@@ -12000,6 +12000,1308 @@
       "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
       "fullName": "C443-VERIFY-BADGE the badge lines up with the first line of a wrapped name",
       "origin": "443 GAP-D7"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-pre-fix.test.ts",
+      "fullName": "C444-PRE-FIX the instruments see every seeded run on the All tab",
+      "origin": "444 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-pre-fix.test.ts",
+      "fullName": "C444-PRE-FIX the Completed tab lists a finished passed, failed and cancelled run (WINDOWS #519)",
+      "origin": "444 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-pre-fix.test.ts",
+      "fullName": "C444-PRE-FIX a three-test run keeps one name and stays running until its verdict, with every member listed (WINDOWS #549)",
+      "origin": "444 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-pre-fix.test.ts",
+      "fullName": "C444-PRE-FIX a dashboard cancel leaves the row running until the run's verdict (the queue's pre-written cancel)",
+      "origin": "444 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-RUN-TITLE formatRunTitle names two tests, then counts the rest",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-RUN-TITLE a multi-test run is titled at the claim and carries no test id or file path",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-RUN-TITLE a run claimed with no members keeps the store's default name and no ids",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-SUITE-TITLE a one-suite run keeps the suite's name and id",
+      "origin": "444 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-SUITE-TITLE a run spanning two suites is titled by the suite names and carries no suite id",
+      "origin": "444 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-SINGLE-TITLE a single-test run is titled, identified and filed by its test at the claim",
+      "origin": "444 D-44"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-NO-MEMBER-WRITES a member's start writes nothing on the run row",
+      "origin": "444 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-NO-MEMBER-WRITES a member's finish leaves the row running with its claim's end time",
+      "origin": "444 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-NO-MEMBER-WRITES the verdict alone moves the row off running",
+      "origin": "444 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-NO-MEMBER-WRITES member rows keep every member's identity and outcome",
+      "origin": "444 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-BACKEND-RUN-STATUS the active list and kill survive member 1 finishing",
+      "origin": "444 D-43"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-run-identity.test.ts",
+      "fullName": "C444-BACKEND-RUN-STATUS a handle takes its status from the run-level outcome only",
+      "origin": "444 D-43"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-artifact-members.test.ts",
+      "fullName": "C444-ARTIFACT-MEMBERS a real two-test agent-qa run leaves both members' own YAML in its artifact",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-artifact-members.test.ts",
+      "fullName": "C444-ARTIFACT-MEMBERS a two-test run's source lists both members with their own YAML and config",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-artifact-members.test.ts",
+      "fullName": "C444-ARTIFACT-MEMBERS members are listed in member order whatever order their snapshots arrive in",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-artifact-members.test.ts",
+      "fullName": "C444-ARTIFACT-MEMBERS a run spanning two suites lists every member with its own suite's config and presents neither suite as the run's",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-artifact-members.test.ts",
+      "fullName": "C444-ARTIFACT-MEMBERS a single-test run keeps its test source and config",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/reporter/__tests__/444-artifact-members.test.ts",
+      "fullName": "C444-ARTIFACT-MEMBERS a one-suite run keeps its suite source",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/run-detail/__tests__/444-artifact-members.test.tsx",
+      "fullName": "C444-ARTIFACT-MEMBERS the Test tab shows each member's source with that member",
+      "origin": "444 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/444-record-v6.test.ts",
+      "fullName": "C444-SCHEMA-V6 the record refuses a version 5 runs database before the run starts",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/444-record-v6.test.ts",
+      "fullName": "C444-SCHEMA-V6 an incomplete record closes its own row with the verdict's own word",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/444-schema-v6.test.ts",
+      "fullName": "C444-SCHEMA-V6 a fresh runs database opens at version 6",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/444-schema-v6.test.ts",
+      "fullName": "C444-SCHEMA-V6 the runs table admits exactly the seven status words",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/444-schema-v6.test.ts",
+      "fullName": "C444-SCHEMA-V6 a version 5 file is refused naming the file and left untouched",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/db/__tests__/444-schema-v6.test.ts",
+      "fullName": "C444-SCHEMA-V6 a healed verdict and a timeout verdict are stored as their own words",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-STATUS-CLASS the classifier sorts the seven words into pass, fail, cancelled and live",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-STATUS-CLASS healed counts as a pass and timeout as a fail in trends and the insights summary",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-STATUS-CLASS the insights flaky count reads the stored healed word",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/444-status-class.test.ts",
+      "fullName": "C444-STATUS-CLASS the UI classifier sorts the seven words as the server does",
+      "origin": "444 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-RUNS-FILTER repeated status parameters list every run in any of those words",
+      "origin": "444 D-40"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-RUNS-FILTER one status parameter lists that word only",
+      "origin": "444 D-40"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-RUNS-FILTER an unknown status word is refused with 400",
+      "origin": "444 D-40"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-MEMBER-HISTORY each run row lists its members with their test ids, paths, suites and outcomes",
+      "origin": "444 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-MEMBER-HISTORY a running member with no outcome reads null",
+      "origin": "444 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-MEMBER-HISTORY a page of runs is listed with every run's members",
+      "origin": "444 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-test-history.test.tsx",
+      "fullName": "C444-MEMBER-HISTORY a three-test run updates all three tests on the Tests page",
+      "origin": "444 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-test-history.test.tsx",
+      "fullName": "C444-MEMBER-HISTORY a healed member counts as a pass and a timed-out one as a fail",
+      "origin": "444 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-test-history.test.tsx",
+      "fullName": "C444-MEMBER-HISTORY a running run's member with no outcome shows running",
+      "origin": "444 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-TEST-VIEWER the test viewer lists every run that ran the test, with that member's outcome",
+      "origin": "444 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-TEST-VIEWER pass rate and trends count member outcomes",
+      "origin": "444 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-TEST-VIEWER a test is found by its path when no id is given",
+      "origin": "444 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-TEST-VIEWER a request naming neither a test id nor a path is refused with 400",
+      "origin": "444 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-TEST-VIEWER flaky tests are grouped by member file path and count healed as a pass",
+      "origin": "444 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-test-history.test.tsx",
+      "fullName": "C444-TEST-VIEWER the test viewer asks for its test by id and path",
+      "origin": "444 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-test-history.test.tsx",
+      "fullName": "C444-TEST-VIEWER the test viewer's run list shows each run's member outcome",
+      "origin": "444 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-run-reads.test.ts",
+      "fullName": "C444-SUITE-HISTORY a run spanning two suites is listed under each suite's history",
+      "origin": "444 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-test-history.test.tsx",
+      "fullName": "C444-SUITE-HISTORY a run spanning two suites counts once in each suite's history",
+      "origin": "444 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-REQUEST a cancel on this dashboard's running run asks it to stop and writes nothing",
+      "origin": "444 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-REQUEST the row takes the run's own verdict after the stop",
+      "origin": "444 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-REQUEST a run that reached passed before the stop landed keeps passed",
+      "origin": "444 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-REQUEST a pending row is cancelled by the queue itself",
+      "origin": "444 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-REQUEST the backend's kill leaves the handle's status to the run",
+      "origin": "444 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS queue cancel prints a stop request and exits 0",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS queue cancel prints a finished run's verdict and exits 0",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS queue cancel prints a not-stoppable answer to stderr and exits 1",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/queue-cancel.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS queue cancel treats an answer with no sentence as a failure, never a cancel",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS a pending run answers 200 cancelled before it started",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS a running run here answers 202 stop requested",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS a running run this dashboard cannot reach answers 409 and writes nothing",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-CANCEL-ANSWERS a finished run answers 200 with its verdict and writes nothing",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C444-CANCEL-ANSWERS the live-run page shows a stop request as an info toast and keeps the run's status",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C444-CANCEL-ANSWERS the live-run page shows a pending run's cancel as a success toast with the route's sentence",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C444-CANCEL-ANSWERS the live-run page shows a finished run's answer as an info toast",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C444-CANCEL-ANSWERS the live-run page reads an answer with no sentence as a failed cancel, never a cancel",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/live-run.test.tsx",
+      "fullName": "C444-CANCEL-ANSWERS a 409 not-stoppable answer shows the route's sentence as an error toast",
+      "origin": "444 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-NO-CAUSE-GUESS a settled run whose output says the browser closed is written failed, never cancelled",
+      "origin": "444 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-cancel-request.test.ts",
+      "fullName": "C444-NO-CAUSE-GUESS the settle handler never rewrites a row the run already finished",
+      "origin": "444 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-signal-asks.test.ts",
+      "fullName": "C444-SIGNAL-ASKS the first signal cancels the session and arms the grace timer, and nothing else",
+      "origin": "444 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-signal-asks.test.ts",
+      "fullName": "C444-SIGNAL-ASKS a forced exit closes this process's own running row as cancelled with the plain sentence",
+      "origin": "444 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-signal-asks.test.ts",
+      "fullName": "C444-SIGNAL-ASKS a forced exit after the verdict writes nothing",
+      "origin": "444 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-signal-asks.test.ts",
+      "fullName": "C444-SIGNAL-ASKS a forced exit never touches a row another process owns",
+      "origin": "444 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-signal-asks.test.ts",
+      "fullName": "C444-SIGNAL-ASKS both agent-qa run sites force-exit through the close",
+      "origin": "444 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-abort-skipped.test.ts",
+      "fullName": "C444-ABORT-SKIPPED members a run-level cancel skips are published as skipped, in member order",
+      "origin": "444 D-34"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-abort-skipped.test.ts",
+      "fullName": "C444-ABORT-SKIPPED the published members agree with the handoff",
+      "origin": "444 D-34"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-VERDICTLESS-CLOSE a run that ends with no verdict closes its own row failed with the plain sentence",
+      "origin": "444 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-VERDICTLESS-CLOSE a run with a verdict is never closed by the no-verdict branch",
+      "origin": "444 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-VERDICTLESS-CLOSE a row another process owns is untouched",
+      "origin": "444 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-VERDICTLESS-CLOSE an incomplete record with no verdict closes the same way and warns once",
+      "origin": "444 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-CRASH-CATCH agent-qa run's crash path guesses no cause and writes no row",
+      "origin": "444 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-RECORD-CLOSED a record closed while its open is in flight releases the handle and refuses",
+      "origin": "444 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-RECORD-CLOSED a closed record refuses a later open",
+      "origin": "444 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-GATE-MARK an inherited gate-run mark never reaches the row",
+      "origin": "444 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/commands/__tests__/444-run-record.test.ts",
+      "fullName": "C444-GATE-MARK a verify run's own flag still marks its row",
+      "origin": "444 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/runs-post-processing.test.ts",
+      "fullName": "C444-STAGE-WORDS the producer answers complete for a finished stage",
+      "origin": "444 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-WORDS the CLI exit line prints complete",
+      "origin": "444 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-WORDS the MCP digest tool's output carries complete",
+      "origin": "444 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-WORDS no renderer spells done as a stage word",
+      "origin": "444 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/post-processing-view.test.ts",
+      "fullName": "C444-STAGE-WORDS the dashboard presents complete for a complete chip",
+      "origin": "444 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-NOTIFICATION-VIEW the stored notification keeps done and the served view reads complete",
+      "origin": "444 D-36"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-NOTIFICATION-VIEW the CLI chain terminal line and the proposals segment print complete",
+      "origin": "444 D-36"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-NOTIFICATION-VIEW the digest's chain line prints complete",
+      "origin": "444 D-36"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-NOTIFICATION-VIEW the served output validates against the functions' output schema",
+      "origin": "444 D-36"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-SKIPPED a gate run's read carries skipped with reason gate-run and no exclusion field",
+      "origin": "444 D-39"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-SKIPPED the CLI exit line prints skipped (gate run) for both stages",
+      "origin": "444 D-39"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-SKIPPED the CLI exit line prints skipped (outcome-excluded) for an outcome-excluded run",
+      "origin": "444 D-39"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-SKIPPED the digest's chain line prints skipped (gate run)",
+      "origin": "444 D-39"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-SKIPPED no renderer prints excluded as a stage word",
+      "origin": "444 D-39"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-STAGE-SKIPPED every renderer reads the reason's word from one map",
+      "origin": "444 D-39"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/post-processing-view.test.ts",
+      "fullName": "C444-STAGE-SKIPPED the dashboard indicator reads Analysis skipped with the reason's own sentence",
+      "origin": "444 D-39"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-no-verdict.test.ts",
+      "fullName": "C444-NO-VERDICT a finished row with no handoff and no logged verdict reads skipped (no verdict)",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-no-verdict.test.ts",
+      "fullName": "C444-NO-VERDICT a running row with no handoff is never skipped",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-no-verdict.test.ts",
+      "fullName": "C444-NO-VERDICT a logged verdict without a handoff is never no-verdict",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-no-verdict.test.ts",
+      "fullName": "C444-NO-VERDICT a gate run's handoff still reads skipped (gate run)",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-no-verdict.test.ts",
+      "fullName": "C444-NO-VERDICT no row and no handoff derives nothing",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-NO-VERDICT the CLI exit line prints skipped (no verdict)",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-stage-words.test.ts",
+      "fullName": "C444-NO-VERDICT the CLI host's reader answers a finished row and opens nothing before runs.db exists",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/run-service/__tests__/444-run-record-reader.test.ts",
+      "fullName": "C444-NO-VERDICT the dashboard's reader answers the row's stored status and undefined for an unknown id",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/lib/__tests__/post-processing-view.test.ts",
+      "fullName": "C444-NO-VERDICT the dashboard reads Analysis skipped and Curation skipped with the no-verdict sentence",
+      "origin": "444 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS a finished row with no handoff answers that it ended before a verdict",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS a running row with no handoff answers that it has not reached a verdict yet",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS a run directory with no row and no verdict answers that it did not reach a verdict",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS an id with no row and no run directory is still not found",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS a host without the run detail port is still not found",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/functions/ops/__tests__/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS a logged verdict or an unreadable record is still not found",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS agent-qa runs overview answers a verdictless run with the sentence and exit 1",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS agent_qa_get_run_overview answers a verdictless run with the sentence",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS agent_qa_get_run_digest answers a verdictless run with the sentence",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS agent-qa digest answers a verdictless run with the sentence",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdictless-reads.test.ts",
+      "fullName": "C444-VERDICTLESS-READS the CLI and MCP lists do not list a verdictless run",
+      "origin": "444 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-posture.test.ts",
+      "fullName": "C444-CI-COLOUR the posture turns colour off when stdout is not a terminal",
+      "origin": "444 D-42"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-posture.test.ts",
+      "fullName": "C444-CI-COLOUR the posture leaves a terminal, FORCE_COLOR and an existing NO_COLOR alone",
+      "origin": "444 D-42"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-colour.test.ts",
+      "fullName": "C444-CI-COLOUR the shipped bin under CI=true with stdout piped prints no colour code",
+      "origin": "444 D-42"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-colour.test.ts",
+      "fullName": "C444-CI-COLOUR the shipped bin with FORCE_COLOR prints colour codes",
+      "origin": "444 D-42"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-colour.test.ts",
+      "fullName": "C444-CI-COLOUR the built bin entry loads no module before the posture runs",
+      "origin": "444 D-42"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-posture.test.ts",
+      "fullName": "C444-CI-PENDING in CI a pending analysis stage says a later run or the daemon must pick it up in this workspace",
+      "origin": "444 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-posture.test.ts",
+      "fullName": "C444-CI-PENDING in CI a pending curation stage names only a later local run",
+      "origin": "444 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-posture.test.ts",
+      "fullName": "C444-CI-PENDING a finished stage carries no suffix in CI",
+      "origin": "444 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-posture.test.ts",
+      "fullName": "C444-CI-PENDING outside CI the posture suffix is unchanged",
+      "origin": "444 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-posture.test.ts",
+      "fullName": "C444-CI-PENDING the drive's preparation-pending warning in CI states the resume limit",
+      "origin": "444 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-completed-tab.test.tsx",
+      "fullName": "C444-COMPLETED-TAB the Completed tab asks for the five finished words",
+      "origin": "444 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-completed-tab.test.tsx",
+      "fullName": "C444-COMPLETED-TAB the Completed tab lists a passed, a failed and a cancelled run",
+      "origin": "444 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-completed-tab.test.tsx",
+      "fullName": "C444-COMPLETED-TAB the Failed tab asks for failed and timeout",
+      "origin": "444 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-completed-tab.test.tsx",
+      "fullName": "C444-COMPLETED-TAB All, Running and Queued keep their requests",
+      "origin": "444 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-runs-table-layout.test.ts",
+      "fullName": "C444-RUNS-TABLE at 1280px and 1024px the name column keeps about 280px and nothing overflows",
+      "origin": "444 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-runs-table-layout.test.ts",
+      "fullName": "C444-RUNS-TABLE at 1600px the Attributes column shows",
+      "origin": "444 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C444-RUNS-TABLE the badge and the chevron take the row's tab stop",
+      "origin": "444 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C444-RUNS-TABLE Enter and Space on the badge or the chevron never open the run",
+      "origin": "444 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C444-RUNS-TABLE the badge keeps its own data-slot under its tooltip",
+      "origin": "444 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/components/__tests__/runs-table.test.tsx",
+      "fullName": "C444-RUNS-TABLE Target and Attributes truncate with the full value in a tooltip, and Attributes carries the hide-below-1200 container class",
+      "origin": "444 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-real-cancel.e2e.test.ts",
+      "fullName": "C444-REAL-CANCEL a dashboard Cancel stops a run parked in its first step",
+      "origin": "444 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-real-cancel.e2e.test.ts",
+      "fullName": "C444-REAL-CANCEL a Cancel after the verdict answers that the run already finished",
+      "origin": "444 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-real-cancel.e2e.test.ts",
+      "fullName": "C444-REAL-CANCEL SIGINT stops a parked direct run",
+      "origin": "444 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-real-cancel.e2e.test.ts",
+      "fullName": "C444-REAL-CANCEL SIGTERM stops a parked direct run",
+      "origin": "444 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-real-cancel.e2e.test.ts",
+      "fullName": "C444-REAL-CANCEL SIGINT stops a parked suite run",
+      "origin": "444 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-real-cancel.e2e.test.ts",
+      "fullName": "C444-REAL-CANCEL SIGTERM stops a parked suite run",
+      "origin": "444 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-cancel-ranking.test.ts",
+      "fullName": "C444-CANCEL-RANKING Ctrl+C during member 2 after member 1 failed gives cancelled and exit 130",
+      "origin": "444 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-cancel-ranking.test.ts",
+      "fullName": "C444-CANCEL-RANKING the CLI overview lists member 1 failed, member 2 cancelled and member 3 skipped",
+      "origin": "444 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-cancel-ranking.test.ts",
+      "fullName": "C444-CANCEL-RANKING the MCP overview lists the same member words",
+      "origin": "444 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-cancel-ranking.test.ts",
+      "fullName": "C444-CANCEL-RANKING the dashboard's run detail lists the same member words",
+      "origin": "444 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-completed-views.test.ts",
+      "fullName": "C444-COMPLETED-VIEWS the Completed tab shows the passed, failed and cancelled run",
+      "origin": "444 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-completed-views.test.ts",
+      "fullName": "C444-COMPLETED-VIEWS agent-qa runs list shows the three runs with their verdict words",
+      "origin": "444 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-completed-views.test.ts",
+      "fullName": "C444-COMPLETED-VIEWS agent_qa_list_runs shows the three runs with their verdict words",
+      "origin": "444 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-completed-views.test.ts",
+      "fullName": "C444-COMPLETED-VIEWS every surface names each run with the same word",
+      "origin": "444 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdict-independence.test.ts",
+      "fullName": "C444-VERDICT-INDEPENDENCE a failed run whose analysis failed keeps failed and exit 1 on every surface",
+      "origin": "444 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdict-independence.test.ts",
+      "fullName": "C444-VERDICT-INDEPENDENCE a passed gate run reads skipped (gate run) and keeps passed and exit 0",
+      "origin": "444 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdict-independence.test.ts",
+      "fullName": "C444-VERDICT-INDEPENDENCE a failed gate run reads skipped (gate run) and keeps failed and exit 1",
+      "origin": "444 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdict-independence.test.ts",
+      "fullName": "C444-VERDICT-INDEPENDENCE a passed detached run reads pending and keeps passed and exit 0",
+      "origin": "444 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-verdict-independence.test.ts",
+      "fullName": "C444-VERDICT-INDEPENDENCE a failed detached run reads pending and keeps failed and exit 1",
+      "origin": "444 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-exit-two.test.ts",
+      "fullName": "C444-EXIT-TWO a test that cannot start exits 2",
+      "origin": "444 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-exit-two.test.ts",
+      "fullName": "C444-EXIT-TWO its verdict is failed with the could-not-start summary",
+      "origin": "444 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-exit-two.test.ts",
+      "fullName": "C444-EXIT-TWO its row reads failed and no running row is left",
+      "origin": "444 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-CRASH a killed run's row stays running until a starting dashboard finalizes it failed",
+      "origin": "444 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-CRASH the finalized run is in the Completed request",
+      "origin": "444 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-CRASH the finalized run's post-processing reads skipped (no verdict)",
+      "origin": "444 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-CRASH agent-qa runs overview answers that the run ended before a verdict",
+      "origin": "444 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-PENDING-AT-EXIT a stalled drainer's run exits with its verdict's code and reports its stages as durable state does",
+      "origin": "444 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-PENDING-AT-EXIT a detached run exits with its verdict's code and reads pending on the CLI and the dashboard",
+      "origin": "444 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-PENDING-AT-EXIT neither run left preparation pending at exit",
+      "origin": "444 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-RESUME a later run completes the stalled run's post-processing",
+      "origin": "444 D-37"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-RESUME the daemon completes the detached run's analysis and leaves curation to a later local run",
+      "origin": "444 D-37"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-RESUME the stalled run's handoff, evidence, log and row are byte-identical after resume",
+      "origin": "444 D-37"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-crash-pending-resume.e2e.test.ts",
+      "fullName": "C444-RESUME the detached run's handoff, evidence, log and row are byte-identical after both resumes",
+      "origin": "444 D-37"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-headless.test.ts",
+      "fullName": "C444-CI-HEADLESS a passing headless CI run exits 0 and a failing one exits 1",
+      "origin": "444 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-headless.test.ts",
+      "fullName": "C444-CI-HEADLESS a headless CI run prints no colour code, redraw or prompt",
+      "origin": "444 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-headless.test.ts",
+      "fullName": "C444-CI-HEADLESS a detached CI run prints pending stages with the resume limit",
+      "origin": "444 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-headless.test.ts",
+      "fullName": "C444-CI-PROPOSE-ONLY curation in CI keeps what it adds a candidate and what it supersedes proposed",
+      "origin": "444 D-38"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-recipe.test.ts",
+      "fullName": "C444-CI-RECIPE every agent-qa command and flag in the job exists in the shipped help",
+      "origin": "444 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-recipe.test.ts",
+      "fullName": "C444-CI-RECIPE the job never selects the junit reporter without its output path",
+      "origin": "444 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-recipe.test.ts",
+      "fullName": "C444-CI-UPLOAD every uploaded path exists after a CI-mode run",
+      "origin": "444 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-recipe.test.ts",
+      "fullName": "C444-CI-UPLOAD nothing under the uploaded paths is a file the recipe forbids",
+      "origin": "444 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts",
+      "fullName": "C444-CTRL-C-OWNED one SIGINT ends a held direct run through agent-qa run's own path",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts",
+      "fullName": "C444-CTRL-C-OWNED one SIGINT ends a held suite run through agent-qa run's own path",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts",
+      "fullName": "C444-CTRL-C-OWNED one SIGTERM ends a held direct run through agent-qa run's own path",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts",
+      "fullName": "C444-CTRL-C-OWNED a dashboard run still launches its browser with Playwright's signal handling",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ctrl-c-owned.e2e.test.ts",
+      "fullName": "C444-CTRL-C-OWNED only agent-qa run's two producer calls hand the browser's signals to the host",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/444-ctrl-c-owned.test.ts",
+      "fullName": "C444-CTRL-C-OWNED a browser launched for a host that owns its signals adds no Playwright SIGINT or SIGTERM listener",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/444-ctrl-c-owned.test.ts",
+      "fullName": "C444-CTRL-C-OWNED a browser launched without the option keeps Playwright's SIGINT, SIGTERM and SIGHUP listeners",
+      "origin": "444 D-46"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci the runs.start door exit line states each pending stage's resume limit",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci the runs.start door tail-failure warning states the resume limit",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci a failed preparation or enqueue states the resume limit",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci the post-run tail drain failure states the resume limit",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci the run command unexpected curation-tail error states the resume limit, on both of its tail sites",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci the curation fold incomplete warning states the resume limit",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci the post-verdict decision without a lease capability states the resume limit",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-every-door.test.ts",
+      "fullName": "C444-CI-EVERY-DOOR in ci a recovered preparation that fails states the resume limit",
+      "origin": "444 D-48"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-run-detail-class.test.tsx",
+      "fullName": "C444-RUN-DETAIL-CLASS a timed-out run shows its failure summary, error details and verdict link",
+      "origin": "444 D-49"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-run-detail-class.test.tsx",
+      "fullName": "C444-RUN-DETAIL-CLASS a failed run still shows its failure summary, error details and verdict link",
+      "origin": "444 D-49"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-ui/src/pages/__tests__/444-run-detail-class.test.tsx",
+      "fullName": "C444-RUN-DETAIL-CLASS a passed run shows none of them",
+      "origin": "444 D-49"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-stopped-queue.test.ts",
+      "fullName": "C444-STOPPED-QUEUE after stop(), onSlotFreed for an active run neither reads the database nor rejects",
+      "origin": "444 D-50"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-stopped-queue.test.ts",
+      "fullName": "C444-STOPPED-QUEUE a dispatch from onSlotFreed that fails is reported, never thrown",
+      "origin": "444 D-50"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-stopped-queue.test.ts",
+      "fullName": "C444-STOPPED-QUEUE a poll whose dispatch fails is reported, never thrown",
+      "origin": "444 D-50"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-no-cause-words.test.ts",
+      "fullName": "C444-NO-CAUSE-WORDS a cancelled step's record and a test's default abort reason carry no \"by user\"",
+      "origin": "444 D-51"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-member-duration.test.ts",
+      "fullName": "C444-MEMBER-DURATION a member held and then aborted reports at least its hold, and a member the abort skipped reports 0",
+      "origin": "444 D-52"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-member-duration.test.ts",
+      "fullName": "C444-MEMBER-DURATION a member whose executor throws after a hold reports at least its hold",
+      "origin": "444 D-52"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-no-browser-guess.test.ts",
+      "fullName": "C444-NO-BROWSER-GUESS a browser that closes with no cancel fails the member and says the browser closed",
+      "origin": "444 D-53"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-no-browser-guess.test.ts",
+      "fullName": "C444-NO-BROWSER-GUESS a cancelled member stays cancelled with its cancel summary when the browser also closed",
+      "origin": "444 D-53"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-skipped-exit-line.test.ts",
+      "fullName": "C444-SKIPPED-EXIT-LINE a gate run's tail prints skipped (gate run) for both stages and starts no drain",
+      "origin": "444 D-55"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-skipped-exit-line.test.ts",
+      "fullName": "C444-SKIPPED-EXIT-LINE an outcome-excluded run's tail prints skipped (outcome-excluded) for both stages and starts no drain",
+      "origin": "444 D-55"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-propose-words.test.ts",
+      "fullName": "C444-CI-PROPOSE-WORDS in ci the outcome line says the changes were recorded and never promoted",
+      "origin": "444 D-57"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-propose-words.test.ts",
+      "fullName": "C444-CI-PROPOSE-WORDS in cloud the outcome line names cloud and says the changes were never promoted",
+      "origin": "444 D-57"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/444-ci-propose-words.test.ts",
+      "fullName": "C444-CI-PROPOSE-WORDS a local run still reports what it applied to the knowledge root",
+      "origin": "444 D-57"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/curator/__tests__/444-proposed-supersession.test.ts",
+      "fullName": "C444-PROPOSED-SUPERSESSION in ci a same-anchor correction is a separate candidate and the victim stays byte-unchanged",
+      "origin": "444 D-58"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/knowledge-local/src/curator/__tests__/444-proposed-supersession.test.ts",
+      "fullName": "C444-PROPOSED-SUPERSESSION the proposed candidate has the id a local Supersede of the same delta mints",
+      "origin": "444 D-58"
     }
   ]
 }
