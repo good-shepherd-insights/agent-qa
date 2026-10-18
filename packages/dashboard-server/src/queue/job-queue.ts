@@ -55,7 +55,8 @@ export class JobQueue extends EventEmitter {
   start(intervalMs = 1000): void {
     this.stopped = false
     this.pollInterval = setInterval(() => this.dispatchReported('a poll'), intervalMs)
-    this.on('enqueued', () => this.processNext())
+    // 2026-10-18 (444-27, D-62 IN-06): a dispatch that fails here never escapes enqueue().
+    this.on('enqueued', () => this.dispatchReported('an enqueue'))
   }
 
   // 2026-10-17 (444-16, D-50): the server closes the database after this; a run that settles later
