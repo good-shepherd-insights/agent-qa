@@ -6035,3 +6035,128 @@ The round's record gate measures agent-qa HEAD after this subsection lands. Its 
 verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
 2 (`### Gate (gap-closure round 2)`) and the SHA in its `### Final SHA (gap-closure round 2)`,
 rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 3 (444-33 to 444-34), 2026-10-18
+
+This subsection appends to the Phase 444 section, after the second round's subsection; written by
+444-34, which changed no earlier line. It follows the second re-verification,
+`.planning/phases/444-truthful-lifecycle/444-VERIFICATION.md` (agent-qa `74abd941f`, 12 of 13
+truths). Its one gap is the code review's CR-01: since D-64, each Tests or Suites page load sends
+its file list and its batch read together, both run the file manager's `list()`, and
+`TestFileManager.list()` and `SuiteFileManager.list()` minted an id into an id-less file by reading
+it and rewriting it in place with a truncating `writeFile`, with nothing serializing two calls. A
+second read could see the file empty or partial and write back only the id line, or an id line over
+a fragment: about a third of 100 id-less test files and of 100 suite files lost their content in
+the orchestrator's probe, and row links named ids no longer on disk (the D-64 delivery gap). The
+orchestrator settled the round on 2026-10-18 under the owner's delegation, in `444-CONTEXT.md`
+§ Settled at the second re-verification: D-65 (reading the test or suite list never damages a
+file, and each file gets one id), with its two amendments at gap planning (super-repo `f6e8e5fb0`:
+a file the server may not write is listed with a `null` id and keeps its bytes, and the editor's
+save goes through the same atomic replace under a per-file lock; `7e72d6849`: `delete()` takes the
+same lock), and the info items IN-11 (`docs/ci.md`'s hang-up paragraph reads in order) and IN-12
+(the batch routes' counting has cells of its own). Every commit below is in agent-qa on
+`version-0.2` and signed. Every new cell is listed in `scripts/gate/inputs/regressions.json` with
+its area's `444 D-NN` origin, after the 2280 rows listed at `74abd941f`, which are unchanged and in
+order (Registered gate rows, below).
+
+**How it is measured.** Baseline `74abd941f` (the second round's final SHA, 444-32's inventory
+commit). Closing SHA `2f8c4bf59` (444-34's gate list, the parent of the commit that completes this
+subsection). `git -C agent-qa diff --shortstat 74abd941f 2f8c4bf59`: 7 files changed, 944
+insertions, 39 deletions (under `packages/`: 5 files, +894/−30; the other two are `docs/ci.md`,
++8/−9, and `regressions.json`, +42). `--diff-filter=D`: no file deleted. `--diff-filter=A`: 2
+files added, one test file (`dashboard-server/src/__tests__/444-list-write-safe.test.ts`) and one
+production helper (`dashboard-server/src/tests/replace-file-atomic.ts`). 6 commits, every one signed
+(`%G?` = `G`): 444-33's four (`62e806b7f`, the RED cells; `559e51d2c`, the shared read;
+`b452f724e`, the atomic write and the per-file lock; `2a576ca55`, the IN-12 cells) and 444-34's two
+(`3d2ad9f59`, the `docs/ci.md` paragraph, and `2f8c4bf59`, the gate list). 3 production files
+changed: `dashboard-server/src/tests/test-file-manager.ts`, `tests/suite-file-manager.ts` and the
+new `tests/replace-file-atomic.ts`. `dashboard-server`'s `server/routes.ts`, `server/server.ts`,
+`db/database.ts` and `db/schema.ts`, and every `dashboard-ui` file, are unchanged. The golden
+ledger (`cli/src/__tests__/conformance/golden-registry.json`) and the capability catalog
+(`cli/capability-catalog/capability-catalog.json`) did not move, and `scripts/397-regen-golden.sh`
+and `scripts/398-regen-catalog.sh`, run unaided, print `nothing to change`. The removed lines below
+are read from each deleting commit's diff (`git -C agent-qa show <sha>`), not transcribed from a
+summary. Names are at `74abd941f`.
+
+#### What was deleted
+
+| Member (file at `74abd941f`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| the in-place, truncating id write in `TestFileManager.list()` and `SuiteFileManager.list()`: in the mint branch, `await writeFile(record.absolutePath, content, 'utf-8')` with `content` set to the id line (`test-id:`, `suite-id:` in the suite manager) plus the content it had read (`dashboard-server/src/tests/test-file-manager.ts`, `tests/suite-file-manager.ts`) | truncated the file, then wrote the id line over the content it had read, so a reader between the truncate and the write saw an empty or partial file, and a second `list()` wrote that fragment back under its own id (CR-01) | `b452f724e` (444-33); the id write is `replaceFileAtomic` under the file's lock, over the content re-read under it | `C444-LIST-WRITE-SAFE a reader during an id write never sees an empty or partial file`; `C444-LIST-WRITE-SAFE a save sent with the list reads keeps exactly the saved body under one id line, a delete stays deleted, and no reader sees a partial file` |
+| the in-place `await writeFile(target.absolutePath, content, 'utf-8')` in both managers' `write()`, the editor's save (`test-file-manager.ts`, `suite-file-manager.ts`) | truncated the file before writing the saved body, so a list read landing mid-save saw no id and replaced the file with the partial body plus an id, and the save was lost | `b452f724e` (444-33); `write()` is `replaceFileAtomic` under the file's lock; `writeFile` left both managers' imports | `C444-LIST-WRITE-SAFE a save sent with the list reads keeps exactly the saved body under one id line, a delete stays deleted, and no reader sees a partial file` |
+| the per-call listing: each `list()` call ran its own discovery, read and mint, with nothing shared between concurrent calls (`async list()` in both managers) | let a page load's two requests, two tabs or a suite resolving its tests mint different ids for one file, so an answer could name the id that lost on disk | `559e51d2c` (444-33); `list()` returns a copy of one in-flight listing (`inFlightList`), and the body moved unchanged into `listOnce()` | `C444-LIST-WRITE-SAFE the Tests and Suites page reads sent together leave every id-less file whole under one id line, and every listed id opens`; `C444-LIST-WRITE-SAFE two list calls at once on one manager name the same id for each file, and the file holds one id line` |
+| the listing's id for a file whose write failed: the minted id was assigned (`testId = generateTestId()`, `suiteId = generateSuiteId()`) before the write, so a refused write still listed it (`test-file-manager.ts`, `suite-file-manager.ts`) | listed an id that never reached the disk, so that row's link opened nothing | `b452f724e` (444-33); the id is named only once `replaceFileAtomic` resolves, and a refused write leaves it `null` | `C444-LIST-WRITE-SAFE an id write goes through a symlink to its target and keeps the file mode, and a file it may not write keeps its bytes and gets no id` |
+
+**Changed with no member deleted** (each read from its commit):
+
+| Before (file at `74abd941f`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| nothing ordered two writes to one file inside the server: the id write, the save and the delete ran as they were called | the id write, `write()` and `delete()` for one file run one at a time under a per-file lock (`createPathLock`, a promise chain keyed by the resolved absolute path); the id write re-reads the file under the lock, writes only if it still has no id, and adds the id to the content it just read (D-65 as amended at `f6e8e5fb0`, with `delete()` under the lock at `7e72d6849`) | `b452f724e` (444-33) | `C444-LIST-WRITE-SAFE a save sent with the list reads keeps exactly the saved body under one id line, a delete stays deleted, and no reader sees a partial file`; `C444-LIST-WRITE-SAFE two list calls at once on one manager name the same id for each file, and the file holds one id line` |
+| a workspace file was written in place | a write is `replaceFileAtomic`: a `.<name>.<pid>.<uuid>.tmp` beside the real target, created exclusively (`'wx'`) with the target's mode, then renamed over it; a symlinked file is written through to its target and stays a link; an existing file the process may not write (`access W_OK`) is refused before anything is written | `b452f724e` (444-33) | `C444-LIST-WRITE-SAFE an id write goes through a symlink to its target and keeps the file mode, and a file it may not write keeps its bytes and gets no id`; `C444-LIST-WRITE-SAFE a reader during an id write never sees an empty or partial file` |
+| `docs/ci.md`'s hang-up paragraph put "So `nohup agent-qa run` does not survive a hang-up" after the second-signal sentence, broke its 100-column wrap there, and said interactive zsh "sends it twice" | the paragraph's sentences in order: the hang-up cancels like Ctrl+C; closing a terminal can deliver it twice (interactive zsh "delivers it twice"); the `nohup` sentence and the five after it, unchanged; then the second-signal sentence, last. Every other word is unchanged, and the paragraph is re-wrapped at 100 columns with no code span split (IN-11) | `3d2ad9f59` (444-34) | `C444-CI-RECIPE` and `C444-CI-UPLOAD` (no fence added, no reporter flag named) |
+
+No file was deleted and no registered cell was removed. The round's 7 new cells, by area and
+origin: `C444-LIST-WRITE-SAFE` 5 (`444 D-65`) and `C444-RATE-WINDOW` 2 (`444 D-64`, IN-12: the test
+and the suite batch reads count a healed member as a pass, a timed-out one as a fail, and a
+cancelled, a still-running and an outcome-less member in neither, as their viewers do).
+
+#### Registered gate rows
+
+The 2280 rows listed at `74abd941f` are still listed, unchanged and in order; none was renamed,
+removed, moved or re-spelled. 444-33 re-spelled no registered cell: the five registered
+`C444-RATE-WINDOW` server rows keep their titles verbatim and pass, and `444-rate-window.test.ts`'s
+`suiteViewer` helper only widened its `suiteId` parameter from `SuiteId` to `string`, a type-only
+change. `test-file-manager.ids.test.ts` and `suite-file-manager.ids.test.ts` are unedited and pass.
+
+#### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| the id's format, its first line (`test-id: <id>` / `suite-id: <id>`) and its mint on the first read of an id-less file (`generateTestId`, `generateSuiteId`) | D-65 changes how the id is written, not what is written or when | `test-file-manager.ids.test.ts`, `suite-file-manager.ids.test.ts`; `C444-LIST-WRITE-SAFE two list calls at once on one manager name the same id for each file, and the file holds one id line` |
+| the test and suite save routes (`POST /api/tests`, `PUT /api/tests/:id`, `POST /api/suites`, `PUT /api/suites/:id`) and their validation, including the test routes' 400 `invalid_test_file` for a body with no `test-id` | only the manager's write under them changed; `server/routes.ts` is unchanged | `C444-LIST-WRITE-SAFE a save sent with the list reads keeps exactly the saved body under one id line, a delete stays deleted, and no reader sees a partial file` (the saves answer 200, 201, 201) |
+| the batch routes (`GET /api/analytics/test-summaries`, `/suite-summaries`) and the Tests and Suites pages, which still send their two requests together | the batch routes keep reading through `list()`, now the shared in-flight read; no route or page changed | the eleven earlier `C444-RATE-WINDOW` cells and the two IN-12 cells |
+| `ConfigManager.writeAtomic` (`dashboard-server/src/config/config-manager.ts`), the analog `replaceFileAtomic` follows | untouched; `replaceFileAtomic` adds the exclusive create and the write-permission refusal the workspace files need | `config-manager.test.ts` |
+
+#### What degrades, stated plainly
+
+- **A mint or a save replaces the file's inode.** Another hard link to the old file keeps the old
+  content, and the new file is owned by the dashboard's user; its permission bits are kept.
+- **A crash between the temp write and the rename** leaves a dot-prefixed `.<name>.<pid>.<uuid>.tmp`
+  beside the test or suite file, and nothing sweeps it. No test or suite glob matches it: at
+  planning, `discoverWorkspaceFiles`' glob, with no `dot` option, matched no such file under init's
+  scaffolded patterns, `tests/*.yaml`, `tests/**/*` or `**/*`.
+- **A file the dashboard may not write is listed with no id.** It keeps its bytes and mode, its
+  Tests page row opens by path, and a suite row with no id has no viewer link, as before.
+- **Two dashboards over one workspace are not serialized** by the in-memory lock: each can mint an
+  id for one id-less file. The file ends whole, under the last rename's id, and the other server's
+  answer names the losing id until its next list (reasoned, not measured).
+- **A caller of the removed members breaks,** with no alias, shim or message naming a replacement
+  (D-01). None was exported.
+
+#### Persisted values the narrowed contract governs
+
+No persisted value moves, no schema bump, no migration and no compatibility code (D-01). runs.db
+stays version 6 (`git -C agent-qa diff --quiet 74abd941f 2f8c4bf59 --
+packages/dashboard-server/src/db/schema.ts packages/dashboard-server/src/db/database.ts` exits 0),
+and agent-jobs.db, the handoff and the knowledge root are unchanged. A test or suite file's id line
+keeps its form. No golden or catalog line moves: the dashboard file routes are not golden ops, and
+the golden's 44 op rows hold no dashboard route.
+
+#### The instruments that notice a return
+
+- **The 434 gate** must execute and pass the 7 cells above, each with its area's origin, as well as
+  the 2280 earlier rows (2287 in all).
+- **The `C444-LIST-WRITE-SAFE` tracer** runs a real dashboard over 20 id-less test files and 20
+  id-less suite files for 5 rounds, so a return of the per-call read or the in-place write loses
+  files there, as it lost 40 of 100 of each at `74abd941f`.
+- **The reader and save cells** read the files raw while the writes run, so a return of any
+  in-place write shows as a partial read.
+- **The golden and catalog freshness cells** in the CLI suite red a schema move that is not
+  re-minted.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
+3 (`### Gate (gap-closure round 3)`) and the SHA in its `### Final SHA (gap-closure round 3)`,
+rather than quoted here, so no agent-qa commit follows it.
