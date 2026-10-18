@@ -15,7 +15,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table"
 import { Plus, FolderOpen, ArrowUpDown, Keyboard } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { RunStatusBadge } from "@/components/run-status-badge"
 import { Button } from "@/components/ui/button"
 import { SelectionCheckboxCell } from "@/components/table-selection-checkbox"
 import { Input } from "@/components/ui/input"
@@ -78,45 +78,6 @@ function formatPlatformLabel(platform: string | null): string {
 
 function getRunTimestamp(run: RunRow): string {
   return run.createdAt || run.startedAt || run.endedAt || ""
-}
-
-function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "passed":
-      return (
-        <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
-          Passed
-        </Badge>
-      )
-    case "failed":
-      return <Badge variant="destructive">Failed</Badge>
-    case "healed":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Healed
-        </Badge>
-      )
-    case "flaky":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Flaky
-        </Badge>
-      )
-    case "running":
-      return (
-        <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 animate-pulse">
-          Running
-        </Badge>
-      )
-    case "cancelled":
-      return (
-        <Badge className="bg-muted text-muted-foreground border-border">
-          Cancelled
-        </Badge>
-      )
-    default:
-      return <Badge variant="outline">{status}</Badge>
-  }
 }
 
 function getHeaderClassName(columnId: string) {
@@ -235,10 +196,11 @@ export default function SuitesPage() {
 
   const filteredData = useMemo(() => {
     let result = data
-    if (status) {
-      result = status === "no-runs"
-        ? result.filter(d => !d.lastRunStatus)
-        : result.filter(d => d.lastRunStatus === status)
+    if (status === "no-runs") {
+      result = result.filter(d => !d.lastRunStatus)
+    } else if (status) {
+      const chosen = runStatusClass(status)
+      result = result.filter(d => chosen !== undefined && runStatusClass(d.lastRunStatus ?? "") === chosen)
     }
     if (platform) {
       result = result.filter(d => d.platform === platform)
@@ -393,7 +355,7 @@ export default function SuitesPage() {
             className="relative z-10 flex w-full flex-col items-end gap-1 rounded-sm text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
             onClick={(event) => event.stopPropagation()}
           >
-            <StatusBadge status={row.original.lastRun.status} />
+            <RunStatusBadge status={row.original.lastRun.status} />
             <span className="whitespace-normal break-words text-xs leading-snug text-muted-foreground">
               {formatDate(getRunTimestamp(row.original.lastRun))}
             </span>

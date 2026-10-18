@@ -4,6 +4,7 @@ import { routes } from "@/lib/routes"
 import { toast } from "sonner"
 import { FileCode, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { RunStatusBadge } from "@/components/run-status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -99,45 +100,6 @@ function formatRelativeCompact(iso: string): string {
   return formatDate(iso)
 }
 
-function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "passed":
-      return (
-        <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
-          Passed
-        </Badge>
-      )
-    case "failed":
-      return <Badge variant="destructive">Failed</Badge>
-    case "healed":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Healed
-        </Badge>
-      )
-    case "flaky":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Flaky
-        </Badge>
-      )
-    case "running":
-      return (
-        <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 animate-pulse">
-          Running
-        </Badge>
-      )
-    case "cancelled":
-      return (
-        <Badge className="bg-muted text-muted-foreground border-border">
-          Cancelled
-        </Badge>
-      )
-    default:
-      return <Badge variant="outline">{status}</Badge>
-  }
-}
-
 function MetricScopeControl({
   configured,
   mode,
@@ -215,7 +177,7 @@ function RunHistoryTable({
                 className="absolute inset-0"
                 tabIndex={-1}
               />
-              <StatusBadge status={run.status} />
+              <RunStatusBadge status={run.status} />
             </TableCell>
             <TableCell>
               {run.status === "running" ? (
