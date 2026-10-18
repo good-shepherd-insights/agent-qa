@@ -7,8 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { InsightsBreakdownTable } from "@/components/insights/insights-breakdown-table"
 import type { InsightsBreakdownRow } from "@/lib/api"
+import InsightsPage from "@/pages/insights"
 import SuiteViewerPage from "@/pages/suite-viewer"
+import SuitesPage from "@/pages/suites"
 import TestViewerPage from "@/pages/test-viewer"
+import TestsPage from "@/pages/tests"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -31,6 +34,7 @@ vi.mock("@/components/pass-rate-chart", () => ({
   },
 }))
 vi.mock("@/components/duration-chart", () => ({ DurationChart: () => <div /> }))
+vi.mock("@/components/token-usage-chart", () => ({ TokenUsageChart: () => <div /> }))
 
 const EM_DASH = "—"
 
@@ -50,6 +54,76 @@ type Daily = { date: string; passed: number; failed: number; total: number; avgD
 
 let trends: { passRate: number | null; totalRuns: number; avgDuration: number; daily: Daily[] }
 let suiteAnalyticsFails = false
+
+interface Member {
+  testId: string | null
+  filePath: string | null
+  suiteId: string | null
+  name: string
+  outcome: string | null
+}
+
+function run(id: string, status: string, createdAt: string, members: Member[]) {
+  return {
+    id,
+    name: members.map((member) => member.name).join(" · "),
+    filePath: null,
+    status,
+    duration: 1000,
+    attributes: {},
+    environment: null,
+    metadata: null,
+    startedAt: createdAt,
+    endedAt: status === "running" ? null : createdAt,
+    failureSummary: null,
+    errorLog: null,
+    memoryLog: null,
+    testId: null,
+    suiteId: null,
+    platform: "web",
+    testFileContent: null,
+    modelName: null,
+    llmProvider: null,
+    parentRunId: null,
+    attemptNumber: 1,
+    retryCount: 0,
+    maxRetries: 0,
+    createdAt,
+    members: members.map((member, testIndex) => ({ testIndex, ...member })),
+  }
+}
+
+const STEADY = { name: "Steady", path: "tests/steady.yaml", testId: "t_steady" }
+const PARKED = { name: "Parked", path: "tests/parked.yaml", testId: "t_parked" }
+const MIXED = { name: "Mixed", path: "tests/mixed.yaml", testId: "t_mixed" }
+
+function member(test: typeof STEADY, outcome: string | null, suiteId: string | null = null): Member {
+  return { testId: test.testId, filePath: test.path, suiteId, name: test.name, outcome }
+}
+
+function testFile(test: typeof STEADY) {
+  return { path: test.path, name: test.name, testId: test.testId, targetName: null, platform: "web", modified: "2026-10-17T09:00:00.000Z" }
+}
+
+function suiteFile(name: string, path: string, suiteId: string) {
+  return { path, name, suiteId, testCount: 1, platform: "web", modified: "2026-10-17T09:00:00.000Z" }
+}
+
+type Stats = {
+  totalRuns: number
+  passed: number
+  failed: number
+  flakeRate: number
+  avgDuration: number
+  runs: Array<{ date: string; passed: number; failed: number; healed: number; duration: number }>
+}
+
+let served: { tests: unknown[]; suites: unknown[]; runs: unknown[]; stats: Stats | null } = {
+  tests: [],
+  suites: [],
+  runs: [],
+  stats: null,
+}
 
 function analytics() {
   return {
@@ -73,6 +147,15 @@ function json(body: unknown, status = 200) {
 
 function fakeServer(input: string) {
   const url = new URL(input, "http://dashboard.test")
+  if (url.pathname === "/api/tests") return json({ files: served.tests, targets: [] })
+  if (url.pathname === "/api/suites") return json({ files: served.suites })
+  if (url.pathname === "/api/runs") return json({ runs: served.runs, total: served.runs.length, targets: [] })
+  if (url.pathname === "/api/stats") return json(served.stats)
+  if (url.pathname === "/api/token-events/stats") {
+    return json({ byModel: [], bySource: {}, totals: { promptTokens: 0, completionTokens: 0 } })
+  }
+  if (url.pathname === "/api/insights/knowledge-changes") return json({ status: "unavailable", reason: "read_failed" })
+  if (url.pathname === "/api/analytics/breakdowns") return json({ dimension: url.searchParams.get("dimension"), rows: [] })
   if (url.pathname === `/api/tests/${VIEWED_TEST.testId}`) return json(VIEWED_TEST)
   if (url.pathname === `/api/suites/${VIEWED_SUITE.suiteId}`) return json(VIEWED_SUITE)
   if (url.pathname.startsWith("/api/analytics/tests/")) return json({ name: "Checkout flow", ...analytics() })
@@ -103,6 +186,9 @@ async function renderPage(path: string) {
         <Routes>
           <Route path="/test/:t_id" element={<TestViewerPage />} />
           <Route path="/suite/:suite-id" element={<SuiteViewerPage />} />
+          <Route path="/tests" element={<TestsPage />} />
+          <Route path="/suites" element={<SuitesPage />} />
+          <Route path="/insights" element={<InsightsPage />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -141,11 +227,32 @@ function passRateCells(dimension: "test" | "platform"): string[] {
     .map((row) => row.querySelectorAll("td")[column]?.textContent?.trim() ?? "")
 }
 
+function passRateOf(name: string): string {
+  const row = Array.from(container?.querySelectorAll("tbody tr") ?? []).find((candidate) =>
+    candidate.textContent?.includes(name),
+  )
+  expect(row, `a row for ${name}`).toBeTruthy()
+  return Array.from(row!.querySelectorAll("td")).map((cell) => cell.textContent ?? "")
+    .find((text) => /%|0 completed/.test(text)) ?? ""
+}
+
+function insightsPassRateMetric(): { value: string; description: string } {
+  const labels = Array.from(container?.querySelectorAll("p") ?? []).filter((element) =>
+    element.textContent?.trim() === "Pass Rate" && element.nextElementSibling?.tagName === "P",
+  )
+  expect(labels, "one Pass Rate metric cell").toHaveLength(1)
+  return {
+    value: labels[0]!.nextElementSibling?.textContent?.trim() ?? "",
+    description: labels[0]!.parentElement?.nextElementSibling?.textContent?.trim() ?? "",
+  }
+}
+
 function everyCell(): string[] {
   return Array.from(container?.querySelectorAll("tbody td") ?? []).map((cell) => cell.textContent?.trim() ?? "")
 }
 
 beforeEach(() => {
+  served = { tests: [], suites: [], runs: [], stats: null }
   trends = { passRate: null, totalRuns: 2, avgDuration: 1000, daily: [] }
   suiteAnalyticsFails = false
   chartData.length = 0
@@ -224,5 +331,74 @@ describe('C444-PASS-RATE', () => {
       expect(chartData[chartData.length - 1], path).toEqual([{ date: "2026-10-01", passRate: 100 }])
       unmount()
     }
+  })
+
+  it("the Tests page rates a test over its pass and fail outcomes only", async () => {
+    served.tests = [STEADY, PARKED, MIXED].map(testFile)
+    served.runs = [
+      run("r_live", "running", "2026-10-17T13:00:00.000Z", [member(STEADY, null)]),
+      run("r_skip", "cancelled", "2026-10-17T12:00:00.000Z", [member(PARKED, "cancelled"), member(STEADY, "skipped")]),
+      run("r_cancel", "cancelled", "2026-10-17T11:00:00.000Z", [member(STEADY, "cancelled"), member(PARKED, "skipped")]),
+      run("r_pass", "passed", "2026-10-17T10:00:00.000Z", [member(STEADY, "passed"), member(MIXED, "passed")]),
+      run("r_timeout", "timeout", "2026-10-17T09:30:00.000Z", [member(MIXED, "timeout")]),
+    ]
+    await renderPage("/tests")
+
+    expect(passRateOf(STEADY.name), "passed, cancelled, skipped and in flight").toBe("100%1/1")
+    expect(passRateOf(PARKED.name), "cancelled and skipped only").toBe(`${EM_DASH}0 completed`)
+    expect(passRateOf(MIXED.name), "passed and timed out").toBe("50%1/2")
+  })
+
+  it("the Suites page rates a suite over its passed and failed runs only", async () => {
+    served.suites = [
+      suiteFile("Rated suite", "suites/rated.yaml", "s_rated"),
+      suiteFile("Unrated suite", "suites/unrated.yaml", "s_unrated"),
+    ]
+    served.runs = [
+      run("r_rated_cancel", "cancelled", "2026-10-17T11:00:00.000Z", [member(STEADY, "cancelled", "s_rated")]),
+      run("r_rated_pass", "passed", "2026-10-17T10:00:00.000Z", [member(STEADY, "passed", "s_rated")]),
+      run("r_unrated_cancel", "cancelled", "2026-10-17T09:00:00.000Z", [member(PARKED, "cancelled", "s_unrated")]),
+    ]
+    await renderPage("/suites")
+
+    expect(passRateOf("Rated suite"), "passed and cancelled").toBe("100%1/1")
+    expect(passRateOf("Unrated suite"), "cancelled only").toBe(`${EM_DASH}0 completed`)
+  })
+
+  it("the insights summary rates the window over its passed and failed runs only", async () => {
+    served.stats = {
+      totalRuns: 4,
+      passed: 1,
+      failed: 1,
+      flakeRate: 0,
+      avgDuration: 1000,
+      runs: [
+        { date: "2026-10-16", passed: 1, failed: 1, healed: 0, duration: 1000 },
+        { date: "2026-10-17", passed: 0, failed: 0, healed: 0, duration: 1000 },
+      ],
+    }
+    chartData.length = 0
+    await renderPage("/insights")
+
+    expect(insightsPassRateMetric()).toEqual({
+      value: "50%",
+      description: "1 successful runs out of 2 that passed or failed.",
+    })
+    expect(chartData.length, "the insights pass-rate chart rendered").toBeGreaterThan(0)
+    expect(chartData[chartData.length - 1]).toEqual([{ date: "2026-10-16", passRate: 50 }])
+    unmount()
+
+    served.stats = {
+      totalRuns: 2,
+      passed: 0,
+      failed: 0,
+      flakeRate: 0,
+      avgDuration: 1000,
+      runs: [{ date: "2026-10-17", passed: 0, failed: 0, healed: 0, duration: 1000 }],
+    }
+    await renderPage("/insights")
+
+    expect(insightsPassRateMetric().value).toBe(EM_DASH)
+    expect(insightsPassRateMetric().value).not.toContain("%")
   })
 })

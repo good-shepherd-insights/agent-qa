@@ -217,7 +217,7 @@ describe("C444-MEMBER-HISTORY", () => {
     await renderPage("/tests")
 
     expect(historyOf(LOGIN.name)).toEqual({ passRate: "100%1/1", lastRunHref: "/runs/r_live", lastStatus: expect.stringContaining("Passed") })
-    expect(historyOf(CART.name)).toEqual({ passRate: "No runs0 completed", lastRunHref: "/runs/r_live", lastStatus: expect.stringContaining("Running") })
+    expect(historyOf(CART.name)).toEqual({ passRate: "\u20140 completed", lastRunHref: "/runs/r_live", lastStatus: expect.stringContaining("Running") })
   })
 })
 
