@@ -44,7 +44,8 @@ A hang-up (SIGHUP, for example when the terminal or SSH session that started the
 the run like Ctrl+C: it ends with the `cancelled` verdict and exits 130. Closing a terminal can
 deliver the hang-up twice (interactive zsh, the macOS default shell, sends it twice about 1 ms
 apart), and the run still ends once, as `cancelled`, with exit 130. A second Ctrl+C, or a SIGTERM,
-after the first signal still stops the run at once, with exit 130 and no verdict.
+after the first signal still stops the run at once, with exit 130, even before the run reaches its
+verdict.
 So `nohup agent-qa run` does
 not survive a hang-up. Node.js puts the hang-up signal back to its default when it starts, and
 `agent-qa run` listens for it, so `nohup`'s ignore never takes effect. Measured with
