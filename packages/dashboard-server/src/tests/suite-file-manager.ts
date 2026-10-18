@@ -62,6 +62,8 @@ export class SuiteFileManager {
                 const content = await readFile(record.absolutePath, 'utf-8')
                 const current = take(content)
                 if (current !== null) return current
+                // 2026-10-18 (444-35, IN-20): an empty file may be an outside save mid-write; it is never minted.
+                if (content.trim() === '') return current
                 const minted = generateSuiteId()
                 await replaceFileAtomic(record.absolutePath, `suite-id: ${minted}\n${content}`)
                 return minted

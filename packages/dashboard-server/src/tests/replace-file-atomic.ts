@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { access, chmod, lstat, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 
-// 2026-10-18 (444-33, D-65): a whole temp file renamed over the target, through a symlink, with its mode.
+// 2026-10-18 (444-33, D-65; 444-35, IN-17): a whole fixed-length temp file renamed over the target, through a symlink, with its mode.
 export async function replaceFileAtomic(absolutePath: string, content: string): Promise<void> {
   const isLink = await lstat(absolutePath).then(
     (stats) => stats.isSymbolicLink(),
@@ -20,7 +20,7 @@ export async function replaceFileAtomic(absolutePath: string, content: string): 
   } catch (err) {
     if (!isMissingFile(err)) throw err
   }
-  const tempPath = join(dirname(target), `.${basename(target)}.${process.pid}.${randomUUID()}.tmp`)
+  const tempPath = join(dirname(target), `.agent-qa-${randomUUID()}.tmp`)
   try {
     await writeFile(tempPath, content, { encoding: 'utf-8', flag: 'wx', ...(mode === undefined ? {} : { mode }) })
     if (mode !== undefined) await chmod(tempPath, mode)

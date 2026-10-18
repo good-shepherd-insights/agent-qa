@@ -136,8 +136,8 @@ export class TestFileManager {
           let targetName: string | null = null
           let testId: string | null = null
           const take = (metadata: TestFileMetadata): void => {
-            testName = metadata.name ?? basename(record.workspaceRelativePath)
-            targetName = metadata.targetName
+            testName = metadata.name || basename(record.workspaceRelativePath)
+            targetName = metadata.targetName || null
             platform = metadata.platform
             testId = metadata.testId
           }
@@ -149,6 +149,8 @@ export class TestFileManager {
                 const content = await readFile(record.absolutePath, 'utf-8')
                 const current = extractTestFileMetadata(content)
                 if (current.testId) return current
+                // 2026-10-18 (444-35, IN-20): an empty file may be an outside save mid-write; it is never minted.
+                if (content.trim() === '') return current
                 const minted = generateTestId()
                 await replaceFileAtomic(record.absolutePath, `test-id: ${minted}\n${content}`)
                 return { ...current, testId: minted }
