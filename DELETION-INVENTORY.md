@@ -6345,3 +6345,132 @@ The round's record gate measures agent-qa HEAD after this subsection lands. Its 
 verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
 4 (`### Gate (gap-closure round 4)`) and the SHA in its `### Final SHA (gap-closure round 4)`,
 rather than quoted here, so no agent-qa commit follows it.
+
+### Gap closure round 5 (444-37), 2026-10-19
+
+This subsection appends to the Phase 444 section, after the fourth round's subsection; written by
+444-37, which changed no earlier line. It follows the round-4 final review,
+`.planning/phases/444-truthful-lifecycle/444-REVIEW.md` (super-repo `db578bea6`), which found CR-03
+(an id write put its line above a leading byte-order mark, and above a `---` that a blank, comment
+or `%YAML` line preceded, so the file stopped parsing as one document), WR-10 (the suite read its id
+from a `suite-id:` line regex, so a value on the next, indented line was re-minted), WR-11 (a
+comment-only value was read as the value), WR-12 (a quoted or spaced id key was given a second id
+key), WR-13 (the round-4 cells did not pin the empty-quoted fill, the marker with spaces or a
+comment, or the suite's blank-id rule), IN-22 (the id line was LF in a CRLF file) and IN-23 (the
+records name three lock-pinning cells where four pin it, and the explicit-null property). The
+orchestrator settled the round on 2026-10-19 under the owner's delegation, in `444-CONTEXT.md` §
+Settled at the round-4 final review: D-68 (a file that parses is read from its parsed mapping, where
+a null, empty or whitespace-only value is absent; the line patterns run only for a file that does
+not parse; an id write lands only if its text parses, as one document, to exactly the old mapping
+plus the id, and otherwise nothing is written and the file is listed with a `null` id) and IN-23
+(the lines below). Every commit below is in agent-qa on `version-0.2` and signed. Every new cell is
+listed in `scripts/gate/inputs/regressions.json` with its area's `444 D-65` origin, after the 2294
+rows listed at `99952a3bf`, which are unchanged and in order (Registered gate rows, below).
+
+**How it is measured.** Baseline `99952a3bf` (the fourth round's final SHA, 444-36's inventory
+commit). Closing SHA `450bf8f0f` (444-37's gate list, the parent of the commit that completes this
+subsection). `git -C agent-qa diff --shortstat 99952a3bf 450bf8f0f`: 5 files changed, 335
+insertions, 67 deletions (under `packages/`: 4 files, +317/−67; the fifth is `regressions.json`,
++18). `--diff-filter=D`: no file deleted. `--diff-filter=A`: no file added. 3 commits, every one
+signed (`%G?` = `G`): `7e5c8c0a8` (the D-68 RED cells and the save-guard cell), `ff38a6807` (the
+D-68 fix) and `450bf8f0f` (the gate list). 3 production files changed:
+`dashboard-server/src/tests/test-file-manager.ts`, `tests/suite-file-manager.ts` and
+`server/routes.ts` (the two test-save routes' shown-marker check, which the dispatch amendment of
+2026-10-19 keeps at least as strict as before). `tests/replace-file-atomic.ts`, `db/database.ts`,
+`db/schema.ts` and every `dashboard-ui` file are unchanged, and so are the golden ledger
+(`cli/src/__tests__/conformance/golden-registry.json`) and the capability catalog
+(`cli/capability-catalog/capability-catalog.json`). The removed lines below are read from the
+deleting commit's diff (`git -C agent-qa show ff38a6807`), not transcribed from a summary. Names are
+at `99952a3bf`.
+
+#### What was deleted
+
+| Member (file at `99952a3bf`) | What it did | Deleting commit | The corpus rows or cell that notice its return |
+|---|---|---|---|
+| the line patterns' use on a file that parses: in `extractTestFileMetadata`, the `valueOnLine(nameMatch)`, `valueOnLine(targetMatch)`, `valueOnLine(testIdMatch)`, `normalizePlatform(platformMatch?.[1])` and `parallelMatch` arms after a successful `parseYaml`; in the suite `take()`, `content.match(/^suite-id:[ \t]*(\S.*)$/m)` and its quote-stripped id, and the `blankName` test (`dashboard-server/src/tests/test-file-manager.ts`, `tests/suite-file-manager.ts`) | read a comment-only value (`name: # TODO`, `test-id: # fill later`) or `null` / `~` as text, so a comment or a literal was listed as a name, target or id and the id-less file was never minted (WR-11); the suite took a value on the next, indented line as no id and minted a second id above it (WR-10) | `ff38a6807` (444-37); a file that parses is read only from its mapping through `presentText`, and the line patterns move to `lineMetadata`, run only when `parseYaml` throws | the `comment-id`, `comment-name`, `explicit-null` and `next-line-id` rows of `C444-LIST-WRITE-SAFE every test file in the layout corpus …` and `C444-LIST-WRITE-SAFE every suite file in the layout corpus …` |
+| the unchecked id write: `await replaceFileAtomic(record.absolutePath, withIdLine(content, 'test-id', minted))` and its `suite-id` twin in the two locked mints | wrote whatever text `withIdLine` built, so a quoted (`"test-id": ""`) or spaced (`test-id :`) id key, or `test-id: null`, got a second id key and the file stopped parsing (WR-12) | `ff38a6807` (444-37); both mints write `idWriteText(content, <key>, minted)`, which returns the text only when it parses to the old mapping plus the id, and otherwise write nothing | the `quoted-key`, `spaced-key` and `explicit-null` rows of both corpus cells; the `no-check` mutation run |
+| `withIdLine`'s first-byte-only marker match, `content.match(/^---[ \t]*(?:#[^\r\n]*)?(?:\r?\n\|$)/)`, and its prepend `` `${line}\n${content}` `` above a byte-order mark | put the id line above a leading U+FEFF (the key after it read as `﻿name`), and above a `---` that a blank, comment or `%YAML` directive line preceded, so the file held two documents or did not parse (CR-03) | `ff38a6807` (444-37); a leading U+FEFF stays at byte 0, and the id line goes after the stream's first `---` marker line that only blank, comment or `%` directive lines precede | the `bom`, `bom-marker`, `blank-marker`, `comment-marker` and `directive-marker` rows of both corpus cells; the `marker-plain` mutation run |
+| the LF-only id line: `${line}\n` in `withIdLine`'s two inserts | gave a CRLF file one LF line (IN-22) | `ff38a6807` (444-37); the id line takes `\r\n` when the first line of the file ends in `\r\n` | the `crlf` and `crlf-marker` rows of both corpus cells |
+
+**Changed with no member deleted** (each read from its commit):
+
+| Before (file at `99952a3bf`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| the fill pattern `^<key>:[ \t]*(?:(["'])[ \t]*\1)?[ \t]*$` | `^<key>:(?:[ \t]*(["'])[ \t]*\1)?(?:[ \t]+#[^\r\n]*)?[ \t]*$`, so a comment-only id key is filled in place too, and its comment is dropped (D-68, WR-11) | `ff38a6807` (444-37) | the `comment-id` and `empty-quoted-id` rows; the `fill-quoted` mutation run |
+| the test-save routes' shown-marker check read `extractTestFileMetadata(body.content).targetName` (`server/routes.ts`, `POST /api/tests` and `PUT /api/tests/:id`) | `targetsForMarkerCheck(body.content)`: the parsed top-level `target` of any shape, and every value the old line pattern `^[ \t]*target:[ \t]*(\S.*)$` finds anywhere in the body, so D-68's parsed reads do not narrow the refusal | `ff38a6807` (444-37) | `C444-LIST-WRITE-SAFE a test create or save whose target holds a shown marker in a mapping value or on an indented target line is refused and nothing is written`; the `guard` mutation run |
+
+No product file was added or deleted. The round's 3 new cells are all in `C444-LIST-WRITE-SAFE`
+(`444 D-65`, the area D-68 amends): the two layout-corpus cells (17 rows each, one per manager) and
+the save-guard cell the dispatch amendment adds.
+
+#### The IN-23 lines
+
+- **The lock-pinning set.** With `createPathLock`'s returned lock made to run `work()` at once (444-37's
+  `nolock` run, on an untracked copy of the cell file at `ff38a6807`, deleted straight after;
+  recorded as `.planning/phases/444-truthful-lifecycle/capture/444-37-mut-nolock.junit.xml`), four
+  cells fail, not three: the round-3 tracer, the two-list cell and the save cell that the round-4
+  WR-07 correction names, and also the D-66 managers cell,
+  `C444-LIST-WRITE-SAFE with a listing still in flight, the next list, find and validate calls on both managers see every save and delete that has finished`
+  ("every call started after a finished save or delete sees it, and the held file keeps one id"). So the D-66 managers cell is a lock-pinning cell too. The round-4 lines that name
+  three are left as they are.
+- **The explicit-null property as it now stands.** `test-id: null` or `suite-id: ~` is read as no id,
+  and the id write that would add a second id key is refused by the parse check, so the file is left
+  byte-identical and listed with a `null` id; `name: ~` lists the file name. The round-4 reading,
+  which took the literal text `null` / `~` as the value, is superseded and stays where it is.
+
+#### Registered gate rows
+
+The 2294 rows listed at `99952a3bf` are still listed, unchanged and in order; none was renamed,
+removed or moved. 444-37 re-spelled no registered cell.
+
+#### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| the per-file lock (`createPathLock`) and the mint's re-read under it, the `current` id check, and `write()` and `delete()` under the same lock | D-65, D-66 and D-67 settled them; D-68 changes what the mint writes, not when | the four cells of the IN-23 lock-pinning set, above |
+| `replaceFileAtomic`'s steps, unchanged since `99952a3bf` | D-68 does not touch the write itself | `C444-LIST-WRITE-SAFE an id write goes through a symlink to its target and keeps the file mode, and a file it may not write keeps its bytes and gets no id`; `C444-LIST-WRITE-SAFE a reader during an id write never sees an empty or partial file` |
+| the empty-file guard (`content.trim() === ''` returns the re-read and writes nothing) | IN-20's rule | `C444-LIST-WRITE-SAFE a zero-byte or whitespace-only file is listed with no id and nothing is written to it` |
+| the per-call listing, the id format, the routes, the pages and the batch reads | no listing, route or page changed beyond the save guard | the D-66 cells; the `C444-RATE-WINDOW` cells |
+
+#### What degrades, stated plainly
+
+- **A test file that does not parse, or a multi-document one, is no longer minted.** It lists its
+  line-pattern id, or `null`.
+- **A comments-only file is not minted** (it parses to `null`, not a mapping).
+- **An id key the fill does not recognise is left alone.** A quoted (`"test-id": ""`) or spaced
+  (`test-id :`) key, `null` or `~`: the parse check refuses the second key, so the file is left
+  byte-identical with no id. This is the explicit-null property as it now stands (IN-23, above).
+- **A comment on a filled id line is dropped** (`test-id: # fill later` becomes `test-id: <id>`).
+- **A non-string name, target, platform or id counts as absent** (a number, a boolean, a mapping or a
+  sequence): the planner's reading of D-68.
+- **Each mint parses the file twice more** (the old text and the new), under its per-file lock.
+- **A caller of the removed members breaks,** with no alias, shim or message naming a replacement
+  (D-01). `withIdLine` keeps its exported signature; `presentText`, `idWriteText` and
+  `targetsForMarkerCheck` are new exports.
+
+#### Persisted values the narrowed contract governs
+
+No persisted value moves, no schema bump, no migration and no compatibility code (D-01). runs.db
+stays version 6 (`git -C agent-qa diff --quiet 99952a3bf 450bf8f0f --
+packages/dashboard-server/src/db/schema.ts packages/dashboard-server/src/db/database.ts` exits 0).
+A test or suite file's id line keeps its form (`test-id: <id>` / `suite-id: <id>`); after D-68 it
+sits after a leading byte-order mark and the first `---` marker, in the file's own line ending, or in
+place of a bare, blank or comment-only id key. No golden or catalog line moves.
+
+#### The instruments that notice a return
+
+- **The 434 gate** must execute and pass the 3 cells above, each with its area's origin, as well as
+  the 2294 earlier rows (2297 in all).
+- **The two layout-corpus cells** fail if any deleted member returns, each row by its class (the
+  rows named in "What was deleted"), as both did at `99952a3bf`; the `fill-quoted`, `marker-plain`,
+  `blank-id` and `no-check` mutation runs show the pins the RED could not.
+- **The save-guard cell** fails if the save routes read the target only through the listing's
+  parsed reads (the `guard` run).
+- **The four cells of the IN-23 lock-pinning set** fail if the per-file lock becomes a no-op.
+
+**Gate**
+
+The round's record gate measures agent-qa HEAD after this subsection lands. Its legs, counts and
+verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
+5 (`### Gate (gap-closure round 5)`) and the SHA in its `### Final SHA (gap-closure round 5)`,
+rather than quoted here, so no agent-qa commit follows it.
