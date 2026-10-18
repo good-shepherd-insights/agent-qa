@@ -41,7 +41,11 @@ failed job is the one whose evidence you most need.
 | `2` | The harness could not run the test. A test that could not start (no browser, a setup error) exits 2, and so does a run that was refused, a pattern that matched nothing, or a CLI that failed to load or threw before a run started (`Framework error: …`, followed by the error's stack on stderr). |
 
 A hang-up (SIGHUP, for example when the terminal or SSH session that started the run closes) cancels
-the run like Ctrl+C: it ends with the `cancelled` verdict and exits 130. So `nohup agent-qa run` does
+the run like Ctrl+C: it ends with the `cancelled` verdict and exits 130. Closing a terminal can
+deliver the hang-up twice (interactive zsh, the macOS default shell, sends it twice about 1 ms
+apart), and the run still ends once, as `cancelled`, with exit 130. A second Ctrl+C, or a SIGTERM,
+after the first signal still stops the run at once, with exit 130 and no verdict.
+So `nohup agent-qa run` does
 not survive a hang-up. Node.js puts the hang-up signal back to its default when it starts, and
 `agent-qa run` listens for it, so `nohup`'s ignore never takes effect. Measured with
 `nohup agent-qa run` sent SIGHUP during a step: the run was cancelled and exited 130 in about
