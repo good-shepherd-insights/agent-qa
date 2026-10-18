@@ -200,6 +200,22 @@ describe('C444-OVERVIEW-SKIPPED', () => {
     expect('skipped' in curation).toBe(false)
     expect(curation).toEqual({ status: 'pending' })
   })
+
+  it('the overview text prints curation skipped (gate run)', async () => {
+    const p = skippedRuns()
+    const learnedLine = async (runId: string) => {
+      const human = await cli(p.configPath, ['runs', 'overview', runId])
+      expect(human.exitCode, human.stderr).toBe(0)
+      const lines = human.stdout.split('\n').filter((line) => line.startsWith('Learned:'))
+      expect(lines, human.stdout).toHaveLength(1)
+      return lines[0]!
+    }
+    const gate = await learnedLine(p.gateRun)
+    expect(gate).toContain('curation skipped (gate run)')
+    expect(gate).not.toContain('curation pending')
+    expect(gate).toBe('Learned: snapshot not recorded · curation skipped (gate run)')
+    expect(await learnedLine(p.ordinary)).toBe('Learned: snapshot not recorded · curation pending')
+  })
 })
 
 // ---- C444-KNOWLEDGE-SKIPPED -----------------------------------------------------------------------
@@ -228,5 +244,22 @@ describe('C444-KNOWLEDGE-SKIPPED', () => {
     const curation = await knowledgeCuration(p, p.ordinary, mcp)
     expect('skipped' in curation).toBe(false)
     expect(curation).toEqual({ status: 'pending' })
+  })
+
+  it('the knowledge text prints curation skipped (gate run)', async () => {
+    const p = skippedRuns()
+    const headerLine = async (runId: string) => {
+      const human = await cli(p.configPath, ['runs', 'knowledge', runId])
+      expect(human.exitCode, human.stderr).toBe(0)
+      const lines = human.stdout.split('\n').filter((line) => line.startsWith(`Run ${runId} knowledge`))
+      expect(lines, human.stdout).toHaveLength(1)
+      return lines[0]!
+    }
+    const gate = await headerLine(p.gateRun)
+    expect(gate).toContain('curation skipped (gate run)')
+    expect(gate).not.toContain('curation pending')
+    expect(gate.endsWith(' · curation skipped (gate run)'), gate).toBe(true)
+    const ordinary = await headerLine(p.ordinary)
+    expect(ordinary.endsWith(' · curation pending'), ordinary).toBe(true)
   })
 })

@@ -55,6 +55,8 @@ const RENDERERS = [
 const SKIP_WORD_READERS = [
   'cli/src/curation/post-run-tail.ts',
   'agent/src/functions/ops/runs-digest.ts',
+  // 2026-10-18 (444-26, D-61): the overview's Learned line and the knowledge header.
+  'cli/src/commands/runs-read.ts',
 ] as const
 
 const SKIPPED_RENDERERS = [
