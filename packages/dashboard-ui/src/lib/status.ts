@@ -3,7 +3,6 @@ export type NormalizedRunStatus =
   | 'failed'
   | 'timeout'
   | 'cancelled'
-  | 'flaky'
   | 'healed'
   | 'skipped'
   | 'running'
@@ -60,8 +59,6 @@ export function normalizeRunStatus(status: string | null | undefined): Normalize
     case 'cancelled':
     case 'canceled':
       return 'cancelled'
-    case 'flaky':
-      return 'flaky'
     case 'healed':
       return 'healed'
     case 'skipped':
@@ -87,11 +84,9 @@ export function getRunStatusDescriptor(status: string | null | undefined): RunSt
     case 'failed':
       return { raw, normalized, label: 'Failed', tone: 'danger', terminal: true }
     case 'timeout':
-      return { raw, normalized, label: 'Timed Out', tone: 'danger', terminal: true }
+      return { raw, normalized, label: 'Timed out', tone: 'danger', terminal: true }
     case 'cancelled':
       return { raw, normalized, label: 'Cancelled', tone: 'muted', terminal: true }
-    case 'flaky':
-      return { raw, normalized, label: 'Flaky', tone: 'warning', terminal: true }
     case 'healed':
       return { raw, normalized, label: 'Healed', tone: 'warning', terminal: true }
     case 'skipped':
@@ -144,13 +139,12 @@ export function shouldRouteRunToLive(status: string | null | undefined): boolean
 }
 
 export function normalizeStepStatus(status: string | null | undefined): NormalizedStepStatus {
+  if (canonicalizeStatus(status) === 'flaky') return 'flaky'
   switch (normalizeRunStatus(status)) {
     case 'passed':
       return 'passed'
     case 'cancelled':
       return 'cancelled'
-    case 'flaky':
-      return 'flaky'
     case 'healed':
       return 'healed'
     case 'skipped':
@@ -175,8 +169,6 @@ export function finalStepStatusForRun(status: string | null | undefined): Normal
       return 'passed'
     case 'cancelled':
       return 'cancelled'
-    case 'flaky':
-      return 'flaky'
     case 'healed':
       return 'healed'
     case 'skipped':
@@ -267,11 +259,6 @@ export function statusBadgeLook(status: string): StatusBadgeLook {
       return { label: 'Skipped', variant: 'secondary' }
     case 'cancelled':
       return { label: 'Cancelled', className: 'bg-muted text-muted-foreground border-border' }
-    // THE FIFTH VERDICT WORD (425-04 · D-02, PXH-RUN-01). `timeout` is in the run-status
-    // vocabulary (`runStatusValues`, schema functions/runs.ts), so without an arm here a timed-out
-    // run fell to the default and painted the raw lowercase word. This is an arm added to the ONE
-    // palette, not a second one (D-01): the variant is the danger tone `getRunStatusDescriptor`
-    // already assigns this status.
     case 'timeout':
       return { label: 'Timed out', variant: 'destructive' }
     case 'running':
