@@ -819,7 +819,7 @@ export function effectSectionView(
 ): EffectSectionView {
   const used = usedRecordsById(projection)
   const position = new Map([...used.keys()].map((id, index) => [id, index]))
-  const status = projection.curation.status
+  const status = curationWord(projection)
   const scanIncomplete = projection.learned.scanIncomplete === true
 
   const trials = new Map<string, EffectDraft>()
@@ -835,6 +835,9 @@ export function effectSectionView(
         row => row.testIndex === step.testIndex && row.stepIndex === step.stepIndex && row.recordId === line.id,
       )
       const word = canaryOutcomeWord(status, attribution, scanIncomplete)
+      // A skipped canary is no trial and is not uncounted either: the uncounted line says post-run
+      // processing finished, and a skipped run's never ran. It falls to the unmeasured records (444 D-61).
+      if (word === 'skipped') continue
       if (word === 'not-attributed') {
         uncountedIds.add(line.id)
         continue
@@ -1023,6 +1026,16 @@ export function ledgerRungLine(rung: Exclude<RetrievalRung, 'memidex'>, reason?:
  * simply not mattered.
  */
 export const ATTRIBUTION_PENDING_TEXT = 'attribution pending'
+
+/**
+ * What a canary line says when curation was skipped and served no row for it (444 D-61).
+ *
+ * A WORD ABOUT THE LINE, NOT A REASON. Nobody will ever decide this line's attribution, which is a
+ * different fact from `pending` (nobody has decided yet) and from `not attributed` (the fold ran
+ * and found nothing). The reason is stated once on the tab, in Memory changes, from the
+ * post-processing card's own sentence map.
+ */
+export const ATTRIBUTION_SKIPPED_TEXT = 'attribution skipped'
 
 /**
  * What a canary line says when the store was consulted and answered no (D-08 · 407-22).
@@ -1426,10 +1439,11 @@ export type LineWhy =
   | { readonly kind: 'no-trace'; readonly reason: BriefWhyNoTraceReason }
 
 /**
- * The word a canary line wears — one of SEVEN, and never blank (D-08, widened by REVIEW WR-02).
+ * The word a canary line wears — one of EIGHT, and never blank (D-08, widened by REVIEW WR-02).
  *
  * `unknown` is the seventh and it is not a shade of `not-attributed`: one says the fold answered
- * and found nothing, the other says the read behind the answer was partial (407-18).
+ * and found nothing, the other says the read behind the answer was partial (407-18). `skipped` is
+ * the eighth: curation never ran for this run, so nobody will answer (444 D-61).
  */
 export type CanaryOutcomeWord =
   | 'confirmed'
@@ -1439,6 +1453,7 @@ export type CanaryOutcomeWord =
   | 'pending'
   | 'not-attributed'
   | 'unknown'
+  | 'skipped'
 
 /** One channel-1 line, with its trace answer and (if it is a canary) its outcome word. */
 export interface BriefLineView {
@@ -1555,9 +1570,10 @@ export function cutCandidates(trace: RunKnowledgeTrace): CutCandidatesView | und
 /**
  * What a canary line says, from the curation word, the attribution and the READ — never blank.
  *
- * ORDER MATTERS, AND THERE ARE THREE ARMS (D-08 · REVIEW WR-02 · 407-22, owner ruling 2026-08-30).
- * The chain's own word is consulted on exactly ONE line of this function — the first — and nowhere
- * else. Three movements, in this order:
+ * ORDER MATTERS, AND THERE ARE FOUR ARMS (D-08 · REVIEW WR-02 · 407-22, owner ruling 2026-08-30;
+ * 444 D-61). The chain's own word is consulted on two lines of this function — the first, for an
+ * unsettled chain, and the third, for a skipped one — and the row decides between them. Four
+ * movements, in this order:
  *
  *   1. AN UNSETTLED CHAIN IS READ FIRST. `pending` and `running` mean nobody has decided yet, and
  *      that outranks both a stale row from an earlier fold and a partial read: presenting a
@@ -1574,8 +1590,11 @@ export function cutCandidates(trace: RunKnowledgeTrace): CutCandidatesView | und
  *      {@link learnedView}'s own `failed` arm was finally moved below its rows fold and the two
  *      halves stopped disagreeing (REVIEW CR-01 · G-407-12).
  *
- *   3. THEN, WITH NO ROW, THE READ DECIDES. `unknown` when the flag is set, because nobody could
- *      finish looking; `not attributed` when it is clear, because the walk completed and no
+ *   3. THEN, WITH NO ROW, A SKIPPED CHAIN SAYS `skipped`. Curation never ran, so neither of the
+ *      read's words below applies: nobody looked, and nobody will (444 D-61).
+ *
+ *   4. OTHERWISE, WITH NO ROW, THE READ DECIDES. `unknown` when the flag is set, because nobody
+ *      could finish looking; `not attributed` when it is clear, because the walk completed and no
  *      surviving outcome carried this line's observation id — a fact somebody measured.
  *
  * THE FOURTH ARM WAS DELETED, NOT REORDERED. From 407-06 (`a795316e`) to 407-21 a standalone arm
@@ -1589,12 +1608,15 @@ export function cutCandidates(trace: RunKnowledgeTrace): CutCandidatesView | und
  * `scanIncomplete` DEFAULTS TO FALSE so every existing caller keeps the word it had.
  */
 export function canaryOutcomeWord(
-  curationStatus: PostProcessingChipStatus,
+  curation: CurationWord,
   attribution: RunKnowledgeCanaryAttribution | undefined,
   scanIncomplete = false,
 ): CanaryOutcomeWord {
-  if (curationStatus === 'pending' || curationStatus === 'running') return 'pending'
+  // 2026-10-18 (444-29, D-61): the first parameter is the tab's curation word, so a gate run or an
+  // outcome-excluded run no longer reads `pending` from its defaulted chip. A served row still wins.
+  if (curation === 'pending' || curation === 'running') return 'pending'
   if (attribution !== undefined) return attribution.outcome
+  if (curation === 'skipped') return 'skipped'
   return scanIncomplete ? 'unknown' : 'not-attributed'
 }
 
@@ -1875,7 +1897,7 @@ function canaryLineCount(step: RunKnowledgeStep): number {
 
 function stepRow(
   step: RunKnowledgeStep,
-  curationStatus: PostProcessingChipStatus,
+  curation: CurationWord,
   attributions: readonly RunKnowledgeCanaryAttribution[],
   scanIncomplete: boolean,
 ): StepRowView {
@@ -1900,7 +1922,7 @@ function stepRow(
     // A step that served nothing keeps its row and says so. Dropping it would make a run look
     // shorter than it was, and D-04's whole posture is that nothing silently drops.
     ...(briefLines === 0 ? { noBrief: true as const } : {}),
-    detail: stepDetail(step, curationStatus, attributions, scanIncomplete),
+    detail: stepDetail(step, curation, attributions, scanIncomplete),
   }
 }
 
@@ -1920,7 +1942,7 @@ function stepRow(
  */
 function stepDetail(
   step: RunKnowledgeStep,
-  curationStatus: PostProcessingChipStatus,
+  curation: CurationWord,
   attributions: readonly RunKnowledgeCanaryAttribution[],
   scanIncomplete: boolean,
 ): StepDetailView {
@@ -1929,7 +1951,7 @@ function stepDetail(
       ? {
           ...line,
           canaryOutcome: canaryOutcomeWord(
-            curationStatus,
+            curation,
             attributions.find(
               row =>
                 row.testIndex === step.testIndex &&
@@ -2388,7 +2410,7 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
   const steps = projection.steps.map(step =>
     stepRow(
       step,
-      projection.curation.status,
+      curationWord(projection),
       projection.learned.canaryAttributions,
       projection.learned.scanIncomplete === true,
     ),

@@ -31,6 +31,7 @@ import { EvidenceIncomplete } from "./evidence-incomplete"
 import { RecordIdCopy } from "./record-id-copy"
 import {
   ATTRIBUTION_PENDING_TEXT,
+  ATTRIBUTION_SKIPPED_TEXT,
   ATTRIBUTION_UNKNOWN_TEXT,
   LEDGER_ON_TRIAL_TEXT,
   NOT_ATTRIBUTED_TEXT,
@@ -54,10 +55,10 @@ const MONO_CLASS = "font-mono text-xs text-muted-foreground tabular-nums"
 const LEDGER_WORD_CLASS = "text-xs text-muted-foreground"
 
 /**
- * The seven outcome words, as plain text (427 D-19).
+ * The eight outcome words, as plain text (427 D-19; 444 D-61).
  *
  * NO `default` ARM. The switch is exhaustive over `CanaryOutcomeWord` and its return type is not
- * optional, so an eighth word is a COMPILE ERROR here rather than a slot that silently renders
+ * optional, so a ninth word is a COMPILE ERROR here rather than a slot that silently renders
  * `undefined`. `unknown` and `not attributed` look the same; `data-canary-outcome` tells them apart.
  */
 function outcomeText(word: CanaryOutcomeWord): string {
@@ -73,6 +74,8 @@ function outcomeText(word: CanaryOutcomeWord): string {
       return NOT_ATTRIBUTED_TEXT
     case "unknown":
       return ATTRIBUTION_UNKNOWN_TEXT
+    case "skipped":
+      return ATTRIBUTION_SKIPPED_TEXT
   }
 }
 
