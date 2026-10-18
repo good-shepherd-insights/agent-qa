@@ -59,6 +59,7 @@ import {
   BREAKDOWN_NOT_RECORDED_TEXT,
   BREAKDOWN_WITHHELD_TEXT,
   COUNTS_NOT_RECORDED_TEXT,
+  STAGE_SKIPPED_TEXT,
   curationBreakdownLine,
   legacyCurationPairText,
 } from './post-processing-view'
@@ -1691,15 +1692,17 @@ export interface StepRowView {
 }
 
 /**
- * The five words the Learned half's root can carry (D-12).
+ * The six words the Learned half's root can carry (D-12; 444 D-61).
  *
- * FOUR OF THEM MIRROR THE CURATION CHIP and the fifth is the one the chip cannot say. A reader
+ * FOUR OF THEM MIRROR THE CURATION CHIP and two are words the chip cannot say. A reader
  * looking at the header and the panel at once must not see two different accounts of the same
- * chain; `counts-absent` is the extra state because "settled, and nobody wrote the numbers down"
+ * chain; `counts-absent` is an extra state because "settled, and nobody wrote the numbers down"
  * is a fact about the frozen row rather than about the chain, and collapsing it into `complete` would
- * make an unrecorded run indistinguishable from one that changed nothing.
+ * make an unrecorded run indistinguishable from one that changed nothing. `skipped` is the other:
+ * the run's own record says curation never ran (444 D-39), and the chip beside it is a defaulted
+ * `pending` no job will move — see {@link curationWord}.
  */
-export type LearnedState = 'pending' | 'running' | 'complete' | 'failed' | 'counts-absent'
+export type LearnedState = 'pending' | 'running' | 'complete' | 'failed' | 'counts-absent' | 'skipped'
 
 export type LearnedLeadSource = 'joined' | 'absent' | 'not-recorded'
 
@@ -1811,9 +1814,12 @@ export interface LearnedView {
    * of them, and whichever it reported would be silently speaking for the other. That is the
    * coupling round-2 WR-03 named; two notes is the fix, not one flag with two meanings.
    *
-   * Present exactly when `state` is `failed` AND {@link LearnedView.rows} is non-empty; absent
-   * everywhere else, including the no-rows `failed` arm, which keeps {@link CURATION_FAILED_TEXT}
-   * in `sentence` unchanged. It never carries a fact about the store read (407-26 · G-407-12).
+   * The chain's fate beside rows, for a failed or a skipped chain. Present exactly when `state` is
+   * `failed` or `skipped` AND {@link LearnedView.rows} is non-empty; absent everywhere else,
+   * including the no-rows `failed` and `skipped` arms, which keep their sentence in `sentence`. A
+   * failed chain's note is {@link CURATION_FAILED_PARTIAL_TEXT}; a skipped chain's is the
+   * post-processing card's own curation sentence for the reason, from `STAGE_SKIPPED_TEXT` (444
+   * D-61). It never carries a fact about the store read (407-26 · G-407-12).
    */
   readonly chainNote?: string
   /**
@@ -2102,21 +2108,34 @@ function ledgerEntry(draft: ChangeDraft, index: number, joins: ReadonlyMap<strin
   }
 }
 
+/** The tab's one word for curation: the chip's four, or `skipped` (444 D-61). */
+export type CurationWord = PostProcessingChipStatus | 'skipped'
+
+// 2026-10-18 (444-29, D-61): the one place the Knowledge tab reads the curation chip. A gate run
+// and an outcome-excluded run never enqueue curation, so their chip is a defaulted `pending` that no
+// job will ever move; `runs.knowledge` carries the skipped fact beside it (444-26), and that fact
+// outranks the chip. Every reader below takes this word, and the tab states the reason only through
+// `STAGE_SKIPPED_TEXT`, the post-processing card's own sentence map.
+export function curationWord(projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>): CurationWord {
+  return projection.curation.skipped === undefined ? projection.curation.status : 'skipped'
+}
+
 /**
  * Retrieval details' memory-changes part: one entry per Memory changes row, in the same order
- * (D-19 part 2). An unsettled chain lists no rows, so it has no entries either (D-12).
+ * (D-19 part 2). An unsettled chain lists no rows, so it has no entries either (D-12). A skipped
+ * chain is not unsettled: it lists exactly the rows its Memory changes half paints (444 D-61).
  */
 export function changeLedgerViews(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
 ): readonly ChangeLedgerView[] {
-  const { status } = projection.curation
+  const status = curationWord(projection)
   if (status === 'pending' || status === 'running') return []
   const joins = contentById(projection)
   return changeDrafts(projection).map((draft, index) => ledgerEntry(draft, index, joins))
 }
 
 /**
- * The Learned half, as one of five states — and every one of them says something (D-12).
+ * The Learned half, as one of six states — and every one of them says something (D-12; 444 D-61).
  *
  * THE ORDER OF THE ARMS IS THE ORDER OF THE QUESTIONS. Is the chain still moving? Did it fail?
  * Could the store even be read? Did any of it reach this run? Did the frozen row record what it
@@ -2169,7 +2188,8 @@ export function changeLedgerViews(
 export function learnedView(
   projection: Extract<RunKnowledgeProjection, { kind: 'ready' }>,
 ): LearnedView {
-  const { status, counts } = projection.curation
+  const status = curationWord(projection)
+  const { counts, skipped } = projection.curation
 
   // COMPUTED ONCE, SPREAD EVERYWHERE (WR-05). Absent rather than `false` on a clean read — the
   // same true-or-absent idiom the wire flag it mirrors is typed with.
@@ -2228,6 +2248,17 @@ export function learnedView(
             reconciliation: { count: reconciliationCountText(counted, shown), cause },
           },
         }
+
+  // A SKIPPED CHAIN NEVER RAN, so it is neither waiting nor settled (444 D-61). Below the fold like
+  // every arm: rows it was handed are painted and the skip rides beside them in `chainNote`; with
+  // none, the skip is the sentence. No count line — no row settled, the same absence `pending` states.
+  // `skipped` is present exactly when `status` is the `skipped` word, so this is that arm.
+  if (skipped !== undefined) {
+    const skipText = STAGE_SKIPPED_TEXT[skipped.reason].curation
+    return rows.length > 0
+      ? { state: 'skipped', rows, chainNote: skipText, ...degraded, ...readNote, ...snapshot }
+      : { state: 'skipped', sentence: skipText, rows: [], ...degraded, ...readNote, ...snapshot }
+  }
 
   if (status === 'pending' || status === 'running') {
     // `rows: []` here is now a STATEMENT, not a consequence of ordering: the rows are in scope and
