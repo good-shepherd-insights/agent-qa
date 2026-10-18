@@ -1,0 +1,203 @@
+// 2026-10-18 (444-26, D-61): a run whose post-run chain was never enqueued carries the skipped fact
+// beside its curation chip on the run's overview and knowledge reads, on the CLI and MCP alike, so a
+// gate run's never-run curation no longer reads as a bare `pending`. The fact is the same fold
+// `runs.postprocessing` serves, read from the run's own handoff.
+//
+// Built on 431-knowledge-run-reads.test.ts's harness: completed handoffs written through
+// FsHandoffStore, the in-process `cli()` driver over createRunsCommand(), and the composed MCP
+// reader. The fixtures live in this file (437 D-19).
+
+import { createServer } from 'node:http'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
+import { generateRunId } from '@vostride/agent-qa-ids'
+import { FsHandoffStore } from '@vostride/agent-qa-runner-local'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import type { CompletedRunHandoff, PerTestOutcome } from '@vostride/agent-qa-schema'
+import { Command, CommanderError } from 'commander'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { composeMcpMasking, createMcpHttpRequestListener } from '../commands/mcp.js'
+import { createRunsCommand } from '../commands/runs.js'
+import * as host from '../composition/local-agent-host.js'
+import { cleanupTempRoots, fixtureProject } from './conformance/spawned-chat.js'
+
+const cleanups: (() => void | Promise<void>)[] = []
+let originalExitCode: typeof process.exitCode
+
+beforeEach(() => {
+  originalExitCode = process.exitCode
+})
+
+afterEach(async () => {
+  vi.restoreAllMocks()
+  process.exitCode = originalExitCode
+  for (const close of cleanups.splice(0).reverse()) await close()
+  cleanupTempRoots()
+})
+
+// ---- The fixtures ---------------------------------------------------------------------------------
+
+type Marker = 'gate-run' | 'outcome-excluded' | 'none'
+
+function completedRun(agentQaRoot: string, endedAt: number, marker: Marker,
+  verdict: CompletedRunHandoff['aggregateVerdict']): string {
+  const runId = generateRunId()
+  const handoff: CompletedRunHandoff = {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: runId as CompletedRunHandoff['runId'],
+    scope: { tier: 'product', key: 'shop' },
+    buildOrdinal: 1,
+    executionContext: 'local-headless',
+    aggregateVerdict: verdict,
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: endedAt - 50,
+    endedAt,
+    tests: [{
+      testId: 't-checkout', testName: 'Checkout', filePath: 'tests/t-checkout.yaml', testIndex: 0,
+      outcome: verdict === 'passed' ? 'passed' : 'failed', steps: [],
+    } as unknown as PerTestOutcome],
+    ...(marker === 'gate-run' ? { gateRun: true as const } : {}),
+    ...(marker === 'outcome-excluded' ? { excludedFromOutcomes: true as const } : {}),
+  }
+  new FsHandoffStore({ root: agentQaRoot, runId }).save(handoff)
+  return runId
+}
+
+/** One project holding a gate run, an outcome-excluded run and an ordinary run, read by every cell. */
+function skippedRuns() {
+  const project = fixtureProject('444-26-skipped')
+  writeFileSync(join(project.root, 'hooks.yaml'), 'hooks: []\n')
+  writeFileSync(join(project.root, '.env'), '')
+  writeFileSync(join(project.root, '.env.secrets.local'), '')
+  const agentQaRoot = join(project.root, '.agent-qa')
+  return {
+    configPath: project.configPath,
+    agentQaRoot,
+    gateRun: completedRun(agentQaRoot, 1_700_000_001_000, 'gate-run', 'passed'),
+    outcomeExcluded: completedRun(agentQaRoot, 1_700_000_002_000, 'outcome-excluded', 'failed'),
+    ordinary: completedRun(agentQaRoot, 1_700_000_003_000, 'none', 'passed'),
+  }
+}
+
+// ---- Drivers --------------------------------------------------------------------------------------
+
+interface Invocation {
+  stdout: string
+  stderr: string
+  exitCode: number
+}
+
+function allCommands(command: Command): Command[] {
+  return [command, ...command.commands.flatMap(allCommands)]
+}
+
+async function cli(configPath: string, args: readonly string[]): Promise<Invocation> {
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+    stdout.push(values.map(String).join(' '))
+  })
+  const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+    stderr.push(values.map(String).join(' '))
+  })
+  process.exitCode = undefined
+  const program = new Command()
+    .option('--config <path>', 'config file path')
+    .addCommand(createRunsCommand())
+  for (const command of allCommands(program)) {
+    command.exitOverride().configureOutput({
+      writeOut: (text) => { stdout.push(text) },
+      writeErr: (text) => { stderr.push(text) },
+    })
+  }
+  let exitCode: number
+  try {
+    await program.parseAsync(['node', 'agent-qa', '--config', configPath, ...args])
+    exitCode = Number(process.exitCode ?? 0)
+  } catch (thrown) {
+    if (!(thrown instanceof CommanderError)) throw thrown
+    exitCode = thrown.exitCode
+  } finally {
+    log.mockRestore()
+    error.mockRestore()
+    process.exitCode = undefined
+  }
+  return { stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode }
+}
+
+function json(invocation: Invocation): unknown {
+  expect(invocation.exitCode, invocation.stderr).toBe(0)
+  return JSON.parse(invocation.stdout) as unknown
+}
+
+type WireResult = {
+  readonly content: readonly { type: string; text?: string }[]
+  readonly structuredContent?: unknown
+  readonly isError?: boolean
+}
+
+async function mcpReader(p: { configPath: string; agentQaRoot: string }) {
+  const composed = host.composeCliLocalAgent({ configPath: p.configPath, agentQaRoot: p.agentQaRoot })
+  cleanups.push(() => composed.close())
+  const masking = composeMcpMasking({ configPath: p.configPath })
+  const server = createServer(createMcpHttpRequestListener({
+    registry: composed.registry, maskText: (text) => masking.mask(text),
+  }))
+  await new Promise<void>((listening, fail) => {
+    server.once('error', fail)
+    server.listen(0, '127.0.0.1', listening)
+  })
+  cleanups.push(() => new Promise<void>((closed) => server.close(() => closed())))
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('MCP did not bind')
+  const client = new Client({ name: 'agent-qa-444-26', version: '0.0.0' })
+  cleanups.push(() => client.close())
+  await client.connect(new StreamableHTTPClientTransport(
+    new URL(`http://127.0.0.1:${String(address.port)}/mcp`)))
+  return {
+    async structured(name: string, args: Record<string, unknown>): Promise<unknown> {
+      const result = await client.callTool({ name, arguments: args }) as unknown as WireResult
+      const text = result.content.map((block) => block.text ?? '').join('\n')
+      expect(result.isError ?? false, text.slice(0, 400)).toBe(false)
+      return result.structuredContent
+    },
+  }
+}
+
+type OverviewCuration = { learned: { curation: Record<string, unknown> } }
+
+async function overviewCuration(p: ReturnType<typeof skippedRuns>, runId: string,
+  mcp: Awaited<ReturnType<typeof mcpReader>>): Promise<Record<string, unknown>> {
+  const overview = json(await cli(p.configPath, ['runs', 'overview', runId, '--json']))
+  expect(overview).toEqual(await mcp.structured('agent_qa_get_run_overview', { runId }))
+  return (overview as OverviewCuration).learned.curation
+}
+
+// ---- C444-OVERVIEW-SKIPPED ------------------------------------------------------------------------
+
+describe('C444-OVERVIEW-SKIPPED', () => {
+  it("a gate run's overview carries skipped with reason gate-run beside its curation chip", async () => {
+    const p = skippedRuns()
+    const mcp = await mcpReader(p)
+    const curation = await overviewCuration(p, p.gateRun, mcp)
+    expect(curation).toEqual({ status: 'pending', skipped: { reason: 'gate-run' } })
+  })
+
+  it("an outcome-excluded run's overview carries skipped with reason outcome-excluded", async () => {
+    const p = skippedRuns()
+    const mcp = await mcpReader(p)
+    const curation = await overviewCuration(p, p.outcomeExcluded, mcp)
+    expect(curation).toEqual({ status: 'pending', skipped: { reason: 'outcome-excluded' } })
+  })
+
+  it("an ordinary run's overview carries no skipped key", async () => {
+    const p = skippedRuns()
+    const mcp = await mcpReader(p)
+    const curation = await overviewCuration(p, p.ordinary, mcp)
+    expect('skipped' in curation).toBe(false)
+    expect(curation).toEqual({ status: 'pending' })
+  })
+})
