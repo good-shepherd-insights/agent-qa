@@ -1237,6 +1237,23 @@ function enrichRunRow(
   }
 }
 
+// 2026-10-18 (444-31, D-64): a suite row's target and platform come from its own history, newest
+// first: the newest run with a target names both, else its last run does.
+function suiteTargetOf(
+  runs: readonly RunRow[],
+  targetPlatforms: Map<string, SupportedPlatform>,
+): { platform: string | null; targetName: string | null } {
+  let last: EnrichedRunRow | undefined
+  for (const run of runs) {
+    const enriched = enrichRunRow(run, targetPlatforms)
+    last ??= enriched
+    const targetName = enriched.targetName?.trim()
+    if (targetName) return { platform: enriched.platform, targetName }
+  }
+  if (!last) return { platform: null, targetName: null }
+  return { platform: last.platform, targetName: last.targetName?.trim() || null }
+}
+
 function matchesTargetFilter(run: EnrichedRunRow, filterValue: string | null): boolean {
   if (!filterValue) return true
   if (normalizeRunFilterValue(run.targetName) === filterValue) return true
@@ -3543,6 +3560,33 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             }
           })
           json(res, { tests })
+        })
+        .catch(() => json(res, { error: 'Failed to read run summaries' }, 500))
+      return
+    }
+
+    // GET /api/analytics/suite-summaries — each listed suite's rate, last run, target and platform
+    if (path === '/api/analytics/suite-summaries' && req.method === 'GET') {
+      if (!suiteFileManager) {
+        json(res, { error: 'Suite file management not configured' }, 501)
+        return
+      }
+      Promise.all([suiteFileManager.list(), readTargetPlatformMap(configManager)])
+        .then(([files, targetPlatforms]) => {
+          const suites = files.map((file) => {
+            if (!file.suiteId) {
+              return { path: file.path, suiteId: null, passRate: null, passed: 0, decided: 0, lastRun: null, platform: null, targetName: null }
+            }
+            const runs = db.getRunsBySuiteId(file.suiteId)
+            return {
+              path: file.path,
+              suiteId: file.suiteId,
+              ...passRateOf(db.getSuiteTrends(file.suiteId)),
+              lastRun: lastRunOf(runs[0]),
+              ...suiteTargetOf(runs, targetPlatforms),
+            }
+          })
+          json(res, { suites })
         })
         .catch(() => json(res, { error: 'Failed to read run summaries' }, 500))
       return

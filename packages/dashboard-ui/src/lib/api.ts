@@ -1166,6 +1166,18 @@ export async function fetchTestSummaries(): Promise<{ tests: TestSummary[] }> {
   return request('/api/analytics/test-summaries')
 }
 
+export interface SuiteSummary extends PassRateCount {
+  path: string
+  suiteId: string | null
+  lastRun: SummaryLastRun | null
+  platform: string | null
+  targetName: string | null
+}
+
+export async function fetchSuiteSummaries(): Promise<{ suites: SuiteSummary[] }> {
+  return request('/api/analytics/suite-summaries')
+}
+
 export async function fetchSuiteAnalytics(
   suiteId: string,
   opts?: { limit?: number; offset?: number; from?: string },

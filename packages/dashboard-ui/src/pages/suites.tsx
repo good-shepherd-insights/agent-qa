@@ -52,7 +52,7 @@ import {
 } from "@/pages/tests-suites-table-widths"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { useSuitesSearchParams } from "@/hooks/use-suites-search-params"
-import { deleteSuiteFile, deniedRunSentences, fetchSuiteFiles, fetchRuns, triggerRun, type SuiteFileInfo, type RunRow } from "@/lib/api"
+import { deleteSuiteFile, deniedRunSentences, fetchSuiteFiles, fetchSuiteSummaries, triggerRun, type SuiteFileInfo, type SuiteSummary } from "@/lib/api"
 import { runStatusClass } from "@/lib/status"
 import { formatDate } from "@/lib/utils"
 
@@ -61,8 +61,11 @@ interface SuiteListRow {
   suiteId: string | null
   name: string
   platform: string | null
+  // 2026-10-18 (444-31, D-64): false while the batch read has not named this file; its rate,
+  // last-run and target cells stay empty and no status filter lists it.
+  historyKnown: boolean
   lastRunStatus: string | null
-  lastRun: RunRow | null
+  lastRun: SuiteSummary["lastRun"]
   targetName: string | null
   passRate: number | null
   passCount: number
@@ -76,8 +79,12 @@ function formatPlatformLabel(platform: string | null): string {
   return platform === "ios" ? "iOS" : platform.charAt(0).toUpperCase() + platform.slice(1)
 }
 
-function getRunTimestamp(run: RunRow): string {
-  return run.createdAt || run.startedAt || run.endedAt || ""
+function normalizeSuitePath(path: string): string {
+  return path.replace(/\\/g, "/")
+}
+
+function getRunTimestamp(run: SuiteSummary["lastRun"]): string {
+  return run?.createdAt || run?.startedAt || ""
 }
 
 function getHeaderClassName(columnId: string) {
@@ -117,7 +124,7 @@ function getRowClassName({
 export default function SuitesPage() {
   usePageTitle("Suites")
   const [suiteFiles, setSuiteFiles] = useState<SuiteFileInfo[]>([])
-  const [runs, setRuns] = useState<RunRow[]>([])
+  const [summaries, setSummaries] = useState<Map<string, SuiteSummary> | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
   const [batchLoading, setBatchLoading] = useState(false)
@@ -130,11 +137,18 @@ export default function SuitesPage() {
   useEffect(() => {
     let cancelled = false
 
-    Promise.all([fetchSuiteFiles(), fetchRuns({ limit: 200 })])
-      .then(([suitesData, runsData]) => {
+    const summaryRead = fetchSuiteSummaries()
+      .then((answer) => (Array.isArray(answer?.suites) ? answer.suites : null))
+      .catch(() => null)
+
+    Promise.all([fetchSuiteFiles(), summaryRead])
+      .then(([suitesData, summaryRows]) => {
         if (!cancelled) {
           setSuiteFiles(suitesData.files)
-          setRuns(runsData.runs)
+          setSummaries(summaryRows === null
+            ? null
+            : new Map(summaryRows.map((summary) => [normalizeSuitePath(summary.path), summary])))
+          if (summaryRows === null) toast.error("Failed to load run history")
         }
       })
       .catch(() => {
@@ -149,58 +163,32 @@ export default function SuitesPage() {
     }
   }, [])
 
-  const data: SuiteListRow[] = useMemo(() => {
-    const runsBySuiteId = new Map<string, RunRow[]>()
-    for (const run of runs) {
-      const suiteIds = new Set((run.members ?? []).flatMap((member) => member.suiteId ? [member.suiteId] : []))
-      for (const suiteId of suiteIds) {
-        const current = runsBySuiteId.get(suiteId)
-        if (current) {
-          current.push(run)
-        } else {
-          runsBySuiteId.set(suiteId, [run])
-        }
-      }
+  // 2026-10-18 (444-31, D-64): every per-row figure is the server's, over the suite's own history.
+  const data: SuiteListRow[] = useMemo(() => suiteFiles.map((sf) => {
+    const summary = summaries?.get(normalizeSuitePath(sf.path))
+    const lastRun = summary?.lastRun ?? null
+    return {
+      path: sf.path,
+      suiteId: sf.suiteId,
+      name: sf.name,
+      platform: sf.platform ?? summary?.platform ?? null,
+      historyKnown: summary !== undefined,
+      lastRunStatus: lastRun?.status ?? null,
+      lastRun,
+      targetName: summary?.targetName ?? null,
+      passRate: summary && summary.passRate !== null ? Math.round(summary.passRate * 100) : null,
+      passCount: summary?.passed ?? 0,
+      completedRunCount: summary?.decided ?? 0,
     }
-
-    return suiteFiles.map((sf) => {
-      const matchingRuns = sf.suiteId ? runsBySuiteId.get(sf.suiteId) ?? [] : []
-      const sortedRuns = [...matchingRuns].sort((left, right) =>
-        getRunTimestamp(right).localeCompare(getRunTimestamp(left)),
-      )
-      const decidedRuns = sortedRuns.filter((run) => {
-        const statusClass = runStatusClass(run.status)
-        return statusClass === "pass" || statusClass === "fail"
-      })
-      const passCount = decidedRuns.filter((run) => runStatusClass(run.status) === "pass").length
-      const passRate = decidedRuns.length > 0
-        ? Math.round((passCount / decidedRuns.length) * 100)
-        : null
-      const lastRun = sortedRuns[0] ?? null
-      const latestTargetedRun = sortedRuns.find((run) => run.targetName?.trim()) ?? null
-
-      return {
-        path: sf.path,
-        suiteId: sf.suiteId,
-        name: sf.name,
-        platform: sf.platform ?? latestTargetedRun?.platform ?? lastRun?.platform ?? null,
-        lastRunStatus: lastRun?.status ?? null,
-        lastRun,
-        targetName: latestTargetedRun?.targetName?.trim() ?? lastRun?.targetName?.trim() ?? null,
-        passRate,
-        passCount,
-        completedRunCount: decidedRuns.length,
-      }
-    })
-  }, [suiteFiles, runs])
+  }), [suiteFiles, summaries])
 
   const filteredData = useMemo(() => {
     let result = data
     if (status === "no-runs") {
-      result = result.filter(d => !d.lastRunStatus)
+      result = result.filter(d => d.historyKnown && d.lastRun === null)
     } else if (status) {
       const chosen = runStatusClass(status)
-      result = result.filter(d => chosen !== undefined && runStatusClass(d.lastRunStatus ?? "") === chosen)
+      result = result.filter(d => d.historyKnown && chosen !== undefined && runStatusClass(d.lastRunStatus ?? "") === chosen)
     }
     if (platform) {
       result = result.filter(d => d.platform === platform)
@@ -272,11 +260,13 @@ export default function SuitesPage() {
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
       ),
-      cell: ({ row }) => (
-        <span className="block whitespace-normal break-words text-sm leading-snug text-muted-foreground">
-          {row.original.targetName ?? "No target"}
-        </span>
-      ),
+      cell: ({ row }) => row.original.historyKnown
+        ? (
+          <span className="block whitespace-normal break-words text-sm leading-snug text-muted-foreground">
+            {row.original.targetName ?? "No target"}
+          </span>
+        )
+        : null,
     },
     {
       accessorKey: "platform",
@@ -292,6 +282,7 @@ export default function SuitesPage() {
       ),
       cell: ({ row }) => {
         const platform = row.getValue("platform") as string | null
+        if (!row.original.historyKnown && !platform) return null
         return <span className="text-muted-foreground text-sm">{formatPlatformLabel(platform)}</span>
       },
     },
@@ -308,6 +299,7 @@ export default function SuitesPage() {
         </Button>
       ),
       cell: ({ row }) => {
+        if (!row.original.historyKnown) return null
         if (row.original.passRate === null) {
           return (
             <div className="space-y-0.5 text-right">
@@ -331,7 +323,7 @@ export default function SuitesPage() {
     },
     {
       id: "lastRun",
-      accessorFn: (row) => row.lastRun?.createdAt ?? row.lastRun?.startedAt ?? row.lastRun?.endedAt ?? "",
+      accessorFn: (row) => getRunTimestamp(row.lastRun),
       header: ({ column }) => (
         <div className="flex items-center justify-end">
           <Button
@@ -345,6 +337,7 @@ export default function SuitesPage() {
         </div>
       ),
       cell: ({ row }) => {
+        if (!row.original.historyKnown) return null
         if (!row.original.lastRun) {
           return <span className="block text-sm text-muted-foreground">No runs</span>
         }
