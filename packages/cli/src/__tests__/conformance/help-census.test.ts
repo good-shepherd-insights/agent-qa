@@ -1296,9 +1296,9 @@ describe('C432-CURATION-COPY: curation and chat say where a change went, and poi
     expect(curationOutcomeLine({ executionContext: 'local-headless', committed: 3, downgraded: 1 }))
       .toBe('curation: 2 learned change(s) applied, 1 kept proposed (local runs apply learned knowledge to the knowledge root)')
     expect(curationOutcomeLine({ executionContext: 'ci', committed: 2, downgraded: 2 }))
-      .toBe('curation: 0 learned change(s) applied, 2 kept proposed (ci runs keep learned knowledge proposed)')
+      .toBe('curation: 0 learned change(s) recorded, 2 kept proposed (ci runs never promote learned knowledge)')
     expect(curationOutcomeLine({ executionContext: 'cloud', committed: 1, downgraded: 1 }))
-      .toBe('curation: 0 learned change(s) applied, 1 kept proposed (cloud runs keep learned knowledge proposed)')
+      .toBe('curation: 0 learned change(s) recorded, 1 kept proposed (cloud runs never promote learned knowledge)')
     // A fold that committed nothing says nothing, so the one-line drained hint stays one line.
     expect(curationOutcomeLine({ executionContext: 'ci', committed: 0, downgraded: 0 })).toBeUndefined()
     expect(curationOutcomeLine({ executionContext: undefined, committed: 1, downgraded: 5 }))

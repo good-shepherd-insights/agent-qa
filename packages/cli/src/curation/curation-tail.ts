@@ -414,10 +414,10 @@ function misdirectionHarmLine(
 /**
  * Where this fold's learned changes went, in one line (432-40, D-08 / D-24).
  *
- * A local run applies what curation learned to the knowledge root in the fold; a `ci` or `cloud`
- * run keeps it as a proposed candidate (the disposition profile downgrades it), and a change that
- * delta validation refused is downgraded the same way anywhere. `committed` counts both, so the
- * applied share is `committed - downgraded`. Silent when the fold committed nothing, and it never
+ * A local run applies what curation learned to the knowledge root in the fold. A `ci` or `cloud`
+ * run records it as candidates it never promotes, and keeps a supersession proposed (444 D-57). A
+ * change that delta validation refused is downgraded anywhere. `committed` counts both, so the
+ * recorded share is `committed - downgraded`. Silent when the fold committed nothing, and it never
  * points at a review step: there is none.
  */
 export function curationOutcomeLine(input: {
@@ -427,11 +427,13 @@ export function curationOutcomeLine(input: {
 }): string | undefined {
   if (input.committed <= 0) return undefined
   const proposed = Math.min(Math.max(input.downgraded, 0), input.committed)
-  const applied = input.committed - proposed
-  const posture = input.executionContext === 'ci' || input.executionContext === 'cloud'
-    ? `${input.executionContext} runs keep learned knowledge proposed`
-    : 'local runs apply learned knowledge to the knowledge root'
-  return `curation: ${applied} learned change(s) applied, ${proposed} kept proposed (${posture})`
+  const recorded = input.committed - proposed
+  if (input.executionContext === 'ci' || input.executionContext === 'cloud') {
+    return `curation: ${recorded} learned change(s) recorded, ${proposed} kept proposed `
+      + `(${input.executionContext} runs never promote learned knowledge)`
+  }
+  return `curation: ${recorded} learned change(s) applied, ${proposed} kept proposed `
+    + '(local runs apply learned knowledge to the knowledge root)'
 }
 
 /** Fixed text: the warning names no row content. */
