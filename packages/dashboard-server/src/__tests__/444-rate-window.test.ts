@@ -294,7 +294,7 @@ function pageFoldOfSuite(runs: PageRun[], suiteId: string): { passed: number; de
   return { passed, decided }
 }
 
-async function suiteViewer(window: RateWindow, suiteId: SuiteId): Promise<any> {
+async function suiteViewer(window: RateWindow, suiteId: string): Promise<any> {
   const viewer = await read(`${window.origin}/api/analytics/suites/${encodeURIComponent(suiteId)}?limit=50`)
   expect(viewer.status, `the ${suiteId} viewer route`).toBe(200)
   return viewer.body
@@ -318,6 +318,98 @@ function lastRunFields(run: any, withOutcome: boolean): Record<string, unknown> 
     duration: run.duration,
     ...(withOutcome ? { memberOutcome: run.memberOutcome ?? null } : {}),
   }
+}
+
+// 2026-10-18 (444-33, IN-12): the batch reads count each class of member and run as their viewers do.
+const COUNTING_RUNS = [
+  { name: 'healed', status: 'healed', outcome: 'healed' },
+  { name: 'timeout', status: 'timeout', outcome: 'timeout' },
+  { name: 'bare', status: 'cancelled', outcome: undefined },
+  { name: 'cancelled', status: 'cancelled', outcome: 'cancelled' },
+  { name: 'running', status: 'running', outcome: undefined },
+] as const
+const COUNTING_CLASSES = [...COUNTING_RUNS.map((run) => run.name), 'mixed'] as const
+type CountingClass = (typeof COUNTING_CLASSES)[number]
+
+async function seedCountingClasses(): Promise<{ origin: string; tests: Record<CountingClass, Seeded> }> {
+  mkdirSync(join(dir, 'tests'), { recursive: true })
+  mkdirSync(join(dir, 'suites'), { recursive: true })
+  for (const name of COUNTING_CLASSES) {
+    writeFileSync(
+      join(dir, 'tests', `count-${name}.yaml`),
+      [`name: Count ${name}`, `test-id: t_count_${name}`, 'steps: []', ''].join('\n'),
+    )
+    writeFileSync(
+      join(dir, 'suites', `count-${name}.suite.yaml`),
+      [
+        `suite-id: s_count_${name}`,
+        `name: Count ${name} suite`,
+        'tests:',
+        `  - test: tests/count-${name}.yaml`,
+        `    id: t_count_${name}`,
+        '',
+      ].join('\n'),
+    )
+  }
+  const workspacePaths = resolveWorkspacePaths({
+    config: {
+      workspace: {
+        testMatch: ['tests/*.yaml'],
+        suiteMatch: ['suites/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+    },
+    configPath,
+  })
+  vi.spyOn(console, 'log').mockImplementation(() => undefined)
+  const handle = await startServer({
+    declaredSecretMask: (text) => text,
+    db: new DashboardDatabase({ dbPath }),
+    port: 0,
+    configPath,
+    workspacePaths,
+    executionBackend: new IdleBackend() as unknown as ExecutionBackend,
+  })
+  started.push(handle)
+  const origin = `http://127.0.0.1:${String((handle.server.address() as AddressInfo).port)}`
+
+  const listed = await read(`${origin}/api/tests`)
+  expect(listed.status, 'GET /api/tests').toBe(200)
+  const files = listed.body.files as Array<{ path: string; name: string; testId: string | null }>
+  const tests = {} as Record<CountingClass, Seeded>
+  for (const name of COUNTING_CLASSES) {
+    const file = files.find((candidate) => candidate.path === `tests/count-${name}.yaml`)
+    expect(file, `GET /api/tests lists tests/count-${name}.yaml`).toBeDefined()
+    expect(file!.testId, `tests/count-${name}.yaml's test id`).toBe(`t_count_${name}`)
+    tests[name] = { testId: file!.testId!, filePath: file!.path, name: file!.name }
+  }
+
+  for (const [minute, run] of COUNTING_RUNS.entries()) {
+    const startedAt = new Date(Date.UTC(2026, 9, 3, 0, minute)).toISOString()
+    const id = db.insertRun({
+      name: `${tests[run.name].name} · ${tests.mixed.name}`,
+      status: run.status,
+      duration: 1000,
+      startedAt,
+      endedAt: startedAt,
+    })
+    for (const [testIndex, member] of [run.name, 'mixed' as const].entries()) {
+      db.upsertRunMember({
+        runId: id,
+        testIndex,
+        testId: tests[member].testId,
+        name: tests[member].name,
+        filePath: tests[member].filePath,
+        suiteId: `s_count_${member}`,
+        suiteName: `Count ${member} suite`,
+        ...(run.outcome === undefined ? {} : { outcome: run.outcome }),
+      })
+    }
+  }
+  return { origin, tests }
 }
 
 describe('C444-RATE-WINDOW', () => {
@@ -551,5 +643,55 @@ describe('C444-RATE-WINDOW', () => {
     expect(refusedSuite, 'the suite viewer refuses it the same way').toEqual(refused)
     expect(await read(`${origin}/api/analytics/test-summaries`), 'the test batch read refuses it the same way').toEqual(refused)
     expect(await read(`${origin}/api/analytics/suite-summaries`), 'the suite batch read refuses it the same way').toEqual(refused)
+  })
+
+  it('the test batch read counts a healed member as a pass and a timed-out one as a fail, and a cancelled, a still-running and an outcome-less member in neither, as its viewer does', async () => {
+    const { origin, tests } = await seedCountingClasses()
+    const expected: Record<CountingClass, { figures: object; lastRun: object }> = {
+      healed: { figures: { passRate: 1, passed: 1, decided: 1 }, lastRun: { status: 'healed', memberOutcome: 'healed' } },
+      timeout: { figures: { passRate: 0, passed: 0, decided: 1 }, lastRun: { status: 'timeout', memberOutcome: 'timeout' } },
+      bare: { figures: { passRate: null, passed: 0, decided: 0 }, lastRun: { status: 'cancelled', memberOutcome: null } },
+      cancelled: { figures: { passRate: null, passed: 0, decided: 0 }, lastRun: { status: 'cancelled', memberOutcome: 'cancelled' } },
+      running: { figures: { passRate: null, passed: 0, decided: 0 }, lastRun: { status: 'running', memberOutcome: null } },
+      mixed: { figures: { passRate: 0.5, passed: 1, decided: 2 }, lastRun: { status: 'running', memberOutcome: null } },
+    }
+
+    const batch = await read(`${origin}/api/analytics/test-summaries`)
+    const window = { origin } as RateWindow
+    for (const name of COUNTING_CLASSES) {
+      const test = tests[name]
+      const row = batchRow(batch, 'tests', test.filePath)
+      expect(row, `${test.name}'s batch figures`).toMatchObject({ testId: test.testId, ...expected[name].figures })
+      expect(row.lastRun, `${test.name}'s batch last run`).toMatchObject(expected[name].lastRun)
+      const viewer = await testViewer(window, test)
+      expect(row.passRate, `${test.name}'s batch rate equals its viewer's`).toBe(viewer.trends.passRate)
+      expect(lastRunFields(row.lastRun, true), `${test.name}'s last run equals its viewer's runs[0]`)
+        .toEqual(lastRunFields(viewer.runs[0], true))
+    }
+  })
+
+  it('the suite batch read counts a healed run as a pass and a timed-out one as a fail, and a cancelled run, a still-running run and a run whose member has no outcome in neither, as its viewer does', async () => {
+    const { origin } = await seedCountingClasses()
+    const expected: Record<CountingClass, { figures: object; status: string }> = {
+      healed: { figures: { passRate: 1, passed: 1, decided: 1 }, status: 'healed' },
+      timeout: { figures: { passRate: 0, passed: 0, decided: 1 }, status: 'timeout' },
+      bare: { figures: { passRate: null, passed: 0, decided: 0 }, status: 'cancelled' },
+      cancelled: { figures: { passRate: null, passed: 0, decided: 0 }, status: 'cancelled' },
+      running: { figures: { passRate: null, passed: 0, decided: 0 }, status: 'running' },
+      mixed: { figures: { passRate: 0.5, passed: 1, decided: 2 }, status: 'running' },
+    }
+
+    const batch = await read(`${origin}/api/analytics/suite-summaries`)
+    const window = { origin } as RateWindow
+    for (const name of COUNTING_CLASSES) {
+      const suiteId = `s_count_${name}`
+      const row = batchRow(batch, 'suites', `suites/count-${name}.suite.yaml`)
+      expect(row, `${suiteId}'s batch figures`).toMatchObject({ suiteId, ...expected[name].figures })
+      expect(row.lastRun?.status, `${suiteId}'s batch last run`).toBe(expected[name].status)
+      const viewer = await suiteViewer(window, suiteId)
+      expect(row.passRate, `${suiteId}'s batch rate equals its viewer's`).toBe(viewer.trends.passRate)
+      expect(lastRunFields(row.lastRun, false), `${suiteId}'s last run equals its viewer's runs[0]`)
+        .toEqual(lastRunFields(viewer.runs[0], false))
+    }
   })
 })
