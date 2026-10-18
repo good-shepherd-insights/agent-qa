@@ -18,6 +18,7 @@ import { CurationBreakdownSchema, CurationBucketSchema } from '../notification/c
 import {
   CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
+  PostProcessingSkippedSchema,
 } from '../notification/post-processing-status'
 import { EvidenceAbsenceReasonSchema, EvidenceKindSchema } from '../run/evidence'
 import { RECORDING_CONTENT_TYPES } from '../run/recording'
@@ -205,6 +206,7 @@ export const RunOverviewLearnedSchema = z.object({
   curation: z.object({
     status: z.enum(POST_PROCESSING_CHIP_STATUSES),
     counts: z.object({ curated: count, deprecated: count }).strict().optional(),
+    skipped: PostProcessingSkippedSchema.optional(),
   }).strict(),
   snapshot: z.discriminatedUnion('state', [
     z.object({

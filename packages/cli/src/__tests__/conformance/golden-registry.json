@@ -714,7 +714,7 @@
       "classifies": true,
       "id": "runs.overview",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "9bbc1278d97800f719acd3be4cb0c42d6bc5c1aa0d2b00a266960fcd3ce1212f",
+      "outputSchemaDigest": "3648932bea79ddabaab27a38cb9b65d8eec038c8af06e8da1b37fed7944f965a",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_get_run_overview"

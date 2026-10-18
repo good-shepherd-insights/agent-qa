@@ -48,6 +48,7 @@ import type { ClauseVerdict, FunctionDeps, FunctionSpec } from '../spec.js'
 import { annotatePresence } from './evidence-presence.js'
 import { refuseMissingHandoff, RunNotFoundError } from './runs-get.js'
 import { runsKnowledgeSpec } from './runs-knowledge.js'
+import { projectPostProcessingSkipped } from './runs-post-processing.js'
 import { requireSecretMask } from './secret-mask.js'
 
 export const RUNS_OVERVIEW_FUNCTION_ID = 'runs.overview'
@@ -292,8 +293,9 @@ function projectSteps(
   })
 }
 
-function projectLearned(knowledge: ReadyKnowledge): RunOverviewLearned {
+function projectLearned(knowledge: ReadyKnowledge, document: CompletedRunHandoff): RunOverviewLearned {
   const { learned, curation } = knowledge
+  const skipped = projectPostProcessingSkipped(document)
   const snapshot: RunOverviewLearned['snapshot'] = learned.curationSnapshot !== undefined
     ? {
         state: 'recorded',
@@ -312,6 +314,9 @@ function projectLearned(knowledge: ReadyKnowledge): RunOverviewLearned {
     curation: {
       status: curation.status,
       ...(curation.counts === undefined ? {} : { counts: { ...curation.counts } }),
+      // 2026-10-18 (444-26, D-61): the run's own handoff says why its chain was never enqueued, by
+      // the fold runs.postprocessing serves; an ordinary run carries no key.
+      ...(skipped === undefined ? {} : { skipped: { reason: skipped.reason } }),
     },
     snapshot,
     changes: learned.changes.map((change) => ({
@@ -380,7 +385,7 @@ export const runsOverviewSpec: FunctionSpec<RunsOverviewInput, RunOverviewProjec
             rows?.members.find((member) => member.testIndex === test.testIndex), runId, presence),
           steps: projectSteps(test, runId, rows, knowledge, presence, mask),
         })),
-      learned: projectLearned(knowledge),
+      learned: projectLearned(knowledge, document),
     }
   },
 }
