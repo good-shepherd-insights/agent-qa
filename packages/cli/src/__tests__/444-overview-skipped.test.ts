@@ -201,3 +201,32 @@ describe('C444-OVERVIEW-SKIPPED', () => {
     expect(curation).toEqual({ status: 'pending' })
   })
 })
+
+// ---- C444-KNOWLEDGE-SKIPPED -----------------------------------------------------------------------
+
+type KnowledgeCuration = { kind: string; curation: Record<string, unknown> }
+
+async function knowledgeCuration(p: ReturnType<typeof skippedRuns>, runId: string,
+  mcp: Awaited<ReturnType<typeof mcpReader>>): Promise<Record<string, unknown>> {
+  const knowledge = json(await cli(p.configPath, ['runs', 'knowledge', runId, '--json']))
+  expect(knowledge).toEqual(await mcp.structured('agent_qa_get_run_knowledge', { runId }))
+  expect((knowledge as KnowledgeCuration).kind).toBe('ready')
+  return (knowledge as KnowledgeCuration).curation
+}
+
+describe('C444-KNOWLEDGE-SKIPPED', () => {
+  it("a gate run's knowledge carries skipped with reason gate-run beside its curation chip", async () => {
+    const p = skippedRuns()
+    const mcp = await mcpReader(p)
+    const curation = await knowledgeCuration(p, p.gateRun, mcp)
+    expect(curation).toEqual({ status: 'pending', skipped: { reason: 'gate-run' } })
+  })
+
+  it("an ordinary run's knowledge carries no skipped key", async () => {
+    const p = skippedRuns()
+    const mcp = await mcpReader(p)
+    const curation = await knowledgeCuration(p, p.ordinary, mcp)
+    expect('skipped' in curation).toBe(false)
+    expect(curation).toEqual({ status: 'pending' })
+  })
+})
