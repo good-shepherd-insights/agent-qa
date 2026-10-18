@@ -19,7 +19,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
-import { generateTestId } from '@vostride/agent-qa-ids'
+import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 
 import { DashboardDatabase } from '../db/database.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
@@ -28,6 +28,83 @@ import { SuiteFileManager } from '../tests/suite-file-manager.js'
 import { TestFileManager } from '../tests/test-file-manager.js'
 
 // 2026-10-18 (444-33, D-65): reading the test or suite list never damages a file or a save racing it.
+// 2026-10-18 (444-35, D-66): a read after a save or delete sees it; empty, unnamed and long-named files list truthfully.
+
+type Hold = { suffix: string; content: string | null; reach: () => void; gate: Promise<void>; release: () => void }
+
+const fileWrites = vi.hoisted(() => ({
+  hold: undefined as Hold | undefined,
+  holds: [] as Hold[],
+  inProgress: new Map<string, number>(),
+  lockAsks: [] as string[],
+}))
+
+vi.mock('../tests/replace-file-atomic.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../tests/replace-file-atomic.js')>()
+  return {
+    ...real,
+    replaceFileAtomic: async (absolutePath: string, content: string): Promise<void> => {
+      fileWrites.inProgress.set(absolutePath, (fileWrites.inProgress.get(absolutePath) ?? 0) + 1)
+      try {
+        const hold = fileWrites.hold
+        if (hold !== undefined && absolutePath.endsWith(hold.suffix)) {
+          fileWrites.hold = undefined
+          hold.content = content
+          hold.reach()
+          await hold.gate
+        }
+        await real.replaceFileAtomic(absolutePath, content)
+      } finally {
+        const left = (fileWrites.inProgress.get(absolutePath) ?? 1) - 1
+        if (left > 0) fileWrites.inProgress.set(absolutePath, left)
+        else fileWrites.inProgress.delete(absolutePath)
+      }
+    },
+    createPathLock: (): ReturnType<typeof real.createPathLock> => {
+      const lock = real.createPathLock()
+      return (key, work) => {
+        fileWrites.lockAsks.push(key)
+        return lock(key, work)
+      }
+    },
+  }
+})
+
+function holdReplace(suffix: string): { reached: Promise<void>; release: () => void; readonly content: string | null } {
+  let reach = (): void => undefined
+  let release = (): void => undefined
+  const reachedNow = new Promise<void>((resolve) => {
+    reach = resolve
+  })
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const hold: Hold = { suffix, content: null, reach, gate, release }
+  fileWrites.hold = hold
+  fileWrites.holds.push(hold)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const reached = Promise.race([
+    reachedNow,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`the held id write for ${suffix} never started`)), 5_000)
+    }),
+  ]).finally(() => clearTimeout(timer))
+  return {
+    reached,
+    release,
+    get content() {
+      return hold.content
+    },
+  }
+}
+
+async function waitUntil(predicate: () => boolean, label: string, ms: number): Promise<void> {
+  const deadline = Date.now() + ms
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`${label}: not within ${String(ms)} ms`)
+    await new Promise((resolve) => setTimeout(resolve, 2))
+  }
+}
 
 class IdleBackend extends EventEmitter {
   execute = (): void => undefined
@@ -49,6 +126,10 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  for (const hold of fileWrites.holds.splice(0)) hold.release()
+  fileWrites.hold = undefined
+  fileWrites.inProgress.clear()
+  fileWrites.lockAsks.length = 0
   while (started.length > 0) started.pop()?.close()
   vi.restoreAllMocks()
   await rm(root, { recursive: true, force: true })
@@ -170,6 +251,20 @@ async function tmpFilesUnder(dir: string): Promise<string[]> {
 
 const pad = (index: number): string => String(index).padStart(3, '0')
 const SAVE_BYTES = 950_000
+
+const idTest = (id: string, name: string): string => `test-id: ${id}\nname: ${name}\ntarget: web\nsteps:\n  - Click a\n`
+const idSuite = (id: string, name: string, test: string, testId: string): string =>
+  `suite-id: ${id}\nname: ${name}\ntarget: web\ntests:\n  - test: ${test}\n    id: ${testId}\n`
+
+function otherTab(url: string): { settled: () => boolean; answer: Promise<Answer> } {
+  let done = false
+  const answer = read(url).finally(() => {
+    done = true
+  })
+  return { settled: () => done, answer }
+}
+
+const asksFor = (suffix: string): number => fileWrites.lockAsks.filter((key) => key.endsWith(suffix)).length
 
 describe('C444-LIST-WRITE-SAFE', () => {
   it('the Tests and Suites page reads sent together leave every id-less file whole under one id line, and every listed id opens', async () => {
@@ -630,5 +725,367 @@ describe('C444-LIST-WRITE-SAFE', () => {
       expect(existsSync(join(ws.dir, gone)), `(m) ${gone} stays deleted`).toBe(false)
       expect(await tmpFilesUnder(ws.dir), `(m) no temp file is left in the ${kind} workspace`).toEqual([])
     }
+  })
+
+  it('with another list read in flight, a test or suite the editor just saved opens by its id, and a suite naming a test saved a moment earlier saves', async () => {
+    const unexpected: string[] = []
+    const inFlight = new Map<string, number>()
+    const COUNTS = [30, 200]
+    const FLOWS = ['T', 'V', 'S'] as const
+
+    for (const count of COUNTS) {
+      const tws = await workspace(`tracer-tests-${String(count)}`)
+      for (let index = 0; index < count; index++) {
+        await writeFile(join(tws.dir, `tests/t${pad(index)}.yaml`), idTest(generateTestId(), `T${String(index)}`))
+      }
+      const sws = await workspace(`tracer-suites-${String(count)}`)
+      const onlyId = generateTestId()
+      await writeFile(join(sws.dir, 'tests/only.yaml'), idTest(onlyId, 'Only'))
+      for (let index = 0; index < count; index++) {
+        await writeFile(
+          join(sws.dir, `suites/s${pad(index)}.suite.yaml`),
+          idSuite(generateSuiteId(), `S${String(index)}`, 'tests/only.yaml', onlyId),
+        )
+      }
+      const testsOrigin = await startDashboard(tws)
+      const suitesOrigin = await startDashboard(sws)
+
+      for (let round = 0; round < 5; round++) {
+        const flag = (flow: string, other: { settled: () => boolean }): string => {
+          const live = !other.settled()
+          if (live) inFlight.set(`${flow} ${String(count)}`, (inFlight.get(`${flow} ${String(count)}`) ?? 0) + 1)
+          return `${flow} at ${String(count)} files, round ${String(round)}, other listing ${live ? 'in flight' : 'settled'}`
+        }
+        const expectAnswer = (label: string, step: string, reply: Answer, status: number, path?: string): void => {
+          if (reply.status !== status || (path !== undefined && reply.body?.path !== path)) {
+            unexpected.push(`${label}: ${step} answered ${String(reply.status)} ${JSON.stringify(reply.body)}`)
+          }
+        }
+
+        // T: a test created, then opened by its id
+        {
+          const other = otherTab(`${testsOrigin}/api/tests`)
+          const id = generateTestId()
+          const path = `tests/new-t${pad(round)}.yaml`
+          const created = await send(`${testsOrigin}/api/tests`, 'POST', { path, content: idTest(id, `New T ${String(round)}`) })
+          const label = flag('T', other)
+          const opened = await read(`${testsOrigin}/api/tests/${encodeURIComponent(id)}`)
+          expectAnswer(label, 'POST /api/tests', created, 201)
+          expectAnswer(label, 'GET /api/tests/:id', opened, 200, path)
+          expectAnswer(label, "the other tab's GET /api/tests", await other.answer, 200)
+        }
+
+        // V: a suite saved naming a test created a moment earlier, then opened by its id
+        {
+          const other = otherTab(`${testsOrigin}/api/tests`)
+          const testId = generateTestId()
+          const testPath = `tests/new-v${pad(round)}.yaml`
+          const suiteId = generateSuiteId()
+          const suitePath = `suites/new-v${pad(round)}.suite.yaml`
+          const created = await send(`${testsOrigin}/api/tests`, 'POST', {
+            path: testPath,
+            content: idTest(testId, `New V ${String(round)}`),
+          })
+          const label = flag('V', other)
+          const saved = await send(`${testsOrigin}/api/suites`, 'POST', {
+            path: suitePath,
+            content: idSuite(suiteId, `Suite V ${String(round)}`, testPath, testId),
+          })
+          const opened = await read(`${testsOrigin}/api/suites/${encodeURIComponent(suiteId)}`)
+          expectAnswer(label, 'POST /api/tests', created, 201)
+          expectAnswer(label, 'POST /api/suites', saved, 201)
+          expectAnswer(label, 'GET /api/suites/:id', opened, 200, suitePath)
+          expectAnswer(label, "the other tab's GET /api/tests", await other.answer, 200)
+        }
+
+        // S: a suite created, then opened by its id
+        {
+          const other = otherTab(`${suitesOrigin}/api/suites`)
+          const suiteId = generateSuiteId()
+          const suitePath = `suites/new-s${pad(round)}.suite.yaml`
+          const saved = await send(`${suitesOrigin}/api/suites`, 'POST', {
+            path: suitePath,
+            content: idSuite(suiteId, `Suite S ${String(round)}`, 'tests/only.yaml', onlyId),
+          })
+          const label = flag('S', other)
+          const opened = await read(`${suitesOrigin}/api/suites/${encodeURIComponent(suiteId)}`)
+          expectAnswer(label, 'POST /api/suites', saved, 201)
+          expectAnswer(label, 'GET /api/suites/:id', opened, 200, suitePath)
+          expectAnswer(label, "the other tab's GET /api/suites", await other.answer, 200)
+        }
+      }
+    }
+
+    expect(unexpected, 'every request after a finished save answered as that save left the workspace').toEqual([])
+    for (const flow of FLOWS) {
+      for (const count of COUNTS) {
+        expect(
+          inFlight.get(`${flow} ${String(count)}`) ?? 0,
+          `flow ${flow} at ${String(count)} files had the other listing in flight in at least one round`,
+        ).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('with a listing still in flight, the next list, find and validate calls on both managers see every save and delete that has finished', async () => {
+    const findings: string[] = []
+
+    // (t) the test manager, with a suite manager over it as server.ts builds them
+    {
+      const ws = await workspace('managers-held-t')
+      await writeFile(join(ws.dir, 'tests/a-gone.yaml'), idTest(generateTestId(), 'Gone'))
+      for (let index = 0; index < 50; index++) {
+        await writeFile(join(ws.dir, `tests/t${pad(index)}.yaml`), idTest(generateTestId(), `T${String(index)}`))
+      }
+      const heldBody = smallTest(900)
+      await writeFile(join(ws.dir, 'tests/zzz-hold.yaml'), heldBody)
+      const tests = new TestFileManager(ws.paths)
+      const suites = new SuiteFileManager(ws.paths, tests)
+
+      const hold = holdReplace('tests/zzz-hold.yaml')
+      const held = tests.list()
+      await hold.reached
+      const newId = generateTestId()
+      await tests.write('tests/new.yaml', idTest(newId, 'New'))
+      await tests.delete('tests/a-gone.yaml')
+      const asked = asksFor('tests/zzz-hold.yaml')
+      const find = tests.findByTestId(newId)
+      const later = tests.list()
+      const validation = suites.validate(idSuite(generateSuiteId(), 'Names new', 'tests/new.yaml', newId))
+      await waitUntil(() => asksFor('tests/zzz-hold.yaml') >= asked + 3, '(t) the three later calls ask for the held file', 5_000).catch(
+        (err: Error) => findings.push(err.message),
+      )
+      hold.release()
+      const [heldList, found, laterList, valid] = await Promise.all([held, find, later, validation])
+
+      if (found?.path !== 'tests/new.yaml') findings.push(`(t) findByTestId of the saved test answered ${JSON.stringify(found?.path ?? null)}`)
+      const laterPaths = laterList.map((file) => file.path)
+      if (!laterPaths.includes('tests/new.yaml')) findings.push('(t) the later list() does not list the saved tests/new.yaml')
+      if (laterPaths.includes('tests/a-gone.yaml')) findings.push('(t) the later list() still lists the deleted tests/a-gone.yaml')
+      if (JSON.stringify(valid) !== JSON.stringify({ valid: true, errors: [] })) {
+        findings.push(`(t) validate() of a suite naming tests/new.yaml answered ${JSON.stringify(valid)}`)
+      }
+      const heldId = hold.content === null ? null : splitIdLine(hold.content, 'test').id
+      if (heldId === null) findings.push('(t) the held mint wrote no id line')
+      for (const [label, listing] of [['held', heldList], ['later', laterList]] as const) {
+        const named = listing.find((file) => file.path === 'tests/zzz-hold.yaml')?.testId ?? null
+        if (named !== heldId) findings.push(`(t) the ${label} list names ${String(named)} for tests/zzz-hold.yaml, the mint wrote ${String(heldId)}`)
+      }
+      const disk = await readFile(join(ws.dir, 'tests/zzz-hold.yaml'), 'utf-8')
+      if (heldId === null || oneIdOver(disk, heldBody, 'test') !== heldId) {
+        findings.push(`(t) tests/zzz-hold.yaml: ${describeFile(disk, 'test')}, the mint wrote ${String(heldId)}`)
+      }
+    }
+
+    // (s) the suite manager
+    {
+      const ws = await workspace('managers-held-s')
+      const onlyId = generateTestId()
+      await writeFile(join(ws.dir, 'tests/only.yaml'), idTest(onlyId, 'Only'))
+      await writeFile(join(ws.dir, 'suites/a-gone.suite.yaml'), idSuite(generateSuiteId(), 'Gone', 'tests/only.yaml', onlyId))
+      for (let index = 0; index < 50; index++) {
+        await writeFile(
+          join(ws.dir, `suites/s${pad(index)}.suite.yaml`),
+          idSuite(generateSuiteId(), `S${String(index)}`, 'tests/only.yaml', onlyId),
+        )
+      }
+      const heldBody = `name: Held\ntarget: web\ntests:\n  - test: tests/only.yaml\n    id: ${onlyId}\n`
+      await writeFile(join(ws.dir, 'suites/zzz-hold.suite.yaml'), heldBody)
+      const suites = new SuiteFileManager(ws.paths, new TestFileManager(ws.paths))
+
+      const hold = holdReplace('suites/zzz-hold.suite.yaml')
+      const held = suites.list()
+      await hold.reached
+      const newId = generateSuiteId()
+      await suites.write('suites/new.suite.yaml', idSuite(newId, 'New', 'tests/only.yaml', onlyId))
+      await suites.delete('suites/a-gone.suite.yaml')
+      const asked = asksFor('suites/zzz-hold.suite.yaml')
+      const find = suites.findBySuiteId(newId)
+      const later = suites.list()
+      await waitUntil(() => asksFor('suites/zzz-hold.suite.yaml') >= asked + 2, '(s) the two later calls ask for the held file', 5_000).catch(
+        (err: Error) => findings.push(err.message),
+      )
+      hold.release()
+      const [heldList, found, laterList] = await Promise.all([held, find, later])
+
+      if (found?.path !== 'suites/new.suite.yaml') {
+        findings.push(`(s) findBySuiteId of the saved suite answered ${JSON.stringify(found?.path ?? null)}`)
+      }
+      const laterPaths = laterList.map((file) => file.path)
+      if (!laterPaths.includes('suites/new.suite.yaml')) findings.push('(s) the later list() does not list the saved suites/new.suite.yaml')
+      if (laterPaths.includes('suites/a-gone.suite.yaml')) findings.push('(s) the later list() still lists the deleted suites/a-gone.suite.yaml')
+      const heldId = hold.content === null ? null : splitIdLine(hold.content, 'suite').id
+      if (heldId === null) findings.push('(s) the held mint wrote no id line')
+      for (const [label, listing] of [['held', heldList], ['later', laterList]] as const) {
+        const named = listing.find((file) => file.path === 'suites/zzz-hold.suite.yaml')?.suiteId ?? null
+        if (named !== heldId) {
+          findings.push(`(s) the ${label} list names ${String(named)} for suites/zzz-hold.suite.yaml, the mint wrote ${String(heldId)}`)
+        }
+      }
+      const disk = await readFile(join(ws.dir, 'suites/zzz-hold.suite.yaml'), 'utf-8')
+      if (heldId === null || oneIdOver(disk, heldBody, 'suite') !== heldId) {
+        findings.push(`(s) suites/zzz-hold.suite.yaml: ${describeFile(disk, 'suite')}, the mint wrote ${String(heldId)}`)
+      }
+    }
+
+    expect(findings, 'every call started after a finished save or delete sees it, and the held file keeps one id').toEqual([])
+  })
+
+  it('an empty name lists the file name and an empty target lists no target', async () => {
+    const ws = await workspace('empty-name')
+    await writeFile(join(ws.dir, 'tests/blank-name.yaml'), `test-id: ${generateTestId()}\nname: ""\ntarget: ''\nsteps:\n  - Click a\n`)
+    const namedId = generateTestId()
+    await writeFile(join(ws.dir, 'tests/named.yaml'), idTest(namedId, 'Named'))
+    await writeFile(
+      join(ws.dir, 'suites/blank-name.suite.yaml'),
+      `suite-id: ${generateSuiteId()}\nname: ""\ntarget: web\ntests:\n  - test: tests/named.yaml\n    id: ${namedId}\n`,
+    )
+    const tests = new TestFileManager(ws.paths)
+    const suites = new SuiteFileManager(ws.paths, tests)
+    const testRows = await tests.list()
+    const suiteRows = await suites.list()
+    const shown = (path: string): { name: string; targetName: string | null } | undefined => {
+      const row = testRows.find((file) => file.path === path)
+      return row === undefined ? undefined : { name: row.name, targetName: row.targetName }
+    }
+
+    expect(
+      {
+        blank: shown('tests/blank-name.yaml'),
+        named: shown('tests/named.yaml'),
+        suite: suiteRows.find((file) => file.path === 'suites/blank-name.suite.yaml')?.name,
+      },
+      'an empty name falls back to the file name and an empty target to none; a set name and target are kept',
+    ).toEqual({
+      blank: { name: 'blank-name.yaml', targetName: null },
+      named: { name: 'Named', targetName: 'web' },
+      suite: 'blank-name.suite.yaml',
+    })
+  })
+
+  it('a zero-byte or whitespace-only file is listed with no id and nothing is written to it', async () => {
+    posixOnly()
+    const ws = await workspace('empty-file')
+    const findings: string[] = []
+    const kinds = [
+      { kind: 'test' as const, empty: ['tests/empty.yaml', 'tests/blank.yaml'], plain: 'tests/plain.yaml', body: smallTest(1) },
+      {
+        kind: 'suite' as const,
+        empty: ['suites/empty.suite.yaml', 'suites/blank.suite.yaml'],
+        plain: 'suites/plain.suite.yaml',
+        body: smallSuite(1),
+      },
+    ]
+    const emptyBytes = ['', ' \n\n  \n']
+    const before = new Map<string, { bytes: string; ino: bigint; mtimeNs: bigint }>()
+    for (const entry of kinds) {
+      for (const [index, path] of entry.empty.entries()) {
+        await writeFile(join(ws.dir, path), emptyBytes[index])
+        const s = await stat(join(ws.dir, path), { bigint: true })
+        before.set(path, { bytes: emptyBytes[index], ino: s.ino, mtimeNs: s.mtimeNs })
+      }
+      await writeFile(join(ws.dir, entry.plain), entry.body)
+    }
+    const tests = new TestFileManager(ws.paths)
+    const suites = new SuiteFileManager(ws.paths, tests)
+
+    for (const entry of kinds) {
+      const manager = entry.kind === 'test' ? tests : suites
+      const listings: Array<Array<{ path: string; testId?: string | null; suiteId?: string | null }>> = []
+      for (let call = 0; call < 2; call++) {
+        listings.push(await manager.list())
+        for (const path of entry.empty) {
+          const row = listings[call].find((file) => file.path === path)
+          const id = entry.kind === 'test' ? row?.testId : row?.suiteId
+          if (row === undefined) findings.push(`list ${String(call + 1)} does not list ${path}`)
+          else if (id !== null) findings.push(`list ${String(call + 1)} names ${String(id)} for ${path}`)
+          const s = await stat(join(ws.dir, path), { bigint: true })
+          const now = { bytes: await readFile(join(ws.dir, path), 'utf-8'), ino: s.ino, mtimeNs: s.mtimeNs }
+          const was = before.get(path)!
+          if (now.bytes !== was.bytes || now.ino !== was.ino || now.mtimeNs !== was.mtimeNs) {
+            findings.push(`after list ${String(call + 1)} ${path} reads ${JSON.stringify(now.bytes)} (ino or mtime ${now.ino === was.ino && now.mtimeNs === was.mtimeNs ? 'unchanged' : 'changed'})`)
+          }
+        }
+      }
+      const disk = await readFile(join(ws.dir, entry.plain), 'utf-8')
+      const id = oneIdOver(disk, entry.body, entry.kind)
+      if (id === null) findings.push(`${entry.plain}: ${describeFile(disk, entry.kind)}`)
+      for (const [call, listing] of listings.entries()) {
+        const row = listing.find((file) => file.path === entry.plain)
+        const named = entry.kind === 'test' ? row?.testId : row?.suiteId
+        if (id === null || named !== id) findings.push(`list ${String(call + 1)} names ${String(named)} for ${entry.plain}, the file holds ${String(id)}`)
+      }
+    }
+    const temps = await tmpFilesUnder(ws.dir)
+    if (temps.length > 0) findings.push(`temp files left: ${temps.join(', ')}`)
+
+    expect(findings, 'an empty or whitespace-only file keeps its bytes, inode and mtime and is listed with no id').toEqual([])
+  })
+
+  it('a test or suite file whose name is 250 bytes long is minted and saved whole, with no temp file left', async () => {
+    posixOnly()
+    const ws = await workspace('long-name')
+    const findings: string[] = []
+    const kinds = [
+      {
+        kind: 'test' as const,
+        first: `tests/${'l'.repeat(245)}.yaml`,
+        second: `tests/m${'l'.repeat(244)}.yaml`,
+        body: smallTest(1),
+        saved: (): { id: string; body: string } => {
+          const id = generateTestId()
+          return { id, body: `test-id: ${id}\n${smallTest(2)}` }
+        },
+      },
+      {
+        kind: 'suite' as const,
+        first: `suites/${'l'.repeat(239)}.suite.yaml`,
+        second: `suites/m${'l'.repeat(238)}.suite.yaml`,
+        body: smallSuite(1),
+        saved: (): { id: string; body: string } => {
+          const id = generateSuiteId()
+          return { id, body: `suite-id: ${id}\n${smallSuite(2)}` }
+        },
+      },
+    ]
+    const tests = new TestFileManager(ws.paths)
+    const suites = new SuiteFileManager(ws.paths, tests)
+
+    for (const entry of kinds) {
+      for (const path of [entry.first, entry.second]) {
+        const name = path.slice(path.indexOf('/') + 1)
+        if (Buffer.byteLength(name) !== 250) throw new Error(`the fixture name ${name} is ${String(Buffer.byteLength(name))} bytes, not 250`)
+      }
+      const manager = entry.kind === 'test' ? tests : suites
+      const idOf = (rows: Array<{ path: string; testId?: string | null; suiteId?: string | null }>, path: string) => {
+        const row = rows.find((file) => file.path === path)
+        return (entry.kind === 'test' ? row?.testId : row?.suiteId) ?? null
+      }
+
+      // (1) an id-less file with a 250-byte name is minted
+      await writeFile(join(ws.dir, entry.first), entry.body)
+      const listed = idOf(await manager.list(), entry.first)
+      const disk = await readFile(join(ws.dir, entry.first), 'utf-8')
+      if (listed === null) findings.push(`(1) the ${entry.kind} list names no id for its 250-byte file: ${describeFile(disk, entry.kind)}`)
+      else if (oneIdOver(disk, entry.body, entry.kind) !== listed) findings.push(`(1) ${describeFile(disk, entry.kind)}, listed ${listed}`)
+
+      // (2) write() saves a new id-bearing file under a 250-byte name
+      const saved = entry.saved()
+      try {
+        await manager.write(entry.second, saved.body)
+      } catch (err) {
+        findings.push(`(2) write() of the ${entry.kind} file rejected: ${(err as NodeJS.ErrnoException).code ?? String(err)}`)
+      }
+      const written = existsSync(join(ws.dir, entry.second)) ? await readFile(join(ws.dir, entry.second), 'utf-8') : null
+      if (written !== saved.body) findings.push(`(2) the saved ${entry.kind} file reads ${describeFile(written, entry.kind)}`)
+      const named = idOf(await manager.list(), entry.second)
+      if (named !== saved.id) findings.push(`(2) the ${entry.kind} list after the save names ${String(named)}, the save holds ${saved.id}`)
+    }
+
+    // (3) no temp file
+    const temps = await tmpFilesUnder(ws.dir)
+    if (temps.length > 0) findings.push(`(3) temp files left: ${temps.map((temp) => `${String(temp.length)}-byte path`).join(', ')}`)
+
+    expect(findings, 'a 250-byte file name is minted and saved whole, with no temp file left').toEqual([])
   })
 })
