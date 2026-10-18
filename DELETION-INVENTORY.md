@@ -5479,19 +5479,29 @@ cancelled member's zero duration) and D-55 (the skipped run's sentence).
 | the gate list | 217 `C444-` cells in 53 areas listed in `scripts/gate/inputs/regressions.json` after the 2000 rows listed at `e424b0bd0` (unchanged and in order, except three renamed in place; § Registered gate rows), each with its area's `444 D-NN` origin, so `gate:local` must execute and pass every one | `scripts/gate/inputs/regressions.json` (444-21 `d34b0a658`) |
 
 **Both ends of the derivation, stated so it can be re-run.** Baseline `e424b0bd0` (agent-qa
-`version-0.2`, Phase 443's final SHA and 444-01's base). Closing SHA `d34b0a658` (444-21's gate
-list commit, the parent of this section's commit). `git -C agent-qa diff --shortstat e424b0bd0
-d34b0a658`: 220 files changed, 15,770 insertions, 1,774 deletions (under `packages/`: 215 files,
-+14,297/−1,758; the other five are `docs/ci.md`, `docs/queues.md`, `README.md`, `regressions.json`
-and this file, whose two D-26 sentences 444-09 corrected). `--diff-filter=D`: no file deleted.
-`--diff-filter=A`: 49 files added, 43 of them under `__tests__` (the C444 test files and the
-`444-process-tree.ts` witness) and six not: `docs/ci.md`, `cli/src/cli-main.ts` (the former
-`cli.ts` body, byte-identical to `cli.ts` at `e424b0bd0`, D-47), `cli/src/color-posture.ts`,
-`cli/src/curation/resume-limit.ts`, `dashboard-server/src/db/run-status-class.ts` and
-`dashboard-server/src/reporter/run-row-identity.ts`. 64 production files changed. 102 commits,
-every one signed (`%G?` = `G`): 101 from 444-01 to 444-20 and 444-22, and 444-21's gate list.
-The removed lines below are read from each deleting commit's diff (`git -C agent-qa show <sha>`)
-and the plan summaries, not transcribed from memory. Names are at `e424b0bd0`.
+`version-0.2`, Phase 443's final SHA and 444-01's base). Closing SHA `3b21dacc6` (444-21's
+run-parity fix, the parent of the commit that completes this section). `git -C agent-qa diff
+--shortstat e424b0bd0 3b21dacc6`: 221 files changed, 16,060 insertions, 1,775 deletions (under
+`packages/`: 216 files, +14,323/−1,759; the other five are `docs/ci.md`, `docs/queues.md`,
+`README.md`, `regressions.json` and this file, whose two D-26 sentences 444-09 corrected).
+`--diff-filter=D`: no file deleted. `--diff-filter=A`: 49 files added, 43 of them under
+`__tests__` (the C444 test files and the `444-process-tree.ts` witness) and six not:
+`docs/ci.md`, `cli/src/cli-main.ts` (the former `cli.ts` body, byte-identical to `cli.ts` at
+`e424b0bd0`, D-47), `cli/src/color-posture.ts`, `cli/src/curation/resume-limit.ts`,
+`dashboard-server/src/db/run-status-class.ts` and `dashboard-server/src/reporter/run-row-identity.ts`.
+64 production files changed. 104 commits, every one signed (`%G?` = `G`): 101 from 444-01 to
+444-20 and 444-22, and 444-21's three: the gate list (`d34b0a658`), this section's first commit
+(`c0ba54e59`) and the run-parity fix (`3b21dacc6`). The record gate at `c0ba54e59` was red on two
+unlisted cells, both in `cli/src/commands/__tests__/run-parity.e2e.test.ts`
+(`` `agent-qa run suites/gate.suite.yaml` is byte-identical to the pre-extraction reading `` and
+`` `agent-qa run --all` is byte-identical to the pre-extraction reading ``): the gate runs with
+`CI=true`, the capture inherits it, and since 444-14 (D-22) the `ci` exit line states each pending
+stage's resume limit, while the golden is a local reading. The fix is in the owning file: the cell
+reads the golden's exit line in the context the run resolves, with the golden and its generator
+unchanged and every comparison byte-exact; it was red under `CI=true` and green with `CI` unset
+before the fix, and green under both after. `444-RECORD.md` § Gate has both runs. The removed
+lines below are read from each deleting commit's diff (`git -C agent-qa show <sha>`) and the plan
+summaries, not transcribed from memory. Names are at `e424b0bd0`.
 
 ### What was deleted
 
@@ -5702,7 +5712,7 @@ edited.
 
 ### Gate at the time of writing
 
-The record gate runs on Phase 444's final agent-qa SHA, the commit that adds this section, which
-`.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Final SHA names. Its legs, counts and
-verdict are recorded in that file's § Gate rather than quoted here, so no agent-qa commit follows
-the gate run.
+The record gate runs on Phase 444's final agent-qa SHA, the commit that completes this section,
+which `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Final SHA names. Its legs, counts
+and verdict are recorded in that file's § Gate rather than quoted here, so no agent-qa commit
+follows the gate run.
