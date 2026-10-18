@@ -934,6 +934,30 @@ function calculateFlakyMetrics(classes: ReadonlyArray<RunStatusClass | 'skipped'
   }
 }
 
+// 2026-10-18 (444-31, D-64): a list row's rate is its viewer's own fold; passed and decided are
+// that fold's pass and pass-or-fail counts.
+function passRateOf(trends: {
+  passRate: number | null
+  daily: ReadonlyArray<{ passed: number; failed: number }>
+}): { passRate: number | null; passed: number; decided: number } {
+  return {
+    passRate: trends.passRate,
+    passed: trends.daily.reduce((sum, day) => sum + day.passed, 0),
+    decided: trends.daily.reduce((sum, day) => sum + day.passed + day.failed, 0),
+  }
+}
+
+function lastRunOf(run: RunRow | undefined): {
+  id: string
+  status: string
+  startedAt: string | null
+  createdAt: string
+  duration: number
+} | null {
+  if (!run) return null
+  return { id: run.id, status: run.status, startedAt: run.startedAt, createdAt: run.createdAt, duration: run.duration }
+}
+
 function normalizeSupportedPlatform(value: unknown): SupportedPlatform | null {
   if (value !== 'web' && value !== 'android' && value !== 'ios') return null
   return value
@@ -3496,6 +3520,31 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return { ...t, isFlaky: t.flakyScore >= 0.4 }
       })
       json(res, { tests: result })
+      return
+    }
+
+    // GET /api/analytics/test-summaries — each listed test's rate and last run, as its viewer reads them
+    if (path === '/api/analytics/test-summaries' && req.method === 'GET') {
+      if (!testFileManager) {
+        json(res, { error: 'Test file management not configured' }, 501)
+        return
+      }
+      testFileManager.list()
+        .then((files) => {
+          const tests = files.map((file) => {
+            const test = { ...(file.testId ? { testId: file.testId } : {}), filePath: file.path }
+            const [last] = db.getRunsByTest(test, { limit: 1 })
+            const lastRun = lastRunOf(last)
+            return {
+              path: file.path,
+              testId: file.testId,
+              ...passRateOf(db.getTestTrends(test)),
+              lastRun: lastRun ? { ...lastRun, memberOutcome: last?.memberOutcome ?? null } : null,
+            }
+          })
+          json(res, { tests })
+        })
+        .catch(() => json(res, { error: 'Failed to read run summaries' }, 500))
       return
     }
 

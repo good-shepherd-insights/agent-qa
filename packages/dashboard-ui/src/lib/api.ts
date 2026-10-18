@@ -1141,6 +1141,31 @@ export async function fetchTestAnalytics(
   return request(`/api/analytics/tests/${encodeURIComponent(name)}${query}`)
 }
 
+// 2026-10-18 (444-31, D-64): each list row's rate and last run, as its viewer reads them.
+export interface PassRateCount {
+  passRate: number | null
+  passed: number
+  decided: number
+}
+
+export interface SummaryLastRun {
+  id: string
+  status: string
+  startedAt: string | null
+  createdAt: string
+  duration: number
+}
+
+export interface TestSummary extends PassRateCount {
+  path: string
+  testId: string | null
+  lastRun: (SummaryLastRun & { memberOutcome: string | null }) | null
+}
+
+export async function fetchTestSummaries(): Promise<{ tests: TestSummary[] }> {
+  return request('/api/analytics/test-summaries')
+}
+
 export async function fetchSuiteAnalytics(
   suiteId: string,
   opts?: { limit?: number; offset?: number; from?: string },

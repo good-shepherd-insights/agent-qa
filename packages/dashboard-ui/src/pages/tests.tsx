@@ -51,7 +51,7 @@ import {
   SHARED_TESTS_SUITES_COLUMN_IDS,
 } from "@/pages/tests-suites-table-widths"
 import { ShortcutLegend } from "@/components/shortcut-hints"
-import { deleteTestFile, deniedRunSentences, fetchTestFiles, fetchRuns, purgeCache, triggerRun, type TestFileInfo, type RunRow } from "@/lib/api"
+import { deleteTestFile, deniedRunSentences, fetchTestFiles, fetchTestSummaries, purgeCache, triggerRun, type TestFileInfo, type TestSummary } from "@/lib/api"
 import { memberStatus, runStatusClass } from "@/lib/status"
 import { cn, formatDate } from "@/lib/utils"
 
@@ -61,8 +61,11 @@ interface TestRow {
   testId: string | null
   targetName: string | null
   platform: string | null
+  // 2026-10-18 (444-31, D-64): false while the batch read has not named this file; its rate and
+  // last-run cells stay empty and no status filter lists it.
+  historyKnown: boolean
   lastRunStatus: string | null
-  lastRun: RunRow | null
+  lastRun: TestSummary["lastRun"]
   passRate: number | null
   passCount: number
   completedRunCount: number
@@ -82,13 +85,8 @@ function stripDisplayPrefix(path: string): string {
   return parts.length > 1 ? parts.slice(1).join("/") : parts[0] ?? path
 }
 
-function getRunTimestamp(run: RunRow): string {
-  return run.createdAt || run.startedAt || run.endedAt || ""
-}
-
-interface MemberHistoryEntry {
-  run: RunRow
-  status: string
+function getRunTimestamp(run: TestSummary["lastRun"]): string {
+  return run?.createdAt || run?.startedAt || ""
 }
 
 function getHeaderClassName(columnId: string) {
@@ -204,6 +202,7 @@ const columns: ColumnDef<TestRow>[] = [
       </Button>
     ),
     cell: ({ row }) => {
+      if (!row.original.historyKnown) return null
       if (row.original.passRate === null) {
         return (
           <div className="space-y-0.5 text-right">
@@ -226,7 +225,7 @@ const columns: ColumnDef<TestRow>[] = [
   },
   {
     id: "lastRun",
-    accessorFn: (row) => row.lastRun?.createdAt ?? row.lastRun?.startedAt ?? row.lastRun?.endedAt ?? "",
+    accessorFn: (row) => getRunTimestamp(row.lastRun),
     header: ({ column }) => (
       <div className="flex items-center justify-end">
         <Button
@@ -240,6 +239,7 @@ const columns: ColumnDef<TestRow>[] = [
       </div>
     ),
     cell: ({ row }) => {
+      if (!row.original.historyKnown) return null
       if (!row.original.lastRun) {
         return <span className="block text-sm text-muted-foreground">No runs</span>
       }
@@ -250,25 +250,23 @@ const columns: ColumnDef<TestRow>[] = [
           className="relative z-10 flex w-full flex-col items-end gap-1 rounded-sm text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           onClick={(event) => event.stopPropagation()}
         >
-          <RunStatusBadge status={row.original.lastRunStatus ?? ""} />
+          {row.original.lastRunStatus === null
+            ? <span className="text-muted-foreground">{"\u2014"}</span>
+            : <RunStatusBadge status={row.original.lastRunStatus} />}
           <span className="whitespace-normal break-words text-xs leading-snug text-muted-foreground">
             {formatDate(getRunTimestamp(row.original.lastRun))}
           </span>
         </Link>
       )
     },
-    sortingFn: (rowA, rowB) => {
-      const a = getRunTimestamp(rowA.original.lastRun ?? { createdAt: "", startedAt: null, endedAt: null } as RunRow)
-      const b = getRunTimestamp(rowB.original.lastRun ?? { createdAt: "", startedAt: null, endedAt: null } as RunRow)
-      return a.localeCompare(b)
-    },
+    sortingFn: (rowA, rowB) => getRunTimestamp(rowA.original.lastRun).localeCompare(getRunTimestamp(rowB.original.lastRun)),
   },
 ]
 
 export default function TestsPage() {
   usePageTitle("Tests")
   const [files, setFiles] = useState<TestFileInfo[]>([])
-  const [runs, setRuns] = useState<RunRow[]>([])
+  const [summaries, setSummaries] = useState<Map<string, TestSummary> | null>(null)
   const [targetOptions, setTargetOptions] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [batchLoading, setBatchLoading] = useState(false)
@@ -280,12 +278,19 @@ export default function TestsPage() {
   useEffect(() => {
     let cancelled = false
 
-    Promise.all([fetchTestFiles(), fetchRuns({ limit: 200 })])
-      .then(([filesData, runsData]) => {
+    const summaryRead = fetchTestSummaries()
+      .then((answer) => (Array.isArray(answer?.tests) ? answer.tests : null))
+      .catch(() => null)
+
+    Promise.all([fetchTestFiles(), summaryRead])
+      .then(([filesData, summaryRows]) => {
         if (!cancelled) {
           setFiles(filesData.files)
           setTargetOptions(filesData.targets ?? [])
-          setRuns(runsData.runs)
+          setSummaries(summaryRows === null
+            ? null
+            : new Map(summaryRows.map((summary) => [normalizeTestPath(summary.path), summary])))
+          if (summaryRows === null) toast.error("Failed to load run history")
         }
       })
       .catch(() => {
@@ -319,67 +324,24 @@ export default function TestsPage() {
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const rowRefs = useRef<Array<HTMLTableRowElement | null>>([])
 
-  const data: TestRow[] = useMemo(() => {
-    const historyByExactPath = new Map<string, MemberHistoryEntry[]>()
-    const historyByStrippedPath = new Map<string, MemberHistoryEntry[]>()
-
-    const appendEntry = (map: Map<string, MemberHistoryEntry[]>, key: string, entry: MemberHistoryEntry) => {
-      if (!key) return
-      const current = map.get(key)
-      if (current) {
-        current.push(entry)
-      } else {
-        map.set(key, [entry])
-      }
+  // 2026-10-18 (444-31, D-64): every per-row figure is the server's, over the row's viewer reference.
+  const data: TestRow[] = useMemo(() => files.map((file) => {
+    const summary = summaries?.get(normalizeTestPath(file.path))
+    const lastRun = summary?.lastRun ?? null
+    return {
+      path: file.path,
+      name: file.name,
+      testId: file.testId,
+      targetName: file.targetName,
+      platform: file.platform,
+      historyKnown: summary !== undefined,
+      lastRunStatus: lastRun ? memberStatus(lastRun.status, lastRun.memberOutcome) : null,
+      lastRun,
+      passRate: summary && summary.passRate !== null ? Math.round(summary.passRate * 100) : null,
+      passCount: summary?.passed ?? 0,
+      completedRunCount: summary?.decided ?? 0,
     }
-
-    for (const run of runs) {
-      const seenPaths = new Set<string>()
-      for (const member of run.members ?? []) {
-        if (!member.filePath) continue
-        const status = memberStatus(run.status, member.outcome)
-        if (status === null) continue
-        const exactPath = normalizeTestPath(member.filePath)
-        if (seenPaths.has(exactPath)) continue
-        seenPaths.add(exactPath)
-        const entry = { run, status }
-        appendEntry(historyByExactPath, exactPath, entry)
-        appendEntry(historyByStrippedPath, stripDisplayPrefix(exactPath), entry)
-      }
-    }
-
-    return files.map((file) => {
-      const exactPath = normalizeTestPath(file.path)
-      const history = historyByExactPath.get(exactPath)
-        ?? historyByStrippedPath.get(stripDisplayPrefix(exactPath))
-        ?? []
-      const sortedHistory = [...history].sort((left, right) =>
-        getRunTimestamp(right.run).localeCompare(getRunTimestamp(left.run)),
-      )
-      const decided = sortedHistory.filter((entry) => {
-        const statusClass = runStatusClass(entry.status)
-        return statusClass === "pass" || statusClass === "fail"
-      })
-      const passCount = decided.filter((entry) => runStatusClass(entry.status) === "pass").length
-      const passRate = decided.length > 0
-        ? Math.round((passCount / decided.length) * 100)
-        : null
-      const last = sortedHistory[0] ?? null
-
-      return {
-        path: file.path,
-        name: file.name,
-        testId: file.testId,
-        targetName: file.targetName,
-        platform: file.platform,
-        lastRunStatus: last?.status ?? null,
-        lastRun: last?.run ?? null,
-        passRate,
-        passCount,
-        completedRunCount: decided.length,
-      }
-    })
-  }, [files, runs])
+  }), [files, summaries])
 
   const filteredData = useMemo(() => {
     let result = data
@@ -393,10 +355,10 @@ export default function TestsPage() {
       })
     }
     if (status === "no-runs") {
-      result = result.filter((row) => !row.lastRunStatus)
+      result = result.filter((row) => row.historyKnown && row.lastRun === null)
     } else if (status) {
       const chosen = runStatusClass(status)
-      result = result.filter((row) => chosen !== undefined && runStatusClass(row.lastRunStatus ?? "") === chosen)
+      result = result.filter((row) => row.historyKnown && chosen !== undefined && runStatusClass(row.lastRunStatus ?? "") === chosen)
     }
     if (platform) {
       result = result.filter((row) => row.platform === platform)
