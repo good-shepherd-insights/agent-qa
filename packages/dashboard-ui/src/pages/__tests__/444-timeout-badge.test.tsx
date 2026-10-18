@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter, Route, Routes } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import SuiteViewerPage from "@/pages/suite-viewer"
+import SuitesPage from "@/pages/suites"
+import TestViewerPage from "@/pages/test-viewer"
 import TestsPage from "@/pages/tests"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -14,6 +19,13 @@ vi.mock("@/hooks/use-page-title", () => ({ usePageTitle: () => {} }))
 vi.mock("@/hooks/use-run-config", () => ({
   useRunConfig: () => ({ defaultRunMode: "local", hasFarm: false, isLoading: false }),
 }))
+vi.mock("@/components/monaco-editor", () => ({ MonacoEditor: () => <div /> }))
+vi.mock("@/components/visual-builder", () => ({ VisualBuilder: () => <div /> }))
+vi.mock("@/components/suite-visual-builder", () => ({ SuiteVisualBuilder: () => <div /> }))
+vi.mock("@/components/test-navbar", () => ({ TestNavbar: () => <div /> }))
+vi.mock("@/components/suite-navbar", () => ({ SuiteNavbar: () => <div /> }))
+vi.mock("@/components/pass-rate-chart", () => ({ PassRateChart: () => <div /> }))
+vi.mock("@/components/duration-chart", () => ({ DurationChart: () => <div /> }))
 
 interface Member {
   testId: string | null
@@ -72,7 +84,44 @@ const QUICK = { name: "Quick login", path: "tests/quick-login.yaml", testId: "t_
 const BROKEN = { name: "Broken search", path: "tests/broken-search.yaml", testId: "t_broken" }
 const MENDED = { name: "Mended profile", path: "tests/mended-profile.yaml", testId: "t_mended" }
 
-let served: { tests: unknown[]; runs: Array<ReturnType<typeof run>> } = { tests: [], runs: [] }
+function suiteFile(name: string, path: string, suiteId: string) {
+  return { path, name, suiteId, testCount: 1, platform: "web", modified: "2026-10-17T09:00:00.000Z" }
+}
+
+const SLOW_SUITE = suiteFile("Slow suite", "suites/slow.yaml", "s_slow")
+const QUICK_SUITE = suiteFile("Quick suite", "suites/quick.yaml", "s_quick")
+const BROKEN_SUITE = suiteFile("Broken suite", "suites/broken.yaml", "s_broken")
+const MENDED_SUITE = suiteFile("Mended suite", "suites/mended.yaml", "s_mended")
+
+const VIEWED_TEST = {
+  path: "tests/checkout.yaml",
+  testId: "t_checkout",
+  content: "name: Checkout flow\ntest-id: t_checkout\nsteps:\n  - open the cart\n",
+}
+const VIEWED_SUITE = {
+  path: "suites/nightly.yaml",
+  suiteId: "s_nightly",
+  content: "suite-id: s_nightly\nname: Nightly suite\ntarget: web\ntests:\n  - test: tests/checkout.yaml\n",
+}
+
+let served: {
+  tests: unknown[]
+  suites: unknown[]
+  runs: Array<ReturnType<typeof run>>
+  testAnalyticsRuns: unknown[]
+  suiteAnalyticsRuns: unknown[]
+} = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [] }
+
+function analytics(runs: unknown[]) {
+  return {
+    runs,
+    total: runs.length,
+    trends: { passRate: 0.5, avgDuration: 1000, totalRuns: runs.length, daily: [] },
+    isFlaky: false,
+    flakyScore: 0,
+    scope: { configured: false, predicates: [], scopedCount: 0, totalCount: runs.length },
+  }
+}
 
 function json(body: unknown) {
   return Promise.resolve({ ok: true, status: 200, statusText: "OK", json: () => Promise.resolve(body) })
@@ -81,6 +130,13 @@ function json(body: unknown) {
 function fakeServer(input: string) {
   const url = new URL(input, "http://dashboard.test")
   if (url.pathname === "/api/tests") return json({ files: served.tests, targets: [] })
+  if (url.pathname === "/api/suites") return json({ files: served.suites })
+  if (url.pathname === `/api/tests/${VIEWED_TEST.testId}`) return json(VIEWED_TEST)
+  if (url.pathname === `/api/suites/${VIEWED_SUITE.suiteId}`) return json(VIEWED_SUITE)
+  if (url.pathname.startsWith("/api/analytics/tests/")) return json({ name: "Checkout flow", ...analytics(served.testAnalyticsRuns) })
+  if (url.pathname === `/api/analytics/suites/${VIEWED_SUITE.suiteId}`) {
+    return json({ suiteId: VIEWED_SUITE.suiteId, ...analytics(served.suiteAnalyticsRuns) })
+  }
   if (url.pathname === "/api/runs") {
     const statuses = url.searchParams.getAll("status")
     const runs = statuses.length > 0 ? served.runs.filter((row) => statuses.includes(row.status)) : served.runs
@@ -101,6 +157,9 @@ async function renderPage(path: string) {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route path="/tests" element={<TestsPage />} />
+          <Route path="/suites" element={<SuitesPage />} />
+          <Route path="/test/:t_id" element={<TestViewerPage />} />
+          <Route path="/suite/:suite-id" element={<SuiteViewerPage />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -120,16 +179,36 @@ function listedTests(): string[] {
   return [SLOW, QUICK, BROKEN, MENDED].map((test) => test.name).filter((name) => rowNamed(name) !== undefined)
 }
 
-function lastRunBadge(name: string) {
-  const row = rowNamed(name)
-  expect(row, `a row for ${name}`).toBeTruthy()
-  const badge = row!.querySelector('a[href^="/runs/"] [data-slot="badge"]')
-  expect(badge, `a last-run badge for ${name}`).toBeTruthy()
+function listedSuites(): string[] {
+  return [SLOW_SUITE, QUICK_SUITE, BROKEN_SUITE, MENDED_SUITE].map((suite) => suite.name).filter((name) => rowNamed(name) !== undefined)
+}
+
+function look(badge: Element | null | undefined, what: string) {
+  expect(badge, what).toBeTruthy()
   return { variant: badge!.getAttribute("data-variant"), text: badge!.textContent }
 }
 
+function lastRunBadge(name: string) {
+  const row = rowNamed(name)
+  expect(row, `a row for ${name}`).toBeTruthy()
+  return look(row!.querySelector('a[href^="/runs/"] [data-slot="badge"]'), `a last-run badge for ${name}`)
+}
+
+function runListBadge(runId: string) {
+  const row = container?.querySelector(`a[href="/runs/${runId}"]`)?.closest("tr")
+  expect(row, `a run-list row for ${runId}`).toBeTruthy()
+  return look(row!.querySelector('[data-slot="badge"]'), `a badge in ${runId}'s row`)
+}
+
+const PAGE_FILES = ["tests.tsx", "suites.tsx", "test-viewer.tsx", "suite-viewer.tsx"]
+
+function pageSource(file: string): string {
+  const text = readFileSync(resolve(process.cwd(), "src/pages", file), "utf8")
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1")
+}
+
 beforeEach(() => {
-  served = { tests: [], runs: [] }
+  served = { tests: [], suites: [], runs: [], testAnalyticsRuns: [], suiteAnalyticsRuns: [] }
   vi.stubGlobal("fetch", vi.fn((input: string) => fakeServer(input)))
 })
 
@@ -176,5 +255,75 @@ describe('C444-TIMEOUT-BADGE', () => {
     await renderPage("/tests?status=passed")
 
     expect(listedTests()).toEqual([QUICK.name, MENDED.name])
+  })
+
+  it("the Suites page shows a timed-out last run as a destructive Timed out badge", async () => {
+    served.suites = [SLOW_SUITE, QUICK_SUITE]
+    served.runs = [
+      run("r_slow_suite", "timeout", "2026-10-17T11:00:00.000Z", [member(SLOW, "timeout", SLOW_SUITE.suiteId)]),
+      run("r_quick_suite", "passed", "2026-10-17T10:00:00.000Z", [member(QUICK, "passed", QUICK_SUITE.suiteId)]),
+    ]
+    await renderPage("/suites")
+
+    expect(lastRunBadge(QUICK_SUITE.name)).toEqual({ variant: "default", text: "Passed" })
+    expect(lastRunBadge(SLOW_SUITE.name)).toEqual({ variant: "destructive", text: "Timed out" })
+  })
+
+  it("the Suites page's Failed filter lists a suite whose last run timed out", async () => {
+    served.suites = [SLOW_SUITE, QUICK_SUITE, BROKEN_SUITE]
+    served.runs = [
+      run("r_slow_suite", "timeout", "2026-10-17T11:00:00.000Z", [member(SLOW, "timeout", SLOW_SUITE.suiteId)]),
+      run("r_quick_suite", "passed", "2026-10-17T10:30:00.000Z", [member(QUICK, "passed", QUICK_SUITE.suiteId)]),
+      run("r_broken_suite", "failed", "2026-10-17T10:00:00.000Z", [member(BROKEN, "failed", BROKEN_SUITE.suiteId)]),
+    ]
+    await renderPage("/suites?status=failed")
+
+    expect(listedSuites()).toEqual([SLOW_SUITE.name, BROKEN_SUITE.name])
+  })
+
+  it("the Suites page's Passed filter lists a suite whose last run healed", async () => {
+    served.suites = [SLOW_SUITE, QUICK_SUITE, MENDED_SUITE]
+    served.runs = [
+      run("r_slow_suite", "timeout", "2026-10-17T11:00:00.000Z", [member(SLOW, "timeout", SLOW_SUITE.suiteId)]),
+      run("r_quick_suite", "passed", "2026-10-17T10:30:00.000Z", [member(QUICK, "passed", QUICK_SUITE.suiteId)]),
+      run("r_mended_suite", "healed", "2026-10-17T10:00:00.000Z", [member(MENDED, "healed", MENDED_SUITE.suiteId)]),
+    ]
+    await renderPage("/suites?status=passed")
+
+    expect(listedSuites()).toEqual([QUICK_SUITE.name, MENDED_SUITE.name])
+  })
+
+  it("the test viewer shows a timed-out member outcome as a destructive Timed out badge", async () => {
+    const viewed = { name: "Checkout flow", path: VIEWED_TEST.path, testId: VIEWED_TEST.testId }
+    served.testAnalyticsRuns = [
+      { ...run("r_view_timeout", "timeout", "2026-10-17T12:00:00.000Z", [member(viewed, "timeout")]), memberOutcome: "timeout" },
+      { ...run("r_view_passed", "passed", "2026-10-17T11:00:00.000Z", [member(viewed, "passed")]), memberOutcome: "passed" },
+    ]
+    await renderPage(`/test/${VIEWED_TEST.testId}`)
+
+    expect(runListBadge("r_view_passed")).toEqual({ variant: "default", text: "Passed" })
+    expect(runListBadge("r_view_timeout")).toEqual({ variant: "destructive", text: "Timed out" })
+  })
+
+  it("the suite viewer shows a timed-out run as a destructive Timed out badge", async () => {
+    served.suiteAnalyticsRuns = [
+      { id: "r_nightly_timeout", status: "timeout", duration: 1000, createdAt: "2026-10-17T12:00:00.000Z", source: "suite" },
+      { id: "r_nightly_passed", status: "passed", duration: 1000, createdAt: "2026-10-17T11:00:00.000Z", source: "suite" },
+    ]
+    await renderPage(`/suite/${VIEWED_SUITE.suiteId}`)
+
+    expect(runListBadge("r_nightly_passed")).toEqual({ variant: "default", text: "Passed" })
+    expect(runListBadge("r_nightly_timeout")).toEqual({ variant: "destructive", text: "Timed out" })
+  })
+
+  it("no page keeps its own status badge switch", () => {
+    for (const file of PAGE_FILES) {
+      const source = pageSource(file)
+      expect(source.length, `${file} has source`).toBeGreaterThan(0)
+      expect(source, `${file} imports RunStatusBadge`).toMatch(/import \{[^}]*\bRunStatusBadge\b[^}]*\} from "@\/components\/run-status-badge"/)
+      expect(source, `${file} switches over status words`).not.toMatch(/^\s*case "(passed|timeout)":/m)
+      expect(source, `${file} copies the palette's success class`).not.toContain("bg-emerald-500/15")
+      expect(source, `${file} copies the palette's running class`).not.toContain("bg-blue-500/15")
+    }
   })
 })

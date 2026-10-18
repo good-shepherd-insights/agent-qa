@@ -242,7 +242,7 @@ describe("C444-SUITE-HISTORY", () => {
     await renderPage("/suites")
 
     expect(historyOf("Checkout suite")).toEqual({ passRate: "100%1/1", lastRunHref: "/runs/r_span", lastStatus: expect.stringContaining("Healed") })
-    expect(historyOf("Account suite")).toEqual({ passRate: "50%1/2", lastRunHref: "/runs/r_later", lastStatus: expect.stringContaining("timeout") })
+    expect(historyOf("Account suite")).toEqual({ passRate: "50%1/2", lastRunHref: "/runs/r_later", lastStatus: expect.stringContaining("Timed out") })
     expect(historyOf("Idle suite").lastRunHref).toBeNull()
   })
 })
