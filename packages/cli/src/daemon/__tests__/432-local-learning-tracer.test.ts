@@ -404,8 +404,18 @@ describe('432 local headless learning through the existing worker path (D-03, D-
       expect.objectContaining({ type: 'proposed-supersession-of', targetId: victimId }),
     )
     expect(relations).not.toContainEqual(expect.objectContaining({ type: 'supersedes' }))
-    expect(bundles(project).map(({ manifest }) => manifest.id).sort())
-      .toEqual([victimId, siblingId].sort())
+    // 2026-10-18 (444-20, D-58): the proposed correction is its own candidate. It never lands on
+    // the victim's id, so the victim carries no relation to itself.
+    const proposals = bundles(project)
+      .filter(({ manifest }) => manifest.id !== victimId && manifest.id !== siblingId)
+    expect(proposals.map((bundle) => ({
+      status: deriveBundleTrust(bundle).status,
+      proposedOf: bundle.relations.relations
+        .filter(({ type }) => type === 'proposed-supersession-of')
+        .map(({ targetId }) => targetId),
+    }))).toEqual([{ status: 'candidate', proposedOf: [victimId] }])
+    expect(victim.relations.relations)
+      .not.toContainEqual(expect.objectContaining({ type: 'proposed-supersession-of' }))
 
     const served = nextBriefIds(project)
     expect(served).toContain(victimId)
