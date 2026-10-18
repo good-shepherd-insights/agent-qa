@@ -4,7 +4,7 @@ import { generateSuiteId } from '@vostride/agent-qa-ids'
 import { parse as parseYaml } from 'yaml'
 import { discoverWorkspaceFiles, resolveWorkspaceFileTarget, SuiteDefinitionSchema } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, SuiteDefinition } from '@vostride/agent-qa-core'
-import { withIdLine, type TestFileManager } from './test-file-manager.js'
+import { idWriteText, presentText, type TestFileManager } from './test-file-manager.js'
 import { createPathLock, replaceFileAtomic } from './replace-file-atomic.js'
 
 interface SuiteFileInfo {
@@ -49,14 +49,11 @@ export class SuiteFileManager {
           let suiteId: string | null = null
           const take = (content: string): string | null => {
             const parsed = parseYaml(content)
-            // 2026-10-18 (444-36, D-67): a blank name falls back, and the id is read from its own line.
-            const blankName = typeof parsed?.name === 'string' && parsed.name.trim() === ''
-            suiteName = parsed?.name && !blankName ? parsed.name : basename(record.workspaceRelativePath)
+            // 2026-10-19 (444-37, D-68): name, platform and id come from the parsed mapping, and a blank value is no value.
+            suiteName = presentText(parsed?.name) ?? basename(record.workspaceRelativePath)
             testCount = Array.isArray(parsed?.tests) ? parsed.tests.length : 0
-            platform = parsed?.config?.platform ?? null
-            const suiteIdMatch = content.match(/^suite-id:[ \t]*(\S.*)$/m)
-            const id = suiteIdMatch ? suiteIdMatch[1].trim().replace(/^["'](.*)["']$/, '$1') : null
-            return id === null || id.trim() === '' ? null : id
+            platform = presentText(parsed?.config?.platform)
+            return presentText(parsed?.['suite-id'])
           }
           try {
             suiteId = take(await readFile(record.absolutePath, 'utf-8'))
@@ -68,7 +65,9 @@ export class SuiteFileManager {
                 // 2026-10-18 (444-35, IN-20): an empty file may be an outside save mid-write; it is never minted.
                 if (content.trim() === '') return current
                 const minted = generateSuiteId()
-                await replaceFileAtomic(record.absolutePath, withIdLine(content, 'suite-id', minted))
+                const next = idWriteText(content, 'suite-id', minted)
+                if (next === null) return current
+                await replaceFileAtomic(record.absolutePath, next)
                 return minted
               })
             }

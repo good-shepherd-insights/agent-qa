@@ -7,7 +7,12 @@ import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension,
 import { isRunStatusWord, memberOutcomeClass, runStatusClass, type RunStatusClass } from '../db/run-status-class.js'
 import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
-import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
+import {
+  extractTestFileMetadata,
+  targetsForMarkerCheck,
+  type SupportedPlatform,
+  type TestFileManager,
+} from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import { readConfigValues, type ConfigManager } from '../config/index.js'
 import { holdsShownMarker } from '../config/config-manager.js'
@@ -3430,7 +3435,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: 'Both path and content are required' }, 400)
             return
           }
-          if (refusedShownMarkerTarget(res, extractTestFileMetadata(body.content).targetName)) return
+          if (refusedShownMarkerTarget(res, targetsForMarkerCheck(body.content))) return
           const validation = await testFileManager.validate(body.content)
           if (!validation.valid) {
             json(res, { error: 'invalid_test_file', errors: validation.errors }, 400)
@@ -3487,7 +3492,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             json(res, { error: 'Content is required' }, 400)
             return
           }
-          if (refusedShownMarkerTarget(res, extractTestFileMetadata(body.content).targetName)) return
+          if (refusedShownMarkerTarget(res, targetsForMarkerCheck(body.content))) return
           const found = await testFileManager.findByTestId(tId)
           if (!found) {
             notFound(res, 'Test not found')
