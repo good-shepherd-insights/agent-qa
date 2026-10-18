@@ -320,9 +320,10 @@ function judgeCandidates(elements: unknown[]): unknown {
 }
 
 // In-page, in the parent frame: projects a box from a child frame's viewport through its frame
-// element into the parent's viewport, or null when it cannot be judged: a transform or zoom on the
-// frame element or a flat-tree ancestor, an empty result after the content box, clipping ancestors
-// and the viewport, or a hit test at its centre that lands on anything but the frame element.
+// element into the parent's viewport, or null when it cannot be judged: a frame element whose
+// computed visibility is not `visible`, opacity 0 or a transform or zoom on the frame element or a
+// flat-tree ancestor, an empty result after the content box, clipping ancestors and the viewport,
+// or a hit test at its centre that lands on anything but the frame element.
 // Its flat-tree walk and clip rules are a copy of judgeCandidates', without the positioned skip.
 function projectThroughFrame(frameElement: unknown, box: ProbeBox): unknown {
   const g = globalThis as any
@@ -335,6 +336,10 @@ function projectThroughFrame(frameElement: unknown, box: ProbeBox): unknown {
   const clips = (node: any): boolean => {
     const style = g.getComputedStyle(node)
     return style.overflowX !== 'visible' || style.overflowY !== 'visible'
+  }
+  if (g.getComputedStyle(el).visibility !== 'visible') return null
+  for (let n = el; n; n = parentOf(n)) {
+    if (g.getComputedStyle(n).opacity === '0') return null
   }
   for (let n = el; n; n = parentOf(n)) {
     const style = g.getComputedStyle(n)
