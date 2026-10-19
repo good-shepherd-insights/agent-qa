@@ -177,8 +177,9 @@ describe('agent job store: schema version (D-04)', () => {
       // chain that really never terminated. 4 is 425's durable start instant. Widening would not
       // print a wrong duration here (a null start drops both duration clauses); the database is
       // refused because D-04 admits no ALTER-on-open path, and without the gate the first
-      // statement naming the missing column would fail with a bare SQLite error instead.
-      expect(AGENT_JOB_STORE_USER_VERSION).toBe(4)
+      // statement naming the missing column would fail with a bare SQLite error instead. 5 is
+      // 444.1's retry not-before time, refused for the same reason.
+      expect(AGENT_JOB_STORE_USER_VERSION).toBe(5)
     } finally {
       store.close()
     }
@@ -232,8 +233,8 @@ describe('agent job store: schema version (D-04)', () => {
     const before = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
     before.exec('PRAGMA user_version=7')
     before.exec(
-      "INSERT INTO jobs VALUES ('job_x','analyze-run','k','queued','s','{}',0,NULL,'t','t'," +
-        'NULL,NULL,NULL,NULL)',
+      'INSERT INTO jobs (id, kind, idempotency_key, status, summary, payload, attempts, ' +
+        "created_at, updated_at) VALUES ('job_x','analyze-run','k','queued','s','{}',0,'t','t')",
     )
     before.close()
 
@@ -1509,5 +1510,141 @@ describe('agent job store: durable start instant (425-13, PXH-RUN-03)', () => {
       requeued?.started_at,
       'a requeued row starts a new queue life; keeping the start would time one that no longer exists',
     ).toBeNull()
+  })
+})
+
+describe('C444.1-RETRY-BACKOFF', () => {
+  const T0 = Date.parse('2026-01-01T00:00:00.000Z')
+  let root: string
+  let offsetMs: number
+  let store: SqliteJobStore
+  let fence: JobStoreFence
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-backoff-'))
+    offsetMs = 0
+    store = openStore(root, { now: () => new Date(T0 + offsetMs).toISOString() })
+    fence = await store.adoptEpoch(1)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('a claim skips a retrying row until its not-before time and then claims it', async () => {
+    await store.enqueue(insert('job_a', 'key-a'))
+    await store.enqueue(insert('job_b', 'key-b'))
+    const first = await store.claimNext(fence)
+    expect(first.claimed && String(first.job.id)).toBe('job_a')
+    await store.recordFailure(
+      asJobId('job_a'),
+      { kind: 'retry', reason: 'provider timed out', retryAfterMs: 1000 },
+      fence,
+    )
+
+    offsetMs = 999
+    const skipped = await store.claimNext(fence)
+    expect(
+      skipped.claimed && String(skipped.job.id),
+      'job_a is inside its backoff, so the younger row is offered',
+    ).toBe('job_b')
+    expect(await store.claimNext(fence, { excludeKinds: ['curate-memory'] })).toEqual({
+      claimed: false,
+    })
+    expect(rawRow(root, 'job_a')).toMatchObject({
+      status: 'queued',
+      claimed_at: null,
+      attempts: 1,
+      not_before: '2026-01-01T00:00:01.000Z',
+    })
+
+    offsetMs = 1000
+    expect(await store.claimNext(fence)).toMatchObject({
+      claimed: true,
+      job: { id: 'job_a', attempts: 2 },
+    })
+
+    await store.recordFailure(
+      asJobId('job_a'),
+      { kind: 'retry', reason: 'provider timed out', retryAfterMs: 60_000 },
+      fence,
+    )
+    await store.recordFailure(asJobId('job_a'), { kind: 'permanent', reason: 'gave up' }, fence)
+    expect(await store.requeueTerminal(asJobId('job_a'), fence)).toEqual({ outcome: 'requeued' })
+    expect(rawRow(root, 'job_a')?.not_before, 'the operator requeue clears the backoff').toBeNull()
+    expect(await store.claimNext(fence)).toMatchObject({
+      claimed: true,
+      job: { id: 'job_a', attempts: 1 },
+    })
+  })
+
+  it('a row whose not-before time is now is claimable', async () => {
+    await store.enqueue(insert('job_a', 'key-a'))
+    await store.claimNext(fence)
+    offsetMs = 250
+    await store.recordFailure(
+      asJobId('job_a'),
+      { kind: 'retry', reason: 'transient', retryAfterMs: 500 },
+      fence,
+    )
+    expect(rawRow(root, 'job_a')?.not_before).toBe('2026-01-01T00:00:00.750Z')
+
+    offsetMs = 749
+    expect(await store.claimNext(fence)).toEqual({ claimed: false })
+    expect(await store.claimNext(fence, { excludeKinds: ['curate-memory'] })).toEqual({
+      claimed: false,
+    })
+
+    offsetMs = 750
+    expect(await store.claimNext(fence, { excludeKinds: ['curate-memory'] })).toMatchObject({
+      claimed: true,
+      job: { id: 'job_a', attempts: 2 },
+    })
+  })
+
+  it('a job store written at version 4 is refused by name', () => {
+    const versionFour = mkdtempSync(join(tmpdir(), 'agent-qa-job-v4-'))
+    try {
+      const raw = new DatabaseSync(join(versionFour, AGENT_JOB_STORE_DB_FILE))
+      raw.exec(
+        `CREATE TABLE jobs (
+           id TEXT PRIMARY KEY, kind TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+           status TEXT NOT NULL, summary TEXT NOT NULL, payload TEXT NOT NULL,
+           attempts INTEGER NOT NULL, claimed_at TEXT, created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL, last_failure_kind TEXT, last_failure_reason TEXT,
+           cancel_requested_at TEXT, started_at TEXT
+         )`,
+      )
+      raw.exec('PRAGMA user_version=4')
+      raw.close()
+
+      let thrown: unknown
+      try {
+        openStore(versionFour).close()
+      } catch (error) {
+        thrown = error
+      }
+
+      expect(thrown).toBeInstanceOf(JobStoreSchemaVersionError)
+      expect((thrown as JobStoreSchemaVersionError).observedVersion).toBe(4)
+      expect((thrown as JobStoreSchemaVersionError).expectedVersion).toBe(5)
+      expect((thrown as Error).message).toContain('clear agent job queue state')
+
+      const after = new DatabaseSync(join(versionFour, AGENT_JOB_STORE_DB_FILE))
+      try {
+        expect(Number(after.prepare('PRAGMA user_version').get()?.user_version)).toBe(4)
+        const columns = after
+          .prepare('PRAGMA table_info(jobs)')
+          .all()
+          .map((column) => String(column.name))
+        expect(columns).toContain('started_at')
+        expect(columns).not.toContain('not_before')
+      } finally {
+        after.close()
+      }
+    } finally {
+      rmSync(versionFour, { recursive: true, force: true })
+    }
   })
 })

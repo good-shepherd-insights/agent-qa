@@ -243,7 +243,7 @@ describe('bounded retry (D-18)', () => {
     expect(recordFailureCalls).toEqual([
       [
         enqueued.job.id,
-        { kind: 'retry', reason: 'handler-threw: synthetic engine crash' },
+        { kind: 'retry', reason: 'handler-threw: synthetic engine crash', retryAfterMs: 125 },
         fence,
       ],
     ])
@@ -252,6 +252,48 @@ describe('bounded retry (D-18)', () => {
       claimed: false,
       attempts: 1,
     })
+  })
+})
+
+describe('C444.1-RETRY-BACKOFF', () => {
+  it('a retry hands the store the backoff it reports', async () => {
+    let calls = 0
+    const harness = await harnessFor([
+      declaration({
+        maxAttempts: 3,
+        backoff: { kind: 'exponential', initialDelayMs: 125, factor: 2, maxDelayMs: 1_000 },
+        handler: async () => {
+          calls += 1
+          if (calls === 1) throw new Error('synthetic engine crash')
+          return { status: 'retryable', reason: 'transient' }
+        },
+      }),
+    ])
+    const enqueued = await harness.queue.enqueue('analyze-run', {}, 'key')
+
+    const thrown = await harness.queue.runNextJob({ fence: harness.fence })
+    const returned = await harness.queue.runNextJob({ fence: harness.fence })
+
+    expect(thrown).toMatchObject({ disposition: 'retry-scheduled', retryDelayMs: 125 })
+    expect(returned).toMatchObject({ disposition: 'retry-scheduled', retryDelayMs: 250 })
+    expect(harness.store.failureDispositions()).toEqual([
+      {
+        jobId: String(enqueued.job.id),
+        disposition: {
+          kind: 'retry',
+          reason: 'handler-threw: synthetic engine crash',
+          retryAfterMs: (thrown as { retryDelayMs: number }).retryDelayMs,
+        },
+      },
+      {
+        jobId: String(enqueued.job.id),
+        disposition: {
+          kind: 'retry',
+          reason: 'transient',
+          retryAfterMs: (returned as { retryDelayMs: number }).retryDelayMs,
+        },
+      },
+    ])
   })
 })
 

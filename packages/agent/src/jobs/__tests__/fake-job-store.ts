@@ -54,6 +54,7 @@ export interface FakeJobStore extends JobStorePort {
   callCount(verb: 'recordFailure' | 'failAndChain'): number
   /** What each claimNext call received as its options argument, in call order. */
   claimNextCalls(): readonly (ClaimNextOptions | undefined)[]
+  failureDispositions(): readonly { jobId: string; disposition: JobFailureDisposition }[]
 }
 
 /** The three statuses a job never leaves. A cancel arriving at one of them changes nothing. */
@@ -63,6 +64,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
   const rows = new Map<string, Row>()
   const published: { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[] = []
   const claimNextCallLog: (ClaimNextOptions | undefined)[] = []
+  const failureLog: { jobId: string; disposition: JobFailureDisposition }[] = []
   const callCounts = {
     recordFailure: 0,
     failAndChain: 0,
@@ -134,6 +136,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
     checkpoints: () => published.map((entry) => ({ ...entry })),
     callCount: (verb) => callCounts[verb],
     claimNextCalls: () => [...claimNextCallLog],
+    failureDispositions: () => failureLog.map((entry) => ({ ...entry })),
 
     async adoptEpoch(next: number): Promise<JobStoreFence> {
       if (next < epoch) throw new StaleJobStoreEpochError(next, epoch)
@@ -210,6 +213,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
     ): Promise<void> {
       callCounts.recordFailure += 1
       requireFence(fence)
+      failureLog.push({ jobId: String(jobId), disposition: { ...disposition } })
       const row = requireRow(jobId)
       row.claimed = false
       row.updatedAt = clock.now()
