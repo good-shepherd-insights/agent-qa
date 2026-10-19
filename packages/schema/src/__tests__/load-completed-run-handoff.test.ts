@@ -503,3 +503,62 @@ describe('C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plan
     expect(guardCompletedRunHandoff(makeValidHandoff())).not.toHaveProperty('plannerLimits')
   })
 })
+
+// 2026-10-19 (444.1-08, D-14): a healed sub-action's dispatch pair is checked where it is loaded.
+describe('C444.1-DISPATCH-PAIR', () => {
+  const saveElement = {
+    ref: 'e3',
+    role: 'button',
+    name: 'Save',
+    nameNormalized: 'save',
+    labels: {},
+    attributes: {},
+  }
+  const dispatchState = {
+    platform: 'web',
+    url: 'https://shop.example/editor',
+    tree: 'button Save',
+    elements: [saveElement],
+    refMap: {},
+    timestamp: 0,
+    metadata: {},
+  }
+
+  function healedHandoff(healedDispatch?: unknown): Record<string, unknown> {
+    const subAction = {
+      plan: 'Save the record',
+      plannedAction: { type: 'click', ref: 'e2' },
+      stateBefore: { ...dispatchState, elements: [{ ...saveElement, ref: 'e2' }] },
+      result: { success: true },
+      ...(healedDispatch === undefined ? {} : { healedDispatch }),
+    }
+    const step = { ...(makeStepWithRung() as Record<string, unknown>), subActions: [subAction] }
+    const handoff = makeHandoffWithStep()
+    const [test] = handoff.tests as Record<string, unknown>[]
+    return { ...handoff, tests: [{ ...test, steps: [step] }] }
+  }
+
+  it('the loader refuses a healed sub-action whose dispatch pair is malformed', () => {
+    const malformed: readonly unknown[] = [
+      { action: 'click', stateBefore: {} },
+      null,
+      { action: [], stateBefore: dispatchState },
+      { stateBefore: dispatchState },
+      { action: { type: 'click', ref: 'e3' } },
+      { action: { type: 'click', ref: 'e3' }, stateBefore: { ...dispatchState, url: 7 } },
+      { action: { type: 'click', ref: 'e3' }, stateBefore: { ...dispatchState, elements: [{}] } },
+      { action: { type: 'click', ref: 'e3' }, stateBefore: { ...dispatchState, elements: undefined } },
+    ]
+    for (const healedDispatch of malformed) {
+      expect(() => guardCompletedRunHandoff(healedHandoff(healedDispatch))).toThrow(
+        /failed structural validation/,
+      )
+    }
+
+    const pair = { action: { type: 'click', ref: 'e3' }, stateBefore: dispatchState }
+    const loaded = guardCompletedRunHandoff(healedHandoff(pair))
+    expect(loaded.tests[0]?.steps[0]?.subActions[0]).toHaveProperty('healedDispatch', pair)
+    const unhealed = guardCompletedRunHandoff(healedHandoff())
+    expect(unhealed.tests[0]?.steps[0]?.subActions[0]).not.toHaveProperty('healedDispatch')
+  })
+})
