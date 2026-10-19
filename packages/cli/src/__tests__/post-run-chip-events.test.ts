@@ -32,6 +32,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
+import { createPostRunChipEmitter } from '../curation/post-run-chip-emitter.js'
 import {
   digestFetchCommand,
   renderPostProcessingSummaryLine,
@@ -799,5 +800,29 @@ describe('the user-facing post-run lines (D-07 / D-08 / D-09)', () => {
     expect(source).toContain('RUNS_POST_PROCESSING_FUNCTION_ID')
     // The CLI never reads `agent-jobs.db` for status — that is the op's job and only the op's.
     expect(source).not.toMatch(/sqlite|DatabaseSync|agent-jobs\.db/u)
+  })
+})
+
+describe('C444.1-INTERRUPTED', () => {
+  it('an interrupted stage emits no failure chip', () => {
+    const f = fixture()
+    const emitter = createPostRunChipEmitter({
+      agentQaRoot: f.agentQaRoot,
+      runId: RUN_ID,
+      chainJobIds: ['job-analyze', 'job-curate', 'job-propose'],
+      now: () => f.clock.value,
+    })
+
+    emitter.observe({
+      ran: true,
+      disposition: 'interrupted',
+      handlerInvoked: true,
+      job: { id: 'job-analyze', kind: 'analyze-run' },
+      reason: 'handler-threw: the model request was aborted',
+    })
+
+    const appended = readEvents(f.eventsPath).slice(FIXTURE_EVENT_LINES.length)
+    expect(appended.map((event) => event.type)).toEqual(['analysisStarted'])
+    expect(emitter.emitted()).toBe(1)
   })
 })
