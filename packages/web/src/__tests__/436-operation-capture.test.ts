@@ -668,11 +668,17 @@ describe('C436-DOWNLOAD-CAPTURE', () => {
 
   it('a non-activation action does not wait for a download', async () => {
     const web = await open()
-    const started = performance.now()
+    const capture = captureOf(web) as unknown as { waitForSignal: (ms: number) => Promise<void> }
+    const wait = vi.spyOn(capture, 'waitForSignal')
     const result = await web.execute({ type: 'delay', ms: 0 })
     expect(result.success).toBe(true)
-    expect(performance.now() - started).toBeLessThan(DOWNLOAD_START_GRACE_MS)
     expect(result.metadata?.['download']).toBeUndefined()
+    expect(wait).not.toHaveBeenCalled()
+
+    const clicked = await web.execute({ type: 'click', ref: await refFor(web, 'button', 'Do nothing') })
+    expect(clicked.metadata?.['download']).toBeUndefined()
+    expect(wait).toHaveBeenCalled()
+    wait.mockRestore()
   }, 60_000)
 })
 
