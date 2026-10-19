@@ -420,7 +420,7 @@ describe('doctor command', () => {
 
     expect(mockResolveLLMAuth).toHaveBeenCalledWith('default', expect.objectContaining({
       provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5-5',
     }))
   })
 

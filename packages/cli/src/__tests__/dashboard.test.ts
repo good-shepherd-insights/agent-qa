@@ -273,7 +273,7 @@ describe('createDashboardCommand', () => {
       expect.objectContaining({
         llmConfig: expect.objectContaining({
           provider: 'anthropic-subscription',
-          model: 'claude-sonnet-4-6',
+          model: 'claude-sonnet-5-5',
         }),
       }),
     )

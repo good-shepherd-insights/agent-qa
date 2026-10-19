@@ -237,11 +237,11 @@ describe('resolveLLMModels', () => {
     expect(resolved.configName).toBe('')
     expect(resolved.planner).toEqual({
       provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5-5',
     })
     expect(resolved.verifier).toEqual({
       provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5-5',
     })
   })
 
@@ -259,8 +259,8 @@ describe('resolveLLMModels', () => {
     })
 
     expect(resolved.configName).toBe('')
-    expect(resolved.planner.model).toBe('claude-sonnet-4-6')
-    expect(resolved.verifier.model).toBe('claude-sonnet-4-6')
+    expect(resolved.planner.model).toBe('claude-sonnet-5-5')
+    expect(resolved.verifier.model).toBe('claude-sonnet-5-5')
   })
 
   it('preserves explicit named model configs', () => {
