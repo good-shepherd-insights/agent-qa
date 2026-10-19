@@ -282,6 +282,7 @@ const ORACLE_PAGE = `<!DOCTYPE html>
   <button id="forge-copy" onclick="claim('SECRET-COPY')">Forge copy</button>
   <script>
     const claim = (text) => window[${JSON.stringify(CLIPBOARD_BINDING)}]({ via: 'writeText', text })
+      .then(() => { window.__acked = (window.__acked || 0) + 1 })
     function forgeThousand() {
       for (let i = 0; i < 1000; i++) claim('PIN-' + String(i).padStart(3, '0'))
     }
@@ -1586,6 +1587,12 @@ describe('C436-CLIPBOARD-ORACLE', () => {
 
   it('a thousand forged claims in one action confirm nothing', async () => {
     const web = await holding('PIN-417')
+    const capture = captureOf(web)
+    const collect = capture.collect.bind(capture)
+    vi.spyOn(capture, 'collect').mockImplementation(async () => {
+      await web.getPage()!.waitForFunction('window.__acked === 1000')
+      return collect()
+    })
     const result = await click(web, 'Forge thousand')
 
     const expected = Array.from({ length: 8 }, (_, i) => unavailable(`PIN-${String(992 + i)}`))
