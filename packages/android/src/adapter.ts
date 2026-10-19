@@ -319,7 +319,7 @@ return (function() {
   var active = doc.activeElement;
 
   var all = doc.querySelectorAll(
-    'a, button, input, textarea, select, h1, h2, h3, h4, h5, h6, img[alt], [role], [contenteditable="true"]'
+    'a, button, input, textarea, select, h1, h2, h3, h4, h5, h6, img[alt], [role], [contenteditable]:not([contenteditable="false"])'
   );
 
   var nodes = [];
