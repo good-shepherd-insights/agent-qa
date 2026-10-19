@@ -47,7 +47,12 @@ export type { FsEvidenceArtifactStoreConfig } from './evidence-artifact-store.js
 // Phase 363 D-08 / Q10 — the sharp screenshot compressor behind the runner ScreenshotCompressor
 // port (sharp's host-adapter home; banned in the storage-neutral runner). `alignToWindow` /
 // `getImageDimensions` are host-side sharp utilities the mobile adapters call directly.
-export { SharpScreenshotCompressor, alignToWindow, getImageDimensions } from './screenshot-compressor.js'
+export {
+  SharpScreenshotCompressor,
+  alignToWindow,
+  flattenOntoWhite,
+  getImageDimensions,
+} from './screenshot-compressor.js'
 export type {
   AlignOptions,
   CompressOptions,

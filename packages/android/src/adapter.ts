@@ -801,7 +801,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     } else {
       try { await this.ensureContext('NATIVE_APP') } catch { /* best-effort */ }
     }
-    const buf = await this.captureScreenshot()
+    let buf = await this.captureScreenshot()
     if (buf && this.driver) {
       // D-19 / D-20 (Phase 138.1.1): Android screenshot dims differ from getWindowSize() on WebView
       // (1080x2274 image vs 411x810 viewport — ~6% vertical AR drift from URL bar, per D-13/D-14).
@@ -809,7 +809,10 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       // scaling code — coords are viewport-space identity. Log kept for diagnostics.
       try {
         // 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core).
-        const { getImageDimensions } = await import('@vostride/agent-qa-runner-local')
+        const { flattenOntoWhite, getImageDimensions } =
+          await import('@vostride/agent-qa-runner-local')
+        // D-12 (#567): a WebView page's unset background is transparent, and black once in JPEG.
+        if (this.activeWebContext) buf = await flattenOntoWhite(buf)
         const dims = await getImageDimensions(buf)
         const { width } = await this.driver.getWindowSize()
         if (dims && Math.abs(dims.width - width) > 1) {

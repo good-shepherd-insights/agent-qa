@@ -156,3 +156,9 @@ export async function getImageDimensions(buffer: Buffer): Promise<ImageDimension
   if (!meta.width || !meta.height) return undefined
   return { width: meta.width, height: meta.height }
 }
+
+export async function flattenOntoWhite(buffer: Buffer): Promise<Buffer> {
+  const meta = await sharp(buffer).metadata()
+  if (!meta.hasAlpha) return buffer
+  return sharp(buffer).flatten({ background: '#ffffff' }).png().toBuffer()
+}
