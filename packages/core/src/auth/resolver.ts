@@ -9,18 +9,24 @@ interface LLMAuthConfig {
   providerHeaders?: Record<string, string>
 }
 
-function missingMessage(provider: string, plugin?: LLMAuthProviderPlugin): string {
+const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
+
+function missingMessage(configName: string, provider: string, plugin?: LLMAuthProviderPlugin): string {
   if (plugin) {
-    return `Authenticate "${plugin.label}" for this config before testing.`
+    return `Sign in to "${plugin.label}" for the "${configName}" config: agent-qa auth login --config ${configName}`
   }
 
+  const setKey = `agent-qa auth set --config ${configName} --type api-key`
   switch (provider) {
     case 'gemini':
-      return 'Save a Gemini API key for this config before testing.'
+      return `Save a Gemini API key for the "${configName}" config: ${setKey}`
     case 'openai-compatible':
-      return 'Save an API key for this config before testing.'
+      return `Save an API key for the "${configName}" config: ${setKey}`
     case 'anthropic-compatible':
-      return 'Save an API key or bearer token for this config before testing.'
+      return `Save an API key for the "${configName}" config: ${setKey} (or --type bearer-token)`
+    case 'openai-subscription':
+    case 'anthropic-subscription':
+      return `Provider "${provider}" needs the subscription-auth plugin: npm install -D ${SUBSCRIPTION_AUTH_PACKAGE}, and declare it under plugins.auth in agent-qa.config.yaml`
     default:
       return `Provider "${provider}" requires an auth plugin.`
   }
@@ -63,7 +69,7 @@ function missing(configName: string, provider: string, plugin?: LLMAuthProviderP
     credentialKey: configName,
     provider,
     required: true,
-    message: missingMessage(provider, plugin),
+    message: missingMessage(configName, provider, plugin),
   }
 }
 

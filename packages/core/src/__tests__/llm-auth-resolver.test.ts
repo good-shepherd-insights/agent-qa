@@ -127,7 +127,7 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'openai-subscription',
       required: true,
-      message: 'Authenticate "OpenAI subscription" for this config before testing.',
+      message: 'Sign in to "OpenAI subscription" for the "planner" config: agent-qa auth login --config planner',
     })
   })
 
@@ -217,7 +217,7 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'gemini',
       required: true,
-      message: 'Save a Gemini API key for this config before testing.',
+      message: 'Save a Gemini API key for the "planner" config: agent-qa auth set --config planner --type api-key',
     })
   })
 
@@ -248,14 +248,14 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'openai-subscription',
       required: true,
-      message: 'Authenticate "OpenAI subscription" for this config before testing.',
+      message: 'Sign in to "OpenAI subscription" for the "planner" config: agent-qa auth login --config planner',
     })
     expect(anthropicResult).toEqual({
       kind: 'missing',
       credentialKey: 'planner',
       provider: 'anthropic-subscription',
       required: true,
-      message: 'Authenticate "Anthropic subscription" for this config before testing.',
+      message: 'Sign in to "Anthropic subscription" for the "planner" config: agent-qa auth login --config planner',
     })
   })
 
@@ -288,14 +288,14 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'anthropic-subscription',
       required: true,
-      message: 'Authenticate "Anthropic subscription" for this config before testing.',
+      message: 'Sign in to "Anthropic subscription" for the "planner" config: agent-qa auth login --config planner',
     })
     expect(openAIResult).toEqual({
       kind: 'missing',
       credentialKey: 'planner',
       provider: 'openai-subscription',
       required: true,
-      message: 'Authenticate "OpenAI subscription" for this config before testing.',
+      message: 'Sign in to "OpenAI subscription" for the "planner" config: agent-qa auth login --config planner',
     })
   })
 
