@@ -13824,6 +13824,24 @@
       "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
       "fullName": "C436-SCROLL-FRAMES a slow but healthy frame on screen is found at zero swipes",
       "origin": "444.1 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a clipped field focused beyond its observed bounds is refused as moved, and the re-observed fill types once",
+      "origin": "444.1 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-FILL-NATIVE a moved field fill planned twice types nothing either time",
+      "origin": "444.1 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
+      "fullName": "C437-CLEAR a clear whose field moved after the tap clears nothing",
+      "origin": "444.1 D-07"
     }
   ]
 }
