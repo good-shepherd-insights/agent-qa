@@ -14772,6 +14772,24 @@
       "file": "packages/cli/src/__tests__/doctor.test.ts",
       "fullName": "C445-DOCTOR-AUTH a compatible config with no key on the public provider API fails the credential row with auth set",
       "origin": "445 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT daemon stop on a v1 config says nothing to stop twice and changes no file, and daemon status still names the hard cut",
+      "origin": "445 D-42"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-daemon-stop.test.ts",
+      "fullName": "C445-DAEMON-STOP a live daemon registered in a v1 workspace is sent SIGTERM without the config being validated",
+      "origin": "445 D-42"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT the old knowledge gitignore refusal prints its message and exits 1 with no stack frame",
+      "origin": "445 D-43"
     }
   ]
 }
