@@ -920,7 +920,6 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       '--base-url <url>',
       'endpoint for openai-compatible or anthropic-compatible (default: the provider API)',
     )
-    .option('--skip-install', 'deprecated no-op; setup commands are shown after init')
     .option('--force', 'overwrite existing files')
     .option(
       WRITE_AGENT_INSTRUCTIONS_FLAG,
@@ -928,7 +927,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
     )
     .option(
       '--agent',
-      'print the JSON capability manifest (catalog, v1 migration map, local posture) and exit; '
+      'print the JSON capability manifest (catalog, v1 name map, local posture) and exit; '
       + 'writes nothing',
     )
     .action(async (opts, command: Command) => {
