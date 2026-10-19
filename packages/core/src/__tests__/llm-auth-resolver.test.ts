@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -595,5 +596,92 @@ describe('C445-AUTH-MESSAGES', () => {
     expect(messages[2]).toContain('agent-qa auth set --config claude-compat --type api-key')
     expect(messages[2]).toContain('--type bearer-token')
     for (const text of messages) expect(text).not.toContain('sk-unusable-not-a-key')
+  })
+})
+
+describe('C445-PUBLIC-API-KEY', () => {
+  let tempDir: string
+  let authPath: string
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-445-public-api-key-'))
+    authPath = join(tempDir, 'auth.json')
+  })
+
+  afterEach(async () => {
+    clearLLMAuthProviderPlugins()
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('a compatible config with no key on api.anthropic.com or api.openai.com resolves as missing and names auth set', async () => {
+    const anthropicConfig = {
+      provider: 'anthropic-compatible',
+      model: 'claude-sonnet-4-6',
+      baseURL: 'https://api.anthropic.com/v1',
+    }
+    const anthropic = await resolveLLMAuth('default', anthropicConfig, authPath)
+    expect(anthropic.kind).toBe('missing')
+    if (anthropic.kind !== 'missing') throw new Error('Expected missing result')
+    expect(anthropic.message).toContain('agent-qa auth set --config default --type api-key')
+    expect(anthropic.message).toContain('--type bearer-token')
+
+    const openAI = await resolveLLMAuth('compat', {
+      provider: 'openai-compatible',
+      model: 'gpt-5.2',
+      baseURL: 'https://api.openai.com/v1',
+    }, authPath)
+    expect(openAI.kind).toBe('missing')
+    if (openAI.kind !== 'missing') throw new Error('Expected missing result')
+    expect(openAI.message).toContain('agent-qa auth set --config compat --type api-key')
+
+    const [first, second] = await Promise.all([
+      resolveLLMAuth('default', anthropicConfig, authPath),
+      resolveLLMAuth('default', anthropicConfig, authPath),
+    ])
+    expect(first).toEqual(second)
+    expect(first).toEqual(anthropic)
+    expect(existsSync(authPath)).toBe(false)
+  })
+
+  it('a compatible config with no key on a local or self-hosted server stays credential optional', async () => {
+    const hosts = [
+      'http://127.0.0.1:11434/v1',
+      'http://localhost:8080/v1',
+      'https://llm.internal.example/v1',
+    ]
+    const results: unknown[] = []
+    for (const baseURL of hosts) {
+      for (const provider of ['openai-compatible', 'anthropic-compatible'] as const) {
+        const config = { provider, model: 'local-model', baseURL }
+        results.push(await resolveLLMAuth('local', config, authPath))
+      }
+    }
+    expect(results).toHaveLength(6)
+    for (const result of results) {
+      expect(result).toMatchObject({ kind: 'unauthenticated', credentialKey: 'local', optional: true })
+    }
+  })
+
+  it('the public host is matched on the parsed hostname, ignoring case', async () => {
+    const resolveFor = (provider: 'openai-compatible' | 'anthropic-compatible', baseURL: string) =>
+      resolveLLMAuth('default', { provider, model: 'any-model', baseURL }, authPath)
+
+    const upperCase = await resolveFor('anthropic-compatible', 'HTTPS://API.ANTHROPIC.COM/v1')
+    const explicitPort = await resolveFor('openai-compatible', 'https://Api.OpenAI.com:443/v1')
+    expect(upperCase.kind).toBe('missing')
+    expect(explicitPort.kind).toBe('missing')
+
+    const lookAlikes = [
+      await resolveFor('anthropic-compatible', 'https://api.anthropic.com.evil.example/v1'),
+      await resolveFor('anthropic-compatible', 'https://evil.example/api.anthropic.com/v1'),
+      await resolveFor('openai-compatible', 'https://evil.example/v1?u=https://api.openai.com'),
+      await resolveFor('openai-compatible', 'not a url'),
+    ]
+    expect(lookAlikes.map(result => result.kind)).toEqual([
+      'unauthenticated',
+      'unauthenticated',
+      'unauthenticated',
+      'unauthenticated',
+    ])
   })
 })

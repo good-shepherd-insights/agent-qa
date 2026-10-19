@@ -1512,6 +1512,71 @@ describe('C445-DOCTOR-AUTH', () => {
     expect(subscriptionFix).not.toContain('from `agent-qa dashboard`')
     expect(getOutput()).not.toContain('from `agent-qa dashboard`')
   })
+
+  it('a compatible config with no key on the public provider API fails the credential row with auth set', async () => {
+    type Core = typeof import('@vostride/agent-qa-core')
+    type FsPromises = typeof import('node:fs/promises')
+    const real = await vi.importActual<Core>('@vostride/agent-qa-core')
+    const { mkdtemp, rm } = await vi.importActual<FsPromises>('node:fs/promises')
+    const { tmpdir } = await import('node:os')
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'agent-qa-445-16-doctor-'))
+    const authPath = resolve(tempDir, 'auth.json')
+    const configYaml = [
+      'registry:',
+      '  llms:',
+      '    - name: default',
+      '      provider: anthropic-compatible',
+      '      model: claude-sonnet-4-6',
+      '      baseURL: https://api.anthropic.com/v1',
+      'use:',
+      '  llm: default',
+      '',
+    ].join('\n')
+    const defaultResolve = mockResolveLLMAuth.getMockImplementation()
+    try {
+      mockReadFile.mockImplementation(((path: unknown) => path === 'agent-qa.config.yaml'
+        ? Promise.resolve(configYaml)
+        : Promise.reject({ code: 'ENOENT' })) as never)
+      type LLMConfig = Parameters<Core['resolveLLMAuth']>[1]
+      mockResolveLLMAuth.mockImplementation((name: string, llm: LLMConfig) =>
+        real.resolveLLMAuth(name, llm, authPath))
+
+      await runDoctor()
+
+      const credentialRow = rowFor('LLM credential')
+      expect(credentialRow, getOutput()).toContain('FAIL')
+      const expected = await real.resolveLLMAuth('default', {
+        provider: 'anthropic-compatible',
+        model: 'claude-sonnet-4-6',
+        baseURL: 'https://api.anthropic.com/v1',
+      }, authPath)
+      expect(expected.kind, getOutput()).toBe('missing')
+      if (expected.kind !== 'missing') throw new Error('Expected missing result')
+      expect(credentialRow, getOutput()).toContain(expected.message)
+
+      const lines = consoleLogs.map(stripAnsi)
+      const start = lines.findIndex(line => line.startsWith('    LLM credential  '))
+      const fixStart = lines.findIndex(
+        (line, index) => index > start && FIX_LINE_PATTERN.test(line),
+      )
+      expect(fixStart, getOutput()).toBeGreaterThan(start)
+      const fix = [(lines[fixStart] ?? '').replace(FIX_LINE_PATTERN, '')]
+      for (let index = fixStart + 1; /^ {11}\S/.test(lines[index] ?? ''); index += 1) {
+        fix.push((lines[index] ?? '').trim())
+      }
+      expect(fix.join(' ')).toContain('agent-qa auth set --config default --type api-key')
+
+      const connectionRow = rowFor('LLM connection')
+      expect(connectionRow, getOutput()).toContain('FAIL')
+      expect(connectionRow, getOutput()).toContain(expected.message)
+      expect(mockGenerateText).not.toHaveBeenCalled()
+      expect(process.exitCode).toBe(1)
+    } finally {
+      mockResolveLLMAuth.mockImplementation(defaultResolve)
+      mockReadFile.mockRejectedValue({ code: 'ENOENT' })
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('doctor row renderer (407-24 · G-407-3)', () => {

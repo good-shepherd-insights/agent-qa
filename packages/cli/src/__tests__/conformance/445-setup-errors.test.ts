@@ -1,13 +1,15 @@
-// C445-SETUP-ERRORS (445-08, D-15, D-12): each missing setup prerequisite names its fix
+// C445-SETUP-ERRORS (445-08, D-15, D-12; 445-16, D-41): each missing setup prerequisite names its fix
 
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import * as core from '@vostride/agent-qa-core'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+import { INIT_BASE_URL_DEFAULTS } from '../../commands/init.js'
 import { refuseWithoutRecordingTools } from './433-door-fixture.js'
 import {
   POPULATED_RUN_ANCHORED_BUILDS,
@@ -43,6 +45,7 @@ interface Leg {
 interface Scene {
   browser?: Leg
   model?: Leg
+  anthropicNoKey?: Leg
   validate?: Leg
   run?: Leg
   auth?: Record<string, Leg>
@@ -181,6 +184,27 @@ async function driveModel(): Promise<void> {
   )
 }
 
+async function driveAnthropicNoKey(): Promise<void> {
+  if (target === undefined) throw new Error('target not started')
+  const root = workspace(
+    'anthropic-no-key',
+    'default',
+    [
+      '    - name: default',
+      '      provider: anthropic-compatible',
+      '      model: claude-sonnet-4-6',
+      '      baseURL: https://api.anthropic.com/v1',
+    ].join('\n'),
+    target.url,
+  )
+  const browsers = populatedRunSpawnEnv().PLAYWRIGHT_BROWSERS_PATH
+  scene.anthropicNoKey = await spawnCli(
+    root,
+    ['run', 'tests/setup.test.yaml'],
+    browsers === undefined ? {} : { PLAYWRIGHT_BROWSERS_PATH: browsers },
+  )
+}
+
 async function driveConfig(): Promise<void> {
   if (model === undefined || target === undefined) throw new Error('servers not started')
   const root = workspace(
@@ -240,6 +264,7 @@ describe('C445-SETUP-ERRORS', () => {
       await driveModel()
       await driveConfig()
       await driveAuth()
+      await driveAnthropicNoKey()
       scene.modelRequests = model.requests.length
     } catch (error) {
       scene.error = message(error)
@@ -267,6 +292,26 @@ describe('C445-SETUP-ERRORS', () => {
     expect(scene.model?.output, seen()).toContain(
       `agent-qa auth set --config ${GEMINI_CONFIG} --type api-key`,
     )
+  })
+
+  it('a missing key for anthropic-compatible on the public Anthropic API names agent-qa auth set and exits 2', () => {
+    expectFresh()
+    expect(scene.error, seen()).toBeUndefined()
+    expect(scene.anthropicNoKey?.signal, seen()).toBeNull()
+    expect(scene.anthropicNoKey?.code, seen()).toBe(2)
+    expect(scene.anthropicNoKey?.output, seen()).toContain(
+      'agent-qa auth set --config default --type api-key',
+    )
+  })
+
+  it('the public provider API hosts are the hosts of the init base URL defaults', () => {
+    expectFresh()
+    const exported: Record<string, unknown> = core
+    const hosts = exported.PUBLIC_PROVIDER_API_HOSTS as readonly string[] | undefined
+    const initHosts = Object.values(INIT_BASE_URL_DEFAULTS).map(url => new URL(url).hostname)
+    expect(hosts).toBeDefined()
+    expect([...(hosts ?? [])].sort()).toEqual([...new Set(initHosts)].sort())
+    expect(hosts?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 
   it('an invalid config names the key and the fix', () => {
