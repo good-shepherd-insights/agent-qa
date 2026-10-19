@@ -14694,6 +14694,42 @@
       "file": "packages/cli/src/__tests__/conformance/445-route-help.test.ts",
       "fullName": "C445-ROUTE-HELP the first-run command selects the suite init writes",
       "origin": "445 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT a v1 workspace is told the hard cut steps by its first command",
+      "origin": "445 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT init --force over the old knowledge root refuses and names the missing rule",
+      "origin": "445 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT after the documented steps the users tests are byte identical and validate is clean",
+      "origin": "445 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT the new examples are present and the preserved secrets file gets the printed line",
+      "origin": "445 D-27"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT a second init force changes no byte",
+      "origin": "445 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
+      "fullName": "C445-HARD-CUT the re-initialize page names every path the hard cut deletes and every command it runs",
+      "origin": "445 D-35"
     }
   ]
 }
