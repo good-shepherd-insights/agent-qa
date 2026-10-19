@@ -29,23 +29,23 @@ function configYaml(options: { evalBlock?: string; useLlm?: boolean } = {}): str
     '    - name: planner',
     '      provider: openai-compatible',
     '      model: gpt-4o',
-    '      baseURL: https://api.openai.com/v1',
+    '      baseURL: https://compat.example/v1',
     '    - name: j',
     '      provider: openai-compatible',
     '      model: claude-judge',
-    '      baseURL: https://api.openai.com/v1',
+    '      baseURL: https://compat.example/v1',
     '    - name: other',
     '      provider: openai-compatible',
     '      model: mistral-large',
-    '      baseURL: https://api.openai.com/v1',
+    '      baseURL: https://compat.example/v1',
     '    - name: same-family',
     '      provider: openai-compatible',
     '      model: gpt-4o-mini',
-    '      baseURL: https://api.openai.com/v1',
+    '      baseURL: https://compat.example/v1',
     '    - name: unknown-family',
     '      provider: openai-compatible',
     '      model: zz-mystery-model',
-    '      baseURL: https://api.openai.com/v1',
+    '      baseURL: https://compat.example/v1',
     'use:',
     '  mobile:',
     '    appState: preserve',
@@ -74,6 +74,7 @@ beforeEach(async () => {
   savedXdgDataHome = process.env.XDG_DATA_HOME
   // Point the auth store at an empty temp location so the real named-LLM chain resolves
   // openai-compatible entries to `unauthenticated` deterministically (no host auth store reads).
+  // 2026-10-20 (445-16, D-41): only off the public provider API, hence compat.example.
   process.env.XDG_DATA_HOME = join(tmpRoot, 'xdg-data')
 })
 

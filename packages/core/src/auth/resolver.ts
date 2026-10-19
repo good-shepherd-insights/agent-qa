@@ -11,6 +11,16 @@ interface LLMAuthConfig {
 
 const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
 
+export const PUBLIC_PROVIDER_API_HOSTS: readonly string[] = Object.freeze([
+  'api.openai.com',
+  'api.anthropic.com',
+])
+
+function onPublicProviderApi(baseURL: string | undefined): boolean {
+  if (typeof baseURL !== 'string' || !URL.canParse(baseURL)) return false
+  return PUBLIC_PROVIDER_API_HOSTS.includes(new URL(baseURL).hostname)
+}
+
 function missingMessage(configName: string, provider: string, plugin?: LLMAuthProviderPlugin): string {
   if (plugin) {
     return `Sign in to "${plugin.label}" for the "${configName}" config: agent-qa auth login --config ${configName}`
@@ -130,7 +140,8 @@ export async function resolveLLMAuth(
   const plugin = getLLMAuthProviderPlugin(llmConfig.provider)
 
   if (!credential) {
-    if (isCompatibleProvider(llmConfig.provider)) {
+    // 2026-10-20 (445-16, D-41): a keyless config on the public provider API cannot run.
+    if (isCompatibleProvider(llmConfig.provider) && !onPublicProviderApi(llmConfig.baseURL)) {
       return unauthenticated(configName, llmConfig.provider)
     }
     return missing(configName, llmConfig.provider, plugin)
