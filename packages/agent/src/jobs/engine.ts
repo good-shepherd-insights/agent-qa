@@ -229,7 +229,7 @@ export type RunNextJobOutcome =
     })
   | (RanJobOutcomeBase & {
       readonly disposition: 'interrupted'
-      /** What the aborted attempt reported: `handler-threw: …` or its retryable reason. */
+      // `handler-threw: …` or the aborted attempt's retryable reason.
       readonly reason: string
     })
 

@@ -423,8 +423,8 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
          updated_at = ?, not_before = ?
      WHERE id = ?`,
   )
-  // 444.1 D-01: an aborted attempt did not fail, so its claim is refunded and the last failure,
-  // not-before time and start stay as the previous attempt left them.
+  // An aborted attempt did not fail, so its attempt is refunded and its claim released. The last
+  // failure, not-before and started_at are kept; a first attempt's start is the refunded claim's.
   const markInterrupted = db.prepare(
     `UPDATE jobs
      SET claimed_at = NULL, attempts = MAX(attempts - 1, 0), updated_at = ?

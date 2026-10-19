@@ -431,7 +431,7 @@ export interface JobStorePort {
     fence: JobStoreFence,
   ): Promise<void>
 
-  /** Release an attempt its host aborted, refunding the attempt and keeping the last failure. */
+  // Refund an aborted attempt and free its claim, keeping last failure, not-before and started_at.
   releaseInterrupted(jobId: JobId, fence: JobStoreFence): Promise<void>
 
   /**
