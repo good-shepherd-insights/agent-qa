@@ -210,3 +210,45 @@ describe('LLMPlanner', () => {
     expect(logger.warnCalls.some((call) => call.meta?.statusCode !== undefined)).toBe(false)
   })
 })
+
+describe('C444.1-PLANNER-CANCEL', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('a cancelled planning turn logs no screenshot retry and starts no second request', async () => {
+    const { generateText } = await import('ai')
+    const mock = vi.mocked(generateText)
+    let markStarted!: () => void
+    const callStarted = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    mock.mockImplementation(((args: { abortSignal?: AbortSignal }) => {
+      markStarted()
+      return new Promise((_resolve, reject) => {
+        const signal = args.abortSignal
+        if (signal === undefined) return reject(new Error('the model call carried no abort signal'))
+        if (signal.aborted) return reject(signal.reason)
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    }) as never)
+
+    const logger = makeSpyLogger()
+    const planner = new LLMPlanner({} as never, 'web', logger, undefined, makeFakeTokenAccounting())
+    const controller = new AbortController()
+    const turn = planner.plan(
+      'Click sign in',
+      screen,
+      makeContext({ screenshot: Buffer.from('png') }),
+      controller.signal,
+    )
+    await callStarted
+    controller.abort()
+
+    await expect(turn).rejects.toBe(controller.signal.reason)
+    expect(logger.warnCalls.map((call) => call.message)).not.toContain(
+      'Screenshot send failed, retrying without image',
+    )
+    expect(mock).toHaveBeenCalledTimes(1)
+  })
+})
