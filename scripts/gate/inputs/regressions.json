@@ -5938,7 +5938,7 @@
     {
       "runner": "vitest",
       "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
-      "fullName": "C438-ROW-TEXT a nested row container's row is its parent row's own line, then its own row",
+      "fullName": "C438-ROW-TEXT a nested row container's row is its own line first, then its same-role parent row's line",
       "origin": "438 D-02"
     },
     {

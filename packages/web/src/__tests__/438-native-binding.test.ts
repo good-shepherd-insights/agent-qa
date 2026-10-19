@@ -5,6 +5,7 @@
 // loop; pages are inline snippets.
 // 2026-10-09 (438-06): C438-BINDING-OUTCOMES (D-07, D-08, D-09) names each way a target stops being
 // the observed element at the adapter, and pins the benign changes that keep a binding.
+// 2026-10-19 (444.1-09, D-15): an enclosing article's prose is not part of a nested row's binding.
 
 import { afterEach, describe, expect, it } from 'vitest'
 import type { Action, ExecuteOptions, PlannerConfig } from '@vostride/agent-qa-runner'
@@ -84,6 +85,18 @@ async function pageClicks(web: WebPlatformAdapter): Promise<string[]> {
 function refMapOf(web: WebPlatformAdapter): RefMap {
   return (web as unknown as { lastRefs: RefMap }).lastRefs
 }
+
+const ARTICLE_INVOICES_PAGE = `<!doctype html><html><head><script>window.__clicks = []</script></head><body>
+  <article>
+    <p id="status">Status: 2 invoices due this week</p>
+    <table>
+      <tr onclick="window.__clicks.push('Invoice 947')"><td>Invoice 947</td><td><button type="button">Pay</button></td></tr>
+      <tr onclick="window.__clicks.push('Invoice 946')"><td>Invoice 946</td><td><button type="button">Pay</button></td></tr>
+    </table>
+  </article>
+</body></html>`
+
+const CHANGE_ARTICLE_STATUS = `document.getElementById('status').textContent = 'Status: 1 invoice due today'`
 
 // Runs a page script once, right before the first dispatch reaches the adapter.
 function changingBeforeDispatch(web: WebPlatformAdapter, script: string): WebPlatformAdapter {
@@ -181,6 +194,25 @@ describe('C438-NATIVE-BINDING', () => {
 
     expect(result.success).toBe(true)
     expect(await pageClicks(web)).toEqual(['7 Elm Street, Springfield'])
+  }, 60_000)
+
+  it('a row inside an article whose status line changes between observe and dispatch is dispatched onto the same row', async () => {
+    const web = await open(ARTICLE_INVOICES_PAGE)
+    const state = await web.observe()
+    const rows = state.elements.filter(
+      (element) => element.role === 'row' && element.name.includes('Invoice 947'),
+    )
+    expect(rows).toHaveLength(1)
+    const ref = rows[0].ref
+    expect(refMapOf(web)[ref]?.rowText).toContain('Invoice 947')
+
+    await web.getPage()!.evaluate(CHANGE_ARTICLE_STATUS)
+    const result = await web.execute({ type: 'click', ref: asRef(ref) } as never)
+
+    expect(result.error).toBeUndefined()
+    expect(readBindingOutcomeMeta(result)).toBeUndefined()
+    expect(result.success).toBe(true)
+    expect(await pageClicks(web)).toEqual(['Invoice 947'])
   }, 60_000)
 })
 

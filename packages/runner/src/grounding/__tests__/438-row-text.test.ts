@@ -228,10 +228,10 @@ describe('C438-ROW-TEXT', () => {
     { role: 'treeitem', name: 'Invoices', parentIndex: 2 },
   ]
 
-  it("a nested row container's row is its parent row's own line, then its own row", () => {
+  it("a nested row container's row is its own line first, then its same-role parent row's line", () => {
     const elements = elementsOf(TREE)
-    expect(rowTextOf(elements[3], elements)).toBe('2025 Invoices')
-    expect(rowTextOf(elements[1], elements)).toBe('2024 Invoices')
+    expect(rowTextOf(elements[3], elements)).toBe('Invoices 2025')
+    expect(rowTextOf(elements[1], elements)).toBe('Invoices 2024')
   })
 
   it('the judge agrees with a nested treeitem stated with its parent row', () => {
@@ -288,5 +288,16 @@ describe('C438-ROW-TEXT', () => {
       { role: 'button', name: 'Reply', parentIndex: 1 },
     ])
     expect(rowTextOf(named(elements, 'Reply'), elements)).toBe('Bo: a reply Reply')
+  })
+
+  // 2026-10-19 (444.1-09, D-15): only a parent of the row's own role joins its row.
+  it('an article never adds its prose to a nested row', () => {
+    const elements = elementsOf([
+      { role: 'article', text: 'Status: 2 invoices due this week' },
+      { role: 'row', name: 'Invoice 947', parentIndex: 0 },
+      { role: 'button', name: 'Pay', parentIndex: 1 },
+    ])
+    expect(rowTextOf(named(elements, 'Invoice 947'), elements)).toBe('Invoice 947 Pay')
+    expect(rowTextOf(named(elements, 'Pay'), elements)).toBe('Invoice 947 Pay')
   })
 })
