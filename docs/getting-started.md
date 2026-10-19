@@ -203,7 +203,8 @@ Commit the records you want to keep.
 | A subscription that is not signed in | `Sign in to "Anthropic subscription" for the "claude-code" config: agent-qa auth login --config claude-code` | `npx agent-qa auth login --config claude-code`, or `--config codex` |
 | No subscription plugin | `Provider "<provider>" needs the subscription-auth plugin: npm install -D @vostride/agent-qa-subscription-auth, …` | `npm install -D @vostride/agent-qa-subscription-auth` |
 | No Gemini key | `Save a Gemini API key for the "default" config: agent-qa auth set --config default --type api-key` | `npx agent-qa auth set --config default --type api-key` |
-| No key for `openai-compatible` or `anthropic-compatible` | The provider refuses the first model request with its authentication error. | `npx agent-qa auth set --config default --type api-key` |
+| No key for `openai-compatible` or `anthropic-compatible` on `api.openai.com` or `api.anthropic.com` | `Save an API key for the "default" config: agent-qa auth set --config default --type api-key`; anthropic-compatible adds `(or --type bearer-token)` | `npx agent-qa auth set --config default --type api-key` |
+| No key for a local or self-hosted `--base-url` | Nothing: agent-qa runs without a saved key, and the server answers as it is set up. | `npx agent-qa auth set --config default --type api-key` if the server needs one |
 | An invalid config | `Config validation failed`, the key, and `Fix or remove the key named above in <path>, then run agent-qa validate.` | Fix or remove that key, then run `npx agent-qa validate`. |
 | A config from before v2 | The keys removed in v2 and the steps to re-create the workspace. | Follow [re-initialize.md](re-initialize.md). |
 
