@@ -446,6 +446,14 @@ return (function() {
       attributes: attributes
     };
     if (parentIndex !== undefined) record.parentIndex = parentIndex;
+    // 2026-10-19 (444.1-05, D-08): a field's contents are its value, never its name; a password never.
+    if ((tag === 'INPUT' || tag === 'TEXTAREA') && String(el.type).toLowerCase() !== 'password' && el.value) {
+      record.value = String(el.value).slice(0, 200);
+    } else if (tag === 'SELECT') {
+      var option = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+      var optionText = option ? String(option.text || '').trim().slice(0, 200) : '';
+      if (optionText) record.value = optionText;
+    }
 
     nodes.push(record);
     includedEls.push(el);
@@ -480,6 +488,8 @@ function coerceWebInterimNode(value: unknown): InterimNode | null {
   const node: InterimNode = { role: role.toLowerCase(), attributes: coerceStringBag(v.attributes) }
   const name = coerceString(v.name)
   if (name) node.name = name
+  const fieldValue = coerceString(v.value)
+  if (fieldValue) node.value = fieldValue
   if (typeof v.parentIndex === 'number' && Number.isInteger(v.parentIndex) && v.parentIndex >= 0) {
     node.parentIndex = v.parentIndex
   }
