@@ -45,6 +45,8 @@ const STAGE_WORD = /^(?:pending|running|complete|failed|skipped \((?:gate run|ou
 const BUCKETS_LINE =
   /^curation: added (\d+), confirmed (\d+), superseded (\d+), deprecated (\d+), proposed (\d+)$/u
 const PROMOTION_LINE = /^curation: \S+ (?:held: |promoted via )/u
+const CI_OUTCOME_LINE =
+  /^curation: (\d+) learned change\(s\) recorded, (\d+) kept proposed \(ci runs never promote learned knowledge\)$/u
 
 type Verdict = 'passed' | 'failed'
 
@@ -342,6 +344,23 @@ describe('C444-CI-HEADLESS', () => {
       analysis: `pending${CI_PENDING_SUFFIX.analysis}`,
       curation: `pending${CI_PENDING_SUFFIX.curation}`,
     })
+  })
+
+  it('a CI run curation outcome line counts only the changes its buckets line shows', () => {
+    const measured = ['passed', 'supersede', 'failed'].map((key) => {
+      const run = legOf(key)
+      const buckets = bucketsOf(run)
+      expect(buckets, `${key}'s one buckets line\n${seen()}`).toHaveLength(1)
+      const bucketed = Object.values(buckets[0]!).reduce((sum, count) => sum + count, 0)
+      const outcome = (run.curationLines ?? []).flatMap((line) => {
+        const match = CI_OUTCOME_LINE.exec(line)
+        return match === null ? [] : [Number(match[1]) + Number(match[2])]
+      })
+      return { key, bucketed, outcome }
+    })
+    expect(measured, seen()).toEqual(measured.map(({ key, bucketed }) =>
+      ({ key, bucketed, outcome: bucketed === 0 ? [] : [bucketed] })))
+    expect(measured.filter((each) => each.bucketed > 0).length, seen()).toBeGreaterThan(0)
   })
 })
 
