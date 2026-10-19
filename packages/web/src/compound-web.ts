@@ -249,7 +249,7 @@ async function wheelPointerChain(page: Page, dx: number, dy: number, axis: Axis)
 type ProbeBox = { left: number; top: number; right: number; bottom: number }
 type Judged = { state: TargetVisibility; rect?: ProbeBox }
 
-// 2026-10-08 (436-26): the longest one child frame may take to answer the visibility probe (CR-08).
+// 2026-10-08 (436-26): the longest a child frame may take to answer its liveness check (CR-08).
 export const FRAME_PROBE_TIMEOUT_MS = 1_000
 
 // In-page judge for every candidate of one frame, in that frame's own viewport. Ancestors are
@@ -483,27 +483,35 @@ async function probeChildFrame(frame: Frame, target: string): Promise<TargetVisi
   }
 }
 
-// Child-frame judges still running after their bound, per search.
-type PendingFrames = WeakMap<Frame, Promise<TargetVisibility>>
+// Child-frame liveness checks still running after their bound, per search.
+type PendingFrames = WeakMap<Frame, Promise<unknown>>
 
-// A frame with no committed document, or with a judge still pending from earlier in this search, is
-// unknown with no evaluate. Otherwise the judge and projection get FRAME_PROBE_TIMEOUT_MS; past it
-// the frame is unknown and its judge is parked in `pending` until it settles.
+// A frame with no committed document, or with a liveness check still pending from earlier in this
+// search, is unknown with no evaluate. Otherwise the bound covers the liveness check only: a frame
+// that has not answered `1` within FRAME_PROBE_TIMEOUT_MS is unknown and its check is parked in
+// `pending` until it settles; a frame that answers is judged and projected with no bound.
+// 2026-10-19 (444.1-02, D-06): a slow but healthy frame is judged, not cut off (WR-24).
 async function probeChildFrameBounded(frame: Frame, target: string, pending: PendingFrames): Promise<TargetVisibility> {
   if (frame.url() === '' || pending.has(frame)) return 'unknown'
-  const judge = probeChildFrame(frame, target)
+  const liveness = frame.evaluate('1')
   let timer: ReturnType<typeof setTimeout> | undefined
   const bound = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => { resolve('timeout') }, FRAME_PROBE_TIMEOUT_MS)
   })
-  const answer = await Promise.race([judge, bound])
-  clearTimeout(timer)
-  if (answer !== 'timeout') return answer
-  pending.set(frame, judge)
-  const release = (): void => {
-    if (pending.get(frame) === judge) pending.delete(frame)
+  let answer: 'alive' | 'timeout'
+  try {
+    answer = await Promise.race([liveness.then(() => 'alive' as const), bound])
+  } catch {
+    return 'unknown'
+  } finally {
+    clearTimeout(timer)
   }
-  judge.then(release, release)
+  if (answer === 'alive') return await probeChildFrame(frame, target)
+  pending.set(frame, liveness)
+  const release = (): void => {
+    if (pending.get(frame) === liveness) pending.delete(frame)
+  }
+  liveness.then(release, release)
   return 'unknown'
 }
 
@@ -516,9 +524,9 @@ async function probeChildFrameBounded(frame: Frame, target: string, pending: Pen
 // viewport. Unknown: a nested-scroller clip, a covered or clipped centre point, a frame target not
 // on screen inside its frame, a transformed, zoomed or covered frame (review WR-16).
 // 2026-10-08 (436-26): evaluateAll waits for a child frame's execution context, which a frame that
-// never answers never gets (review CR-08). Child frames are judged at once, each bounded by
-// FRAME_PROBE_TIMEOUT_MS and judged once per search; a frame with no committed document is unknown
-// at once. The main frame stays unbounded.
+// never answers never gets (review CR-08). Child frames are judged at once, each frame's liveness
+// check bounded by FRAME_PROBE_TIMEOUT_MS and sent once while it is pending; a frame with no
+// committed document is unknown at once. The main frame and a live frame's judge are unbounded.
 async function probeOnScreen(page: Page, target: string, pending: PendingFrames): Promise<TargetVisibility> {
   let states: TargetVisibility[]
   try {
