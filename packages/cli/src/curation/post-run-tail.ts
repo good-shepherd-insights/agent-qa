@@ -630,6 +630,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
   let heldAuthority: CurationWriterAuthority | undefined
   /** The one budget's absolute stop point, fixed when the drain leg begins (D-03). */
   let drainDeadlineMs: number | undefined
+  // 2026-10-19 (444.1-14, D-01): aborts at `drainDeadlineMs`, or with the caller's own signal.
+  let drainSignal: AbortSignal | undefined
 
   const curateRun: PostRunTailHostInput['curateRun'] = async (input) => {
     if (knowledgeRoot === undefined) {
@@ -711,6 +713,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
     } = {}): Promise<void> {
       if (opts.postVerdict !== undefined && enqueueOutcome() !== 'enqueued' && enqueueOutcome() !== 'deduped') return
       let root: string
+      const budget = new AbortController()
+      let budgetTimer: ReturnType<typeof setTimeout> | undefined
       try {
         // 404 D-05: resolved HERE. The enqueue leg used to do it as a side effect, and the step
         // that replaced it runs in the shell — a tail that waited for a leg that no longer exists
@@ -727,11 +731,14 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // resolved costs a warning and no fence.
         knowledgeRoot ??= ops().resolveKnowledgeRoot(opts.knowledgeConfig, opts.configDir)
         root = knowledgeRoot
-        drainDeadlineMs = opts.deadlineMs ?? ops().now() + DRAIN_BUDGET_MS
-        if ((opts.deadlineMs !== undefined && ops().now() >= drainDeadlineMs) || opts.signal?.aborted) {
+        const drainStartedMs = ops().now()
+        drainDeadlineMs = opts.deadlineMs ?? drainStartedMs + DRAIN_BUDGET_MS
+        if ((opts.deadlineMs !== undefined && drainStartedMs >= drainDeadlineMs) || opts.signal?.aborted) {
           drainOutcome = 'budget-exhausted'
           return
         }
+        budgetTimer = setTimeout(() => { budget.abort() }, drainDeadlineMs - drainStartedMs)
+        budgetTimer.unref()
         const recovery = await ops().recoverPendingPostVerdictContinuations({
           agentQaRoot: opts.agentQaRoot, configPath: opts.configPath, knowledgeRoot: root,
           deadlineMs: drainDeadlineMs, log,
@@ -744,12 +751,15 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         // Constructing the operations table reads the shipped modules, and a build where one of
         // those reads throws must not send the exception past `runVerdictFirstCurationTail` into
         // the command's framework catch (JOBQ-06).
+        clearTimeout(budgetTimer)
         drainOutcome = 'not-attempted'
         log.warn(drainFailureWarning(opts.runId, error, opts.executionContext))
         return
       }
       let acquiredLeaseId: string | undefined
       let openedHost: LocalAgentHost | undefined
+      const signal = opts.signal === undefined ? budget.signal : AbortSignal.any([opts.signal, budget.signal])
+      drainSignal = signal
       try {
         // THE TAKE, AND THE `finally` THAT ENDS IT, IN ONE TRY (CR-01). Calling the thunk is what
         // acquires; the very next statement records what to release. Nothing can run between them.
@@ -870,7 +880,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
             pumpExit = 'aborted'
             break
           }
-          const outcome = await jobs.queue.runNextJob({ fence })
+          const outcome = await jobs.queue.runNextJob({ fence, signal })
           if (!outcome.ran) {
             pumpExit = 'empty'
             break
@@ -894,6 +904,16 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
             // claim until its not-before time (444.1 D-23), so the pump goes on to the next one.
             drainOutcome = 'retry-scheduled'
             continue
+          }
+          if (outcome.disposition === 'interrupted') {
+            // The signal cut off an in-flight model request; the job is queued again, unspent.
+            if (signal.aborted && !budget.signal.aborted) {
+              pumpExit = 'aborted'
+            } else {
+              drainOutcome = 'budget-exhausted'
+              pumpExit = 'budget'
+            }
+            break
           }
         }
         // WR-01 / T-388-18b: the pump ended without ever reaching this run's chain, on an exit
@@ -937,6 +957,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         drainOutcome = openedHost === undefined ? 'not-attempted' : 'threw'
         log.warn(drainFailureWarning(opts.runId, error, opts.executionContext))
       } finally {
+        clearTimeout(budgetTimer)
+        drainSignal = undefined
         heldAuthority = undefined
         // THE ONE RELEASE, ON EVERY PATH OUT (CR-01). `acquiredLeaseId` is set in the same breath
         // as the take above and by the acquired arm below it, so there is no exit from this try —

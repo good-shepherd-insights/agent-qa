@@ -267,6 +267,7 @@ export function buildJobModelCapability(
         temperature: 0,
         maxOutputTokens: accounting.getCeilings().maxOutput,
         ...(request.system === undefined ? {} : { system: request.system }),
+        ...(request.signal === undefined ? {} : { abortSignal: request.signal }),
       }
       // D-02's screenshot channel: images ride the SAME request as the prompt, mapped onto
       // the SDK messages form only when `resolveVisionGate` allows attachment — one user
