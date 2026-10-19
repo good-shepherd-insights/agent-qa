@@ -57,6 +57,8 @@ export interface BuildCuratorAuthorDependencies {
   createModelImpl?: typeof createModel
   resolveCapabilitiesImpl?: typeof resolveCapabilities
   createTokenAccountingImpl?: typeof createTokenAccounting
+  // 2026-10-19 (444.1-14, D-01): an aborted request is rethrown, so the drain requeues it.
+  signal?: AbortSignal
 }
 
 interface PromptBuild {
@@ -1239,8 +1241,10 @@ export function buildCuratorAuthor(deps: BuildCuratorAuthorDependencies): Curato
           maxOutputTokens: ceilings.maxOutput,
           system: systemMessage.content,
           messages: turnMessages,
+          ...(deps.signal === undefined ? {} : { abortSignal: deps.signal }),
         })
-      } catch {
+      } catch (error) {
+        if (deps.signal?.aborted) throw error
         return { kind: 'fallback-required', reason: 'model-error' }
       }
 
@@ -1295,8 +1299,10 @@ export function buildCuratorAuthor(deps: BuildCuratorAuthorDependencies): Curato
           maxOutputTokens: prompt.maxOutputTokens,
           system: systemMessage.content,
           messages: turnMessages,
+          ...(deps.signal === undefined ? {} : { abortSignal: deps.signal }),
         })
-      } catch {
+      } catch (error) {
+        if (deps.signal?.aborted) throw error
         return { kind: 'fallback-required', reason: 'model-error' }
       }
 

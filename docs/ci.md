@@ -110,18 +110,10 @@ curation: 1 learned change(s) recorded, 0 kept proposed (ci runs never promote l
 A run that proposes a correction reads `curation: 0 learned change(s) recorded, 1 kept proposed (ci runs never promote learned knowledge)`,
 and its counts line reads `superseded 0` and `proposed 1`.
 
-## A run can outlive its verdict
+## How long the post-run work takes
 
-The tail stops starting new jobs after 60 seconds, but it does not cut off a model request that is
-already in flight. If the model stops answering, the run stays alive after its verdict until the
-model client gives up: about 301 seconds per attempt, and then a retry. The verdict and the exit code
-are already fixed by then.
-
-To bound it:
-
-- set a timeout on the CI job (`timeout-minutes` on GitHub Actions);
-- or skip the tail's drain with `--detach`, so the run queues its post-run work and exits;
-- or run with `--gate-run`, which queues no post-run work at all.
+After the verdict, the run's post-run work is bounded by a 60-second budget. A model request still in
+flight when the budget ends is cancelled, and its job stays queued for the next run or the daemon.
 
 ## The job
 
@@ -137,7 +129,6 @@ on: [push, pull_request]
 jobs:
   agent-qa:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

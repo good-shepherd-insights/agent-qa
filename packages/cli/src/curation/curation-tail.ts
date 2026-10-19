@@ -785,6 +785,7 @@ export async function curateCompletedRun(
           : operations.buildCuratorAuthor({
               ...input.modelDeps,
               mask: input.mask ?? ((text) => text),
+              ...(input.signal === undefined ? {} : { signal: input.signal }),
             }))
       const drain = await operations.drainQueue({
         sourceRunId: String(input.handoff.runId),

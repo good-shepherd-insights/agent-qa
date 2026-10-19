@@ -99,7 +99,7 @@ import {
 
 export type { GcPassReport, WriterPassReport } from './maintenance.js'
 
-/** Ratified M2 one-shot budget. It gates job starts only, never an in-flight author request. */
+/** Ratified M2 one-shot budget. A run's tail aborts an author request in flight at its end. */
 export const DRAIN_BUDGET_MS = 60_000
 
 /** Provisional §7.4 cap over distinct search-before-create query targets. */
@@ -881,8 +881,8 @@ function budgetMs(options: DrainOptions): number {
 
 /**
  * Lease-gated one-shot Curator drain. It owns no provider: authoring is injected, serialized, and
- * durably checkpointed before the deterministic commit tail. Abort and budget are checked only at
- * job boundaries, so an in-flight model request always finishes under its own model-layer policy.
+ * durably checkpointed before the deterministic commit tail. Abort and budget are checked at job
+ * boundaries; an in-flight model request is cut off only by the host's own author signal.
  */
 export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
   const priors = snapshotTrustPriors(options.priors)

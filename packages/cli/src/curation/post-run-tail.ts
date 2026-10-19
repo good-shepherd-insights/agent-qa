@@ -654,6 +654,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       completedRunHandoffPath(opts.agentQaRoot, input.runId),
     )
     const deadlineMs = input.deadlineMs ?? drainDeadlineMs
+    const foldSignal = drainSignal ?? opts.signal
     const runPromotionPosture = await preparePromotionPosture(handoff.buildOrdinal, handoff.scope)
     const folded = await ops().curateCompletedRun({
       resolveTrustPriors,
@@ -668,7 +669,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
       ...(heldAuthority === undefined ? {} : { authority: heldAuthority }),
       ...(deadlineMs === undefined ? {} : { deadlineMs }),
-      ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+      ...(foldSignal === undefined ? {} : { signal: foldSignal }),
       log,
     })
     // WR-03: the fold already told us whether it wrote a receipt. Dropping `complete` here is
@@ -733,7 +734,10 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         root = knowledgeRoot
         const drainStartedMs = ops().now()
         drainDeadlineMs = opts.deadlineMs ?? drainStartedMs + DRAIN_BUDGET_MS
-        if ((opts.deadlineMs !== undefined && drainStartedMs >= drainDeadlineMs) || opts.signal?.aborted) {
+        if (
+          (opts.deadlineMs !== undefined && drainStartedMs >= drainDeadlineMs)
+          || opts.signal?.aborted
+        ) {
           drainOutcome = 'budget-exhausted'
           return
         }
@@ -758,7 +762,9 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
       }
       let acquiredLeaseId: string | undefined
       let openedHost: LocalAgentHost | undefined
-      const signal = opts.signal === undefined ? budget.signal : AbortSignal.any([opts.signal, budget.signal])
+      const signal = opts.signal === undefined
+        ? budget.signal
+        : AbortSignal.any([opts.signal, budget.signal])
       drainSignal = signal
       try {
         // THE TAKE, AND THE `finally` THAT ENDS IT, IN ONE TRY (CR-01). Calling the thunk is what
@@ -940,7 +946,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           configDir: opts.configDir,
           ...(opts.mask === undefined ? {} : { mask: opts.mask }),
           ...(opts.modelDeps === undefined ? {} : { modelDeps: opts.modelDeps }),
-          ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+          signal,
           log,
           authority: heldAuthority,
           deadlineMs: drainDeadlineMs,

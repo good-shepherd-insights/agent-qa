@@ -669,7 +669,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       },
       buildCuratorAuthor(deps) {
         order.push('author')
-        expect(deps).toEqual({ ...modelDeps, mask: expect.any(Function) })
+        expect(deps).toEqual({ ...modelDeps, mask: expect.any(Function), signal: controller.signal })
         return author
       },
       async drainQueue(options) {
