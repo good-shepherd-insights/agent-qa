@@ -105,11 +105,11 @@ export function hasWeb(platform: InitPlatformInput): boolean {
 /**
  * The `registry.targets` block.
  *
- * `targets` IS AN OVERRIDE RATHER THAN A DEFAULT SINCE 395-08. `init` scaffolds its three example
- * web targets so a fresh project has something to run; `config.project.scaffold` derives exactly
- * ONE target from the utterance's domain and must not carry `example-web` and two third-party demo
- * sites into a person's repository they never asked for. The parameter is the difference between
- * those two callers and nothing else about the config changes.
+ * `targets` IS AN OVERRIDE RATHER THAN A DEFAULT SINCE 395-08. `init` scaffolds the two Komazon
+ * example targets on the playground so a fresh project has something to run;
+ * `config.project.scaffold` derives exactly ONE target from the utterance's domain and must not
+ * carry init's example targets into a person's repository they never asked for. The parameter is
+ * the difference between those two callers and nothing else about the config changes.
  */
 export function buildTargets(
   platform: InitPlatformInput,
@@ -120,9 +120,11 @@ export function buildTargets(
   const targets: Record<string, unknown> = {}
 
   if (selection.capabilities.includes('web')) {
-    targets['example-web'] = { platform: 'web', url: 'https://example.com' }
-    targets['automation-exercise'] = { platform: 'web', url: 'https://automationexercise.com' }
-    targets['wai-bad'] = { platform: 'web', url: 'https://www.w3.org/WAI/demos/bad/before/home.html' }
+    targets.komazon = { platform: 'web', url: 'https://playground.vostride.dev/shop/' }
+    targets['komazon-cart-total-bug'] = {
+      platform: 'web',
+      url: 'https://playground.vostride.dev/shop/?bug=cart-total',
+    }
   }
   if (selection.mobileRuntimes.includes('android')) {
     targets['example-android'] = { platform: 'android' }
@@ -155,9 +157,9 @@ export interface ScaffoldConfigFacts {
   /**
    * `registry.targets`, when the caller has its own.
    *
-   * `init` scaffolds three example web targets so a fresh project has something to run;
+   * `init` scaffolds the two Komazon example targets so a fresh project has something to run;
    * `config.project.scaffold` derives exactly ONE from the utterance's domain and must not carry
-   * two third-party demo sites into a repository nobody asked to have them in.
+   * init's example targets into a repository nobody asked to have them in.
    */
   readonly targets?: Record<string, unknown>
 }
@@ -299,20 +301,9 @@ export function renderScaffoldConfigYaml(config: Record<string, unknown>): strin
   return addYamlComments(stringify(config))
 }
 
-export const HN_TOP_STORY_HOOK_ID
-  = 'h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper'
-
-export function buildHooksFile(platform: InitPlatformInput): string {
-  if (!hasWeb(platform)) return 'hooks: []\n'
-
-  return `hooks:
-  - id: ${HN_TOP_STORY_HOOK_ID}
-    name: Fetch first Hacker News story
-    runtime: node
-    file: scripts/fetch-hn-top-story.mjs
-    timeout: 30s
-    network: true
-`
+// 2026-10-19 (445-02, D-40): the proposal writes no hook script, so its hooks file names none.
+export function buildHooksFile(_platform: InitPlatformInput): string {
+  return 'hooks: []\n'
 }
 
 // ---------------------------------------------------------------------------------------------

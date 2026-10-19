@@ -121,11 +121,5 @@
 +
 --- /dev/null
 +++ b/hooks.yaml
-@@ -0,0 +1,7 @@
-+hooks:
-+  - id: h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper
-+    name: Fetch first Hacker News story
-+    runtime: node
-+    file: scripts/fetch-hn-top-story.mjs
-+    timeout: 30s
-+    network: true
+@@ -0,0 +1,1 @@
++hooks: []

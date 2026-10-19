@@ -54,9 +54,13 @@ describe('init generated config schema compatibility', () => {
       expect(parsed.use?.parallel).toBe(false)
       if (platform === 'web' || platform === 'web+android') {
         expect(parsed.use?.browser?.viewport).toEqual({ width: 1280, height: 720 })
-        expect(parsed.registry?.targets?.['automation-exercise']).toEqual({
+        expect(parsed.registry?.targets?.komazon).toEqual({
           platform: 'web',
-          url: 'https://automationexercise.com',
+          url: 'https://playground.vostride.dev/shop/',
+        })
+        expect(parsed.registry?.targets?.['komazon-cart-total-bug']).toEqual({
+          platform: 'web',
+          url: 'https://playground.vostride.dev/shop/?bug=cart-total',
         })
       }
     },

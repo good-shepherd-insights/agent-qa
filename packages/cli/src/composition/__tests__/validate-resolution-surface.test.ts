@@ -296,7 +296,7 @@ describe('a project the product scaffolds is validated, not attested over an emp
     // project has re-opened a class three rounds running.
     scaffoldWithShippedInit()
 
-    for (const verb of [['run', 'tests/example-pass.yaml'], ['devices', 'list']]) {
+    for (const verb of [['run', 'tests/examples/komazon-checkout.yaml'], ['devices', 'list']]) {
       const { status, combined } = runShippedCli(...verb)
 
       expect(status, `a project missing its declared plugin must still fail (${verb.join(' ')}):\n${combined}`)

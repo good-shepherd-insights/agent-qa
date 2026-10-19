@@ -105,7 +105,7 @@ import {
 } from '../local-agent-host.js'
 import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
 import * as host from '../local-agent-host.js'
-import { HN_TOP_STORY_HOOK_ID, buildScaffoldFileSet } from '../../commands/scaffold-content.js'
+import { buildScaffoldFileSet } from '../../commands/scaffold-content.js'
 
 const HUMAN: FunctionCaller = {
   surface: 'test',
@@ -968,8 +968,8 @@ describe('C432-SCAFFOLD-LLMS: the scaffold keeps the model registry and its sele
       expect(config.use?.llm).toBe('judge')
       const parsed = AgentQaConfigSchema.safeParse(config)
       expect(parsed.success ? null : JSON.stringify(parsed.error?.issues)).toBeNull()
-      // The hooks file keeps its canonical id, and the managed block is present.
-      expect(files.find((file) => file.path === 'hooks.yaml')?.text).toContain(HN_TOP_STORY_HOOK_ID)
+      // The hooks file is the empty list (445-02, D-40), and the managed block is present.
+      expect(files.find((file) => file.path === 'hooks.yaml')?.text).toBe('hooks: []\n')
       expect(files.find((file) => file.path === '.gitignore')?.text).toContain('# agent-qa init:start')
 
       const selected = buildScaffoldFileSet({
@@ -1101,7 +1101,7 @@ describe('C432-CONFIG-SIX-OPS: the scaffold writes every file before it answers'
       expect(directFiled).toBe(0)
       expect(readFileSync(join(root, '.gitignore'), 'utf8').startsWith(SEEDED_GITIGNORE)).toBe(true)
       expect(AgentQaConfigSchema.safeParse(parseYaml(readFileSync(configPath, 'utf8'))).success).toBe(true)
-      expect(readFileSync(join(root, 'hooks.yaml'), 'utf8')).toContain(HN_TOP_STORY_HOOK_ID)
+      expect(readFileSync(join(root, 'hooks.yaml'), 'utf8')).toBe('hooks: []\n')
       expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     })
 })

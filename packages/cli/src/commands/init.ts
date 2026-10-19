@@ -24,7 +24,6 @@ import {
   normalizePlatformSelection,
   parseInitPlatform,
   renderScaffoldConfigYaml,
-  HN_TOP_STORY_HOOK_ID,
   type InitLLMConfig,
   type InitPlatformInput,
   type MobileRuntime,
@@ -171,150 +170,49 @@ export const LLM_SETUP_CHOICES: Array<{ value: LLMSetupChoice; name: string; des
   },
 ]
 
-function defaultExampleTargetName(platform: InitPlatformInput): string {
-  const selection = normalizePlatformSelection(platform)
-  if (hasWeb(platform)) return 'example-web'
-  if (selection.mobileRuntimes.includes('android')) return 'example-android'
-  return 'example-ios'
-}
+const KOMAZON_CHECKOUT_TEST_ID = 't_packer-staff-asha-lak-spill-usher-pele-allen-bid-done'
+const KOMAZON_CART_TOTAL_BUG_TEST_ID = 't_reduce-eva-elding-reset-lai-iban-rum-hin-parent-chang'
+const EXAMPLES_SUITE_ID = 's_dice-ego-veer-warp-ionic-trying-tur-cal-stride-battle'
+const KOMAZON_CHECKOUT_PATH = 'tests/examples/komazon-checkout.yaml'
+const KOMAZON_CART_TOTAL_BUG_PATH = 'tests/examples/komazon-cart-total-bug.yaml'
+const EXAMPLES_SUITE_PATH = 'suites/examples.suite.yaml'
 
-function buildExampleTest(platform: InitPlatformInput, variant: 'pass' | 'fail'): string {
-  const expectedUrl = variant === 'pass'
-    ? 'https://www.iana.org/help/example-domains'
-    : 'https://www.iana.org/example-domains'
-  const testId = variant === 'pass'
-    ? 't_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
-    : 't_bronze-cedar-dune-ember-fjord-glade-harbor-ivory-jade-kelp'
-  const name = variant === 'pass' ? 'Example passing test' : 'Example failing test'
-  const browserOverride = variant === 'fail' && hasWeb(platform)
-    ? `use:
-  browser:
-    headless: false
-`
-    : ''
-
-  return `test-id: ${testId}
-name: ${name}
-target: ${defaultExampleTargetName(platform)}
-${browserOverride}steps:
-  - Verify the page says "This domain is for use in documentation examples"
-  - Click on "Learn more"
-  - Verify the page url is "${expectedUrl}"
-`
-}
-
-const AUTOMATION_EXERCISE_TESTS = [
-  {
-    fileName: 'home-smoke.yaml',
-    id: 't_class-volume-nth-intent-break-gun-gone-ging-twig-vert',
-    name: 'Automation Exercise home smoke',
-    steps: [
-      'Verify the page says "Automation Exercise"',
-      'Verify the page has "Signup / Login"',
-    ],
-  },
-  {
-    fileName: 'products-smoke.yaml',
-    id: 't_umble-ruby-direct-notify-rama-phony-dust-owl-lop-etch',
-    name: 'Automation Exercise products smoke',
-    steps: [
-      'Click on "Products"',
-      'Verify the page says "All Products"',
-    ],
-  },
-  {
-    fileName: 'cart-smoke.yaml',
-    id: 't_kend-lack-infect-nou-bah-kil-point-reak-ura-loo',
-    name: 'Automation Exercise cart smoke',
-    steps: [
-      'Click on "Cart"',
-      'Verify the page says "Shopping Cart"',
-    ],
-  },
-]
-const HN_TOP_STORY_TEST_ID = 't_quad-adar-micro-magic-cross-cue-open-agog-rang-cours'
-const BAD_A11Y_TEST_ID = 't_ponent-toa-base-fred-click-sigma-lad-agen-report-sticky'
-
-function buildAutomationExerciseTest(test: typeof AUTOMATION_EXERCISE_TESTS[number]): string {
-  return `test-id: ${test.id}
-name: ${test.name}
-target: automation-exercise
+function buildKomazonCheckoutTest(): string {
+  return `test-id: ${KOMAZON_CHECKOUT_TEST_ID}
+name: Komazon checkout journey
+target: komazon
 steps:
-${test.steps.map(step => `  - ${step}`).join('\n')}
+  - Click the toolbar button named Reset playground session. Verify the shopping bag is empty.
+  - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
+  - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
+  - Enter street address 24 Cedar Lane, city Portland and postal code 97205. Continue to delivery.
+  - Select Express delivery and continue with Review order. Verify the review shows one Everyday Ceramic Mug, the entered address, Express delivery and a total of $36.00.
+  - Place the order using Place order · $36.00. Verify Order confirmed and that the bag is empty.
+  - Open View orders. Verify Order FW-1001 contains one Everyday Ceramic Mug and the $36.00 total.
 `
 }
 
-function buildAutomationExerciseSuite(): string {
-  return `suite-id: s_hill-gant-verb-nast-hunter-rita-home-store-amy-crest
-name: Automation Exercise demo suite
-target: automation-exercise
+// 2026-10-19 (445-02, D-32): a suite replaces a member's target, so the bug URL is a step.
+function buildKomazonCartTotalBugTest(): string {
+  return `test-id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
+name: Komazon cart total (fails on the deliberate cart-total bug)
+target: komazon-cart-total-bug
+steps:
+  - Navigate to https://playground.vostride.dev/shop/?bug=cart-total
+  - Add Everyday Ceramic Mug to the bag, open the shopping bag, and increase that product's quantity to two.
+  - Verify the bag contains exactly two Everyday Ceramic Mugs and the order total is $53.00.
+`
+}
+
+function buildExamplesSuite(): string {
+  return `suite-id: ${EXAMPLES_SUITE_ID}
+name: Komazon examples
+target: komazon
 tests:
-${AUTOMATION_EXERCISE_TESTS.map(test => `  - test: tests/automation-exercise/${test.fileName}\n    id: ${test.id}`).join('\n')}
-`
-}
-
-function buildHackerNewsHookScript(): string {
-  return `import { writeFile } from 'node:fs/promises'
-
-const topStoriesUrl = 'https://hacker-news.firebaseio.com/v0/topstories.json'
-
-async function getJson(url) {
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(\`HN API request failed: \${response.status} \${response.statusText}\`)
-  }
-  return response.json()
-}
-
-function serializeEnvValue(value) {
-  return value
-    .replace(/\\\\/g, '\\\\\\\\')
-    .replace(/"/g, '\\\\"')
-    .replace(/\\r/g, '\\\\r')
-    .replace(/\\n/g, '\\\\n')
-}
-
-const storyIds = await getJson(topStoriesUrl)
-const firstStoryId = Array.isArray(storyIds) ? storyIds[0] : undefined
-if (!Number.isInteger(firstStoryId)) {
-  throw new Error('HN API returned no first story id')
-}
-
-const story = await getJson(\`https://hacker-news.firebaseio.com/v0/item/\${firstStoryId}.json\`)
-const title = typeof story?.title === 'string' ? story.title.trim() : ''
-if (!title) {
-  throw new Error(\`HN item \${firstStoryId} returned no title\`)
-}
-
-await writeFile('/tmp/agent-qa.env', [
-  \`HN_FIRST_STORY_TITLE="\${serializeEnvValue(title)}"\`,
-  \`HN_FIRST_STORY_ID=\${firstStoryId}\`,
-  '',
-].join('\\n'), 'utf-8')
-`
-}
-
-function buildHackerNewsTopStoryTest(): string {
-  return `test-id: ${HN_TOP_STORY_TEST_ID}
-name: Hacker News top story hook demo
-target: example-web
-setup:
-  - ${HN_TOP_STORY_HOOK_ID}
-use:
-  cache: false
-steps:
-  - Navigate to "https://news.ycombinator.com/"
-  - Verify the page shows "{{env:HN_FIRST_STORY_TITLE}}"
-`
-}
-
-function buildBadA11yTest(): string {
-  return `test-id: ${BAD_A11Y_TEST_ID}
-name: W3C BAD accessibility smoke
-target: wai-bad
-steps:
-  - Verify the page says "Welcome to CityLights"
-  - Verify the page says "Inaccessible Home Page"
+  - test: ${KOMAZON_CHECKOUT_PATH}
+    id: ${KOMAZON_CHECKOUT_TEST_ID}
+  - test: ${KOMAZON_CART_TOTAL_BUG_PATH}
+    id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
 `
 }
 
@@ -695,7 +593,10 @@ function initNextSteps(platform: InitPlatformInput): Array<{ command: string; de
     { command: 'agent-qa doctor', description: 'Verify your environment' },
   )
   if (hasWeb(platform)) {
-    steps.push({ command: 'Edit tests/example-pass.yaml', description: 'Write your first test' })
+    steps.push({
+      command: `agent-qa run ${EXAMPLES_SUITE_PATH}`,
+      description: "Run the examples: one passes, one fails on the playground's deliberate bug",
+    })
   } else {
     steps.push({ command: 'Edit agent-qa.local.yaml', description: 'Bind your mobile app' })
   }
@@ -829,54 +730,9 @@ function buildScaffoldFilePlans(
   if (!hasWeb(platform)) return plans
 
   plans.push(
-    scaffoldFilePlan(
-      dir,
-      join('tests', 'example-pass.yaml'),
-      buildExampleTest(platform, 'pass'),
-      force,
-    ),
-    scaffoldFilePlan(
-      dir,
-      join('tests', 'example-fail.yaml'),
-      buildExampleTest(platform, 'fail'),
-      force,
-    ),
-  )
-
-  for (const test of AUTOMATION_EXERCISE_TESTS) {
-    plans.push(scaffoldFilePlan(
-      dir,
-      join('tests', 'automation-exercise', test.fileName),
-      buildAutomationExerciseTest(test),
-      force,
-    ))
-  }
-
-  plans.push(
-    scaffoldFilePlan(
-      dir,
-      join('suites', 'automation-exercise.suite.yaml'),
-      buildAutomationExerciseSuite(),
-      force,
-    ),
-    scaffoldFilePlan(
-      dir,
-      join('scripts', 'fetch-hn-top-story.mjs'),
-      buildHackerNewsHookScript(),
-      force,
-    ),
-    scaffoldFilePlan(
-      dir,
-      join('tests', 'hacker-news-top-story.yaml'),
-      buildHackerNewsTopStoryTest(),
-      force,
-    ),
-    scaffoldFilePlan(
-      dir,
-      join('tests', 'bad-a11y.yaml'),
-      buildBadA11yTest(),
-      force,
-    ),
+    scaffoldFilePlan(dir, KOMAZON_CHECKOUT_PATH, buildKomazonCheckoutTest(), force),
+    scaffoldFilePlan(dir, KOMAZON_CART_TOTAL_BUG_PATH, buildKomazonCartTotalBugTest(), force),
+    scaffoldFilePlan(dir, EXAMPLES_SUITE_PATH, buildExamplesSuite(), force),
   )
 
   return plans

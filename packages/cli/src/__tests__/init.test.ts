@@ -249,12 +249,10 @@ describe('init command', () => {
     expect(content).toContain('dir: .agent-qa/auth-states')
     expect(content).toContain('registry:')
     expect(content).toContain('targets:')
-    expect(content).toContain('example-web:')
-    expect(content).toContain('url: https://example.com')
-    expect(content).toContain('automation-exercise:')
-    expect(content).toContain('url: https://automationexercise.com')
-    expect(content).toContain('wai-bad:')
-    expect(content).toContain('url: https://www.w3.org/WAI/demos/bad/before/home.html')
+    expect(content).toContain('komazon:')
+    expect(content).toContain('url: https://playground.vostride.dev/shop/')
+    expect(content).toContain('komazon-cart-total-bug:')
+    expect(content).toContain('url: https://playground.vostride.dev/shop/?bug=cart-total')
     expect(content).toContain('use:')
     expect(content).toContain('mobile:')
     expect(content).toContain('appState: preserve')
@@ -527,19 +525,17 @@ describe('init command', () => {
           runAfter: 'every-step',
           failOnViolation: false,
         })
-        expect(config.registry.targets).toHaveProperty('wai-bad')
+        expect(config.registry.targets).toHaveProperty('komazon-cart-total-bug')
       } else {
         expect(config.services).not.toHaveProperty('accessibility')
-        expect(config.registry.targets).not.toHaveProperty('wai-bad')
+        expect(config.registry.targets).not.toHaveProperty('komazon-cart-total-bug')
       }
       if (platform === 'web+android') {
-        expect(config.registry.targets).toHaveProperty('example-web')
-        expect(config.registry.targets).toHaveProperty('automation-exercise')
+        expect(config.registry.targets).toHaveProperty('komazon')
         expect(config.registry.targets).toHaveProperty('example-android')
       }
       if (platform === 'web+ios') {
-        expect(config.registry.targets).toHaveProperty('example-web')
-        expect(config.registry.targets).toHaveProperty('automation-exercise')
+        expect(config.registry.targets).toHaveProperty('komazon')
         expect(config.registry.targets).toHaveProperty('example-ios')
       }
       expect(config).not.toHaveProperty('analytics')
@@ -656,7 +652,7 @@ describe('init command', () => {
     const configCall = mockWriteFileSync.mock.calls.find(
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
     )
-    expect(configCall?.[1]).toContain('example-web:')
+    expect(configCall?.[1]).toContain('komazon:')
     expect(configCall?.[1]).toContain('example-android:')
     expect(configCall?.[1]).toContain('example-ios:')
   })
@@ -762,206 +758,31 @@ describe('init command', () => {
     expect(findWriteCallEndingWith('package.json')).toBeUndefined()
   })
 
-  it('creates passing and failing example test files', async () => {
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
-
-    const passCall = findWriteCallEndingWith('example-pass.yaml')
-    const failCall = findWriteCallEndingWith('example-fail.yaml')
-    expect(passCall).toBeDefined()
-    expect(failCall).toBeDefined()
-
-    const passContent = passCall![1] as string
-    expect(passContent).toContain('name: Example passing test')
-    expect(passContent).toContain('target: example-web')
-    expect(passContent).not.toContain('url: https://example.com')
-    expect(passContent).toContain('steps:')
-    expect(passContent).toContain('Verify the page says "This domain is for use in documentation examples"')
-    expect(passContent).toContain('Click on "Learn more"')
-    expect(passContent).toContain('Verify the page url is "https://www.iana.org/help/example-domains"')
-
-    const failContent = failCall![1] as string
-    expect(failContent).toContain('name: Example failing test')
-    expect(failContent).toContain('target: example-web')
-    expect(failContent).toContain('use:\n  browser:\n    headless: false')
-    expect(failContent).toContain('Verify the page says "This domain is for use in documentation examples"')
-    expect(failContent).toContain('Click on "Learn more"')
-    expect(failContent).toContain('Verify the page url is "https://www.iana.org/example-domains"')
-  })
-
-  it('creates Automation Exercise demo tests and suite for web init', async () => {
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
-
-    const homeCall = findWriteCallEndingWith('tests/automation-exercise/home-smoke.yaml')
-    const productsCall = findWriteCallEndingWith('tests/automation-exercise/products-smoke.yaml')
-    const cartCall = findWriteCallEndingWith('tests/automation-exercise/cart-smoke.yaml')
-    const suiteCall = findWriteCallEndingWith('suites/automation-exercise.suite.yaml')
-    expect(homeCall).toBeDefined()
-    expect(productsCall).toBeDefined()
-    expect(cartCall).toBeDefined()
-    expect(suiteCall).toBeDefined()
-
-    expect(homeCall?.[1]).toContain('target: automation-exercise')
-    expect(homeCall?.[1]).toContain('Verify the page says "Automation Exercise"')
-    expect(homeCall?.[1]).toContain('Verify the page has "Signup / Login"')
-    expect(productsCall?.[1]).toContain('Click on "Products"')
-    expect(productsCall?.[1]).toContain('Verify the page says "All Products"')
-    expect(cartCall?.[1]).toContain('Click on "Cart"')
-    expect(cartCall?.[1]).toContain('Verify the page says "Shopping Cart"')
-
-    const suiteContent = suiteCall?.[1] as string
-    expect(suiteContent).toContain('suite-id: s_hill-gant-verb-nast-hunter-rita-home-store-amy-crest')
-    expect(suiteContent).toContain('name: Automation Exercise demo suite')
-    expect(suiteContent).toContain('target: automation-exercise')
-    expect(suiteContent).toContain('test: tests/automation-exercise/home-smoke.yaml')
-    expect(suiteContent).toContain('test: tests/automation-exercise/products-smoke.yaml')
-    expect(suiteContent).toContain('test: tests/automation-exercise/cart-smoke.yaml')
-
-    const output = consoleOutput()
-    expect(output).toContain('tests/automation-exercise/home-smoke.yaml')
-    expect(output).toContain('tests/automation-exercise/products-smoke.yaml')
-    expect(output).toContain('tests/automation-exercise/cart-smoke.yaml')
-    expect(output).toContain('suites/automation-exercise.suite.yaml')
-  })
-
-  it('creates a Hacker News hook demo for web init', async () => {
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
-
-    const hooksCall = findWriteCallEndingWith('hooks.yaml')
-    const scriptCall = findWriteCallEndingWith('scripts/fetch-hn-top-story.mjs')
-    const testCall = findWriteCallEndingWith('tests/hacker-news-top-story.yaml')
-    expect(hooksCall).toBeDefined()
-    expect(scriptCall).toBeDefined()
-    expect(testCall).toBeDefined()
-
-    const hooksContent = hooksCall?.[1] as string
-    expect(hooksContent).toContain('Fetch first Hacker News story')
-    expect(hooksContent).toContain('runtime: node')
-    expect(hooksContent).toContain('file: scripts/fetch-hn-top-story.mjs')
-    expect(hooksContent).toContain('timeout: 30s')
-    expect(hooksContent).toContain('network: true')
-
-    const scriptContent = scriptCall?.[1] as string
-    expect(scriptContent).toContain('https://hacker-news.firebaseio.com/v0/topstories.json')
-    expect(scriptContent).toContain('https://hacker-news.firebaseio.com/v0/item/${firstStoryId}.json')
-    expect(scriptContent).toContain("writeFile('/tmp/agent-qa.env'")
-    expect(scriptContent).toContain('HN_FIRST_STORY_TITLE')
-    expect(scriptContent).toContain('HN_FIRST_STORY_ID')
-
-    const testContent = testCall?.[1] as string
-    expect(testContent).toContain('name: Hacker News top story hook demo')
-    expect(testContent).toContain('target: example-web')
-    expect(testContent).toContain('setup:')
-    expect(testContent).toContain('h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper')
-    expect(testContent).toContain('use:\n  cache: false')
-    expect(testContent).toContain('Navigate to "https://news.ycombinator.com/"')
-    expect(testContent).toContain('{{env:HN_FIRST_STORY_TITLE}}')
-
-    const output = consoleOutput()
-    expect(output).toContain('tests/hacker-news-top-story.yaml')
-    expect(output).toContain('scripts/fetch-hn-top-story.mjs')
-  })
-
-  it('round-trips generated Hacker News values through the runtime env decoder', async () => {
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
-
-    const scriptCall = findWriteCallEndingWith('scripts/fetch-hn-top-story.mjs')
-    expect(scriptCall).toBeDefined()
-    const script = String(scriptCall?.[1]).replace(
-      "import { writeFile } from 'node:fs/promises'\n",
-      '',
-    )
-    const title = 'quote " slash \\ apostrophe \' carriage\rreturn line\nfeed equals=a hash=#'
-    const fetch = vi.fn(async (url: string) => ({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      json: async () => url.endsWith('topstories.json')
-        ? [38315]
-        : { title },
-    }))
-    let envBytes = ''
-    const writeFile = vi.fn(async (path: string, content: string) => {
-      expect(path).toBe('/tmp/agent-qa.env')
-      envBytes = content
-    })
-    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
-      ...args: string[]
-    ) => (...values: unknown[]) => Promise<void>
-
-    await new AsyncFunction('fetch', 'writeFile', script)(fetch, writeFile)
-
-    const runnerCodecUrl = pathToFileURL(
-      resolve(repoRoot, 'packages/runner/src/hooks/env-file.ts'),
-    ).href
-    const runtimeCodec = await import(/* @vite-ignore */ runnerCodecUrl)
-    expect(runtimeCodec.parseEnvFile(envBytes)).toEqual({
-      HN_FIRST_STORY_TITLE: title,
-      HN_FIRST_STORY_ID: '38315',
-    })
-  })
-
-  it('creates a W3C BAD accessibility reporting demo for web init', async () => {
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
-
-    const testCall = findWriteCallEndingWith('tests/bad-a11y.yaml')
-    expect(testCall).toBeDefined()
-
-    const testContent = testCall?.[1] as string
-    expect(testContent).toContain('test-id: t_ponent-toa-base-fred-click-sigma-lad-agen-report-sticky')
-    expect(testContent).toContain('name: W3C BAD accessibility smoke')
-    expect(testContent).toContain('target: wai-bad')
-    expect(testContent).toContain('Verify the page says "Welcome to CityLights"')
-    expect(testContent).toContain('Verify the page says "Inaccessible Home Page"')
-
-    const output = consoleOutput()
-    expect(output).toContain('tests/bad-a11y.yaml')
-  })
-
   it('generates schema-valid demo artifact YAML for web init', async () => {
     await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
     const { parseTestFile, SuiteDefinitionSchema, HooksFileSchema } = await loadCoreYamlValidators()
 
-    for (const suffix of [
-      'tests/automation-exercise/home-smoke.yaml',
-      'tests/automation-exercise/products-smoke.yaml',
-      'tests/automation-exercise/cart-smoke.yaml',
+    for (const [suffix, target] of [
+      ['tests/examples/komazon-checkout.yaml', 'komazon'],
+      ['tests/examples/komazon-cart-total-bug.yaml', 'komazon-cart-total-bug'],
     ]) {
       const call = findWriteCallEndingWith(suffix)
       expect(call).toBeDefined()
       const parsed = parseTestFile(String(call?.[1]), suffix)
       expect(parsed.errors).toEqual([])
       expect(parsed.tests).toHaveLength(1)
-      expect(parsed.tests[0].target).toBe('automation-exercise')
+      expect(parsed.tests[0].target).toBe(target)
     }
 
-    const hnCall = findWriteCallEndingWith('tests/hacker-news-top-story.yaml')
-    expect(hnCall).toBeDefined()
-    const parsedHn = parseTestFile(String(hnCall?.[1]), 'tests/hacker-news-top-story.yaml')
-    expect(parsedHn.errors).toEqual([])
-    expect(parsedHn.tests).toHaveLength(1)
-    expect(parsedHn.tests[0].setup).toEqual([
-      'h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper',
-    ])
-    expect(parsedHn.tests[0].use?.cache).toBe(false)
-
-    const badA11yCall = findWriteCallEndingWith('tests/bad-a11y.yaml')
-    expect(badA11yCall).toBeDefined()
-    const parsedBadA11y = parseTestFile(String(badA11yCall?.[1]), 'tests/bad-a11y.yaml')
-    expect(parsedBadA11y.errors).toEqual([])
-    expect(parsedBadA11y.tests).toHaveLength(1)
-    expect(parsedBadA11y.tests[0].target).toBe('wai-bad')
-
-    const suiteCall = findWriteCallEndingWith('suites/automation-exercise.suite.yaml')
+    const suiteCall = findWriteCallEndingWith('suites/examples.suite.yaml')
     expect(suiteCall).toBeDefined()
     const parsedSuite = SuiteDefinitionSchema.safeParse(parseYaml(String(suiteCall?.[1])))
     if (!parsedSuite.success) {
       throw new Error(JSON.stringify(parsedSuite.error.issues, null, 2))
     }
-    expect(parsedSuite.data.tests).toHaveLength(3)
     expect(parsedSuite.data.tests.map((test: { test: string }) => test.test)).toEqual([
-      'tests/automation-exercise/home-smoke.yaml',
-      'tests/automation-exercise/products-smoke.yaml',
-      'tests/automation-exercise/cart-smoke.yaml',
+      'tests/examples/komazon-checkout.yaml',
+      'tests/examples/komazon-cart-total-bug.yaml',
     ])
 
     const hooksCall = findWriteCallEndingWith('hooks.yaml')
@@ -970,40 +791,25 @@ describe('init command', () => {
     if (!parsedHooks.success) {
       throw new Error(JSON.stringify(parsedHooks.error.issues, null, 2))
     }
-    expect(parsedHooks.data.hooks).toHaveLength(1)
-    expect(parsedHooks.data.hooks[0]).toMatchObject({
-      id: 'h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper',
-      name: 'Fetch first Hacker News story',
-      runtime: 'node',
-      file: 'scripts/fetch-hn-top-story.mjs',
-      network: true,
-    })
+    expect(parsedHooks.data.hooks).toHaveLength(0)
   })
 
   it('does not create web demo tests for mobile-only init', async () => {
     await runInit(['--dir', '/tmp/test-project', '--platform', 'android', '--skip-install'])
 
-    expect(findWriteCallEndingWith('tests/example-pass.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('tests/example-fail.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('tests/automation-exercise/home-smoke.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('tests/automation-exercise/products-smoke.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('tests/automation-exercise/cart-smoke.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('suites/automation-exercise.suite.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('scripts/fetch-hn-top-story.mjs')).toBeUndefined()
-    expect(findWriteCallEndingWith('tests/hacker-news-top-story.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('tests/bad-a11y.yaml')).toBeUndefined()
+    expect(findWriteCallEndingWith('tests/examples/komazon-checkout.yaml')).toBeUndefined()
+    expect(findWriteCallEndingWith('tests/examples/komazon-cart-total-bug.yaml')).toBeUndefined()
+    expect(findWriteCallEndingWith('suites/examples.suite.yaml')).toBeUndefined()
 
     const configCall = findWriteCallEndingWith('agent-qa.config.yaml')
-    expect(configCall?.[1]).not.toContain('automation-exercise:')
-    expect(configCall?.[1]).not.toContain('automationexercise.com')
-    expect(configCall?.[1]).not.toContain('wai-bad:')
+    expect(configCall?.[1]).not.toContain('komazon')
+    expect(configCall?.[1]).not.toContain('playground.vostride.dev')
     expect(configCall?.[1]).not.toContain('\n  accessibility:\n')
 
     const hooksCall = findWriteCallEndingWith('hooks.yaml')
     expect(hooksCall?.[1]).toBe('hooks: []\n')
-    expect(consoleOutput()).not.toContain('tests/example-pass.yaml')
-    expect(consoleOutput()).not.toContain('tests/example-fail.yaml')
-    expect(consoleOutput()).not.toContain('Edit tests/example-pass.yaml')
+    expect(consoleOutput()).not.toContain('tests/examples/')
+    expect(consoleOutput()).not.toContain('suites/examples.suite.yaml')
   })
 
   it('creates an empty local secrets file', async () => {
@@ -1367,7 +1173,7 @@ describe('init command', () => {
     expect(mockWriteScaffoldFileAtomic).toHaveBeenCalledWith(
       expect.objectContaining({
         root: '/tmp/test-project',
-        path: '/tmp/test-project/tests/example-pass.yaml',
+        path: '/tmp/test-project/tests/examples/komazon-checkout.yaml',
       }),
       expect.anything(),
     )
@@ -1611,15 +1417,9 @@ skills/.staging/
       '/tmp/test-project/agent-qa.local.yaml',
       '/tmp/test-project/hooks.yaml',
       '/tmp/test-project/package.json',
-      '/tmp/test-project/scripts/fetch-hn-top-story.mjs',
-      '/tmp/test-project/suites/automation-exercise.suite.yaml',
-      '/tmp/test-project/tests/automation-exercise/cart-smoke.yaml',
-      '/tmp/test-project/tests/automation-exercise/home-smoke.yaml',
-      '/tmp/test-project/tests/automation-exercise/products-smoke.yaml',
-      '/tmp/test-project/tests/bad-a11y.yaml',
-      '/tmp/test-project/tests/example-fail.yaml',
-      '/tmp/test-project/tests/example-pass.yaml',
-      '/tmp/test-project/tests/hacker-news-top-story.yaml',
+      '/tmp/test-project/suites/examples.suite.yaml',
+      '/tmp/test-project/tests/examples/komazon-cart-total-bug.yaml',
+      '/tmp/test-project/tests/examples/komazon-checkout.yaml',
     ]))
 
     const preflightOrder = mockPreflightInitPlan.mock.invocationCallOrder[0]!
@@ -1693,11 +1493,11 @@ skills/.staging/
 
     const output = consoleOutput()
     expect(output).toContain('Preserved:')
-    expect(output).toContain('tests/example-pass.yaml')
+    expect(output).toContain('tests/examples/komazon-checkout.yaml')
     const createdSection = output.match(
       /  Created:\n([\s\S]*?)(?:\n  (?:Updated|Preserved|Next steps):|$)/,
     )?.[1] ?? ''
-    expect(createdSection).not.toContain('tests/example-pass.yaml')
+    expect(createdSection).not.toContain('tests/examples/komazon-checkout.yaml')
   })
 
   it('performs zero writes when any full-plan preflight destination fails', async () => {
@@ -2000,8 +1800,13 @@ skills/.staging/
       // People still write policies by hand, and the README still says where.
       expect(readme).toContain('policies/global.md')
 
-      // D-21: the samples and the policy template are still scaffolded as before.
-      for (const sample of ['tests/example-pass.yaml', 'tests/example-fail.yaml', 'agent-qa-knowledge/policies/global.md']) {
+      // D-21: the samples and the policy template are still scaffolded (445-02 moved the samples).
+      for (const sample of [
+        'tests/examples/komazon-checkout.yaml',
+        'tests/examples/komazon-cart-total-bug.yaml',
+        'suites/examples.suite.yaml',
+        'agent-qa-knowledge/policies/global.md',
+      ]) {
         expect(actualFs.existsSync(join(dir, sample)), `${sample} is no longer scaffolded`).toBe(true)
       }
     } finally {
