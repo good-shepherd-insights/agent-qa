@@ -1455,6 +1455,65 @@ describe('C445-DOCTOR-CONFIG', () => {
   })
 })
 
+describe('C445-DOCTOR-AUTH', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockExistsSync.mockReturnValue(false)
+    mockLoadLLMAuthPlugins.mockResolvedValue([])
+    mockLoadProviderPluginsForRawConfig.mockResolvedValue()
+    mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
+    mockReadFileSync.mockReturnValue('')
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({ source: 'index' })
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue(NATIVE_READY)
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'absent' })
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    forceTerminalWidth(WIDE_TEST_WIDTH)
+  })
+
+  afterEach(() => {
+    mockReadFile.mockRejectedValue({ code: 'ENOENT' })
+    restoreTerminalWidth()
+    process.exitCode = 0
+  })
+
+  async function credentialFix(name: string, provider: string, model: string): Promise<string> {
+    mockReadFile.mockResolvedValue(
+      `registry:\n  llms:\n    - name: ${name}\n      provider: ${provider}\n      model: ${model}\nuse:\n  llm: ${name}\n` as never,
+    )
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'missing',
+      credentialKey: name,
+      provider,
+      required: true,
+      message: 'No credential saved.',
+    })
+    await runDoctor()
+    const lines = consoleLogs.map(stripAnsi)
+    const start = lines.findIndex(line => line.startsWith('    LLM credential  '))
+    expect(start, getOutput()).toBeGreaterThanOrEqual(0)
+    expect(rowFor('LLM credential'), getOutput()).toContain('FAIL')
+    const fixStart = lines.findIndex((line, index) => index > start && FIX_LINE_PATTERN.test(line))
+    expect(fixStart, getOutput()).toBeGreaterThan(start)
+    const parts = [(lines[fixStart] ?? '').replace(FIX_LINE_PATTERN, '')]
+    for (let index = fixStart + 1; index < lines.length && /^ {11}\S/.test(lines[index] ?? ''); index += 1) {
+      parts.push((lines[index] ?? '').trim())
+    }
+    return parts.join(' ')
+  }
+
+  it('the LLM rows name auth login, never the dashboard', async () => {
+    const apiFix = await credentialFix('gemini-fast', 'gemini', 'gemini-3-flash-preview')
+    expect(apiFix).toContain('agent-qa auth set --config gemini-fast --type api-key')
+    expect(apiFix).toContain('agent-qa auth login --config')
+    expect(apiFix).not.toContain('from `agent-qa dashboard`')
+
+    const subscriptionFix = await credentialFix('claude-code', 'anthropic-subscription', 'claude-sonnet-4-6')
+    expect(subscriptionFix).toContain('agent-qa auth login --config claude-code')
+    expect(subscriptionFix).not.toContain('from `agent-qa dashboard`')
+    expect(getOutput()).not.toContain('from `agent-qa dashboard`')
+  })
+})
+
 describe('doctor row renderer (407-24 · G-407-3)', () => {
   const originalColumnsEnv = process.env.COLUMNS
 

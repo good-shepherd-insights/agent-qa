@@ -1,7 +1,7 @@
 // C445-SETUP-ERRORS (445-08, D-15, D-12): each missing setup prerequisite names its fix
 
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -32,6 +32,7 @@ const LEG_BUDGET_MS = 180_000
 const GEMINI_CONFIG = 'gemini-key'
 const UNKNOWN_KEY = 'planer'
 const INVALID_CONFIG_FIX = 'Fix or remove the key named above'
+const PLANTED_KEY = 'sk-test-not-a-key'
 
 interface Leg {
   code: number | null
@@ -44,6 +45,8 @@ interface Scene {
   model?: Leg
   validate?: Leg
   run?: Leg
+  auth?: Record<string, Leg>
+  authStoreWritten?: boolean
   modelRequests?: number
   error?: string
 }
@@ -197,6 +200,35 @@ async function driveConfig(): Promise<void> {
   scene.run = await spawnCli(root, ['run', 'tests/setup.test.yaml'])
 }
 
+async function driveAuth(): Promise<void> {
+  if (model === undefined || target === undefined) throw new Error('servers not started')
+  const root = workspace(
+    'auth',
+    'default',
+    [
+      '    - name: codex',
+      '      provider: openai-subscription',
+      '      model: gpt-6.1-sol',
+      '    - name: default',
+      '      provider: openai-compatible',
+      '      model: stub-vision',
+      `      baseURL: ${model.baseUrl}`,
+    ].join('\n'),
+    target.url,
+  )
+  const legs: Record<string, readonly string[]> = {
+    unknownConfig: ['auth', 'login', '--config', 'nosuch'],
+    loginApiConfig: ['auth', 'login', '--config', 'default'],
+    setOnSubscription: ['auth', 'set', '--config', 'codex', '--type', 'api-key', PLANTED_KEY],
+    invalidType: ['auth', 'set', '--config', 'default', '--type', 'nosuch', PLANTED_KEY],
+    bearerOnOpenAI: ['auth', 'set', '--config', 'default', '--type', 'bearer-token', PLANTED_KEY],
+    emptySecret: ['auth', 'set', '--config', 'default', '--type', 'api-key', ''],
+  }
+  scene.auth = {}
+  for (const [name, args] of Object.entries(legs)) scene.auth[name] = await spawnCli(root, args)
+  scene.authStoreWritten = existsSync(join(root, '.agent-qa', 'auth.json'))
+}
+
 describe('C445-SETUP-ERRORS', () => {
   beforeAll(async () => {
     if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
@@ -207,6 +239,7 @@ describe('C445-SETUP-ERRORS', () => {
       await driveBrowser()
       await driveModel()
       await driveConfig()
+      await driveAuth()
       scene.modelRequests = model.requests.length
     } catch (error) {
       scene.error = message(error)
@@ -245,5 +278,21 @@ describe('C445-SETUP-ERRORS', () => {
       expect(leg?.output, seen()).toContain(`"${UNKNOWN_KEY}"`)
       expect(leg?.output, seen()).toContain(INVALID_CONFIG_FIX)
     }
+  })
+
+  it('auth refusals exit non-zero and name the command to use', () => {
+    expectFresh()
+    expect(scene.error, seen()).toBeUndefined()
+    const auth = scene.auth ?? {}
+    expect(Object.keys(auth).length, seen()).toBe(6)
+    for (const [name, leg] of Object.entries(auth)) {
+      expect({ name, code: leg.code }, seen()).toEqual({ name, code: 1 })
+      expect(leg.output, seen()).not.toContain(PLANTED_KEY)
+    }
+    expect(auth.unknownConfig?.output, seen()).toContain('nosuch')
+    expect(auth.unknownConfig?.output, seen()).toContain('codex, default')
+    expect(auth.loginApiConfig?.output, seen()).toContain('agent-qa auth set --config')
+    expect(auth.setOnSubscription?.output, seen()).toContain('agent-qa auth login --config codex')
+    expect(scene.authStoreWritten, seen()).toBe(false)
   })
 })
