@@ -130,6 +130,9 @@ function outcomeReport(outcome: RunNextJobOutcome): Record<string, unknown> {
   if (outcome.disposition === 'completed') {
     return { ...base, chained: outcome.chained.map((enqueued) => String(enqueued.job.id)) }
   }
+  if (outcome.disposition === 'interrupted') {
+    return { ...base, reason: outcome.reason }
+  }
   return {
     ...base,
     reason: outcome.reason,

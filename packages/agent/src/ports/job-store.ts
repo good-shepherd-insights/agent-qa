@@ -431,6 +431,9 @@ export interface JobStorePort {
     fence: JobStoreFence,
   ): Promise<void>
 
+  /** Release an attempt its host aborted, refunding the attempt and keeping the last failure. */
+  releaseInterrupted(jobId: JobId, fence: JobStoreFence): Promise<void>
+
   /**
    * Durably publish one checkpoint. The store records the canonical payload and digest in
    * the same fenced transaction that touches the job. A file may be written afterward as a

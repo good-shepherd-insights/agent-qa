@@ -151,7 +151,7 @@ export interface ObservedJobOutcome {
    * chip, never enough to pick a run.
    */
   readonly job?: { readonly id: string; readonly kind: JobKind }
-  readonly disposition?: 'completed' | 'retry-scheduled' | 'cancelled' | 'failed'
+  readonly disposition?: 'completed' | 'retry-scheduled' | 'cancelled' | 'failed' | 'interrupted'
   readonly handlerInvoked?: boolean
   readonly reason?: string
 }

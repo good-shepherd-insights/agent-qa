@@ -146,7 +146,7 @@ export interface CreateAgentJobQueueOptions {
    * cannot reach a model is to fail somewhere far from the composition that forgot it. Making
    * it an argument of construction puts that decision where the binding is made. The engine
    * never calls it: the only thing that happens to this value is that the authorship
-   * primitive hands it to an author callback.
+   * primitive hands it to an author callback, carrying the job's signal when a host passed one.
    */
   readonly model: JobModelCapability
   /**
@@ -163,6 +163,9 @@ export interface CreateAgentJobQueueOptions {
 
 export interface RunNextJobInput {
   readonly fence: JobStoreFence
+  // 2026-10-19 (444.1-13, D-01): reaches every model request of the claimed job; an attempt
+  // that fails while it is aborted is released with its attempt refunded.
+  readonly signal?: AbortSignal
 }
 
 /** Facts every ran outcome carries, whatever the job's disposition turned out to be. */
@@ -223,6 +226,11 @@ export type RunNextJobOutcome =
       readonly reason: string
       /** What the kind's declared disposition enqueued — empty for a halt-chain kind. */
       readonly continuation: readonly JobEnqueueOutcome[]
+    })
+  | (RanJobOutcomeBase & {
+      readonly disposition: 'interrupted'
+      /** What the aborted attempt reported: `handler-threw: …` or its retryable reason. */
+      readonly reason: string
     })
 
 export interface CancelJobInput {
@@ -471,7 +479,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       return { released }
     },
 
-    async runNextJob({ fence }) {
+    async runNextJob({ fence, signal }) {
       const claim =
         claimOptions === undefined
           ? await store.claimNext(fence)
@@ -579,12 +587,34 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         publishedValues.set(checkpointId, value)
       }
 
+      const jobModel: JobModelCapability =
+        signal === undefined
+          ? model
+          : {
+              modelId: model.modelId,
+              ...(model.vision === undefined ? {} : { vision: model.vision }),
+              generate: (request) => model.generate({ ...request, signal }),
+            }
+
+      const landInterrupted = async (reason: string): Promise<RunNextJobOutcome> => {
+        await store.releaseInterrupted(job.id, fence)
+        return {
+          ran: true,
+          disposition: 'interrupted',
+          job,
+          payload: claim.payload,
+          checkpointsPublished: published,
+          handlerInvoked: true,
+          reason,
+        }
+      }
+
       // The context that carries the model. It is built here and handed to the authorship
       // primitive; it is NOT part of what the handler receives, which is the structural half
       // of "a job has no ambient model accessor" (D-11 layer 2).
       const checkpointContext: JobCheckpointContext = {
         jobId: job.id,
-        model,
+        model: jobModel,
         async readRecordedValue(checkpointId) {
           // The same boundary. An authorship that is about to consult a model is exactly where
           // a pending cancel is worth the most, so the request is honoured BEFORE the call
@@ -635,6 +665,8 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
         if (error instanceof UndeclaredJobCheckpointError) throw error
 
         const reason = `handler-threw: ${error instanceof Error ? error.message : String(error)}`
+        // Before the bound: an aborted attempt did not fail, so even the last one is not spent.
+        if (signal?.aborted === true) return landInterrupted(reason)
         if (job.attempts < declaration.maxAttempts) {
           const delayMs = retryDelayMs(declaration.backoff, job.attempts)
           await store.recordFailure(job.id, { kind: 'retry', reason, retryAfterMs: delayMs }, fence)
@@ -697,6 +729,10 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           handlerInvoked: true,
           chained: completed.chained,
         }
+      }
+
+      if (outcome.status === 'retryable' && signal?.aborted === true) {
+        return landInterrupted(outcome.reason)
       }
 
       // A retryable REPORT on the last permitted attempt becomes a permanent DECISION: the

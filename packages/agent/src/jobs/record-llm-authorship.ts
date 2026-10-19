@@ -48,6 +48,8 @@ export interface JobModelRequest {
    * posture — and every pre-widening caller and stub stays assignable unchanged.
    */
   readonly images?: readonly Uint8Array[]
+  // 2026-10-19 (444.1-13, D-01): set by the engine from the host's per-run signal.
+  readonly signal?: AbortSignal
 }
 
 /** What a model answered. Text, because a caller that needs structure parses it. */

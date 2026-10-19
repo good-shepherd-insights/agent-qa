@@ -92,7 +92,7 @@ export interface AgentJobOutcomeRow {
   readonly jobId: string
   readonly kind: JobKind
   readonly runId?: string
-  readonly disposition: 'completed' | 'retry-scheduled' | 'failed' | 'cancelled'
+  readonly disposition: 'completed' | 'retry-scheduled' | 'failed' | 'cancelled' | 'interrupted'
   readonly attempt: number
 }
 

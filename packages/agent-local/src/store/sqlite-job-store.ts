@@ -423,6 +423,13 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
          updated_at = ?, not_before = ?
      WHERE id = ?`,
   )
+  // 444.1 D-01: an aborted attempt did not fail, so its claim is refunded and the last failure,
+  // not-before time and start stay as the previous attempt left them.
+  const markInterrupted = db.prepare(
+    `UPDATE jobs
+     SET claimed_at = NULL, attempts = MAX(attempts - 1, 0), updated_at = ?
+     WHERE id = ?`,
+  )
   const markFailed = db.prepare(
     `UPDATE jobs
      SET status = 'failed', claimed_at = NULL, last_failure_kind = 'permanent',
@@ -771,6 +778,15 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         } else {
           markFailed.run(disposition.reason, now, String(jobId))
         }
+      })
+    },
+
+    async releaseInterrupted(jobId: JobId, fence: JobStoreFence): Promise<void> {
+      const now = clock.now()
+      inTransaction(() => {
+        requireFence(fence)
+        requireRow(String(jobId))
+        markInterrupted.run(now, String(jobId))
       })
     },
 
