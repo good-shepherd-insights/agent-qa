@@ -277,6 +277,8 @@ export function startRun(config: RunConfig): RunSession {
         memberQuarantinedSlots[i] = quarantined
         bus.publish('testFinished', projectTestFinished(skip, mask, {
           recording: { state: 'absent', reason: 'not-captured' },
+          name: member.name,
+          filePath: member.filePath,
         }))
         return
       }
@@ -290,6 +292,8 @@ export function startRun(config: RunConfig): RunSession {
         memberQuarantinedSlots[i] = quarantined
         bus.publish('testFinished', projectTestFinished(skip, mask, {
           recording: { state: 'absent', reason: 'not-captured' },
+          name: member.name,
+          filePath: member.filePath,
         }))
         return
       }

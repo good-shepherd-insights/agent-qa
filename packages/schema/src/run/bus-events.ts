@@ -206,6 +206,9 @@ export interface TestFinishedPayload {
   failureSummary?: string
   retryCount?: number
   recording?: RecordingEntry
+  // 2026-10-19 (444.1-15, D-24): set only on a skipped member, which has no testStarted to name it.
+  name?: string
+  filePath?: string
   readonly steps?: never
 }
 

@@ -292,7 +292,7 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     totalDurationMs += payload.durationMs ?? 0
 
     const meta = testMeta.get(payload.testIndex)
-    const name = meta?.name ?? `Test ${payload.testIndex + 1}`
+    const name = meta?.name ?? payload.name ?? `Test ${payload.testIndex + 1}`
     const outcome = payload.outcome
     const failed = outcome === 'failed' || outcome === 'timeout'
     const skipped = outcome === 'skipped' || outcome === 'cancelled'
@@ -306,7 +306,7 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     const quarantined =
       failed
       && quarantineAppliesToTest(options.quarantined, {
-        filePath: meta?.filePath ?? name,
+        filePath: meta?.filePath ?? payload.filePath ?? name,
         testName: name,
       })
     if (quarantined) quarantinedFailures++

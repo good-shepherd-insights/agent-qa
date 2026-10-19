@@ -223,6 +223,8 @@ export function projectTestFinished(
     failureSummary?: string
     retryCount?: number
     recording?: TestFinishedPayload['recording']
+    name?: string
+    filePath?: string
   },
 ): TestFinishedPayload {
   const { steps, ...rest } = outcome
@@ -241,6 +243,8 @@ export function projectTestFinished(
       : {}),
     ...(extra?.retryCount !== undefined ? { retryCount: extra.retryCount } : {}),
     ...(extra?.recording !== undefined ? { recording: extra.recording } : {}),
+    ...(extra?.name !== undefined ? { name: extra.name } : {}),
+    ...(extra?.filePath !== undefined ? { filePath: extra.filePath } : {}),
   }
   return maskPayloadStrings(payload, mask)
 }

@@ -177,7 +177,7 @@ function normalize(events: readonly RunEventEnvelope[]): BaselineEvent[] {
 }
 
 /**
- * The ONE intentional divergence from the pre-402 capture, and the whole of it.
+ * The first intentional divergence from the pre-402 capture (444.1-15 names the second, below).
  *
  * 402-04 adds `handles` to the `runStarted` payload (D-10's roster). That is an ADDITIVE payload
  * field, so the baseline — captured before it existed — cannot contain it, and the control reds.
@@ -196,16 +196,37 @@ function withoutHandleRoster(events: readonly BaselineEvent[]): BaselineEvent[] 
   })
 }
 
+// 2026-10-19 (444.1-15, D-24): the second named divergence, subtracted and asserted the same way.
+// A skipped member's testFinished now carries its name and filePath (additive payload fields).
+function withoutSkipIdentity(events: readonly BaselineEvent[]): BaselineEvent[] {
+  return events.map((event) => {
+    if (event.type !== 'testFinished') return event
+    const payload = event.payload as Record<string, unknown>
+    const { name: _name, filePath: _filePath, ...rest } = payload
+    return { ...event, payload: rest }
+  })
+}
+
+function skipIdentityOf(events: readonly RunEventEnvelope[]): unknown[] {
+  return events
+    .filter((event) => event.type === 'testFinished')
+    .map((event) => event.payload as { outcome: string; name?: string; filePath?: string })
+    .filter((payload) => payload.name !== undefined || payload.filePath !== undefined)
+    .map((payload) => [payload.outcome, payload.name, payload.filePath])
+}
+
 describe('workers=1 parity — the pre-refactor differential control', () => {
   it('reproduces the captured sequential event stream verbatim, but for the added roster', async () => {
     const session = startRun(baselineConfig())
     const events = drain(session)
     await done(session)
 
-    expect(withoutHandleRoster(normalize(events))).toEqual(SEQUENTIAL_BASELINE)
+    const stream = withoutSkipIdentity(withoutHandleRoster(normalize(events)))
+    expect(stream).toEqual(SEQUENTIAL_BASELINE)
     // …and the subtracted field is exactly the roster, present and correct. Subtracting a field
     // without asserting it would let the control pass on a runStarted that lost the roster too.
     expect(handleRosterOf(events[0] as RunEventEnvelope)).toEqual([0, 1, 2, 3])
+    expect(skipIdentityOf(events)).toEqual([['skipped', 'charlie test', 'charlie.test.ts']])
   })
 
   // Capture mode. Run with AGENT_QA_CAPTURE_BASELINE=1 to (re)generate the fixture. It is
@@ -408,8 +429,10 @@ describe('the bounded member pool — 2 members concurrent, one bus, one termina
     const events = drain(session)
     await done(session)
 
-    expect(withoutHandleRoster(normalize(events))).toEqual(SEQUENTIAL_BASELINE)
+    const stream = withoutSkipIdentity(withoutHandleRoster(normalize(events)))
+    expect(stream).toEqual(SEQUENTIAL_BASELINE)
     expect(handleRosterOf(events[0] as RunEventEnvelope)).toEqual([0, 1, 2, 3])
+    expect(skipIdentityOf(events)).toEqual([['skipped', 'charlie test', 'charlie.test.ts']])
   })
 })
 

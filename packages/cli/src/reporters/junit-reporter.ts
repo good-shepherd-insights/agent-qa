@@ -131,8 +131,8 @@ export function createJunitReporter(options: JunitReporterOptions): JunitReporte
 
   function onTestFinished(payload: TestFinishedPayload): void {
     const start = started.get(payload.testIndex)
-    const name = start?.name ?? `Test ${payload.testIndex + 1}`
-    const filePath = start?.filePath ?? start?.name ?? ''
+    const name = start?.name ?? payload.name ?? `Test ${payload.testIndex + 1}`
+    const filePath = start?.filePath ?? start?.name ?? payload.filePath ?? payload.name ?? ''
     tests.push({
       testIndex: payload.testIndex,
       name,
