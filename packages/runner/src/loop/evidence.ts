@@ -285,6 +285,7 @@ export interface RecordSubActionInput {
   callRecord?: ModelCallRecord
   /** 436 D-22: what the action produced outside the page, already masked by the loop. */
   operationEvidence?: SubActionEvidence['operationEvidence']
+  healedDispatch?: SubActionEvidence['healedDispatch']
 }
 
 export class EvidenceRecorder {
@@ -471,6 +472,7 @@ export class EvidenceRecorder {
     if (input.decisionScreenshotRef) evidence.decisionScreenshotRef = input.decisionScreenshotRef
     if (input.artifactRefs) evidence.artifactRefs = [...input.artifactRefs]
     if (input.operationEvidence) evidence.operationEvidence = input.operationEvidence
+    if (input.healedDispatch) evidence.healedDispatch = input.healedDispatch
     this.subActions.push(evidence)
     this.cacheFlags.push(input.cached ?? false)
     const index = this.subActions.length - 1
