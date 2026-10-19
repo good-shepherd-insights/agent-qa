@@ -16,6 +16,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  createAgentJobQueue,
+  createJobKindRegistry,
   JobCancellationNotRequestedError,
   MissingIdempotencyKeyError,
   StaleJobStoreEpochError,
@@ -23,7 +25,9 @@ import {
 import type {
   ClockPort,
   JobCheckpointRecord,
+  JobIdSource,
   JobInsert,
+  JobModelCapability,
   JobStoreFence,
 } from '@vostride/agent-qa-agent'
 import {
@@ -1646,5 +1650,96 @@ describe('C444.1-RETRY-BACKOFF', () => {
     } finally {
       rmSync(versionFour, { recursive: true, force: true })
     }
+  })
+})
+
+describe('C444.1-INTERRUPTED', () => {
+  let root: string
+  let store: SqliteJobStore
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'agent-qa-job-interrupted-'))
+    store = openStore(root)
+  })
+
+  afterEach(() => {
+    store.close()
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  it('an interrupted job is queued again with its attempt refunded and its last failure kept', async () => {
+    const controller = new AbortController()
+    let markCalled: () => void = () => {}
+    const called = new Promise<void>((resolve) => {
+      markCalled = resolve
+    })
+    const model: JobModelCapability = {
+      modelId: 'test:waiting',
+      generate: () => {
+        markCalled()
+        return new Promise((_, reject) => {
+          controller.signal.addEventListener(
+            'abort',
+            () => reject(new DOMException('the model request was aborted', 'AbortError')),
+            { once: true },
+          )
+        })
+      },
+    }
+    const idSource: JobIdSource = {
+      jobIdFor: (kind, idempotencyKey) => asJobId(`job_${kind}_${idempotencyKey}`),
+    }
+    const queue = createAgentJobQueue({
+      store,
+      registry: createJobKindRegistry([
+        {
+          kind: KIND,
+          checkpointed: true,
+          checkpointSchedule: ['verdicts-authored'],
+          allowedSuccessors: [],
+          maxAttempts: 3,
+          backoff: { kind: 'none' },
+          onPermanentFailure: 'halt-chain',
+          handler: async (context) => {
+            if (context.job.attempts === 1) {
+              return { status: 'retryable', reason: 'the provider timed out' }
+            }
+            await context.recordLlmAuthorship('verdicts-authored', (bound) =>
+              bound.generate({ prompt: 'author the verdicts' }),
+            )
+            return { status: 'complete', next: [] }
+          },
+        },
+      ]),
+      clock: steppingClock(),
+      idSource,
+      model,
+    })
+    const fence = await store.adoptEpoch(1)
+    const enqueued = await queue.enqueue(KIND, {}, 'key-a')
+    const id = String(enqueued.job.id)
+    expect(await queue.runNextJob({ fence })).toMatchObject({ disposition: 'retry-scheduled' })
+    const afterRetry = rawRow(root, id)
+    expect(afterRetry).toMatchObject({ attempts: 1, last_failure_kind: 'retry' })
+
+    const running = queue.runNextJob({ fence, signal: controller.signal })
+    await called
+    controller.abort()
+    const outcome = await running
+
+    expect(rawRow(root, id)).toMatchObject({
+      status: 'queued',
+      claimed_at: null,
+      attempts: 1,
+      last_failure_kind: 'retry',
+      last_failure_reason: 'the provider timed out',
+      not_before: afterRetry?.not_before,
+      started_at: afterRetry?.started_at,
+    })
+    expect(outcome).toMatchObject({ ran: true, disposition: 'interrupted', job: { attempts: 2 } })
+    expect(await store.claimNext(fence)).toMatchObject({
+      claimed: true,
+      job: { id, attempts: 2 },
+    })
   })
 })

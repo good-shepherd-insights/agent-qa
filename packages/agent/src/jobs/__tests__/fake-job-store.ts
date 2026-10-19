@@ -51,7 +51,7 @@ interface Row {
 export interface FakeJobStore extends JobStorePort {
   rows(): readonly Row[]
   checkpoints(): readonly { jobId: string; checkpointId: string; payload: JobCheckpointRecord }[]
-  callCount(verb: 'recordFailure' | 'failAndChain'): number
+  callCount(verb: 'recordFailure' | 'failAndChain' | 'releaseInterrupted'): number
   /** What each claimNext call received as its options argument, in call order. */
   claimNextCalls(): readonly (ClaimNextOptions | undefined)[]
   failureDispositions(): readonly { jobId: string; disposition: JobFailureDisposition }[]
@@ -68,6 +68,7 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
   const callCounts = {
     recordFailure: 0,
     failAndChain: 0,
+    releaseInterrupted: 0,
   }
   let epoch = 0
 
@@ -220,6 +221,15 @@ export function createFakeJobStore(clock: ClockPort): FakeJobStore {
       row.lastFailureKind = disposition.kind
       row.lastFailureReason = disposition.reason
       if (disposition.kind === 'permanent') row.status = 'failed'
+    },
+
+    async releaseInterrupted(jobId: JobId, fence: JobStoreFence): Promise<void> {
+      callCounts.releaseInterrupted += 1
+      requireFence(fence)
+      const row = requireRow(jobId)
+      row.claimed = false
+      row.attempts = Math.max(row.attempts - 1, 0)
+      row.updatedAt = clock.now()
     },
 
     async requestCancel(jobId: JobId, fence: JobStoreFence): Promise<JobCancelOutcome> {

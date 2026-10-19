@@ -162,6 +162,7 @@ export const JOB_STORE_VERBS = [
   'completeAndChain',
   'failAndChain',
   'recordFailure',
+  'releaseInterrupted',
   'requestCancel',
   'recordCancellation',
   'requeueTerminal',
@@ -330,6 +331,11 @@ export function instrumentJobStore(store: JobStorePort, hook: JobStoreCrashHook)
     ): Promise<void> =>
       around({ verb: 'recordFailure', jobId: String(jobId) }, () =>
         store.recordFailure(jobId, disposition, fence),
+      ),
+
+    releaseInterrupted: (jobId: JobId, fence: JobStoreFence): Promise<void> =>
+      around({ verb: 'releaseInterrupted', jobId: String(jobId) }, () =>
+        store.releaseInterrupted(jobId, fence),
       ),
 
     requestCancel: (jobId: JobId, fence: JobStoreFence): Promise<JobCancelOutcome> =>
