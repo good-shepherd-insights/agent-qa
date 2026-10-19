@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
+import type { QuarantineAppliedEntry, RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
 
 import {
   JUNIT_QUARANTINE_MARKER_BLOCK,
@@ -80,6 +80,47 @@ describe('createJunitReporter', () => {
     await reporter.flush()
     expect(written).toBe(true)
     expect(capturedXml).toContain('<testsuites')
+  })
+})
+
+function abortSkippedStream(): RunEventEnvelope[] {
+  let seq = 0
+  const env = (type: RunEventType, payload: object): RunEventEnvelope =>
+    ({ seq: seq++, ts: 1_000 + seq, runId: 'run-444.1-15', type, payload }) as RunEventEnvelope
+  return [
+    env('testStarted', { testId: 't0', testIndex: 0, name: 'Login flow', filePath: 'tests/login.yaml' }),
+    env('testFinished', { testId: 't0', testIndex: 0, outcome: 'cancelled', durationMs: 500 }),
+    env('testFinished', {
+      testId: 't1',
+      testIndex: 1,
+      outcome: 'skipped',
+      name: 'Checkout flow',
+      filePath: 'tests/checkout.yaml',
+    }),
+  ]
+}
+
+async function junitOf(envelopes: readonly RunEventEnvelope[]): Promise<string> {
+  let xml = ''
+  const reporter = createJunitReporter({
+    outputPath: 'out/junit.xml',
+    write: async (_p: string, content: string) => {
+      xml = content
+    },
+  })
+  for (const envelope of envelopes) reporter.handler(envelope)
+  await reporter.flush()
+  return xml
+}
+
+describe('C444.1-REPORTER-WORDS', () => {
+  it('JUnit names an abort-skipped member by its test', async () => {
+    const xml = await junitOf(abortSkippedStream())
+    expect(xml).toContain(
+      '    <testcase name="Checkout flow" classname="tests/checkout.yaml" time="0.000" file="tests/checkout.yaml">\n'
+      + '      <skipped message="skipped"/>\n',
+    )
+    expect(xml).not.toContain('Test 2')
   })
 })
 

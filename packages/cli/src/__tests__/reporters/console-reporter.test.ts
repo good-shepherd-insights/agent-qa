@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import type { QuarantineAppliedEntry, StepStartedPayload } from '@vostride/agent-qa-schema'
+import type {
+  QuarantineAppliedEntry,
+  RunEventEnvelope,
+  RunEventType,
+  StepStartedPayload,
+} from '@vostride/agent-qa-schema'
 
 import {
   QUARANTINE_TEST_ANNOTATION,
@@ -174,6 +179,48 @@ describe('C441-DISPLAY', () => {
     for (const secret of [secrets.stepSecret, secrets.hookSecret, secrets.summarySecret]) {
       expect(output).not.toContain(secret)
     }
+  })
+})
+
+function abortSkippedStream(): RunEventEnvelope[] {
+  let seq = 0
+  const env = (type: RunEventType, payload: object): RunEventEnvelope =>
+    ({ seq: seq++, ts: 1_000 + seq, runId: 'run-444.1-15', type, payload }) as RunEventEnvelope
+  return [
+    env('runStarted', {
+      busSchemaVersion: 1,
+      scope: { tier: 'suite', key: 'shop' },
+      executionContext: 'local-headless',
+      buildOrdinal: 1,
+      configDigests: { suiteConfigDigest: 'aaaa', testConfigDigest: 'bbbb' },
+      memberTestCount: 2,
+    }),
+    env('testStarted', { testId: 't0', testIndex: 0, name: 'Login flow', filePath: 'tests/login.yaml' }),
+    env('testFinished', { testId: 't0', testIndex: 0, outcome: 'cancelled', durationMs: 500 }),
+    env('testFinished', {
+      testId: 't1',
+      testIndex: 1,
+      outcome: 'skipped',
+      name: 'Checkout flow',
+      filePath: 'tests/checkout.yaml',
+    }),
+    env('runFinished', { aggregateVerdict: 'cancelled' }),
+  ]
+}
+
+describe('C444.1-REPORTER-WORDS', () => {
+  it('the console names an abort-skipped member by its test', () => {
+    const capture = createCapture()
+    const reporter = createConsoleReporter({
+      plain: true,
+      colorize: false,
+      write: capture.write,
+      isTTY: false,
+    })
+    for (const envelope of abortSkippedStream()) reporter.handler(envelope)
+    const output = capture.output()
+    expect(output).toContain('skipped Checkout flow (skipped)')
+    expect(output).not.toContain('Test 2')
   })
 })
 

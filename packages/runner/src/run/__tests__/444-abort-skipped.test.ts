@@ -85,3 +85,20 @@ describe('C444-ABORT-SKIPPED', () => {
     expect(published).toEqual(handoff.tests.map((test) => `${test.testId}:${test.outcome}`))
   })
 })
+
+describe('C444.1-REPORTER-WORDS', () => {
+  it('a member a run-level cancel skipped carries its test name and file', async () => {
+    const { events } = await cancelledDuringMemberOne()
+
+    type Finished = { testId: string; outcome: string; name?: string; filePath?: string }
+    const skipped = events
+      .filter((event) => event.type === 'testFinished')
+      .map((event) => event.payload as Finished)
+      .filter((payload) => payload.outcome === 'skipped')
+    expect(skipped.map((payload) => payload.testId)).toEqual(['m2', 'm3'])
+    expect(skipped.map((payload) => [payload.name, payload.filePath])).toEqual([
+      ['member two', 'm2.test.yaml'],
+      ['member three', 'm3.test.yaml'],
+    ])
+  })
+})
