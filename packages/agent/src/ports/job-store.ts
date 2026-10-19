@@ -196,7 +196,7 @@ export interface JobFailAndChainOutcome {
  * nowhere to live if the report and the decision were one type.
  */
 export type JobFailureDisposition =
-  | { readonly kind: 'retry'; readonly reason: string }
+  | { readonly kind: 'retry'; readonly reason: string; readonly retryAfterMs?: number }
   | { readonly kind: 'permanent'; readonly reason: string }
 
 export type JobCheckpointReadOutcome =

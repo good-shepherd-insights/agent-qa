@@ -90,8 +90,11 @@ import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.j
  * only way to open it cleanly is an `ALTER TABLE` on open, which is the migration machinery
  * D-04 excludes. So a v3 database is refused by name, with the remedy in the message, before
  * any of that runs. What clearing it costs is written down in docs/queues.md.
+ *
+ * 5 (444.1 D-23): the jobs table gained `not_before`, so a retrying row stays out of every claim
+ * until its backoff has passed. A v4 database is refused by name for the same reason as a v3 one.
  */
-export const AGENT_JOB_STORE_USER_VERSION = 4
+export const AGENT_JOB_STORE_USER_VERSION = 5
 
 /**
  * Busy timeout for every connection to the job database.
@@ -187,7 +190,9 @@ const SCHEMA_STATEMENTS = [
      -- The instant this row was FIRST claimed, kept after the lease is released (425). The
      -- claim column answers who holds the row now; no column answered how long the work took.
      -- Written once by the claim, cleared only by the operator requeue. Appended last, as above.
-     started_at TEXT
+     started_at TEXT,
+     -- 444.1 D-23: a retrying row is not claimable before this instant. Appended last, as above.
+     not_before TEXT
    )`,
   // D-08's dedupe is THIS line. Making it a store-level constraint rather than a check the
   // caller performs is what turns "two enqueues of the same work produce one job" from a
@@ -351,8 +356,8 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     `INSERT INTO jobs
        (id, kind, idempotency_key, status, summary, payload, attempts, claimed_at,
         created_at, updated_at, last_failure_kind, last_failure_reason,
-        cancel_requested_at, started_at)
-     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL, NULL, NULL)
+        cancel_requested_at, started_at, not_before)
+     VALUES (?, ?, ?, 'queued', ?, ?, 0, NULL, ?, ?, NULL, NULL, NULL, NULL, NULL)
      ON CONFLICT (kind, idempotency_key) DO NOTHING`,
   )
   const selectByKey = db.prepare('SELECT * FROM jobs WHERE kind = ? AND idempotency_key = ?')
@@ -360,6 +365,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   const selectClaimable = db.prepare(
     `SELECT * FROM jobs
      WHERE status = 'queued' AND claimed_at IS NULL
+       AND (not_before IS NULL OR not_before <= ?)
      ORDER BY created_at ASC, id ASC
      LIMIT 1`,
   )
@@ -376,7 +382,8 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     const placeholders = Array.from({ length: excludedCount }, () => '?').join(', ')
     const prepared = db.prepare(
       `SELECT * FROM jobs
-       WHERE status = 'queued' AND claimed_at IS NULL AND kind NOT IN (${placeholders})
+       WHERE status = 'queued' AND claimed_at IS NULL
+         AND (not_before IS NULL OR not_before <= ?) AND kind NOT IN (${placeholders})
        ORDER BY created_at ASC, id ASC
        LIMIT 1`,
     )
@@ -413,7 +420,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
   const markRetryable = db.prepare(
     `UPDATE jobs
      SET claimed_at = NULL, last_failure_kind = 'retry', last_failure_reason = ?,
-         updated_at = ?
+         updated_at = ?, not_before = ?
      WHERE id = ?`,
   )
   const markFailed = db.prepare(
@@ -447,7 +454,7 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
     `UPDATE jobs
      SET status = 'queued', claimed_at = NULL, started_at = NULL, attempts = 0,
          last_failure_kind = NULL, last_failure_reason = NULL, cancel_requested_at = NULL,
-         updated_at = ?
+         not_before = NULL, updated_at = ?
      WHERE id = ?`,
   )
   // DISTINCT because the checkpoint key carries the attempt: one checkpoint id published
@@ -661,8 +668,8 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         for (let scanned = 0; scanned <= QUARANTINE_SCAN_BOUND; scanned += 1) {
           const row =
             excludeKinds.length === 0
-              ? selectClaimable.get()
-              : claimableStatementFor(excludeKinds.length).get(...excludeKinds)
+              ? selectClaimable.get(now)
+              : claimableStatementFor(excludeKinds.length).get(now, ...excludeKinds)
           if (row === undefined) {
             return { claimed: false }
           }
@@ -755,7 +762,12 @@ export function createSqliteJobStore(options: CreateSqliteJobStoreOptions): Sqli
         // again on the way out would charge a reported failure twice and an unreported one
         // never.
         if (disposition.kind === 'retry') {
-          markRetryable.run(disposition.reason, now, String(jobId))
+          // Lexical comparison in the claim holds only because both sides are toISOString().
+          const notBefore =
+            disposition.retryAfterMs === undefined
+              ? null
+              : new Date(Date.parse(now) + disposition.retryAfterMs).toISOString()
+          markRetryable.run(disposition.reason, now, notBefore, String(jobId))
         } else {
           markFailed.run(disposition.reason, now, String(jobId))
         }

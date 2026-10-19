@@ -78,7 +78,8 @@ function createSteppingClock(): ClockPort {
   let tick = 0
   return {
     now() {
-      const stamp = `2026-03-03T00:00:${String(tick % 60).padStart(2, '0')}.000Z`
+      // 2026-10-19 (444.1-12, D-23): a minute per read, past every declared retry backoff.
+      const stamp = new Date(Date.parse('2026-03-03T00:00:00.000Z') + tick * 60_000).toISOString()
       tick += 1
       return stamp
     },

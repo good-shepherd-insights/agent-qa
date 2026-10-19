@@ -100,10 +100,14 @@ function fidelityDeclaration(fixture: FidelityFixture): JobKindDeclaration {
 describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-03)', () => {
   let root: string
   let open: SqliteJobStore[]
+  let clock: ClockPort
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'agent-qa-authorship-fidelity-'))
     open = []
+    // 2026-10-19 (444.1-12, D-23): one clock for both hosts, so the second never reads a time
+    // before the first host's retry was recorded.
+    clock = createSteppingClock()
   })
 
   afterEach(() => {
@@ -113,7 +117,6 @@ describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-0
 
   /** A host: its own engine, its own registry, its own connection to the same durable state. */
   function openPass(declaration: JobKindDeclaration): Pass {
-    const clock = createSteppingClock()
     const checkpoints = createJobCheckpointStore({ root })
     const store = createSqliteJobStore({
       path: join(root, AGENT_JOB_STORE_DB_FILE),

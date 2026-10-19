@@ -200,10 +200,9 @@ export type RunNextJobOutcome =
        * declared backoff policy and the attempt just spent.
        *
        * Returned rather than applied: 385 ships no dispatcher, and a driver that slept on its
-       * own would be the timer loop this engine deliberately is not. It is also why no
-       * not-before TIMESTAMP is computed — that would mean doing arithmetic on the injected
-       * clock's string and storing a scheduling column no store has, and a value nothing
-       * reads is a value nothing keeps honest.
+       * own would be the timer loop this engine deliberately is not. The same value goes to the
+       * store as the disposition's `retryAfterMs`, which stores the row's not-before time from
+       * its own clock and keeps the row out of every claim until then (444.1 D-23).
        */
       readonly retryDelayMs: number
       readonly attemptsRemaining: number
@@ -637,7 +636,8 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
 
         const reason = `handler-threw: ${error instanceof Error ? error.message : String(error)}`
         if (job.attempts < declaration.maxAttempts) {
-          await store.recordFailure(job.id, { kind: 'retry', reason }, fence)
+          const delayMs = retryDelayMs(declaration.backoff, job.attempts)
+          await store.recordFailure(job.id, { kind: 'retry', reason, retryAfterMs: delayMs }, fence)
           return {
             ran: true,
             disposition: 'retry-scheduled',
@@ -646,7 +646,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
             checkpointsPublished: published,
             handlerInvoked: true,
             reason,
-            retryDelayMs: retryDelayMs(declaration.backoff, job.attempts),
+            retryDelayMs: delayMs,
             attemptsRemaining: declaration.maxAttempts - job.attempts,
           }
         }
@@ -704,7 +704,12 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
       // knows there is no next time. That asymmetry is why the report and the decision are
       // two types rather than one.
       if (outcome.status === 'retryable' && job.attempts < declaration.maxAttempts) {
-        await store.recordFailure(job.id, { kind: 'retry', reason: outcome.reason }, fence)
+        const delayMs = retryDelayMs(declaration.backoff, job.attempts)
+        await store.recordFailure(
+          job.id,
+          { kind: 'retry', reason: outcome.reason, retryAfterMs: delayMs },
+          fence,
+        )
         return {
           ran: true,
           disposition: 'retry-scheduled',
@@ -713,7 +718,7 @@ export function createAgentJobQueue(options: CreateAgentJobQueueOptions): AgentJ
           checkpointsPublished: published,
           handlerInvoked: true,
           reason: outcome.reason,
-          retryDelayMs: retryDelayMs(declaration.backoff, job.attempts),
+          retryDelayMs: delayMs,
           attemptsRemaining: declaration.maxAttempts - job.attempts,
         }
       }
