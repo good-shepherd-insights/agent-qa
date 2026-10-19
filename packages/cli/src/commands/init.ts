@@ -390,6 +390,15 @@ const DEFAULT_HOOKS_FILE = 'hooks.yaml'
 const DEFAULT_ENV_FILE = '.env'
 const DEFAULT_SECRETS_FILE = '.env.secrets.local'
 const SECRETS_FILE_MODE = 0o600
+export const EXAMPLE_SECRET_LINE = 'KOMAZON_PASSWORD=komazon123'
+
+// 2026-10-19 (445-03, D-09): applied only when init creates the file (preserveOnForce).
+function buildSecretsFile(platform: InitPlatformInput): string {
+  if (!hasWeb(platform)) return ''
+  return "# The Komazon playground's public demo password (printed on its sign-in page); "
+    + 'the examples type it as {{secret:KOMAZON_PASSWORD}}.\n'
+    + `${EXAMPLE_SECRET_LINE}\n`
+}
 const DEFAULT_LOCAL_CONFIG_FILE = 'agent-qa.local.yaml'
 
 function directoryGitignoreEntry(value: string): string {
@@ -725,7 +734,14 @@ function buildScaffoldFilePlans(
   const plans = [
     // User-owned credential bytes are never replaced, including under --force.
     scaffoldFilePlan(dir, DEFAULT_ENV_FILE, '', force, true),
-    scaffoldFilePlan(dir, DEFAULT_SECRETS_FILE, '', force, true, SECRETS_FILE_MODE),
+    scaffoldFilePlan(
+      dir,
+      DEFAULT_SECRETS_FILE,
+      buildSecretsFile(platform),
+      force,
+      true,
+      SECRETS_FILE_MODE,
+    ),
     scaffoldFilePlan(
       dir,
       DEFAULT_HOOKS_FILE,
@@ -808,6 +824,13 @@ function printOutcomeSummary(dir: string, outcomes: readonly InitFileResult[]): 
       console.log(`    ${pc.dim('•')} ${displayInitPath(dir, result.path)}`)
     }
   }
+}
+
+// 2026-10-19 (445-03, D-27): printed flush left so the line can be pasted as is.
+function printExampleSecretLine(): void {
+  console.log('')
+  console.log(`  Add this line to ${DEFAULT_SECRETS_FILE} so the examples can sign in:`)
+  console.log(EXAMPLE_SECRET_LINE)
 }
 
 function printNextSteps(
@@ -1182,6 +1205,11 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       console.log(pc.green(pc.bold('✓ agent-qa project initialized!')))
       console.log('')
       printOutcomeSummary(dir, outcomes)
+      const secretsPath = join(dir, DEFAULT_SECRETS_FILE)
+      const secretsPreserved = outcomes.some(
+        result => result.path === secretsPath && result.outcome === 'preserved',
+      )
+      if (hasWeb(platform) && secretsPreserved) printExampleSecretLine()
       printNextSteps(platform, config, provider)
       if (!agentInstructionsPlan) printAgentInstructionPointer()
       console.log('')

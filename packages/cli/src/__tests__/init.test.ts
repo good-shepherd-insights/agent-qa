@@ -824,7 +824,15 @@ describe('init command', () => {
       (call) => (call[0] as string).endsWith('.env.secrets.local'),
     )
     expect(secretsCall).toBeDefined()
-    expect(secretsCall![1]).toBe('')
+    expect(String(secretsCall![1]).split('\n')).toContain('KOMAZON_PASSWORD=komazon123')
+
+    mockWriteFileSync.mockClear()
+    await runInit(['--dir', '/tmp/test-project', '--platform', 'android', '--skip-install'])
+    const mobileSecretsCall = mockWriteFileSync.mock.calls.find(
+      (call) => (call[0] as string).endsWith('.env.secrets.local'),
+    )
+    expect(mobileSecretsCall).toBeDefined()
+    expect(mobileSecretsCall![1]).toBe('')
   })
 
   it('creates explicit workspace support files', async () => {
@@ -1086,7 +1094,7 @@ describe('init command', () => {
       const envWrite = mockWriteFileSync.mock.calls.find(call => call[0] === envPath)
       const secretsWrite = mockWriteFileSync.mock.calls.find(call => call[0] === secretsPath)
       expect(envWrite?.[1]).toBe('')
-      expect(secretsWrite?.[1]).toBe('')
+      expect(String(secretsWrite?.[1]).split('\n')).toContain('KOMAZON_PASSWORD=komazon123')
     })
 
     it('leaves non-credential scaffold files force-updatable', async () => {
