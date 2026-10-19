@@ -82,7 +82,9 @@ function el(tag: string, spec: ElementSpec = {}): StubElement {
   }
   if (tagName === 'INPUT') {
     node.type = attrs.type ?? 'text'
-    node.value = spec.value ?? attrs.value ?? ''
+    const toggle = node.type === 'checkbox' || node.type === 'radio'
+    node.value = spec.value ?? attrs.value ?? (toggle ? 'on' : '')
+    if (toggle) node.checked = 'checked' in attrs
   } else if (tagName === 'TEXTAREA') {
     node.type = 'textarea'
     node.value = spec.value ?? node.textContent
@@ -481,5 +483,54 @@ describe('C437-WEBVIEW-OBSERVE', () => {
     expect(fields).toHaveLength(1)
     expect(fields[0].name).toBe('Article')
     expect(headings[0].hierarchy?.parentRef).toBe(fields[0].ref)
+  })
+
+  it('a checked checkbox carries no value and is named by its label', async () => {
+    const state = await observe(
+      page(
+        form(
+          el('label', { attrs: { for: 'terms' }, text: 'Accept terms' }),
+          el('input', { attrs: { id: 'terms', type: 'checkbox', checked: '' } }),
+        ),
+      ),
+    )
+
+    const box = state.elements.find((e) => e.name === 'Accept terms')!
+    expect(box.state.checked).toBe(true)
+    expect('value' in box).toBe(false)
+    expect(state.elements.some((e) => e.value === 'on')).toBe(false)
+  })
+
+  it('a radio option carries no value and is named by its label', async () => {
+    const state = await observe(
+      page(
+        form(
+          el('label', { attrs: { for: 'express' }, text: 'Express shipping' }),
+          el('input', { attrs: { id: 'express', type: 'radio', value: 'express', checked: '' } }),
+          el('label', { attrs: { for: 'standard' }, text: 'Standard shipping' }),
+          el('input', { attrs: { id: 'standard', type: 'radio' } }),
+        ),
+      ),
+    )
+
+    const express = state.elements.find((e) => e.name === 'Express shipping')!
+    const standard = state.elements.find((e) => e.name === 'Standard shipping')!
+    expect('value' in express).toBe(false)
+    expect('value' in standard).toBe(false)
+  })
+
+  it('a submit or button input carries no value and keeps its caption as its name', async () => {
+    const state = await observe(
+      page(
+        form(
+          el('input', { attrs: { type: 'submit', value: 'Place order' } }),
+          el('input', { attrs: { type: 'button', value: 'Apply coupon' } }),
+          el('input', { attrs: { type: 'reset', value: 'Start over' } }),
+        ),
+      ),
+    )
+
+    expect(state.elements.map((e) => e.name)).toEqual(['Place order', 'Apply coupon', 'Start over'])
+    for (const control of state.elements) expect('value' in control).toBe(false)
   })
 })
