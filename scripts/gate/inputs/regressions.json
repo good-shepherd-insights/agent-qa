@@ -14574,6 +14574,30 @@
       "file": "packages/cli/src/__tests__/conformance/445-knowledge-gitignore.test.ts",
       "fullName": "C445-KNOWLEDGE-GITIGNORE init refuses an older knowledge gitignore that lacks the rule and says which line to add",
       "origin": "445 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C445-CONFIG-HINT a config with keys removed in v2 closes with the hard cut steps",
+      "origin": "445 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C445-CONFIG-HINT the removed-key messages name no internal phase or spec section",
+      "origin": "445 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/config.test.ts",
+      "fullName": "C445-CONFIG-HINT an invalid config that is not from v1 names the key and the fix, not the init line",
+      "origin": "445 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor.test.ts",
+      "fullName": "C445-DOCTOR-CONFIG doctor tells a v1 config the hard cut steps",
+      "origin": "445 D-23"
     }
   ]
 }
