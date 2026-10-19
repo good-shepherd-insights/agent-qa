@@ -460,8 +460,10 @@ const KNOWLEDGE_ROOT_DIR = 'agent-qa-knowledge'
 const KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES = [
   'memory/index/',
   'memory/queue/',
+  'memory/*/bundles/.staging/',
   '.lease',
   '.epoch',
+  '.writer-authority.sqlite*',
   '**/artifacts/',
   'skills/.staging/',
   '.*.agent-qa-init-*.tmp',
@@ -481,8 +483,10 @@ function buildKnowledgeGitignore(): string {
   return `# agent-qa-knowledge/.gitignore
 memory/index/
 memory/queue/
+memory/*/bundles/.staging/
 .lease
 .epoch
+.writer-authority.sqlite*
 # binary blobs; artifact inventories are committed and live OUTSIDE artifacts/
 **/artifacts/
 skills/.staging/
@@ -565,6 +569,8 @@ directory enforces the split:
 
 - \`memory/index/\` — derived search index; rebuildable from records, never committed.
 - \`memory/queue/\`, \`.lease\`, \`.epoch\` — machine-local curation runtime state.
+- \`.writer-authority.sqlite*\` — the local writer-authority database and its -wal/-shm/-journal files.
+- \`memory/*/bundles/.staging/\` — a bundle being published; present only if a publish was interrupted.
 - \`**/artifacts/\` — binary blobs (screenshots, DOM snapshots, HAR). Excluded
   from git by default; artifact *inventories* are text, live outside
   \`artifacts/\`, and are committed.

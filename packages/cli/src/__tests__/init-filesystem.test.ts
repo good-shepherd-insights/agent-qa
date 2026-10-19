@@ -356,8 +356,10 @@ describe('safe init filesystem primitives', () => {
   const KNOWLEDGE_FUNCTIONAL_RULES = [
     'memory/index/',
     'memory/queue/',
+    'memory/*/bundles/.staging/',
     '.lease',
     '.epoch',
+    '.writer-authority.sqlite*',
     '**/artifacts/',
     'skills/.staging/',
     '.*.agent-qa-init-*.tmp',

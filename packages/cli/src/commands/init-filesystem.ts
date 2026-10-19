@@ -154,6 +154,21 @@ export const KNOWLEDGE_GITIGNORE_PROBES = [
   { path: '.lease', expected: 'ignored', requiredRule: '.lease' },
   { path: '.epoch', expected: 'ignored', requiredRule: '.epoch' },
   {
+    path: '.writer-authority.sqlite',
+    expected: 'ignored',
+    requiredRule: '.writer-authority.sqlite*',
+  },
+  {
+    path: '.writer-authority.sqlite-wal',
+    expected: 'ignored',
+    requiredRule: '.writer-authority.sqlite*',
+  },
+  {
+    path: '.writer-authority.sqlite-shm',
+    expected: 'ignored',
+    requiredRule: '.writer-authority.sqlite*',
+  },
+  {
     path: 'memory/example/bundles/fact-example/artifacts/screenshot.png',
     expected: 'ignored',
     requiredRule: '**/artifacts/',
@@ -162,6 +177,11 @@ export const KNOWLEDGE_GITIGNORE_PROBES = [
     path: 'skills/.staging/draft.md',
     expected: 'ignored',
     requiredRule: 'skills/.staging/',
+  },
+  {
+    path: 'memory/komazon/bundles/.staging/fact.md',
+    expected: 'ignored',
+    requiredRule: 'memory/*/bundles/.staging/',
   },
   {
     path: KNOWLEDGE_DURABLE_TEMPORARY_PROBE_NAME,
@@ -1310,6 +1330,16 @@ function asSentence(clause: string): string {
   return `${clause.charAt(0).toUpperCase()}${clause.slice(1)}.`
 }
 
+function gitignoreHasRule(cwd: string, rule: string | undefined): boolean {
+  let content: string
+  try {
+    content = readFileSync(resolve(cwd, '.gitignore'), 'utf8')
+  } catch {
+    return false
+  }
+  return content.split(/\r?\n/).some((line) => line.trim() === rule)
+}
+
 export function verifyEffectiveGitignore(options: {
   cwd: string
   label: string
@@ -1352,10 +1382,11 @@ export function verifyEffectiveGitignore(options: {
     const status = checkIgnoreStatus(cwd, probe.path)
     const ignored = status === 0
     if (probe.expected === 'ignored' && !ignored) {
+      const fix = gitignoreHasRule(cwd, probe.requiredRule)
+        ? `Move "${probe.requiredRule}" after any negation, then rerun agent-qa init`
+        : `Add "${probe.requiredRule}" to ${resolve(cwd, '.gitignore')}, then rerun agent-qa init`
       throw new Error(
-        `${options.label} is unsafe: "${probe.path}" must be ignored. `
-        + `Move "${probe.requiredRule}" after any negation, then rerun agent-qa init; `
-        + `${unchanged}.`,
+        `${options.label} is unsafe: "${probe.path}" must be ignored. ${fix}; ${unchanged}.`,
       )
     }
     if (probe.expected === 'visible' && ignored) {

@@ -1088,8 +1088,10 @@ describe('init command', () => {
     const FUNCTIONAL_LINES = [
       'memory/index/',
       'memory/queue/',
+      'memory/*/bundles/.staging/',
       '.lease',
       '.epoch',
+      '.writer-authority.sqlite*',
       '**/artifacts/',
       'skills/.staging/',
     ]
@@ -1129,7 +1131,7 @@ describe('init command', () => {
       expect(output).toContain('agent-qa-knowledge/AGENTS.md')
     })
 
-    it('scaffolded knowledge .gitignore carries the six spec lines plus the init-tool rule', async () => {
+    it('scaffolded knowledge .gitignore carries the spec lines plus the init-tool rule', async () => {
       await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--skip-install'])
 
       const gitignoreCall = findWriteCallEndingWith('agent-qa-knowledge/.gitignore')
@@ -1244,7 +1246,9 @@ describe('init command', () => {
       const degraded = `# agent-qa-knowledge/.gitignore
 memory/index/
 memory/queue/
+memory/*/bundles/.staging/
 .lease
+.writer-authority.sqlite*
 **/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
 skills/.staging/
 .*.agent-qa-init-*.tmp
