@@ -6645,3 +6645,128 @@ scripts print `nothing to change` at the closing SHA.
 The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
 verdict are recorded in `.planning/phases/444.1-pre-release-fixes/444.1-RECORD.md` § Gate, and the
 SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-19 — Phase 445: Setup route and re-initialization
+
+This section appends to the register and rewrites no earlier section. Phase 445 made the first
+use of agent-qa a documented route from an empty directory to a first run on the playground, and
+made re-initializing a workspace from before v2 a documented hard cut with no migration code: the
+Node floor in the bin (D-21), the Komazon examples on `playground.vostride.dev` in place of every
+third-party sample (D-01, D-04, D-06, D-07, D-26, D-32, D-38), the local hook-and-variables sample
+and the secrets line (D-09, D-27, D-40), `init --llm/--model/--base-url` and questions only for
+absent flags (D-11, D-36), current subscription defaults (D-31), the route-ordered next steps
+(D-14, D-17), the knowledge `.gitignore` rules (D-22, D-34), the config and doctor hard-cut hints
+(D-15, D-23), named fixes and non-zero exits for setup errors (D-12, D-15), the removal of the
+no-op install flag and the caller-less migration (D-24, D-37), the getting-started and
+re-initialize pages (D-16, D-19, D-20, D-29, D-35), and the fresh-session journey (D-32, refined
+2026-10-20). The decisions are in
+`.planning/phases/445-setup-route-and-re-initialization/445-CONTEXT.md`. Written by 445-15 on
+2026-10-20.
+
+### How this inventory is measured
+
+Baseline `8e5a91b36` (where 445 began). Closing SHA `dce925cb1` (445-14's last commit, the parent
+of the commit that adds this section). `git -C agent-qa diff --shortstat 8e5a91b36 dce925cb1`: 49
+files changed, 4687 insertions, 1778 deletions; outside `__tests__` directories under `packages/`,
+16 files, +501/−856. `--diff-filter=D`: 2 files deleted
+(`core/src/hooks/migrate-hook-refs.ts`, `core/src/hooks/__tests__/migrate-hook-refs.test.ts`).
+With rename detection, `cli/src/__tests__/433-scaffold-samples.test.ts` reads as renamed to
+`445-scaffold-hosts.test.ts` (55% similar); its cells were deleted in `e4c2298ba` and the new file
+written in `089afbd49`. `--diff-filter=A`: 12 files added: `docs/getting-started.md`,
+`docs/re-initialize.md`, `cli/src/hard-cut.ts`, `cli/src/node-floor.ts`, and 8 test files
+(`445-examples`, `445-init-llm`, `445-no-migration-census`, and under `conformance/` `445-hard-cut`,
+`445-knowledge-gitignore`, `445-node-floor`, `445-route-help`, `445-setup-errors`). 55 commits,
+every one signed (`%G?` = `G`). The removed members below are read from each deleting commit's
+diff (`git -C agent-qa show --unified=0 <sha>`), not transcribed from a summary. Names are at
+`8e5a91b36`.
+
+### What was deleted
+
+| Member (file at `8e5a91b36`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `buildExampleTest(platform, variant)` and `defaultExampleTargetName` (`cli/src/commands/init.ts`), with the `tests/example-pass.yaml` and `tests/example-fail.yaml` file plans and the fail variant's forced `headless: false` browser override | wrote two `example.com` tests on the `example-web` target; the failing one opened a headed browser (§4.1's headed `example-fail`) | `e4c2298ba` (445-02) | `C445-EXAMPLES init writes none of the retired samples`; `C445-SCAFFOLD-HOSTS no generated file names a retired sample host` |
+| `AUTOMATION_EXERCISE_TESTS`, `buildAutomationExerciseTest`, `buildAutomationExerciseSuite`, the three `tests/automation-exercise/*.yaml` plans, `suites/automation-exercise.suite.yaml` and the `automation-exercise` target (`init.ts`, `scaffold-content.ts`) | wrote three smoke tests and a suite against `automationexercise.com`, a third-party site with ad overlays (todo 399) | `e4c2298ba` (445-02) | `C445-EXAMPLES init writes none of the retired samples`; `C445-EXAMPLES the targets are komazon and komazon-cart-total-bug with no product field`; `C445-SCAFFOLD-HOSTS every URL init writes for every platform names only playground.vostride.dev` |
+| the Hacker News hook demo: `buildHackerNewsHookScript` (fetched `hacker-news.firebaseio.com`), `buildHackerNewsTopStoryTest` with `HN_TOP_STORY_TEST_ID`, the `tests/hacker-news-top-story.yaml` plan, and `HN_TOP_STORY_HOOK_ID` with the hooks file entry `buildHooksFile` wrote (`init.ts`, `scaffold-content.ts`) | showed a hook by calling a third-party API before a test | `e4c2298ba` (445-02); the local sample that replaced it is `396ef3bcb` (445-03) | `C445-EXAMPLES the config scaffold proposal writes an empty hooks list and names no script`; `C445-EXAMPLES the hook sample makes its value locally with no network and is not in the suite`; `C445-SCAFFOLD-HOSTS no generated file names a retired sample host` |
+| the W3C BAD demo: `buildBadA11yTest` with `BAD_A11Y_TEST_ID`, the `tests/bad-a11y.yaml` plan, the `wai-bad` target (`https://www.w3.org/WAI/demos/bad/before/home.html`) and its comment under `ttl: 7d` | showed accessibility findings on a third-party page | `e4c2298ba` (445-02); the comment moved in `731e6e366` | `C445-EXAMPLES the targets are komazon and komazon-cart-total-bug with no product field`; `C445-SCAFFOLD-HOSTS no generated file names a retired sample host` |
+| the `example-web` target (`https://example.com`) and its scaffold proposal entry | the default web target init wrote | `e4c2298ba` (445-02) | `C445-EXAMPLES the targets are komazon and komazon-cart-total-bug with no product field` |
+| `cli/src/__tests__/433-scaffold-samples.test.ts` (138 lines) | pinned the removed samples; none of its cells was registered | `e4c2298ba` (445-02) | its subject is noticed by `C445-EXAMPLES init writes none of the retired samples` |
+| the multi-select "Subscription auth (optional)" question: `LLM_SETUP_CHOICES` (exported), `LLMSetupChoice`, `OPENAI_SUBSCRIPTION_CONFIG`, `ANTHROPIC_SUBSCRIPTION_CONFIG`, `subscriptionConfigsForChoice(s)` and the two-subscription scaffold (`codex` and `claude-subscription` written together); the `claude-subscription` entry name and its `'  llm: claude-subscription'` comment anchor; `getCompatibleProviderChoices` (exported, no caller left); the "Which LLM provider?" select and the base-URL input with no default | asked a multi-select a first user could not answer and wrote two subscription entries | `0a94a6eb2`, then `abbfb4cc6` (445-04) | `C445-INIT-LLM with no flags and no terminal, init writes the claude-code entry and asks nothing`; `C445-INIT-LLM --llm codex writes one codex entry on the Codex subscription and declares the plugin`; `C445-INIT-PROMPTS in a terminal with no flags, init asks the platform and the model connection, each with its default`; `C445-INIT-PROMPTS init asks no yes or no question` |
+| `browserSetupCommand`, `mobileDriverSetupCommand` and the one-argument `initNextSteps(platform)` (`init.ts`), with the doctor step and the dashboard sign-in lines | printed setup steps out of the route's order | `74d888b39` (445-05) | `C445-NEXT-STEPS the next steps follow the route order for a subscription workspace`; `C445-NEXT-STEPS the next steps name no file init replaces and no dashboard sign-in` |
+| `init --skip-install` (`deprecated no-op; setup commands are shown after init`), no alias | a compatibility no-op | `475de7873` (445-09); its pinning cell `--skip-install remains accepted and init remains scaffold-only` was deleted in `510456db8` | `C445-NO-MIGRATION no shipped command or option offers a migration, an upgrade or a compatibility no-op` |
+| `core/src/hooks/migrate-hook-refs.ts` (421 lines) with `auditWorkspaceHookReferenceMigration`, `applyWorkspaceHookReferenceMigration` and `HookReferenceMigrationError` (re-exported from the hooks barrel and the package root), its test `migrate-hook-refs.test.ts` (328 lines, 4 tests) and the `config-loader-fault-surface.test.ts` cell `(V5) the hook-reference migration audit answers position-only on BOTH of its file arms` | a caller-less workspace migration (D-24, D-37: no migration code) | `9d64f9bab` (445-09) | `C445-NO-MIGRATION core exports no workspace migration` |
+
+None of the deleted test cells was a registered gate row. `checkConfigValidation`'s static fix text
+(`doctor.ts`, `3e8eb7861`) and the resolver's one-argument `missingMessage(provider, plugin)`
+(`core`, `bb090bc97`) were replaced in place by versions that name the fix; they are listed below.
+
+**Changed with no member deleted** (each read from its commit):
+
+| Before (at `8e5a91b36`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| `DEFAULT_OPENAI_MODEL = 'gpt-5.5'`, `DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-6'`, and the same `defaultModel` for `openai-subscription` and `anthropic-subscription` in `builtins.ts` | `gpt-6.1-sol` and `claude-sonnet-5-5`; the compatible providers and `gemini` are unchanged | `8c52856d7` (445-05) | `C445-MODEL-DEFAULTS --llm codex with no --model writes gpt-6.1-sol`; `… --llm claude-code with no --model writes claude-sonnet-5-5`; `… the CLI subscription defaults equal the provider registry defaults` |
+| the scaffold's accessibility block `runAfter: 'every-step'`, its comment under `ttl: 7d` | `runAfter: 'test-end'`, the comment on `  accessibility:` | `731e6e366` (445-02) | `C445-EXAMPLES accessibility runs at test end, never fails the run, and its comment sits on the accessibility block` |
+| the knowledge `.gitignore` had no rule for `.writer-authority.sqlite*` or `memory/*/bundles/.staging/` (WINDOWS #510); an older `.gitignore` that lacked a rule was refused with "Move … after any negation" | both rules; a missing rule is refused with `Add "<rule>" to <path>, then rerun agent-qa init`; no code rewrites an existing file | `e5ef2cbf0` (445-06) | the four `C445-KNOWLEDGE-GITIGNORE` cells; `C445-HARD-CUT init --force over the old knowledge root refuses and names the missing rule` |
+| a config with keys removed in v2, and any other invalid config, closed with `Run 'agent-qa init' to generate a complete config file.`; two removed-key lines named `(knowledge-store.md §5)` and `(served from Phase 380)`; doctor's config row gave a static fix | v1 keys close with the four `HARD_CUT_STEPS` (`cli/src/hard-cut.ts`) and the `re-initialize.md` link; other invalid configs name the key and `Fix or remove the key named above in <path>`; doctor gives the hard-cut steps | `a697d8364`, `3e8eb7861` (445-07) | the three `C445-CONFIG-HINT` cells; `C445-DOCTOR-CONFIG doctor tells a v1 config the hard cut steps` |
+| refused `auth login` and `auth set` commands exited 0; a missing model connection did not name the config or the command; doctor's LLM rows pointed at the dashboard | `process.exitCode = 1` before each refusal; the message names the config and `auth login --config <name>` or `auth set --config <name> --type api-key`; doctor names those commands | `bb090bc97`, `031a77652` (445-08) | `C445-SETUP-ERRORS auth refusals exit non-zero and name the command to use`; the two `C445-AUTH-MESSAGES` cells; `C445-DOCTOR-AUTH the LLM rows name auth login, never the dashboard`; the other three `C445-SETUP-ERRORS` cells |
+| init's next steps: the doctor step, `Edit tests/example-pass.yaml` and the dashboard sign-in | the route's order: `install-browsers --chromium`, the plugin install and `auth login` or `auth set`, `validate`, the examples run with its expected outcome, then `docs/getting-started.md` | `74d888b39` (445-05), the examples line from `e4c2298ba` | the three `C445-NEXT-STEPS` cells |
+| the journey and the hook sample began with `Click the toolbar button named Reset playground session…` | no reset or clear step; a fresh session is already reset (D-32, refined 2026-10-20, F-445-13-2) | `ef732e83a` (445-14) | `C445-EXAMPLES no example test has a reset or clear step, whose effect a fresh session would hide`; `C445-EXAMPLES the passing journey signs in with the declared secret, checks the order in View orders and has no reset or clear step` |
+| any Node reached `cli-main` and `node:sqlite` | the bin refuses a Node below 24 by integer major before either loads (`cli/src/node-floor.ts`) | `0084f4075` (445-01) | the four `C445-NODE-FLOOR` cells; `C445-NODE-FLOOR-DOCTOR the Node row names the same install line as the bin` |
+
+#### Registered gate rows
+
+The 2386 rows listed at `8e5a91b36` are still listed, unchanged and in order. 70 rows were
+appended (2456 in all), each with origin `445 D-NN`: D-04 2, D-06 3, D-07 1, D-09 1, D-11 8, D-12 1,
+D-15 7, D-17 5, D-19 1, D-20 1, D-21 5, D-22 3, D-23 3, D-24 7, D-26 1, D-27 3, D-31 2, D-32 3,
+D-33 1, D-34 1, D-35 1, D-36 3, D-37 2, D-38 1, D-40 4. One appended row was re-titled in place by
+445-14 (`dce925cb1`, same index, runner, file and origin `445 D-06`, an orchestrator decision of
+2026-10-20): `C445-EXAMPLES the passing journey resets the session, signs in with the declared
+secret and checks the order in View orders` became `C445-EXAMPLES the passing journey signs in with
+the declared secret, checks the order in View orders and has no reset or clear step`. The registered
+`C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14)
+C434-NO-SUPER-REPO-READS: in-repo demo-project reads stay inside the root` kept its title; its
+file list lost the deleted `migrate-hook-refs.test.ts` in `9d64f9bab`.
+
+### What was RETAINED, and why
+
+D-37 keeps every refusal and rebuild that is not a migration. Each is checked by
+`C445-NO-MIGRATION every kept item is still what it was classified as` (file plus marker):
+
+| Item | File | Why kept |
+|---|---|---|
+| `init --agent`'s v1 name map | `cli/src/commands/init.ts` (`v1 name map`) | it maps old agent names for a guide; it writes no workspace state |
+| the dashboard store's version refusal | `dashboard-server/src/db/database.ts` | refuses an old `runs.db` by name; performs no migration |
+| the job store's version refusal | `agent-local/src/store/store-errors.ts` | refuses an old `agent-jobs.db` by name |
+| the derived-index profile rebuild (`setActiveEmbeddingProfile`) | `knowledge-local/src/profile-migration.ts` | rebuilds a derived index from committed records; no user data changes shape |
+| the removed CLI surface refusal | `cli/src/removed-cli-surface.ts` | names a removed command instead of guessing |
+| the retired-key refusals | `core/src/schema/retired-keys.ts` | what makes a v1 config print the hard-cut steps |
+| doctor's legacy-memory row | `cli/src/commands/doctor.ts` | warns that `agent-qa-memory/` is not read; `C445-NO-MIGRATION only doctor reads the legacy memory directory, and only to warn` |
+| the managed `.gitignore` block | `init` only | `C445-NO-MIGRATION only init writes the managed gitignore block` |
+
+`buildHooksFile` keeps its platform parameter (as `_platform`); `getProviderChoices` stays exported
+and pinned by `init.test.ts`.
+
+### What degrades, stated plainly
+
+- **A workspace from before v2 is not migrated.** Its first config-reading command prints the
+  hard-cut steps; `docs/re-initialize.md` has the user copy rules aside, delete `.agent-qa/`,
+  `agent-qa-knowledge/` and `agent-qa-memory/`, run `init --force` and sign in again. Run history,
+  the job queue and learned knowledge are lost; the user's own tests are kept byte for byte
+  (`C445-HARD-CUT after the documented steps the users tests are byte identical and validate is
+  clean`).
+- **`init --force` over an older knowledge root refuses** until the root is deleted or the rule is
+  added; the refusal also prints an uncaught stack trace after its message (a follow-up todo).
+- **A caller of the removed exports or of `--skip-install` breaks,** with no alias or shim.
+
+### The instruments that notice a return
+
+- **The 434 gate** must execute and pass all 2456 listed cells, the 70 appended by this phase with
+  their `445 D-NN` origins as well as the 2386 earlier rows.
+- **The cells named above** each failed at their RED commit or in a recorded mutation run on an
+  untracked copy; the records are under
+  `.planning/phases/445-setup-route-and-re-initialization/capture/`.
+
+### Gate at the time of writing
+
+The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
+verdict are recorded in `.planning/phases/445-setup-route-and-re-initialization/445-RECORD.md`
+§ Gate, and the SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
