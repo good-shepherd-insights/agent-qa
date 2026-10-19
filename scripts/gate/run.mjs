@@ -51,6 +51,7 @@ import {
 } from './host.mjs'
 
 const GATE_DIR = dirname(fileURLToPath(import.meta.url))
+const GATE_NAME = 'agent-qa-local-gate'
 const DEFAULT_SOURCE = resolve(GATE_DIR, '..', '..')
 const TURBO_LEGS = new Set(['turbo-build-typecheck', 'turbo-test'])
 const NODE_TEST_DIR = 'scripts/__tests__'
@@ -640,6 +641,7 @@ async function runRepeat(options, deps) {
   const repeatSummary = {
     schemaVersion: 1,
     sha,
+    gate: summaries[0]?.gate ?? null,
     n: options.repeat,
     record: summaries.every(summary => summary.record === true),
     runs: summaries.map(({ runDir, exitCode, startedAt, finishedAt, durationMs }) => ({
@@ -707,6 +709,11 @@ export async function runGate(options, deps = {}) {
       `source checkout has ${dirtyPaths} uncommitted path(s) the clone did not include`,
     )
   }
+  const gateStatus = exec('git', ['-C', GATE_DIR, 'status', '--porcelain', '--', '.'])
+  const gateDirty = gateStatus.status === 0 ? gateStatus.stdout.trim() !== '' : null
+  if (gateDirty === null) warnings.push('could not read the gate files status')
+  const gateHead = exec('git', ['-C', GATE_DIR, 'rev-parse', 'HEAD']).stdout.trim()
+  const gateSha = /^[0-9a-f]{40}$/.test(gateHead) ? gateHead : null
 
   const runName = runDirName({ mode, now: started, pid })
   const runDir = options.runDir ?? join(options.out, sha ?? 'unresolved', runName)
@@ -872,9 +879,10 @@ export async function runGate(options, deps = {}) {
   const turboConcurrency = options.turboConcurrency ?? 'default'
   const summary = {
     schemaVersion: 1,
-    gate: 'agent-qa-local-gate',
+    gate: { name: GATE_NAME, sha: gateSha, dirty: gateDirty },
     mode,
-    record: mode === 'clone' && !partial && !legMissing,
+    record:
+      mode === 'clone' && !partial && !legMissing && gateDirty === false && sourceDirty === false,
     partial,
     only: options.only,
     sha,
@@ -931,6 +939,8 @@ export async function runGate(options, deps = {}) {
   say(`gate ${verdict.exitCode === 0 ? 'green' : 'red'}: ${findings.length} finding(s)`)
   if (inPlace) say('in-place run: NOT A RECORD')
   if (partial) say(`partial run (${options.only.join(',')}): NOT A RECORD`)
+  if (gateDirty) say('gate files dirty: NOT A RECORD')
+  if (sourceDirty) say('source checkout dirty: NOT A RECORD')
   say(`summary: ${summaryPath}`)
   return summary
 }
