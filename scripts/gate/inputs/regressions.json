@@ -14184,6 +14184,24 @@
       "file": "packages/cli/src/__tests__/conformance/444-ci-headless.test.ts",
       "fullName": "C444-CI-HEADLESS a CI run curation outcome line counts only the changes its buckets line shows",
       "origin": "444.1 D-25"
+    },
+    {
+      "runner": "node-test",
+      "file": "scripts/__tests__/gate-run.test.mjs",
+      "fullName": "C444.1-RECORD-INTEGRITY a clone run whose gate files are dirty is not a record and says so",
+      "origin": "444.1 D-27"
+    },
+    {
+      "runner": "node-test",
+      "file": "scripts/__tests__/gate-run.test.mjs",
+      "fullName": "C444.1-RECORD-INTEGRITY a clone run whose source checkout is dirty is not a record and says so",
+      "origin": "444.1 D-27"
+    },
+    {
+      "runner": "node-test",
+      "file": "scripts/__tests__/gate-run.test.mjs",
+      "fullName": "C444.1-RECORD-INTEGRITY a record names the gate commit it was judged by and that its files were clean",
+      "origin": "444.1 D-27"
     }
   ]
 }
