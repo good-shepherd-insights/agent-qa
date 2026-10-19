@@ -14368,7 +14368,7 @@
     {
       "runner": "vitest",
       "file": "packages/cli/src/__tests__/445-examples.test.ts",
-      "fullName": "C445-EXAMPLES the passing journey resets the session, signs in with the declared secret and checks the order in View orders",
+      "fullName": "C445-EXAMPLES the passing journey signs in with the declared secret, checks the order in View orders and has no reset or clear step",
       "origin": "445 D-06"
     },
     {
@@ -14730,6 +14730,12 @@
       "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
       "fullName": "C445-HARD-CUT the re-initialize page names every path the hard cut deletes and every command it runs",
       "origin": "445 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES no example test has a reset or clear step, whose effect a fresh session would hide",
+      "origin": "445 D-32"
     }
   ]
 }
