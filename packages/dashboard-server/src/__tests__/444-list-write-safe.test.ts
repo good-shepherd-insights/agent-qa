@@ -456,6 +456,45 @@ async function checkLayoutCorpus(kind: Kind): Promise<{ rows: number; findings: 
   return { rows, findings }
 }
 
+type GuardLeg = { status: number; error: string | null; written: boolean | 'other bytes'; valid: boolean }
+
+// 2026-10-19 (444.1-11, D-19, D-20, D-21): each body is valid under parseTestFile, so a refusal is the guard's and not validate()'s.
+async function guardLegs(name: string, body: (firstId: string) => string): Promise<{ POST: GuardLeg; PUT: GuardLeg }> {
+  const ws = await workspace(name)
+  const savedId = generateTestId()
+  const saved = idTest(savedId, 'Guard')
+  const savedPath = join(ws.dir, 'tests/guard.yaml')
+  const createdPath = join(ws.dir, 'tests/new.yaml')
+  await writeFile(savedPath, saved)
+  const origin = await startDashboard(ws)
+  const valid = (content: string): boolean => {
+    const product = parseTestFile(content, '<editor>')
+    return product.errors.length === 0 && product.tests.length > 0
+  }
+  const posted = body(generateTestId())
+  const created = await send(`${origin}/api/tests`, 'POST', { path: 'tests/new.yaml', content: posted })
+  const createdNow = existsSync(createdPath) ? await readFile(createdPath, 'utf-8') : null
+  const put = body(savedId)
+  const updated = await send(`${origin}/api/tests/${encodeURIComponent(savedId)}`, 'PUT', { content: put })
+  const savedNow = await readFile(savedPath, 'utf-8')
+  return {
+    POST: {
+      status: created.status,
+      error: created.body?.error ?? null,
+      written: createdNow === null ? false : createdNow === posted ? true : 'other bytes',
+      valid: valid(posted),
+    },
+    PUT: {
+      status: updated.status,
+      error: updated.body?.error ?? null,
+      written: savedNow === saved ? false : savedNow === put ? true : 'other bytes',
+      valid: valid(put),
+    },
+  }
+}
+
+const SHOWN = '[secret:API_TOKEN]'
+
 describe('C444-LIST-WRITE-SAFE', () => {
   it('the Tests and Suites page reads sent together leave every id-less file whole under one id line, and every listed id opens', async () => {
     const lost: string[] = []
@@ -1546,11 +1585,12 @@ describe('C444-LIST-WRITE-SAFE', () => {
       answers[`PUT ${shape}`] = { status: put.status, error: put.body?.error ?? null, written: (await readFile(join(ws.dir, 'tests/guard.yaml'), 'utf-8')) !== saved }
     }
     const refused = { status: 422, error: 'marker_written_back', written: false }
+    const invalid = { status: 400, error: 'invalid_test_file', written: false }
     expect(answers, 'a shown marker in a mapping target or on an indented target line is refused on create and save').toEqual({
       'POST mapping': refused,
       'PUT mapping': refused,
-      'POST indented': refused,
-      'PUT indented': refused,
+      'POST indented': invalid,
+      'PUT indented': invalid,
     })
   })
 
@@ -1604,5 +1644,31 @@ describe('C444-LIST-WRITE-SAFE', () => {
     }
 
     expect(findings, 'a file that is not valid UTF-8 keeps every byte and lists no id, while a valid id-less file beside it is minted').toEqual([])
+  })
+
+  it('a test create or save whose second YAML document holds a shown marker target is refused and nothing is written', async () => {
+    const legs = await guardLegs('marker-two-docs', (firstId) =>
+      `test-id: ${firstId}\nname: Guard first\ntarget: web\nsteps:\n  - Click a\n---\ntest-id: ${generateTestId()}\nname: Guard second\ntarget:\n  "${SHOWN}"\nsteps:\n  - Click b\n`,
+    )
+    const refused = { status: 422, error: 'marker_written_back', written: false, valid: true }
+    expect(legs, 'a valid two-document body whose second target is a shown marker is refused on create and save').toEqual({ POST: refused, PUT: refused })
+  })
+
+  it('a valid test whose block-scalar step line starts with target and holds a marker is saved', async () => {
+    const legs = await guardLegs('marker-block-step', (firstId) =>
+      `test-id: ${firstId}\nname: Guard block\ntarget: web\nsteps:\n  - |\n    target: ${SHOWN} is shown\n`,
+    )
+    expect(legs, 'a step text that starts with target: is not a target, so the valid body is created and saved').toEqual({
+      POST: { status: 201, error: null, written: true, valid: true },
+      PUT: { status: 200, error: null, written: true, valid: true },
+    })
+  })
+
+  it('a valid test whose target holds a shown marker on the next line is refused and nothing is written', async () => {
+    const legs = await guardLegs('marker-next-line', (firstId) =>
+      `test-id: ${firstId}\nname: Guard next\ntarget:\n  "${SHOWN}"\nsteps:\n  - Click a\n`,
+    )
+    const refused = { status: 422, error: 'marker_written_back', written: false, valid: true }
+    expect(legs, 'a valid body whose target value sits on the line after target: is refused on create and save').toEqual({ POST: refused, PUT: refused })
   })
 })
