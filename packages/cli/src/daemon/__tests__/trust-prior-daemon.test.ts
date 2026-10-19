@@ -1,11 +1,14 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
 import { sha256hex } from '@vostride/agent-qa-schema'
 import type { ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 import { MAINTENANCE_CADENCE_MS, runDaemonHost, type DaemonHostOperations } from '../host.js'
 
 vi.mock('@vostride/agent-qa-eval-local', async original => {
@@ -23,6 +26,7 @@ import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterAll(() => { removeInProcessFixtures() })
 
 function artifact(root: string, precision = 0.75) {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })

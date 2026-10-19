@@ -17,7 +17,7 @@ import {
   loadCompletedRunHandoff,
 } from '@vostride/agent-qa-runner-local'
 import { parseProcedureBody } from '@vostride/agent-qa-schema'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
 import { CURATION_TAIL_RECEIPT_FILE, runCurationTail } from '../curation-tail.js'
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
@@ -27,6 +27,7 @@ import {
   parseProcedureTrajectorySeed,
   projectCurationCandidates,
 } from '../emit-candidates.js'
+import { removeTempRoots } from '../../__tests__/temp-roots.js'
 
 /**
  * F-381-48-1 staged reproduction (Plan 381-49, G-381-2 round 12).
@@ -85,9 +86,13 @@ interface StagedRoots {
   knowledgeConfig: { dir: string }
 }
 
+const stagedConfigDirs: string[] = []
+afterAll(() => { removeTempRoots(stagedConfigDirs.splice(0)) })
+
 /** One fixture run dir inside a fresh temp runs-root, plus a fresh cold knowledge root. */
 function stageRoots(): StagedRoots {
   const configDir = mkdtempSync(join(tmpdir(), 'f-381-48-1-'))
+  stagedConfigDirs.push(configDir)
   const agentQaRoot = join(configDir, '.agent-qa')
   const runDir = join(agentQaRoot, RUNS_SUBDIR, RUN_ID)
   mkdirSync(dirname(runDir), { recursive: true })

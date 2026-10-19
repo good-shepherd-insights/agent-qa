@@ -22,6 +22,7 @@ import {
   closeTestRunRecords,
   createInProcessFixture,
   testRunRecord,
+  removeInProcessFixtures,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { refuseWithoutPosixRunLifecycle, startCliRun } from './442-run-fixture.js'
@@ -67,7 +68,10 @@ interface RunRowRead {
 const target = new CountingTarget()
 
 beforeAll(async () => { await target.listen() })
-afterAll(async () => { await target.close() })
+afterAll(async () => {
+  await target.close()
+  removeInProcessFixtures()
+})
 
 function project(environment: 'local' | 'production' = 'local'): InProcessFixture {
   refuseWithoutPosixRunLifecycle()

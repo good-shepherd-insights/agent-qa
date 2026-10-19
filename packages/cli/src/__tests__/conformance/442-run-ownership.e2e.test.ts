@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { orphanSummary, ownedElsewhere, resolveRunOwnerHost } from '@vostride/agent-qa-dashboard'
 import type { RunOwner } from '@vostride/agent-qa-dashboard'
 import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import {
   exitedPid,
@@ -15,6 +15,7 @@ import {
   readOwner,
   readRow,
   refuseWithoutPosixRunLifecycle,
+  removePlantedCellBrowsers,
   rowIds,
   runDirectory,
   seedRunningRow,
@@ -22,6 +23,7 @@ import {
   twoRunProject,
 } from './442-run-fixture.js'
 import type { CellBrowsers, StartedCliRun, TwoRunProject } from './442-run-fixture.js'
+import { removeInProcessFixtures } from '../../composition/__tests__/in-process-run-fixture.js'
 
 const CELL_BUDGET_MS = 300_000
 const ARRIVAL_BUDGET_MS = 120_000
@@ -47,6 +49,10 @@ afterEach(async () => {
   for (const run of open.runs) if (!run.exited()) run.child.kill('SIGKILL')
   await Promise.allSettled(open.runs.map((run) => run.done))
   await open.project.close()
+})
+afterAll(() => {
+  removeInProcessFixtures()
+  removePlantedCellBrowsers()
 })
 
 async function openCell(): Promise<Cell> {

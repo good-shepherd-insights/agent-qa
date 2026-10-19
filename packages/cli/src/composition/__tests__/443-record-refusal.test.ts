@@ -23,7 +23,12 @@ import { createRunRecord, doorRunAttributes } from '../../commands/run.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import type { ComposeCliLocalAgentInput } from '../local-agent-host.js'
 import { composeRunOwnership } from '../run-owner-probe.js'
-import { CountingTarget, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  createInProcessFixture,
+  runDirs,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
 
 type Fixture = ReturnType<typeof createInProcessFixture>
 
@@ -39,6 +44,7 @@ afterAll(async () => {
   await target.close()
   if (priorBrowsersPath === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH
   else process.env.PLAYWRIGHT_BROWSERS_PATH = priorBrowsersPath
+  removeInProcessFixtures()
 })
 afterEach(async () => {
   for (const close of opened.splice(0).reverse()) await close()

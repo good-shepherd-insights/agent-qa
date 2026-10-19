@@ -19,7 +19,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -64,7 +64,10 @@ import {
   runReplayGateVerb,
 } from '../../eval-session-composition.js'
 
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 import { composeCliLocalAgent, proposalStageCapabilities } from '../../composition/local-agent-host.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
 import { createReplayGatePortForHost } from '../../gates/replay-gate-host.js'
@@ -234,6 +237,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
+afterAll(() => { removeInProcessFixtures() })
 
 /** One memoised bridge per host, the way both production hosts build theirs. */
 function sharedGate(root: string, resolveClaimAuthority: () => { leaseId: string; epoch: number } | undefined) {

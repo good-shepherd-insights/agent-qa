@@ -44,7 +44,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { ExecuteOptions, RunSettledDetails } from '@vostride/agent-qa-dashboard'
@@ -55,6 +55,7 @@ import {
   CountingTarget,
   createInProcessFixture,
   runDirs,
+  removeInProcessFixtures,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 
 type Fixture = ReturnType<typeof createInProcessFixture>
@@ -120,6 +121,7 @@ afterEach(() => {
   plantedBrowsers?.restoreBrowsersPath()
   plantedBrowsers = undefined
 })
+afterAll(() => { removeInProcessFixtures() })
 
 describe('cancelling one of two concurrently executing dashboard runs (401 UAT 14 / truth 5, D-12)', () => {
   it('ABORTS THE NAMED RUN MID-FLIGHT AND LEAVES THE OTHER TO ITS OWN VERDICT, EACH UNDER ITS OWN runId', async () => {

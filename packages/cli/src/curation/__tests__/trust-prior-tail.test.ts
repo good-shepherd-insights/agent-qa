@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Command } from 'commander'
 import { randomUUID } from 'node:crypto'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
 import { sha256hex } from '@vostride/agent-qa-schema'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
@@ -35,6 +35,10 @@ import * as registration from '../../daemon/registration.js'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterAll(async () => {
+  const { removeInProcessFixtures } = await import('../../composition/__tests__/in-process-run-fixture.js')
+  removeInProcessFixtures()
+})
 function fixture() {
   const f = markFixture()
   roots.push(f.root)

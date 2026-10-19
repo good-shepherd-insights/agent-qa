@@ -11,7 +11,7 @@ import { acquireWriterLease, releaseLease } from '@vostride/agent-qa-knowledge-l
 import { asRecordId, computeBriefDigest, guardCompletedRunHandoff, sha256hex } from '@vostride/agent-qa-schema'
 import type { ServedBrief } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createRunCommand } from '../commands/run.js'
 import * as drive from '../composition/in-process-run-execution.js'
@@ -21,6 +21,7 @@ import {
   closeTestRunRecords,
   createInProcessFixture,
   testRunRecord,
+  removeInProcessFixtures,
 } from '../composition/__tests__/in-process-run-fixture.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
 import { runCurationTail } from '../curation/curation-tail.js'
@@ -49,6 +50,7 @@ afterEach(async () => {
   for (const target of targets.splice(0)) await target.close()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+afterAll(() => { removeInProcessFixtures() })
 
 const plain = (text: string): string => text.replace(/\x1b\[[0-9;]*m/gu, '')
 

@@ -78,7 +78,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { RunDeniedError } from '@vostride/agent-qa-agent-local'
@@ -87,8 +87,15 @@ import { DRAFT_STABILITY_RUNS_N, authoredSuiteTargetPath } from '@vostride/agent
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
-import { CountingTarget, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  createInProcessFixture,
+  runDirs,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
 import { IN_PROCESS_TARGET_NAME } from './in-process-run-fixture.js'
+
+afterAll(() => { removeInProcessFixtures() })
 
 /**
  * The draft the fixture model returns.

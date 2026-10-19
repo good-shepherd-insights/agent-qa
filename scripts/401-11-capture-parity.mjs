@@ -34,6 +34,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -384,8 +385,9 @@ export function staleDeclaredAdditions(observedFiles) {
 export async function captureInvocation(invocation) {
   const target = new CountingTarget()
   await target.listen()
+  let fixture
   try {
-    const fixture = createParityFixture(target.origin)
+    fixture = createParityFixture(target.origin)
     const result = await runCli(fixture, invocation.args)
     // 418 CR-02: policy publication is mandatory on each originating run, including
     // the direct framework-error path. Check exact DATA against that run's handoff;
@@ -415,6 +417,7 @@ export async function captureInvocation(invocation) {
     }
   } finally {
     await target.close()
+    if (fixture !== undefined) rmSync(fixture.project, { recursive: true, force: true })
   }
 }
 

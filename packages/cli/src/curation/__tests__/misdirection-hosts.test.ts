@@ -23,7 +23,7 @@
 // posture, the decision location and the replay — is substituted at its own exported seam, which
 // is the boundary the surface-firewall ledger says only that file may cross.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -95,7 +95,10 @@ import {
 } from '../../eval-session-composition.js'
 
 import type { InProcessCliRunExecutionOptions } from '../../composition/in-process-run-execution.js'
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
 import { createPostVerdictStep, type PostVerdictStepOperations } from '../post-verdict-step.js'
@@ -150,6 +153,7 @@ afterEach(() => {
   for (const project of projects.splice(0)) rmSync(project, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
+afterAll(() => { removeInProcessFixtures() })
 
 function fixture() {
   const created = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })

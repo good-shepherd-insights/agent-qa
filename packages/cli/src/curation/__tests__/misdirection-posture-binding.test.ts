@@ -2,7 +2,7 @@
 // Run execution and daemon lifecycle are substituted; root reads, posture recording and
 // analysis validation are real. No provider or live BYOM evidence is claimed.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -59,7 +59,10 @@ import { completedRunDir } from '../curation-tail.js'
 import { defaultPostRunTailOperations } from '../post-run-tail.js'
 
 import type { InProcessCliRunExecutionOptions } from '../../composition/in-process-run-execution.js'
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
 import { createPostVerdictStep, type PostVerdictStepOperations } from '../post-verdict-step.js'
@@ -103,6 +106,7 @@ afterEach(async () => {
   for (const project of projects.splice(0)) rmSync(project, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
+afterAll(() => { removeInProcessFixtures() })
 
 function fixture() {
   const created = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })

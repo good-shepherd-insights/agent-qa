@@ -23,6 +23,7 @@ import {
   buildFreshness,
   hermeticEnv,
 } from './spawned-chat.js'
+import { removeTempRoots } from '../temp-roots.js'
 
 export interface CliRunExit {
   readonly code: number | null
@@ -74,11 +75,13 @@ export function refuseWithoutPosixRunLifecycle(): void {
 // playwright fixes its browsers root on first use, so one process plants once and every cell
 // shares that plant through its own ordinal offset.
 let planted: HoldableBrowser | undefined
+let plantedRoot: string | undefined
 
 export function holdCellBrowsers(): CellBrowsers {
-  planted ??= plantHoldableBrowser({
-    project: realpathSync(mkdtempSync(join(tmpdir(), 'run-ownership-browsers-'))),
-  })
+  if (planted === undefined) {
+    plantedRoot = realpathSync(mkdtempSync(join(tmpdir(), 'run-ownership-browsers-')))
+    planted = plantHoldableBrowser({ project: plantedRoot })
+  }
   const browsers = planted
   const base = browsers.arrivals().length
   return {
@@ -89,6 +92,12 @@ export function holdCellBrowsers(): CellBrowsers {
     release: (ordinal) => { browsers.release(base + ordinal) },
     releaseAll: () => { browsers.releaseAll() },
   }
+}
+
+export function removePlantedCellBrowsers(): void {
+  if (plantedRoot !== undefined) removeTempRoots([plantedRoot])
+  plantedRoot = undefined
+  planted = undefined
 }
 
 /** A direct test and a two-member suite over one counting target, with runs.db created up front. */

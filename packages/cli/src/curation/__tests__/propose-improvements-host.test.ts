@@ -26,7 +26,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import type {
@@ -81,7 +81,10 @@ import {
   proposalStageCapabilities,
   resolveProposeGate1MaxPerJob,
 } from '../../composition/local-agent-host.js'
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 import { createReplayGatePortForHost } from '../../gates/replay-gate-host.js'
 import { curateCompletedRun, type CurationTailReceipt } from '../curation-tail.js'
 import {
@@ -239,6 +242,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   vi.restoreAllMocks()
 })
+afterAll(() => { removeInProcessFixtures() })
 
 /**
  * This host's one replay-gate bridge, memoised exactly as `composeCliLocalAgent` memoises it.

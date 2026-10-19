@@ -11,16 +11,22 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import { runInProcessCliRun } from '../in-process-run-execution.js'
-import { CountingTarget, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  createInProcessFixture,
+  runDirs,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
+afterAll(() => { removeInProcessFixtures() })
 
 function eventEnvelopes(fixture: { project: string }): RunEventEnvelope[] {
   return runDirs(fixture as never).flatMap((dir) => {

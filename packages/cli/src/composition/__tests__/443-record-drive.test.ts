@@ -18,7 +18,11 @@ import {
 import type { ProducedCliRunMembers, RunRecordHostBinding } from '../../commands/run.js'
 import { runInProcessCliRun } from '../in-process-run-execution.js'
 import { composeRunOwnership } from '../run-owner-probe.js'
-import { CountingTarget, createInProcessFixture } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
 
 type Fixture = ReturnType<typeof createInProcessFixture>
 type RunAttributes = ReturnType<typeof doorRunAttributes>
@@ -38,6 +42,7 @@ afterAll(async () => {
   else process.env.PLAYWRIGHT_BROWSERS_PATH = priorBrowsersPath
   if (priorRunAttributes === undefined) delete process.env.AGENT_QA_RUN_ATTRIBUTES_JSON
   else process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = priorRunAttributes
+  removeInProcessFixtures()
 })
 
 function posixOnly(): void {

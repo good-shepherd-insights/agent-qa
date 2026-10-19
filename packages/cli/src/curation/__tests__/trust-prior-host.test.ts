@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
 import { ORIGIN_PRIORS, sha256hex } from '@vostride/agent-qa-schema'
 import type { LabelCalibrationArtifact } from '@vostride/agent-qa-eval-local'
@@ -29,6 +29,10 @@ import { buildTrustPriorsResolver } from '../trust-priors.js'
 let root: string
 beforeEach(() => { vi.clearAllMocks(); root = mkdtempSync(join(tmpdir(), 'agent-qa-priors-cli-')) })
 afterEach(() => { vi.restoreAllMocks(); rmSync(root, { recursive: true, force: true }) })
+afterAll(async () => {
+  const { removeInProcessFixtures } = await import('../../composition/__tests__/in-process-run-fixture.js')
+  removeInProcessFixtures()
+})
 function fixture(precision = 0.75): LabelCalibrationArtifact {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })
   const mass = ORIGIN_PRIORS['agent-verified'].alpha + ORIGIN_PRIORS['agent-verified'].beta

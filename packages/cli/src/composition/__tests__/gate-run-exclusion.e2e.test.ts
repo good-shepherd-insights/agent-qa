@@ -43,7 +43,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
@@ -63,7 +63,14 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
-import { CountingTarget, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  createInProcessFixture,
+  runDirs,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
+
+afterAll(() => { removeInProcessFixtures() })
 
 type Fixture = ReturnType<typeof createInProcessFixture>
 

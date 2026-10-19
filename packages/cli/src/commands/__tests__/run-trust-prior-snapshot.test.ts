@@ -1,10 +1,13 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Command } from 'commander'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
 import { sha256hex } from '@vostride/agent-qa-schema'
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 import { createRunCommand } from '../run.js'
 import * as drive from '../../composition/in-process-run-execution.js'
 import * as tail from '../../curation/post-run-tail-composition.js'
@@ -26,6 +29,7 @@ afterEach(() => {
   vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllEnvs()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+afterAll(() => { removeInProcessFixtures() })
 
 function artifact(root: string, precision: number) {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })

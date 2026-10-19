@@ -12,7 +12,13 @@ import { generateTestId } from '@vostride/agent-qa-ids'
 import type { CompletedRunHandoff, RunStartAcknowledgement } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
-import { CountingTarget, IN_PROCESS_TARGET_NAME, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  IN_PROCESS_TARGET_NAME,
+  createInProcessFixture,
+  runDirs,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
 
 type Fixture = ReturnType<typeof createInProcessFixture>
 
@@ -40,6 +46,7 @@ afterAll(async () => {
   await target.close()
   if (priorBrowsersPath === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH
   else process.env.PLAYWRIGHT_BROWSERS_PATH = priorBrowsersPath
+  removeInProcessFixtures()
 })
 
 function fixture(): Fixture {

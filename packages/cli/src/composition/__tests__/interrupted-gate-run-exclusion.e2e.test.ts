@@ -52,7 +52,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
@@ -73,7 +73,15 @@ import type {
 
 import { plantHoldableBrowser, waitFor } from '../../commands/__tests__/holdable-browser.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
-import { CountingTarget, auditRows, createInProcessFixture, runDirs } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  auditRows,
+  createInProcessFixture,
+  runDirs,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
+
+afterAll(() => { removeInProcessFixtures() })
 
 type Fixture = ReturnType<typeof createInProcessFixture>
 

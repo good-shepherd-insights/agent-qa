@@ -40,7 +40,7 @@ import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { composeAnalyticsHost } from '../../composition/analytics-host.js'
 import {
@@ -50,6 +50,7 @@ import {
   createInProcessFixture,
   eventTypes,
   runDirs,
+  removeInProcessFixtures,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { UNINSTALLED_AUTH_PLUGIN_PACKAGE } from '../../composition/__tests__/in-process-run-fixture.js'
@@ -118,6 +119,7 @@ afterEach(() => {
   restoreResolver = undefined
   removeTempRoots(temporaryRoots.splice(0))
 })
+afterAll(() => { removeInProcessFixtures() })
 
 interface DaemonProject {
   readonly fixture: InProcessFixture

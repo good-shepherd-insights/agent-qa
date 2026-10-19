@@ -34,18 +34,23 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RunDeniedError } from '@vostride/agent-qa-agent-local'
 
 import { CliRunInputError, runInProcessCliRun } from '../in-process-run-execution.js'
 import { requireReporterSelection } from '../../commands/run.js'
 import type { RunOptions } from '../../commands/run.js'
-import { CountingTarget, createInProcessFixture } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
+afterAll(() => { removeInProcessFixtures() })
 
 const CLI_SRC = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const ENTRY = join(CLI_SRC, 'composition', 'in-process-run-execution.ts')

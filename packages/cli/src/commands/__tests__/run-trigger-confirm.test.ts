@@ -36,7 +36,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import { DashboardDatabase, startServer } from '@vostride/agent-qa-dashboard'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
@@ -49,6 +49,7 @@ import {
   buildOrdinalsExist,
   createInProcessFixture,
   eventTypes,
+  removeInProcessFixtures,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { AuditRow } from '../../composition/__tests__/in-process-run-fixture.js'
 
@@ -199,6 +200,7 @@ afterEach(async () => {
     await scene.close()
   }
 })
+afterAll(() => { removeInProcessFixtures() })
 
 /**
  * Click the run button — the shipped trigger route, with the fixture's own standalone test.

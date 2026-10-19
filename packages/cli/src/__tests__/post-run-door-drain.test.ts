@@ -26,7 +26,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import type { CliRunOutcome } from '../composition/in-process-run-execution.js'
 import { runInProcessCliRun } from '../composition/in-process-run-execution.js'
@@ -34,6 +34,7 @@ import {
   CountingTarget,
   createInProcessFixture,
   eventTypes,
+  removeInProcessFixtures,
 } from '../composition/__tests__/in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from '../composition/__tests__/in-process-run-fixture.js'
 
@@ -68,6 +69,7 @@ const targets: CountingTarget[] = []
 afterEach(async () => {
   for (const target of targets.splice(0)) await target.close()
 })
+afterAll(() => { removeInProcessFixtures() })
 
 async function project(): Promise<ReturnType<typeof createInProcessFixture>> {
   const target = new CountingTarget()

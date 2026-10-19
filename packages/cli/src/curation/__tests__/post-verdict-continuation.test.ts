@@ -1,11 +1,14 @@
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { asRecordId, computeBriefDigest, guardCompletedRunHandoff, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 import type { RunSession, ServedBrief, StepEvidence } from '@vostride/agent-qa-schema'
 import { preparationPendingWarning, runInProcessCliRun } from '../../composition/in-process-run-execution.js'
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { prepareMisdirectionEvidence } from '../misdirection-tail.js'
 import { readMisdirectionRunState } from '../misdirection-run-state.js'
@@ -43,6 +46,7 @@ afterEach(() => {
   vi.unstubAllEnvs()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+afterAll(() => { removeInProcessFixtures() })
 
 function deferred<T>() {
   let resolve!: (value: T) => void

@@ -17,7 +17,7 @@
 // ports, the REAL JUnit + wire reporters, the REAL masking middleware, the REAL cache-key floor
 // helpers, the REAL debug-logging middleware and the shipped dashboard routers.
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -59,6 +59,7 @@ import { createEntitiesCommand } from '../commands/entities.js'
 import * as localAgentHost from '../composition/local-agent-host.js'
 import { createKnowledgeCommand } from '../commands/knowledge.js'
 import { renderClauseResults } from '../commands/result-render.js'
+import { removeTempRoots } from './temp-roots.js'
 import {
   ARTIFACT_FILE,
   EVENTS_FILE,
@@ -740,6 +741,7 @@ async function rollCallServicePorts(): Promise<unknown> {
 
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'unmask-rollcall-'))
 const runDir = join(TMP_ROOT, RUNS_SUBDIR, slugBranch(RUN_ID))
+afterAll(() => { removeTempRoots([TMP_ROOT]) })
 
 interface MaskedSurface {
   name: string

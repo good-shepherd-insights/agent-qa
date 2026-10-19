@@ -53,6 +53,7 @@ import {
   buildOrdinalsExist,
   createInProcessFixture,
   eventTypes,
+  removeInProcessFixtures,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { AuditRow } from '../../composition/__tests__/in-process-run-fixture.js'
 import {
@@ -349,6 +350,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
+  removeInProcessFixtures()
 })
 
 afterEach(async () => {

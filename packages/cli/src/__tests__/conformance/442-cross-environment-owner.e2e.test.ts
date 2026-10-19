@@ -13,7 +13,7 @@ import {
   ownedElsewhere,
 } from '@vostride/agent-qa-dashboard'
 import type { RunOwner } from '@vostride/agent-qa-dashboard'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
 
 import { composeRunOwnership } from '../../composition/run-owner-probe.js'
 import { processIsAlive } from '../../daemon/registration.js'
@@ -24,6 +24,7 @@ import {
   twoRunProject,
 } from './442-run-fixture.js'
 import type { TwoRunProject } from './442-run-fixture.js'
+import { removeInProcessFixtures } from '../../composition/__tests__/in-process-run-fixture.js'
 
 const CELL_BUDGET_MS = 120_000
 const OWNER_LINE_BUDGET_MS = 60_000
@@ -99,6 +100,7 @@ afterEach(async () => {
   await open.project.close()
   rmSync(open.root, { recursive: true, force: true })
 })
+afterAll(() => { removeInProcessFixtures() })
 
 async function openCell(): Promise<Cell> {
   refuseWithoutPosixRunLifecycle()

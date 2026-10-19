@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, LOCAL_CURATION_CAPABILITIES, DIGEST_JOB_ID_SOURCE, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
@@ -12,7 +12,10 @@ import { emptyCanaryCreditCounters } from '../canary-credit.js'
 import { defaultPostRunTailOperations, runPostRunTail, type PostRunTailHostInput, type PostRunTailOperations } from '../post-run-tail.js'
 import { enqueueThroughTheStep } from '../../__tests__/post-run-step-harness.js'
 import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
-import { createInProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
+import {
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from '../../composition/__tests__/in-process-run-fixture.js'
 
 const roots: string[] = []
 const RUN_ID = asRunId('synthetic-423-run')
@@ -29,6 +32,7 @@ const ZERO_SNAPSHOT = { schemaVersion: 1, rows: [],
 const malformedSnapshot = { ...snapshot, breakdown: { ...snapshot.breakdown, added: 20 } }
 function tempRoot() { const root = mkdtempSync(join(tmpdir(), '423-curation-tail-')); roots.push(root); return root }
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterAll(() => { removeInProcessFixtures() })
 
 function fixture(over: Record<string, unknown> = {}) {
   const root = tempRoot()

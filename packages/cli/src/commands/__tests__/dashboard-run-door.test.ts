@@ -35,7 +35,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { ExecuteOptions, RunSettledDetails } from '@vostride/agent-qa-dashboard'
@@ -57,6 +57,7 @@ import {
   createInProcessFixture,
   eventTypes,
   runDirs,
+  removeInProcessFixtures,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { AuditRow } from '../../composition/__tests__/in-process-run-fixture.js'
 
@@ -186,6 +187,7 @@ afterEach(() => {
   restoreAmbient?.()
   restoreAmbient = undefined
 })
+afterAll(() => { removeInProcessFixtures() })
 
 function pinAmbient(value: 'ci' | 'local-interactive' | 'local-headless', ciMarker: boolean): void {
   const priorGithubActions = process.env.GITHUB_ACTIONS

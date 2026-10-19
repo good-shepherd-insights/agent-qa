@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { DEFAULT_PARALLEL_WORKERS, resolveEffectiveWorkers } from '@vostride/agent-qa-schema'
@@ -32,11 +32,21 @@ import {
   resolveRunInvocationInputs,
 } from '../../commands/run.js'
 import type { RunOptions } from '../../commands/run.js'
-import { CountingTarget, createInProcessFixture } from './in-process-run-fixture.js'
+import {
+  CountingTarget,
+  createInProcessFixture,
+  removeInProcessFixtures,
+} from './in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
+import { removeTempRoots } from '../../__tests__/temp-roots.js'
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
+const assemblyRoots: string[] = []
+afterAll(() => {
+  removeInProcessFixtures()
+  removeTempRoots(assemblyRoots.splice(0))
+})
 
 /**
  * WHAT THE DRIVE HANDED THE ASSEMBLER, captured at the seam itself.
@@ -179,6 +189,7 @@ describe('the chain: agent-qa.config.yaml → the shipped producer', () => {
 describe('the chain: the resolved count → the RunConfig the shell reads', () => {
   function assemblyInput(workers: number | undefined): Parameters<typeof assembleCliRun>[0] {
     const configDir = realpathSync(mkdtempSync(join(tmpdir(), 'run-assembly-workers-')))
+    assemblyRoots.push(configDir)
     return {
       runId: 'r_assembly-workers',
       executionContext: 'local-headless' as never,

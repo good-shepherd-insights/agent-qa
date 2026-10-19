@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
 
 import { Command } from 'commander'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import type { RunStartAcknowledgement } from '@vostride/agent-qa-schema'
@@ -33,6 +33,7 @@ import {
   buildOrdinalsExist,
   createInProcessFixture,
   eventTypes,
+  removeInProcessFixtures,
 } from '../composition/__tests__/in-process-run-fixture.js'
 
 type DoorMode = 'ci' | 'tty'
@@ -47,6 +48,7 @@ afterEach(() => {
   process.exitCode = undefined
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
+afterAll(() => { removeInProcessFixtures() })
 
 /**
  * Run `body` at a door: CI with non-TTY streams, or a terminal with no CI marker.

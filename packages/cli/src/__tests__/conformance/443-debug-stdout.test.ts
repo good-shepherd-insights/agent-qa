@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   CountingTarget,
   createInProcessFixture,
+  removeInProcessFixtures,
 } from '../../composition/__tests__/in-process-run-fixture.js'
 import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { refuseWithoutPosixRunLifecycle, startCliRun } from './442-run-fixture.js'
@@ -21,7 +22,10 @@ const DEBUG_LINES = /^\s*(Platform|Model): /mu
 const target = new CountingTarget()
 
 beforeAll(async () => { await target.listen() })
-afterAll(async () => { await target.close() })
+afterAll(async () => {
+  await target.close()
+  removeInProcessFixtures()
+})
 
 function debugProject(): InProcessFixture {
   refuseWithoutPosixRunLifecycle()
