@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const ANDROID_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -780,6 +781,62 @@ describe('AndroidPlatformAdapter', () => {
     it('returns undefined when no driver', async () => {
       const buf = await adapter.screenshot()
       expect(buf).toBeUndefined()
+    })
+  })
+
+  describe('C444.1-WEBVIEW-SCREENSHOT', () => {
+    // sharp is runner-local's dependency, not android's, so it is resolved from there.
+    const runnerLocal = createRequire(import.meta.url).resolve('@vostride/agent-qa-runner-local')
+    const sharp = createRequire(runnerLocal)('sharp') as any
+    const appPackage = 'dev.example.web'
+
+    async function transparentPng(): Promise<Buffer> {
+      const png: Buffer = await sharp({
+        create: { width: 4, height: 4, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+      }).png().toBuffer()
+      expect((await sharp(png).metadata()).hasAlpha).toBe(true)
+      return png
+    }
+
+    it('a WebView screenshot of an unset background is white, not black', async () => {
+      const png = await transparentPng()
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', `WEBVIEW_${appPackage}`])
+      mockDriver.execute.mockResolvedValueOnce({
+        nodes: [{
+          role: 'button',
+          name: 'Submit',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 4, height: 4 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 4, contentHeight: 4 },
+        url: 'https://web.example.test',
+      })
+      await adapter.setup({ platform: 'android', appPackage })
+      const state = await adapter.observe()
+      expect(state.url).toBe('https://web.example.test')
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+
+      const buf = await adapter.screenshot()
+
+      const { data, info } = await sharp(buf).raw().toBuffer({ resolveWithObject: true })
+      expect([...data.subarray(0, info.channels)]).toEqual([255, 255, 255])
+      expect(info.channels).toBe(3)
+      expect((await sharp(buf).metadata()).format).toBe('png')
+    })
+
+    it('a native screenshot is returned as captured', async () => {
+      const png = await transparentPng()
+      await adapter.setup({ platform: 'android', appPackage })
+      await adapter.observe()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+
+      const buf = await adapter.screenshot()
+
+      expect(buf).toBeInstanceOf(Buffer)
+      expect(buf!.equals(png)).toBe(true)
     })
   })
 
