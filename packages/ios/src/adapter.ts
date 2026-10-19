@@ -814,8 +814,9 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
    * Return in a multi-line field adds a new line instead of submitting, so a multi-line submit is
    * never sent and is recorded as such.
    *
-   * An unreadable re-read is unverified and never stops a requested Return, as on Android (D-09,
-   * D-10; owner 2026-10-09); only a mismatch holds it.
+   * An unreadable re-read is unverified and does not stop a requested Return, as on Android (D-09,
+   * D-10; owner 2026-10-09), but focus is confirmed once first and a Return is held as focus-lost
+   * when the field no longer has it (444.1 D-10).
    */
   private async fillIOSCompound(
     el: {
@@ -827,6 +828,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     box: TextBox,
     secure: boolean,
     multiline: boolean,
+    target: IOSTextTarget,
   ): Promise<ActionResult> {
     const driver = this.driver!
     const isAppend = action.clearMode === 'append'
@@ -856,8 +858,12 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     // Return/newline AFTER the re-read, only when the fill is not a failure, in a single-line field (D-07).
     let fillSubmit: FillSubmitMeta = unsent
     if (verdict.ok && action.submit && !multiline) {
-      await driver.keys(['\n'])
-      fillSubmit = { sent: true }
+      if (raw === undefined && (await this.confirmIOSKeyboardFocus(target)) !== 'focused') {
+        fillSubmit = { sent: false, reason: 'focus-lost' }
+      } else {
+        await driver.keys(['\n'])
+        fillSubmit = { sent: true }
+      }
     }
     const metadata = {
       ...(verdict.meta ? { fillReread: verdict.meta } : {}),
@@ -1120,6 +1126,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           box,
           nativeType === 'XCUIElementTypeSecureTextField',
           nativeType === 'XCUIElementTypeTextView',
+          focused.target,
         )
       }
 

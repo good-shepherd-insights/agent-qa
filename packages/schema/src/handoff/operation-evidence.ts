@@ -36,7 +36,7 @@ export type InputPath = 'native' | 'webview' | 'keyboard'
 export type SubmitOutcome = 'sent' | 'not-sent' | 'unavailable' | 'failed'
 
 /** Why a requested submit was not sent (437 D-05). */
-export type SubmitReason = 'mismatch' | 'multi-line-field' | 'input-failed'
+export type SubmitReason = 'mismatch' | 'multi-line-field' | 'input-failed' | 'focus-lost'
 
 /** What one action's input actually delivered (437 D-05). `currentState` is masked. */
 export interface InputEvidence {
