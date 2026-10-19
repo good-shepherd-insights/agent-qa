@@ -6,6 +6,7 @@ import pc from 'picocolors'
 import { loadConfigFile } from '../config.js'
 import { loadAuthPluginsForRawConfig, toModelProfileAndAuth, type LLMModelAdapter } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
+import { NODE_FLOOR_INSTALL_LINE, NODE_FLOOR_MAJOR, nodeFloorRefusal } from '../node-floor.js'
 import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 import {
   discoverWorkspaceFiles,
@@ -122,14 +123,16 @@ async function resolveActiveLLMAuth(llm: ActiveLLMConfig): Promise<ResolvedDocto
 function checkNodeVersion(): DoctorCheck {
   return {
     name: 'Node.js',
-    fixInstructions: 'Install Node.js 24+ from https://nodejs.org/',
+    fixInstructions: NODE_FLOOR_INSTALL_LINE,
     check: async () => {
       const version = process.version
-      const major = parseInt(version.slice(1).split('.')[0], 10)
-      if (major >= 24) {
+      if (nodeFloorRefusal(version) === undefined) {
         return { status: 'pass', message: version }
       }
-      return { status: 'fail', message: `${version} (requires 24+)` }
+      return {
+        status: 'fail',
+        message: `${version} (requires Node.js ${NODE_FLOOR_MAJOR} or newer)`,
+      }
     },
   }
 }
