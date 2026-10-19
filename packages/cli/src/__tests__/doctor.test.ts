@@ -1377,6 +1377,84 @@ describe('C445-NODE-FLOOR-DOCTOR', () => {
   })
 })
 
+// 2026-10-19 (445-07, D-23): doctor's Config validation row gives the same fix as the config loader.
+describe('C445-DOCTOR-CONFIG', () => {
+  const safeParse = vi.mocked(core.AgentQaConfigSchema.safeParse)
+  const mockedParse = safeParse.getMockImplementation()
+  const WORKSPACE = {
+    testMatch: ['tests/**/*.yaml'],
+    suiteMatch: ['suites/**/*.suite.yaml'],
+    hooksFile: 'hooks.yaml',
+    envFile: '.env',
+    secretsFile: '.env.secrets.local',
+  }
+  const REGISTRY = {
+    llms: [{ name: 'default', provider: 'openai-compatible', model: 'gpt-4o', baseURL: 'https://api.openai.com/v1' }],
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockExistsSync.mockReturnValue(false)
+    mockLoadLLMAuthPlugins.mockResolvedValue([])
+    mockLoadProviderPluginsForRawConfig.mockResolvedValue()
+    mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
+    mockReadFileSync.mockReturnValue('')
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({ source: 'index' })
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue(NATIVE_READY)
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'absent' })
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    forceTerminalWidth(WIDE_TEST_WIDTH)
+    const real = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
+    safeParse.mockImplementation(((config: unknown) => real.AgentQaConfigSchema.safeParse(config)) as never)
+  })
+
+  afterEach(() => {
+    safeParse.mockImplementation(mockedParse as never)
+    mockReadFile.mockRejectedValue({ code: 'ENOENT' })
+    restoreTerminalWidth()
+    process.exitCode = 0
+  })
+
+  async function configFix(config: Record<string, unknown>): Promise<string> {
+    const { stringify } = await import('yaml')
+    mockReadFile.mockResolvedValue(stringify(config) as never)
+    await runDoctor()
+    const lines = consoleLogs.map(stripAnsi)
+    const start = lines.findIndex(line => line.startsWith('    Config validation  '))
+    expect(start, getOutput()).toBeGreaterThanOrEqual(0)
+    expect(rowFor('Config validation'), getOutput()).toContain('FAIL')
+    const fixStart = lines.findIndex((line, index) => index > start && FIX_LINE_PATTERN.test(line))
+    expect(fixStart, getOutput()).toBeGreaterThan(start)
+    const parts = [(lines[fixStart] ?? '').replace(FIX_LINE_PATTERN, '')]
+    for (let index = fixStart + 1; index < lines.length && /^ {11}\S/.test(lines[index] ?? ''); index += 1) {
+      parts.push((lines[index] ?? '').trim())
+    }
+    return parts.join(' ')
+  }
+
+  it('doctor tells a v1 config the hard cut steps', async () => {
+    const v1Fix = await configFix({
+      workspace: WORKSPACE,
+      services: { memory: { enabled: true, provider: 'local', dir: 'agent-qa-memory' } },
+      registry: REGISTRY,
+      use: { llm: 'default' },
+    })
+    expect(v1Fix).toContain('agent-qa init --force')
+    expect(v1Fix).toContain('agent-qa-memory/')
+    expect(v1Fix).not.toContain('re-run `agent-qa init`')
+
+    const unknownKeyFix = await configFix({
+      workspace: WORKSPACE,
+      registry: REGISTRY,
+      use: { llm: 'default' },
+      planer: {},
+    })
+    expect(unknownKeyFix).toContain('Fix or remove the key named above')
+    expect(unknownKeyFix).not.toContain('agent-qa-memory/')
+    expect(unknownKeyFix).not.toContain('re-run `agent-qa init`')
+  })
+})
+
 describe('doctor row renderer (407-24 · G-407-3)', () => {
   const originalColumnsEnv = process.env.COLUMNS
 
