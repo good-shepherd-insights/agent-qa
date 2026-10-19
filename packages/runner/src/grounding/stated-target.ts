@@ -15,10 +15,15 @@
 //     pass. Extra numbers in the element's name never refuse (438 gap round, WR-03, within D-03).
 //   - row: a row was stated, the element's row is known (row-text.ts) and the stated row words
 //     are not in it. An empty stated row is not stated; an unknown row never contradicts.
-// All three read words and numbers through wordTokens (row-text.ts), so they read digit groups
-// the same way: a group split by `,`, `_`, U+202F or U+00A0 is one number ("1,234" equals
-// "1234", "$1,234.50" equals "$1234.50"), while a dot and a plain space never group (438 gap
-// round 2, WR-11, completing WR-03 within D-03).
+// All of them read words and numbers through row-text.ts, never a second tokenizer, and compare
+// the NFKC-normalized tokens it produces (438 gap round 2, WR-11, completing WR-03; 444.1 D-16;
+// within D-03). Grouping separators: `,`, `_`, U+202F and U+00A0 before exactly three digits
+// ("1,234" equals "1234", "$1,234.50" equals "$1234.50"), and a well-formed lakh group
+// ("1,00,000" equals "100000"). Not grouping: U+2009 and U+2007 (NFKC makes them a plain space),
+// `'`, U+066C, and `.`, a decimal point. A comma run reads as a grouped number (wordTokens) or a
+// list (listWordTokens), and a rule agrees when both texts read the same way, either way, agree:
+// "Order 947" agrees with "Orders 947,948", while "Invoice 947" against "Invoice 946" and
+// "Rows 1,2" against "Rows 12" still refuse.
 // A paraphrase that shares a word ("Log in" for "Sign in") agrees; exact equality is never
 // required. A refusal names both identities and never picks a substitute element.
 //
@@ -28,7 +33,7 @@
 // Pure functions: no recording, no side effects. Redaction is the caller's job.
 
 import type { ElementInfo } from '@vostride/agent-qa-schema'
-import { rowContains, rowTextOf, wordTokens } from './row-text.js'
+import { listWordTokens, rowContains, rowTextOf, wordTokens } from './row-text.js'
 
 /** The element the planner meant beside its ref (D-01); `row` names a repeated label's row. */
 export interface StatedTarget {
@@ -77,26 +82,35 @@ export type StatedTargetJudgement =
 
 const NUMBER_TOKEN = /^\p{N}+$/u
 
-function numberTokens(text: string | undefined): string[] {
-  return wordTokens(text).filter((word) => NUMBER_TOKEN.test(word))
-}
+type Reading = (text: string | undefined) => string[]
+
+const READINGS: readonly Reading[] = [wordTokens, listWordTokens]
 
 function numbersDiffer(stated: string, observed: string): boolean {
-  const statedNumbers = numberTokens(stated)
-  const observedNumbers = numberTokens(observed)
-  if (statedNumbers.length === 0 || observedNumbers.length === 0) return false
-  return statedNumbers.some((number) => !observedNumbers.includes(number))
+  return READINGS.every((read) => {
+    const statedNumbers = read(stated).filter((word) => NUMBER_TOKEN.test(word))
+    const observedNumbers = read(observed).filter((word) => NUMBER_TOKEN.test(word))
+    if (statedNumbers.length === 0 || observedNumbers.length === 0) return false
+    return statedNumbers.some((number) => !observedNumbers.includes(number))
+  })
 }
 
-function observedWords(element: ElementInfo): Set<string> {
+function observedWords(element: ElementInfo, read: Reading): Set<string> {
   const { testId: _testId, ...labels } = element.labels
   const sources = [element.name, element.value, ...Object.values(labels)]
   const words = new Set<string>()
   for (const source of sources) {
     if (typeof source !== 'string') continue
-    for (const word of wordTokens(source)) words.add(word)
+    for (const word of read(source)) words.add(word)
   }
   return words
+}
+
+function sharesWord(statedName: string, element: ElementInfo): boolean {
+  return READINGS.some((read) => {
+    const observed = observedWords(element, read)
+    return read(statedName).some((word) => observed.has(word))
+  })
 }
 
 /**
@@ -116,10 +130,8 @@ export function judgeStatedTarget(
     reasons.push('role-kind')
   }
 
-  const observed = observedWords(element)
-  const statedWords = wordTokens(stated.name)
-  if (observed.size > 0 && statedWords.length > 0) {
-    if (!statedWords.some((word) => observed.has(word))) reasons.push('name-no-shared-word')
+  if (observedWords(element, wordTokens).size > 0 && wordTokens(stated.name).length > 0) {
+    if (!sharesWord(stated.name, element)) reasons.push('name-no-shared-word')
     if (numbersDiffer(stated.name, element.name)) reasons.push('name-number')
   }
 

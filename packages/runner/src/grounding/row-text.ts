@@ -23,12 +23,17 @@
 // Containment compares word tokens after NFKC and lowercasing. Each stated word must equal a row
 // word or be a prefix (two or more characters) of a non-number row word; a number must match a row
 // number exactly: 'Elm St' is in '7 Elm Street, Springfield', '7' is not in '17 Elm Street'.
-// A digit group split by `,`, `_`, U+202F or U+00A0 between a digit and exactly three digits (no
-// further digit) is one number in every rule that reads these tokens: '1,234' equals '1234' (438
-// gap round 2, WR-11, within D-03). U+00A0 and U+202F are read before NFKC, which would turn them
-// into a plain space; `,` and `_` after it, so a full-width comma groups too. A dot is a decimal
-// point and a plain space a separator, never grouping; `1.234,50`-style grouping is not
-// normalized (ambiguous with decimals, recorded open).
+// Digit grouping (438 gap round 2, WR-11; 444.1 D-16; within D-03). Grouping separators: `,`, `_`,
+// U+202F and U+00A0 between a digit and exactly three digits (no further digit), so '1,234' equals
+// '1234', and a well-formed lakh group `\d{1,2}(,\d{2})+,\d{3}`, so '1,00,000' equals '100000'.
+// U+00A0 and U+202F are read before NFKC, which would turn them into a plain space; `,` and `_`
+// after it, so a full-width comma groups too. Not grouping: U+2009 and U+2007 (NFKC turns them
+// into a plain space), `'`, U+066C, and `.`, a decimal point; `1.234,50`-style grouping stays open.
+// A comma run is also a list: wordTokens is the grouped reading (read by stated-target.ts,
+// strict-match.ts and cache/value.ts) and listWordTokens the list reading, every comma a split.
+// rowContains agrees when both texts read the same way, either way, agree: 'Order 947' is in
+// 'Orders 947,948'. A reading is global per text, never chosen per run (RESEARCH A5), so a text
+// mixing a grouped number and a list can still refuse, which fails safe.
 //
 // M2 injection boundary: row text is opaque comparison data only — never interpolated into a
 // selector or an instruction, never evaluated, never used to search for an element.
@@ -46,20 +51,33 @@ const NUMBER_TOKEN = /^\p{N}+$/u
 const MIN_PREFIX_LENGTH = 2
 const NO_BREAK_GROUP_SEPARATOR = /(?<=\p{N})[\u00A0\u202F](?=\p{N}{3}(?!\p{N}))/gu
 const GROUP_SEPARATOR = /(?<=\p{N})[,_](?=\p{N}{3}(?!\p{N}))/gu
+const UNDERSCORE_GROUP_SEPARATOR = /(?<=\p{N})_(?=\p{N}{3}(?!\p{N}))/gu
+const LAKH_GROUP = /(?<!\p{N},?)\p{N}{1,2}(?:,\p{N}{2})+,\p{N}{3}(?!\p{N}|,\p{N})/gu
+
+function tokens(text: string | undefined, commasGroup: boolean): string[] {
+  if (text === undefined) return []
+  const normalized = text.replace(NO_BREAK_GROUP_SEPARATOR, '').normalize('NFKC')
+  const grouped = commasGroup
+    ? normalized
+        .replace(LAKH_GROUP, (group) => group.replace(/,/g, ''))
+        .replace(GROUP_SEPARATOR, '')
+    : normalized.replace(UNDERSCORE_GROUP_SEPARATOR, '')
+  return grouped
+    .toLowerCase()
+    .split(NOT_LETTER_OR_DIGIT)
+    .filter((word) => word.length > 0)
+}
 
 /**
  * Word tokens of a text: digit groups joined, NFKC, lowercased, split on every run that is not a
  * letter or digit.
  */
 export function wordTokens(text: string | undefined): string[] {
-  if (text === undefined) return []
-  return text
-    .replace(NO_BREAK_GROUP_SEPARATOR, '')
-    .normalize('NFKC')
-    .replace(GROUP_SEPARATOR, '')
-    .toLowerCase()
-    .split(NOT_LETTER_OR_DIGIT)
-    .filter((word) => word.length > 0)
+  return tokens(text, true)
+}
+
+export function listWordTokens(text: string | undefined): string[] {
+  return tokens(text, false)
 }
 
 function isNumber(word: string): boolean {
@@ -131,14 +149,16 @@ export function rowTextOf(
 
 /** Whether every stated row word is in the row text (equal, or a prefix of a non-number word). */
 export function rowContains(rowText: string, statedRow: string): boolean {
-  const rowWords = wordTokens(rowText)
-  const statedWords = wordTokens(statedRow)
-  if (statedWords.length === 0) return true
-  return statedWords.every((stated) =>
-    rowWords.some((word) => {
-      if (word === stated) return true
-      if (isNumber(stated) || isNumber(word)) return false
-      return stated.length >= MIN_PREFIX_LENGTH && word.startsWith(stated)
-    }),
-  )
+  return [wordTokens, listWordTokens].some((read) => {
+    const rowWords = read(rowText)
+    const statedWords = read(statedRow)
+    if (statedWords.length === 0) return true
+    return statedWords.every((stated) =>
+      rowWords.some((word) => {
+        if (word === stated) return true
+        if (isNumber(stated) || isNumber(word)) return false
+        return stated.length >= MIN_PREFIX_LENGTH && word.startsWith(stated)
+      }),
+    )
+  })
 }
