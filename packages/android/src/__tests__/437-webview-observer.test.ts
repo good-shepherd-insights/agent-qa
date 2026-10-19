@@ -420,4 +420,66 @@ describe('C437-WEBVIEW-OBSERVE', () => {
     expect(fields.map((e) => e.name)).toEqual(['City', 'Bio'])
     for (const field of fields) expect('value' in field).toBe(false)
   })
+
+  it('a contenteditable host is named by its label, not by what it holds', async () => {
+    const state = await observe(
+      page(
+        el('span', { attrs: { id: 'bio-label' }, text: 'About you' }),
+        el('div', {
+          attrs: { contenteditable: 'true', 'aria-labelledby': 'bio-label' },
+          text: 'Hello world',
+        }),
+        el('button', { text: 'Save' }),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('About you')
+    expect(state.elements.some((e) => e.name.includes('Hello world'))).toBe(false)
+    expect(state.tree).not.toContain('Hello world')
+  })
+
+  it('a role textbox editor is named by its label, not by what it holds', async () => {
+    const state = await observe(
+      page(
+        el('div', { attrs: { role: 'textbox', title: 'Notes' }, text: 'first draft' }),
+        el('div', { attrs: { role: 'searchbox', 'aria-placeholder': 'Search' }, text: 'shoes' }),
+        el('div', { attrs: { role: 'combobox' }, text: 'Canada' }),
+        el('div', { attrs: { role: 'combobox' }, text: 'Peru' }),
+      ),
+    )
+
+    expect(textboxes(state).map((e) => e.name)).toEqual(['Notes'])
+    expect(state.elements.find((e) => e.role === 'searchbox')?.name).toBe('Search')
+    const comboboxes = state.elements.filter((e) => e.role === 'combobox')
+    expect(comboboxes).toHaveLength(2)
+    expect(comboboxes.map((e) => e.name)).toEqual(['', ''])
+    for (const held of ['first draft', 'shoes', 'Canada', 'Peru']) {
+      expect(state.tree).not.toContain(held)
+    }
+  })
+
+  it('the descendants of a contenteditable host are not listed as editable', async () => {
+    const state = await observe(
+      page(
+        el('div', {
+          attrs: { contenteditable: 'true', title: 'Article' },
+          children: [
+            el('h2', { text: 'Draft' }),
+            el('p', { text: 'Body text' }),
+            el('h2', { text: 'Draft' }),
+          ],
+        }),
+      ),
+    )
+
+    const headings = state.elements.filter((e) => e.role === 'heading' && e.name === 'Draft')
+    expect(headings).toHaveLength(1)
+    expect(headings[0].state.editable).not.toBe(true)
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('Article')
+    expect(headings[0].hierarchy?.parentRef).toBe(fields[0].ref)
+  })
 })
