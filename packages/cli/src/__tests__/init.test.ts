@@ -114,9 +114,7 @@ import {
   createInitCommand,
   buildDefaultConfig,
   getProviderChoices,
-  getCompatibleProviderChoices,
   defaultModelForProvider,
-  LLM_SETUP_CHOICES,
 } from '../commands/init.js'
 import {
   preflightInitPlan,
@@ -348,14 +346,6 @@ describe('init command', () => {
     expect(values).not.toContain('custom')
   })
 
-  it('compatible provider choices exclude subscription providers', () => {
-    expect(getCompatibleProviderChoices().map(choice => choice.value)).toEqual([
-      'openai-compatible',
-      'anthropic-compatible',
-      'gemini',
-    ])
-  })
-
   it('includes newly registered provider descriptors in init choices at call time', () => {
     const descriptor: ProviderDescriptor = {
       id: 'sixth-provider',
@@ -369,16 +359,7 @@ describe('init command', () => {
     registerProvider(descriptor)
 
     expect(getProviderChoices()).toContainEqual({ value: 'sixth-provider', name: 'Sixth' })
-    expect(getCompatibleProviderChoices().map(choice => choice.value)).toContain('sixth-provider')
     expect(defaultModelForProvider('sixth-provider')).toBe('sixth-default')
-  })
-
-  it('LLM setup choices offer no subscription auth, Codex, and Claude Code', () => {
-    expect(LLM_SETUP_CHOICES.map(choice => choice.value)).toEqual([
-      'none',
-      'codex',
-      'claude-code',
-    ])
   })
 
   it('builds openai-compatible config with user-supplied baseURL and no inline apiKey', () => {
@@ -460,38 +441,6 @@ describe('init command', () => {
     expect(config.registry.llms[0]).not.toHaveProperty('apiKey')
     expect(config.services.authState).toEqual({ dir: '.agent-qa/auth-states' })
     expect(config).not.toHaveProperty('plugins')
-  })
-
-  it('builds dual subscription config and points use.llm at the first subscription', () => {
-    const config = buildDefaultConfig('web', [
-      { name: 'codex', provider: 'openai-subscription', model: 'gpt-5.5' },
-      { name: 'claude-subscription', provider: 'anthropic-subscription', model: 'claude-sonnet-4-6' },
-    ]) as any
-
-    expect(config.registry.llms).toEqual([
-      expect.objectContaining({
-        name: 'codex',
-        provider: 'openai-subscription',
-        model: 'gpt-5.5',
-      }),
-      expect.objectContaining({
-        name: 'claude-subscription',
-        provider: 'anthropic-subscription',
-        model: 'claude-sonnet-4-6',
-      }),
-    ])
-    for (const llm of config.registry.llms) {
-      expect(llm).not.toHaveProperty('screenshotSize')
-      expect(llm).not.toHaveProperty('effectiveResolution')
-    }
-    expect(config.services.vision).toEqual({ screenshotSize: '256k', effectiveResolution: 768 })
-    expect(config.plugins).toEqual({
-      auth: [{ package: '@vostride/agent-qa-subscription-auth' }],
-    })
-    expect(config.use.llm).toBe('codex')
-    expect(config.registry.llms[0]).not.toHaveProperty('apiKey')
-    expect(config.registry.llms[1]).not.toHaveProperty('authMethod')
-    expect(config.services.authState).toEqual({ dir: '.agent-qa/auth-states' })
   })
 
   it.each(['web', 'android', 'ios', 'web+android', 'web+ios'] as const)(
@@ -588,17 +537,16 @@ describe('init command', () => {
   )
 
   it('prompts model as free text and does not collect first-party API keys during interactive init', async () => {
-    mockCheckbox
-      .mockResolvedValueOnce(['web'])
-      .mockResolvedValueOnce(['none'])
-    mockSelect.mockResolvedValueOnce('anthropic-compatible')
-    mockInput
-      .mockResolvedValueOnce('claude-remote')
-      .mockResolvedValueOnce('https://anthropic-proxy.example/messages')
-    mockConfirm.mockResolvedValueOnce(false)
+    mockCheckbox.mockResolvedValueOnce(['web'])
 
-    await runInit(['--dir', '/tmp/test-project', '--skip-install'])
+    await runInit([
+      '--dir', '/tmp/test-project', '--skip-install',
+      '--llm', 'anthropic-compatible',
+      '--model', 'claude-remote',
+      '--base-url', 'https://anthropic-proxy.example/messages',
+    ], { isTTY: true })
 
+    expect(mockCheckbox).toHaveBeenCalledTimes(1)
     expect(mockCheckbox).toHaveBeenNthCalledWith(1, expect.objectContaining({
       message: 'What platform will you test?',
       choices: [
@@ -607,23 +555,6 @@ describe('init command', () => {
       ],
       required: true,
     }))
-    expect(mockCheckbox).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      message: expect.stringContaining('Subscription auth'),
-      choices: LLM_SETUP_CHOICES,
-      required: true,
-    }))
-    expect(mockSelect).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      message: 'Which LLM provider?',
-      choices: getCompatibleProviderChoices(),
-      default: 'anthropic-compatible',
-    }))
-    expect(mockInput).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      message: 'Model name:',
-      default: 'claude-sonnet-4-6',
-    }))
-    expect(mockInput).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      message: 'Base URL:',
-    }))
     expect(mockPassword).not.toHaveBeenCalled()
     expect(mockWriteAuth).not.toHaveBeenCalled()
 
@@ -631,22 +562,19 @@ describe('init command', () => {
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
     )
     expect(configCall?.[1]).toContain('provider: anthropic-compatible')
+    expect(configCall?.[1]).toContain('model: claude-remote')
     expect(configCall?.[1]).toContain('baseURL: https://anthropic-proxy.example/messages')
     expect(configCall?.[1]).not.toContain('apiKey')
   })
 
   it('scaffolds both mobile runtimes when Mobile is selected', async () => {
-    mockCheckbox
-      .mockResolvedValueOnce(['web', 'mobile'])
-      .mockResolvedValueOnce(['codex'])
+    mockCheckbox.mockResolvedValueOnce(['web', 'mobile'])
 
-    await runInit(['--dir', '/tmp/test-project', '--skip-install'])
+    await runInit(['--dir', '/tmp/test-project', '--skip-install', '--llm', 'codex'], { isTTY: true })
 
-    expect(mockCheckbox).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      message: expect.stringContaining('Subscription auth'),
-      choices: LLM_SETUP_CHOICES,
-      required: true,
-    }))
+    expect(mockCheckbox).toHaveBeenCalledTimes(1)
+    const platformValidate = mockCheckbox.mock.calls[0]?.[0].validate
+    expect(platformValidate?.([])).toBe('Select at least one platform.')
     expect(mockCheckbox).not.toHaveBeenCalledWith(expect.objectContaining({
       message: 'Which mobile platforms will you test?',
     }))
@@ -659,67 +587,10 @@ describe('init command', () => {
     expect(configCall?.[1]).toContain('example-ios:')
   })
 
-  it('validates required platform and subscription selections', async () => {
-    mockCheckbox
-      .mockResolvedValueOnce(['mobile'])
-      .mockResolvedValueOnce(['codex'])
-
-    await runInit(['--dir', '/tmp/test-project', '--skip-install'])
-
-    const platformValidate = mockCheckbox.mock.calls[0]?.[0].validate
-    const subscriptionValidate = mockCheckbox.mock.calls[1]?.[0].validate
-
-    expect(platformValidate?.([])).toBe('Select at least one platform.')
-    expect(subscriptionValidate?.([])).toBe('Select No subscription auth or at least one subscription provider.')
-    expect(subscriptionValidate?.([
-      { value: 'none', name: 'No subscription auth', checkedName: 'No subscription auth', short: 'No subscription auth', checked: true, disabled: false },
-      { value: 'codex', name: 'Codex', checkedName: 'Codex', short: 'Codex', checked: true, disabled: false },
-    ])).toBe('No subscription auth cannot be combined with Codex or Claude Code.')
-    expect(subscriptionValidate?.([
-      { value: 'codex', name: 'Codex', checkedName: 'Codex', short: 'Codex', checked: true, disabled: false },
-      { value: 'claude-code', name: 'Claude Code', checkedName: 'Claude Code', short: 'Claude Code', checked: true, disabled: false },
-    ])).toBe(true)
-  })
-
-  it('writes both subscription configs during interactive init without collecting API keys', async () => {
-    mockCheckbox
-      .mockResolvedValueOnce(['web'])
-      .mockResolvedValueOnce(['codex', 'claude-code'])
-
-    await runInit(['--dir', '/tmp/test-project', '--skip-install'])
-
-    expect(mockInput).not.toHaveBeenCalled()
-    expect(mockPassword).not.toHaveBeenCalled()
-    expect(mockWriteAuth).not.toHaveBeenCalled()
-
-    const configCall = mockWriteFileSync.mock.calls.find(
-      (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
-    )
-    expect(configCall?.[1]).toContain('name: codex')
-    expect(configCall?.[1]).toContain('provider: openai-subscription')
-    expect(configCall?.[1]).toContain('name: claude-subscription')
-    expect(configCall?.[1]).toContain('provider: anthropic-subscription')
-    expect(configCall?.[1]).toContain('package: "@vostride/agent-qa-subscription-auth"')
-    expect(configCall?.[1]).toContain('llm: codex')
-    expect(configCall?.[1]).not.toContain('apiKey')
-    expect(configCall?.[1]).not.toContain('authMethod')
-
-    const output = consoleOutput()
-    expect(output).toContain('Fetch @vostride/agent-qa-subscription-auth with your package manager install command')
-    expect(output).toContain('Authenticate codex from agent-qa dashboard')
-    expect(output).toContain('Authenticate claude-subscription from agent-qa dashboard')
-
-    const packageJsonCall = findWriteCallEndingWith('package.json')
-    expect(packageJsonCall).toBeDefined()
-    expect(JSON.parse(packageJsonCall![1] as string).devDependencies['@vostride/agent-qa-subscription-auth']).toBe('0.1.1')
-  })
-
   it('writes OpenAI subscription config during interactive init', async () => {
-    mockCheckbox
-      .mockResolvedValueOnce(['web'])
-      .mockResolvedValueOnce(['codex'])
+    mockCheckbox.mockResolvedValueOnce(['web'])
 
-    await runInit(['--dir', '/tmp/test-project', '--skip-install'])
+    await runInit(['--dir', '/tmp/test-project', '--skip-install', '--llm', 'codex'], { isTTY: true })
 
     const configCall = mockWriteFileSync.mock.calls.find(
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
@@ -735,19 +606,15 @@ describe('init command', () => {
   })
 
   it('keeps compatible Gemini init free of subscription auth plugin', async () => {
-    mockCheckbox
-      .mockResolvedValueOnce(['web'])
-      .mockResolvedValueOnce(['none'])
-    mockSelect.mockResolvedValueOnce('gemini')
-    mockInput.mockResolvedValueOnce('gemini-3-flash-preview')
+    mockCheckbox.mockResolvedValueOnce(['web'])
 
-    await runInit(['--dir', '/tmp/test-project', '--skip-install'])
+    await runInit([
+      '--dir', '/tmp/test-project', '--skip-install',
+      '--llm', 'gemini',
+      '--model', 'gemini-3-flash-preview',
+    ], { isTTY: true })
 
-    expect(mockInput).toHaveBeenCalledTimes(1)
-    expect(mockInput).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Model name:',
-      default: 'gemini-3-flash-preview',
-    }))
+    expect(mockInput).not.toHaveBeenCalled()
 
     const configCall = mockWriteFileSync.mock.calls.find(
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
@@ -1154,13 +1021,9 @@ describe('init command', () => {
   })
 
   it('prints all-drivers setup guidance when both mobile platforms are selected interactively', async () => {
-    mockCheckbox
-      .mockResolvedValueOnce(['mobile'])
-      .mockResolvedValueOnce(['none'])
-    mockSelect.mockResolvedValue('openai-compatible')
-    mockInput.mockResolvedValue('https://api.example.test/v1')
+    mockCheckbox.mockResolvedValueOnce(['mobile'])
 
-    await runInit(['--dir', '/tmp/test-project'])
+    await runInit(['--dir', '/tmp/test-project', '--llm', 'codex'], { isTTY: true })
 
     const output = consoleOutput()
     expect(output).toContain('agent-qa install-mobile-drivers --all')

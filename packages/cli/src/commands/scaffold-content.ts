@@ -286,7 +286,7 @@ export function addYamlComments(yamlStr: string): string {
       result += '    #   appActivity: .MainActivity\n'
       result += '    #   app:\n'
       result += '    #     path: apps/example.apk\n'
-    } else if (line === '  llm: codex' || line === '  llm: claude-subscription' || line === '  llm: default') {
+    } else if (line === '  llm: codex' || line === '  llm: claude-code' || line === '  llm: default') {
       result += '  # Optional: bind mobile runs to a configured device profile.\n'
       result += '  # device: android-emu\n'
     }

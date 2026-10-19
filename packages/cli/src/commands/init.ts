@@ -2,8 +2,6 @@ import { Command, Option } from 'commander'
 import { readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import pc from 'picocolors'
-import select from '@inquirer/select'
-import input from '@inquirer/input'
 import checkbox from '@inquirer/checkbox'
 import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
@@ -36,7 +34,6 @@ import {
 // far more of the host than a scaffold writer needs. Measured 2026-08-17: a top-level import breaks
 // `init.test.ts`, whose partial `node:fs` mock does not carry every export that graph consumes.
 import type { composeAnalyticsHost as ComposeAnalyticsHost } from '../composition/analytics-host.js'
-import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
 import {
   KNOWLEDGE_GITIGNORE_PROBES,
   TARGET_GITIGNORE_PROBES,
@@ -133,42 +130,46 @@ export function buildDefaultConfig(
     authStatesDir: INIT_AUTH_STATES_DIR,
   })
 }
-type LLMSetupChoice = 'none' | 'codex' | 'claude-code'
-const OPENAI_SUBSCRIPTION_CONFIG: InitLLMConfig = {
-  name: 'codex',
-  provider: 'openai-subscription',
-  model: DEFAULT_OPENAI_MODEL,
+export const INIT_LLM_CHOICES = [
+  'claude-code',
+  'codex',
+  'openai-compatible',
+  'anthropic-compatible',
+  'gemini',
+] as const
+export type InitLLMChoice = (typeof INIT_LLM_CHOICES)[number]
+
+const INIT_LLM_ENTRIES: Record<InitLLMChoice, { name: string; provider: string }> = {
+  'claude-code': { name: 'claude-code', provider: 'anthropic-subscription' },
+  codex: { name: 'codex', provider: 'openai-subscription' },
+  'openai-compatible': { name: 'default', provider: 'openai-compatible' },
+  'anthropic-compatible': { name: 'default', provider: 'anthropic-compatible' },
+  gemini: { name: 'default', provider: 'gemini' },
 }
-const ANTHROPIC_SUBSCRIPTION_CONFIG: InitLLMConfig = {
-  name: 'claude-subscription',
-  provider: 'anthropic-subscription',
-  model: DEFAULT_ANTHROPIC_MODEL,
+
+// 2026-10-19 (445-04, D-40): the defaults @ai-sdk/openai and @ai-sdk/anthropic use with no baseURL.
+export const INIT_BASE_URL_DEFAULTS: Readonly<Record<string, string>> = {
+  'openai-compatible': 'https://api.openai.com/v1',
+  'anthropic-compatible': 'https://api.anthropic.com/v1',
+}
+
+const BASE_URL_FORM_REFUSAL = '--base-url must be an absolute http or https URL'
+
+function baseUrlFormRefusal(value: string): string | undefined {
+  const url = URL.canParse(value) ? new URL(value) : undefined
+  return url?.protocol === 'http:' || url?.protocol === 'https:' ? undefined : BASE_URL_FORM_REFUSAL
+}
+
+function baseUrlRefusal(provider: string, value: string): string | undefined {
+  if (getProvider(provider)?.needsBaseURL !== true) {
+    return '--base-url applies only to --llm openai-compatible or anthropic-compatible'
+  }
+  return baseUrlFormRefusal(value)
 }
 
 export function getProviderChoices(): Array<{ value: string; name: string }> {
   return listProviders().map(provider => ({ value: provider.id, name: provider.label }))
 }
-
-export function getCompatibleProviderChoices(): Array<{ value: string; name: string }> {
-  return getProviderChoices().filter(choice => !getProvider(choice.value)?.subscription)
-}
-export const LLM_SETUP_CHOICES: Array<{ value: LLMSetupChoice; name: string; description: string }> = [
-  {
-    value: 'none',
-    name: 'No subscription auth',
-    description: 'Configure OpenAI-compatible, Anthropic-compatible, or Gemini credentials later.',
-  },
-  {
-    value: 'codex',
-    name: 'Codex',
-    description: 'Use your existing OpenAI Codex subscription through the subscription-auth plugin.',
-  },
-  {
-    value: 'claude-code',
-    name: 'Claude Code',
-    description: 'Use your existing Anthropic Claude subscription through the subscription-auth plugin.',
-  },
-]
 
 const KOMAZON_CHECKOUT_TEST_ID = 't_packer-staff-asha-lak-spill-usher-pele-allen-bid-done'
 const KOMAZON_CART_TOTAL_BUG_TEST_ID = 't_reduce-eva-elding-reset-lai-iban-rum-hin-parent-chang'
@@ -374,16 +375,6 @@ export function upsertSubscriptionAuthPackageDependency(
 
 export function defaultModelForProvider(provider: string): string {
   return getProvider(provider)?.defaultModel ?? 'model-name'
-}
-
-function subscriptionConfigsForChoice(choice: LLMSetupChoice): InitLLMConfig[] {
-  if (choice === 'codex') return [OPENAI_SUBSCRIPTION_CONFIG]
-  if (choice === 'claude-code') return [ANTHROPIC_SUBSCRIPTION_CONFIG]
-  return []
-}
-
-function subscriptionConfigsForChoices(choices: LLMSetupChoice[]): InitLLMConfig[] {
-  return choices.flatMap(subscriptionConfigsForChoice)
 }
 
 const DEFAULT_HOOKS_FILE = 'hooks.yaml'
@@ -706,6 +697,7 @@ export interface InitCommandHooks {
    * one event this command emits without touching a home directory.
    */
   composeAnalytics?: typeof ComposeAnalyticsHost
+  isTTY?: boolean
 }
 
 function scaffoldFilePlan(
@@ -882,6 +874,15 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       new Option('--platform <type>', 'platform to configure')
         .choices([...SUPPORTED_INIT_PLATFORMS]),
     )
+    .addOption(
+      new Option('--llm <provider>', 'model connection (default: claude-code)')
+        .choices([...INIT_LLM_CHOICES]),
+    )
+    .option('--model <id>', "model id (default: the provider's default model)")
+    .option(
+      '--base-url <url>',
+      'endpoint for openai-compatible or anthropic-compatible (default: the provider API)',
+    )
     .option('--skip-install', 'deprecated no-op; setup commands are shown after init')
     .option('--force', 'overwrite existing files')
     .option(
@@ -896,7 +897,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
     .action(async (opts, command: Command) => {
       // `--agent` IS A READ, AND IT RETURNS BEFORE ANYTHING ELSE HAPPENS (D-16). Ahead of it lies
       // the whole of init: prompts, a scaffold plan, files. Returning here rather than threading a
-      // flag through `isInteractive` is what makes "non-interactive, idempotent, writes nothing" a
+      // flag through the prompt checks is what makes "non-interactive, idempotent, writes nothing" a
       // property of the control flow instead of a claim about it — there is no branch below this
       // one that a manifest read can reach.
       if (opts.agent === true) {
@@ -934,7 +935,8 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       const analyticsConfigPath =
         command.parent?.opts<{ config?: string }>().config ?? join(dir, 'agent-qa.config.yaml')
 
-      const isInteractive = !opts.platform
+      const tty = hooks.isTTY ?? process.stdin.isTTY === true
+      let asked = false
 
       /**
        * The init/scaffold member (398-10, D-18), emitted from the ONE place that knows how the run
@@ -992,7 +994,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           const createdCount = results.filter((result) => result.outcome === 'created').length
           const updatedCount = results.filter((result) => result.outcome === 'updated').length
           analytics.port.capture(analyticsEvent(analytics, 'agent-qa.init.completed', {
-            init_mode: isInteractive ? 'interactive' : 'scaffold',
+            init_mode: asked ? 'interactive' : 'scaffold',
             outcome: createdCount > 0 ? 'created' : updatedCount > 0 ? 'updated' : 'unchanged',
             created_file_count: createdCount,
             duration_ms: Date.now() - initStartedAt,
@@ -1002,14 +1004,18 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         }
       }
 
-      let platform: InitPlatformInput
-      let provider = 'anthropic-subscription'
-      let model = DEFAULT_ANTHROPIC_MODEL
-      let baseURL: string | undefined
-      let llmConfigs: InitLLMConfig[] | undefined
+      const llm: InitLLMChoice = opts.llm ?? 'claude-code'
+      const { name: llmName, provider } = INIT_LLM_ENTRIES[llm]
+      const refusal = opts.baseUrl === undefined ? undefined : baseUrlRefusal(provider, opts.baseUrl)
+      if (refusal) {
+        console.error(pc.red(refusal))
+        process.exitCode = 1
+        return
+      }
 
-      if (isInteractive) {
-        // Step 1 — Platform selection
+      let platform: InitPlatformInput
+      if (tty && opts.platform === undefined) {
+        asked = true
         const capabilities = await checkbox<PlatformCapability>({
           message: 'What platform will you test?',
           choices: [
@@ -1023,51 +1029,14 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         const mobileRuntimes: MobileRuntime[] = capabilities.includes('mobile') ? ['android', 'ios'] : []
 
         platform = { capabilities, mobileRuntimes }
-
-        // Step 2 — Subscription-auth choice
-        const llmSetup = await checkbox<LLMSetupChoice>({
-          message: `Subscription auth ${pc.dim('(optional)')}`,
-          choices: LLM_SETUP_CHOICES,
-          required: true,
-          validate: (value) => {
-            if (value.length === 0) return 'Select No subscription auth or at least one subscription provider.'
-            const selectedValues = value.map(choice => choice.value)
-            if (selectedValues.includes('none') && selectedValues.length > 1) {
-              return 'No subscription auth cannot be combined with Codex or Claude Code.'
-            }
-            return true
-          },
-        }) as LLMSetupChoice[]
-
-        if (llmSetup.includes('none')) {
-          // Step 3 — Provider selection for non-subscription paths
-          provider = await select({
-            message: 'Which LLM provider?',
-            choices: getCompatibleProviderChoices(),
-            default: 'anthropic-compatible',
-          })
-
-          // Step 4 — Model selection
-          model = await input({ message: 'Model name:', default: defaultModelForProvider(provider) })
-        } else {
-          llmConfigs = subscriptionConfigsForChoices(llmSetup)
-          provider = llmConfigs[0]?.provider ?? provider
-          model = llmConfigs[0]?.model ?? model
-        }
-
-        // Step 5 — Exact compatible endpoint URL
-        if (getProvider(provider)?.needsBaseURL) {
-          baseURL = await input({
-            message: 'Base URL:',
-            validate: (value) => value.trim().length > 0 || 'Base URL is required for compatible providers.',
-          })
-        }
       } else {
-        // Non-interactive mode — use flag values
         platform = (opts.platform ?? 'web') as Platform
-        provider = 'anthropic-subscription'
-        model = DEFAULT_ANTHROPIC_MODEL
       }
+
+      const model: string = opts.model ?? defaultModelForProvider(provider)
+      const baseURL: string | undefined = getProvider(provider)?.needsBaseURL
+        ? opts.baseUrl ?? INIT_BASE_URL_DEFAULTS[provider]
+        : undefined
 
       const configPath = join(dir, 'agent-qa.config.yaml')
       const configClassification = classifyInitPath(configPath, dir)
@@ -1080,7 +1049,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         return
       }
 
-      const config = buildDefaultConfig(platform, llmConfigs ?? provider, model, baseURL)
+      const config = buildDefaultConfig(platform, [{ name: llmName, provider, model, baseURL }])
       const usesSubscriptionAuth = configUsesSubscriptionAuth(config)
       const subscriptionAuthDependency = usesSubscriptionAuth
         ? buildSubscriptionAuthPackageDependencyPlan(dir)
