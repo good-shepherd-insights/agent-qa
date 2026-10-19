@@ -651,22 +651,28 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
     this.driver = await createAndroidSession(this.config, config.farmSession)
 
-    // Explicitly launch the app after session creation.
-    // Appium with noReset:true doesn't always auto-launch pre-installed apps
-    // even when appPackage+appActivity are set in capabilities.
     const appPackage = this.appPackage
     if (appPackage && !this.config.browserName && !this.config.device?.match?.browserName) {
+      let state: number | undefined
       try {
-        await this.driver.activateApp(appPackage)
-      } catch (err) {
-        throw new MobileSetupError({
-          category: 'app-launch',
-          message: `Failed to launch Android app "${appPackage}": ${err instanceof Error ? err.message : String(err)}`,
-          platform: 'android',
-          deviceName: config.device?.name,
-          appId: appPackage,
-          cause: err,
-        })
+        state = await this.driver.queryAppState(appPackage)
+      } catch {
+        state = undefined
+      }
+      // D-11 (#566): activating a foreground app clears a deep link above a singleTask launcher.
+      if (state !== 4) {
+        try {
+          await this.driver.activateApp(appPackage)
+        } catch (err) {
+          throw new MobileSetupError({
+            category: 'app-launch',
+            message: `Failed to launch Android app "${appPackage}": ${err instanceof Error ? err.message : String(err)}`,
+            platform: 'android',
+            deviceName: config.device?.name,
+            appId: appPackage,
+            cause: err,
+          })
+        }
       }
     }
 
