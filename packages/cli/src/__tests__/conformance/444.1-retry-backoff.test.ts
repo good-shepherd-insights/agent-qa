@@ -40,6 +40,7 @@ interface Leg {
   readonly runId: string
   exit?: { code: number | null; signal: NodeJS.Signals | null }
   exitLines?: string[]
+  closeOutLines?: string[]
   printed?: boolean
   rows?: JobRow[] | string
   tail?: string
@@ -97,6 +98,8 @@ async function runOnce(project: PopulatedRunProject, testPath: string): Promise<
   }
   const output = `${stdout}\n${stderr}`
   leg.exitLines = output.split('\n').filter((line) => line.startsWith('post-processing — '))
+  leg.closeOutLines = output.split('\n')
+    .filter((line) => line.startsWith('post-processing complete for '))
   leg.printed = printedRunIds(output).includes(leg.runId)
   leg.tail = output.slice(-2_000)
   leg.rows = chainRows(project, leg.runId)
@@ -181,11 +184,12 @@ describe('C444.1-RETRY-BACKOFF', () => {
       expect(row.status, `the later run's ${row.kind} drained in its own tail\n${seen()}`)
         .toBe('done')
     }
-    expect(later?.exitLines?.length, `the later run's one exit line\n${seen()}`).toBe(1)
+    expect(later?.closeOutLines?.length, `the later run's one close-out line\n${seen()}`).toBe(1)
     expect(
-      later?.exitLines?.[0]?.startsWith('post-processing — analysis: complete · curation: complete · '),
-      `the later run's exit line\n${seen()}`,
+      later?.closeOutLines?.[0]?.startsWith(`post-processing complete for ${later?.runId ?? ''} `),
+      `the later run's close-out line names its run\n${seen()}`,
     ).toBe(true)
+    expect(later?.exitLines, `the later run printed no summary line\n${seen()}`).toEqual([])
     expect(later?.exit, `the later run passed\n${seen()}`).toEqual({ code: 0, signal: null })
     expect(later?.printed, seen()).toBe(true)
 

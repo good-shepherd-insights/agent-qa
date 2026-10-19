@@ -727,6 +727,58 @@ describe('prohibitions: never-wait and print-not-publish (388 D-03 / C13)', () =
   })
 })
 
+describe('C444.1-TAIL-BOUND', () => {
+  const FOREIGN_RETRY = {
+    ran: true,
+    disposition: 'retry-scheduled',
+    reason: 'transient',
+    retryDelayMs: 1_000,
+    attemptsRemaining: 2,
+    job: { id: 'job_some_other_run' },
+  }
+
+  type CloseOut = { drain: string; lines: string[] }
+
+  async function closeOut(outcomes: readonly unknown[]): Promise<CloseOut> {
+    const h = harness({
+      runNextJob: pump(outcomes),
+      status: { ...completeStatus(), notification: terminalNotification() },
+    })
+    const tail = runPostRunTail(options(h))
+    await tail.drain()
+    await tail.finish()
+    return {
+      drain: tail.report().drain,
+      lines: h.info.mock.calls.map(([message]) => String(message)),
+    }
+  }
+
+  function expectChainTerminal(result: CloseOut): void {
+    expect(result.drain).toBe('drained')
+    expect(result.lines.length).toBeGreaterThan(0)
+    expect(result.lines[0]).toContain(`post-processing complete for ${runId}`)
+    expect(result.lines.filter((line) => line.startsWith('post-processing — '))).toEqual([])
+  }
+
+  it('a chain that completes after a retry of another run closes with the chain terminal line', async () => {
+    expectChainTerminal(await closeOut([FOREIGN_RETRY, ANALYZE_COMPLETED]))
+  })
+
+  it('a chain whose analysis an earlier process completed closes with the chain terminal line after a retry of another run', async () => {
+    expectChainTerminal(await closeOut([
+      FOREIGN_RETRY,
+      { ran: true, disposition: 'completed', job: { id: String(OWN_CHAIN.curateMemory) } },
+    ]))
+  })
+
+  it('an analysis that retries and then completes in one pump closes with the chain terminal line', async () => {
+    expectChainTerminal(await closeOut([
+      { ...FOREIGN_RETRY, job: { id: String(OWN_CHAIN.analyzeRun) } },
+      ANALYZE_COMPLETED,
+    ]))
+  })
+})
+
 describe('the pure renderers (exported for exactly these pins)', () => {
   it('renderAnalysisClusterBlock: count+refs for multi-member clusters, bare sentence for singletons',
     () => {

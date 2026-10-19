@@ -357,7 +357,7 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
 
       expect(runNextJob).toHaveBeenCalledTimes(3)
       expect(tail.report().drain).not.toBe('backlog-exhausted')
-      expect(tail.report()).toEqual({ enqueue: 'skipped', drain: 'retry-scheduled', jobsRun: 2 })
+      expect(tail.report()).toEqual({ enqueue: 'skipped', drain: 'drained', jobsRun: 2 })
     })
 
   it('stops the pump at the one budget rather than following the chain forever', async () => {
