@@ -14412,6 +14412,36 @@
       "file": "packages/cli/src/__tests__/445-examples.test.ts",
       "fullName": "C445-EXAMPLES accessibility runs at test end, never fails the run, and its comment sits on the accessibility block",
       "origin": "445 D-33"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES the hook sample makes its value locally with no network and is not in the suite",
+      "origin": "445 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES the hook script writes a shipping address the runtime env decoder reads",
+      "origin": "445 D-40"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-SECRETS-LINE a created secrets file holds the example line at mode 0600",
+      "origin": "445 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-SECRETS-LINE an existing secrets file is never written and init prints the exact line",
+      "origin": "445 D-27"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-SECRETS-LINE the same holds under --force",
+      "origin": "445 D-27"
     }
   ]
 }
