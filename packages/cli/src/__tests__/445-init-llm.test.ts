@@ -1,5 +1,6 @@
 // C445-INIT-LLM (445-04, D-11, D-36): init's model connection flags and their defaults
 // C445-INIT-PROMPTS (445-04, D-11): a terminal init asks only defaulted questions whose flag is absent
+// C445-MODEL-DEFAULTS (445-05, D-31, D-36): the subscription defaults are current and agree with the registry
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
 import { parse as parseYaml } from 'yaml'
@@ -80,6 +81,7 @@ import checkbox from '@inquirer/checkbox'
 import confirm from '@inquirer/confirm'
 import password from '@inquirer/password'
 import { getProvider } from '@vostride/agent-qa-model'
+import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
 
 const DIR = '/tmp/c445-init-llm'
 const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
@@ -388,5 +390,29 @@ describe('C445-INIT-PROMPTS', () => {
     expect(lines.some(line => line.startsWith('  --model <id>'))).toBe(true)
     expect(lines.some(line => line.startsWith('  --base-url <url>'))).toBe(true)
     expect(stdout.join('')).not.toMatch(/--(api-key|token|key|secret)\b/u)
+  })
+})
+
+describe('C445-MODEL-DEFAULTS', () => {
+  it('--llm codex with no --model writes gpt-6.1-sol', async () => {
+    await initOk(['--platform', 'web', '--llm', 'codex'])
+
+    expect(writtenConfig().registry.llms).toEqual([
+      { name: 'codex', provider: 'openai-subscription', model: 'gpt-6.1-sol' },
+    ])
+  })
+
+  it('--llm claude-code with no --model writes claude-sonnet-5-5', async () => {
+    await initOk(['--platform', 'web', '--llm', 'claude-code'])
+
+    expect(writtenConfig().registry.llms).toEqual([
+      { name: 'claude-code', provider: 'anthropic-subscription', model: 'claude-sonnet-5-5' },
+    ])
+  })
+
+  it('the CLI subscription defaults equal the provider registry defaults', () => {
+    expect(DEFAULT_OPENAI_MODEL).toBe(getProvider('openai-subscription')?.defaultModel)
+    expect(DEFAULT_ANTHROPIC_MODEL).toBe(getProvider('anthropic-subscription')?.defaultModel)
+    expect([DEFAULT_OPENAI_MODEL, DEFAULT_ANTHROPIC_MODEL]).toEqual(['gpt-6.1-sol', 'claude-sonnet-5-5'])
   })
 })
