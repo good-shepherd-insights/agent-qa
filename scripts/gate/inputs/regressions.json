@@ -14514,6 +14514,42 @@
       "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
       "fullName": "C445-INIT-PROMPTS init help names --llm with its five values, --model and --base-url",
       "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-MODEL-DEFAULTS --llm codex with no --model writes gpt-6.1-sol",
+      "origin": "445 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-MODEL-DEFAULTS --llm claude-code with no --model writes claude-sonnet-5-5",
+      "origin": "445 D-36"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-MODEL-DEFAULTS the CLI subscription defaults equal the provider registry defaults",
+      "origin": "445 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-NEXT-STEPS the next steps follow the route order for a subscription workspace",
+      "origin": "445 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-NEXT-STEPS an API-key workspace is told to save its key with auth set and the hidden prompt",
+      "origin": "445 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-NEXT-STEPS the next steps name no file init replaces and no dashboard sign-in",
+      "origin": "445 D-17"
     }
   ]
 }
