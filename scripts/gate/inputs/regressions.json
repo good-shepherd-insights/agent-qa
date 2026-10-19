@@ -13968,6 +13968,36 @@
       "file": "packages/android/src/__tests__/adapter.test.ts",
       "fullName": "AndroidPlatformAdapter C444.1-SESSION-START an app state that neither query can read activates the app once",
       "origin": "444.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/load-completed-run-handoff.test.ts",
+      "fullName": "C444.1-DISPATCH-PAIR the loader refuses a healed sub-action whose dispatch pair is malformed",
+      "origin": "444.1 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/444.1-dispatch-pair.test.ts",
+      "fullName": "C444.1-DISPATCH-PAIR curation projects a healed sub-action from the pair it dispatched",
+      "origin": "444.1 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/438-heal-lanes.test.ts",
+      "fullName": "C444.1-DISPATCH-PAIR a healed click keeps the planner pair and records the dispatch pair beside it",
+      "origin": "444.1 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/444.1-planner-pair.test.ts",
+      "fullName": "C444.1-EVAL-PLANNER-PAIR a ref-healed leg is extracted with the tree the planner saw and the action it chose",
+      "origin": "444.1 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/eval/src/extract/__tests__/444.1-planner-pair.test.ts",
+      "fullName": "C444.1-EVAL-PLANNER-PAIR a ref-healed leg is replayed against the tree the planner saw",
+      "origin": "444.1 D-14"
     }
   ]
 }
