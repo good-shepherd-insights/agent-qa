@@ -311,4 +311,10 @@ describe('C438-ROW-TEXT', () => {
     expect(rowTextOf(named(elements, 'Q1'), elements)).toBe('Q1 2025 Invoices')
     expect(rowTextOf(named(elements, '2025'), elements)).toBe('2025 Q1 Invoices')
   })
+
+  // 2026-10-19 (444.1-10, D-16)
+  it('wordTokens reads a well-formed lakh group as one number', () => {
+    expect(wordTokens('1,00,000')).toEqual(['100000'])
+    expect(wordTokens('12,34,567 1,23,45,678')).toEqual(['1234567', '12345678'])
+  })
 })

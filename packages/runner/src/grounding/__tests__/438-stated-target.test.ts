@@ -227,4 +227,42 @@ describe('C438-JUDGE', () => {
       rowKnown: true,
     })
   })
+
+  // 2026-10-19 (444.1-10, D-16): a comma run agrees under its grouped or its list reading.
+  it('a stated order inside a comma list of orders agrees', () => {
+    expect(reasons({ role: 'link', name: 'Order 947' }, element('link', 'Orders 947,948'))).toEqual(
+      [],
+    )
+    const track = (rowName: string) => {
+      const row: ElementInfo = { ...element('row', rowName), ref: asRef('r1') }
+      const button: ElementInfo = {
+        ...element('button', 'Track'),
+        ref: asRef('b1'),
+        hierarchy: { parentRef: asRef('r1') },
+      }
+      return judgeStatedTarget(
+        { role: 'button', name: 'Track', row: 'Order 947' },
+        button,
+        [row, button],
+      )
+    }
+    expect(track('Orders 947,948')).toMatchObject({
+      verdict: 'agrees',
+      rowStated: true,
+      rowKnown: true,
+    })
+    expect(track('Orders 946,948')).toMatchObject({ verdict: 'contradicts', reasons: ['row'] })
+  })
+
+  it('a lakh-grouped number agrees with its plain spelling', () => {
+    expect(
+      reasons({ role: 'button', name: 'Pay 100000' }, element('button', 'Pay 1,00,000')),
+    ).toEqual([])
+    expect(
+      reasons({ role: 'button', name: 'Pay 1,00,000' }, element('button', 'Pay 100000')),
+    ).toEqual([])
+    expect(
+      reasons({ role: 'button', name: 'Pay 1,00,000' }, element('button', 'Pay 1,00,001')),
+    ).toEqual(['name-number'])
+  })
 })
