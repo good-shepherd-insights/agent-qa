@@ -46,7 +46,7 @@
 
 import { spawn } from 'node:child_process'
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync,
 } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -82,6 +82,7 @@ import { invokeViaDaemon } from '../../daemon/client.js'
 import { runDaemonHost } from '../../daemon/host.js'
 import type { DaemonHostOperations } from '../../daemon/host.js'
 import { driveChatLines, genericFnClause } from './surface-dispatch.js'
+import { removeTempRoots } from '../temp-roots.js'
 
 const CLI_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'dist', 'cli.js')
 const OPT_IN_LINE = 'allowProduction: true'
@@ -99,7 +100,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   process.exitCode = undefined
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup().catch(() => {})
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(roots.splice(0))
 })
 
 // ---- the project ------------------------------------------------------------------------------

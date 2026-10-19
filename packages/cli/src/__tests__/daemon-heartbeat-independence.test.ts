@@ -21,9 +21,10 @@ import {
   type WriterLease,
 } from '@vostride/agent-qa-knowledge-local';
 import { LOCAL_DAEMON_CAPABILITIES } from '@vostride/agent-qa-agent-local';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import { startHeartbeatSupervisor } from '../daemon/heartbeat-supervisor.js';
+import { removeTempRoots } from './temp-roots.js';
 
 /**
  * 386-43: what the deleted renewal sidecar used to claim, re-proven against the mechanism that
@@ -382,6 +383,9 @@ if (FIXTURE_ROLE === 'beating-holder') {
   });
 } else {
   describe('heartbeat independence and the escalation gate after the sidecar deletion', () => {
+    const roots: string[] = [];
+    afterAll(() => removeTempRoots(roots.splice(0)));
+
     /**
      * ROADMAP criterion 2, re-proven structurally: 386-29's over-TTL contender proof, restated
      * against the lock-free beat.
@@ -396,6 +400,7 @@ if (FIXTURE_ROLE === 'beating-holder') {
       'advances the published lease across an over-TTL held mutation and holds off contenders',
       async () => {
         const root = mkdtempSync(join(tmpdir(), 'agent-qa-independence-held-'));
+        roots.push(root);
         const marker = join(root, 'mutation-open.json');
         const released = join(root, 'mutation-released.json');
         const permit = join(root, 'release.permit');
@@ -510,6 +515,7 @@ if (FIXTURE_ROLE === 'beating-holder') {
         'escalates against a whole-process-stopped holder past the TTL and bumps the epoch',
         async () => {
           const root = mkdtempSync(join(tmpdir(), 'agent-qa-independence-stopped-'));
+          roots.push(root);
           const marker = join(root, 'mutation-open.json');
           const holder = startFixture('beating-holder', {
             root,
@@ -567,6 +573,7 @@ if (FIXTURE_ROLE === 'beating-holder') {
      */
     it('reclaims a dead owner without ceremony and bumps the epoch by exactly one', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-independence-dead-'));
+      roots.push(root);
       const deadExit = await new Promise<{ pid: number; code: number | null; signal: string | null }>(
         (resolve, reject) => {
           const child = spawn(process.execPath, ['--eval', 'process.exit(0)'], {

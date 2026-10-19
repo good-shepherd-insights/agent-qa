@@ -30,7 +30,7 @@
 // `PLAYWRIGHT_BROWSERS_PATH` is an empty directory, so a member fails fast — but it fails DOWNSTREAM
 // of `startRun`, which is the point: the artifacts a started run leaves are what these cells read.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -58,6 +58,7 @@ import { DAEMON_EVENTS_FILE } from '../events.js'
 import { runDaemonHost } from '../host.js'
 import type { DaemonHostOperations } from '../host.js'
 import { closeTestRunRecords, testRunRecord } from '../../composition/__tests__/in-process-run-fixture.js'
+import { removeTempRoots } from '../../__tests__/temp-roots.js'
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
@@ -115,7 +116,7 @@ function varyAmbientExecutionContext(value: 'ci' | 'local-interactive'): void {
 afterEach(() => {
   restoreResolver?.()
   restoreResolver = undefined
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(temporaryRoots.splice(0))
 })
 
 interface DaemonProject {

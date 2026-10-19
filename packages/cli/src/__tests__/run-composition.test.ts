@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
-import { describe, it, expect, vi } from 'vitest'
+import { afterAll, describe, it, expect, vi } from 'vitest'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
 import type { RunSubscriberHandle } from '@vostride/agent-qa-agent-local'
@@ -14,6 +14,17 @@ import {
 import { QUARANTINE_TEST_ANNOTATION } from '../reporters/console-reporter.js'
 import { JUNIT_QUARANTINE_MARKER_BLOCK } from '../reporters/junit-reporter.js'
 import { QUARANTINED_CHECKOUT, buildReporterFixture, createCapture } from './reporters/fixtures.js'
+
+const roots: string[] = []
+
+function track(path: string): string {
+  roots.push(path)
+  return path
+}
+
+afterAll(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 // 363-09 Task 2 / Task 1 — the composition swap seam: the D-11 unmasking confirm decorator and the
 // shared `attachRunSubscribers` helper both startRun sites use (Pitfall 8). Reporter RENDERING is
@@ -49,7 +60,7 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
     const { flush } = attachRunSubscribers({
       session: session as never,
       console: { verbose: false, write: () => {} },
-      junitOutputPath: join(tmpdir(), `agent-qa-junit-${Date.now()}.xml`),
+      junitOutputPath: track(join(tmpdir(), `agent-qa-junit-${Date.now()}.xml`)),
       extraSubscribers: [extra],
     })
 
@@ -113,7 +124,7 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
   it('renders the disposition on the console AND in the JUnit document from one input', async () => {
     const fixture = buildReporterFixture()
     const capture = createCapture()
-    const junitPath = join(mkdtempSync(join(tmpdir(), 'agent-qa-390-07-')), 'junit.xml')
+    const junitPath = join(track(mkdtempSync(join(tmpdir(), 'agent-qa-390-07-'))), 'junit.xml')
     const handlers: ((envelope: RunEventEnvelope) => void)[] = []
     const session = {
       subscribe: vi.fn((_from: number | undefined, handler: (e: RunEventEnvelope) => void) => {

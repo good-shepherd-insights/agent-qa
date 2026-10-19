@@ -58,6 +58,7 @@ import {
 import { DAEMON_EVENTS_FILE } from '../daemon/events.js'
 import { runDaemonHost, type DaemonHostOperations } from '../daemon/host.js'
 import { DAEMON_REGISTRATION_FILE } from '../daemon/registration.js'
+import { removeTempRoots } from './temp-roots.js'
 
 const MODEL: JobModelCapability = {
   modelId: 'test:daemon-drain',
@@ -430,7 +431,7 @@ function startScheduledHost(options: {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(roots.splice(0))
 })
 
 describe('daemon curation serving tracer', () => {

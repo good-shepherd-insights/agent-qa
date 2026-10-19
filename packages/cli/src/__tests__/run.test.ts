@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { Command } from 'commander'
 
 const {
@@ -859,6 +859,11 @@ afterEach(async () => {
   defaultHooksFilePath = undefined
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   tempDirs.length = 0
+})
+
+afterAll(async () => {
+  await Promise.all(['agent-qa-run-notice-junit.xml', 'agent-qa-selection-junit.xml']
+    .map((file) => rm(join(tmpdir(), file), { force: true })))
 })
 
 async function runCommand(...args: string[]) {

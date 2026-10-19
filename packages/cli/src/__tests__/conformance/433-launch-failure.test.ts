@@ -20,7 +20,45 @@ import { join } from 'node:path'
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+
+// 2026-10-19 (444.1-19, D-29): a dashboard run's post-processing tail, and a cancelled run's member
+// drive (its working-memory flush is its last write), outlive the run; both are awaited before the
+// project is removed.
+const inFlight = vi.hoisted(() => ({
+  tails: [] as Array<Promise<void>>,
+  drives: 0,
+  flushes: 0,
+  waiters: [] as Array<() => void>,
+}))
+
+vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../composition/in-process-run-execution.js')>()
+  return {
+    ...original,
+    runInProcessCliRun: async (...args: Parameters<typeof original.runInProcessCliRun>) => {
+      inFlight.drives += 1
+      const outcome = await original.runInProcessCliRun(...args)
+      if (outcome.settled !== undefined) inFlight.tails.push(outcome.settled)
+      return outcome
+    },
+  }
+})
+
+vi.mock('../../wm-flush.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../wm-flush.js')>()
+  return {
+    ...original,
+    flushWorkingMemory: async (...args: Parameters<typeof original.flushWorkingMemory>) => {
+      try {
+        return await original.flushWorkingMemory(...args)
+      } finally {
+        inFlight.flushes += 1
+        for (const wake of inFlight.waiters.splice(0)) wake()
+      }
+    },
+  }
+})
 
 import { CountingTarget } from '../../commands/__tests__/suite-run-fixture.js'
 import {
@@ -51,6 +89,8 @@ const cleanups: Array<() => Promise<void>> = []
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup().catch(() => {})
+  await Promise.allSettled(inFlight.tails.splice(0))
+  while (inFlight.flushes < inFlight.drives) await new Promise<void>((wake) => inFlight.waiters.push(wake))
 })
 
 afterAll(() => {

@@ -43,7 +43,6 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -52,6 +51,8 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
+
+import { removeTempRoots } from '../temp-roots.js'
 
 /** This directory. */
 export const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
@@ -186,7 +187,7 @@ export function trackTempRoot(root: string): string {
  * owner is ambiguous is a cleanup that runs at an ambiguous time.
  */
 export function cleanupTempRoots(): void {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(roots.splice(0))
 }
 
 /**

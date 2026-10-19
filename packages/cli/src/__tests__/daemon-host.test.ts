@@ -10,7 +10,6 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
-  rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -83,6 +82,7 @@ import {
   writeDaemonRegistration,
 } from '../daemon/registration.js'
 import type { DaemonRegistration } from '../daemon/registration.js'
+import { removeTempRoots } from './temp-roots.js'
 
 const CHILD_ROOT_ENV = 'AGENT_QA_DAEMON_HOST_ROOT'
 const CHILD_HOST_URL_ENV = 'AGENT_QA_DAEMON_HOST_URL'
@@ -488,9 +488,7 @@ function drainHostHarness(options: {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  for (const root of temporaryRoots.splice(0)) {
-    rmSync(root, { recursive: true, force: true })
-  }
+  removeTempRoots(temporaryRoots.splice(0))
 })
 
 describe('runDaemonHost — the D-06 entity-index sweep', () => {

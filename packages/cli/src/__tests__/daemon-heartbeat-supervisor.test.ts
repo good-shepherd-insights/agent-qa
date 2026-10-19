@@ -21,7 +21,7 @@ import {
   withCurrentWriterAuthority,
 } from '@vostride/agent-qa-knowledge-local';
 import type { ConfigReaderPort } from '@vostride/agent-qa-agent';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import { runDaemonHost } from '../daemon/host.js';
 import {
@@ -29,6 +29,7 @@ import {
   startHeartbeatSupervisor,
   type HeartbeatSupervisorMessage,
 } from '../daemon/heartbeat-supervisor.js';
+import { removeTempRoots } from './temp-roots.js';
 
 const FIXTURE_ROLE = process.env.AGENT_QA_HEARTBEAT_FIXTURE_ROLE;
 const FIXTURE_ROOT = process.env.AGENT_QA_HEARTBEAT_FIXTURE_ROOT;
@@ -364,8 +365,12 @@ if (FIXTURE_ROLE === 'contender') {
   });
 } else {
   describe('daemon heartbeat supervision across real process boundaries', () => {
+    const roots: string[] = [];
+    afterAll(() => removeTempRoots(roots.splice(0)));
+
     it('resolves the worker capability when the launching project cwd has no dependencies', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-cwd-'));
+      roots.push(root);
       const report = join(root, 'cwd-supervisor.json');
       const fixture = startFixture('cwd-supervisor', { root, report, cwd: root });
       const exited = await fixture.exit;
@@ -382,6 +387,7 @@ if (FIXTURE_ROLE === 'contender') {
 
     it('stops a live worker idempotently without emitting later heartbeats', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-stop-'));
+      roots.push(root);
       const acquired = acquireWriterLease(root);
       if (acquired.kind !== 'acquired') {
         throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
@@ -413,6 +419,7 @@ if (FIXTURE_ROLE === 'contender') {
 
     it('reports one refusal, halts recurrence, and preserves the replacement lease', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-refusal-'));
+      roots.push(root);
       const acquired = acquireWriterLease(root);
       if (acquired.kind !== 'acquired') {
         throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
@@ -462,6 +469,7 @@ if (FIXTURE_ROLE === 'contender') {
       'keeps the writer lease held while the daemon holds one governed mutation past TTL',
       async () => {
         const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-mutating-'));
+        roots.push(root);
         const marker = join(root, 'mutation-started.json');
         const daemonReport = join(root, 'mutation-complete.json');
         const contenderReport = join(root, 'contender.json');
@@ -532,6 +540,7 @@ if (FIXTURE_ROLE === 'contender') {
 
     it('resolves a graceful stop well inside the stop timeout', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-graceful-'));
+      roots.push(root);
       const acquired = acquireWriterLease(root);
       if (acquired.kind !== 'acquired') {
         throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
@@ -554,6 +563,7 @@ if (FIXTURE_ROLE === 'contender') {
 
     it('resolves stop only after a wedged heartbeat worker thread has exited', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-wedge-'));
+      roots.push(root);
       const acquired = acquireWriterLease(root);
       if (acquired.kind !== 'acquired') {
         throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
@@ -607,6 +617,7 @@ if (FIXTURE_ROLE === 'contender') {
      */
     it('takes an ordinary beat against a wedged store, never a busy throw (I-02)', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-contention-'));
+      roots.push(root);
       const acquired = acquireWriterLease(root);
       if (acquired.kind !== 'acquired') {
         throw new Error(`Expected acquired fixture lease, received ${acquired.kind}`);
@@ -651,6 +662,7 @@ if (FIXTURE_ROLE === 'contender') {
       'keeps the writer lease held while only the daemon main loop is blocked past TTL',
       async () => {
         const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-busy-'));
+        roots.push(root);
         const marker = join(root, 'busy-started.json');
         const daemonReport = join(root, 'busy-complete.json');
         const contenderReport = join(root, 'contender.json');
@@ -716,6 +728,7 @@ if (FIXTURE_ROLE === 'contender') {
       'allows a real contender to reclaim with an epoch bump after whole-process SIGSTOP',
       async () => {
         const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-sigstop-'));
+        roots.push(root);
         const marker = join(root, 'daemon-ready.json');
         const contenderReport = join(root, 'contender.json');
         const daemon = startFixture('stopped-daemon', { root, marker });

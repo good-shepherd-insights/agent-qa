@@ -16,7 +16,23 @@ import { join } from 'node:path'
 import type { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { buildProductionRefusal } from '@vostride/agent-qa-schema'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// 2026-10-19 (444.1-19, D-29): a dashboard run's post-processing tail is detached and writes into
+// the project after the run settles; it is awaited before the project is removed.
+const tails = vi.hoisted(() => [] as Array<Promise<void>>)
+
+vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../composition/in-process-run-execution.js')>()
+  return {
+    ...original,
+    runInProcessCliRun: async (...args: Parameters<typeof original.runInProcessCliRun>) => {
+      const outcome = await original.runInProcessCliRun(...args)
+      if (outcome.settled !== undefined) tails.push(outcome.settled)
+      return outcome
+    },
+  }
+})
 
 import { CountingTarget } from '../../commands/__tests__/suite-run-fixture.js'
 import { openDashboardScene, type DashboardScene } from './433-door-fixture.js'
@@ -45,6 +61,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup().catch(() => {})
+  await Promise.allSettled(tails.splice(0))
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   if (savedCi === undefined) delete process.env.CI
   else process.env.CI = savedCi

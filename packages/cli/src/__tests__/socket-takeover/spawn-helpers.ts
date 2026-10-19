@@ -1,9 +1,11 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { removeTempRoots } from '../temp-roots.js'
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const JITI = join(PACKAGE_ROOT, 'node_modules', '.bin', 'jiti')
@@ -59,7 +61,7 @@ export function makeRoot(label: string): TakeoverPaths {
 }
 
 export function cleanupTakeoverRoots(): void {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(temporaryRoots.splice(0))
 }
 
 export function startDaemonChild(

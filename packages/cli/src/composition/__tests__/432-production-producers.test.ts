@@ -24,7 +24,6 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -52,6 +51,7 @@ import { runInProcessCliRun } from '../in-process-run-execution.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import { CountingTarget } from './in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
+import { removeTempRoots } from '../../__tests__/temp-roots.js'
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
@@ -87,7 +87,7 @@ interface ProductionProject {
 const projects: string[] = []
 
 afterEach(() => {
-  for (const project of projects.splice(0)) rmSync(project, { recursive: true, force: true })
+  removeTempRoots(projects.splice(0))
 })
 
 /**

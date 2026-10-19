@@ -5,7 +5,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { request } from 'node:http'
@@ -48,6 +47,7 @@ import {
   readDaemonRegistration,
   writeDaemonRegistration,
 } from '../daemon/registration.js'
+import { removeTempRoots } from './temp-roots.js'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -405,7 +405,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   for (const server of servers.splice(0)) await server.close()
   for (const host of hosts.splice(0)) host.close()
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(roots.splice(0))
 })
 
 describe('daemon /invoke endpoint tracer', () => {
@@ -484,6 +484,7 @@ describe('daemon /invoke endpoint tracer', () => {
     const agentQaRoot = join(projectRoot, '.agent-qa')
     const knowledgeRoot = join(projectRoot, 'agent-qa-knowledge')
     mkdirSync(projectRoot, { recursive: true })
+    roots.push(projectRoot)
 
     const comparison = localHost(join(root, 'comparison-runtime'), join(root, 'comparison-knowledge'))
     const expected = await invokeFunction(

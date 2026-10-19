@@ -20,12 +20,14 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { expect } from 'vitest'
+
+import { removeTempRoots } from '../temp-roots.js'
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const JITI = join(PACKAGE_ROOT, 'node_modules', '.bin', 'jiti')
@@ -94,7 +96,7 @@ export function makePostRunDaemonRoot(label: string): PostRunDaemonPaths {
 }
 
 export function cleanupPostRunDaemonRoots(): void {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(temporaryRoots.splice(0))
 }
 
 export interface RunningDaemon {

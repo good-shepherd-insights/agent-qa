@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { expect } from 'vitest'
 
 import { DAEMON_EVENTS_FILE } from '../../daemon/events.js'
+import { removeTempRoots } from '../temp-roots.js'
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 const JITI = join(PACKAGE_ROOT, 'node_modules', '.bin', 'jiti')
@@ -101,7 +102,7 @@ export function makeRoot(label: string): FencingPaths {
 }
 
 export function cleanupFencingRoots(): void {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(temporaryRoots.splice(0))
 }
 
 function bestEffortFsyncDirectory(dir: string): void {

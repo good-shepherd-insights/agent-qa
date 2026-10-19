@@ -1,12 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { expect } from 'vitest'
 
+import { removeTempRoots } from '../temp-roots.js'
 import type { FixtureVariant } from './fixtures.js'
 
 const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
@@ -73,7 +74,7 @@ export function makeRoot(label: string): DualHostPaths {
 }
 
 export function cleanupDualHostRoots(): void {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+  removeTempRoots(temporaryRoots.splice(0))
 }
 
 interface RunningChild {

@@ -15,7 +15,44 @@ import { DashboardDatabase, resolveDashboardDbPath } from '@vostride/agent-qa-da
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { chromium } from 'playwright-core'
 import type { Browser, Page } from 'playwright-core'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+
+// 2026-10-19 (444.1-19, D-29): the cancelled run's member drive (its working-memory flush is its last
+// write) and its post-processing tail outlive the run; both are awaited before the roots are removed.
+const inFlight = vi.hoisted(() => ({
+  tails: [] as Array<Promise<void>>,
+  drives: 0,
+  flushes: 0,
+  waiters: [] as Array<() => void>,
+}))
+
+vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../composition/in-process-run-execution.js')>()
+  return {
+    ...original,
+    runInProcessCliRun: async (...args: Parameters<typeof original.runInProcessCliRun>) => {
+      inFlight.drives += 1
+      const outcome = await original.runInProcessCliRun(...args)
+      if (outcome.settled !== undefined) inFlight.tails.push(outcome.settled)
+      return outcome
+    },
+  }
+})
+
+vi.mock('../../wm-flush.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../wm-flush.js')>()
+  return {
+    ...original,
+    flushWorkingMemory: async (...args: Parameters<typeof original.flushWorkingMemory>) => {
+      try {
+        return await original.flushWorkingMemory(...args)
+      } finally {
+        inFlight.flushes += 1
+        for (const wake of inFlight.waiters.splice(0)) wake()
+      }
+    },
+  }
+})
 
 import {
   openDashboardScene,
@@ -570,6 +607,8 @@ describe('C444-PRE-FIX', () => {
     else process.env.CI = savedCi
     if (savedBrowsers === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH
     else process.env.PLAYWRIGHT_BROWSERS_PATH = savedBrowsers
+    await Promise.allSettled(inFlight.tails.splice(0))
+    while (inFlight.flushes < inFlight.drives) await new Promise<void>((wake) => inFlight.waiters.push(wake))
     cleanupTempRoots()
   }, 120_000)
 
