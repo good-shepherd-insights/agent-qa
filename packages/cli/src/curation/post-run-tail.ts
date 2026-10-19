@@ -870,6 +870,7 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
          * work", and the posture the user is told would be free to disagree with the trail.
          */
         let ownChainObserved = false
+        const retryingOwnJobs = new Set<string>()
         /**
          * How the pump left the loop. Whether an exit means this run's chain was starved is
          * declared once, per member, in `PUMP_EXIT_STARVES_OWN_CHAIN` — this doc's job is to
@@ -894,7 +895,12 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           // Emitted from the outcome the pump just RECEIVED, before anything is decided about
           // it: the chip says what the queue durably did, not what this loop does next.
           chips.observe(outcome)
-          if (ownChainJobIds.includes(String(outcome.job.id))) ownChainObserved = true
+          const outcomeJobId = String(outcome.job.id)
+          if (ownChainJobIds.includes(outcomeJobId)) {
+            ownChainObserved = true
+            if (outcome.disposition === 'retry-scheduled') retryingOwnJobs.add(outcomeJobId)
+            else retryingOwnJobs.delete(outcomeJobId)
+          }
           if (
             String(outcome.job.id) === String(chainIds.analyzeRun)
             && outcome.disposition === 'completed'
@@ -908,7 +914,6 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           if (outcome.disposition === 'retry-scheduled') {
             // Never sleep the run process on a backoff. The store keeps the row out of every
             // claim until its not-before time (444.1 D-23), so the pump goes on to the next one.
-            drainOutcome = 'retry-scheduled'
             continue
           }
           if (outcome.disposition === 'interrupted') {
@@ -922,6 +927,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
             break
           }
         }
+        // 2026-10-19 (444.1-21, D-31): a retry of another run's job never changes this run's outcome.
+        if (drainOutcome === 'drained' && retryingOwnJobs.size > 0) drainOutcome = 'retry-scheduled'
         // WR-01 / T-388-18b: the pump ended without ever reaching this run's chain, on an exit
         // the table classifies as starvation. The user is owed the reason their work is still
         // pending, not just the fact. No condition on `drainOutcome` here, deliberately: every
