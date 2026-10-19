@@ -319,6 +319,30 @@ describe('AndroidPlatformAdapter', () => {
       expect(mockDriver.activateApp).toHaveBeenCalledTimes(1)
       expect(mockDriver.activateApp).toHaveBeenCalledWith(appPackage)
     })
+
+    it('a foreground app read through mobile queryAppState when the typed query is gone is not activated', async () => {
+      mockDriver.queryAppState.mockRejectedValue(new Error('unknown command'))
+      mockDriver.execute.mockImplementation(async (script: string) =>
+        script === 'mobile: queryAppState' ? 4 : undefined)
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: queryAppState', { appId: appPackage })
+    })
+
+    it('an app state that neither query can read activates the app once', async () => {
+      mockDriver.queryAppState.mockRejectedValue(new Error('unknown command'))
+      mockDriver.execute.mockImplementation(async (script: string) => {
+        if (script === 'mobile: queryAppState') throw new Error('unknown mobile command')
+        return undefined
+      })
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).toHaveBeenCalledTimes(1)
+      expect(mockDriver.activateApp).toHaveBeenCalledWith(appPackage)
+    })
   })
 
   describe('cleanup', () => {
