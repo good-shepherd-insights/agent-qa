@@ -14022,6 +14022,24 @@
       "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
       "fullName": "C438-JUDGE leaves with one name under different grandparents are told apart",
       "origin": "444.1 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE a stated order inside a comma list of orders agrees",
+      "origin": "444.1 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE a lakh-grouped number agrees with its plain spelling",
+      "origin": "444.1 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT wordTokens reads a well-formed lakh group as one number",
+      "origin": "444.1 D-16"
     }
   ]
 }
