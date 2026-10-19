@@ -13782,6 +13782,42 @@
       "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
       "fullName": "C444-LIST-WRITE-SAFE a test create or save whose target holds a shown marker in a mapping value or on an indented target line is refused and nothing is written",
       "origin": "444 D-65"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS an iframe copy under an opacity 0 ancestor never ends found at zero swipes",
+      "origin": "444.1 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS an iframe copy under a visibility hidden ancestor never ends found at zero swipes",
+      "origin": "444.1 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a display contents holder is found at zero swipes",
+      "origin": "444.1 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a display contents custom element host is found at zero swipes",
+      "origin": "444.1 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a title under a transparent stretched link overlay is found at zero swipes",
+      "origin": "444.1 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-DECOYS a display contents holder with no text of its own reads unknown, never hidden",
+      "origin": "444.1 D-04"
     }
   ]
 }
