@@ -14442,6 +14442,78 @@
       "file": "packages/cli/src/__tests__/445-examples.test.ts",
       "fullName": "C445-SECRETS-LINE the same holds under --force",
       "origin": "445 D-27"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-LLM --llm codex writes one codex entry on the Codex subscription and declares the plugin",
+      "origin": "445 D-36"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-LLM with no flags and no terminal, init writes the claude-code entry and asks nothing",
+      "origin": "445 D-36"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-LLM --llm anthropic-compatible writes a default entry with the Anthropic API base URL and no plugin",
+      "origin": "445 D-40"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-LLM --llm openai-compatible takes --model and --base-url as given",
+      "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-LLM --llm gemini writes a default entry with no base URL and no plugin",
+      "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-LLM an unknown --llm value is refused before anything is written",
+      "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-LLM a base URL is refused for a provider that takes none or when it is not an absolute http or https URL",
+      "origin": "445 D-40"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-PROMPTS in a terminal with no flags, init asks the platform and the model connection, each with its default",
+      "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-PROMPTS a flag that is given skips its question",
+      "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-PROMPTS the compatible providers ask the model and base URL with their defaults",
+      "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-PROMPTS init asks no yes or no question",
+      "origin": "445 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
+      "fullName": "C445-INIT-PROMPTS init help names --llm with its five values, --model and --base-url",
+      "origin": "445 D-11"
     }
   ]
 }
