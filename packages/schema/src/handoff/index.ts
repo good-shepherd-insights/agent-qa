@@ -18,6 +18,7 @@ export type {
 } from './step-evidence'
 export type { VerifierVerdict, Decision } from './step-evidence'
 export type { SubActionEvidence } from './sub-action-evidence'
+export { actedPair } from './sub-action-evidence'
 export type {
   CycleEvidence,
   LocalEffectEvidence,

@@ -573,6 +573,7 @@ export type {
   SubActionEvidence,
   ToolExchangeEvidence,
 } from './handoff/index'
+export { actedPair } from './handoff/index'
 // 360 termination-verb & AI-assertion evidence vocabulary (EXEC-05/EXEC-07)
 export type {
   AiJudgmentEvidence,

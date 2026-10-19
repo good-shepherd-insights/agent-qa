@@ -111,6 +111,12 @@ function hasCompleteElementShape(value: unknown): boolean {
   )
 }
 
+function hasCompleteStateBeforeShape(stateBefore: unknown): boolean {
+  if (!isNonArrayObject(stateBefore)) return false
+  if ('url' in stateBefore && typeof stateBefore.url !== 'string') return false
+  return Array.isArray(stateBefore.elements) && stateBefore.elements.every(hasCompleteElementShape)
+}
+
 /**
  * Validates a `subActions` element against the consumer-dereferenced surface: actionRefs
  * applies the `in` operator to `plannedAction`, resolvedElementEvidence walks
@@ -142,14 +148,12 @@ function hasCompleteSubActionShape(value: unknown): boolean {
       return false
     }
   }
-  const stateBefore = value.stateBefore
-  if (!isNonArrayObject(stateBefore)) return false
-  if ('url' in stateBefore && typeof stateBefore.url !== 'string') return false
-  if (
-    !Array.isArray(stateBefore.elements) ||
-    !stateBefore.elements.every(hasCompleteElementShape)
-  ) {
-    return false
+  if (!hasCompleteStateBeforeShape(value.stateBefore)) return false
+  // 2026-10-19 (444.1-08, D-14): curation dereferences the dispatch pair as it does the planner's.
+  if ('healedDispatch' in value) {
+    const healed = value.healedDispatch
+    if (!isNonArrayObject(healed) || !isNonArrayObject(healed.action)) return false
+    if (!hasCompleteStateBeforeShape(healed.stateBefore)) return false
   }
   if ('stateAfter' in value) {
     const stateAfter = value.stateAfter

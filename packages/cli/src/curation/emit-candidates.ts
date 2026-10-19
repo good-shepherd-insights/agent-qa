@@ -10,6 +10,7 @@ import {
 } from '@vostride/agent-qa-agent-local'
 import { RUN_EVIDENCE_BLOBS_SUBDIR } from '@vostride/agent-qa-runner-local'
 import {
+  actedPair,
   canonicalJson,
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
   deriveEvidenceToken,
@@ -25,11 +26,13 @@ import {
   type PerTestOutcome,
   type Platform,
   type ProcedureJsonValue,
+  type ScreenState,
   type StepEvidence,
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
 
 import {
+  actedStep,
   actionRefs,
   classifySubActionRoute,
   elementAnchor,
@@ -55,6 +58,10 @@ type CurationArtifactDescriptor =
   CurationCandidateProjection['artifactDescriptors'][number]
 
 const SHA256_HEX = /^[0-9a-f]{64}$/
+
+function actedStateOf(subAction: SubActionEvidence | undefined): ScreenState | undefined {
+  return subAction === undefined ? undefined : actedPair(subAction).stateBefore
+}
 
 function observationId(
   handoff: CompletedRunHandoff,
@@ -229,12 +236,13 @@ function projectFact(
   mask: MaskFn | undefined,
 ): CurationCandidateProjection | undefined {
   if (!step.verifierVerdict.pass) return undefined
-  const resolved = resolvedElementEvidence(step)
+  const resolved = resolvedElementEvidence(actedStep(step))
   if (resolved.length !== 1) return undefined
 
   const evidence = resolved[0]!
   const id = observationId(handoff, test.testIndex, step.stepIndex)
-  const platform = evidence.subAction.stateBefore.platform
+  const before = actedPair(evidence.subAction).stateBefore
+  const platform = before.platform
   const classification = factSubtype(evidence)
   const element = elementAnchor(evidence)
   const selector = evidence.locator === undefined
@@ -256,12 +264,12 @@ function projectFact(
     step: { naturalKey: id, ordinal: step.stepIndex },
     platform: observationPlatform(platform),
     test: { id: test.testId },
-    ...(evidence.subAction.stateBefore.url === undefined
+    ...(before.url === undefined
       ? {}
       : {
           surface: {
             kind: 'page' as const,
-            naturalKey: classification.route ?? evidence.subAction.stateBefore.url,
+            naturalKey: classification.route ?? before.url,
           },
         }),
     element: { naturalKey: elementNaturalKey(evidence) },
@@ -326,9 +334,9 @@ function projectMeasurements(
   if (!step.verifierVerdict.pass) return []
   const firstSubAction = step.subActions[0]
   if (firstSubAction === undefined) return []
-  const resolved = resolvedElementEvidence(step)
+  const resolved = resolvedElementEvidence(actedStep(step))
   const singleElement = resolved.length === 1 ? resolved[0] : undefined
-  const platform = firstSubAction.stateBefore.platform
+  const platform = actedPair(firstSubAction).stateBefore.platform
   const id = observationId(handoff, test.testIndex, step.stepIndex)
 
   return measurementSeeds(step).map((measurement) => {
@@ -396,7 +404,7 @@ function projectCaution(
   ])
   const citedSteps = new Set(rootCause.evidence.citedSteps)
   const producingSteps = test.steps.filter((step) => citedSteps.has(step.stepIndex))
-  const platform = producingSteps[0]?.subActions[0]?.stateBefore.platform
+  const platform = actedStateOf(producingSteps[0]?.subActions[0])?.platform
   const observation: DistilledObservation = {
     schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: id, ordinal: stepIndex },
@@ -680,13 +688,14 @@ function trajectoryTargets(
   mask: MaskFn | undefined,
 ): Record<string, z.infer<typeof trajectoryGuardTargetSchema>> {
   const targets: Record<string, z.infer<typeof trajectoryGuardTargetSchema>> = {}
-  const action = subAction.plannedAction as unknown as Record<string, unknown>
+  const { action: acted, stateBefore: before } = actedPair(subAction)
+  const action = acted as unknown as Record<string, unknown>
   const stated = subAction.grounding?.stated
   let statedLaneFound = false
   for (const key of ACTION_REF_KEYS) {
     const ref = action[key]
     if (typeof ref !== 'string') continue
-    const element = subAction.stateBefore.elements.find(
+    const element = before.elements.find(
       (candidate) => candidate.ref === ref,
     )
     if (element === undefined) continue
@@ -713,7 +722,7 @@ function trajectoryValues(
   mask: MaskFn | undefined,
 ): Record<string, z.infer<typeof trajectoryValueSlotSchema>> | undefined {
   const values: Record<string, z.infer<typeof trajectoryValueSlotSchema>> = {}
-  const action = subAction.plannedAction as unknown as Record<string, unknown>
+  const action = actedPair(subAction).action as unknown as Record<string, unknown>
   for (const [key, raw] of Object.entries(action)) {
     if (key === 'type' || ACTION_REF_KEYS.includes(key)) continue
     // CR-01/T-381-52: one lossy field invalidates the whole action. Silently dropping a value
@@ -757,9 +766,7 @@ function trajectoryStep(step: StepEvidence, mask: MaskFn | undefined): Procedure
   // Replay evaluates the page guard before executing the action (D-10), so this route must
   // describe the pre-action page. Recording a navigation destination made healthy steps miss
   // their guards and fed false staleness negatives into the D-05/D-11 confirmation ladder.
-  const route = completing === undefined
-    ? undefined
-    : completing.stateBefore.url
+  const route = actedStateOf(completing)?.url
   return {
     ordinal: step.stepIndex,
     instruction: maskedProse(step.stepText, mask),
@@ -767,7 +774,7 @@ function trajectoryStep(step: StepEvidence, mask: MaskFn | undefined): Procedure
       ? {}
       : {
           action: {
-            type: completing.plannedAction.type,
+            type: actedPair(completing).action.type,
             targets: trajectoryTargets(completing, mask),
             values,
           },
@@ -787,9 +794,9 @@ function projectProcedureTarget(
 
   const flowName = test.testId
   const pageAnchors = test.steps.flatMap((step) =>
-    exercisedAnchors(step).filter((anchor) => anchor.t === 'page'),
+    exercisedAnchors(actedStep(step)).filter((anchor) => anchor.t === 'page'),
   )
-  const platform = test.steps[0]?.subActions[0]?.stateBefore.platform
+  const platform = actedStateOf(test.steps[0]?.subActions[0])?.platform
   const anchors = uniqueAnchors([
     { t: 'flow', name: flowName },
     ...pageAnchors,
@@ -797,12 +804,10 @@ function projectProcedureTarget(
   ])
 
   const observations: DistilledObservation[] = test.steps.map((step, position) => {
-    const completing = completingSubAction(step)
-    const stepPlatform = completing?.stateBefore.platform
-    const route = completing === undefined
-      ? undefined
-      : completing.stateBefore.url
-    const resolved = resolvedElementEvidence(step).at(-1)
+    const before = actedStateOf(completingSubAction(step))
+    const stepPlatform = before?.platform
+    const route = before?.url
+    const resolved = resolvedElementEvidence(actedStep(step)).at(-1)
     const previous = test.steps[position - 1]
     return {
       schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,

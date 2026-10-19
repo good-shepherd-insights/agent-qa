@@ -1,9 +1,16 @@
 // 2026-09-07, 418 D-01: the credit pass; DATA crosses the eval/knowledge wall here.
 import type { Benefit, CanaryOutcome, CompletedRunHandoff, CrossCheck } from '@vostride/agent-qa-schema'
-import { canonicalJson, distilledScreenStateDigest, exercisedAnchors, normalizeAnchor } from '@vostride/agent-qa-schema'
+import {
+  actedPair,
+  canonicalJson,
+  distilledScreenStateDigest,
+  exercisedAnchors,
+  normalizeAnchor,
+} from '@vostride/agent-qa-schema'
 import type { LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
 import type { NonSignalClass, ProjectedCanaryAttribution } from './emit-canary-outcomes.js'
 import type { CompletedCanaryAblation } from './canary-run-state.js'
+import { actedSubAction } from './handoff-anchors.js'
 
 export interface CanaryAblationInput {
   handoff: CompletedRunHandoff
@@ -132,10 +139,12 @@ export async function creditCanaryAttributions(
       // multiple live decisions. The unique live action must exercise THIS row's anchor.
       const live = step?.subActions?.filter(action => action.exchanges !== undefined) ?? []
       const action = live.length === 1 ? live[0] : undefined
-      const observed = step !== undefined && action !== undefined
-        && exercisedAnchors({ ...step, subActions: [action] }).some(anchor =>
+      // 2026-10-19 (444.1-08, D-14): a healed decision is credited against the pair it dispatched.
+      const acted = action === undefined ? undefined : actedSubAction(action)
+      const observed = step !== undefined && acted !== undefined
+        && exercisedAnchors({ ...step, subActions: [acted] }).some(anchor =>
           canonicalJson(normalizeAnchor(anchor)) === canonicalJson(normalizeAnchor(outcome.exercisedAnchor)))
-        ? action.stateBefore : undefined
+        ? actedPair(acted).stateBefore : undefined
       if (observed !== undefined) outcome.observedStateDigest = distilledScreenStateDigest(observed)
       const bundle = input.readBundleStateDigests({
         knowledgeRoot: input.knowledgeRoot, candidateId: outcome.candidateId,
