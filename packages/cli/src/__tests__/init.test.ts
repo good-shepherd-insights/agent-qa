@@ -538,13 +538,12 @@ describe('init command', () => {
 
   it('prompts model as free text and does not collect first-party API keys during interactive init', async () => {
     mockCheckbox.mockResolvedValueOnce(['web'])
+    mockSelect.mockResolvedValueOnce('anthropic-compatible')
+    mockInput
+      .mockResolvedValueOnce('claude-remote')
+      .mockResolvedValueOnce('https://anthropic-proxy.example/messages')
 
-    await runInit([
-      '--dir', '/tmp/test-project', '--skip-install',
-      '--llm', 'anthropic-compatible',
-      '--model', 'claude-remote',
-      '--base-url', 'https://anthropic-proxy.example/messages',
-    ], { isTTY: true })
+    await runInit(['--dir', '/tmp/test-project', '--skip-install'], { isTTY: true })
 
     expect(mockCheckbox).toHaveBeenCalledTimes(1)
     expect(mockCheckbox).toHaveBeenNthCalledWith(1, expect.objectContaining({
@@ -555,6 +554,19 @@ describe('init command', () => {
       ],
       required: true,
     }))
+    expect(mockSelect).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      message: 'Which model connection?',
+      default: 'claude-code',
+    }))
+    expect(mockInput).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      message: 'Model:',
+      default: defaultModelForProvider('anthropic-compatible'),
+    }))
+    expect(mockInput).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      message: 'Base URL:',
+      default: 'https://api.anthropic.com/v1',
+    }))
+    expect(mockConfirm).not.toHaveBeenCalled()
     expect(mockPassword).not.toHaveBeenCalled()
     expect(mockWriteAuth).not.toHaveBeenCalled()
 
@@ -607,14 +619,16 @@ describe('init command', () => {
 
   it('keeps compatible Gemini init free of subscription auth plugin', async () => {
     mockCheckbox.mockResolvedValueOnce(['web'])
+    mockSelect.mockResolvedValueOnce('gemini')
+    mockInput.mockResolvedValueOnce('gemini-3-flash-preview')
 
-    await runInit([
-      '--dir', '/tmp/test-project', '--skip-install',
-      '--llm', 'gemini',
-      '--model', 'gemini-3-flash-preview',
-    ], { isTTY: true })
+    await runInit(['--dir', '/tmp/test-project', '--skip-install'], { isTTY: true })
 
-    expect(mockInput).not.toHaveBeenCalled()
+    expect(mockInput).toHaveBeenCalledTimes(1)
+    expect(mockInput).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Model:',
+      default: defaultModelForProvider('gemini'),
+    }))
 
     const configCall = mockWriteFileSync.mock.calls.find(
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),

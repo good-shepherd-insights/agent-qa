@@ -2,6 +2,8 @@ import { Command, Option } from 'commander'
 import { readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import pc from 'picocolors'
+import select from '@inquirer/select'
+import input from '@inquirer/input'
 import checkbox from '@inquirer/checkbox'
 import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
@@ -145,6 +147,14 @@ const INIT_LLM_ENTRIES: Record<InitLLMChoice, { name: string; provider: string }
   'openai-compatible': { name: 'default', provider: 'openai-compatible' },
   'anthropic-compatible': { name: 'default', provider: 'anthropic-compatible' },
   gemini: { name: 'default', provider: 'gemini' },
+}
+
+const INIT_LLM_NAMES: Record<InitLLMChoice, string> = {
+  'claude-code': 'Claude Code (Anthropic subscription)',
+  codex: 'Codex (OpenAI subscription)',
+  'openai-compatible': 'OpenAI-compatible API',
+  'anthropic-compatible': 'Anthropic-compatible API',
+  gemini: 'Gemini API',
 }
 
 // 2026-10-19 (445-04, D-40): the defaults @ai-sdk/openai and @ai-sdk/anthropic use with no baseURL.
@@ -1004,14 +1014,17 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         }
       }
 
-      const llm: InitLLMChoice = opts.llm ?? 'claude-code'
-      const { name: llmName, provider } = INIT_LLM_ENTRIES[llm]
-      const refusal = opts.baseUrl === undefined ? undefined : baseUrlRefusal(provider, opts.baseUrl)
-      if (refusal) {
-        console.error(pc.red(refusal))
-        process.exitCode = 1
-        return
+      const refuseBaseUrl = (provider: string): boolean => {
+        const refusal = opts.baseUrl === undefined ? undefined : baseUrlRefusal(provider, opts.baseUrl)
+        if (refusal) {
+          console.error(pc.red(refusal))
+          process.exitCode = 1
+        }
+        return refusal !== undefined
       }
+      const askLlm = tty && opts.llm === undefined
+      const flaggedLlm = (opts.llm ?? 'claude-code') as InitLLMChoice
+      if (!askLlm && refuseBaseUrl(INIT_LLM_ENTRIES[flaggedLlm].provider)) return
 
       let platform: InitPlatformInput
       if (tty && opts.platform === undefined) {
@@ -1033,10 +1046,40 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         platform = (opts.platform ?? 'web') as Platform
       }
 
-      const model: string = opts.model ?? defaultModelForProvider(provider)
-      const baseURL: string | undefined = getProvider(provider)?.needsBaseURL
+      let llm: InitLLMChoice = opts.llm ?? 'claude-code'
+      if (askLlm) {
+        asked = true
+        llm = await select<InitLLMChoice>({
+          message: 'Which model connection?',
+          choices: INIT_LLM_CHOICES.map(value => ({ value, name: INIT_LLM_NAMES[value] })),
+          default: 'claude-code',
+        })
+      }
+      const { name: llmName, provider } = INIT_LLM_ENTRIES[llm]
+      if (askLlm && refuseBaseUrl(provider)) return
+
+      let model: string = opts.model ?? defaultModelForProvider(provider)
+      if (tty && opts.model === undefined && !isSubscriptionProvider(provider)) {
+        asked = true
+        model = (await input({
+          message: 'Model:',
+          default: model,
+          validate: (value) => value.trim().length > 0 || 'Enter a model id.',
+        })).trim()
+      }
+
+      const needsBaseURL = getProvider(provider)?.needsBaseURL === true
+      let baseURL: string | undefined = needsBaseURL
         ? opts.baseUrl ?? INIT_BASE_URL_DEFAULTS[provider]
         : undefined
+      if (tty && opts.baseUrl === undefined && needsBaseURL) {
+        asked = true
+        baseURL = (await input({
+          message: 'Base URL:',
+          default: baseURL,
+          validate: (value) => baseUrlFormRefusal(value.trim()) ?? true,
+        })).trim()
+      }
 
       const configPath = join(dir, 'agent-qa.config.yaml')
       const configClassification = classifyInitPath(configPath, dir)
