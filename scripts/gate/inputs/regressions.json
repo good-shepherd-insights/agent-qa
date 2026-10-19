@@ -14142,6 +14142,36 @@
       "file": "packages/cli/src/__tests__/curator-author.test.ts",
       "fullName": "C444.1-TAIL-BOUND an aborted curator request is rethrown, never a fallback",
       "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/run/__tests__/444-abort-skipped.test.ts",
+      "fullName": "C444.1-REPORTER-WORDS a member a run-level cancel skipped carries its test name and file",
+      "origin": "444.1 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/reporters/console-reporter.test.ts",
+      "fullName": "C444.1-REPORTER-WORDS the console names an abort-skipped member by its test",
+      "origin": "444.1 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/reporters/console-reporter.test.ts",
+      "fullName": "C444.1-REPORTER-WORDS the console prints a cancelled member and step as cancelled with their own glyph and counts",
+      "origin": "444.1 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/reporters/junit-reporter.test.ts",
+      "fullName": "C444.1-REPORTER-WORDS JUnit names an abort-skipped member by its test",
+      "origin": "444.1 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/reporters/junit-reporter.test.ts",
+      "fullName": "C444.1-REPORTER-WORDS JUnit writes a cancelled member as skipped with the message cancelled",
+      "origin": "444.1 D-24"
     }
   ]
 }
