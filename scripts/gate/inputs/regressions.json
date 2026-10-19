@@ -14316,6 +14316,36 @@
       "file": "packages/cli/src/__tests__/conformance/444-ci-recipe.test.ts",
       "fullName": "C444-CI-RECIPE the post-run section bounds only the work after the verdict and words queued work with the CI resume limit",
       "origin": "444.1 D-35"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-node-floor.test.ts",
+      "fullName": "C445-NODE-FLOOR an unsupported Node stops the bin before cli-main or node:sqlite loads",
+      "origin": "445 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-node-floor.test.ts",
+      "fullName": "C445-NODE-FLOOR every subcommand is refused the same way, mcp included",
+      "origin": "445 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-node-floor.test.ts",
+      "fullName": "C445-NODE-FLOOR the floor compares the integer major: 23.99.99 and 9.11.2 are refused, 24.0.0 and 100.0.0 pass",
+      "origin": "445 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-node-floor.test.ts",
+      "fullName": "C445-NODE-FLOOR a supported Node loads the CLI",
+      "origin": "445 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor.test.ts",
+      "fullName": "C445-NODE-FLOOR-DOCTOR the Node row names the same install line as the bin",
+      "origin": "445 D-21"
     }
   ]
 }
