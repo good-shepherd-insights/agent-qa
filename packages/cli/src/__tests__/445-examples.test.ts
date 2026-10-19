@@ -1,4 +1,5 @@
-// C445-EXAMPLES (445-02, D-06, D-26, D-32): init writes the Komazon examples, suite and targets
+// C445-EXAMPLES (445-02, 445-03, D-06, D-26, D-32, D-40): init writes the Komazon examples
+// C445-SECRETS-LINE (445-03, D-09, D-27): the example secret goes only into a created secrets file
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { Command } from 'commander'
 import { parse as parseYaml } from 'yaml'
@@ -21,18 +22,27 @@ vi.mock('node:child_process', () => ({
 
 vi.mock('../commands/init-filesystem.js', async () => {
   const fs = await import('node:fs')
-  const writePlan = (plan: { path: string; content: string | Uint8Array }) => {
+  const writePlan = (plan: {
+    path: string
+    content: string | Uint8Array
+    force?: boolean
+    preserveOnForce?: boolean
+  }) => {
+    const exists = fs.existsSync(plan.path)
+    if (exists && (!plan.force || plan.preserveOnForce)) {
+      return { path: plan.path, outcome: 'preserved' as const }
+    }
     fs.writeFileSync(plan.path, plan.content)
-    return { path: plan.path, outcome: 'created' as const }
+    return { path: plan.path, outcome: exists ? 'updated' as const : 'created' as const }
   }
 
   return {
     KNOWLEDGE_GITIGNORE_PROBES: [],
     TARGET_GITIGNORE_PROBES: [],
-    classifyInitPath: vi.fn(() => 'missing'),
+    classifyInitPath: vi.fn((path: string) => fs.existsSync(path) ? 'regular' : 'missing'),
     preflightInitPlan: vi.fn((plans: Array<{ path: string }>) => plans.map(plan => ({
       path: plan.path,
-      classification: 'missing',
+      classification: fs.existsSync(plan.path) ? 'regular' : 'missing',
     }))),
     writeScaffoldFileAtomic: vi.fn(writePlan),
     writeConfigMarkerLast: vi.fn(writePlan),
@@ -66,11 +76,12 @@ vi.mock('@vostride/agent-qa-core', () => ({
 }))
 
 import { createInitCommand } from '../commands/init.js'
+import { writeScaffoldFileAtomic } from '../commands/init-filesystem.js'
 import { buildScaffoldFileSet } from '../commands/scaffold-content.js'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { clearProviderRegistry } from '@vostride/agent-qa-model'
 import { isCanonicalHookId, isCanonicalSuiteId, isCanonicalTestId } from '@vostride/agent-qa-ids'
-import { parseEnvFile } from '@vostride/agent-qa-runner'
+import { SecretStore, parseEnvFile } from '@vostride/agent-qa-runner'
 import { hermeticEnv } from './conformance/spawned-chat.js'
 
 const realFs = await vi.importActual<typeof import('node:fs')>('node:fs')
@@ -89,6 +100,9 @@ const SUITE = 'suites/examples.suite.yaml'
 const HOOK_TEST = 'tests/examples/komazon-shipping-hook.yaml'
 const HOOK_SCRIPT = 'scripts/examples/make-shipping-address.mjs'
 const HOOK_ENV_FILE = '/tmp/agent-qa.env'
+const SECRETS_PATH = `${DIR}/.env.secrets.local`
+const CONFIG_PATH = `${DIR}/agent-qa.config.yaml`
+const EXAMPLE_SECRET = 'KOMAZON_PASSWORD=komazon123'
 const EXAMPLE_PREFIXES = ['tests/examples/', 'scripts/examples/']
 const BUG_URL = 'https://playground.vostride.dev/shop/?bug=cart-total'
 const KOMAZON_TARGETS = {
@@ -184,22 +198,25 @@ afterAll(() => {
   for (const root of tempRoots.splice(0)) realFs.rmSync(root, { recursive: true, force: true })
 })
 
-describe('C445-EXAMPLES', () => {
-  beforeEach(() => {
-    clearProviderRegistry()
-    vi.spyOn(console, 'log').mockImplementation(() => {})
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-    vi.clearAllMocks()
-    vi.mocked(existsSync).mockReturnValue(false)
-    vi.mocked(readFileSync).mockImplementation(path =>
-      String(path).endsWith('package.json') ? '{"version":"0.1.1"}' : '',
-    )
-  })
+function setUpInitMocks(): void {
+  clearProviderRegistry()
+  vi.spyOn(console, 'log').mockImplementation(() => {})
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.clearAllMocks()
+  vi.mocked(existsSync).mockReturnValue(false)
+  vi.mocked(readFileSync).mockImplementation(path =>
+    String(path).endsWith('package.json') ? '{"version":"0.1.1"}' : '',
+  )
+}
 
-  afterEach(() => {
-    clearProviderRegistry()
-    vi.restoreAllMocks()
-  })
+function tearDownInitMocks(): void {
+  clearProviderRegistry()
+  vi.restoreAllMocks()
+}
+
+describe('C445-EXAMPLES', () => {
+  beforeEach(setUpInitMocks)
+  afterEach(tearDownInitMocks)
 
   it('init writes the examples in their own folder and the suite selects the journey then the failing test', async () => {
     const writes = await initWrites()
@@ -437,5 +454,70 @@ describe('C445-EXAMPLES', () => {
     expect(run.status, run.stderr).toBe(0)
     const vars = parseEnvFile(realFs.readFileSync(output, 'utf8'))
     expect(vars.SHIPPING_ADDRESS).toMatch(/^\d{3} Cedar Lane$/)
+  })
+})
+
+describe('C445-SECRETS-LINE', () => {
+  beforeEach(setUpInitMocks)
+  afterEach(tearDownInitMocks)
+
+  function outputLines(): string[] {
+    return consoleOutput().split('\n')
+  }
+
+  async function initOverExistingSecrets(args: string[]): Promise<Write[]> {
+    const existing = new Set([SECRETS_PATH, ...(args.includes('--force') ? [CONFIG_PATH] : [])])
+    vi.mocked(existsSync).mockImplementation(path => existing.has(String(path)))
+    vi.mocked(readFileSync).mockImplementation(path => {
+      if (String(path).endsWith('package.json')) return '{"version":"0.1.1"}'
+      return String(path) === SECRETS_PATH ? 'C445_OWN_SECRET=owner-value-zz\n' : ''
+    })
+    mockWriteFileSync.mockClear()
+    await runInit(['--dir', DIR, '--platform', 'web', ...args])
+    return mockWriteFileSync.mock.calls.map(call => ({
+      path: String(call[0]),
+      content: String(call[1]),
+    }))
+  }
+
+  function expectPrintedLineAndUntouchedFile(writes: Write[]): void {
+    expect(writes.length, 'init wrote its scaffold').toBeGreaterThan(0)
+    expect(writes.map(write => write.path)).not.toContain(SECRETS_PATH)
+    const plan = vi.mocked(writeScaffoldFileAtomic).mock.calls
+      .map(([candidate]) => candidate)
+      .find(candidate => candidate.path === SECRETS_PATH)
+    expect(plan?.preserveOnForce, 'the secrets plan is preserved on --force').toBe(true)
+
+    const lines = outputLines()
+    const index = lines.indexOf(EXAMPLE_SECRET)
+    expect(index, 'init prints the example line on its own line').toBeGreaterThan(0)
+    const sentence = lines.slice(0, index).reverse().find(line => line.trim().length > 0)
+    expect(sentence).toContain('.env.secrets.local')
+    expect(sentence).toMatch(/sign in/)
+    expect(consoleOutput()).not.toContain('owner-value-zz')
+  }
+
+  it('a created secrets file holds the example line at mode 0600', async () => {
+    const writes = await initWrites()
+    const plan = vi.mocked(writeScaffoldFileAtomic).mock.calls
+      .map(([candidate]) => candidate)
+      .find(candidate => candidate.path === SECRETS_PATH)
+
+    expect(plan, 'init plans the secrets file').toBeDefined()
+    expect(plan!.mode).toBe(0o600)
+    expect(plan!.preserveOnForce).toBe(true)
+    const content = writtenText(writes, '.env.secrets.local')
+    expect(content).toBe(plan!.content)
+    expect(SecretStore.fromEnvContent(content).get('KOMAZON_PASSWORD')).toBe('komazon123')
+    expect(content.split('\n')).toContain(EXAMPLE_SECRET)
+    expect(outputLines(), 'a created file needs no printed line').not.toContain(EXAMPLE_SECRET)
+  })
+
+  it('an existing secrets file is never written and init prints the exact line', async () => {
+    expectPrintedLineAndUntouchedFile(await initOverExistingSecrets([]))
+  })
+
+  it('the same holds under --force', async () => {
+    expectPrintedLineAndUntouchedFile(await initOverExistingSecrets(['--force']))
   })
 })
