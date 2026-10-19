@@ -41,6 +41,9 @@ under `.agent-qa/` and `agent-qa-knowledge/` open.
   npx agent-qa daemon stop
   ```
 
+  agent-qa 0.1 has no daemon, so in a workspace from 0.1 this prints
+  `error: unknown command 'daemon'`. Nothing is left to stop then; go on.
+
 - **An MCP server:** a coding agent that uses agent-qa starts its own `agent-qa mcp`. Close that
   agent's session. If you started `agent-qa mcp` or `agent-qa serve` in a terminal, press Ctrl+C
   there.
@@ -57,6 +60,9 @@ cp agent-rules.md rules-before-v2/
 ```
 
 If your config names a different rules file, copy that file instead of `agent-rules.md`.
+
+A workspace from agent-qa 0.1 has no `agent-qa-knowledge/` folder, so the first `cp` line prints
+`No such file or directory`. Its rules are all in `agent-rules.md`, which the second `cp` line copies.
 
 ## 3. Delete the old state and examples
 
