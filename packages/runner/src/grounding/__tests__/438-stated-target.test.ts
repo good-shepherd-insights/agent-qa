@@ -7,6 +7,7 @@ import { asRef } from '@vostride/agent-qa-schema'
 import type { ElementInfo, ElementLabels } from '@vostride/agent-qa-schema'
 
 import { judgeStatedTarget, renderTargetMismatch } from '../stated-target.js'
+import { strictMatch } from '../strict-match.js'
 import type { StatedTarget, TargetMismatchReason } from '../stated-target.js'
 
 interface ElementOverrides {
@@ -188,5 +189,42 @@ describe('C438-JUDGE', () => {
     })
     expect(line).toContain(`"${'x'.repeat(80)}…"`)
     expect(line).not.toContain('x'.repeat(81))
+  })
+
+  // 2026-10-19 (444.1-09, D-17): a leaf's row carries every enclosing treeitem's own line.
+  it('leaves with one name under different grandparents are told apart', () => {
+    const treeitem = (ref: string, name: string, parentRef?: string): ElementInfo => ({
+      ...element('treeitem', name),
+      ref: asRef(ref),
+      ...(parentRef !== undefined ? { hierarchy: { parentRef: asRef(parentRef) } } : {}),
+    })
+    const elements = [
+      treeitem('e1', 'Invoices'),
+      treeitem('e2', '2025', 'e1'),
+      treeitem('e3', 'Q1', 'e2'),
+      treeitem('e4', 'Receipts'),
+      treeitem('e5', '2025', 'e4'),
+      treeitem('e6', 'Q1', 'e5'),
+    ]
+    const [invoicesQ1, receiptsQ1] = [elements[2], elements[5]]
+
+    expect(strictMatch({ role: 'treeitem', name: 'Q1', row: 'Receipts 2025' }, elements)).toEqual({
+      kind: 'resolved',
+      ref: receiptsQ1.ref,
+    })
+    expect(strictMatch({ role: 'treeitem', name: 'Q1', row: 'Invoices 2025' }, elements)).toEqual({
+      kind: 'resolved',
+      ref: invoicesQ1.ref,
+    })
+    const stated = { role: 'treeitem', name: 'Q1', row: 'Receipts' }
+    expect(judgeStatedTarget(stated, invoicesQ1, elements)).toMatchObject({
+      verdict: 'contradicts',
+      reasons: ['row'],
+    })
+    expect(judgeStatedTarget(stated, receiptsQ1, elements)).toMatchObject({
+      verdict: 'agrees',
+      rowStated: true,
+      rowKnown: true,
+    })
   })
 })

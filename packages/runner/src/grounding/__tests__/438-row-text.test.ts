@@ -300,4 +300,15 @@ describe('C438-ROW-TEXT', () => {
     expect(rowTextOf(named(elements, 'Invoice 947'), elements)).toBe('Invoice 947 Pay')
     expect(rowTextOf(named(elements, 'Pay'), elements)).toBe('Invoice 947 Pay')
   })
+
+  // 2026-10-19 (444.1-09, D-17): every enclosing row of the same role joins, nearest first.
+  it('a leaf three levels deep carries every enclosing same-role row line', () => {
+    const elements = elementsOf([
+      { role: 'treeitem', name: 'Invoices' },
+      { role: 'treeitem', name: '2025', parentIndex: 0 },
+      { role: 'treeitem', name: 'Q1', parentIndex: 1 },
+    ])
+    expect(rowTextOf(named(elements, 'Q1'), elements)).toBe('Q1 2025 Invoices')
+    expect(rowTextOf(named(elements, '2025'), elements)).toBe('2025 Q1 Invoices')
+  })
 })
