@@ -4,7 +4,7 @@ import { generateSuiteId } from '@vostride/agent-qa-ids'
 import { parse as parseYaml } from 'yaml'
 import { discoverWorkspaceFiles, resolveWorkspaceFileTarget, SuiteDefinitionSchema } from '@vostride/agent-qa-core'
 import type { ResolvedWorkspacePaths, SuiteDefinition } from '@vostride/agent-qa-core'
-import { idWriteText, presentText, type TestFileManager } from './test-file-manager.js'
+import { decodeUtf8, idWriteText, presentText, type TestFileManager } from './test-file-manager.js'
 import { createPathLock, replaceFileAtomic } from './replace-file-atomic.js'
 
 interface SuiteFileInfo {
@@ -59,7 +59,8 @@ export class SuiteFileManager {
             suiteId = take(await readFile(record.absolutePath, 'utf-8'))
             if (suiteId === null) {
               suiteId = await this.underLock(record.absolutePath, async () => {
-                const content = await readFile(record.absolutePath, 'utf-8')
+                const content = decodeUtf8(await readFile(record.absolutePath))
+                if (content === undefined) return null
                 const current = take(content)
                 if (current !== null) return current
                 // 2026-10-18 (444-35, IN-20): an empty file may be an outside save mid-write; it is never minted.

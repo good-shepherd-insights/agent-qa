@@ -146,6 +146,16 @@ export function extractTestFileMetadata(content: string): TestFileMetadata {
   }
 }
 
+// 2026-10-19 (444.1-11, D-18): a mint reads bytes that decode losslessly, or it does not write.
+export function decodeUtf8(bytes: Uint8Array): string | undefined {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+  } catch (err) {
+    if (err instanceof TypeError) return undefined
+    throw err
+  }
+}
+
 export function targetsForMarkerCheck(content: string): unknown[] {
   const targets: unknown[] = []
   try {
@@ -185,7 +195,8 @@ export class TestFileManager {
             take(first)
             if (!first.testId) {
               take(await this.underLock(record.absolutePath, async () => {
-                const content = await readFile(record.absolutePath, 'utf-8')
+                const content = decodeUtf8(await readFile(record.absolutePath))
+                if (content === undefined) return first
                 const current = extractTestFileMetadata(content)
                 if (current.testId) return current
                 // 2026-10-18 (444-35, IN-20): an empty file may be an outside save mid-write; it is never minted.
