@@ -14040,6 +14040,30 @@
       "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
       "fullName": "C438-ROW-TEXT wordTokens reads a well-formed lakh group as one number",
       "origin": "444.1 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE an id-less test or suite file that is not valid UTF-8 is listed with no id and left byte-identical",
+      "origin": "444.1 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a test create or save whose second YAML document holds a shown marker target is refused and nothing is written",
+      "origin": "444.1 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a valid test whose block-scalar step line starts with target and holds a marker is saved",
+      "origin": "444.1 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
+      "fullName": "C444-LIST-WRITE-SAFE a valid test whose target holds a shown marker on the next line is refused and nothing is written",
+      "origin": "444.1 D-20"
     }
   ]
 }
