@@ -178,6 +178,8 @@ function fieldKindOf(refData: MobileRefMap[string] | undefined): FieldKind {
 
 type Rect = { x: number; y: number; width: number; height: number }
 
+type FocusVerdict = 'target' | 'elsewhere' | 'moved'
+
 function webFocusEvidence(focus: WebFocus): 'no-keyboard-focus' | 'focus-elsewhere' {
   return focus.editable ? 'focus-elsewhere' : 'no-keyboard-focus'
 }
@@ -1156,21 +1158,29 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   }
 
   /**
-   * 437 D-11 (WR-02): true only when the focused node's bounds are read and lie outside the ref's.
+   * 437 D-11 (WR-02): where the focused node is relative to the ref, judged by its read bounds.
    * An unreadable or unparseable value is no evidence, so the native path stays (D-04, D-15).
+   * 444.1 D-07: 'elsewhere' needs positive evidence, the bounds of another observed field.
    */
   private async focusIsElsewhere(
     handle: FocusedField,
+    ref: string,
     bounds: { x: number; y: number; width: number; height: number },
-  ): Promise<boolean> {
+  ): Promise<FocusVerdict> {
     let raw: string | null
     try {
       raw = await handle.getAttribute('bounds')
     } catch {
-      return false
+      return 'target'
     }
     const focused = parseBoundsAttr(raw)
-    return focused !== undefined && !rectWithin(focused, bounds)
+    if (focused === undefined || rectWithin(focused, bounds)) return 'target'
+    for (const [other, entry] of Object.entries(this.lastRefs)) {
+      if (other === ref || !entry.bounds) continue
+      const field = entry.editable === true || ANDROID_FILLABLE_ROLES.has(entry.role.toLowerCase())
+      if (field && rectWithin(focused, entry.bounds)) return 'elsewhere'
+    }
+    return 'moved'
   }
 
   /** Ctrl+A then DEL as key input; clears only the view holding input focus (437 D-14). */
@@ -1422,18 +1432,26 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   private refuseFocus(
     verb: 'fill' | 'clearText',
     ref: string,
-    evidence: 'no-keyboard-focus' | 'focus-elsewhere',
-    path: 'webview' | 'native',
+    focus: 'no-keyboard-focus' | 'focus-elsewhere' | Exclude<FocusVerdict, 'target'>,
     submit: boolean,
     box: TextBox,
   ): ActionResult {
-    const fillRefusal: FillRefusalMeta = { verb, cause: 'not-editable', evidence }
     const nothing = verb === 'fill' ? 'nothing was typed' : 'nothing was cleared'
-    const error = path === 'webview'
-      ? `${verb}: the tap on ${ref} did not focus an editable field; ${nothing}. `
-        + 'Target the input itself and try again.'
-      : `${verb}: after tapping ${ref}, input focus is on another field; ${nothing}. `
+    let fillRefusal: FillRefusalMeta
+    let error: string
+    if (focus === 'moved') {
+      fillRefusal = { verb, cause: 'target-not-found', evidence: 'stale-target' }
+      error = `${verb}: after tapping ${ref}, the focused field is no longer where it was observed; `
+        + `${nothing}. Re-observe and target the field where it is now.`
+    } else if (focus === 'elsewhere') {
+      fillRefusal = { verb, cause: 'not-editable', evidence: 'focus-elsewhere' }
+      error = `${verb}: after tapping ${ref}, input focus is on another field; ${nothing}. `
         + 'Input is never sent to a field other than the target. Re-observe and target the field itself.'
+    } else {
+      fillRefusal = { verb, cause: 'not-editable', evidence: focus }
+      error = `${verb}: the tap on ${ref} did not focus an editable field; ${nothing}. `
+        + 'Target the input itself and try again.'
+    }
     return {
       success: false,
       error,
@@ -1455,7 +1473,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     await this.trustedWebTap(center)
     const focus = await this.awaitWebFocus(center)
     if (!focus.editable || !focus.matches) {
-      return this.refuseFocus('clearText', ref, webFocusEvidence(focus), 'webview', false, box)
+      return this.refuseFocus('clearText', ref, webFocusEvidence(focus), false, box)
     }
     try {
       await driver.keys(['Control', 'a'])
@@ -1481,7 +1499,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     await this.trustedWebTap(center)
     const focus = await this.awaitWebFocus(center)
     if (!focus.editable || !focus.matches) {
-      return this.refuseFocus('fill', action.ref, webFocusEvidence(focus), 'webview', action.submit, box)
+      return this.refuseFocus('fill', action.ref, webFocusEvidence(focus), action.submit, box)
     }
     if (!focus.multiline && LINE_BREAK_RE.test(action.text)) {
       return this.refuseLineBreaks(action, box)
@@ -1799,8 +1817,9 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           )
         // 437-05 (2026-10-08, D-12): the path is chosen here, before any text is delivered.
         const focusedEl = await this.focusedField()
-        if (focusedEl && await this.focusIsElsewhere(focusedEl, bounds)) {
-          return this.refuseFocus('fill', action.ref, 'focus-elsewhere', 'native', action.submit, box)
+        const verdict = focusedEl ? await this.focusIsElsewhere(focusedEl, action.ref, bounds) : 'target'
+        if (verdict !== 'target') {
+          return this.refuseFocus('fill', action.ref, verdict, action.submit, box)
         }
         if (focusedEl) return await this.fillNativeCompound(focusedEl, action, box)
         return await this.fillKeyboardPath(action, box, refData)
@@ -2101,8 +2120,11 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           )
         const clearBox = { coordinates: center, boundingBox: bounds }
         const clearHandle = await this.focusedField()
-        if (clearHandle && await this.focusIsElsewhere(clearHandle, bounds)) {
-          return this.refuseFocus('clearText', action.ref, 'focus-elsewhere', 'native', false, clearBox)
+        const clearVerdict = clearHandle
+          ? await this.focusIsElsewhere(clearHandle, action.ref, bounds)
+          : 'target'
+        if (clearVerdict !== 'target') {
+          return this.refuseFocus('clearText', action.ref, clearVerdict, false, clearBox)
         }
         return await this.clearNativeOrKeyboard(clearBox, clearHandle)
       }
