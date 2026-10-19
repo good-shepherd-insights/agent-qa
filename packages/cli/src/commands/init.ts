@@ -1159,14 +1159,21 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           && result.classification === 'regular',
       )
       if (knowledgeGitignoreWasPresent) {
-        warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
-        verifyEffectiveGitignore({
-          cwd: join(dir, KNOWLEDGE_ROOT_DIR),
-          label: 'existing agent-qa-knowledge/.gitignore',
-          probes: KNOWLEDGE_GITIGNORE_PROBES,
-          // Nothing has been written yet at this point in the run.
-          written: 'nothing',
-        })
+        // 2026-10-20 (445-17, D-43): the refusal prints its message only, never a stack trace.
+        try {
+          warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
+          verifyEffectiveGitignore({
+            cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+            label: 'existing agent-qa-knowledge/.gitignore',
+            probes: KNOWLEDGE_GITIGNORE_PROBES,
+            // Nothing has been written yet at this point in the run.
+            written: 'nothing',
+          })
+        } catch (error) {
+          console.error(pc.red(error instanceof Error ? error.message : String(error)))
+          process.exitCode = 1
+          return
+        }
       }
 
       const outcomes: InitFileResult[] = []
