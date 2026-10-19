@@ -9,9 +9,11 @@
 // A row container is its own row (438 gap round, WR-04), so a clicked listitem or row is checked
 // against its own row words. Row text is the container's name, its folded static text, then every
 // descendant's name and text in document order. A row container that is the element itself and
-// has an enclosing row container also carries that enclosing container's own line (its name and
-// folded text) first, so `2025 > Invoices` reads '2025 Invoices' (438 gap round 2, WR-10); only
-// the nearest one joins and none of its other descendants, so a sibling row's words never join.
+// has an enclosing container of its own role then carries that container's own line (its name and
+// folded text), so `2025 > Invoices` reads 'Invoices 2025' (438 gap round 2, WR-10; 444.1 D-15):
+// the row's own line comes first, so a length cap keeps it, and an enclosing container of another
+// role (an article around a table row) never joins, so its prose never moves the row. Only the
+// nearest one joins and none of its other descendants, so a sibling row's words never join.
 // No container means the row is unknown — never a contradiction (Android layout groups are
 // filtered out of the observation, so a list row there has no container). strictMatch, the cache
 // locator's row lift, the heal's prior row and the web binding (observe-time and dispatch-time
@@ -113,16 +115,13 @@ export function rowTextOf(
   const container = rowContainerOf(element, byRef)
   if (container === undefined) return undefined
 
-  const parts: string[] = []
-  if (container.ref === element.ref && ROW_CONTAINER_ROLES.includes(element.role)) {
-    const enclosing = ancestorsOf(element, byRef).find((ancestor) =>
-      ROW_CONTAINER_ROLES.includes(ancestor.role),
-    )
-    if (enclosing !== undefined) parts.push(enclosing.name, enclosing.text ?? '')
-  }
-  parts.push(container.name, container.text ?? '')
+  const parts: string[] = [container.name, container.text ?? '']
   for (const descendant of descendantsInOrder(container, elements, byRef)) {
     parts.push(descendant.name, descendant.text ?? '')
+  }
+  if (container.ref === element.ref && ROW_CONTAINER_ROLES.includes(element.role)) {
+    const enclosing = ancestorsOf(element, byRef).find((ancestor) => ancestor.role === element.role)
+    if (enclosing !== undefined) parts.push(enclosing.name, enclosing.text ?? '')
   }
   const joined = parts.join(' ').replace(/\s+/g, ' ').trim()
   return joined.length > 0 ? joined : undefined
