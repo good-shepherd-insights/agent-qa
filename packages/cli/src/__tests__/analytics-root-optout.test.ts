@@ -338,7 +338,7 @@ async function runInit(
     parent.addCommand(createInitCommand(extraHooks))
     parent.exitOverride()
     await parent.parseAsync([
-      'node', 'agent-qa', 'init', '--dir', dir, '--platform', 'web', '--skip-install',
+      'node', 'agent-qa', 'init', '--dir', dir, '--platform', 'web',
     ])
     return { exitCode: process.exitCode }
   } finally {

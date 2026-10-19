@@ -65,7 +65,7 @@ function gitIgnores(cwd: string, path: string): boolean {
 async function runRealInit(dir: string): Promise<void> {
   const parent = new Command()
   parent.addCommand(createInitCommand())
-  await parent.parseAsync(['node', 'test', 'init', '--dir', dir, '--platform', 'web', '--skip-install'])
+  await parent.parseAsync(['node', 'test', 'init', '--dir', dir, '--platform', 'web'])
 }
 
 describe('init neither probes nor creates the old grant ledger (432-18, D-22)', () => {

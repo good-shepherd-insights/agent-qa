@@ -2068,7 +2068,6 @@ async function runRealInit(dir: string, hooks: InitCommandHooks = {}): Promise<v
     dir,
     '--platform',
     'web',
-    '--skip-install',
   ])
 }
 

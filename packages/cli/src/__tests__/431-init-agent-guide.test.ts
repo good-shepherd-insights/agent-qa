@@ -61,7 +61,7 @@ async function runInit(dir: string, extra: string[] = [], hooks: InitCommandHook
   parent.exitOverride()
   init.exitOverride()
   parent.addCommand(init)
-  await parent.parseAsync(['node', 'test', 'init', '--dir', dir, '--platform', 'web', '--skip-install', ...extra])
+  await parent.parseAsync(['node', 'test', 'init', '--dir', dir, '--platform', 'web', ...extra])
 }
 
 function stdout(): string {
