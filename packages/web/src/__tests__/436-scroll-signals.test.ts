@@ -13,7 +13,7 @@ import { createServer } from 'node:http'
 import type { Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import type { Frame, Page } from 'playwright-core'
+import type { Frame, Locator, Page } from 'playwright-core'
 import type { Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 import { buildScrollPrimitives, FRAME_PROBE_TIMEOUT_MS } from '../compound-web.js'
@@ -80,6 +80,7 @@ const FRAME_STYLE = 'margin-left:500px;width:400px;height:150px;border:0;display
 const framePage = (src: string, style = FRAME_STYLE, before = '', after = '<div style="height:2000px">Body</div>'): string =>
   `<!DOCTYPE html><html><body style="margin:0">${before}<iframe id="frame" src="${src}" style="${style}"></iframe>${after}</body></html>`
 const FRAME_SAME = framePage('/frame-pay')
+const FRAME_SLOW = framePage('/frame-pay')
 const FRAME_CROSS = (port: number): string => framePage(`http://127.0.0.1:${String(port)}/frame-pay`)
 const FRAME_NESTED = framePage('/frame-mid', 'margin-left:500px;width:400px;height:300px;border:0;display:block')
 const FRAME_MID = '<!DOCTYPE html><html><body style="margin:0"><iframe src="/frame-pay" style="width:300px;height:150px;border:0"></iframe></body></html>'
@@ -158,6 +159,7 @@ const PAGES: Record<string, string | ((port: number) => string)> = {
   '/shadow-target': SHADOW_TARGET,
   '/slotted-clipped': SLOTTED_CLIPPED,
   '/frame-same': FRAME_SAME,
+  '/frame-slow': FRAME_SLOW,
   '/frame-cross': FRAME_CROSS,
   '/frame-nested': FRAME_NESTED,
   '/frame-mid': FRAME_MID,
@@ -731,10 +733,13 @@ describe('C436-SCROLL-FRAMES', () => {
   it('committed frames that never answer are unknown at the bound, once per search', async () => {
     const { tab } = await open('/short')
     const calls = [0, 0]
-    const fakes = calls.map((_, i) => fakeFrame(tab, () => {
-      calls[i] += 1
-      return new Promise<unknown[]>(() => undefined)
-    }))
+    const fakes = calls.map((_, i) => {
+      const never = (): Promise<never> => {
+        calls[i] += 1
+        return new Promise<never>(() => undefined)
+      }
+      return fakeFrame(tab, never, never)
+    })
     vi.spyOn(tab, 'frames').mockReturnValue([...tab.frames(), ...fakes])
     const primitives = buildScrollPrimitives(tab, {}, 720)
     const first = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
@@ -744,18 +749,18 @@ describe('C436-SCROLL-FRAMES', () => {
     const second = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
     expect(second.value).toBe('unknown')
     expect(second.ms).toBeLessThan(300)
-    expect(calls, 'no second evaluate while a judge is pending').toEqual([1, 1])
+    expect(calls, 'no second evaluate while a frame is pending').toEqual([1, 1])
   }, 60_000)
 
   it('a frame that answers after the bound is judged again on the next probe', async () => {
     const { tab } = await open('/short')
-    let calls = 0
+    let judged = 0
     let answerLate: (value: unknown[]) => void = () => undefined
     const late = new Promise<unknown[]>((resolve) => { answerLate = resolve })
     const fake = fakeFrame(tab, () => {
-      calls += 1
-      return calls === 1 ? late : Promise.resolve([])
-    })
+      judged += 1
+      return judged === 1 ? late : Promise.resolve([])
+    }, () => late)
     vi.spyOn(tab, 'frames').mockReturnValue([...tab.frames(), fake])
     const primitives = buildScrollPrimitives(tab, {}, 720)
     const first = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
@@ -764,14 +769,30 @@ describe('C436-SCROLL-FRAMES', () => {
     answerLate([])
     await late
     await new Promise((resolve) => { setTimeout(resolve, 0) })
+    const judgedBefore = judged
     const second = await withSentinel(primitives.probeTargetVisible!('No such text'), 5_000)
-    expect(calls).toBe(2)
+    expect(judged - judgedBefore, 'the next probe judges the frame').toBe(1)
     expect(second.value).toBe('hidden')
+  }, 60_000)
+
+  it('a slow but healthy frame on screen is found at zero swipes', async () => {
+    const { web, tab } = await open('/frame-slow')
+    const pay = tab.frames().find((frame) => frame !== tab.mainFrame())
+    expect(pay, 'the pay frame is attached').toBeDefined()
+    const slow = slowCandidates(pay!)
+    const result = await web.execute(search('up', 5))
+    expect(slow.judged, 'the frame was judged through the slow candidates').toBeGreaterThan(0)
+    expect(result.metadata?.scrollUntilVisible).toEqual(ZERO_SWIPES_FOUND)
   }, 60_000)
 })
 
-// A committed child frame whose candidates locator answers through `evaluateAll`.
-function fakeFrame(tab: Page, evaluateAll: () => Promise<unknown[]>): Frame {
+// A committed child frame: `evaluate` answers the liveness check, the candidates locator's
+// `evaluateAll` the judge.
+function fakeFrame(
+  tab: Page,
+  evaluateAll: () => Promise<unknown[]>,
+  evaluate: () => Promise<unknown> = () => new Promise(() => undefined),
+): Frame {
   const locator: Record<string, unknown> = { evaluateAll }
   locator.or = () => locator
   const candidates = () => locator
@@ -779,11 +800,36 @@ function fakeFrame(tab: Page, evaluateAll: () => Promise<unknown[]>): Frame {
     url: () => 'http://fake.invalid/frame',
     isDetached: () => false,
     parentFrame: () => tab.mainFrame(),
+    evaluate,
     getByText: candidates,
     getByLabel: candidates,
     getByAltText: candidates,
     getByTitle: candidates,
   } as unknown as Frame
+}
+
+// A real frame whose candidates answer only after the frame bound, as a very large frame does.
+function slowCandidates(frame: Frame): { judged: number } {
+  const seen = { judged: 0 }
+  const slow = (real: Locator): Locator => new Proxy(real, {
+    get(target, prop) {
+      if (prop === 'or') return (other: Locator) => slow(target.or(other))
+      if (prop === 'evaluateAll') {
+        return async (...args: Parameters<Locator['evaluateAll']>) => {
+          seen.judged += 1
+          await new Promise((resolve) => { setTimeout(resolve, FRAME_PROBE_TIMEOUT_MS + 500) })
+          return target.evaluateAll(...args)
+        }
+      }
+      const value: unknown = Reflect.get(target, prop, target)
+      return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value
+    },
+  })
+  for (const name of ['getByText', 'getByLabel', 'getByAltText', 'getByTitle'] as const) {
+    const real = frame[name].bind(frame) as (...args: unknown[]) => Locator
+    Object.assign(frame, { [name]: (...args: unknown[]) => slow(real(...args)) })
+  }
+  return seen
 }
 
 type ActionOutcome = Awaited<ReturnType<WebPlatformAdapter['execute']>>
