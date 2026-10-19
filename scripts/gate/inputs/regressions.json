@@ -14118,6 +14118,30 @@
       "file": "packages/cli/src/__tests__/post-run-chip-events.test.ts",
       "fullName": "C444.1-INTERRUPTED an interrupted stage emits no failure chip",
       "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/post-run-tail.test.ts",
+      "fullName": "C444.1-TAIL-BOUND every job the tail runs gets the tail budget signal",
+      "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/post-run-tail.test.ts",
+      "fullName": "C444.1-TAIL-BOUND an interrupted job ends the pump as budget exhausted",
+      "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/llm-utils.job-model-capability.test.ts",
+      "fullName": "C444.1-TAIL-BOUND the job model passes the request signal to the model call",
+      "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/curator-author.test.ts",
+      "fullName": "C444.1-TAIL-BOUND an aborted curator request is rethrown, never a fallback",
+      "origin": "444.1 D-01"
     }
   ]
 }
