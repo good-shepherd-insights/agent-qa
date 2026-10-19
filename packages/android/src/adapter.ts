@@ -657,7 +657,13 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       try {
         state = await this.driver.queryAppState(appPackage)
       } catch {
-        state = undefined
+        // The typed call's route is deprecated in Appium 3; the mobile command outlives it.
+        try {
+          const answer = await this.driver.execute('mobile: queryAppState', { appId: appPackage })
+          if (typeof answer === 'number') state = answer
+        } catch {
+          state = undefined
+        }
       }
       // D-11 (#566): activating a foreground app clears a deep link above a singleTask launcher.
       if (state !== 4) {
