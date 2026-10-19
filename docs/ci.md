@@ -112,8 +112,11 @@ and its counts line reads `superseded 0` and `proposed 1`.
 
 ## How long the post-run work takes
 
-After the verdict, the run's post-run work is bounded by a 60-second budget. A model request still in
-flight when the budget ends is cancelled, and its job stays queued for the next run or the daemon.
+The post-run work has a 60-second budget, and it bounds only the work after the verdict. A model
+request still in flight when the budget ends is cancelled, and its job stays queued. In CI that job
+resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up.
+A CI workspace is usually thrown away, so work left queued in it is not finished later. The verdict
+and the exit code are unaffected.
 
 ## The job
 
@@ -128,6 +131,7 @@ name: agent-qa
 on: [push, pull_request]
 jobs:
   agent-qa:
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -147,6 +151,10 @@ jobs:
             .agent-qa/runs/
             junit.xml
 ```
+
+The job timeout is ordinary CI hygiene, because a web step whose frame answers its liveness check
+and then hangs is held only by a step or test timeout, and neither has a default; it is not a
+workaround for the post-run work, which its 60-second budget bounds.
 
 ## After upgrading
 
