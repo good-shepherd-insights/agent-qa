@@ -51,16 +51,16 @@
 +  cache:
 +    dir: .agent-qa/cache
 +    ttl: 7d
-+  # Accessibility checks power the W3C BAD demo test.
 +  authState:
 +    dir: .agent-qa/auth-states
 +  vision:
 +    screenshotSize: 256k
 +    effectiveResolution: 768
++  # Accessibility checks run once at the end of each test; results show in the dashboard's run detail.
 +  accessibility:
 +    enabled: true
 +    standard: wcag2aa
-+    runAfter: every-step
++    runAfter: test-end
 +    failOnViolation: false
 +  recording:
 +    enabled: true

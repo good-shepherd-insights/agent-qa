@@ -187,7 +187,7 @@ export function buildScaffoldConfig(
             accessibility: {
               enabled: true,
               standard: 'wcag2aa',
-              runAfter: 'every-step',
+              runAfter: 'test-end',
               failOnViolation: false,
             },
           }
@@ -247,6 +247,9 @@ export function addYamlComments(yamlStr: string): string {
       result += '\n# Optional subscription auth plugin declarations\n'
     } else if (line.startsWith('use:')) {
       result += '\n# Execution settings (cascades: global -> suite -> test -> CLI flags)\n'
+    } else if (line === '  accessibility:') {
+      result +=
+        "  # Accessibility checks run once at the end of each test; results show in the dashboard's run detail.\n"
     } else if (line === '  planner:') {
       result += '  # Per-step limits: maxActions (actions) and maxPlanningTurns (planner calls); a step that needs more stops with the limit reason\n'
     }
@@ -260,15 +263,11 @@ export function addYamlComments(yamlStr: string): string {
     } else if (line === '    artifactsDir: .agent-qa/artifacts') {
       result += '    # Optional: persist dashboard state to a custom SQLite path.\n'
       result += '    # dbPath: .agent-qa/dashboard.sqlite\n'
-    } else if (line === '    ttl: 7d') {
-      if (yamlStr.includes('\n  accessibility:\n')) {
-        result += '  # Accessibility checks power the W3C BAD demo test.\n'
-      } else {
-        result += '  # Optional accessibility service example:\n'
-        result += '  # accessibility:\n'
-        result += '  #   enabled: false\n'
-        result += '  #   standard: wcag2aa\n'
-      }
+    } else if (line === '    ttl: 7d' && !yamlStr.includes('\n  accessibility:\n')) {
+      result += '  # Optional accessibility service example:\n'
+      result += '  # accessibility:\n'
+      result += '  #   enabled: false\n'
+      result += '  #   standard: wcag2aa\n'
     } else if (line === 'registry:') {
       result += '  # Optional: local and cloud device/provider profiles.\n'
       result += '  # devices:\n'

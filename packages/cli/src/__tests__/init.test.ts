@@ -287,10 +287,12 @@ describe('init command', () => {
     expect(content).not.toContain('#   privacy: true')
     expect(content).toContain('# Optional: ignore archived or generated tests.')
     expect(content).toContain('  # testPathIgnore:')
-    expect(content).toContain('# Accessibility checks power the W3C BAD demo test.')
+    expect(content).toContain(
+      "  # Accessibility checks run once at the end of each test; results show in the dashboard's run detail.\n  accessibility:\n",
+    )
     expect(content).toContain('accessibility:')
     expect(content).toContain('standard: wcag2aa')
-    expect(content).toContain('runAfter: every-step')
+    expect(content).toContain('runAfter: test-end')
     expect(content).toContain('failOnViolation: false')
     expect(content).not.toContain('  # recording:')
     expect(content).not.toContain('  # memory:')
@@ -522,7 +524,7 @@ describe('init command', () => {
         expect(config.services.accessibility).toEqual({
           enabled: true,
           standard: 'wcag2aa',
-          runAfter: 'every-step',
+          runAfter: 'test-end',
           failOnViolation: false,
         })
         expect(config.registry.targets).toHaveProperty('komazon-cart-total-bug')
