@@ -82,7 +82,7 @@ async function fixture(t) {
   return { source, out: join(base, 'out'), temp }
 }
 
-function fakeDeps({ temp, porcelain = '', logBytes = 0, legs, tools } = {}) {
+function fakeDeps({ temp, porcelain = '', gatePorcelain = '', logBytes = 0, legs, tools } = {}) {
   const lines = []
   const calls = []
   const tool = toolExec(tools)
@@ -95,6 +95,9 @@ function fakeDeps({ temp, porcelain = '', logBytes = 0, legs, tools } = {}) {
     exec(command, args) {
       calls.push([command, ...args])
       if (args.includes('rev-parse')) return { status: 0, stdout: `${SHA}\n`, stderr: '' }
+      if (args.includes('status') && args.includes('--')) {
+        return { status: 0, stdout: gatePorcelain, stderr: '' }
+      }
       if (args.includes('status')) return { status: 0, stdout: porcelain, stderr: '' }
       return tool(command, args)
     },
@@ -208,6 +211,44 @@ test('a dirty source in clone mode warns how many paths the clone did not includ
   assert.equal(summary.sourceDirty, true)
   assert.equal(summary.warnings.length, 1)
   assert.match(summary.warnings[0], /3 uncommitted path\(s\) the clone did not include/)
+})
+
+test('C444.1-RECORD-INTEGRITY a clone run whose gate files are dirty is not a record and says so', async t => {
+  const { source, out, temp } = await fixture(t)
+  const gatePorcelain = ' M scripts/gate/run.mjs\n'
+  const { deps, lines } = fakeDeps({ temp, gatePorcelain, legs: everyLegAsNodeTest })
+  const summary = await gate.runGate({ out, source, only: null }, deps)
+  assert.equal(summary.partial, false)
+  assert.equal(summary.sourceDirty, false)
+  assert.equal(summary.record, false)
+  assert.equal(summary.gate?.dirty, true)
+  assert.ok(lines.some(line => line.includes('gate files dirty: NOT A RECORD')))
+})
+
+test('C444.1-RECORD-INTEGRITY a clone run whose source checkout is dirty is not a record and says so', async t => {
+  const { source, out, temp } = await fixture(t)
+  const { deps, lines } = fakeDeps({ temp, porcelain: ' M a.txt\n', legs: everyLegAsNodeTest })
+  const summary = await gate.runGate({ out, source, only: null }, deps)
+  assert.equal(summary.partial, false)
+  assert.equal(summary.sourceDirty, true)
+  assert.equal(summary.record, false)
+  assert.ok(lines.some(line => line.includes('source checkout dirty: NOT A RECORD')))
+})
+
+test('C444.1-RECORD-INTEGRITY a record names the gate commit it was judged by and that its files were clean', async t => {
+  const { source, out, temp } = await fixture(t)
+  const { deps, calls } = fakeDeps({ temp, legs: everyLegAsNodeTest })
+  const summary = await gate.runGate({ out, source, only: null }, deps)
+  assert.equal(summary.record, true)
+  assert.deepEqual(summary.gate, { name: 'agent-qa-local-gate', sha: SHA, dirty: false })
+  const gateRevParse = calls.filter(
+    call =>
+      call[0] === 'git' &&
+      call[1] === '-C' &&
+      /scripts[/\\]gate$/.test(call[2]) &&
+      call.slice(3).join(' ') === 'rev-parse HEAD',
+  )
+  assert.equal(gateRevParse.length, 1)
 })
 
 test('a leg log over 2 MiB is gzipped and the leg names the .gz path', async t => {
