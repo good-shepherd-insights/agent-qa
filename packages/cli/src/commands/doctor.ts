@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import pc from 'picocolors'
 import { loadConfigFile } from '../config.js'
+import { HARD_CUT_STEPS, INVALID_CONFIG_FIX, isRetiredKeyIssue } from '../hard-cut.js'
 import { loadAuthPluginsForRawConfig, toModelProfileAndAuth, type LLMModelAdapter } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
 import { NODE_FLOOR_INSTALL_LINE, NODE_FLOOR_MAJOR, nodeFloorRefusal } from '../node-floor.js'
@@ -168,10 +169,13 @@ function checkLegacyV1MemoryData(configPath: string): DoctorCheck {
   }
 }
 
-function checkConfigValidation(config: Record<string, unknown> | null): DoctorCheck {
-  return {
+function checkConfigValidation(
+  config: Record<string, unknown> | null,
+  configPath: string,
+): DoctorCheck {
+  const row: DoctorCheck = {
     name: 'Config validation',
-    fixInstructions: 'Fix the config errors above, or delete agent-qa.config.yaml and re-run `agent-qa init`',
+    fixInstructions: INVALID_CONFIG_FIX(configPath),
     check: async () => {
       if (!config) {
         return { status: 'skip', message: 'no config to validate' }
@@ -184,6 +188,10 @@ function checkConfigValidation(config: Record<string, unknown> | null): DoctorCh
           return { status: 'pass', message: 'config schema valid' }
         }
 
+        // 2026-10-19 (445-07, D-23): the printed fix is read after this check returns.
+        row.fixInstructions = result.error.issues.some(isRetiredKeyIssue)
+          ? HARD_CUT_STEPS
+          : INVALID_CONFIG_FIX(configPath)
         const issues = result.error.issues.slice(0, 3)
         const errors = issues.map((i: { path: PropertyKey[]; message: string }) =>
           `${i.path.map(String).join('.')}: ${i.message}`
@@ -194,6 +202,7 @@ function checkConfigValidation(config: Record<string, unknown> | null): DoctorCh
       }
     },
   }
+  return row
 }
 
 function checkSecretsFile(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
@@ -630,7 +639,7 @@ export function createDoctorCommand(): Command {
         // memory row, because they are the same subject — and before config validation, so the
         // rung reads as the conclusion of the store and embedder rows above it.
         ...createKnowledgeChecks({ config, configPath }),
-        checkConfigValidation(config),
+        checkConfigValidation(config, configPath),
         checkSecretsFile(config, configPath),
         checkWorkspaceSupportFiles(config, configPath),
         checkDocker(),
