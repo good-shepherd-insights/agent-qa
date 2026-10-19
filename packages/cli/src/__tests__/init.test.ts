@@ -767,6 +767,7 @@ describe('init command', () => {
     for (const [suffix, target] of [
       ['tests/examples/komazon-checkout.yaml', 'komazon'],
       ['tests/examples/komazon-cart-total-bug.yaml', 'komazon-cart-total-bug'],
+      ['tests/examples/komazon-shipping-hook.yaml', 'komazon'],
     ]) {
       const call = findWriteCallEndingWith(suffix)
       expect(call).toBeDefined()
@@ -793,7 +794,9 @@ describe('init command', () => {
     if (!parsedHooks.success) {
       throw new Error(JSON.stringify(parsedHooks.error.issues, null, 2))
     }
-    expect(parsedHooks.data.hooks).toHaveLength(0)
+    expect(parsedHooks.data.hooks).toHaveLength(1)
+    expect(parsedHooks.data.hooks[0].file).toBe('scripts/examples/make-shipping-address.mjs')
+    expect(parsedHooks.data.hooks[0].network).toBe(false)
   })
 
   it('does not create web demo tests for mobile-only init', async () => {
@@ -1419,9 +1422,11 @@ skills/.staging/
       '/tmp/test-project/agent-qa.local.yaml',
       '/tmp/test-project/hooks.yaml',
       '/tmp/test-project/package.json',
+      '/tmp/test-project/scripts/examples/make-shipping-address.mjs',
       '/tmp/test-project/suites/examples.suite.yaml',
       '/tmp/test-project/tests/examples/komazon-cart-total-bug.yaml',
       '/tmp/test-project/tests/examples/komazon-checkout.yaml',
+      '/tmp/test-project/tests/examples/komazon-shipping-hook.yaml',
     ]))
 
     const preflightOrder = mockPreflightInitPlan.mock.invocationCallOrder[0]!

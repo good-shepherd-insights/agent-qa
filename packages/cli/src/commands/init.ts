@@ -176,6 +176,10 @@ const EXAMPLES_SUITE_ID = 's_dice-ego-veer-warp-ionic-trying-tur-cal-stride-batt
 const KOMAZON_CHECKOUT_PATH = 'tests/examples/komazon-checkout.yaml'
 const KOMAZON_CART_TOTAL_BUG_PATH = 'tests/examples/komazon-cart-total-bug.yaml'
 const EXAMPLES_SUITE_PATH = 'suites/examples.suite.yaml'
+const KOMAZON_SHIPPING_HOOK_TEST_ID = 't_ayin-dual-chunk-lou-tablet-ticket-brace-lak-kite-abu'
+const SHIPPING_ADDRESS_HOOK_ID = 'h_phi-arts-vis-band-aira-streng-twig-roi-mino-fold'
+const KOMAZON_SHIPPING_HOOK_PATH = 'tests/examples/komazon-shipping-hook.yaml'
+const SHIPPING_ADDRESS_SCRIPT_PATH = 'scripts/examples/make-shipping-address.mjs'
 
 function buildKomazonCheckoutTest(): string {
   return `test-id: ${KOMAZON_CHECKOUT_TEST_ID}
@@ -213,6 +217,45 @@ tests:
     id: ${KOMAZON_CHECKOUT_TEST_ID}
   - test: ${KOMAZON_CART_TOTAL_BUG_PATH}
     id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
+`
+}
+
+// 2026-10-19 (445-03, D-40): web init's own hooks file; the proposal keeps hooks: [].
+function buildExampleHooksFile(): string {
+  return `hooks:
+  - id: ${SHIPPING_ADDRESS_HOOK_ID}
+    name: Make a shipping address
+    runtime: node
+    file: ${SHIPPING_ADDRESS_SCRIPT_PATH}
+    timeout: 30s
+    network: false
+`
+}
+
+function buildShippingAddressScript(): string {
+  return `// Runs before the test with no network and writes SHIPPING_ADDRESS for {{env:SHIPPING_ADDRESS}}.
+import { writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+
+const address = \`\${100 + (randomBytes(1)[0] % 900)} Cedar Lane\`
+await writeFile('/tmp/agent-qa.env', \`SHIPPING_ADDRESS="\${address}"\\n\`, 'utf-8')
+`
+}
+
+function buildKomazonShippingHookTest(): string {
+  return `test-id: ${KOMAZON_SHIPPING_HOOK_TEST_ID}
+name: Komazon checkout with a shipping address from a hook
+target: komazon
+setup:
+  - ${SHIPPING_ADDRESS_HOOK_ID}
+use:
+  cache: false
+steps:
+  - Click the toolbar button named Reset playground session. Verify the shopping bag is empty.
+  - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
+  - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
+  - Type {{env:SHIPPING_ADDRESS}} into the Street address field, enter city Portland and postal code 97205, then continue to delivery.
+  - Select Express delivery and continue with Review order. Verify the review shows {{env:SHIPPING_ADDRESS}} as the street address.
 `
 }
 
@@ -683,7 +726,12 @@ function buildScaffoldFilePlans(
     // User-owned credential bytes are never replaced, including under --force.
     scaffoldFilePlan(dir, DEFAULT_ENV_FILE, '', force, true),
     scaffoldFilePlan(dir, DEFAULT_SECRETS_FILE, '', force, true, SECRETS_FILE_MODE),
-    scaffoldFilePlan(dir, DEFAULT_HOOKS_FILE, buildHooksFile(platform), force),
+    scaffoldFilePlan(
+      dir,
+      DEFAULT_HOOKS_FILE,
+      hasWeb(platform) ? buildExampleHooksFile() : buildHooksFile(platform),
+      force,
+    ),
     scaffoldFilePlan(
       dir,
       DEFAULT_LOCAL_CONFIG_FILE,
@@ -733,6 +781,8 @@ function buildScaffoldFilePlans(
     scaffoldFilePlan(dir, KOMAZON_CHECKOUT_PATH, buildKomazonCheckoutTest(), force),
     scaffoldFilePlan(dir, KOMAZON_CART_TOTAL_BUG_PATH, buildKomazonCartTotalBugTest(), force),
     scaffoldFilePlan(dir, EXAMPLES_SUITE_PATH, buildExamplesSuite(), force),
+    scaffoldFilePlan(dir, SHIPPING_ADDRESS_SCRIPT_PATH, buildShippingAddressScript(), force),
+    scaffoldFilePlan(dir, KOMAZON_SHIPPING_HOOK_PATH, buildKomazonShippingHookTest(), force),
   )
 
   return plans
