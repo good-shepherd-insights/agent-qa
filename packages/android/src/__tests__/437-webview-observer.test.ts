@@ -18,6 +18,9 @@ interface StubElement {
   value?: string
   type?: string
   alt?: string
+  text?: string
+  options?: StubElement[]
+  selectedIndex?: number
   checked?: boolean
   disabled: boolean
   readOnly: boolean
@@ -86,6 +89,11 @@ function el(tag: string, spec: ElementSpec = {}): StubElement {
   } else if (tagName === 'SELECT') {
     node.type = 'select-one'
     node.value = spec.value ?? ''
+    node.options = children.filter((c) => c.tagName === 'OPTION')
+    const chosen = node.options.findIndex((o) => 'selected' in o.attrs)
+    node.selectedIndex = chosen !== -1 ? chosen : node.options.length > 0 ? 0 : -1
+  } else if (tagName === 'OPTION') {
+    node.text = node.textContent
   } else if (tagName === 'IMG') {
     node.alt = attrs.alt ?? ''
   }
@@ -106,6 +114,10 @@ function page(...roots: StubElement[]) {
   walk(roots, all)
   all.forEach((node, i) => {
     node.rect = { left: 10, top: 10 + i * 50, width: 200, height: 40 }
+    // Document order visits a parent first, so its own flag is already set when a child inherits.
+    node.isContentEditable =
+      node.attrs.contenteditable === 'true' ||
+      (node.parentElement?.isContentEditable === true && node.attrs.contenteditable !== 'false')
   })
   for (const node of all) {
     if (!FIELD_TAGS.has(node.tagName)) continue
@@ -117,7 +129,8 @@ function page(...roots: StubElement[]) {
     (n) =>
       OBSERVED_TAGS.has(n.tagName) ||
       (n.tagName === 'IMG' && 'alt' in n.attrs) ||
-      'role' in n.attrs,
+      'role' in n.attrs ||
+      n.attrs.contenteditable === 'true',
   )
   const document = {
     activeElement: null,
@@ -188,6 +201,7 @@ function createMockDriver() {
 
 vi.mock('webdriverio', () => ({ remote: vi.fn() }))
 
+import { ExplicitExtractor } from '@vostride/agent-qa-runner'
 import { AndroidPlatformAdapter } from '../adapter.js'
 
 let adapter: AndroidPlatformAdapter
@@ -316,5 +330,94 @@ describe('C437-WEBVIEW-OBSERVE', () => {
 
     expect(state.elements.map((e) => e.name ?? '')).toEqual(['Place order', ''])
     expect(state.tree).not.toContain('typed')
+  })
+
+  it('the typed text of a field is its value and never its name', async () => {
+    const long = 'x'.repeat(250)
+    const state = await observe(
+      page(
+        form(
+          el('label', { attrs: { for: 'email' }, text: 'Email' }),
+          el('input', { attrs: { id: 'email', type: 'email' }, value: 'ada@example.test' }),
+          el('label', { attrs: { for: 'notes' }, text: 'Notes' }),
+          el('textarea', { attrs: { id: 'notes' }, value: long }),
+          el('label', {
+            children: [
+              el('span', { text: 'Country' }),
+              el('select', {
+                children: [
+                  el('option', { attrs: { value: 'ca' }, text: 'Canada' }),
+                  el('option', { attrs: { value: 'pe', selected: '' }, text: ' Peru ' }),
+                ],
+              }),
+            ],
+          }),
+        ),
+      ),
+    )
+
+    const email = state.elements.find((e) => e.name === 'Email')!
+    expect(email.role).toBe('textbox')
+    expect(email.value).toBe('ada@example.test')
+    const notes = state.elements.find((e) => e.name === 'Notes')!
+    expect(notes.value).toBe('x'.repeat(200))
+    const country = state.elements.find((e) => e.role === 'combobox')!
+    expect(country.name).toBe('Country')
+    expect(country.value).toBe('Peru')
+    expect(state.elements.some((e) => e.name.includes('ada@example.test'))).toBe(false)
+    expect(state.tree).not.toContain('ada@example.test')
+  })
+
+  it('the text of a password field is never observed', async () => {
+    const state = await observe(
+      page(
+        form(
+          el('label', { attrs: { for: 'pw' }, text: 'Password' }),
+          el('input', { attrs: { id: 'pw', type: 'password' }, value: 'hunter2-secret' }),
+        ),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('Password')
+    expect('value' in fields[0]).toBe(false)
+    expect(JSON.stringify(state)).not.toContain('hunter2-secret')
+  })
+
+  it('a selector capture of a WebView field returns what it holds, not its label', async () => {
+    const state = await observe(
+      page(
+        form(
+          el('label', { attrs: { for: 'email' }, text: 'Email' }),
+          el('input', { attrs: { id: 'email', type: 'email' }, value: 'ada@example.test' }),
+          el('button', { text: 'Send' }),
+        ),
+      ),
+    )
+
+    const captured = await new ExplicitExtractor().extract(
+      { method: 'selector', variableName: 'email', selector: 'Email' },
+      state,
+    )
+    expect(captured.success).toBe(true)
+    expect(captured.value).toBe('ada@example.test')
+  })
+
+  it('an empty field carries no value', async () => {
+    const state = await observe(
+      page(
+        form(
+          el('label', { attrs: { for: 'city' }, text: 'City' }),
+          el('input', { attrs: { id: 'city' } }),
+          el('label', { attrs: { for: 'bio' }, text: 'Bio' }),
+          el('textarea', { attrs: { id: 'bio' } }),
+        ),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields.map((e) => e.name)).toEqual(['City', 'Bio'])
+    for (const field of fields) expect('value' in field).toBe(false)
   })
 })
