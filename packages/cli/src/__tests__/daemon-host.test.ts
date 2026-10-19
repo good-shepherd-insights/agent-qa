@@ -224,6 +224,7 @@ function daemonCommandDeps(
   return {
     runHost: vi.fn(() => Promise.resolve(0)),
     resolvePaths: () => Promise.resolve(paths),
+    resolveAgentQaRoot: () => paths.agentQaRoot,
     readRegistration: readDaemonRegistration,
     processIsAlive: () => options.alive ?? true,
     readIdentity: (registration) => Promise.resolve({

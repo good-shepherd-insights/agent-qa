@@ -462,6 +462,7 @@ function daemonDepsCapturing(captured: { analytics?: unknown }): DaemonCommandDe
       return Promise.resolve(0)
     },
     resolvePaths: unused('resolvePaths'),
+    resolveAgentQaRoot: unused('resolveAgentQaRoot'),
     readRegistration: unused('readRegistration'),
     processIsAlive: unused('processIsAlive'),
     readIdentity: unused('readIdentity'),

@@ -49,6 +49,7 @@ export interface DaemonProjectPaths {
 export interface DaemonCommandDeps {
   runHost(options: DaemonHostOptions): Promise<number>
   resolvePaths(configPath: string): Promise<DaemonProjectPaths>
+  resolveAgentQaRoot(configPath: string): string
   readRegistration(agentQaRoot: string): ReadDaemonRegistrationOutcome
   processIsAlive(pid: number): boolean
   readIdentity(registration: DaemonRegistration): Promise<DaemonIdentity>
@@ -71,18 +72,22 @@ export type DaemonStatusDto =
       lease: WriterLease | null
     }
 
+export function resolveDaemonAgentQaRoot(configPath: string): string {
+  return resolve(dirname(configPath), '.agent-qa')
+}
+
 async function resolveDaemonPaths(configPath: string): Promise<DaemonProjectPaths> {
-  const configDir = dirname(configPath)
   const config = await resolveConfig({ configPath, loadAuthPlugins: false })
   return {
-    agentQaRoot: resolve(configDir, '.agent-qa'),
-    knowledgeRoot: resolveConfiguredKnowledgeRoot(config, configDir),
+    agentQaRoot: resolveDaemonAgentQaRoot(configPath),
+    knowledgeRoot: resolveConfiguredKnowledgeRoot(config, dirname(configPath)),
   }
 }
 
 const DEFAULT_DEPS: DaemonCommandDeps = {
   runHost: runDaemonHost,
   resolvePaths: resolveDaemonPaths,
+  resolveAgentQaRoot: resolveDaemonAgentQaRoot,
   readRegistration: readDaemonRegistration,
   processIsAlive,
   readIdentity: (registration) => fetchDaemonIdentity(registration.socketPath),
@@ -271,8 +276,9 @@ export function createDaemonCommand(deps: DaemonCommandDeps = DEFAULT_DEPS): Com
     .description('Gracefully stop the registered live daemon')
     .action(async (_opts: unknown, command: Command) => {
       try {
-        const paths = await deps.resolvePaths(configPathFor(command))
-        const inspected = await inspectRegistration(deps, paths.agentQaRoot)
+        // 2026-10-20 (445-17, D-42): stop reads only .agent-qa/, so a pre-v2 config cannot block it.
+        const agentQaRoot = deps.resolveAgentQaRoot(configPathFor(command))
+        const inspected = await inspectRegistration(deps, agentQaRoot)
         if (inspected.kind !== 'live') {
           console.log(
             inspected.kind === 'stale'
