@@ -518,3 +518,82 @@ describe('resolveLLMAuth', () => {
     })
   })
 })
+
+describe('C445-AUTH-MESSAGES', () => {
+  let tempDir: string
+  let authPath: string
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-445-auth-messages-'))
+    authPath = join(tempDir, 'auth.json')
+  })
+
+  afterEach(async () => {
+    clearLLMAuthProviderPlugins()
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('a subscription config with no sign-in is told to run auth login with its name', async () => {
+    const withoutPlugin = await resolveLLMAuth('claude-code', {
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet',
+    }, authPath)
+
+    expect(withoutPlugin.kind).toBe('missing')
+    if (withoutPlugin.kind !== 'missing') throw new Error('Expected missing result')
+    expect(withoutPlugin.message).toContain('npm install -D @vostride/agent-qa-subscription-auth')
+    expect(withoutPlugin.message).toContain('plugins.auth')
+
+    registerLLMAuthProviderPlugin({
+      providerId: 'anthropic-subscription',
+      credentialProviderId: 'anthropic-subscription',
+      label: 'Anthropic subscription',
+      modelAdapter: 'anthropic-messages',
+      dashboardAuth: { mode: 'manual-code' },
+      createAuthFetch: () => globalThis.fetch,
+    })
+
+    const result = await resolveLLMAuth('claude-code', {
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet',
+    }, authPath)
+
+    expect(result.kind).toBe('missing')
+    if (result.kind !== 'missing') throw new Error('Expected missing result')
+    expect(result.message).toContain('agent-qa auth login --config claude-code')
+    expect(result.message).toContain('Anthropic subscription')
+  })
+
+  it('an API-key config with no key is told to run auth set with its name', async () => {
+    const unusable = { type: 'session', provider: 'any', key: 'sk-unusable-not-a-key' }
+    await writeAuth('compat', unusable as unknown as AuthCredential, authPath)
+    await writeAuth('claude-compat', unusable as unknown as AuthCredential, authPath)
+
+    const gemini = await resolveLLMAuth('gemini-key', {
+      provider: 'gemini',
+      model: 'gemini-3-flash-preview',
+    }, authPath)
+    const openAI = await resolveLLMAuth('compat', {
+      provider: 'openai-compatible',
+      model: 'chat-compatible',
+      baseURL: 'https://remote.example/v1',
+    }, authPath)
+    const anthropic = await resolveLLMAuth('claude-compat', {
+      provider: 'anthropic-compatible',
+      model: 'claude-compatible',
+      baseURL: 'https://remote.example/messages',
+    }, authPath)
+
+    const messages = [gemini, openAI, anthropic].map((result) => {
+      expect(result.kind).toBe('missing')
+      if (result.kind !== 'missing') throw new Error('Expected missing result')
+      return result.message
+    })
+    expect(messages[0]).toContain('agent-qa auth set --config gemini-key --type api-key')
+    expect(messages[0]).toContain('Gemini API key')
+    expect(messages[1]).toContain('agent-qa auth set --config compat --type api-key')
+    expect(messages[2]).toContain('agent-qa auth set --config claude-compat --type api-key')
+    expect(messages[2]).toContain('--type bearer-token')
+    for (const text of messages) expect(text).not.toContain('sk-unusable-not-a-key')
+  })
+})
