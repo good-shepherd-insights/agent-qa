@@ -569,3 +569,90 @@ describe('C441-GAP2-CONFIG', () => {
     expect(await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')).toBe(before)
   })
 })
+
+// 2026-10-19 (445-07, D-23, D-15): a config with keys removed in v2 closes with the hard-cut
+// steps; any other invalid config names the key and the fix.
+describe('C445-CONFIG-HINT', () => {
+  const RE_INITIALIZE_URL = 'https://github.com/vostride/agent-qa/blob/main/docs/re-initialize.md'
+  const OLD_INIT_LINE = "Run 'agent-qa init' to generate a complete config file."
+  const BASE_YAML = [
+    'registry:',
+    '  llms:',
+    '    - name: default',
+    '      provider: openai-compatible',
+    '      model: gpt-4o',
+    '      baseURL: https://api.openai.com/v1',
+  ].join('\n')
+  const WORKSPACE_YAML = [
+    'workspace:',
+    '  testMatch:',
+    '    - tests/**/*.yaml',
+    '  suiteMatch:',
+    '    - suites/**/*.suite.yaml',
+    '  hooksFile: hooks.yaml',
+    '  envFile: .env',
+    '  secretsFile: .env.secrets.local',
+  ].join('\n')
+  const V1_YAML = [
+    WORKSPACE_YAML,
+    '  agentRules: ./agent-rules.md',
+    'services:',
+    '  memory:',
+    '    enabled: true',
+    '    provider: local',
+    '    dir: agent-qa-memory',
+    BASE_YAML,
+    'use:',
+    '  llm: default',
+    '  planner:',
+    '    maxSubActions: 10',
+    '',
+  ].join('\n')
+  const UNKNOWN_KEY_YAML = [WORKSPACE_YAML, BASE_YAML, 'use:', '  llm: default', 'planer: {}', ''].join('\n')
+
+  async function failureOf(name: string, source: string): Promise<{ configPath: string; text: string }> {
+    const configPath = join(TMP_DIR, name)
+    await writeFile(configPath, source)
+    const error = await resolveConfig({ configPath, loadAuthPlugins: false }).then(
+      () => undefined,
+      (err: unknown) => err,
+    )
+    expect(error).toBeInstanceOf(Error)
+    return { configPath, text: (error as Error).message }
+  }
+
+  it('a config with keys removed in v2 closes with the hard cut steps', async () => {
+    const { text } = await failureOf('v1.yaml', V1_YAML)
+    expect(text).toContain('Config validation failed')
+    expect(text).toContain('agent-qa init --force')
+    expect(text).toContain('.agent-qa/')
+    expect(text).toContain('agent-qa-knowledge/')
+    expect(text).toContain('agent-qa-memory/')
+    expect(text).toContain('agent-qa daemon stop')
+    expect(text).toContain(RE_INITIALIZE_URL)
+    expect(text).not.toContain(OLD_INIT_LINE)
+    expect(text).not.toContain('./agent-rules.md')
+  })
+
+  it('the removed-key messages name no internal phase or spec section', async () => {
+    const { text } = await failureOf('v1.yaml', V1_YAML)
+    expect(text).toContain('services.memory.dir')
+    expect(text).toContain('workspace.agentRules')
+    expect(text).toContain('knowledge.dir')
+    expect(text).toContain('policies/<scope>.md')
+    expect(text).not.toMatch(/Phase \d+/)
+    expect(text).not.toMatch(/knowledge-store\.md/)
+  })
+
+  it('an invalid config that is not from v1 names the key and the fix, not the init line', async () => {
+    const { configPath, text } = await failureOf('unknown-key.yaml', UNKNOWN_KEY_YAML)
+    expect(text).toContain('Config validation failed')
+    expect(text).toContain('planer')
+    expect(text).toContain(`Fix or remove the key named above in ${configPath}`)
+    expect(text).toContain('agent-qa validate')
+    expect(text).toContain('agent-qa init --force')
+    expect(text).not.toContain(OLD_INIT_LINE)
+    expect(text).not.toContain('agent-qa daemon stop')
+    expect(text).not.toContain(RE_INITIALIZE_URL)
+  })
+})
