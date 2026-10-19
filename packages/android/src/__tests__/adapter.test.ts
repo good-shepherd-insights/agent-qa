@@ -862,6 +862,83 @@ describe('AndroidPlatformAdapter', () => {
       expect(buf).toBeInstanceOf(Buffer)
       expect(buf!.equals(png)).toBe(true)
     })
+
+    async function enterWebView(): Promise<string> {
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', `WEBVIEW_${appPackage}`])
+      mockDriver.execute.mockResolvedValueOnce({
+        nodes: [{
+          role: 'button',
+          name: 'Submit',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 4, height: 4 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 4, contentHeight: 4 },
+        url: 'https://web.example.test',
+      })
+      await adapter.setup({ platform: 'android', appPackage })
+      const state = await adapter.observe()
+      expect(state.url).toBe('https://web.example.test')
+      const submit = state.elements.find(e => e.name === 'Submit')
+      expect(submit).toBeDefined()
+      return submit!.ref
+    }
+
+    async function expectWhite(buf: Buffer | Uint8Array | undefined): Promise<void> {
+      expect(buf).toBeDefined()
+      const { data, info } = await sharp(Buffer.from(buf!)).raw().toBuffer({ resolveWithObject: true })
+      expect([...data.subarray(0, info.channels)]).toEqual([255, 255, 255])
+      expect(info.channels).toBe(3)
+    }
+
+    it('a failure screenshot taken in a WebView is white, not black', async () => {
+      const png = await transparentPng()
+      const ref = await enterWebView()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+      mockDriver.execute.mockRejectedValueOnce(new Error('tap failed'))
+
+      const result = await adapter.execute({ type: 'tap', ref })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe('tap failed')
+      await expectWhite(result.screenshot)
+    })
+
+    it('a live preview frame taken in a WebView is white and switches no context', async () => {
+      const png = await transparentPng()
+      await enterWebView()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+      const getContext = vi.fn().mockResolvedValue(`WEBVIEW_${appPackage}`)
+      Object.assign(mockDriver, { getContext })
+      mockDriver.switchContext.mockClear()
+
+      const stream = (adapter as PlatformAdapter<'android'>).liveStream!
+      const first = new Promise<LiveFrame>((resolve) => { void stream.start(resolve) })
+      const frame = await first
+      await stream.stop()
+
+      await expectWhite(frame.bytes)
+      expect(mockDriver.switchContext).not.toHaveBeenCalled()
+      expect(getContext).not.toHaveBeenCalled()
+    })
+
+    it('a native failure screenshot is returned as captured', async () => {
+      const png = await transparentPng()
+      await adapter.setup({ platform: 'android', appPackage })
+      const state = await adapter.observe()
+      const signIn = state.elements.find(e => e.name === 'Sign In')
+      expect(signIn).toBeDefined()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+      mockDriver._pointerAction.perform.mockRejectedValueOnce(new Error('touch failed'))
+
+      const result = await adapter.execute({ type: 'tap', ref: signIn!.ref })
+
+      expect(result.success).toBe(false)
+      expect(result.screenshot).toBeInstanceOf(Buffer)
+      expect(result.screenshot!.equals(png)).toBe(true)
+    })
   })
 
   describe('execute — error handling', () => {
