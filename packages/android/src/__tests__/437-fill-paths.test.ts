@@ -523,6 +523,8 @@ describe('C437-FILL-NATIVE', () => {
   const PASSWORD_BOUNDS = '[100,400][980,500]'
   const FOCUS_ELSEWHERE_ERROR =
     /^fill: after tapping \S+, input focus is on another field; nothing was typed\. Input is never sent to a field other than the target\. Re-observe and target the field itself\.$/
+  const MOVED_FILL_ERROR =
+    /^fill: after tapping \S+, the focused field is no longer where it was observed; nothing was typed\. Re-observe and target the field where it is now\.$/
 
   function typedCount(): number {
     return focused.setValue.mock.calls.length
@@ -605,11 +607,13 @@ describe('C437-FILL-NATIVE', () => {
     const moved = await fill('Username', 'hello')
 
     expect(moved.success).toBe(false)
+    expect(moved.error).toMatch(MOVED_FILL_ERROR)
     expect(moved.metadata?.fillRefusal).toEqual({
       verb: 'fill',
-      cause: 'not-editable',
-      evidence: 'focus-elsewhere',
+      cause: 'target-not-found',
+      evidence: 'stale-target',
     })
+    expect(moved.metadata).not.toHaveProperty('fillSubmit')
     expect(typedCount()).toBe(0)
     expect(field.value).toBe('')
 
@@ -621,6 +625,68 @@ describe('C437-FILL-NATIVE', () => {
     expect(field.value).toBe('hello')
     expect(reobserved.success).toBe(true)
     expect(reobserved.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+  })
+
+  it('a clipped field focused beyond its observed bounds is refused as moved, and the re-observed fill types once', async () => {
+    pageXml = ANDROID_XML.replace('bounds="[100,250][980,350]"', 'bounds="[100,1880][980,1920]"')
+    field.bounds = '[100,1880][980,1980]'
+
+    const clipped = await fill('Username', 'hello')
+
+    expect(clipped.success).toBe(false)
+    expect(clipped.error).toMatch(MOVED_FILL_ERROR)
+    expect(clipped.error).not.toContain('another field')
+    expect(clipped.metadata?.fillRefusal).toEqual({
+      verb: 'fill',
+      cause: 'target-not-found',
+      evidence: 'stale-target',
+    })
+    expect(typedCount()).toBe(0)
+    expect(field.value).toBe('')
+
+    pageXml = ANDROID_XML.replace('bounds="[100,250][980,350]"', 'bounds="[100,1100][980,1200]"')
+    field.bounds = '[100,1100][980,1200]'
+    const reobserved = await fill('Username', 'hello')
+
+    expect(taps.at(-1)?.move).toEqual({ x: 540, y: 1150 })
+    expect(typedCount()).toBe(1)
+    expect(field.value).toBe('hello')
+    expect(reobserved.success).toBe(true)
+    expect(reobserved.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
+  })
+
+  it('a moved field fill planned twice types nothing either time', async () => {
+    pageXml = ANDROID_XML.replace('bounds="[100,250][980,350]"', 'bounds="[100,1500][980,1600]"')
+    field.bounds = '[100,1100][980,1200]'
+
+    const first = await fill('Username', 'hello', { submit: true })
+    const second = await fill('Username', 'hello', { submit: true })
+
+    for (const result of [first, second]) {
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(MOVED_FILL_ERROR)
+      expect(result.metadata?.fillRefusal).toEqual({
+        verb: 'fill',
+        cause: 'target-not-found',
+        evidence: 'stale-target',
+      })
+      expect(result.metadata?.fillSubmit).toEqual({
+        sent: false,
+        outcome: 'not-sent',
+        reason: 'input-failed',
+      })
+    }
+    expect(typedCount()).toBe(0)
+    expect(enterCount()).toBe(0)
+    expect(field.value).toBe('')
+
+    pageXml = ANDROID_XML.replace('bounds="[100,250][980,350]"', 'bounds="[100,1100][980,1200]"')
+    const reobserved = await fill('Username', 'hello', { submit: true })
+
+    expect(reobserved.success).toBe(true)
+    expect(typedCount()).toBe(1)
+    expect(enterCount()).toBe(1)
+    expect(field.value).toBe('hello')
   })
 
   it('a focus-elsewhere fill planned twice types nothing either time', async () => {
@@ -1004,6 +1070,31 @@ describe('C437-CLEAR', () => {
     expect(driver.keys).not.toHaveBeenCalled()
     expect(field.value).toBe('pw-kept')
     expect(count(`$:${FOCUSED_XPATH}`)).toBe(1)
+  })
+
+  it('a clear whose field moved after the tap clears nothing', async () => {
+    pageXml = ANDROID_XML.replace('bounds="[100,250][980,350]"', 'bounds="[100,1500][980,1600]"')
+    field.value = 'old text'
+    field.bounds = '[100,1100][980,1200]'
+
+    const result = await clear('Username')
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(
+      /^clearText: after tapping \S+, the focused field is no longer where it was observed; nothing was cleared\. Re-observe and target the field where it is now\.$/,
+    )
+    expect(result.metadata?.fillRefusal).toEqual({
+      verb: 'clearText',
+      cause: 'target-not-found',
+      evidence: 'stale-target',
+    })
+    expect(result.metadata).not.toHaveProperty('fillVerdict')
+    expect(result.metadata).not.toHaveProperty('fillSubmit')
+    expect(focused.clearValue).not.toHaveBeenCalled()
+    expect(count(CTRL_A)).toBe(0)
+    expect(count(DEL)).toBe(0)
+    expect(driver.keys).not.toHaveBeenCalled()
+    expect(field.value).toBe('old text')
   })
 
   it("a clear within the ref's bounds and a keyboard clear are unchanged", async () => {
