@@ -1,10 +1,10 @@
 import { z } from 'zod'
 
-// D-07/D-11: targeted migration errors for the v51 Phase 373 config collapse
-// (knowledge-store.md §5). This scan is a zod pipe PRE-stage in front of the strict
-// root schema — a superRefine chained after .strict() never runs when strict rejects
-// (verified on zod 4.4.2), so the migration messages must fire first. The scan only
-// ADDS issues; the strict stage-B parse remains the acceptance authority.
+// D-07/D-11: refusals for config keys removed in v2. This scan is a zod pipe PRE-stage in front
+// of the strict root schema — a superRefine chained after .strict() never runs when strict rejects
+// (verified on zod 4.4.2), so these messages must fire first. The scan only ADDS issues; the
+// strict stage-B parse remains the acceptance authority. 2026-10-19 (445-07, D-23): every issue
+// carries params.retired so the CLI closes the error with the hard-cut steps.
 const RETIRED_MEMORY_KEY_MESSAGES: Record<string, string> = {
   dir: 'services.memory.dir was removed in v2 — use knowledge.dir (default agent-qa-knowledge)',
   enabled: 'services.memory.enabled was removed in v2 — memory is always on; delete this key (no disable switch)',
@@ -43,8 +43,9 @@ export const retiredKeyScan = z.any().superRefine((value, ctx) => {
   if (isPlainObject(value.services) && value.services.memory !== undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
+      params: { retired: true },
       path: ['services', 'memory'],
-      message: 'services.memory was removed in v2 — the memory config surface collapsed into the top-level knowledge block (knowledge-store.md §5)',
+      message: 'services.memory was removed in v2 — the memory config surface collapsed into the top-level knowledge block',
     })
     const memory = value.services.memory
     if (isPlainObject(memory)) {
@@ -53,6 +54,7 @@ export const retiredKeyScan = z.any().superRefine((value, ctx) => {
         if (message) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
+            params: { retired: true },
             path: ['services', 'memory', key],
             message,
           })
@@ -64,14 +66,16 @@ export const retiredKeyScan = z.any().superRefine((value, ctx) => {
   if (isPlainObject(value.workspace) && value.workspace.agentRules !== undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
+      params: { retired: true },
       path: ['workspace', 'agentRules'],
-      message: 'workspace.agentRules was removed in v2 — rules dissolve into agent-qa-knowledge/policies/<scope>.md files (served from Phase 380)',
+      message: 'workspace.agentRules was removed in v2 — rules dissolve into agent-qa-knowledge/policies/<scope>.md files',
     })
   }
 
   if (hasRetiredPlannerKey(value.use)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
+      params: { retired: true },
       path: ['use', 'planner', RETIRED_PLANNER_KEY],
       message: RETIRED_MAX_SUB_ACTIONS_MESSAGE,
     })
@@ -83,6 +87,7 @@ export const retiredUseKeyScan = z.any().superRefine((value, ctx) => {
   if (hasRetiredPlannerKey(value)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
+      params: { retired: true },
       path: ['planner', RETIRED_PLANNER_KEY],
       message: RETIRED_MAX_SUB_ACTIONS_MESSAGE,
     })
