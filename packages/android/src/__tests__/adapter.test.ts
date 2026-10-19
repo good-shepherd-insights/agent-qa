@@ -49,6 +49,7 @@ function createMockDriver() {
     keys: vi.fn().mockResolvedValue(undefined),
     pause: vi.fn().mockResolvedValue(undefined),
     activateApp: vi.fn().mockResolvedValue(undefined),
+    queryAppState: vi.fn().mockResolvedValue(1),
     terminateApp: vi.fn().mockResolvedValue(undefined),
     execute: vi.fn().mockResolvedValue(undefined),
     getContexts: vi.fn().mockResolvedValue(['NATIVE_APP']),
@@ -275,6 +276,47 @@ describe('AndroidPlatformAdapter', () => {
         platform: 'android',
         appPackage: 'org.wikipedia.alpha',
       })).rejects.toMatchObject({ category: 'app-launch' })
+    })
+  })
+
+  describe('C444.1-SESSION-START', () => {
+    const appPackage = 'dev.example.deeplinked'
+
+    it('an app already in the foreground is not activated again', async () => {
+      mockDriver.queryAppState.mockResolvedValue(4)
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      expect(mockDriver.queryAppState).toHaveBeenCalledWith(appPackage)
+    })
+
+    it('an app that is not running is activated once', async () => {
+      mockDriver.queryAppState.mockResolvedValue(1)
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).toHaveBeenCalledTimes(1)
+      expect(mockDriver.activateApp).toHaveBeenCalledWith(appPackage)
+    })
+
+    it('a session started twice on a foreground app never activates it', async () => {
+      mockDriver.queryAppState.mockResolvedValue(4)
+
+      await adapter.setup({ platform: 'android', appPackage })
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      expect(mockDriver.queryAppState).toHaveBeenCalledTimes(2)
+    })
+
+    it('an app state that cannot be read falls back to activating the app', async () => {
+      mockDriver.queryAppState.mockRejectedValue(new Error('unknown command'))
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).toHaveBeenCalledTimes(1)
+      expect(mockDriver.activateApp).toHaveBeenCalledWith(appPackage)
     })
   })
 
