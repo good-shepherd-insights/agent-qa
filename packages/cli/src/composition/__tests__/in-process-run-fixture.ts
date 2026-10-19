@@ -27,6 +27,7 @@ import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 
 import { createRunRecord, doorRunAttributes } from '../../commands/run.js'
 import type { RunRecord } from '../../commands/run.js'
+import { removeTempRoots } from '../../__tests__/temp-roots.js'
 
 export {
   CountingTarget,
@@ -193,6 +194,13 @@ export const SECOND_TARGET_NAME = 'the-second-thing'
 /** The name `plantedSecret` declares its value under. One definition, so a cell need not retype it. */
 export const PLANTED_SECRET_NAME = 'AGENT_QA_PLANTED_SECRET'
 
+const createdProjects: string[] = []
+
+// 2026-10-19 (444.1-24, D-39): no hook here, because two users import this module inside cells.
+export function removeInProcessFixtures(): void {
+  removeTempRoots(createdProjects.splice(0))
+}
+
 /**
  * Write a project with one target, one standalone test and one suite over its own member.
  *
@@ -204,6 +212,7 @@ export function createInProcessFixture(input: InProcessFixtureInput): InProcessF
     ? '  - Verify the page says "Example"'
     : `  - ${JSON.stringify(input.stepText)}`
   const project = realpathSync(mkdtempSync(join(tmpdir(), 'in-process-run-')))
+  createdProjects.push(project)
   mkdirSync(join(project, 'tests'), { recursive: true })
   mkdirSync(join(project, 'suites'), { recursive: true })
 

@@ -278,7 +278,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterEach, beforeEach } from 'vitest'
+import { afterAll, afterEach, beforeEach } from 'vitest'
 
 import {
   getActiveExecutionContext,
@@ -295,7 +295,7 @@ import { memberStepText } from '@vostride/agent-qa-runner'
 import { DatabaseSync } from 'node:sqlite'
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
-import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
+import { closeTestRunRecords, removeInProcessFixtures, testRunRecord } from './in-process-run-fixture.js'
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
@@ -311,6 +311,7 @@ afterEach(() => {
   restoreResolver?.()
   restoreResolver = undefined
 })
+afterAll(() => { removeInProcessFixtures() })
 
 function pinAmbientExecutionContext(value: 'ci' | 'local-interactive' | 'local-headless'): void {
   setActiveExecutionContextResolver(() => value as never)
