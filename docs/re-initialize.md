@@ -42,7 +42,9 @@ under `.agent-qa/` and `agent-qa-knowledge/` open.
   ```
 
   agent-qa 0.1 has no daemon, so in a workspace from 0.1 this prints
-  `error: unknown command 'daemon'`. Nothing is left to stop then; go on.
+  `error: unknown command 'daemon'`. Once agent-qa v2 is installed, the command reads only
+  `.agent-qa/`, not the old config: it prints `agent-qa daemon has nothing to stop` when no daemon
+  is registered, and stops the one that is. Either way, go on.
 
 - **An MCP server:** a coding agent that uses agent-qa starts its own `agent-qa mcp`. Close that
   agent's session. If you started `agent-qa mcp` or `agent-qa serve` in a terminal, press Ctrl+C
