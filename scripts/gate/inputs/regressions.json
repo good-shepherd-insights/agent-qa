@@ -13818,6 +13818,12 @@
       "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
       "fullName": "C436-SCROLL-DECOYS a display contents holder with no text of its own reads unknown, never hidden",
       "origin": "444.1 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/436-scroll-signals.test.ts",
+      "fullName": "C436-SCROLL-FRAMES a slow but healthy frame on screen is found at zero swipes",
+      "origin": "444.1 D-06"
     }
   ]
 }
