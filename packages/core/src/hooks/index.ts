@@ -7,8 +7,3 @@ export type { HookRuntime, HookDefinition, HookResult } from '@vostride/agent-qa
 export { RUNTIME_IMAGE_MAP } from '@vostride/agent-qa-runner'
 export * from './schema.js'
 export { parseHooksFile } from './parser.js'
-export {
-  auditWorkspaceHookReferenceMigration,
-  applyWorkspaceHookReferenceMigration,
-  HookReferenceMigrationError,
-} from './migrate-hook-refs.js'

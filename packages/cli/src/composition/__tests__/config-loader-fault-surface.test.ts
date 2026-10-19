@@ -59,7 +59,6 @@ import { inspect } from 'node:util'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
-  auditWorkspaceHookReferenceMigration,
   formatDiagnostics,
   parseTestFile,
   resolveWorkspacePaths,
@@ -719,8 +718,9 @@ describe('the plain-test member reports position-only on BOTH channels (395-18)'
 //
 // Task 2's mechanical sweep of every yaml-parse call site in `packages/*/src` turned up three more
 // members of the identical mechanism, two of them reproduced on the shipped binary before a line
-// was changed. They are here rather than in a deferral row because they are `agent-qa`'s own
-// person-visible roads, which is the boundary the plan draws: dashboard surfaces defer (WINDOWS
+// was changed. 2026-10-19 (445-09, D-37): the third, the hook-reference migration audit, was
+// deleted with its cell. They are here rather than in a deferral row because they are `agent-qa`'s
+// own person-visible roads, which is the boundary the plan draws: dashboard surfaces defer (WINDOWS
 // 140), CLI and core surfaces get fixed in the pass that finds them.
 describe('the other person-visible yaml-parse roads report position-only (395-18)', () => {
   it('(V3) the SHIPPED `agent-qa run --suite` never quotes the suite file back', () => {
@@ -775,44 +775,6 @@ describe('the other person-visible yaml-parse roads report position-only (395-18
     expect(combined, `the command's output:\n${combined}`).not.toMatch(/YAMLParseError/)
     expect(combined, `the command's output:\n${combined}`).not.toMatch(/linePos/)
   })
-
-  it('(V5) the hook-reference migration audit answers position-only on BOTH of its file arms',
-    async () => {
-      // `auditWorkspaceHookReferenceMigration` is a core export with no in-repo caller today, which
-      // is exactly why it was still interpolating `(error as Error).message`: nothing drove it, so
-      // nothing measured it. Its `errors[]` is the audit's whole answer to a person.
-      seedConfig(faultyConfigText({ credential: true }))
-      seedWorkspaceSupportFiles()
-
-      const onTheConfigArm = await auditWorkspaceHookReferenceMigration({
-        workspaceDir: root,
-        configPath,
-      })
-      expect(onTheConfigArm.ok).toBe(false)
-      const configErrors = (onTheConfigArm as { errors: string[] }).errors.join('\n')
-      expect(
-        occurrences(configErrors, PLANTED_CREDENTIAL),
-        `the audit carried the config credential: ${configErrors}`,
-      ).toBe(0)
-      expect(configErrors).toMatch(/not readable as YAML at line \d+, column \d+/)
-
-      // AND THE HOOKS ARM, a separate catch on a separate file — the sibling-input law applied
-      // inside one function rather than across two.
-      seedConfig(WELL_FORMED_CONFIG)
-      seedFile('hooks.yaml', FAULTY_HOOKS)
-
-      const onTheHooksArm = await auditWorkspaceHookReferenceMigration({
-        workspaceDir: root,
-        configPath,
-      })
-      expect(onTheHooksArm.ok).toBe(false)
-      const hooksErrors = (onTheHooksArm as { errors: string[] }).errors.join('\n')
-      expect(
-        occurrences(hooksErrors, PLANTED_HOOKS_CREDENTIAL),
-        `the audit carried the hooks credential: ${hooksErrors}`,
-      ).toBe(0)
-      expect(hooksErrors).toMatch(/not readable as YAML at line \d+, column \d+/)
-    })
 })
 
 describe('the controls: the guard fires on the FAULT, and on nothing else (395-14)', () => {

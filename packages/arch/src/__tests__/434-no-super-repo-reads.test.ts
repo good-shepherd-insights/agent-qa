@@ -245,7 +245,6 @@ describe('C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent
     expect(plantedRules(`readFileSync(new URL('${project}/agent-qa.config.yaml', import.meta.url))`)).toEqual([])
     expect(plantedRules(`resolve(dirname(fileURLToPath(import.meta.url)), '${project}')`)).toEqual([])
     for (const file of [
-      'packages/core/src/hooks/__tests__/migrate-hook-refs.test.ts',
       'packages/dashboard-ui/src/lib/__tests__/runtime-paths-static.test.ts',
       'packages/dashboard-ui/src/lib/__tests__/public-naming-static.test.ts',
     ]) {
