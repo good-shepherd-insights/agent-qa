@@ -326,6 +326,10 @@ return (function() {
   var includedEls = [];
   var seen = {};
   var CAPTION_TYPES = { submit: true, button: true, reset: true };
+  var VALUELESS_TYPES = {
+    password: true, checkbox: true, radio: true, submit: true, button: true, reset: true,
+    image: true, file: true, hidden: true, range: true, color: true
+  };
 
   function textOf(node) {
     return node ? (node.textContent || '').trim() : '';
@@ -451,8 +455,9 @@ return (function() {
       attributes: attributes
     };
     if (parentIndex !== undefined) record.parentIndex = parentIndex;
-    // 2026-10-19 (444.1-05, D-08): a field's contents are its value, never its name; a password never.
-    if ((tag === 'INPUT' || tag === 'TEXTAREA') && String(el.type).toLowerCase() !== 'password' && el.value) {
+    // 2026-10-19 (444.1-05, D-08): only typed text is a value, never a name; a password never.
+    var textEntry = tag === 'TEXTAREA' || (tag === 'INPUT' && !VALUELESS_TYPES[String(el.type).toLowerCase()]);
+    if (textEntry && el.value) {
       record.value = String(el.value).slice(0, 200);
     } else if (tag === 'SELECT') {
       var option = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
