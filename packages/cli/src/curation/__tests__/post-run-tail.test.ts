@@ -708,7 +708,7 @@ describe('prohibitions: never-wait and print-not-publish (388 D-03 / C13)', () =
     }
   })
 
-  it('adds no timer, no poll and no second timing knob to the tail source', async () => {
+  it('adds no wait, no poll and no second timing knob to the tail source', async () => {
     const { readFileSync } = await import('node:fs')
     const { fileURLToPath } = await import('node:url')
     const source = readFileSync(
@@ -716,7 +716,11 @@ describe('prohibitions: never-wait and print-not-publish (388 D-03 / C13)', () =
       'utf8',
     )
     // Never-wait, stated as a measurement (the acceptance criterion's source assertion).
-    expect(source).not.toMatch(/setTimeout|setInterval/u)
+    // 444.1 D-01: the one timer aborts the budget signal at the deadline and waits on nothing.
+    expect(source).not.toMatch(/setInterval/u)
+    expect(source.match(/setTimeout\(/gu)).toEqual(['setTimeout('])
+    expect(source).toContain('setTimeout(() => { budget.abort() }, drainDeadlineMs - drainStartedMs)')
+    expect(source).toContain('budgetTimer.unref()')
     // The one budget still stands imported — no second timing constant beside it.
     expect(source).toContain('DRAIN_BUDGET_MS')
     expect(source).not.toMatch(/60_000|60000/u)
