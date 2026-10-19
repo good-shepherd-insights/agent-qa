@@ -33,13 +33,13 @@
  * its own scan output is the self-certifying guard 401-10 warned about and can never fail.
  */
 
-import { mkdtempSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { IncomingMessage, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
 import { DashboardDatabase } from '../db/database.js'
@@ -1305,12 +1305,19 @@ describe('reconciliation — the two predicates meet in the register', () => {
 })
 
 describe('the historical-row argument is retired, by name (405-07, D-02 · T-402-29)', () => {
+  const roots: string[] = []
+  afterAll(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
   // 402-09's T-402-29 mitigation was "historical rows still render": every parent-link read was
   // kept, and a cell drove the run list, the run detail and the artifact door against a seeded
   // operator database to prove it. The mitigation was correct for its phase and is now MOOT rather
   // than abandoned — the two cells below say why in the terms the mitigation was written in.
   it('a database written before v2 is REFUSED by name, so no pre-405 row is ever rendered', () => {
-    const file = join(mkdtempSync(join(tmpdir(), 'agent-qa-census-')), 'runs.db')
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-census-'))
+    roots.push(root)
+    const file = join(root, 'runs.db')
     const raw = createDashboardSqliteDatabase(file)
     try {
       raw.pragma('user_version = 1')

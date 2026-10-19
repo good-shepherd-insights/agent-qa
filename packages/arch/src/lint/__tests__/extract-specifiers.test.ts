@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import {
   NODE_BUILTINS,
   classifySpecifier,
@@ -10,6 +10,18 @@ import {
   sourceFilesFor,
   specifiersInSource,
 } from '../extract-specifiers.js'
+
+const roots: string[] = []
+
+function tempRoot(prefix: string): string {
+  const root = mkdtempSync(join(tmpdir(), prefix))
+  roots.push(root)
+  return root
+}
+
+afterAll(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 describe('specifier extraction', () => {
   it('captures from, export-from, import type, bare import, dynamic import, require.resolve, and require forms', () => {
@@ -37,7 +49,7 @@ describe('specifier extraction', () => {
   })
 
   it('extracts located specifiers from a file', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agent-qa-arch-specifiers-'))
+    const dir = tempRoot('agent-qa-arch-specifiers-')
     const file = join(dir, 'fixture.ts')
     writeFileSync(file, ["import { z } from 'zod'", "await import('@ai-sdk/openai')"].join('\n'))
 
@@ -134,7 +146,7 @@ describe('specifier classification', () => {
 
 describe('sourceFilesFor', () => {
   it('returns source files while excluding tests and ownership contracts', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-source-'))
+    const repoRoot = tempRoot('agent-qa-arch-source-')
     const packageDir = 'packages/fixture'
     const packageRoot = join(repoRoot, packageDir)
     mkdirSync(join(packageRoot, 'src', '__tests__'), { recursive: true })
@@ -158,7 +170,7 @@ describe('sourceFilesFor', () => {
   })
 
   it('returns an empty list when a package has no src directory', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-source-empty-'))
+    const repoRoot = tempRoot('agent-qa-arch-source-empty-')
 
     expect(sourceFilesFor('packages/missing', repoRoot)).toEqual([])
   })
@@ -166,7 +178,7 @@ describe('sourceFilesFor', () => {
 
 describe('configFilesFor', () => {
   it('returns package-root config files without recursing into src', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-config-'))
+    const repoRoot = tempRoot('agent-qa-arch-config-')
     const packageDir = 'packages/fixture'
     const packageRoot = join(repoRoot, packageDir)
     mkdirSync(join(packageRoot, 'src'), { recursive: true })
@@ -183,7 +195,7 @@ describe('configFilesFor', () => {
   })
 
   it('returns an empty list for a missing package', () => {
-    const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-config-empty-'))
+    const repoRoot = tempRoot('agent-qa-arch-config-empty-')
 
     expect(configFilesFor('packages/missing', repoRoot)).toEqual([])
   })

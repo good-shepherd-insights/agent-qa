@@ -17,13 +17,13 @@
 //      thing an attacker or an audit sees; the bytes are.
 
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, stat, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { generateRunId, generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/agent-qa-schema'
 import { parse } from 'id-agent'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { AgentQaAnalyticsEventSchema, type AgentQaAnalyticsEvent } from '../events.js'
 import {
   ANALYTICS_USER_ID_PREFIX,
@@ -39,8 +39,16 @@ import { createAnalyticsPort } from '../port.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '../port.js'
 import { createAnalyticsRunSubscriber } from '../run-subscriber.js'
 
+const roots: string[] = []
+
+afterAll(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
 async function tempDataHome(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'agent-qa-analytics-identity-'))
+  const root = await mkdtemp(join(tmpdir(), 'agent-qa-analytics-identity-'))
+  roots.push(root)
+  return root
 }
 
 describe('the re-homed distinct-id scheme', () => {

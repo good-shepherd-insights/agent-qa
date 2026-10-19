@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { findDepReconciliationOffenders, findSetMismatchOffenders } from '../reconcile-deps.js'
 import type { OwnershipContract } from '../../contract-types.js'
 import type { SpecifierHit } from '../extract-specifiers.js'
@@ -24,8 +24,15 @@ function fixtureContract(
   }
 }
 
+const roots: string[] = []
+
+afterAll(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
 function fixtureRepoRoot(dependencies: Record<string, string>): string {
   const repoRoot = mkdtempSync(join(tmpdir(), 'agent-qa-arch-reconcile-'))
+  roots.push(repoRoot)
   const packageRoot = join(repoRoot, 'packages', 'fixture')
   mkdirSync(packageRoot, { recursive: true })
   writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({ dependencies }))

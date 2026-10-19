@@ -29,21 +29,19 @@ import { DashboardRemoteBindRefusedError, startServer } from '../server/server.j
 
 const NON_LOOPBACK_HOST = '0.0.0.0'
 
-let tempDir: string | undefined
+const roots: string[] = []
 const started: Array<{ close: () => void }> = []
 const dbs: DashboardDatabase[] = []
 
 afterEach(() => {
   while (started.length > 0) started.pop()?.close()
   while (dbs.length > 0) dbs.pop()?.close()
-  if (tempDir) {
-    rmSync(tempDir, { recursive: true, force: true })
-    tempDir = undefined
-  }
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
 function configPathFor(legacyTokens = false): string {
-  tempDir = mkdtempSync(join(tmpdir(), 'agent-qa-bind-guard-'))
+  const tempDir = mkdtempSync(join(tmpdir(), 'agent-qa-bind-guard-'))
+  roots.push(tempDir)
   const configPath = join(tempDir, 'agent-qa.config.yaml')
   // 432-21 (D-12/D-22): the legacy run-service token block, as a pre-432 project would still carry
   // it on disk. Nothing reads it; it is here so the bind refusal is measured with it present.

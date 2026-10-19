@@ -1191,7 +1191,7 @@ describe('API Routes', () => {
   describe('POST /api/queue/enqueue', () => {
     it('normalizes queued files under configured workspace.testMatch', async () => {
       const testsDir = join(tmpdir(), `agent-qa-queue-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Queued test\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-queue')
@@ -1559,7 +1559,7 @@ describe('API Routes', () => {
 
     it('resolves test-viewer paths through configured workspace.testMatch', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-1')
@@ -1606,7 +1606,7 @@ describe('API Routes', () => {
 
     it('normalizes trigger patterns against discovered configured workspace tests', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-patterns')
@@ -1780,7 +1780,7 @@ describe('API Routes', () => {
 
     it('normalizes dashboard list workspace paths before enqueueing the run', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-2')
@@ -2016,7 +2016,7 @@ describe('API Routes', () => {
 
     it('passes the cache override through to the queued args and labels BrowserStack explicitly', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-3')
