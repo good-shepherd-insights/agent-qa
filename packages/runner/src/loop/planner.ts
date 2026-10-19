@@ -318,6 +318,7 @@ export class LLMPlanner implements Planner {
         try {
           clamped = await runTurn(composeTurnMessages(turnContext, screenState))
         } catch (err) {
+          if (abortSignal?.aborted) throw err
           const provider = extractProviderError(err)
           this.logger?.warn('Screenshot send failed, retrying without image', {
             error: err instanceof Error ? err.message : String(err),
