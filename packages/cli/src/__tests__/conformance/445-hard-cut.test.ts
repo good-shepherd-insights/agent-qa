@@ -524,6 +524,17 @@ describe('C445-HARD-CUT', () => {
     expect(scene.treeKeptAfterRefusal, `the refusal changed no file\n${seen()}`).toBe(true)
   })
 
+  it('the old knowledge gitignore refusal prints its message and exits 1 with no stack frame', () => {
+    assertFreshBuild()
+    expect(scene.error, seen()).toBeUndefined()
+    expect(exited(scene.refusedInit), seen()).toEqual({ code: 1, signal: null })
+    const text = output(scene.refusedInit)
+    expect(text, seen()).toContain('Add ".writer-authority.sqlite*"')
+    const lines = text.split('\n')
+    expect(lines.filter((line) => /^\s+at\s/u.test(line)), seen()).toEqual([])
+    expect(lines.filter((line) => line.includes('throw new Error(')), seen()).toEqual([])
+  })
+
   it('after the documented steps the users tests are byte identical and validate is clean', () => {
     assertFreshBuild()
     expect(scene.error, seen()).toBeUndefined()
