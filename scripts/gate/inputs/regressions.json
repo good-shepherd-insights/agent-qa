@@ -14064,6 +14064,36 @@
       "file": "packages/dashboard-server/src/__tests__/444-list-write-safe.test.ts",
       "fullName": "C444-LIST-WRITE-SAFE a valid test whose target holds a shown marker on the next line is refused and nothing is written",
       "origin": "444.1 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/__tests__/sqlite-job-store.test.ts",
+      "fullName": "C444.1-RETRY-BACKOFF a claim skips a retrying row until its not-before time and then claims it",
+      "origin": "444.1 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/__tests__/sqlite-job-store.test.ts",
+      "fullName": "C444.1-RETRY-BACKOFF a row whose not-before time is now is claimable",
+      "origin": "444.1 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/__tests__/sqlite-job-store.test.ts",
+      "fullName": "C444.1-RETRY-BACKOFF a job store written at version 4 is refused by name",
+      "origin": "444.1 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/engine-semantics.test.ts",
+      "fullName": "C444.1-RETRY-BACKOFF a retry hands the store the backoff it reports",
+      "origin": "444.1 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444.1-retry-backoff.test.ts",
+      "fullName": "C444.1-RETRY-BACKOFF a later run in the same workspace completes its own chain behind an earlier retrying analysis",
+      "origin": "444.1 D-23"
     }
   ]
 }
