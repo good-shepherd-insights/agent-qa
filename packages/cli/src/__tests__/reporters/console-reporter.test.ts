@@ -222,7 +222,72 @@ describe('C444.1-REPORTER-WORDS', () => {
     expect(output).toContain('skipped Checkout flow (skipped)')
     expect(output).not.toContain('Test 2')
   })
+
+  it('the console prints a cancelled member and step as cancelled with their own glyph and counts', () => {
+    const render = (plain: boolean): string => {
+      const capture = createCapture()
+      const reporter = createConsoleReporter({
+        plain,
+        colorize: !plain,
+        write: capture.write,
+        isTTY: false,
+      })
+      for (const envelope of cancelledStream()) reporter.handler(envelope)
+      return capture.output()
+    }
+
+    const plain = render(true)
+    expect(plain).toContain('cancelled Pay now 0ms\n')
+    expect(plain).toContain('cancelled Checkout flow (cancelled)\n')
+    expect(plain).toContain('Tests:  1 of 2 passed, 1 cancelled\n')
+    expect(plain).toContain('Steps:  1 passed, 1 cancelled, 2 total\n')
+    expect(plain).not.toContain('skipped')
+
+    const colour = render(false)
+    expect(colour.split('⊘')).toHaveLength(3)
+    expect(colour).not.toContain('○')
+  })
 })
+
+function cancelledStream(): RunEventEnvelope[] {
+  let seq = 0
+  const env = (type: RunEventType, payload: object): RunEventEnvelope =>
+    ({ seq: seq++, ts: 1_000 + seq, runId: 'run-444.1-15', type, payload }) as RunEventEnvelope
+  const step = (testIndex: number, status: string, durationMs: number): object => ({
+    testIndex,
+    stepIndex: 0,
+    cacheStatus: 'miss',
+    verifierVerdict: { pass: status === 'passed', reasoning: status },
+    selfHealOccurred: false,
+    briefDigest: 'digest',
+    status,
+    durationMs,
+  })
+  return [
+    env('runStarted', {
+      busSchemaVersion: 1,
+      scope: { tier: 'suite', key: 'shop' },
+      executionContext: 'local-headless',
+      buildOrdinal: 1,
+      configDigests: { suiteConfigDigest: 'aaaa', testConfigDigest: 'bbbb' },
+      memberTestCount: 2,
+    }),
+    env('testStarted', { testId: 't0', testIndex: 0, name: 'Login flow', filePath: 'tests/login.yaml' }),
+    env('stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'Open login' }),
+    env('stepFinalized', step(0, 'passed', 400)),
+    env('testFinished', { testId: 't0', testIndex: 0, outcome: 'passed', durationMs: 400 }),
+    env('testStarted', {
+      testId: 't1',
+      testIndex: 1,
+      name: 'Checkout flow',
+      filePath: 'tests/checkout.yaml',
+    }),
+    env('stepStarted', { testIndex: 1, stepIndex: 0, stepText: 'Pay now' }),
+    env('stepFinalized', step(1, 'cancelled', 0)),
+    env('testFinished', { testId: 't1', testIndex: 1, outcome: 'cancelled', durationMs: 700 }),
+    env('runFinished', { aggregateVerdict: 'cancelled' }),
+  ]
+}
 
 describe('renderQuarantineSummarySegment (the pure composer)', () => {
   it('is SILENT at zero — every pre-390 summary line stays byte-frozen', () => {

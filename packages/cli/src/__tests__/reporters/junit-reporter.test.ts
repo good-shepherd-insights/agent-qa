@@ -122,6 +122,15 @@ describe('C444.1-REPORTER-WORDS', () => {
     )
     expect(xml).not.toContain('Test 2')
   })
+
+  it('JUnit writes a cancelled member as skipped with the message cancelled', async () => {
+    const xml = await junitOf(abortSkippedStream())
+    expect(xml).toContain(
+      '    <testcase name="Login flow" classname="tests/login.yaml" time="0.500" file="tests/login.yaml">\n'
+      + '      <skipped message="cancelled"/>\n',
+    )
+    expect(xml).toContain('<testsuites name="agent-qa" tests="2" failures="0" skipped="2"')
+  })
 })
 
 // ---- 390 D-15: the correct amount of red ------------------------------------------------------
