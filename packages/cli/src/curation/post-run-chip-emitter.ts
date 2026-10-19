@@ -326,6 +326,8 @@ export function createPostRunChipEmitter(
         append(chips.completed, { runId: options.runId })
         return
       }
+      // 444.1 D-01: the row is queued again, so the stage reads pending, never failed.
+      if (outcome.disposition === 'interrupted') return
       // `cancelled` joins the failure chip deliberately, matching `projectPostProcessingChips`:
       // both are terminal states in which the stage's work did not happen, and a push event
       // that told them apart would disagree with the durable projection of the same row.
