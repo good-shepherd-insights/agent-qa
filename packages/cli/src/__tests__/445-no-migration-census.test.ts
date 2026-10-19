@@ -201,4 +201,11 @@ describe('C445-NO-MIGRATION', () => {
       )
     expect(drifted).toEqual([])
   })
+
+  it('core exports no workspace migration', async () => {
+    const names = Object.keys(await import('@vostride/agent-qa-core'))
+    expect(names.length, 'core exported nothing, so this census would range nothing')
+      .toBeGreaterThan(0)
+    expect(names.filter((name) => /Migration/.test(name))).toEqual([])
+  })
 })
