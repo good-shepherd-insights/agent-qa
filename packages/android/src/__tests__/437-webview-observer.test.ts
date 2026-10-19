@@ -574,4 +574,89 @@ describe('C437-WEBVIEW-OBSERVE', () => {
     expect(textboxes(state)).toHaveLength(0)
     expect(state.elements.some((e) => e.name === 'Read only')).toBe(false)
   })
+
+  it('a contenteditable host carries what it holds as its value and keeps its label as its name', async () => {
+    const state = await observe(
+      page(
+        el('span', { attrs: { id: 'bio-label' }, text: 'About you' }),
+        el('div', {
+          attrs: { contenteditable: 'true', 'aria-labelledby': 'bio-label' },
+          text: 'Hello world',
+        }),
+        el('button', { text: 'Save' }),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('About you')
+    expect(fields[0].value).toBe('Hello world')
+    expect(state.elements.some((e) => e.name === 'Hello world')).toBe(false)
+  })
+
+  it('a button combobox carries its selection as its value', async () => {
+    const state = await observe(
+      page(
+        el('button', { attrs: { role: 'combobox' }, children: [el('span', { text: 'Apple' })] }),
+      ),
+    )
+
+    const comboboxes = state.elements.filter((e) => e.role === 'combobox')
+    expect(comboboxes).toHaveLength(1)
+    expect(comboboxes[0].name ?? '').toBe('')
+    expect(comboboxes[0].value).toBe('Apple')
+  })
+
+  it('an editable host value is trimmed, kept on one line and cut at 200 characters', async () => {
+    const state = await observe(
+      page(
+        el('div', {
+          attrs: { contenteditable: 'true', title: 'Notes' },
+          text: '  line one\nline two' + 'x'.repeat(250),
+        }),
+        el('button', { text: 'Save' }),
+      ),
+    )
+
+    const notes = textboxes(state).find((e) => e.name === 'Notes')!
+    expect(notes).toBeDefined()
+    const value = notes.value!
+    expect(value).toBeDefined()
+    expect(value).not.toContain('\n')
+    expect(value.startsWith(' ')).toBe(false)
+    expect(value.startsWith('line one line two')).toBe(true)
+    expect(value).toHaveLength(200)
+  })
+
+  it('an empty editable host carries no value', async () => {
+    const state = await observe(
+      page(
+        el('div', { attrs: { contenteditable: 'true', title: 'Notes' } }),
+        el('button', { text: 'Save' }),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('Notes')
+    expect('value' in fields[0]).toBe(false)
+  })
+
+  it('a password input with a textbox role carries no value', async () => {
+    const state = await observe(
+      page(
+        form(
+          el('label', { attrs: { for: 'pw' }, text: 'Password' }),
+          el('input', { attrs: { id: 'pw', type: 'password', role: 'textbox' }, value: 'hunter2' }),
+        ),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('Password')
+    expect('value' in fields[0]).toBe(false)
+    expect(state.elements.some((e) => e.value === 'hunter2')).toBe(false)
+    expect(JSON.stringify(state)).not.toContain('hunter2')
+  })
 })
