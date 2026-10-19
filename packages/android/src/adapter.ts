@@ -446,24 +446,28 @@ return (function() {
 
     var parentIndex = nearestAncestorIndex(el);
 
+    // 2026-10-19 (444.1-05, D-08): only typed text is a value, never a name; a password never.
+    // Built into the record below, so the page script assigns no value property.
+    var observedValue = undefined;
+    var textEntry = tag === 'TEXTAREA' || (tag === 'INPUT' && !VALUELESS_TYPES[String(el.type).toLowerCase()]);
+    if (textEntry && el.value) {
+      observedValue = String(el.value).slice(0, 200);
+    } else if (tag === 'SELECT') {
+      var option = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
+      var optionText = option ? String(option.text || '').trim().slice(0, 200) : '';
+      if (optionText) observedValue = optionText;
+    }
+
     var record = {
       role: role,
       name: name,
+      value: observedValue,
       bounds: bounds,
       state: state,
       labels: labels,
       attributes: attributes
     };
     if (parentIndex !== undefined) record.parentIndex = parentIndex;
-    // 2026-10-19 (444.1-05, D-08): only typed text is a value, never a name; a password never.
-    var textEntry = tag === 'TEXTAREA' || (tag === 'INPUT' && !VALUELESS_TYPES[String(el.type).toLowerCase()]);
-    if (textEntry && el.value) {
-      record.value = String(el.value).slice(0, 200);
-    } else if (tag === 'SELECT') {
-      var option = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
-      var optionText = option ? String(option.text || '').trim().slice(0, 200) : '';
-      if (optionText) record.value = optionText;
-    }
 
     nodes.push(record);
     includedEls.push(el);
