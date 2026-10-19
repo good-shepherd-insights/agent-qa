@@ -165,7 +165,13 @@ async function startHost(kinds: JobKindRegistry): Promise<RunningHost> {
       throw new Error(`unexpected daemon hard exit ${code}`)
     },
     composeLocalAgent: (input) => {
-      const host = composeLocalAgent({ ...input, jobKinds: kinds })
+      // 2026-10-19 (444.1-12, D-23): the store stamps a retry's not-before time from this clock,
+      // so it reads the same manual time the dispatcher waits on, as the wall clock does live.
+      const host = composeLocalAgent({
+        ...input,
+        jobKinds: kinds,
+        clock: { now: () => new Date(scheduler.now()).toISOString() },
+      })
       const originalJobs = host.jobs.bind(host)
       const capturingHost: LocalAgentHost = {
         ...host,
