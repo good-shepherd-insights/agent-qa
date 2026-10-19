@@ -193,12 +193,12 @@ const SHIPPING_ADDRESS_HOOK_ID = 'h_phi-arts-vis-band-aira-streng-twig-roi-mino-
 const KOMAZON_SHIPPING_HOOK_PATH = 'tests/examples/komazon-shipping-hook.yaml'
 const SHIPPING_ADDRESS_SCRIPT_PATH = 'scripts/examples/make-shipping-address.mjs'
 
+// 2026-10-20 (445-14, D-32): every run starts a fresh session, so the journey asks for no reset.
 function buildKomazonCheckoutTest(): string {
   return `test-id: ${KOMAZON_CHECKOUT_TEST_ID}
 name: Komazon checkout journey
 target: komazon
 steps:
-  - Click the toolbar button named Reset playground session. Verify the shopping bag is empty.
   - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
   - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
   - Enter street address 24 Cedar Lane, city Portland and postal code 97205. Continue to delivery.
@@ -254,6 +254,7 @@ await writeFile('/tmp/agent-qa.env', \`SHIPPING_ADDRESS="\${address}"\\n\`, 'utf
 `
 }
 
+// 2026-10-20 (445-14, D-32): every run starts a fresh session, so the sample asks for no reset.
 function buildKomazonShippingHookTest(): string {
   return `test-id: ${KOMAZON_SHIPPING_HOOK_TEST_ID}
 name: Komazon checkout with a shipping address from a hook
@@ -263,7 +264,6 @@ setup:
 use:
   cache: false
 steps:
-  - Click the toolbar button named Reset playground session. Verify the shopping bag is empty.
   - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
   - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
   - Type {{env:SHIPPING_ADDRESS}} into the Street address field, enter city Portland and postal code 97205, then continue to delivery.
