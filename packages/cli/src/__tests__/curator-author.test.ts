@@ -8,6 +8,7 @@ import type {
   ModelProfile,
   ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
+import { MockLanguageModelV3 } from 'ai/test'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -474,5 +475,42 @@ describe('C441-CURATION', () => {
     )
     expect(rendered).not.toContain('UNTRUSTED DATA')
     expect(rendered).not.toContain('Add-candidate or MintUnknown only')
+  })
+})
+
+describe('C444.1-TAIL-BOUND', () => {
+  it('an aborted curator request is rethrown, never a fallback', async () => {
+    const controller = new AbortController()
+    let called: () => void = () => undefined
+    const inFlight = new Promise<void>((resolve) => { called = resolve })
+    const seenSignals: Array<AbortSignal | undefined> = []
+    const recorder = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        seenSignals.push(options.abortSignal)
+        called()
+        return new Promise<never>((_resolve, reject) => {
+          controller.signal.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          }, { once: true })
+        })
+      },
+    })
+    const deps = {
+      profile: profile(),
+      auth: noAuth,
+      mask: (text: string) => text,
+      createModelImpl: ((modelProfile, auth, mask) =>
+        createModel(modelProfile, auth, mask, { languageModels: { [modelProfile.model]: recorder } })
+      ) satisfies typeof createModel,
+      signal: controller.signal,
+    }
+    const author = buildCuratorAuthor(deps)
+
+    const authored = author(job(), [])
+    await inFlight
+    controller.abort()
+
+    await expect(authored).rejects.toMatchObject({ name: 'AbortError' })
+    expect(seenSignals, 'the model call carried the author signal').toEqual([controller.signal])
   })
 })
