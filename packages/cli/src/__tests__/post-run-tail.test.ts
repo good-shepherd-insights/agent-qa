@@ -310,45 +310,54 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
     expect(swept.deadlineMs).toBe(1_000 + 60_000)
   })
 
-  it('stops the pump on retry-scheduled and leaves the job queued for whoever drains next', async () => {
-    const runNextJob = vi.fn(async () => ({
-      ran: true,
-      disposition: 'retry-scheduled',
-      reason: 'transient',
-      retryDelayMs: 30_000,
-      attemptsRemaining: 2,
-      job: { id: String(OWN_CHAIN.analyzeRun) },
-    }))
-    const h = harness({ runNextJob })
-    const tail = runPostRunTail(options(h))
-    await tail.drain()
-
-    // Never sleep the run process on a backoff — one claim, then out.
-    expect(runNextJob).toHaveBeenCalledTimes(1)
-    expect(tail.report().drain).toBe('retry-scheduled')
-  })
-
-  it('reports backlog-exhausted when a foreign retry-scheduled row breaks the pump first (G-388-3)',
-    async () => {
-      // The DETECTOR, differential twin of the retry case above — same disposition, same single
-      // claim, same fixture; the ONE input that differs is the claimed id, a FOREIGN one. A
-      // foreign row's backoff broke the pump before this run's chain was ever reachable, which
-      // is the same starvation as a spent bound with a different trigger — and the shipped
-      // guard ranged past this exit, leaving a bare `pending` for starved work (T-388-18b).
-      const runNextJob = vi.fn(async () => ({
+  it('continues the pump past retry-scheduled and leaves the retrying job for a claim after its backoff', async () => {
+    const ran = [
+      {
         ran: true,
         disposition: 'retry-scheduled',
         reason: 'transient',
         retryDelayMs: 30_000,
         attemptsRemaining: 2,
-        job: { id: 'job_some_other_run' },
-      }))
+        job: { id: String(OWN_CHAIN.analyzeRun) },
+      },
+      { ran: true, disposition: 'completed', job: { id: 'job_some_other_run' } },
+      { ran: false, reason: 'no-job' },
+    ]
+    let call = 0
+    const runNextJob = vi.fn(async () => ran[call++])
+    const h = harness({ runNextJob })
+    const tail = runPostRunTail(options(h))
+    await tail.drain()
+
+    // 2026-10-19 (444.1-12, D-23): the store skips the retrying row until its not-before time, so
+    // the pump never sleeps on the backoff and claims whatever else is ready.
+    expect(runNextJob).toHaveBeenCalledTimes(3)
+    expect(tail.report()).toEqual({ enqueue: 'skipped', drain: 'retry-scheduled', jobsRun: 2 })
+  })
+
+  it('does not report backlog-exhausted when a foreign retry-scheduled row is followed by the own chain of this run (G-388-3)',
+    async () => {
+      const ran = [
+        {
+          ran: true,
+          disposition: 'retry-scheduled',
+          reason: 'transient',
+          retryDelayMs: 30_000,
+          attemptsRemaining: 2,
+          job: { id: 'job_some_other_run' },
+        },
+        { ran: true, disposition: 'completed', job: { id: String(OWN_CHAIN.analyzeRun) } },
+        { ran: false, reason: 'no-job' },
+      ]
+      let call = 0
+      const runNextJob = vi.fn(async () => ran[call++])
       const h = harness({ runNextJob })
       const tail = runPostRunTail(options(h))
       await tail.drain()
 
-      expect(runNextJob).toHaveBeenCalledTimes(1)
-      expect(tail.report().drain).toBe('backlog-exhausted')
+      expect(runNextJob).toHaveBeenCalledTimes(3)
+      expect(tail.report().drain).not.toBe('backlog-exhausted')
+      expect(tail.report()).toEqual({ enqueue: 'skipped', drain: 'retry-scheduled', jobsRun: 2 })
     })
 
   it('stops the pump at the one budget rather than following the chain forever', async () => {
