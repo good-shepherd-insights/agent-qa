@@ -863,7 +863,7 @@ describe('AndroidPlatformAdapter', () => {
       expect(buf!.equals(png)).toBe(true)
     })
 
-    async function enterWebView(): Promise<string> {
+    async function enterWebView() {
       mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', `WEBVIEW_${appPackage}`])
       mockDriver.execute.mockResolvedValueOnce({
         nodes: [{
