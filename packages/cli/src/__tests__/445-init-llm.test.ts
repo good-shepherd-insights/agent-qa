@@ -1,6 +1,7 @@
 // C445-INIT-LLM (445-04, D-11, D-36): init's model connection flags and their defaults
 // C445-INIT-PROMPTS (445-04, D-11): a terminal init asks only defaulted questions whose flag is absent
 // C445-MODEL-DEFAULTS (445-05, D-31, D-36): the subscription defaults are current and agree with the registry
+// C445-NEXT-STEPS (445-05, D-14, D-17): init prints its next steps in the route order
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
 import { parse as parseYaml } from 'yaml'
@@ -414,5 +415,82 @@ describe('C445-MODEL-DEFAULTS', () => {
     expect(DEFAULT_OPENAI_MODEL).toBe(getProvider('openai-subscription')?.defaultModel)
     expect(DEFAULT_ANTHROPIC_MODEL).toBe(getProvider('anthropic-subscription')?.defaultModel)
     expect([DEFAULT_OPENAI_MODEL, DEFAULT_ANTHROPIC_MODEL]).toEqual(['gpt-6.1-sol', 'claude-sonnet-5-5'])
+  })
+})
+
+const GETTING_STARTED = 'https://github.com/vostride/agent-qa/blob/main/docs/getting-started.md'
+const RUN_EXAMPLES = 'npx agent-qa run suites/examples.suite.yaml'
+
+function printed(): string {
+  return vi.mocked(console.log).mock.calls
+    .map(call => call.map(String).join(' '))
+    .join('\n')
+    .replace(/\u001b\[[0-9;]*m/gu, '')
+}
+
+function lineWith(output: string, text: string): string {
+  const line = output.split('\n').find(entry => entry.includes(text))
+  expect(line, `init printed ${text}`).toBeDefined()
+  return line!
+}
+
+describe('C445-NEXT-STEPS', () => {
+  it('the next steps follow the route order for a subscription workspace', async () => {
+    await initOk(['--platform', 'web', '--llm', 'codex'])
+
+    const output = printed()
+    const order = [
+      'npx agent-qa install-browsers --chromium',
+      `npm install -D ${SUBSCRIPTION_AUTH_PACKAGE}`,
+      'npx agent-qa auth login --config codex',
+      'npx agent-qa validate',
+      RUN_EXAMPLES,
+      GETTING_STARTED,
+    ]
+    const positions = order.map(text => output.indexOf(text))
+    for (const [index, text] of order.entries()) expect(positions[index], text).toBeGreaterThanOrEqual(0)
+    expect(positions).toEqual([...positions].sort((a, b) => a - b))
+    const run = lineWith(output, RUN_EXAMPLES)
+    expect(run).toContain('one passes')
+    expect(run).toContain('exit 1')
+    expect(output).not.toContain('agent-qa doctor')
+  })
+
+  it('an API-key workspace is told to save its key with auth set and the hidden prompt', async () => {
+    await initOk(['--platform', 'web', '--llm', 'anthropic-compatible'])
+
+    const output = printed()
+    const apiKey = lineWith(output, 'npx agent-qa auth set --config default --type api-key')
+    expect(apiKey).toContain('hidden prompt')
+    lineWith(output, 'npx agent-qa auth set --config default --type bearer-token')
+    expect(output.indexOf('npx agent-qa install-browsers --chromium'))
+      .toBeLessThan(output.indexOf('npx agent-qa auth set'))
+    expect(output.indexOf('npx agent-qa auth set')).toBeLessThan(output.indexOf('npx agent-qa validate'))
+    expect(output).not.toContain('auth login')
+    expect(output).not.toContain(SUBSCRIPTION_AUTH_PACKAGE)
+  })
+
+  it('the next steps name no file init replaces and no dashboard sign-in', async () => {
+    const workspaces = [
+      ['--platform', 'web', '--llm', 'codex'],
+      ['--platform', 'web'],
+      ['--platform', 'web', '--llm', 'anthropic-compatible'],
+      ['--platform', 'android'],
+    ]
+    for (const args of workspaces) {
+      vi.clearAllMocks()
+      await initOk(args)
+
+      const lines = printed().split('\n')
+      for (const line of lines) {
+        expect(line, args.join(' ')).not.toMatch(/Edit tests\//u)
+        expect(line, args.join(' ')).not.toMatch(/from agent-qa dashboard/u)
+        expect(line, args.join(' ')).not.toMatch(/example-pass/u)
+      }
+      const start = lines.findIndex(line => line.includes('Next steps:'))
+      expect(start, args.join(' ')).toBeGreaterThanOrEqual(0)
+      expect(lines.slice(start).some(line => line.includes('npx agent-qa validate')), args.join(' '))
+        .toBe(true)
+    }
   })
 })
