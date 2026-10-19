@@ -159,9 +159,12 @@ npx agent-qa run tests/examples/komazon-checkout.yaml --save-cache
 npx agent-qa run tests/examples/komazon-checkout.yaml
 ```
 
-The second run's summary counts cache hits on the `Cache:` line. The hits are the steps without a
-`{{secret:…}}` value. The sign-in step types `{{secret:KOMAZON_PASSWORD}}`, so it is never cached
-and asks the model every time.
+Only a step that acts without checking anything can be replayed. A step that the model checks, or
+that types a `{{secret:…}}` value, is never saved and asks the model on every run. In this journey
+that leaves one step, the one that enters the street address. The `Cache:` line in each run's
+summary counts hits and misses for that kind of step only, so for this journey it counts one at
+most. A saved step is replayed only when the page it starts on looks the same as when it was saved,
+so the second run can still count a miss.
 
 ### Open the dashboard
 
@@ -171,7 +174,8 @@ npx agent-qa dashboard
 
 It prints `Dashboard running at` and a URL. Open the URL it prints. Each run shows its tests, steps
 and evidence. Accessibility results appear only here: agent-qa checks each page at the end of a
-test, so open a test's last step and its A11y tab. Stop the dashboard with Ctrl+C.
+test, so open a test's last step and its A11y tab. On the playground's pages it reads
+`No accessibility violations found`. Stop the dashboard with Ctrl+C.
 
 ### Read what the run taught agent-qa
 
@@ -180,11 +184,15 @@ commit, then read the changes:
 
 ```sh
 git status -- agent-qa-knowledge
+git add --intent-to-add agent-qa-knowledge
 git diff -- agent-qa-knowledge
 ```
 
-`git status` lists new files. `git diff` shows changes to files you already committed. Commit the
-records you want to keep.
+After the first runs every record is a new file under `agent-qa-knowledge/memory/`, so `git status`
+lists that folder and `git diff` alone prints nothing. `git add --intent-to-add` makes `git diff`
+show the new files as well as changes to files you already committed. Both example tests record
+under the `komazon` product, so a record can name the cart-total test's `?bug=cart-total` address.
+Commit the records you want to keep.
 
 ## When something is missing
 
