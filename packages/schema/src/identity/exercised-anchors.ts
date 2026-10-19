@@ -8,7 +8,7 @@
 // implementation, living where both sides of the package graph can reach it.
 
 import type { StepEvidence } from '../handoff/step-evidence'
-import type { SubActionEvidence } from '../handoff/sub-action-evidence'
+import { isRedispatchedHeal, type SubActionEvidence } from '../handoff/sub-action-evidence'
 import type { ElementInfo } from '../screen/element-info'
 import { elementOrdinal } from '../screen/element-ordinal'
 import type { Anchor } from './anchor'
@@ -65,6 +65,8 @@ export function actionRefs(subAction: SubActionEvidence): string[] {
 }
 
 function resolvedActionRefs(subAction: SubActionEvidence): string[] {
+  // 2026-10-19 (444.1-08, D-14): a heal's grounding refs index the dispatch tree, not stateBefore.
+  if (isRedispatchedHeal(subAction)) return actionRefs(subAction)
   const grounded = (subAction.grounding?.attempts ?? []).flatMap((attempt) =>
     attempt.outcome === 'resolved' && attempt.resolvedRef !== undefined
       ? [attempt.resolvedRef]

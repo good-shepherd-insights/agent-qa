@@ -58,3 +58,7 @@ export function actedPair(
     stateBefore: subAction.stateBefore,
   }
 }
+
+export function isRedispatchedHeal(subAction: SubActionEvidence): boolean {
+  return subAction.healedDispatch !== undefined
+}
