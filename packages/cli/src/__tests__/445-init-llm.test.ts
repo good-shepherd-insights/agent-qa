@@ -1,4 +1,5 @@
 // C445-INIT-LLM (445-04, D-11, D-36): init's model connection flags and their defaults
+// C445-INIT-PROMPTS (445-04, D-11): a terminal init asks only defaulted questions whose flag is absent
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
 import { parse as parseYaml } from 'yaml'
@@ -70,7 +71,7 @@ vi.mock('@vostride/agent-qa-core', () => ({
   getAgentQaVersion: vi.fn(() => '0.1.1'),
 }))
 
-import { createInitCommand, EXAMPLE_SECRET_LINE } from '../commands/init.js'
+import { createInitCommand, EXAMPLE_SECRET_LINE, INIT_LLM_CHOICES } from '../commands/init.js'
 import { preflightInitPlan, writeScaffoldFileAtomic } from '../commands/init-filesystem.js'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import select from '@inquirer/select'
@@ -88,12 +89,17 @@ const prompts = [select, input, checkbox, confirm, password].map(fn => vi.mocked
 let stderr: string[] = []
 let previousExitCode: typeof process.exitCode
 
+let stdout: string[] = []
+
 async function runInit(args: string[], isTTY = false): Promise<void> {
   const parent = new Command()
   const init = createInitCommand({ isTTY } as Parameters<typeof createInitCommand>[0])
   parent.exitOverride()
   init.exitOverride()
-  init.configureOutput({ writeErr: text => { stderr.push(text) }, writeOut: () => {} })
+  init.configureOutput({
+    writeErr: text => { stderr.push(text) },
+    writeOut: text => { stdout.push(text) },
+  })
   parent.addCommand(init)
   await parent.parseAsync(['node', 'agent-qa', 'init', '--dir', DIR, ...args])
 }
@@ -135,6 +141,7 @@ function expectNoPrompt(): void {
 beforeEach(() => {
   vi.clearAllMocks()
   stderr = []
+  stdout = []
   previousExitCode = process.exitCode
   process.exitCode = undefined
   vi.mocked(existsSync).mockReturnValue(false)
@@ -264,5 +271,122 @@ describe('C445-INIT-LLM', () => {
     expect(refusalOutput()).toContain('--base-url must be an absolute http or https URL')
     expectNothingWritten()
     expectNoPrompt()
+  })
+})
+
+type PromptCall = { kind: string; config: any }
+
+function promptCalls(): PromptCall[] {
+  const kinds = ['select', 'input', 'checkbox', 'confirm', 'password']
+  return prompts.flatMap((prompt, index) =>
+    prompt.mock.calls.map(call => ({ kind: kinds[index]!, config: call[0] as any })))
+}
+
+function answerWithDefaults(): void {
+  vi.mocked(checkbox).mockImplementation((async (config: any) =>
+    config.choices.filter((choice: any) => choice.checked).map((choice: any) => choice.value)) as any)
+  vi.mocked(select).mockImplementation((async (config: any) => config.default) as any)
+  vi.mocked(input).mockImplementation((async (config: any) => config.default) as any)
+}
+
+function hasDefault(call: PromptCall): boolean {
+  if (call.kind === 'checkbox') return call.config.choices.some((choice: any) => choice.checked)
+  return call.config.default !== undefined && String(call.config.default).length > 0
+}
+
+describe('C445-INIT-PROMPTS', () => {
+  beforeEach(answerWithDefaults)
+
+  it('in a terminal with no flags, init asks the platform and the model connection, each with its default', async () => {
+    await initOk([], true)
+
+    expect(vi.mocked(checkbox)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(checkbox).mock.calls[0]![0].choices).toContainEqual(
+      expect.objectContaining({ value: 'web', checked: true }),
+    )
+    expect(vi.mocked(select)).toHaveBeenCalledTimes(1)
+    const connection = vi.mocked(select).mock.calls[0]![0] as any
+    expect(connection.choices.map((choice: any) => choice.value)).toEqual([...INIT_LLM_CHOICES])
+    expect(connection.default).toBe('claude-code')
+    expect(vi.mocked(input)).not.toHaveBeenCalled()
+    expect(writtenConfig().registry.llms).toEqual([
+      {
+        name: 'claude-code',
+        provider: 'anthropic-subscription',
+        model: registryDefault('anthropic-subscription'),
+      },
+    ])
+  })
+
+  it('a flag that is given skips its question', async () => {
+    await initOk(['--platform', 'web', '--llm', 'codex'], true)
+    expectNoPrompt()
+    expect(writtenConfig().registry.llms[0].name).toBe('codex')
+
+    vi.clearAllMocks()
+    answerWithDefaults()
+    await initOk(['--platform', 'web'], true)
+    expect(promptCalls().map(call => call.kind)).toEqual(['select'])
+  })
+
+  it('the compatible providers ask the model and base URL with their defaults', async () => {
+    await initOk(['--platform', 'web', '--llm', 'anthropic-compatible'], true)
+
+    const asked = promptCalls()
+    expect(asked.map(call => call.kind)).toEqual(['input', 'input'])
+    expect(asked[0]!.config.default).toBe(registryDefault('anthropic-compatible'))
+    expect(asked[1]!.config.default).toBe('https://api.anthropic.com/v1')
+    expect(asked[1]!.config.validate('ftp://x.test')).toBe('--base-url must be an absolute http or https URL')
+    expect(asked[1]!.config.validate('https://llm.internal.test/v1')).toBe(true)
+    expect(writtenConfig().registry.llms).toEqual([
+      {
+        name: 'default',
+        provider: 'anthropic-compatible',
+        model: registryDefault('anthropic-compatible'),
+        baseURL: 'https://api.anthropic.com/v1',
+      },
+    ])
+
+    vi.clearAllMocks()
+    answerWithDefaults()
+    await initOk([
+      '--platform', 'web',
+      '--llm', 'anthropic-compatible',
+      '--model', 'claude-test',
+      '--base-url', 'https://llm.internal.test/v1',
+    ], true)
+    expectNoPrompt()
+  })
+
+  it('init asks no yes or no question', async () => {
+    const asked: PromptCall[] = []
+    for (const args of [[], ['--platform', 'web'], ['--platform', 'web', '--llm', 'anthropic-compatible']]) {
+      vi.clearAllMocks()
+      answerWithDefaults()
+      await initOk(args, true)
+      asked.push(...promptCalls())
+    }
+
+    expect(new Set(asked.map(call => call.kind))).toEqual(new Set(['checkbox', 'select', 'input']))
+    for (const call of asked) expect(hasDefault(call), `${call.kind} ${call.config.message}`).toBe(true)
+    const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+    const source = actualFs.readFileSync(new URL('../commands/init.ts', import.meta.url), 'utf8')
+    expect(source).toMatch(/@inquirer\/checkbox/u)
+    expect(source).not.toMatch(/@inquirer\/confirm/u)
+  })
+
+  it('init help names --llm with its five values, --model and --base-url', async () => {
+    await expect(runInit(['--help'])).rejects.toMatchObject({ code: 'commander.helpDisplayed' })
+
+    const lines = stdout.join('').split('\n')
+    const start = lines.findIndex(line => line.startsWith('  --llm <provider>'))
+    expect(start).toBeGreaterThanOrEqual(0)
+    const next = lines.findIndex((line, index) => index > start && /^\s{2}-/u.test(line))
+    const entry = lines.slice(start, next).join(' ')
+    for (const value of INIT_LLM_CHOICES) expect(entry).toContain(`"${value}"`)
+    expect(entry).toContain('default: claude-code')
+    expect(lines.some(line => line.startsWith('  --model <id>'))).toBe(true)
+    expect(lines.some(line => line.startsWith('  --base-url <url>'))).toBe(true)
+    expect(stdout.join('')).not.toMatch(/--(api-key|token|key|secret)\b/u)
   })
 })
