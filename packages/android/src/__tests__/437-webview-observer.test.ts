@@ -43,19 +43,26 @@ interface ElementSpec {
 }
 
 const FIELD_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
-const OBSERVED_TAGS = new Set([
-  'A',
-  'BUTTON',
-  'INPUT',
-  'TEXTAREA',
-  'SELECT',
-  'H1',
-  'H2',
-  'H3',
-  'H4',
-  'H5',
-  'H6',
-])
+const EDITABLE_VALUES = new Set(['', 'true', 'plaintext-only'])
+
+// The selector the script passes, evaluated as a browser would: a comma list of parts, each a
+// tag name, `tag[attr]`, `[attr]`, `[attr="v"]` or `[attr]:not([attr="v"])`.
+const SELECTOR_PART =
+  /^([a-z][a-z0-9]*)?(?:\[([\w-]+)(?:="([^"]*)")?\])?(?::not\(\[([\w-]+)="([^"]*)"\]\))?$/i
+
+function selectorMatcher(selector: string): (node: StubElement) => boolean {
+  const parts = selector.split(',').map((part) => {
+    const match = SELECTOR_PART.exec(part.trim())
+    if (!match || !(match[1] || match[2]))
+      throw new Error(`stub cannot evaluate selector part ${part}`)
+    const [, tag, attr, value, notAttr, notValue] = match
+    return (node: StubElement) =>
+      (!tag || node.tagName === tag.toUpperCase()) &&
+      (!attr || (attr in node.attrs && (value === undefined || node.attrs[attr] === value))) &&
+      (!notAttr || node.attrs[notAttr] !== notValue)
+  })
+  return (node) => parts.some((matches) => matches(node))
+}
 
 function el(tag: string, spec: ElementSpec = {}): StubElement {
   const tagName = tag.toUpperCase()
@@ -117,9 +124,11 @@ function page(...roots: StubElement[]) {
   all.forEach((node, i) => {
     node.rect = { left: 10, top: 10 + i * 50, width: 200, height: 40 }
     // Document order visits a parent first, so its own flag is already set when a child inherits.
+    const flag = node.attrs.contenteditable
     node.isContentEditable =
-      node.attrs.contenteditable === 'true' ||
-      (node.parentElement?.isContentEditable === true && node.attrs.contenteditable !== 'false')
+      flag !== undefined && (EDITABLE_VALUES.has(flag) || flag === 'false')
+        ? flag !== 'false'
+        : node.parentElement?.isContentEditable === true
   })
   for (const node of all) {
     if (!FIELD_TAGS.has(node.tagName)) continue
@@ -127,17 +136,10 @@ function page(...roots: StubElement[]) {
       (l) => l.tagName === 'LABEL' && ((node.id && l.attrs.for === node.id) || l.contains(node)),
     )
   }
-  const observed = all.filter(
-    (n) =>
-      OBSERVED_TAGS.has(n.tagName) ||
-      (n.tagName === 'IMG' && 'alt' in n.attrs) ||
-      'role' in n.attrs ||
-      n.attrs.contenteditable === 'true',
-  )
   const document = {
     activeElement: null,
     documentElement: { scrollWidth: 400, scrollHeight: 800 },
-    querySelectorAll: () => observed,
+    querySelectorAll: (selector: string) => all.filter(selectorMatcher(selector)),
     getElementById: (id: string) => all.find((n) => n.id === id) ?? null,
   }
   const window = {
@@ -532,5 +534,44 @@ describe('C437-WEBVIEW-OBSERVE', () => {
 
     expect(state.elements.map((e) => e.name)).toEqual(['Place order', 'Apply coupon', 'Start over'])
     for (const control of state.elements) expect('value' in control).toBe(false)
+  })
+
+  it('a bare contenteditable attribute marks an editable host', async () => {
+    const state = await observe(
+      page(
+        el('div', { attrs: { contenteditable: '', title: 'Notes' }, text: 'Draft' }),
+        el('button', { text: 'Save' }),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('Notes')
+  })
+
+  it('a plaintext only contenteditable marks an editable host', async () => {
+    const state = await observe(
+      page(
+        el('div', { attrs: { contenteditable: 'plaintext-only', title: 'Notes' }, text: 'Draft' }),
+        el('button', { text: 'Save' }),
+      ),
+    )
+
+    const fields = textboxes(state)
+    expect(fields).toHaveLength(1)
+    expect(fields[0].name).toBe('Notes')
+  })
+
+  it('a contenteditable false element is not an editable host', async () => {
+    const state = await observe(
+      page(
+        el('div', { attrs: { contenteditable: 'false' }, text: 'Read only' }),
+        el('button', { text: 'Save' }),
+      ),
+    )
+
+    expect(state.elements.some((e) => e.name === 'Save')).toBe(true)
+    expect(textboxes(state)).toHaveLength(0)
+    expect(state.elements.some((e) => e.name === 'Read only')).toBe(false)
   })
 })
