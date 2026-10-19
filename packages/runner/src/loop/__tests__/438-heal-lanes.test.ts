@@ -10,7 +10,7 @@
 // refusal block's observed-row cap.
 import { describe, expect, it } from 'vitest'
 import { vi } from 'vitest'
-import type { ScreenState } from '@vostride/agent-qa-schema'
+import { exercisedAnchors, type ScreenState } from '@vostride/agent-qa-schema'
 import type { Action, ActionResult, PlatformAdapter } from '../../platform.js'
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
 import type { StepResult } from '../../result.js'
@@ -540,5 +540,9 @@ describe('C444.1-DISPATCH-PAIR', () => {
       stateBefore: expect.objectContaining({ elements: SAVE_FRESH.elements }),
     })
     expect(nameAt(recorded?.healedDispatch?.stateBefore, 'e3')).toBe('Save')
+    // The heal's grounding refs index the dispatch tree, so a planner-pair reader must not use them.
+    expect(exercisedAnchors(result.evidence!)).toEqual([
+      { t: 'el', role: 'button', name: 'save', ordinal: 0 },
+    ])
   })
 })
