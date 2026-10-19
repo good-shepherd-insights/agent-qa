@@ -13860,6 +13860,48 @@
       "file": "packages/runner/src/compound/__tests__/metadata.test.ts",
       "fullName": "readFillSubmitMeta reads a focus lost hold",
       "origin": "444.1 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE the typed text of a field is its value and never its name",
+      "origin": "444.1 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE the text of a password field is never observed",
+      "origin": "444.1 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a selector capture of a WebView field returns what it holds, not its label",
+      "origin": "444.1 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE an empty field carries no value",
+      "origin": "444.1 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a contenteditable host is named by its label, not by what it holds",
+      "origin": "444.1 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a role textbox editor is named by its label, not by what it holds",
+      "origin": "444.1 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE the descendants of a contenteditable host are not listed as editable",
+      "origin": "444.1 D-09"
     }
   ]
 }
