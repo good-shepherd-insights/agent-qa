@@ -1,8 +1,9 @@
 // C445-EXAMPLES (445-02, D-06, D-26, D-32): init writes the Komazon examples, suite and targets
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { Command } from 'commander'
 import { parse as parseYaml } from 'yaml'
-import { dirname, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 
@@ -68,7 +69,15 @@ import { createInitCommand } from '../commands/init.js'
 import { buildScaffoldFileSet } from '../commands/scaffold-content.js'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { clearProviderRegistry } from '@vostride/agent-qa-model'
-import { isCanonicalSuiteId, isCanonicalTestId } from '@vostride/agent-qa-ids'
+import { isCanonicalHookId, isCanonicalSuiteId, isCanonicalTestId } from '@vostride/agent-qa-ids'
+import { parseEnvFile } from '@vostride/agent-qa-runner'
+import { hermeticEnv } from './conformance/spawned-chat.js'
+
+const realFs = await vi.importActual<typeof import('node:fs')>('node:fs')
+const realChildProcess = await vi.importActual<typeof import('node:child_process')>(
+  'node:child_process',
+)
+const tempRoots: string[] = []
 
 const mockWriteFileSync = vi.mocked(writeFileSync)
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
@@ -77,6 +86,9 @@ const DIR = '/tmp/c445-examples'
 const CHECKOUT = 'tests/examples/komazon-checkout.yaml'
 const CART_TOTAL_BUG = 'tests/examples/komazon-cart-total-bug.yaml'
 const SUITE = 'suites/examples.suite.yaml'
+const HOOK_TEST = 'tests/examples/komazon-shipping-hook.yaml'
+const HOOK_SCRIPT = 'scripts/examples/make-shipping-address.mjs'
+const HOOK_ENV_FILE = '/tmp/agent-qa.env'
 const EXAMPLE_PREFIXES = ['tests/examples/', 'scripts/examples/']
 const BUG_URL = 'https://playground.vostride.dev/shop/?bug=cart-total'
 const KOMAZON_TARGETS = {
@@ -136,10 +148,15 @@ async function initWrites(platform = 'web'): Promise<Write[]> {
   }))
 }
 
-function written(writes: Write[], path: string): { raw: string; doc: any } {
+function writtenText(writes: Write[], path: string): string {
   const write = writes.find(entry => entry.path === path)
   expect(write, `init wrote ${path}`).toBeDefined()
-  return { raw: write!.content, doc: parseYaml(write!.content) }
+  return write!.content
+}
+
+function written(writes: Write[], path: string): { raw: string; doc: any } {
+  const raw = writtenText(writes, path)
+  return { raw, doc: parseYaml(raw) }
 }
 
 function consoleOutput(): string {
@@ -148,9 +165,10 @@ function consoleOutput(): string {
 
 async function loadCoreYamlValidators() {
   const moduleUrl = (path: string) => pathToFileURL(resolve(repoRoot, path)).href
-  const [yamlParser, suiteSchema] = await Promise.all([
+  const [yamlParser, suiteSchema, hooksSchema] = await Promise.all([
     import(/* @vite-ignore */ moduleUrl('packages/core/src/parser/yaml-parser.ts')),
     import(/* @vite-ignore */ moduleUrl('packages/core/src/schema/suite-schema.ts')),
+    import(/* @vite-ignore */ moduleUrl('packages/core/src/hooks/schema.ts')),
   ])
   return {
     parseTestFile: yamlParser.parseTestFile as (
@@ -158,8 +176,13 @@ async function loadCoreYamlValidators() {
       filePath: string,
     ) => { tests: any[]; errors: any[] },
     SuiteDefinitionSchema: suiteSchema.SuiteDefinitionSchema,
+    HooksFileSchema: hooksSchema.HooksFileSchema,
   }
 }
+
+afterAll(() => {
+  for (const root of tempRoots.splice(0)) realFs.rmSync(root, { recursive: true, force: true })
+})
 
 describe('C445-EXAMPLES', () => {
   beforeEach(() => {
@@ -352,5 +375,67 @@ describe('C445-EXAMPLES', () => {
       expect(hooks!.text, mode).toBe('hooks: []\n')
       expect(hooks!.text, mode).not.toContain('file:')
     }
+  })
+
+  it('the hook sample makes its value locally with no network and is not in the suite', async () => {
+    const writes = await initWrites()
+    const { parseTestFile, HooksFileSchema } = await loadCoreYamlValidators()
+
+    const hooksDoc = written(writes, 'hooks.yaml').doc
+    const hooksFile = HooksFileSchema.safeParse(hooksDoc)
+    if (!hooksFile.success) throw new Error(JSON.stringify(hooksFile.error.issues, null, 2))
+    expect(hooksFile.data.hooks).toHaveLength(1)
+    const [hook] = hooksFile.data.hooks
+    expect(isCanonicalHookId(hook.id)).toBe(true)
+    expect(hook).toMatchObject({ runtime: 'node', file: HOOK_SCRIPT, timeout: 30_000 })
+    expect(hooksDoc.hooks[0].network, 'the hook declares network: false').toBe(false)
+
+    const script = writtenText(writes, HOOK_SCRIPT)
+    for (const banned of ['fetch(', 'http:', 'https:', 'node:http', 'node:https', 'node:net']) {
+      expect(script, `the hook script names ${banned}`).not.toContain(banned)
+    }
+    const imports = [...script.matchAll(/from '([^']+)'/g)].map(match => match[1]).sort()
+    expect(imports).toEqual(['node:crypto', 'node:fs/promises'])
+
+    const { raw, doc } = written(writes, HOOK_TEST)
+    const parsed = parseTestFile(raw, HOOK_TEST)
+    expect(parsed.errors).toEqual([])
+    expect(parsed.tests).toHaveLength(1)
+    expect(isCanonicalTestId(doc['test-id'])).toBe(true)
+    expect(doc.target).toBe('komazon')
+    expect(doc.setup).toEqual([hook.id])
+    expect(doc.use).toEqual({ cache: false })
+    const steps = doc.steps as string[]
+    const typed = steps.find(step => step.includes('Street address'))
+    expect(typed, 'a step types into the Street address field').toBeDefined()
+    expect(typed).toContain('{{env:SHIPPING_ADDRESS}}')
+    const review = steps.find(step => /review shows/i.test(step))
+    expect(review, 'a step verifies the review').toBeDefined()
+    expect(review).toContain('{{env:SHIPPING_ADDRESS}}')
+
+    const suite = written(writes, SUITE).doc
+    expect(suite.tests.map((member: { test: string }) => member.test)).not.toContain(HOOK_TEST)
+    expect(suite.tests.map((member: { id: string }) => member.id)).not.toContain(doc['test-id'])
+  })
+
+  it('the hook script writes a shipping address the runtime env decoder reads', async () => {
+    if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
+    const script = writtenText(await initWrites(), HOOK_SCRIPT)
+    expect(script).toContain(HOOK_ENV_FILE)
+
+    const root = realFs.mkdtempSync(join(tmpdir(), 'c445-hook-'))
+    tempRoots.push(root)
+    const output = join(root, 'agent-qa.env')
+    const scriptPath = join(root, 'make-shipping-address.mjs')
+    realFs.writeFileSync(scriptPath, script.replaceAll(HOOK_ENV_FILE, output))
+    const run = realChildProcess.spawnSync(process.execPath, [scriptPath], {
+      cwd: root,
+      env: { ...hermeticEnv(root), DO_NOT_TRACK: '1' },
+      encoding: 'utf8',
+    })
+
+    expect(run.status, run.stderr).toBe(0)
+    const vars = parseEnvFile(realFs.readFileSync(output, 'utf8'))
+    expect(vars.SHIPPING_ADDRESS).toMatch(/^\d{3} Cedar Lane$/)
   })
 })
