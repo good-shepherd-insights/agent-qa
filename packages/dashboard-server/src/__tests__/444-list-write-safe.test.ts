@@ -350,6 +350,27 @@ function layoutCorpus(kind: Kind, namedId: string): LayoutRow[] {
   minted('crlf', '', '', '\r\n', crlf(base('crlf')))
   minted('crlf-marker', '---\r\n', '---\r\n', '\r\n', crlf(base('crlf-marker')))
   minted('plain', '', '', '\n')
+  // 2026-10-19 (444.1-11, D-20, D-22): a nested bare id key, the CRLF and byte-order-mark fills, and the unminted flow and indented mappings.
+  const listKey = kind === 'test' ? 'steps: [Click a]' : 'tests: []'
+  fixed('nested-flow-id', `{name: Layout nested-flow-id, target: web,\nuse: {\n${key}:\n},\n${listKey}}\n`, 'left', null, true, 'web')
+  minted('crlf-comment-id', `${key}: # fill later\r\n`, '', '\r\n', crlf(base('crlf-comment-id')))
+  minted('bom-comment-id', `﻿${key}: # fill later\n`, '﻿', '\n')
+  fixed(
+    'flow-mapping',
+    `{"name": "Layout flow-mapping", "target": "web", ${kind === 'test' ? '"steps": ["Click a"]' : '"tests": []'}}\n`,
+    'left',
+    null,
+    true,
+    'web',
+  )
+  fixed(
+    'indented-mapping',
+    `  name: Layout indented-mapping\n  target: web\n${kind === 'test' ? '  steps:\n    - Click a\n' : '  tests: []\n'}`,
+    'left',
+    null,
+    true,
+    'web',
+  )
   return rows
 }
 
@@ -1559,11 +1580,11 @@ describe('C444-LIST-WRITE-SAFE', () => {
   })
 
   it('every test file in the layout corpus is read from its parsed YAML, and listing it leaves its old mapping with one id that opens, in its own line endings, or leaves it byte-identical with no id; none stops parsing', async () => {
-    expect(await checkLayoutCorpus('test'), 'each test layout is minted whole, kept, or left byte-identical with no id').toEqual({ rows: 17, findings: [] })
+    expect(await checkLayoutCorpus('test'), 'each test layout is minted whole, kept, or left byte-identical with no id').toEqual({ rows: 22, findings: [] })
   })
 
   it('every suite file in the layout corpus is read from its parsed YAML, and listing it leaves its old mapping with one id that opens, in its own line endings, or leaves it byte-identical with no id; none stops parsing', async () => {
-    expect(await checkLayoutCorpus('suite'), 'each suite layout is minted whole, kept, or left byte-identical with no id').toEqual({ rows: 17, findings: [] })
+    expect(await checkLayoutCorpus('suite'), 'each suite layout is minted whole, kept, or left byte-identical with no id').toEqual({ rows: 22, findings: [] })
   })
 
   it('a test create or save whose target holds a shown marker in a mapping value or on an indented target line is refused and nothing is written', async () => {
