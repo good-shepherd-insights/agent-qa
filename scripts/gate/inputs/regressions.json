@@ -14736,6 +14736,42 @@
       "file": "packages/cli/src/__tests__/445-examples.test.ts",
       "fullName": "C445-EXAMPLES no example test has a reset or clear step, whose effect a fresh session would hide",
       "origin": "445 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/llm-auth-resolver.test.ts",
+      "fullName": "C445-PUBLIC-API-KEY a compatible config with no key on api.anthropic.com or api.openai.com resolves as missing and names auth set",
+      "origin": "445 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/llm-auth-resolver.test.ts",
+      "fullName": "C445-PUBLIC-API-KEY a compatible config with no key on a local or self-hosted server stays credential optional",
+      "origin": "445 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/llm-auth-resolver.test.ts",
+      "fullName": "C445-PUBLIC-API-KEY the public host is matched on the parsed hostname, ignoring case",
+      "origin": "445 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-setup-errors.test.ts",
+      "fullName": "C445-SETUP-ERRORS a missing key for anthropic-compatible on the public Anthropic API names agent-qa auth set and exits 2",
+      "origin": "445 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-setup-errors.test.ts",
+      "fullName": "C445-SETUP-ERRORS the public provider API hosts are the hosts of the init base URL defaults",
+      "origin": "445 D-41"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor.test.ts",
+      "fullName": "C445-DOCTOR-AUTH a compatible config with no key on the public provider API fails the credential row with auth set",
+      "origin": "445 D-41"
     }
   ]
 }
