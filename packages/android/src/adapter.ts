@@ -319,7 +319,7 @@ return (function() {
   var active = doc.activeElement;
 
   var all = doc.querySelectorAll(
-    'a, button, input, textarea, select, h1, h2, h3, h4, h5, h6, img[alt], [role]'
+    'a, button, input, textarea, select, h1, h2, h3, h4, h5, h6, img[alt], [role], [contenteditable="true"]'
   );
 
   var nodes = [];
@@ -377,28 +377,33 @@ return (function() {
     if (style.display === 'none' || style.visibility === 'hidden') continue;
 
     var tag = el.tagName;
+    // 2026-10-19 (444.1-05, D-09): only the outermost content-editable element is an editor;
+    // its descendants are ordinary nodes.
+    var host = el.isContentEditable === true
+      && !(el.parentElement && el.parentElement.isContentEditable === true);
     var ariaRole = el.getAttribute('role');
-    var role = (ariaRole || TAG_ROLES[tag] || '').toLowerCase();
+    var role = (ariaRole || TAG_ROLES[tag] || (host ? 'textbox' : '')).toLowerCase();
     if (!role) continue;
 
     var field = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-    var editable = field || el.isContentEditable === true;
+    var editable = field || host;
+    var textual = role === 'textbox' || role === 'searchbox' || role === 'combobox';
     var name = '';
     var ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel) {
       name = ariaLabel;
     } else if (tag === 'IMG') {
       name = el.alt || '';
-    } else if (field) {
-      name = fieldName(el, tag);
+    } else if (editable || textual) {
+      name = fieldName(el, tag) || el.getAttribute('aria-placeholder') || '';
     } else {
       name = (el.textContent || '').trim();
     }
 
     name = name.slice(0, 100).replace(/[\\n\\r]+/g, ' ').trim();
-    if (!name && role !== 'textbox' && !editable) continue;
+    if (!name && !editable && !textual) continue;
 
-    if (!editable) {
+    if (!editable && !textual) {
       var key = role + ':' + name;
       if (seen[key]) continue;
       seen[key] = true;
