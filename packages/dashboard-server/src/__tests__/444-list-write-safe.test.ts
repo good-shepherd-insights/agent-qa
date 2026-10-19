@@ -1553,4 +1553,56 @@ describe('C444-LIST-WRITE-SAFE', () => {
       'PUT indented': refused,
     })
   })
+
+  // 2026-10-19 (444.1-11, D-18): a Latin-1 byte is not valid UTF-8; a decode that replaced it would rewrite it as EF BF BD.
+  it('an id-less test or suite file that is not valid UTF-8 is listed with no id and left byte-identical', async () => {
+    const ws = await workspace('not-utf8')
+    const findings: string[] = []
+    const latin1 = (head: string, tail: string): Buffer => Buffer.concat([Buffer.from(head), Buffer.from([0xe9]), Buffer.from(tail)])
+    const kinds = [
+      {
+        kind: 'test' as const,
+        path: 'tests/latin1.yaml',
+        bytes: latin1('name: Caf', ' order\ntarget: web\nsteps:\n  - Click a\n'),
+        plain: 'tests/plain.yaml',
+        body: smallTest(1),
+      },
+      {
+        kind: 'suite' as const,
+        path: 'suites/latin1.suite.yaml',
+        bytes: latin1('name: Caf', ' suite\ntests: []\n'),
+        plain: 'suites/plain.suite.yaml',
+        body: smallSuite(1),
+      },
+    ]
+    for (const entry of kinds) {
+      await writeFile(join(ws.dir, entry.path), entry.bytes)
+      await writeFile(join(ws.dir, entry.plain), entry.body)
+    }
+    const tests = new TestFileManager(ws.paths)
+    const suites = new SuiteFileManager(ws.paths, tests)
+
+    for (const entry of kinds) {
+      for (let call = 0; call < 2; call++) {
+        const listing: Array<{ path: string; testId?: string | null; suiteId?: string | null }> =
+          entry.kind === 'test' ? await tests.list() : await suites.list()
+        const row = listing.find((file) => file.path === entry.path)
+        const id = entry.kind === 'test' ? row?.testId : row?.suiteId
+        if (row === undefined) findings.push(`list ${String(call + 1)} does not list ${entry.path}`)
+        else if (id !== null) findings.push(`list ${String(call + 1)} names ${String(id)} for ${entry.path}`)
+        const now = await readFile(join(ws.dir, entry.path))
+        if (!now.equals(entry.bytes)) {
+          findings.push(`after list ${String(call + 1)} ${entry.path} holds ${String(now.length)} bytes: ${now.toString('hex').slice(0, 80)}, not ${entry.bytes.toString('hex').slice(0, 80)}`)
+        }
+        const plain = listing.find((file) => file.path === entry.plain)
+        const plainId = entry.kind === 'test' ? plain?.testId : plain?.suiteId
+        const plainDisk = await readFile(join(ws.dir, entry.plain), 'utf-8')
+        if (plainId == null || oneIdOver(plainDisk, entry.body, entry.kind) !== plainId) {
+          findings.push(`list ${String(call + 1)} names ${String(plainId)} for ${entry.plain}, which reads ${describeFile(plainDisk, entry.kind)}`)
+        }
+      }
+    }
+
+    expect(findings, 'a file that is not valid UTF-8 keeps every byte and lists no id, while a valid id-less file beside it is minted').toEqual([])
+  })
 })
