@@ -361,6 +361,7 @@ const SUBMIT_REASON_WORDS: Record<string, string> = {
   mismatch: 'the text did not match',
   'multi-line-field': 'multi-line field',
   'input-failed': 'the input failed',
+  'focus-lost': 'focus left the field before Return',
 }
 
 /**

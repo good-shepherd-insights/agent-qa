@@ -242,7 +242,7 @@ const FILL_REFUSAL_EVIDENCE = new Set<FillRefusalMeta['evidence']>([
   'text-has-line-breaks',
 ])
 const SUBMIT_OUTCOMES = new Set<SubmitOutcome>(['sent', 'not-sent', 'unavailable', 'failed'])
-const SUBMIT_REASONS = new Set<SubmitReason>(['mismatch', 'multi-line-field', 'input-failed'])
+const SUBMIT_REASONS = new Set<SubmitReason>(['mismatch', 'multi-line-field', 'input-failed', 'focus-lost'])
 const SHELL_VERBS = new Set<ShellActionMeta['verb']>(['keyevent', 'openQuickSettings'])
 const SHELL_OUTCOMES = new Set<ShellActionMeta['outcome']>(['unavailable', 'failed'])
 
