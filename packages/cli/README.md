@@ -6,7 +6,7 @@ The self-improving Agentic QA harness with Memory
 
 Write tests in natural language for web and mobile. agent-qa learns from past runs, adapts to UI changes, and catches regressions before you ship.
 
-[Docs](https://vostride.com/docs/agent-qa) | [Quickstart](https://vostride.com/docs/agent-qa/quickstart)
+[Docs](https://vostride.com/docs/agent-qa) | [Quickstart](https://github.com/vostride/agent-qa/blob/main/docs/getting-started.md)
 
 ## Features
 
@@ -21,28 +21,19 @@ Write tests in natural language for web and mobile. agent-qa learns from past ru
 
 ## Quickstart
 
-Install the package:
+Node.js 24 or newer (npm comes with it).
 
 ```sh
-npm install -D agent-qa
-```
-
-For Codex or Claude Code subscription auth, also install:
-
-```sh
-npm install -D @vostride/agent-qa-subscription-auth
-```
-
-Install Docker before using hooks. agent-qa runs hooks in a sandboxed runtime, and Docker is required for the Node, Bun, Python, and Bash hook containers.
-
-Initialize agent-qa and install the runtime support you need:
-
-```sh
-npx agent-qa init
+npm install -D agent-qa @vostride/agent-qa-subscription-auth
 npx agent-qa install-browsers --chromium
-# Mobile projects:
-npx agent-qa install-mobile-drivers --all
+npx agent-qa init --llm claude-code
 ```
+
+With an API key, install `agent-qa` alone and pass another `--llm` value. The rest of the route,
+from signing in to a first run of the examples, is in
+[getting-started.md](https://github.com/vostride/agent-qa/blob/main/docs/getting-started.md).
+
+## Secrets
 
 Put test credentials in the secrets file that `workspace.secretsFile` names (`init` sets it to
 `.env.secrets.local`). Only the values in that file are secrets: agent-qa shows each one as
@@ -51,26 +42,19 @@ is masked, and screenshots and recordings are not masked, so use temporary, limi
 credentials. The one exception: the dashboard's model connection check keeps the key or header
 value it is testing out of the provider's error message.
 
-Start the dashboard, complete auth, and run tests from the UI:
-
-```sh
-npx agent-qa dashboard --open
-```
-
-For the full setup flow, use the [quickstart](https://vostride.com/docs/agent-qa/quickstart).
-
 ## CLI
 
 Run tests from the CLI:
 
 ```sh
-npx agent-qa run tests/hacker-news-top-story.yaml
+npx agent-qa run suites/examples.suite.yaml
 ```
 
 ## Docs
 
 - [Full docs](https://vostride.com/docs/agent-qa)
-- [Quickstart](https://vostride.com/docs/agent-qa/quickstart)
+- [Quickstart](https://github.com/vostride/agent-qa/blob/main/docs/getting-started.md) — from an empty directory to a first run
+- [Re-initializing a workspace from before v2](https://github.com/vostride/agent-qa/blob/main/docs/re-initialize.md)
 - [CLI reference](https://vostride.com/docs/agent-qa/cli)
 - [Dashboard](https://vostride.com/docs/agent-qa/dashboard)
 - [Configuration](https://vostride.com/docs/agent-qa/configuration)
