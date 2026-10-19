@@ -13920,6 +13920,42 @@
       "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
       "fullName": "C437-WEBVIEW-OBSERVE a submit or button input carries no value and keeps its caption as its name",
       "origin": "444.1 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-SESSION-START an app already in the foreground is not activated again",
+      "origin": "444.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-SESSION-START an app that is not running is activated once",
+      "origin": "444.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-SESSION-START a session started twice on a foreground app never activates it",
+      "origin": "444.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-SESSION-START an app state that cannot be read falls back to activating the app",
+      "origin": "444.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-WEBVIEW-SCREENSHOT a WebView screenshot of an unset background is white, not black",
+      "origin": "444.1 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-WEBVIEW-SCREENSHOT a native screenshot is returned as captured",
+      "origin": "444.1 D-12"
     }
   ]
 }
