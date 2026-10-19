@@ -79,6 +79,7 @@ function createMockDriver() {
     keys: vi.fn().mockImplementation((k: unknown) => { calls.push(`keys:${JSON.stringify(k)}`); return Promise.resolve() }),
     pause: vi.fn().mockResolvedValue(undefined),
     activateApp: vi.fn().mockImplementation((id: string) => { calls.push(`activateApp:${id}`); return Promise.resolve() }),
+    queryAppState: vi.fn().mockResolvedValue(1),
     terminateApp: vi.fn().mockResolvedValue(undefined),
     execute: vi.fn().mockImplementation((command: string, args?: unknown) => {
       calls.push(`execute:${command}:${JSON.stringify(args ?? null)}`)
