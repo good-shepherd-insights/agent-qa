@@ -17,13 +17,11 @@ import { chromium } from 'playwright-core'
 import type { Browser, Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
-// 2026-10-19 (444.1-19, D-29): the cancelled run's member drive (its working-memory flush is its last
-// write) and its post-processing tail outlive the run; both are awaited before the roots are removed.
+// 2026-10-19 (444.1-21, D-36): each in-process drive's own tail and member executions (a member's
+// finally writes its working-memory flush) are awaited before the roots are removed.
 const inFlight = vi.hoisted(() => ({
   tails: [] as Array<Promise<void>>,
-  drives: 0,
-  flushes: 0,
-  waiters: [] as Array<() => void>,
+  members: [] as Array<Promise<unknown>>,
 }))
 
 vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) => {
@@ -31,7 +29,6 @@ vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) 
   return {
     ...original,
     runInProcessCliRun: async (...args: Parameters<typeof original.runInProcessCliRun>) => {
-      inFlight.drives += 1
       const outcome = await original.runInProcessCliRun(...args)
       if (outcome.settled !== undefined) inFlight.tails.push(outcome.settled)
       return outcome
@@ -39,16 +36,21 @@ vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) 
   }
 })
 
-vi.mock('../../wm-flush.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../../wm-flush.js')>()
+vi.mock('../../commands/run.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../commands/run.js')>()
   return {
     ...original,
-    flushWorkingMemory: async (...args: Parameters<typeof original.flushWorkingMemory>) => {
-      try {
-        return await original.flushWorkingMemory(...args)
-      } finally {
-        inFlight.flushes += 1
-        for (const wake of inFlight.waiters.splice(0)) wake()
+    produceMembersFromPatterns: async (
+      ...args: Parameters<typeof original.produceMembersFromPatterns>
+    ) => {
+      const produced = await original.produceMembersFromPatterns(...args)
+      return {
+        ...produced,
+        executor: (...run: Parameters<typeof produced.executor>) => {
+          const execution = produced.executor(...run)
+          inFlight.members.push(execution)
+          return execution
+        },
       }
     },
   }
@@ -607,9 +609,13 @@ describe('C444-PRE-FIX', () => {
     else process.env.CI = savedCi
     if (savedBrowsers === undefined) delete process.env.PLAYWRIGHT_BROWSERS_PATH
     else process.env.PLAYWRIGHT_BROWSERS_PATH = savedBrowsers
-    await Promise.allSettled(inFlight.tails.splice(0))
-    while (inFlight.flushes < inFlight.drives) await new Promise<void>((wake) => inFlight.waiters.push(wake))
-    cleanupTempRoots()
+    try {
+      while (inFlight.tails.length + inFlight.members.length > 0) {
+        await Promise.allSettled([...inFlight.tails.splice(0), ...inFlight.members.splice(0)])
+      }
+    } finally {
+      cleanupTempRoots()
+    }
   }, 120_000)
 
   it('the instruments see every seeded run on the All tab', () => {
