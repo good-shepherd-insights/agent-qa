@@ -40,7 +40,7 @@ import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { composeAnalyticsHost } from '../../composition/analytics-host.js'
 import {
@@ -59,7 +59,15 @@ import { DAEMON_EVENTS_FILE } from '../events.js'
 import { runDaemonHost } from '../host.js'
 import type { DaemonHostOperations } from '../host.js'
 import { closeTestRunRecords, testRunRecord } from '../../composition/__tests__/in-process-run-fixture.js'
-import { removeTempRoots } from '../../__tests__/temp-roots.js'
+import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
+import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })

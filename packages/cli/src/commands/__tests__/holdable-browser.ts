@@ -160,7 +160,8 @@ export function plantHoldableBrowser(host: HoldableBrowserHost): HoldableBrowser
         'fs.renameSync(`${control}/pending-arrival-${ordinal}`, `${control}/arrived-${ordinal}`)',
         '// Property 5 — no clock: park until the cell alone says otherwise.',
         'const parked = () => {',
-        '  if (fs.existsSync(`${control}/release-${ordinal}`)) process.exit(1)',
+        // 2026-10-19 (444.1-24, D-39): a removed root lets it go too, so removal strands no stand-in.
+        '  if (!fs.existsSync(control) || fs.existsSync(`${control}/release-${ordinal}`)) process.exit(1)',
         '  setTimeout(parked, 25)',
         '}',
         'parked()',

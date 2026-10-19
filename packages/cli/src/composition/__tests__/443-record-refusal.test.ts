@@ -29,6 +29,15 @@ import {
   runDirs,
   removeInProcessFixtures,
 } from './in-process-run-fixture.js'
+import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
+import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 type Fixture = ReturnType<typeof createInProcessFixture>
 

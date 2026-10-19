@@ -38,9 +38,18 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { generateTestId } from '@vostride/agent-qa-ids'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import { CountingTarget } from '../../composition/__tests__/in-process-run-fixture.js'
+import { pinProcessTmpdir, removeTempRoots } from '../temp-roots.js'
+import type { PinnedTmpdir } from '../temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 const CLI_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'dist', 'cli.js')
 const OPT_IN_LINE = 'allowProduction: true'

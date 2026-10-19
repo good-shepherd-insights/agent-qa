@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
 
 import { Command } from 'commander'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
 import type { RunStartAcknowledgement } from '@vostride/agent-qa-schema'
@@ -35,6 +35,15 @@ import {
   eventTypes,
   removeInProcessFixtures,
 } from '../composition/__tests__/in-process-run-fixture.js'
+import { pinProcessTmpdir, removeTempRoots } from './temp-roots.js'
+import type { PinnedTmpdir } from './temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 type DoorMode = 'ci' | 'tty'
 

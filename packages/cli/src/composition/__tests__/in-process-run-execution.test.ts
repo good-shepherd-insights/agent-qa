@@ -26,7 +26,7 @@
 // lines and the same codes arriving as a VALUE, and — the discriminating half — that the
 // host-terminating call was never reached.
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   produceMembersFromPatterns,
@@ -37,6 +37,15 @@ import {
 import type { RunOptions } from '../../commands/run.js'
 import { CliRunInputError } from '../in-process-run-execution.js'
 import { CountingTarget, createInProcessFixture } from './in-process-run-fixture.js'
+import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
+import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 /**
  * Drive a producer with the host-terminating call STUBBED TO THROW A MARKER.
@@ -278,7 +287,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeEach } from 'vitest'
+import { afterEach, beforeEach } from 'vitest'
 
 import {
   getActiveExecutionContext,

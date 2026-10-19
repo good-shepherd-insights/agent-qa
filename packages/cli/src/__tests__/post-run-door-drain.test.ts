@@ -26,7 +26,7 @@
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import type { CliRunOutcome } from '../composition/in-process-run-execution.js'
 import { runInProcessCliRun } from '../composition/in-process-run-execution.js'
@@ -37,6 +37,15 @@ import {
   removeInProcessFixtures,
 } from '../composition/__tests__/in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from '../composition/__tests__/in-process-run-fixture.js'
+import { pinProcessTmpdir, removeTempRoots } from './temp-roots.js'
+import type { PinnedTmpdir } from './temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })

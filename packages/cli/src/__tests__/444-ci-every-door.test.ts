@@ -11,7 +11,7 @@ import { acquireWriterLease, releaseLease } from '@vostride/agent-qa-knowledge-l
 import { asRecordId, computeBriefDigest, guardCompletedRunHandoff, sha256hex } from '@vostride/agent-qa-schema'
 import type { ServedBrief } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { createRunCommand } from '../commands/run.js'
 import * as drive from '../composition/in-process-run-execution.js'
@@ -33,6 +33,15 @@ import {
   recoverPendingPostVerdictContinuations,
 } from '../curation/post-verdict-continuation.js'
 import { dispositionOf, type PostVerdictHandoff } from '../curation/post-verdict-step.js'
+import { pinProcessTmpdir, removeTempRoots } from './temp-roots.js'
+import type { PinnedTmpdir } from './temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 // Spelled here rather than imported, so the cells pin the words (D-22, 444-14).
 const ANY_HOST = "resumes only if this workspace's .agent-qa/ is kept and a later run or the daemon picks it up"

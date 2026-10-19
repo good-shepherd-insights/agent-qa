@@ -64,7 +64,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { resolveRunExecutionContext } from '@vostride/agent-qa-agent-local'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
   CLI_DIST,
@@ -78,6 +78,15 @@ import {
   withoutDeclaredRunDirAdditions,
 } from '../../../../../scripts/401-11-capture-parity.mjs'
 import type { ParityGolden, ParityReading } from '../../../../../scripts/401-11-capture-parity.mjs'
+import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
+import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 /**
  * The golden is checked for non-vacuity ON LOAD rather than trusted for being a file: a golden

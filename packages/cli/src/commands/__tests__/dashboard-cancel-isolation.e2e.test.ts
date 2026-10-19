@@ -44,7 +44,22 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// 2026-10-19 (444.1-24, D-39): each drive and its detached tail are awaited before removal.
+const tails = vi.hoisted(() => [] as Array<Promise<void>>)
+
+vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../composition/in-process-run-execution.js')>()
+  return {
+    ...original,
+    runInProcessCliRun: (...args: Parameters<typeof original.runInProcessCliRun>) => {
+      const drive = original.runInProcessCliRun(...args)
+      tails.push(drive.then((outcome) => outcome.settled, () => undefined))
+      return drive
+    },
+  }
+})
 
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import type { ExecuteOptions, RunSettledDetails } from '@vostride/agent-qa-dashboard'
@@ -121,7 +136,10 @@ afterEach(() => {
   plantedBrowsers?.restoreBrowsersPath()
   plantedBrowsers = undefined
 })
-afterAll(() => { removeInProcessFixtures() })
+afterAll(async () => {
+  await Promise.allSettled(tails.splice(0))
+  removeInProcessFixtures()
+})
 
 describe('cancelling one of two concurrently executing dashboard runs (401 UAT 14 / truth 5, D-12)', () => {
   it('ABORTS THE NAMED RUN MID-FLIGHT AND LEAVES THE OTHER TO ITS OWN VERDICT, EACH UNDER ITS OWN runId', async () => {

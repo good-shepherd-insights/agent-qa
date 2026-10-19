@@ -30,7 +30,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { invokeFunction } from '@vostride/agent-qa-agent'
@@ -51,7 +51,15 @@ import { runInProcessCliRun } from '../in-process-run-execution.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import { CountingTarget } from './in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
-import { removeTempRoots } from '../../__tests__/temp-roots.js'
+import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
+import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 // 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })

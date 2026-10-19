@@ -67,7 +67,7 @@ import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import { buildAgentQaMcpServer } from '@vostride/agent-qa-mcp'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { Command } from 'commander'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
 import { createAskCommand } from '../../commands/ask.js'
@@ -82,7 +82,15 @@ import { invokeViaDaemon } from '../../daemon/client.js'
 import { runDaemonHost } from '../../daemon/host.js'
 import type { DaemonHostOperations } from '../../daemon/host.js'
 import { driveChatLines, genericFnClause } from './surface-dispatch.js'
-import { removeTempRoots } from '../temp-roots.js'
+import { pinProcessTmpdir, removeTempRoots } from '../temp-roots.js'
+import type { PinnedTmpdir } from '../temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 const CLI_DIST = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'dist', 'cli.js')
 const OPT_IN_LINE = 'allowProduction: true'

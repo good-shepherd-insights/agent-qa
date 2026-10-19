@@ -40,7 +40,22 @@ import { join } from 'node:path'
 
 import { chromium } from 'playwright-core'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+
+// 2026-10-19 (444.1-24, D-39): each drive and its detached tail are awaited before removal.
+const tails = vi.hoisted(() => [] as Array<Promise<void>>)
+
+vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../composition/in-process-run-execution.js')>()
+  return {
+    ...original,
+    runInProcessCliRun: (...args: Parameters<typeof original.runInProcessCliRun>) => {
+      const drive = original.runInProcessCliRun(...args)
+      tails.push(drive.then((outcome) => outcome.settled, () => undefined))
+      return drive
+    },
+  }
+})
 
 import { DashboardDatabase, startServer } from '@vostride/agent-qa-dashboard'
 import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
@@ -350,6 +365,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close()
+  await Promise.allSettled(tails.splice(0))
   removeInProcessFixtures()
 })
 

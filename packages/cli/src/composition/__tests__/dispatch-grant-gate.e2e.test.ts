@@ -44,7 +44,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import * as agentLocal from '@vostride/agent-qa-agent-local'
@@ -66,6 +66,15 @@ import {
   removeInProcessFixtures,
 } from './in-process-run-fixture.js'
 import type { AuditRow } from './in-process-run-fixture.js'
+import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
+import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
 
 /** The one field a consumed grant leaves on a row — the whole of the attribution claim. */
 type GateAuditRow = AuditRow & { readonly trustSource?: string }

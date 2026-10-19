@@ -52,7 +52,22 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+
+// 2026-10-19 (444.1-24, D-39): each drive and its detached tail are awaited before removal.
+const tails = vi.hoisted(() => [] as Array<Promise<void>>)
+
+vi.mock('../in-process-run-execution.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../in-process-run-execution.js')>()
+  return {
+    ...original,
+    runInProcessCliRun: (...args: Parameters<typeof original.runInProcessCliRun>) => {
+      const drive = original.runInProcessCliRun(...args)
+      tails.push(drive.then((outcome) => outcome.settled, () => undefined))
+      return drive
+    },
+  }
+})
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import {
@@ -80,8 +95,20 @@ import {
   runDirs,
   removeInProcessFixtures,
 } from './in-process-run-fixture.js'
+import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
+import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
 
-afterAll(() => { removeInProcessFixtures() })
+let pinnedTmpdir: PinnedTmpdir | undefined
+beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
+afterAll(() => {
+  pinnedTmpdir?.restore()
+  if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
+})
+
+afterAll(async () => {
+  await Promise.allSettled(tails.splice(0))
+  removeInProcessFixtures()
+})
 
 type Fixture = ReturnType<typeof createInProcessFixture>
 

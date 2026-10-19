@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { realpathSync, rmSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -18,4 +18,23 @@ function socketFallbackDirs(root: string): string[] {
 export function removeTempRoots(roots: readonly string[]): void {
   const fallbacks = roots.flatMap(socketFallbackDirs)
   for (const path of [...fallbacks, ...roots]) rmSync(path, { recursive: true, force: true })
+}
+
+export interface PinnedTmpdir {
+  readonly root: string
+  restore(): void
+}
+
+// 2026-10-19 (444.1-24, D-39): a failed browser launch leaves Playwright's dirs in this tmpdir.
+export function pinProcessTmpdir(): PinnedTmpdir {
+  const previous = process.env.TMPDIR
+  const root = mkdtempSync('/tmp/aq24-')
+  process.env.TMPDIR = root
+  return {
+    root,
+    restore: () => {
+      if (previous === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = previous
+    },
+  }
 }
