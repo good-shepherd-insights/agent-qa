@@ -14094,6 +14094,30 @@
       "file": "packages/cli/src/__tests__/conformance/444.1-retry-backoff.test.ts",
       "fullName": "C444.1-RETRY-BACKOFF a later run in the same workspace completes its own chain behind an earlier retrying analysis",
       "origin": "444.1 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/444.1-interrupted.test.ts",
+      "fullName": "C444.1-INTERRUPTED an aborted model request returns its job to the queue without spending an attempt",
+      "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/jobs/__tests__/444.1-interrupted.test.ts",
+      "fullName": "C444.1-INTERRUPTED an aborted last attempt is not a permanent failure",
+      "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent-local/src/__tests__/sqlite-job-store.test.ts",
+      "fullName": "C444.1-INTERRUPTED an interrupted job is queued again with its attempt refunded and its last failure kept",
+      "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/post-run-chip-events.test.ts",
+      "fullName": "C444.1-INTERRUPTED an interrupted stage emits no failure chip",
+      "origin": "444.1 D-01"
     }
   ]
 }
