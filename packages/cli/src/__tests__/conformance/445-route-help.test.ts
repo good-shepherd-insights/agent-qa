@@ -21,7 +21,7 @@ import {
 
 const DOCS = resolve(CLI_PACKAGE_ROOT, '..', '..', 'docs')
 const ROUTE_PAGE = 'getting-started.md'
-const PAGES = [ROUTE_PAGE]
+const PAGES = [ROUTE_PAGE, 're-initialize.md']
 const NODE_LINE = 'Node.js 24 or newer (npm comes with it)'
 const ROUTE_MARKERS = [
   NODE_LINE,
@@ -63,7 +63,7 @@ function readPage(page: string): string {
 
 function shellLines(markdown: string): string[] {
   const lines: string[] = []
-  for (const block of markdown.matchAll(/^```(?:sh|bash)\n([\s\S]*?)^```$/gmu)) {
+  for (const block of markdown.matchAll(/^[ \t]*```(?:sh|bash)\n([\s\S]*?)^[ \t]*```$/gmu)) {
     lines.push(...block[1]!.split('\n').map((line) => line.trim()).filter((line) => line !== ''))
   }
   return lines
