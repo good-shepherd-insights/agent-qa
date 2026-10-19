@@ -13956,6 +13956,18 @@
       "file": "packages/android/src/__tests__/adapter.test.ts",
       "fullName": "AndroidPlatformAdapter C444.1-WEBVIEW-SCREENSHOT a native screenshot is returned as captured",
       "origin": "444.1 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-SESSION-START a foreground app read through mobile queryAppState when the typed query is gone is not activated",
+      "origin": "444.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-SESSION-START an app state that neither query can read activates the app once",
+      "origin": "444.1 D-11"
     }
   ]
 }
