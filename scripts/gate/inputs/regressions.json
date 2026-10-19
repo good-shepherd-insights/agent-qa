@@ -14640,6 +14640,36 @@
       "file": "packages/cli/src/__tests__/doctor.test.ts",
       "fullName": "C445-DOCTOR-AUTH the LLM rows name auth login, never the dashboard",
       "origin": "445 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-no-migration-census.test.ts",
+      "fullName": "C445-NO-MIGRATION no shipped command or option offers a migration, an upgrade or a compatibility no-op",
+      "origin": "445 D-37"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-no-migration-census.test.ts",
+      "fullName": "C445-NO-MIGRATION only doctor reads the legacy memory directory, and only to warn",
+      "origin": "445 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-no-migration-census.test.ts",
+      "fullName": "C445-NO-MIGRATION only init writes the managed gitignore block",
+      "origin": "445 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-no-migration-census.test.ts",
+      "fullName": "C445-NO-MIGRATION every kept item is still what it was classified as",
+      "origin": "445 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-no-migration-census.test.ts",
+      "fullName": "C445-NO-MIGRATION core exports no workspace migration",
+      "origin": "445 D-37"
     }
   ]
 }
