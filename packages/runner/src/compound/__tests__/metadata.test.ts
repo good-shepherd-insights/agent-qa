@@ -76,6 +76,13 @@ describe('readFillSubmitMeta', () => {
     }
   })
 
+  it('reads a focus lost hold', () => {
+    expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, reason: 'focus-lost' } }))).toEqual({
+      sent: false,
+      reason: 'focus-lost',
+    })
+  })
+
   it('rejects an unknown outcome or reason, and a sent that contradicts the outcome', () => {
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, outcome: 'skipped' } }))).toBeUndefined()
     expect(readFillSubmitMeta(carrier({ fillSubmit: { sent: false, outcome: 'not-sent', reason: 'busy' } }))).toBeUndefined()
