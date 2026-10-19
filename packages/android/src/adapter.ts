@@ -811,7 +811,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     } else {
       try { await this.ensureContext('NATIVE_APP') } catch { /* best-effort */ }
     }
-    let buf = await this.captureScreenshot()
+    const buf = await this.captureScreenshot()
     if (buf && this.driver) {
       // D-19 / D-20 (Phase 138.1.1): Android screenshot dims differ from getWindowSize() on WebView
       // (1080x2274 image vs 411x810 viewport — ~6% vertical AR drift from URL bar, per D-13/D-14).
@@ -819,10 +819,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       // scaling code — coords are viewport-space identity. Log kept for diagnostics.
       try {
         // 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core).
-        const { flattenOntoWhite, getImageDimensions } =
-          await import('@vostride/agent-qa-runner-local')
-        // D-12 (#567): a WebView page's unset background is transparent, and black once in JPEG.
-        if (this.activeWebContext) buf = await flattenOntoWhite(buf)
+        const { getImageDimensions } = await import('@vostride/agent-qa-runner-local')
         const dims = await getImageDimensions(buf)
         const { width } = await this.driver.getWindowSize()
         if (dims && Math.abs(dims.width - width) > 1) {
@@ -1050,7 +1047,15 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     try {
       if (this.driver) {
         const base64 = await this.driver.takeScreenshot()
-        return Buffer.from(base64, 'base64')
+        const buf = Buffer.from(base64, 'base64')
+        if (!this.activeWebContext) return buf
+        // 2026-10-19 (444.1-22, D-34): every capture in a WebView context, so the failure screenshot and the live preview are not black either.
+        try {
+          const { flattenOntoWhite } = await import('@vostride/agent-qa-runner-local')
+          return await flattenOntoWhite(buf)
+        } catch {
+          return buf
+        }
       }
       return undefined
     } catch {
