@@ -122,6 +122,7 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
   let stepsPassed = 0
   let stepsFailed = 0
   let stepsSkipped = 0
+  let stepsCancelled = 0
   let cacheHits = 0
   let cacheMisses = 0
 
@@ -129,11 +130,13 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
   let ptPassed = 0
   let ptFailed = 0
   let ptSkipped = 0
+  let ptCancelled = 0
 
   // test-level tallies
   let testsPassed = 0
   let testsFailed = 0
   let testsSkipped = 0
+  let testsCancelled = 0
   let totalDurationMs = 0
   // 390 D-14: counted SEPARATELY and never subtracted from `testsFailed` — the member outcome stays
   // truthful, and this is the segment that explains the green build's arithmetic.
@@ -148,6 +151,7 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     ptPassed = 0
     ptFailed = 0
     ptSkipped = 0
+    ptCancelled = 0
     stepTextByIndex.clear()
     hookPhaseStarted.clear()
   }
@@ -161,8 +165,9 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
         case 'failed':
           return 'x'
         case 'skipped':
-        case 'cancelled':
           return 'skipped'
+        case 'cancelled':
+          return 'cancelled'
         default:
           return '-'
       }
@@ -175,8 +180,9 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
       case 'failed':
         return c(pc.red, '✗')
       case 'skipped':
-      case 'cancelled':
         return c(pc.dim, '○')
+      case 'cancelled':
+        return c(pc.yellow, '⊘')
       default:
         return ' '
     }
@@ -195,10 +201,11 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
   }
 
   function formatStepsLine(): string {
-    const total = stepsPassed + stepsFailed + stepsSkipped
+    const total = stepsPassed + stepsFailed + stepsCancelled + stepsSkipped
     const parts: string[] = []
     if (stepsPassed > 0) parts.push(c(pc.green, `${stepsPassed} passed`))
     if (stepsFailed > 0) parts.push(c(pc.red, `${stepsFailed} failed`))
+    if (stepsCancelled > 0) parts.push(c(pc.yellow, `${stepsCancelled} cancelled`))
     if (stepsSkipped > 0) parts.push(c(pc.dim, `${stepsSkipped} skipped`))
     parts.push(`${total} total`)
     return parts.join(', ')
@@ -239,7 +246,8 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     const status = payload.status
     if (status === 'passed' || status === 'healed') ptPassed++
     else if (status === 'failed') ptFailed++
-    else if (status === 'skipped' || status === 'cancelled') ptSkipped++
+    else if (status === 'skipped') ptSkipped++
+    else if (status === 'cancelled') ptCancelled++
 
     if (payload.cacheStatus === 'hit') cacheHits++
     else if (payload.cacheStatus === 'miss') cacheMisses++
@@ -289,15 +297,18 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     stepsPassed += ptPassed
     stepsFailed += ptFailed
     stepsSkipped += ptSkipped
+    stepsCancelled += ptCancelled
     totalDurationMs += payload.durationMs ?? 0
 
     const meta = testMeta.get(payload.testIndex)
     const name = meta?.name ?? payload.name ?? `Test ${payload.testIndex + 1}`
     const outcome = payload.outcome
     const failed = outcome === 'failed' || outcome === 'timeout'
-    const skipped = outcome === 'skipped' || outcome === 'cancelled'
+    const skipped = outcome === 'skipped'
+    const cancelled = outcome === 'cancelled'
     if (failed) testsFailed++
     else if (skipped) testsSkipped++
+    else if (cancelled) testsCancelled++
     else testsPassed++
 
     // Only a FAILED member carries the disposition: the annotation's claim is "this failure is not
@@ -313,9 +324,13 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
 
     if (failed) failedTests.push({ name, failureSummary: payload.failureSummary, quarantined })
 
-    const badge = failed ? testBadge('failed') : skipped ? statusIcon('skipped') : testBadge('passed')
+    const badge = failed
+      ? testBadge('failed')
+      : skipped || cancelled
+        ? statusIcon(outcome)
+        : testBadge('passed')
     const indent = sawSuite ? '  ' : ''
-    const dur = skipped ? '(skipped)' : humanDuration(payload.durationMs ?? 0)
+    const dur = skipped || cancelled ? `(${outcome})` : humanDuration(payload.durationMs ?? 0)
     // Empty at zero quarantined, so this line is byte-identical to its pre-390 self.
     const disposition = quarantined ? ` ${c(pc.yellow, QUARANTINE_TEST_ANNOTATION)}` : ''
     println(`${indent}${badge} ${name} ${c(pc.dim, dur)}${disposition}`)
@@ -324,7 +339,8 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
 
   function onRunFinished(_payload: RunFinishedPayload): void {
     println('')
-    const total = testsPassed + testsFailed + testsSkipped
+    const total = testsPassed + testsFailed + testsSkipped + testsCancelled
+    const cancelledSegment = testsCancelled > 0 ? `, ${testsCancelled} cancelled` : ''
     if (failedTests.length > 0) {
       println(c(pc.red, 'Failed tests:'))
       for (const failure of failedTests) {
@@ -337,7 +353,8 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
         }
       }
     }
-    println(`Tests:  ${testsPassed} of ${total} passed${renderQuarantineSummarySegment(quarantinedFailures)}`)
+    const segments = `${cancelledSegment}${renderQuarantineSummarySegment(quarantinedFailures)}`
+    println(`Tests:  ${testsPassed} of ${total} passed${segments}`)
     println(`Steps:  ${formatStepsLine()}`)
     println(`Cache:  ${cacheHits} hits, ${cacheMisses} misses`)
     println(`Time:   ${humanDuration(totalDurationMs)}`)
