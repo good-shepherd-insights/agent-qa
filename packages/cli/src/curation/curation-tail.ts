@@ -418,8 +418,9 @@ function misdirectionHarmLine(
  * A local run applies what curation learned to the knowledge root in the fold. A `ci` or `cloud`
  * run records it as candidates it never promotes, and keeps a supersession proposed (444 D-57). A
  * change that delta validation refused is downgraded anywhere. `committed` counts both, so the
- * recorded share is `committed - downgraded`. Silent when the fold committed nothing, and it never
- * points at a review step: there is none.
+ * recorded share is `committed - downgraded`. The caller passes only the changes the breakdown
+ * buckets count, never canary evidence events (444.1 D-25). Silent when there are none, and it
+ * never points at a review step: there is none.
  */
 export function curationOutcomeLine(input: {
   readonly executionContext: ExecutionContext | undefined
@@ -817,7 +818,7 @@ export async function curateCompletedRun(
       for (const entry of drain.promotions ?? []) input.log.info?.(renderPromotionLine(entry))
       const outcomeLine = curationOutcomeLine({
         executionContext: input.handoff.executionContext,
-        committed: drain.committed,
+        committed: drain.committed - (drain.evidenceCommitted ?? 0),
         downgraded: drain.downgraded,
       })
       if (outcomeLine !== undefined) input.log.info?.(outcomeLine)

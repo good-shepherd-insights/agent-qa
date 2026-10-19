@@ -166,6 +166,8 @@ interface DrainReportBase {
   snapshotFoldFailed?: true
   jobsProcessed: number
   committed: number
+  // 2026-10-19 (444.1-16, D-25): the canary evidence commits in `committed`; no bucket counts them.
+  evidenceCommitted?: number
   /**
    * Committed deltas whose kind was `Deprecate` (388-02).
    *
@@ -198,6 +200,7 @@ interface DrainReportBase {
 
 interface MutableDrainReport extends DrainReportBase {
   promotions: DrainPromotionOutcome[]
+  evidenceCommitted: number
 }
 
 export type DrainReport = DrainReportBase &
@@ -376,6 +379,7 @@ function emptyReport(): MutableDrainReport {
   return {
     jobsProcessed: 0,
     committed: 0,
+    evidenceCommitted: 0,
     deprecated: 0,
     promotions: [],
     downgraded: 0,
@@ -1045,6 +1049,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         }
         emitCompleted(claimed.candidateId)
         result.committed += 1
+        result.evidenceCommitted += 1
         continue
       }
 
