@@ -1,4 +1,4 @@
-// C445-HARD-CUT (445-11, D-24, D-27, D-35): a v1-shaped workspace survives the documented hard cut
+// C445-HARD-CUT (445-11, D-24, D-27, D-35; 445-17, D-42, D-43): a v1-shaped workspace survives the documented hard cut
 
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -90,6 +90,11 @@ interface Leg {
 interface Scene {
   root?: string
   firstValidate?: Leg
+  filesBeforeDaemonStop?: Record<string, string>
+  daemonStop?: Leg
+  daemonStopAgain?: Leg
+  filesAfterDaemonStop?: Record<string, string>
+  daemonStatus?: Leg
   refusedInit?: Leg
   configKeptAfterRefusal?: boolean
   treeKeptAfterRefusal?: boolean
@@ -156,6 +161,21 @@ function tree(root: string): Record<string, string> {
       const path = join(dir, entry.name)
       const local = relative(root, path).split(sep).join('/')
       if (local === '.git' || local === '.agent-qa') continue
+      if (entry.isDirectory()) walk(path)
+      else files[local] = sha256(path)
+    }
+  }
+  walk(root)
+  return Object.fromEntries(Object.entries(files).sort(([a], [b]) => a.localeCompare(b)))
+}
+
+function everyFile(root: string): Record<string, string> {
+  const files: Record<string, string> = {}
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      const local = relative(root, path).split(sep).join('/')
+      if (local === '.git') continue
       if (entry.isDirectory()) walk(path)
       else files[local] = sha256(path)
     }
@@ -362,7 +382,12 @@ function drive(): void {
   scene.root = root
   scene.keptBefore = hashes(root, KEPT)
   scene.firstValidate = cli(root, ['validate'])
-  const config = readFileSync(join(root, 'agent-qa.config.yaml'), 'utf8')
+  scene.filesBeforeDaemonStop = everyFile(root)
+  scene.daemonStop = cli(root, ['daemon', 'stop'])
+  scene.daemonStopAgain = cli(root, ['daemon', 'stop'])
+  scene.filesAfterDaemonStop = everyFile(root)
+  scene.daemonStatus = cli(root, ['daemon', 'status'])
+  const config =readFileSync(join(root, 'agent-qa.config.yaml'), 'utf8')
   const beforeRefusal = tree(root)
   scene.refusedInit = cli(root, INIT_ARGS)
   scene.configKeptAfterRefusal = readFileSync(join(root, 'agent-qa.config.yaml'), 'utf8') === config
@@ -433,6 +458,10 @@ describe('C445-HARD-CUT', () => {
     }
     console.info(`C445-HARD-CUT scene: ${JSON.stringify({
       firstValidate: exited(scene.firstValidate),
+      daemonStop: exited(scene.daemonStop),
+      daemonStopAgain: exited(scene.daemonStopAgain),
+      daemonStatus: exited(scene.daemonStatus),
+      filesBeforeDaemonStop: Object.keys(scene.filesBeforeDaemonStop ?? {}).length,
       refusedInit: exited(scene.refusedInit),
       configKeptAfterRefusal: scene.configKeptAfterRefusal,
       treeKeptAfterRefusal: scene.treeKeptAfterRefusal,
@@ -462,6 +491,27 @@ describe('C445-HARD-CUT', () => {
     expect(text, seen()).toContain('agent-qa init --force')
     expect(text, seen()).toContain('agent-qa-memory/')
     expect(text, seen()).not.toContain(OLD_INIT_LINE)
+  })
+
+  it('daemon stop on a v1 config says nothing to stop twice and changes no file, and daemon status still names the hard cut', () => {
+    assertFreshBuild()
+    expect(scene.error, seen()).toBeUndefined()
+    const firstStep = HARD_CUT_STEPS.split('\n')[0]!
+    for (const leg of [scene.daemonStop, scene.daemonStopAgain]) {
+      expect(leg?.signal, seen()).toBeNull()
+      const text = output(leg)
+      expect(text, seen()).toContain('agent-qa daemon has nothing to stop')
+      expect(text, seen()).not.toContain('Config validation failed')
+      expect(text, seen()).not.toContain(firstStep)
+    }
+    expect(scene.daemonStopAgain?.code, seen()).toBe(scene.daemonStop?.code)
+    expect(Object.keys(scene.filesBeforeDaemonStop ?? {}).length, seen()).toBeGreaterThan(0)
+    expect(scene.filesAfterDaemonStop, seen()).toEqual(scene.filesBeforeDaemonStop)
+    expect(exited(scene.daemonStatus), seen()).toEqual({ code: 1, signal: null })
+    expect(output(scene.daemonStatus), seen()).toContain(HARD_CUT_STEPS)
+    expect(readFileSync(join(DOCS, PAGE), 'utf8'), `${PAGE} names what v2 prints`).toContain(
+      'agent-qa daemon has nothing to stop',
+    )
   })
 
   it('init --force over the old knowledge root refuses and names the missing rule', () => {
