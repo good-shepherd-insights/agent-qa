@@ -13842,6 +13842,24 @@
       "file": "packages/android/src/__tests__/437-fill-paths.test.ts",
       "fullName": "C437-CLEAR a clear whose field moved after the tap clears nothing",
       "origin": "444.1 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read whose focus was lost sends no Return and records focus lost",
+      "origin": "444.1 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/ios/src/__tests__/text-input.test.ts",
+      "fullName": "IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read whose focus holds sends the requested Return once",
+      "origin": "444.1 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/compound/__tests__/metadata.test.ts",
+      "fullName": "readFillSubmitMeta reads a focus lost hold",
+      "origin": "444.1 D-10"
     }
   ]
 }
