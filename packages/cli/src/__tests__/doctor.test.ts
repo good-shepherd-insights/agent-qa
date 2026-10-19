@@ -367,7 +367,7 @@ describe('doctor command', () => {
 
     await runDoctor()
     const output = getOutput()
-    expect(output).toContain('requires 24+')
+    expect(output).toContain('requires Node.js 24 or newer')
     expect(output).toContain('FAIL')
   })
 
@@ -1045,7 +1045,7 @@ targets:
 
     await runDoctor()
     const output = getOutput()
-    expect(output).toContain('Install Node.js 24+')
+    expect(output).toContain('Install Node.js 24 or newer')
   })
   // ---- 407 TRST-02: the three knowledge trust rows (D-18/D-19/D-20) ----------------------------
 
@@ -1326,6 +1326,56 @@ targets:
 function wordyMessage(length: number): string {
   return 'lorem ipsum dolor sit amet '.repeat(20).slice(0, length).trimEnd()
 }
+
+describe('C445-NODE-FLOOR-DOCTOR', () => {
+  const versionDescriptor = Object.getOwnPropertyDescriptor(process, 'version')!
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockExistsSync.mockReturnValue(false)
+    mockReadFile.mockRejectedValue({ code: 'ENOENT' })
+    mockLoadLLMAuthPlugins.mockResolvedValue([])
+    mockLoadProviderPluginsForRawConfig.mockResolvedValue()
+    mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
+    mockReadFileSync.mockReturnValue('')
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({ source: 'index' })
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue(NATIVE_READY)
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'absent' })
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    forceTerminalWidth(WIDE_TEST_WIDTH)
+  })
+
+  afterEach(() => {
+    Object.defineProperty(process, 'version', versionDescriptor)
+    restoreTerminalWidth()
+    process.exitCode = 0
+  })
+
+  function nodeFixLine(): string | undefined {
+    const lines = consoleLogs.map(stripAnsi)
+    const start = lines.findIndex(line => line.startsWith('    Node.js  '))
+    const next = lines[start + 1]
+    return start >= 0 && next !== undefined && FIX_LINE_PATTERN.test(next) ? next : undefined
+  }
+
+  it('the Node row names the same install line as the bin', async () => {
+    Object.defineProperty(process, 'version', { ...versionDescriptor, value: 'v22.0.0' })
+    await runDoctor()
+    const refused = rowFor('Node.js')
+    expect(refused, getOutput()).toContain('v22.0.0')
+    expect(refused, getOutput()).toContain('FAIL')
+    expect(nodeFixLine(), getOutput()).toBe(
+      '      Fix: Install Node.js 24 or newer from https://nodejs.org/, then run the command again.',
+    )
+
+    Object.defineProperty(process, 'version', versionDescriptor)
+    await runDoctor()
+    const supported = rowFor('Node.js')
+    expect(supported, getOutput()).toContain(process.version)
+    expect(supported, getOutput()).toContain('PASS')
+    expect(nodeFixLine(), getOutput()).toBeUndefined()
+  })
+})
 
 describe('doctor row renderer (407-24 · G-407-3)', () => {
   const originalColumnsEnv = process.env.COLUMNS
