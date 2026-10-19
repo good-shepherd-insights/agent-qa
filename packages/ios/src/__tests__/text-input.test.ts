@@ -593,6 +593,52 @@ describe('IOSPlatformAdapter text input (AUTO-18)', () => {
       )
     })
 
+    it('an unreadable re-read whose focus was lost sends no Return and records focus lost', async () => {
+      unreadable(fields.title, 'title')
+      fields.title.setValue.mockImplementation((v: string) => {
+        calls.push('setValue:title')
+        fields.title.value = v
+        activeElement = () => Promise.resolve({ [W3C_ELEMENT_KEY]: 'body' })
+        return Promise.resolve()
+      })
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello', { submit: true })
+
+      expect(fields.title.setValue).toHaveBeenCalledWith('Hello')
+      expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({
+        fillVerdict: { verb: 'fill', verdict: 'unverified' },
+        fillSubmit: { sent: false, reason: 'focus-lost' },
+      })
+      expect(mockDriver.keys).not.toHaveBeenCalled()
+    })
+
+    it('an unreadable re-read whose focus holds sends the requested Return once', async () => {
+      unreadable(fields.title, 'title')
+      activeElement = () => {
+        calls.push('activeElement')
+        return activeByLastTap()
+      }
+      await start()
+      const ref = await refFor('Title')
+
+      const result = await fill(ref, 'Hello', { submit: true })
+
+      expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({
+        fillVerdict: { verb: 'fill', verdict: 'unverified' },
+        fillSubmit: { sent: true },
+      })
+      expect(mockDriver.keys).toHaveBeenCalledTimes(1)
+      expect(mockDriver.keys).toHaveBeenCalledWith(['\n'])
+      const reread = calls.lastIndexOf('getAttr:title:value')
+      const sent = calls.findIndex(c => c.startsWith('keys:'))
+      expect(reread).toBeGreaterThan(-1)
+      expect(calls.slice(reread + 1, sent).filter(c => c === 'activeElement')).toHaveLength(1)
+    })
+
     it('an unreadable re-read in a multi-line field sends no Return and records the multi-line outcome', async () => {
       unreadable(fields.body, 'body')
       await start()
