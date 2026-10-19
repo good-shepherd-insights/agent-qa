@@ -14670,6 +14670,30 @@
       "file": "packages/cli/src/__tests__/445-no-migration-census.test.ts",
       "fullName": "C445-NO-MIGRATION core exports no workspace migration",
       "origin": "445 D-37"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-route-help.test.ts",
+      "fullName": "C445-ROUTE-HELP every agent-qa command and flag the route and the re-initialize page name exists in the shipped help",
+      "origin": "445 D-19"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-route-help.test.ts",
+      "fullName": "C445-ROUTE-HELP the route names its steps in the documented order",
+      "origin": "445 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-route-help.test.ts",
+      "fullName": "C445-ROUTE-HELP the route names npm only and states the Node floor in one line",
+      "origin": "445 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-route-help.test.ts",
+      "fullName": "C445-ROUTE-HELP the first-run command selects the suite init writes",
+      "origin": "445 D-17"
     }
   ]
 }
