@@ -14598,6 +14598,48 @@
       "file": "packages/cli/src/__tests__/doctor.test.ts",
       "fullName": "C445-DOCTOR-CONFIG doctor tells a v1 config the hard cut steps",
       "origin": "445 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-setup-errors.test.ts",
+      "fullName": "C445-SETUP-ERRORS a missing browser names agent-qa install-browsers --chromium and exits 2",
+      "origin": "445 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-setup-errors.test.ts",
+      "fullName": "C445-SETUP-ERRORS a missing model key names agent-qa auth set with the config and exits 2",
+      "origin": "445 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-setup-errors.test.ts",
+      "fullName": "C445-SETUP-ERRORS an invalid config names the key and the fix",
+      "origin": "445 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-setup-errors.test.ts",
+      "fullName": "C445-SETUP-ERRORS auth refusals exit non-zero and name the command to use",
+      "origin": "445 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/llm-auth-resolver.test.ts",
+      "fullName": "C445-AUTH-MESSAGES a subscription config with no sign-in is told to run auth login with its name",
+      "origin": "445 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/core/src/__tests__/llm-auth-resolver.test.ts",
+      "fullName": "C445-AUTH-MESSAGES an API-key config with no key is told to run auth set with its name",
+      "origin": "445 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor.test.ts",
+      "fullName": "C445-DOCTOR-AUTH the LLM rows name auth login, never the dashboard",
+      "origin": "445 D-15"
     }
   ]
 }
