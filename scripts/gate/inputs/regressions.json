@@ -14202,6 +14202,42 @@
       "file": "scripts/__tests__/gate-run.test.mjs",
       "fullName": "C444.1-RECORD-INTEGRITY a record names the gate commit it was judged by and that its files were clean",
       "origin": "444.1 D-27"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/post-run-tail.test.ts",
+      "fullName": "the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07) continues the pump past retry-scheduled and leaves the retrying job for a claim after its backoff",
+      "origin": "444.1 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/post-run-tail.test.ts",
+      "fullName": "the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07) does not report backlog-exhausted when a foreign retry-scheduled row is followed by the own chain of this run (G-388-3)",
+      "origin": "444.1 D-23"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/post-run-tail.test.ts",
+      "fullName": "prohibitions: never-wait and print-not-publish (388 D-03 / C13) adds no wait, no poll and no second timing knob to the tail source",
+      "origin": "444.1 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/post-run-tail.test.ts",
+      "fullName": "C444.1-TAIL-BOUND a chain that completes after a retry of another run closes with the chain terminal line",
+      "origin": "444.1 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/post-run-tail.test.ts",
+      "fullName": "C444.1-TAIL-BOUND a chain whose analysis an earlier process completed closes with the chain terminal line after a retry of another run",
+      "origin": "444.1 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/curation/__tests__/post-run-tail.test.ts",
+      "fullName": "C444.1-TAIL-BOUND an analysis that retries and then completes in one pump closes with the chain terminal line",
+      "origin": "444.1 D-31"
     }
   ]
 }
