@@ -14172,6 +14172,18 @@
       "file": "packages/cli/src/__tests__/reporters/junit-reporter.test.ts",
       "fullName": "C444.1-REPORTER-WORDS JUnit writes a cancelled member as skipped with the message cancelled",
       "origin": "444.1 D-24"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/planner.test.ts",
+      "fullName": "C444.1-PLANNER-CANCEL a cancelled planning turn logs no screenshot retry and starts no second request",
+      "origin": "444.1 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/444-ci-headless.test.ts",
+      "fullName": "C444-CI-HEADLESS a CI run curation outcome line counts only the changes its buckets line shows",
+      "origin": "444.1 D-25"
     }
   ]
 }
