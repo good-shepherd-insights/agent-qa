@@ -14238,6 +14238,72 @@
       "file": "packages/cli/src/curation/__tests__/post-run-tail.test.ts",
       "fullName": "C444.1-TAIL-BOUND an analysis that retries and then completes in one pump closes with the chain terminal line",
       "origin": "444.1 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a bare contenteditable attribute marks an editable host",
+      "origin": "444.1 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a plaintext only contenteditable marks an editable host",
+      "origin": "444.1 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a contenteditable false element is not an editable host",
+      "origin": "444.1 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a contenteditable host carries what it holds as its value and keeps its label as its name",
+      "origin": "444.1 D-33"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a button combobox carries its selection as its value",
+      "origin": "444.1 D-33"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE an editable host value is trimmed, kept on one line and cut at 200 characters",
+      "origin": "444.1 D-33"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE an empty editable host carries no value",
+      "origin": "444.1 D-33"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a password input with a textbox role carries no value",
+      "origin": "444.1 D-33"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-WEBVIEW-SCREENSHOT a failure screenshot taken in a WebView is white, not black",
+      "origin": "444.1 D-34"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-WEBVIEW-SCREENSHOT a live preview frame taken in a WebView is white and switches no context",
+      "origin": "444.1 D-34"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/adapter.test.ts",
+      "fullName": "AndroidPlatformAdapter C444.1-WEBVIEW-SCREENSHOT a native failure screenshot is returned as captured",
+      "origin": "444.1 D-34"
     }
   ]
 }
