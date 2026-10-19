@@ -52,10 +52,8 @@ const HOLD_BUDGET_MS = 120_000
 const BROWSER_SELF_EXIT_MS = 10_000
 const POLL_MS = 50
 const PENDING_BUDGET_MS = 600_000
-// The stalled leg refuses its held author once the tail's budget has passed since the request
-// arrived; the bound is a ceiling on that wait, never the wait itself.
-const STALL_BOUND_MS = DRAIN_BUDGET_MS + 60_000
-const EXIT_AFTER_REFUSAL_BOUND_MS = 30_000
+// 444.1 D-01: where the stalled leg stops waiting for its run to exit on its own; never asserted.
+const STALL_EXIT_CEILING_MS = DRAIN_BUDGET_MS + 120_000
 const RESUME_BUDGET_MS = 600_000
 const DAEMON_BOUND_MS = 120_000
 const DAEMON_STOP_BOUND_MS = 30_000
@@ -174,11 +172,11 @@ interface PendingLeg {
   startedAt?: number
   reached?: 'held' | 'ended' | 'timeout'
   heldAt?: number
-  refuseAt?: number
-  refusedAt?: number
+  exitedWhileHeld?: boolean
+  aliveAtCeiling?: boolean
   refused?: number
-  aliveAtRefuse?: boolean
-  analysisRequestsAtRefuse?: Array<{ kind: string; status: number }>
+  abortedBefore?: number
+  abortedAfter?: number
   exitedAt?: number
   exit?: { code: number | null; signal: NodeJS.Signals | null }
   exitLines?: string[]
@@ -621,14 +619,16 @@ function readExit(project: PopulatedRunProject, leg: PendingLeg, ended: Spawned)
   leg.output = output.slice(-3_000)
 }
 
-// D-56: a failed run whose analyze-run author is held. Once the tail's budget has passed since the
-// request arrived, the request is refused; attempt 1 becomes a retry and the tail starts nothing more.
+// 444.1 D-01: a failed run whose analyze-run author is held and never answered. The tail's budget
+// aborts the request and the run exits by itself; only a run still alive at the ceiling has its
+// author refused, so that it can end.
 async function driveStalled(): Promise<void> {
   const { project, model } = await sharedProject()
   const leg = pendingLeg('stalled', project.testPath, [])
   pending.stalled = leg
   const held = model.held.count()
   const fromRequest = model.requests.length
+  leg.abortedBefore = model.held.aborted()
   leg.startedAt = Date.now()
   const run = startCli(project, ['run', leg.testPath, ...leg.flags], leg.runId)
   leg.reached = await untilHeld(model, held, () => exited(run.child))
@@ -638,17 +638,17 @@ async function driveStalled(): Promise<void> {
   }
   leg.heldAt = model.requests.slice(fromRequest).filter((request) => request.kind === 'held-analysis').at(-1)?.at
   if (leg.heldAt === undefined) throw new Error('the held turn is not the analyze-run author')
-  leg.refuseAt = leg.heldAt + DRAIN_BUDGET_MS
-  while (Date.now() <= leg.refuseAt) {
-    if (exited(run.child)) break
-    if (Date.now() >= leg.heldAt + STALL_BOUND_MS) throw new Error('the stall bound passed before the refusal')
-    await new Promise((tick) => setTimeout(tick, 25))
+  const ceiling = leg.heldAt + STALL_EXIT_CEILING_MS
+  while (!exited(run.child) && Date.now() < ceiling) {
+    await new Promise((tick) => setTimeout(tick, POLL_MS))
   }
-  leg.aliveAtRefuse = !exited(run.child)
-  leg.analysisRequestsAtRefuse = analysisRequests(model, fromRequest)
-  leg.refusedAt = Date.now()
-  leg.refused = model.held.refuse()
+  leg.exitedWhileHeld = exited(run.child)
+  if (!leg.exitedWhileHeld) {
+    leg.aliveAtCeiling = true
+    leg.refused = model.held.refuse()
+  }
   const ended = await run.closed
+  leg.abortedAfter = model.held.aborted()
   leg.exitedAt = Date.now()
   leg.analysisRequestsAtExit = analysisRequests(model, fromRequest)
   readExit(project, leg, ended)
@@ -688,7 +688,7 @@ async function localRun(testPath: string): Promise<LocalRun> {
   return run
 }
 
-// D-56: the held author is released, and one later local run's tail drains every queued chain,
+// D-56: the stub's hold is lifted, and one later local run's tail drains every queued chain,
 // oldest first, so the stalled run's analysis and curation finish there.
 async function driveResumeByRun(): Promise<void> {
   const { project, model } = await sharedProject()
@@ -1025,19 +1025,18 @@ describe('C444-PENDING-AT-EXIT', () => {
     const at = seen(pending)
     const run = expectPendingAtExit(pending.stalled, 'failed', at)
     expect(run.reached, `the analyze-run author was held\n${at}`).toBe('held')
-    // The refusal came only once the tail's budget had passed since the request arrived, with the
-    // run still waiting on it.
-    expect(run.aliveAtRefuse, at).toBe(true)
-    expect(run.refusedAt! > run.heldAt! + DRAIN_BUDGET_MS, at).toBe(true)
-    expect(run.analysisRequestsAtRefuse, at).toEqual([{ kind: 'held-analysis', status: 0 }])
-    expect(run.refused, `exactly the held author was refused\n${at}`).toBe(1)
-    // Attempt 1 became a retry and the tail started nothing more: one refused request, and the
-    // run left promptly.
-    expect(run.analysisRequestsAtExit, at).toEqual([{ kind: 'held-analysis', status: 0 }, { kind: 'analysis', status: 400 }])
-    expect(run.exitedAt! - run.refusedAt!, at).toBeLessThan(EXIT_AFTER_REFUSAL_BOUND_MS)
+    // 444.1 D-01: the run exited by itself with its author still held, and the tail's budget
+    // aborted the request rather than anything answering it.
+    expect(run.exitedWhileHeld, `the run exited with no refusal or release\n${at}`).toBe(true)
+    expect(run.aliveAtCeiling, at).toBeUndefined()
+    expect(run.refused, at).toBeUndefined()
+    expect(run.abortedAfter! - run.abortedBefore!, `the client aborted the held request\n${at}`)
+      .toBeGreaterThanOrEqual(1)
+    expect(run.analysisRequestsAtExit, at).toEqual([{ kind: 'held-analysis', status: 0 }])
+    // The interrupted attempt was refunded: the job waits for the next drain with no retry spent.
     expect(Array.isArray(run.jobsAtExit), at).toBe(true)
     expect((run.jobsAtExit as JobRow[]).filter((job) => job.kind === 'analyze-run'), at).toEqual([
-      { kind: 'analyze-run', status: 'queued', attempts: 1, lastFailureKind: 'retry' },
+      { kind: 'analyze-run', status: 'queued', attempts: 0, lastFailureKind: null },
     ])
     // The CLI line's words are the dashboard's post-exit read, and neither is a finished word.
     const words = stageWords(run.exitLines?.[0])
@@ -1108,14 +1107,15 @@ describe('C444-RESUME', () => {
     expect(run?.recordedVerdict, at).toEqual({ verdict: 'passed' })
     expect(run?.exit, at).toEqual({ code: 0, signal: null })
     expect(run?.printed, at).toBe(true)
-    // The released author was answered inside the resume run's tail (attempt 2 of the stalled run),
-    // by the stub's default prose arm, and nothing was held after the release.
+    // The stalled run's analysis was answered inside the resume run's tail by the stub's default
+    // prose arm, and nothing was held after the release. 444.1 D-01: its interrupted attempt was
+    // refunded, so this is its one counted attempt.
     expect((run?.analysisRequests ?? []).length, at).toBeGreaterThan(0)
     for (const request of run?.analysisRequests ?? []) expect(request, at).toEqual({ kind: 'text', status: 200 })
     const jobs = resume.stalledJobsAfterResumeRun
     expect(Array.isArray(jobs), at).toBe(true)
     expect((jobs as JobRow[]).find((job) => job.kind === 'analyze-run'), at)
-      .toMatchObject({ status: 'done', attempts: 2 })
+      .toMatchObject({ status: 'done', attempts: 1 })
     expect((jobs as JobRow[]).every((job) => job.status === 'done'), `every stage of the stalled chain finished\n${at}`)
       .toBe(true)
     expect(statusesOf(resume.stalledJobsFinal), at).toEqual(statusesOf(jobs))

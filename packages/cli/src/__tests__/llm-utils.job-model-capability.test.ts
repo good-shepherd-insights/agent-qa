@@ -80,3 +80,19 @@ describe('buildJobModelCapability', () => {
       .toHaveBeenCalledWith(PROFILE, AUTH, expect.any(Function))
   })
 })
+
+describe('C444.1-TAIL-BOUND', () => {
+  it('the job model passes the request signal to the model call', async () => {
+    const { generateTextImpl, injected } = deps()
+    const capability = buildJobModelCapability(PROFILE, AUTH, (text) => text, injected)
+    const controller = new AbortController()
+
+    await capability.generate({ prompt: 'summarise run_1', signal: controller.signal })
+    await capability.generate({ prompt: 'no signal' })
+
+    expect(generateTextImpl).toHaveBeenCalledTimes(2)
+    expect(generateTextImpl.mock.calls[0]?.[0]).toMatchObject({ prompt: 'summarise run_1' })
+    expect(generateTextImpl.mock.calls[0]?.[0]?.abortSignal).toBe(controller.signal)
+    expect(generateTextImpl.mock.calls[1]?.[0]).not.toHaveProperty('abortSignal')
+  })
+})

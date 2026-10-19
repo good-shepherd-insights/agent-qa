@@ -560,6 +560,61 @@ describe('the shared post-run tail (ANLZ-01 / JOBQ-06, D-03/D-07)', () => {
   })
 })
 
+describe('C444.1-TAIL-BOUND', () => {
+  it('every job the tail runs gets the tail budget signal', async () => {
+    const seen: Array<AbortSignal | undefined> = []
+    const timed = harness({
+      runNextJob: vi.fn(async (input: { signal?: AbortSignal }) => {
+        seen.push(input.signal)
+        const signal = input.signal
+        if (signal !== undefined && !signal.aborted) {
+          await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }))
+        }
+        return { ran: false, reason: 'no-job' }
+      }),
+    })
+    await runPostRunTail({ ...options(timed), deadlineMs: timed.clock.value + 20 }).drain()
+    expect(seen.length, 'the pump claimed a job').toBe(1)
+    expect(seen[0], 'the claim carries a signal').toBeInstanceOf(AbortSignal)
+    expect(seen[0]!.aborted, 'the budget fired at the deadline').toBe(true)
+
+    const caller = new AbortController()
+    const claims: Array<{ signal?: AbortSignal; abortedAtClaim: boolean }> = []
+    const h = harness({
+      runNextJob: vi.fn(async (input: { signal?: AbortSignal }) => {
+        claims.push({ signal: input.signal, abortedAtClaim: input.signal?.aborted === true })
+        if (claims.length === 1) {
+          return { ran: true, disposition: 'completed', job: { id: String(OWN_CHAIN.analyzeRun) } }
+        }
+        caller.abort()
+        return { ran: false, reason: 'no-job' }
+      }),
+    })
+    await runPostRunTail({ ...options(h), signal: caller.signal }).drain()
+    expect(claims.length).toBe(2)
+    for (const claim of claims) {
+      expect(claim.signal).toBeInstanceOf(AbortSignal)
+      expect(claim.abortedAtClaim).toBe(false)
+    }
+    expect(claims[1]!.signal!.aborted, "the caller's abort reaches the job's signal").toBe(true)
+  })
+
+  it('an interrupted job ends the pump as budget exhausted', async () => {
+    const runNextJob = vi.fn(async () => ({
+      ran: true,
+      disposition: 'interrupted',
+      reason: 'handler-threw: the model request was aborted',
+      job: { id: String(OWN_CHAIN.analyzeRun) },
+    }))
+    const h = harness({ runNextJob })
+    const tail = runPostRunTail(options(h))
+    await tail.drain()
+
+    expect(runNextJob).toHaveBeenCalledTimes(1)
+    expect(tail.report().drain).toBe('budget-exhausted')
+  })
+})
+
 describe('the tail can never reach the exit code (JOBQ-06)', () => {
   it('survives a tail whose own operation table cannot be resolved', async () => {
     // The environment `run.test.ts`'s mocked unit runs live in: a partially-stubbed
