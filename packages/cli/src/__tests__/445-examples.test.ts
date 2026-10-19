@@ -105,6 +105,7 @@ const CONFIG_PATH = `${DIR}/agent-qa.config.yaml`
 const EXAMPLE_SECRET = 'KOMAZON_PASSWORD=komazon123'
 const EXAMPLE_PREFIXES = ['tests/examples/', 'scripts/examples/']
 const BUG_URL = 'https://playground.vostride.dev/shop/?bug=cart-total'
+const RESET_OR_CLEAR = /\b(reset|clear)\b/i
 const KOMAZON_TARGETS = {
   komazon: { platform: 'web', url: 'https://playground.vostride.dev/shop/' },
   'komazon-cart-total-bug': { platform: 'web', url: BUG_URL },
@@ -240,12 +241,14 @@ describe('C445-EXAMPLES', () => {
     }
   })
 
-  it('the passing journey resets the session, signs in with the declared secret and checks the order in View orders', async () => {
+  it('the passing journey signs in with the declared secret, checks the order in View orders and has no reset or clear step', async () => {
     const { raw, doc } = written(await initWrites(), CHECKOUT)
     const steps = doc.steps as string[]
 
     expect(doc.target).toBe('komazon')
-    expect(steps[0]).toContain('Reset playground session')
+    for (const step of steps) {
+      expect(step, 'the journey asks for a reset or clear').not.toMatch(RESET_OR_CLEAR)
+    }
     const signIn = steps.find(step => step.includes('alex@example.com'))
     expect(signIn, 'a step signs in with the printed email').toBeDefined()
     expect(signIn).toContain('{{secret:KOMAZON_PASSWORD}}')
@@ -254,6 +257,24 @@ describe('C445-EXAMPLES', () => {
     expect(steps.at(-1)).toContain('View orders')
     expect(steps.at(-1)).toContain('Everyday Ceramic Mug')
     expect(raw).not.toContain('headless')
+  })
+
+  // Every run opens a fresh session, so a reset or clear has no visible effect to verify.
+  it('no example test has a reset or clear step, whose effect a fresh session would hide', async () => {
+    const writes = await initWrites()
+    const examples = writes.filter(
+      write => write.path.startsWith('tests/examples/') && write.path.endsWith('.yaml'),
+    )
+
+    expect(examples.length, 'init writes the example tests').toBeGreaterThanOrEqual(3)
+    expect(examples.map(write => write.path)).toEqual(expect.arrayContaining([CHECKOUT, HOOK_TEST]))
+    for (const { path, content } of examples) {
+      const steps = parseYaml(content).steps as string[]
+      expect(steps.length, path).toBeGreaterThanOrEqual(3)
+      for (const [index, step] of steps.entries()) {
+        expect(step, `${path} step ${index} asks for a reset or clear`).not.toMatch(RESET_OR_CLEAR)
+      }
+    }
   })
 
   it('the failing test reaches the bug through its first step and never resets', async () => {
