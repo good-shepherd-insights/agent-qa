@@ -446,8 +446,7 @@ return (function() {
 
     var parentIndex = nearestAncestorIndex(el);
 
-    // 2026-10-19 (444.1-05, D-08): only typed text is a value, never a name; a password never.
-    // Built into the record below, so the page script assigns no value property.
+    // 2026-10-19 (444.1-05 D-08, 444.1-22 D-33): what a field or an editor holds is its value, never its name; a password's never.
     var observedValue = undefined;
     var textEntry = tag === 'TEXTAREA' || (tag === 'INPUT' && !VALUELESS_TYPES[String(el.type).toLowerCase()]);
     if (textEntry && el.value) {
@@ -456,6 +455,9 @@ return (function() {
       var option = el.options && el.selectedIndex >= 0 ? el.options[el.selectedIndex] : null;
       var optionText = option ? String(option.text || '').trim().slice(0, 200) : '';
       if (optionText) observedValue = optionText;
+    } else if (host || (textual && !field)) {
+      var held = textOf(el).replace(/[\\n\\r]+/g, ' ').slice(0, 200).trim();
+      if (held) observedValue = held;
     }
 
     var record = {
