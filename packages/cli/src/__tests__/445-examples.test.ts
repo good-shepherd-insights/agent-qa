@@ -307,6 +307,26 @@ describe('C445-EXAMPLES', () => {
     }
   })
 
+  it('accessibility runs at test end, never fails the run, and its comment sits on the accessibility block', async () => {
+    const writes = await initWrites()
+    const { raw, doc } = written(writes, 'agent-qa.config.yaml')
+
+    expect(doc.services.accessibility).toEqual({
+      enabled: true,
+      standard: 'wcag2aa',
+      runAfter: 'test-end',
+      failOnViolation: false,
+    })
+    const lines = raw.split('\n')
+    const block = lines.indexOf('  accessibility:')
+    expect(block, 'the config has an accessibility block').toBeGreaterThan(0)
+    expect(lines[block - 1], 'the line above the accessibility block').toMatch(/^ {2}# \S/)
+    for (const write of writes) {
+      expect(write.content, write.path).not.toContain('W3C')
+      expect(write.content, write.path).not.toContain('BAD demo')
+    }
+  })
+
   it('the config scaffold proposal writes an empty hooks list and names no script', () => {
     const input = {
       cacheDir: '.agent-qa/cache',
