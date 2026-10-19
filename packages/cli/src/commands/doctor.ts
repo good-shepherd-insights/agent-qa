@@ -279,10 +279,18 @@ function checkDocker(): DoctorCheck {
   }
 }
 
+function configuredLLMName(config: Record<string, unknown> | null): string {
+  const registry = config?.registry as { llms?: ActiveLLMConfig[] } | undefined
+  const use = config?.use as { llm?: string } | undefined
+  const llms = registry?.llms ?? []
+  return (llms.find(llm => llm.name === use?.llm) ?? llms[0])?.name ?? '<name>'
+}
+
 function checkLLMApiKey(config: Record<string, unknown> | null): DoctorCheck {
+  const name = configuredLLMName(config)
   return {
     name: 'LLM credential',
-    fixInstructions: 'Run `agent-qa auth set --config <name> --type api-key` for API modes, or declare a subscription auth plugin and authenticate from `agent-qa dashboard`.',
+    fixInstructions: `Run \`agent-qa auth set --config ${name} --type api-key\` (it asks for the key), or for a subscription run \`agent-qa auth login --config ${name}\``,
     check: async () => {
       const llm = getActiveLLMConfig(config)
       try {
@@ -307,9 +315,10 @@ function checkLLMApiKey(config: Record<string, unknown> | null): DoctorCheck {
 }
 
 function checkSubscriptionAuth(config: Record<string, unknown> | null): DoctorCheck {
+  const name = configuredLLMName(config)
   return {
     name: 'Subscription Auth',
-    fixInstructions: 'Install `@vostride/agent-qa-subscription-auth`, declare it in plugins.auth, and authenticate from `agent-qa dashboard`.',
+    fixInstructions: `Install \`@vostride/agent-qa-subscription-auth\` (\`npm install -D @vostride/agent-qa-subscription-auth\`), declare it in plugins.auth, then run \`agent-qa auth login --config ${name}\``,
     check: async () => {
       const llm = getActiveLLMConfig(config)
       if (getProvider(llm.provider)?.subscription !== true) {

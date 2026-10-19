@@ -690,7 +690,7 @@ describe('auth set', () => {
 
     await runAuthCommand(['set', '--config', 'claude-subscription', '--type', 'api-key', 'sk-not-allowed'])
 
-    expect(getOutput()).toContain('Subscription providers use OAuth login')
+    expect(getOutput()).toContain('claude-subscription uses a subscription; sign in with: agent-qa auth login --config claude-subscription')
     expect(mockWriteAuth).not.toHaveBeenCalled()
   })
 })

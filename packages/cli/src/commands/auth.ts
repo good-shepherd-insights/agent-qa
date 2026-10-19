@@ -211,23 +211,27 @@ export function createAuthCommand(): Command {
           const requestedName = normalizeConfigName(opts.config)
           if (!requestedName) {
             console.log(pc.red('configName is required'))
+            process.exitCode = 1
             return
           }
           const resolved = await resolveNamedConfig(requestedName, configPath)
           const resolvedName = normalizeConfigName(resolved.config.name)
           if (!resolvedName) {
             console.log(pc.red('Config name is invalid'))
+            process.exitCode = 1
             return
           }
           configName = resolvedName
           const configProvider = resolved.config.provider
           if (!isSubscriptionProvider(configProvider)) {
             printCredentialGuidance(configName, configProvider)
+            process.exitCode = 1
             return
           }
           provider = configProvider
         } catch (err: unknown) {
           console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
           return
         }
 
@@ -245,6 +249,7 @@ export function createAuthCommand(): Command {
         const credentialType = opts.type.trim()
         if (credentialType !== 'api-key' && credentialType !== 'bearer-token') {
           console.log(pc.red('type must be api-key or bearer-token'))
+          process.exitCode = 1
           return
         }
 
@@ -255,6 +260,7 @@ export function createAuthCommand(): Command {
           resolved = await resolveNamedConfig(opts.config, configPath)
         } catch (err: unknown) {
           console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
           return
         }
 
@@ -262,23 +268,27 @@ export function createAuthCommand(): Command {
         const provider = resolved.config.provider
 
         if (SUBSCRIPTION_PROVIDERS.has(provider)) {
-          console.log(pc.red('Subscription providers use OAuth login'))
+          console.log(pc.red(`${configName} uses a subscription; sign in with: agent-qa auth login --config ${configName}`))
+          process.exitCode = 1
           return
         }
 
         if (credentialType === 'bearer-token' && provider !== 'anthropic-compatible') {
           console.log(pc.red('bearer-token credentials are only supported for anthropic-compatible configs'))
+          process.exitCode = 1
           return
         }
 
         if (credentialType === 'api-key' && !API_KEY_CREDENTIAL_PROVIDERS.has(provider)) {
           console.log(pc.red('api-key credentials are not supported for this provider'))
+          process.exitCode = 1
           return
         }
 
         const secret = (secretArg ?? await password({ message: 'Secret:' })).trim()
         if (!secret) {
           console.log(pc.red('Secret is required'))
+          process.exitCode = 1
           return
         }
 
