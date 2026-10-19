@@ -14346,6 +14346,72 @@
       "file": "packages/cli/src/__tests__/doctor.test.ts",
       "fullName": "C445-NODE-FLOOR-DOCTOR the Node row names the same install line as the bin",
       "origin": "445 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-scaffold-hosts.test.ts",
+      "fullName": "C445-SCAFFOLD-HOSTS every URL init writes for every platform names only playground.vostride.dev",
+      "origin": "445 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-scaffold-hosts.test.ts",
+      "fullName": "C445-SCAFFOLD-HOSTS no generated file names a retired sample host",
+      "origin": "445 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES init writes the examples in their own folder and the suite selects the journey then the failing test",
+      "origin": "445 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES the passing journey resets the session, signs in with the declared secret and checks the order in View orders",
+      "origin": "445 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES the failing test reaches the bug through its first step and never resets",
+      "origin": "445 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES the targets are komazon and komazon-cart-total-bug with no product field",
+      "origin": "445 D-38"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES init writes none of the retired samples",
+      "origin": "445 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES every generated test and suite parses with the shipped schemas",
+      "origin": "445 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES the example files are written before the config, which is written last",
+      "origin": "445 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES the config scaffold proposal writes an empty hooks list and names no script",
+      "origin": "445 D-40"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/445-examples.test.ts",
+      "fullName": "C445-EXAMPLES accessibility runs at test end, never fails the run, and its comment sits on the accessibility block",
+      "origin": "445 D-33"
     }
   ]
 }
