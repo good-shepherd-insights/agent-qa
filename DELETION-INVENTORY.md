@@ -6474,3 +6474,174 @@ The round's record gate measures agent-qa HEAD after this subsection lands. Its 
 verdict are recorded in `.planning/phases/444-truthful-lifecycle/444-RECORD.md` § Gap-closure round
 5 (`### Gate (gap-closure round 5)`) and the SHA in its `### Final SHA (gap-closure round 5)`,
 rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-19 — Phase 444.1: Pre-release fixes
+
+This section appends to the register and rewrites no earlier section. Phase 444.1 fixed the open
+review findings and live findings that should not ship with v2, each with a cell that reds without
+its fix: the web visibility probe (D-04 to D-06), Android and iOS text input and session start
+(D-07 to D-12, checked live under D-13), the planner's pair on a healed sub-action (D-14), row
+identity and the comma reading (D-15 to D-17), the test and suite file managers (D-18 to D-22), the
+agent job queue and the post-run tail (D-01, D-23), the reporters' words (D-24), the CI curation
+line and the planner's cancel (D-25, D-26), the gate's record rule (D-27), three load-sensitive gate
+cells (D-28) and the suites' temp roots (D-29). The decisions are in
+`.planning/phases/444.1-pre-release-fixes/444.1-CONTEXT.md` (D-01 to D-30); D-02 and D-03 are owner
+decisions with no code. Written by 444.1-20 on 2026-10-19.
+
+### How this inventory is measured
+
+Baseline `5a263da6f` (Phase 444's final SHA, where 444.1 began). Closing SHA `d77af9ee2` (444.1-19's
+last commit, the parent of the commit that adds this section). `git -C agent-qa diff --shortstat
+5a263da6f d77af9ee2`: 113 files changed, 3951 insertions, 522 deletions; outside `__tests__`
+directories under `packages/`, 40 files, +679/−271. `--diff-filter=D`: no file deleted.
+`--diff-filter=A`: 5 files added, all test files or test helpers
+(`agent/src/jobs/__tests__/444.1-interrupted.test.ts`,
+`cli/src/__tests__/conformance/444.1-retry-backoff.test.ts`, `cli/src/__tests__/temp-roots.ts`,
+`cli/src/curation/__tests__/444.1-dispatch-pair.test.ts`,
+`eval/src/extract/__tests__/444.1-planner-pair.test.ts`). 92 commits, every one signed (`%G?` =
+`G`). The removed members below are read from each deleting commit's diff
+(`git -C agent-qa show --unified=0 <sha>`), not transcribed from a summary. Names are at `5a263da6f`.
+
+### What was deleted
+
+| Member (file at `5a263da6f`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `ChainPumpExit`'s `'retry'` member, `PUMP_EXIT_STARVES_OWN_CHAIN`'s `retry: true` row and the pump's `pumpExit = 'retry'; break` on `retry-scheduled` (`cli/src/curation/post-run-tail.ts`) | stopped a run's post-run tail at a foreign row's backoff, so the run's own chain stayed queued and read as `backlog-exhausted` (444 D-54, reversed by D-23) | `fd3a81566` (444.1-12) | `C444.1-RETRY-BACKOFF a later run in the same workspace completes its own chain behind an earlier retrying analysis` |
+| the unconditional `await this.driver.activateApp(appPackage)` after session creation in `setup()` (`android/src/adapter.ts`) | brought a running app's launcher forward, which cleared a deep-linked activity above a `singleTask` launcher (WINDOWS #566) | `baabdef4f` (444.1-06); `activateApp` now runs only when `queryAppState` does not read 4 | `AndroidPlatformAdapter C444.1-SESSION-START an app already in the foreground is not activated again`; `… a session started twice on a foreground app never activates it`; `… a foreground app read through mobile queryAppState when the typed query is gone is not activated` |
+| the whole-frame bound: `Promise.race([judge, bound])` over `probeChildFrame`, and `PendingFrames` holding parked judges (`web/src/compound-web.ts`) | cut a slow but healthy frame's judge at 1 s and parked it, so a target on screen in that frame was never found (WR-24) | `191b176cd` (444.1-02); only `frame.evaluate('1')` is bounded | `C436-SCROLL-FRAMES a slow but healthy frame on screen is found at zero swipes` |
+| `judgeCandidates`' single `elementFromPoint` hit and its `r.width < 2 \|\| r.height < 2` hidden verdict for a `display: contents` or zero-area candidate (`web/src/compound-web.ts`) | judged a `display: contents` holder or host as hidden and a title under a transparent overlay as covered (WR-22) | `45dec07d7` (444.1-01) | `C436-SCROLL-DECOYS a display contents holder is found at zero swipes`; `… a display contents custom element host is found at zero swipes`; `… a title under a transparent stretched link overlay is found at zero swipes`; `… a display contents holder with no text of its own reads unknown, never hidden` |
+| `focusIsElsewhere`'s boolean (`focused !== undefined && !rectWithin(focused, bounds)`) and `refuseFocus`'s `path` parameter (`android/src/adapter.ts`) | told the planner focus was on another field whenever the focused bounds differed from the observed ones, including a field the keyboard moved (WR-08) | `13cb855b2` (444.1-03); the check returns `'target' \| 'elsewhere' \| 'moved'` | `C437-FILL-NATIVE a field the keyboard moved after the tap is refused, and the re-observed fill types once`; `C437-FILL-NATIVE a clipped field focused beyond its observed bounds is refused as moved, and the re-observed fill types once`; `C437-CLEAR a clear whose field moved after the tap clears nothing` |
+| the unconditional `await driver.keys(['\n'])` after an unreadable iOS re-read (`ios/src/adapter.ts`) | sent Return into whatever had focus when the re-read could not be read (WR-11) | `3c37fa028` (444.1-04) | `IOSPlatformAdapter text input (AUTO-18) C437-FILL-IOS an unreadable re-read whose focus was lost sends no Return and records focus lost` |
+| the WebView observer's `if (!name && role !== 'textbox' && !editable) continue` for a role-less `contenteditable` host and its `field`-only naming (`android/src/adapter.ts`, `WEB_OBSERVER_SCRIPT`) | dropped an editable host, or named an editor by the text it held (WR-10) | `4656deddf` (444.1-05) | `C437-WEBVIEW-OBSERVE a contenteditable host is named by its label, not by what it holds`; `… a role textbox editor is named by its label, not by what it holds` |
+| `rowTextOf`'s enclosing-line rule: the nearest ancestor of any `ROW_CONTAINER_ROLES` role, its line first and only one level (`runner/src/grounding/row-text.ts`) | joined an article's prose to a nested table row, so the row's binding moved when the prose changed (WR-12), and gave leaves under different grandparents one row (IN-12) | `507051095`, then `2cf707445` (444.1-09) | `C438-NATIVE-BINDING a row inside an article whose status line changes between observe and dispatch is dispatched onto the same row`; `C438-ROW-TEXT an article never adds its prose to a nested row`; `C438-ROW-TEXT a leaf three levels deep carries every enclosing same-role row line`; `C438-JUDGE leaves with one name under different grandparents are told apart` |
+| the loop's record of the dispatched pair as `plannedAction`/`stateBefore` on a healed sub-action (`runner/src/loop/index.ts`) | replaced the planner's decision with the heal's, so eval and replay saw an action the planner never chose (WR-13) | `053d967a8` (444.1-08); the dispatch pair is recorded in `healedDispatch` beside the planner's | `C444.1-DISPATCH-PAIR a healed click keeps the planner pair and records the dispatch pair beside it`; `C444.1-EVAL-PLANNER-PAIR a ref-healed leg is extracted with the tree the planner saw and the action it chose`; `C444.1-EVAL-PLANNER-PAIR a ref-healed leg is replayed against the tree the planner saw` |
+| the two locked mints' lossy `readFile(record.absolutePath, 'utf-8')` (`dashboard-server/src/tests/test-file-manager.ts`, `tests/suite-file-manager.ts`) | decoded a Latin-1 file with U+FFFD and wrote it back under a new id line (`0xE9` became `EF BF BD`, CR-04) | `d4155051f` (444.1-11); both mints decode with `decodeUtf8` (fatal) and write nothing that does not decode | `C444-LIST-WRITE-SAFE an id-less test or suite file that is not valid UTF-8 is listed with no id and left byte-identical` |
+| `targetsForMarkerCheck`'s single `parseYaml(content)` and its indented line pattern `/^[ \t]*target:[ \t]*(\S.*)$/gm` (`dashboard-server/src/tests/test-file-manager.ts`) | let a second YAML document write a shown marker back (WR-16), and refused a valid block-scalar step that starts with `target:` (IN-24) | `a7f102222` (444.1-11) | `C444-LIST-WRITE-SAFE a test create or save whose second YAML document holds a shown marker target is refused and nothing is written`; `C444-LIST-WRITE-SAFE a valid test whose block-scalar step line starts with target and holds a marker is saved` |
+| `summary.json`'s `gate: 'agent-qa-local-gate'` string and the record rule `mode === 'clone' && !partial && !legMissing` (`scripts/gate/run.mjs`) | called a run judged by uncommitted gate files, or over a dirty source, a record, and named no gate commit (434 WR-01) | `d5c32f1aa` (444.1-17) | `C444.1-RECORD-INTEGRITY a clone run whose gate files are dirty is not a record and says so`; `… whose source checkout is dirty …`; `… a record names the gate commit it was judged by and that its files were clean` |
+| `docs/ci.md` § "A run can outlive its verdict" (the in-flight request that kept a run alive about 301 seconds per attempt, and its three workarounds) and the example job's `timeout-minutes: 30` | described the unbounded tail D-01 removes | `778170fb6` (444.1-14); replaced by § "How long the post-run work takes" | no registered cell reads the removed words; the behaviour they described is noticed by `C444-PENDING-AT-EXIT a stalled drainer's run exits with its verdict's code and reports its stages as durable state does` |
+
+**Changed with no member deleted** (each read from its commit):
+
+| Before (at `5a263da6f`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| the console reporter folded `cancelled` into `skipped` (`statusIcon`, the step and member counts, `(skipped)`) | `cancelled`, a yellow `⊘`, `(cancelled)`, and its own Steps and Tests counts | `dc3023ae7` (444.1-15) | `C444.1-REPORTER-WORDS the console prints a cancelled member and step as cancelled with their own glyph and counts` |
+| both reporters named a member that never started `Test N` | `testStarted.name`, else the skipped `testFinished`'s `name`, else `Test N` | `438f8f42d` (444.1-15) | `C444.1-REPORTER-WORDS the console names an abort-skipped member by its test`; `C444.1-REPORTER-WORDS JUnit names an abort-skipped member by its test` |
+| `wordTokens` joined every comma run of three-digit groups and only a lakh number's last group | a grouped and a list reading (`listWordTokens`); a well-formed lakh group is one number | `ba43145fe` (444.1-10) | `C438-JUDGE a stated order inside a comma list of orders agrees`; `C438-JUDGE a lakh-grouped number agrees with its plain spelling`; `C438-ROW-TEXT wordTokens reads a well-formed lakh group as one number` |
+| `curationOutcomeLine` received `drain.committed` | `drain.committed - (drain.evidenceCommitted ?? 0)` | `9b75ac4a0` (444.1-16) | `C444-CI-HEADLESS a CI run curation outcome line counts only the changes its buckets line shows` |
+| the planner's screenshot-fallback catch warned and retried on a cancel | it rethrows first when the turn's signal is aborted | `abaae934c` (444.1-16) | `C444.1-PLANNER-CANCEL a cancelled planning turn logs no screenshot retry and starts no second request` |
+| the tail ran each job with `runNextJob({ fence })` and no bound on an in-flight request | a budget signal at `drainDeadlineMs`, passed to every job, model call and curator author it starts | `877d4a00b`, `778170fb6` (444.1-14) | the four `C444.1-TAIL-BOUND` cells; the C444-PENDING-AT-EXIT stalled leg |
+
+The WebView observer's `value` channel (D-08) and its `record.value` assignments were added and
+replaced inside the phase (`a86b0a774`, `d4597544f`, then `0d85d045a`), so nothing at `5a263da6f`
+was deleted for it.
+
+#### Registered gate rows
+
+The 2297 rows listed at `5a263da6f` are still listed, unchanged and in order, except one in-place
+re-spelling (Planner decision 6, 444.1-09 `cad16b2a8`, index 989, origin `438 D-02` kept):
+`C438-ROW-TEXT a nested row container's row is its parent row's own line, then its own row` became
+`C438-ROW-TEXT a nested row container's row is its own line first, then its same-role parent row's
+line`. Bodies changed with titles kept: the C438-HEAL-RECORD cells (444.1-08), `C437-FILL-NATIVE a
+field the keyboard moved after the tap is refused, and the re-observed fill types once` (444.1-03),
+the two fake-frame C436-SCROLL-FRAMES cells (444.1-02), `C444-LIST-WRITE-SAFE a test create or save
+whose target holds a shown marker in a mapping value or on an indented target line is refused and
+nothing is written` (444.1-11), `C444-PENDING-AT-EXIT a stalled drainer's run exits with its
+verdict's code and reports its stages as durable state does` and `C444-RESUME a later run completes
+the stalled run's post-processing` (444.1-14), and `C436-DOWNLOAD-CAPTURE a non-activation action does
+not wait for a download` and `C436-CLIPBOARD-ORACLE a thousand forged claims in one action confirm
+nothing` (444.1-18). 70 rows were appended (2367 in all), each with origin `444.1 D-NN`: D-01 8,
+D-04 4, D-05 2, D-06 1, D-07 3, D-08 7, D-09 3, D-10 3, D-11 6, D-12 2, D-14 5, D-15 2, D-16 3,
+D-17 2, D-18 1, D-19 1, D-20 1, D-21 1, D-23 5, D-24 5, D-25 1, D-26 1, D-27 3. The three D-27 rows
+are the registry's first `node-test` rows.
+
+### What was RETAINED, and why
+
+| Item | Why kept | What pins it |
+|---|---|---|
+| `FRAME_PROBE_TIMEOUT_MS = 1_000` | D-06 moves the bound, not its value (D-03: no timing machinery) | `C436-SCROLL-FRAMES committed frames that never answer are unknown at the bound, once per search` |
+| `DRAIN_BUDGET_MS = 60_000` | D-01 turns the budget into a signal; the value is unchanged | the C444-PENDING-AT-EXIT stalled leg |
+| `activateApp` for an app that is not running, or whose state neither query can read | a session still has to launch the app (the `MobileSetupError` `app-launch` arm is unchanged) | `AndroidPlatformAdapter C444.1-SESSION-START an app that is not running is activated once`; `… an app state that neither query can read activates the app once` |
+| the daemon's and `agent-jobs pump`'s retry handling | D-23 changes the post-run tail only; the pump stops on `retry-scheduled` and the daemon waits `retryDelayMs` | the unregistered `daemon-dispatch.test.ts` cells |
+| the `436-webview-scrollers` `afterAll` | D-02: the owner accepts it as it is | no 444.1 commit touches the file |
+
+### What degrades, stated plainly
+
+- **A flow-style or fully indented test or suite file is listed with a `null` id and never minted
+  (D-22, IN-25).** A flow mapping, JSON included (`{"name": …, "target": …, "steps": […]}`), or a
+  wholly indented mapping (`  name: x\n  target: web`) stops parsing once the mint's id line is
+  added, so the parse-checked write refuses it. The file is left byte-identical and lists `null` on
+  every list, so the dashboard has no id to open it by. The `flow-mapping` and `indented-mapping`
+  rows of both layout corpora pin this, and `nested-flow-id` pins `idWriteText`'s comparison. A file
+  that is not valid UTF-8 degrades the same way (D-18).
+- **A version-4 `agent-jobs.db` is refused and must be deleted (D-23).** `AGENT_JOB_STORE_USER_VERSION`
+  moved from 4 to 5, and every existing workspace's `.agent-qa/agent-jobs.db` is refused by name with
+  `JobStoreSchemaVersionError`, as is every host that opens the store or reads post-processing
+  status: the daemon, the dashboard's stage indicators and `agent-qa digest`. The remedy in
+  `docs/queues.md`: delete `.agent-qa/agent-jobs.db` with its `-wal` and `-shm` files and
+  `.agent-qa/agent-jobs/checkpoints/`, then re-enqueue. Clearing it costs the queue's own history:
+  runs read `pending` for analysis and curation and lose their stage details, notification and
+  curation snapshot. Recorded runs, handoffs, evidence, `analysis.json` and committed knowledge are
+  untouched. Nothing alters or migrates the table.
+- **A frame that answers its liveness check and then hangs is held only by the action's budget
+  (D-06).** The web compound and `runUntilVisibleLoop` do not bound it. The runner's step abort ends
+  the action at a per-step `timeout`, `config.timeouts.step`, the test timeout or a run cancel;
+  neither timeout has a schema default, so with neither configured only a cancel or the browser
+  closing ends it. The hung judge runs on until the page closes.
+- **Agent analysis, the dashboard and the bus read the planner's pair on a healed leg (D-14).**
+  Only curation reads the dispatched pair (`healedDispatch`, through `actedPair`). The other readers
+  (`exercisedAnchors` in agent analysis, the dashboard's frame annotations, the bus
+  `subActionRecorded` projection, the knowledge run-outcome projection, feedback marks, the verdict
+  fingerprint and `emit-canary-outcomes`) walk the planner's pair to the element the planner chose.
+  The bus payload is unchanged; `healedDispatch` reaches `handoff.json` unmasked, like `stateBefore`.
+- **A job interrupted on every attempt waits for a host with no budget (D-01).** Each interruption
+  refunds the attempt it claimed, so the job never uses up its retries in a run's tail. Only the
+  tail passes a signal; `agent-qa daemon` and `agent-qa agent-jobs pump` pass none and run the job to
+  completion.
+- **A backgrounded Android app (`queryAppState` 2 or 3) is activated as before (D-11).** Whether that
+  clears a deep-linked activity above a `singleTask` launcher is not established. The typed
+  `queryAppState` route is logged as deprecated by Appium 3.7.0; when it is gone, setup asks
+  `mobile: queryAppState` once, and when both fail it activates the app.
+- **`Total 1` agrees with `Total 1,000` (D-16).** Under the list reading, `1` is one item of the
+  comma run. Every clear contradiction probed still refuses (`Invoice 947`/`946`, `Rows 1,2`/`Rows
+  12`, `Pay 1,234.50`/`1,235.50`, `Seats 100,250`/`Seats 100`). A text that mixes a grouped number
+  and a list run can still refuse falsely, which fails safe.
+- **A field the keyboard moved is always refused (D-07).** The planner must re-observe; the fill
+  against the re-observed screen types once.
+- **A caller of the removed members breaks,** with no alias, shim or message naming a replacement.
+  None was exported (`ChainPumpExit`, `PendingFrames`, `focusIsElsewhere` and `refuseFocus` are
+  module-private).
+
+### Persisted values the change governs
+
+| Value | At `5a263da6f` | Now | Commit |
+|---|---|---|---|
+| `agent-jobs.db` `user_version` | 4 | 5; a version-4 store is refused by name, never migrated | `29a4071bb` (444.1-12) |
+| `agent-jobs.db` `jobs.not_before` | absent | nullable `TEXT`, appended last: store-clock now + `retryAfterMs` on a retry, `NULL` when the disposition carries none, cleared by the operator requeue; both claim statements add `AND (not_before IS NULL OR not_before <= ?)` | `29a4071bb` (444.1-12) |
+| handoff `SubActionEvidence.healedDispatch` | absent | optional `{ action, stateBefore }` on a re-dispatched heal, shape-checked by the loader; the handoff schema stays version 7 | `78707f32f`, `053d967a8` (444.1-08) |
+| `SubmitReason` (`fillSubmit.reason`) | `'mismatch' \| 'multi-line-field' \| 'input-failed'` | adds `'focus-lost'`; handoff version 7 kept | `3c37fa028` (444.1-04) |
+| `testFinished` payload (`events.jsonl`) | no `name` or `filePath` | optional `name` and `filePath`, set only on a skipped member's `testFinished` | `438f8f42d` (444.1-15) |
+| gate `summary.json` `gate` | the string `'agent-qa-local-gate'` | `{ name: 'agent-qa-local-gate', sha, dirty }`; `repeat-summary.json` carries the first run's | `d5c32f1aa` (444.1-17) |
+| `agent-qa knowledge maintain --json` | no `evidenceCommitted` | the additive key `evidenceCommitted` (the drain report is spread) | `9b75ac4a0` (444.1-16) |
+
+runs.db stays version 6 (`git -C agent-qa diff --quiet 5a263da6f d77af9ee2 --
+packages/dashboard-server/src/db/schema.ts packages/dashboard-server/src/db/database.ts` exits 0).
+The golden ledger (`cli/src/__tests__/conformance/golden-registry.json`) and the capability catalog
+(`cli/capability-catalog/capability-catalog.json`) are unchanged since `5a263da6f`, and both regen
+scripts print `nothing to change` at the closing SHA.
+
+### The instruments that notice a return
+
+- **The 434 gate** must execute and pass all 2367 listed cells, the 70 appended by this phase with
+  their `444.1 D-NN` origins as well as the 2297 earlier rows.
+- **The cells named in "What was deleted"** each fail if their member returns; each failed at its
+  RED commit, or, for the pins (D-20's cells, the D-28 bodies, the JUnit cancelled cell), in a
+  recorded mutation run on an untracked copy. The RED and mutation records are under
+  `.planning/phases/444.1-pre-release-fixes/capture/`.
+- **The record rule** fails a gate run whose gate files or source checkout are dirty
+  (`C444.1-RECORD-INTEGRITY`).
+
+### Gate at the time of writing
+
+The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
+verdict are recorded in `.planning/phases/444.1-pre-release-fixes/444.1-RECORD.md` § Gate, and the
+SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
