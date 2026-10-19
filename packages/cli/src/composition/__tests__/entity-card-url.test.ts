@@ -22,10 +22,10 @@ import type {
   EntityDescriptor,
   FunctionCaller,
 } from '@vostride/agent-qa-schema'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 
 import { createConfigReader } from '../local-agent-host.js'
 
@@ -48,9 +48,16 @@ const DESCRIPTOR: EntityDescriptor = {
   statusSource: 'active',
 }
 
+const roots: string[] = []
+
+afterAll(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
 /** Write a real config file whose `services.dashboard` block carries the D-10 keys. */
 function writeConfig(dashboard: Record<string, unknown>): string {
   const dir = mkdtempSync(join(tmpdir(), 'agent-qa-card-url-'))
+  roots.push(dir)
   const configPath = join(dir, 'agent-qa.config.yaml')
   writeFileSync(
     configPath,
