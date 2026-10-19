@@ -14550,6 +14550,30 @@
       "file": "packages/cli/src/__tests__/445-init-llm.test.ts",
       "fullName": "C445-NEXT-STEPS the next steps name no file init replaces and no dashboard sign-in",
       "origin": "445 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-knowledge-gitignore.test.ts",
+      "fullName": "C445-KNOWLEDGE-GITIGNORE after a run and knowledge writes, git status shows no SQLite file in a fresh workspace",
+      "origin": "445 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-knowledge-gitignore.test.ts",
+      "fullName": "C445-KNOWLEDGE-GITIGNORE an open writer authority connection leaves its sidecars ignored",
+      "origin": "445 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-knowledge-gitignore.test.ts",
+      "fullName": "C445-KNOWLEDGE-GITIGNORE the rule covers the journal and the bundle staging directory",
+      "origin": "445 D-34"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/445-knowledge-gitignore.test.ts",
+      "fullName": "C445-KNOWLEDGE-GITIGNORE init refuses an older knowledge gitignore that lacks the rule and says which line to add",
+      "origin": "445 D-22"
     }
   ]
 }
