@@ -351,54 +351,54 @@ describe('C438-HEAL-EVIDENCE', () => {
   })
 })
 
-// C438-HEAL-RECORD (438 D-08, D-11; CR-03): a heal that re-dispatches sends refs taken from the
-// heal's fresh observation, so the sub-action is recorded against that observation (re-stamped
-// with the planner call's capture stamp): every recorded ref names, in the recorded stateBefore,
-// the element the input was sent to. A heal that sends nothing keeps the pre-heal pairing.
+const SAVE_PRIOR = screenOf([
+  { role: 'button', name: 'Delete' },
+  { role: 'button', name: 'Save' },
+  { role: 'button', name: 'Cancel' },
+])
+// One element is inserted ahead, so the fresh "Save" sits at the prior "Cancel"'s ref.
+const SAVE_FRESH = screenOf([
+  { role: 'button', name: 'Banner' },
+  { role: 'button', name: 'Delete' },
+  { role: 'button', name: 'Save' },
+  { role: 'button', name: 'Cancel' },
+])
+const clickSave: ActionPlan['action'] = {
+  type: 'click',
+  ref: 'e2',
+  target: { role: 'button', name: 'Save' },
+}
+
+function nameAt(state: ScreenState | undefined, ref: unknown): string | undefined {
+  return state?.elements.find((element) => element.ref === ref)?.name
+}
+
+async function runSave(
+  fresh: ScreenState,
+  results: ActionResult[],
+  ports: Record<string, unknown> = {},
+  withScreenshot = false,
+) {
+  const a = adapter(SAVE_PRIOR, fresh, results)
+  if (withScreenshot) a.screenshot = async () => Buffer.from('png')
+  const result = await executeStep(
+    'Click Save',
+    {
+      adapter: a,
+      planner: scriptedPlanner([plan(clickSave), GIVE_UP]),
+      plannerConfig: limits(10, 10),
+      ...ports,
+    },
+    makeStepContext(),
+  )
+  return { a, result }
+}
+
+// C438-HEAL-RECORD (438 D-08, D-11; CR-03; 444.1 D-14): a heal that re-dispatches sends refs taken
+// from the heal's fresh observation, so its dispatch pair (healedDispatch) is recorded against that
+// observation (re-stamped with the planner call's capture stamp): every dispatched ref names, in the
+// dispatch stateBefore, the element the input was sent to. A heal that sends nothing records none.
 describe('C438-HEAL-RECORD', () => {
-  const SAVE_PRIOR = screenOf([
-    { role: 'button', name: 'Delete' },
-    { role: 'button', name: 'Save' },
-    { role: 'button', name: 'Cancel' },
-  ])
-  // One element is inserted ahead, so the fresh "Save" sits at the prior "Cancel"'s ref.
-  const SAVE_FRESH = screenOf([
-    { role: 'button', name: 'Banner' },
-    { role: 'button', name: 'Delete' },
-    { role: 'button', name: 'Save' },
-    { role: 'button', name: 'Cancel' },
-  ])
-  const clickSave: ActionPlan['action'] = {
-    type: 'click',
-    ref: 'e2',
-    target: { role: 'button', name: 'Save' },
-  }
-
-  function nameAt(state: ScreenState | undefined, ref: unknown): string | undefined {
-    return state?.elements.find((element) => element.ref === ref)?.name
-  }
-
-  async function runSave(
-    fresh: ScreenState,
-    results: ActionResult[],
-    ports: Record<string, unknown> = {},
-    withScreenshot = false,
-  ) {
-    const a = adapter(SAVE_PRIOR, fresh, results)
-    if (withScreenshot) a.screenshot = async () => Buffer.from('png')
-    const result = await executeStep(
-      'Click Save',
-      {
-        adapter: a,
-        planner: scriptedPlanner([plan(clickSave), GIVE_UP]),
-        plannerConfig: limits(10, 10),
-        ...ports,
-      },
-      makeStepContext(),
-    )
-    return { a, result }
-  }
-
   it('a healed click is recorded against the fresh observation it was sent to', async () => {
     const { a, result } = await runSave(SAVE_FRESH, [BINDING_LOST_TO_REF, { success: true }])
 
@@ -407,19 +407,19 @@ describe('C438-HEAL-RECORD', () => {
       { type: 'click', ref: 'e3' },
     ])
     expect(result.status).toBe('passed')
-    const recorded = result.evidence?.subActions.at(-1)
-    expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e3' })
-    expect(nameAt(recorded?.stateBefore, 'e3')).toBe('Save')
+    const dispatched = result.evidence?.subActions.at(-1)?.healedDispatch
+    expect(dispatched?.action).toEqual({ type: 'click', ref: 'e3' })
+    expect(nameAt(dispatched?.stateBefore, 'e3')).toBe('Save')
   })
 
   it('a healed drag is recorded against the fresh observation on both lanes', async () => {
     const { result } = await runDrag(PRIOR, FRESH, BINDING_LOST_TO_REF)
 
     expect(result.status).toBe('passed')
-    const recorded = result.evidence?.subActions.at(-1)
-    const action = recorded?.plannedAction as unknown as Record<string, unknown>
-    expect(nameAt(recorded?.stateBefore, action['fromRef'])).toBe('Card')
-    expect(nameAt(recorded?.stateBefore, action['toRef'])).toBe('Drop A')
+    const dispatched = result.evidence?.subActions.at(-1)?.healedDispatch
+    const action = (dispatched?.action ?? {}) as unknown as Record<string, unknown>
+    expect(nameAt(dispatched?.stateBefore, action['fromRef'])).toBe('Card')
+    expect(nameAt(dispatched?.stateBefore, action['toRef'])).toBe('Drop A')
   })
 
   it('a healed sub-action is recorded against the fresh observation with the planner call\'s capture stamp', async () => {
@@ -430,9 +430,9 @@ describe('C438-HEAL-RECORD', () => {
       true,
     )
 
-    const recorded = result.evidence?.subActions.at(-1)
-    expect(nameAt(recorded?.stateBefore, 'e3')).toBe('Save')
-    expect(recorded?.stateBefore.metadata).toMatchObject({
+    const dispatched = result.evidence?.subActions.at(-1)?.healedDispatch
+    expect(nameAt(dispatched?.stateBefore, 'e3')).toBe('Save')
+    expect(dispatched?.stateBefore.metadata).toMatchObject({
       captureMode: 'full',
       imageWidth: 400,
       imageHeight: 800,
@@ -454,6 +454,7 @@ describe('C438-HEAL-RECORD', () => {
     expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e2' })
     expect(nameAt(recorded?.stateBefore, 'e2')).toBe('Save')
     expect(recorded?.stateBefore).toEqual(expect.objectContaining({ elements: SAVE_PRIOR.elements }))
+    expect(recorded).not.toHaveProperty('healedDispatch')
   })
   const NOT_INTERACTABLE: ActionResult = { success: false, error: 'element is not interactable' }
 
@@ -464,9 +465,9 @@ describe('C438-HEAL-RECORD', () => {
       { type: 'click', ref: 'e2' },
       { type: 'click', ref: 'e3' },
     ])
-    const recorded = result.evidence?.subActions[0]
-    expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e3' })
-    expect(nameAt(recorded?.stateBefore, 'e3')).toBe('Save')
+    const dispatched = result.evidence?.subActions[0]?.healedDispatch
+    expect(dispatched?.action).toEqual({ type: 'click', ref: 'e3' })
+    expect(nameAt(dispatched?.stateBefore, 'e3')).toBe('Save')
   })
 
   it('a healed click whose re-dispatch fails anchors its caution to the element acted on', async () => {
@@ -518,5 +519,26 @@ describe('C438-HEAL-RECORD', () => {
     // 439 D-03: the record names the element each action acted on, from that action's observation.
     expect(calls[0]!.record.actions.at(-1)?.element).toEqual({ role: 'button', name: 'Save' })
     expect(renderStepRecord(calls[0]!.record).actions).toContain('click on ref="e3" (button "Save")')
+  })
+})
+
+// 2026-10-19 (444.1-08, D-14): plannedAction/stateBefore stay what the planner chose and saw.
+describe('C444.1-DISPATCH-PAIR', () => {
+  it('a healed click keeps the planner pair and records the dispatch pair beside it', async () => {
+    const { a, result } = await runSave(SAVE_FRESH, [BINDING_LOST_TO_REF, { success: true }])
+
+    expect(a.executed).toEqual([
+      { type: 'click', ref: 'e2' },
+      { type: 'click', ref: 'e3' },
+    ])
+    expect(result.status).toBe('passed')
+    const recorded = result.evidence?.subActions.at(-1)
+    expect(recorded?.plannedAction).toEqual({ type: 'click', ref: 'e2' })
+    expect(recorded?.stateBefore.elements).toEqual(SAVE_PRIOR.elements)
+    expect(recorded?.healedDispatch).toEqual({
+      action: { type: 'click', ref: 'e3' },
+      stateBefore: expect.objectContaining({ elements: SAVE_FRESH.elements }),
+    })
+    expect(nameAt(recorded?.healedDispatch?.stateBefore, 'e3')).toBe('Save')
   })
 })
