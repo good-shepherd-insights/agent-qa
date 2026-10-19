@@ -1031,7 +1031,7 @@ describe('init command', () => {
     const output = consoleOutput()
     expect(output).toContain('agent-qa install-browsers --chromium')
     expect(output).toContain('agent-qa install-mobile-drivers --all')
-    expect(output).toContain('agent-qa doctor')
+    expect(output).toContain('npx agent-qa validate')
   })
 
   it('prints all-drivers setup guidance when both mobile platforms are selected interactively', async () => {

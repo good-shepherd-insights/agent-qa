@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander'
-import { readFileSync } from 'node:fs'
-import { join, relative, resolve } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
 import pc from 'picocolors'
 import select from '@inquirer/select'
 import input from '@inquirer/input'
@@ -187,6 +187,7 @@ const EXAMPLES_SUITE_ID = 's_dice-ego-veer-warp-ionic-trying-tur-cal-stride-batt
 const KOMAZON_CHECKOUT_PATH = 'tests/examples/komazon-checkout.yaml'
 const KOMAZON_CART_TOTAL_BUG_PATH = 'tests/examples/komazon-cart-total-bug.yaml'
 const EXAMPLES_SUITE_PATH = 'suites/examples.suite.yaml'
+const GETTING_STARTED_URL = 'https://github.com/vostride/agent-qa/blob/main/docs/getting-started.md'
 const KOMAZON_SHIPPING_HOOK_TEST_ID = 't_ayin-dual-chunk-lou-tablet-ticket-brace-lak-kite-abu'
 const SHIPPING_ADDRESS_HOOK_ID = 'h_phi-arts-vis-band-aira-streng-twig-roi-mino-fold'
 const KOMAZON_SHIPPING_HOOK_PATH = 'tests/examples/komazon-shipping-hook.yaml'
@@ -620,44 +621,93 @@ function warnForMissingKnowledgeGitignoreRules(path: string): void {
   }
 }
 
-function browserSetupCommand(platform: InitPlatformInput): string | null {
-  return hasWeb(platform) ? 'agent-qa install-browsers --chromium' : null
+type InitNextStep = { command: string; description: string }
+
+function subscriptionAuthInstalled(dir: string): boolean {
+  let current = resolve(dir)
+  while (true) {
+    const manifest = join(
+      current,
+      'node_modules',
+      ...SUBSCRIPTION_AUTH_PACKAGE.split('/'),
+      'package.json',
+    )
+    if (existsSync(manifest)) return true
+    const parent = dirname(current)
+    if (parent === current) return false
+    current = parent
+  }
 }
 
-function mobileDriverSetupCommand(platform: InitPlatformInput): string | null {
-  const runtimes = normalizePlatformSelection(platform).mobileRuntimes
-  if (runtimes.length === 0) return null
-  return 'agent-qa install-mobile-drivers --all'
+function connectionSteps(config: Record<string, unknown>, dir: string): InitNextStep[] {
+  const registry = config.registry as Record<string, unknown> | undefined
+  const llms = (registry?.llms ?? []) as InitLLMConfig[]
+  const steps: InitNextStep[] = []
+  const usesSubscription = llms.some(llm => isSubscriptionProvider(String(llm.provider)))
+  if (usesSubscription && !subscriptionAuthInstalled(dir)) {
+    steps.push({
+      command: `npm install -D ${SUBSCRIPTION_AUTH_PACKAGE}`,
+      description: 'Install the subscription sign-in plugin',
+    })
+  }
+  for (const llm of llms) {
+    const name = String(llm.name)
+    const provider = String(llm.provider)
+    if (isSubscriptionProvider(provider)) {
+      steps.push({
+        command: `npx agent-qa auth login --config ${name}`,
+        description: 'Sign in with your subscription',
+      })
+      continue
+    }
+    steps.push({
+      command: `npx agent-qa auth set --config ${name} --type api-key`,
+      description: 'Save your API key at a hidden prompt',
+    })
+    if (getProvider(provider)?.authModes.includes('bearer-token')) {
+      steps.push({
+        command: `npx agent-qa auth set --config ${name} --type bearer-token`,
+        description: 'Or save a bearer token at a hidden prompt',
+      })
+    }
+  }
+  return steps
 }
 
-function initNextSteps(platform: InitPlatformInput): Array<{ command: string; description: string }> {
-  const steps: Array<{ command: string; description: string }> = []
-  const browserCommand = browserSetupCommand(platform)
-  const mobileCommand = mobileDriverSetupCommand(platform)
-
-  if (browserCommand) {
-    steps.push({ command: browserCommand, description: 'Install browser support' })
-  }
-  if (mobileCommand) {
-    steps.push({ command: mobileCommand, description: 'Install mobile driver support' })
-  }
-
-  steps.push(
-    { command: 'agent-qa doctor', description: 'Verify your environment' },
-  )
+// 2026-10-19 (445-05, D-17): the same commands, in the same order, as docs/getting-started.md.
+function initNextSteps(
+  platform: InitPlatformInput,
+  config: Record<string, unknown>,
+  dir: string,
+): InitNextStep[] {
+  const steps: InitNextStep[] = []
   if (hasWeb(platform)) {
     steps.push({
-      command: `agent-qa run ${EXAMPLES_SUITE_PATH}`,
-      description: "Run the examples: one passes, one fails on the playground's deliberate bug",
+      command: 'npx agent-qa install-browsers --chromium',
+      description: 'Install the browser the examples run in',
     })
-  } else {
+  }
+  if (normalizePlatformSelection(platform).mobileRuntimes.length > 0) {
+    steps.push({
+      command: 'npx agent-qa install-mobile-drivers --all',
+      description: 'Install mobile driver support',
+    })
+  }
+  steps.push(...connectionSteps(config, dir))
+  if (!hasWeb(platform)) {
     steps.push({ command: 'Edit agent-qa.local.yaml', description: 'Bind your mobile app' })
   }
-  steps.push(
-    { command: 'agent-qa run', description: 'Run all tests' },
-    { command: 'agent-qa dashboard', description: 'View results in browser' },
-  )
-
+  steps.push({ command: 'npx agent-qa validate', description: 'Check the config and the tests' })
+  if (hasWeb(platform)) {
+    steps.push({
+      command: `npx agent-qa run ${EXAMPLES_SUITE_PATH}`,
+      description: "Run the examples: one passes, one fails on the playground's deliberate bug (exit 1)",
+    })
+  }
+  steps.push({
+    command: GETTING_STARTED_URL,
+    description: 'The rest of the route: the hook sample, the dashboard and what the run taught agent-qa',
+  })
   return steps
 }
 
@@ -838,41 +888,12 @@ function printExampleSecretLine(): void {
 function printNextSteps(
   platform: InitPlatformInput,
   config: Record<string, unknown>,
-  provider: string,
+  dir: string,
 ): void {
   console.log('')
   console.log('  Next steps:')
-  for (const [index, step] of initNextSteps(platform).entries()) {
+  for (const [index, step] of initNextSteps(platform, config, dir).entries()) {
     console.log(`    ${index + 1}. ${pc.cyan(step.command)}  ${step.description}`)
-  }
-  const registry = config.registry as Record<string, unknown> | undefined
-  const generatedLLMs = (registry?.llms ?? []) as InitLLMConfig[]
-  const subscriptionLLMs = generatedLLMs.filter(
-    llm => isSubscriptionProvider(String(llm.provider)),
-  )
-  if (subscriptionLLMs.length === 0) {
-    console.log(
-      `    ${pc.dim('•')} Save credentials with `
-      + pc.cyan('agent-qa auth set --config default --type api-key'),
-    )
-    if (getProvider(provider)?.authModes.includes('bearer-token')) {
-      console.log(
-        `    ${pc.dim('•')} Bearer tokens use `
-        + pc.cyan('agent-qa auth set --config default --type bearer-token'),
-      )
-    }
-    return
-  }
-
-  console.log(
-    `    ${pc.dim('•')} Fetch ${SUBSCRIPTION_AUTH_PACKAGE} `
-    + 'with your package manager install command',
-  )
-  for (const llm of subscriptionLLMs) {
-    console.log(
-      `    ${pc.dim('•')} Authenticate ${pc.cyan(String(llm.name))} `
-      + `from ${pc.cyan('agent-qa dashboard')}`,
-    )
   }
 }
 
@@ -1222,7 +1243,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         result => result.path === secretsPath && result.outcome === 'preserved',
       )
       if (hasWeb(platform) && secretsPreserved) printExampleSecretLine()
-      printNextSteps(platform, config, provider)
+      printNextSteps(platform, config, dir)
       if (!agentInstructionsPlan) printAgentInstructionPointer()
       console.log('')
     })

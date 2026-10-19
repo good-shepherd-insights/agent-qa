@@ -1,6 +1,6 @@
 // C445-INIT-LLM (445-04, D-11, D-36): init's model connection flags and their defaults
 // C445-INIT-PROMPTS (445-04, D-11): a terminal init asks only defaulted questions whose flag is absent
-// C445-MODEL-DEFAULTS (445-05, D-31, D-36): the subscription defaults are current and agree with the registry
+// C445-MODEL-DEFAULTS (445-05, D-31, D-36): current subscription defaults, same in CLI and registry
 // C445-NEXT-STEPS (445-05, D-14, D-17): init prints its next steps in the route order
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
@@ -414,7 +414,8 @@ describe('C445-MODEL-DEFAULTS', () => {
   it('the CLI subscription defaults equal the provider registry defaults', () => {
     expect(DEFAULT_OPENAI_MODEL).toBe(getProvider('openai-subscription')?.defaultModel)
     expect(DEFAULT_ANTHROPIC_MODEL).toBe(getProvider('anthropic-subscription')?.defaultModel)
-    expect([DEFAULT_OPENAI_MODEL, DEFAULT_ANTHROPIC_MODEL]).toEqual(['gpt-6.1-sol', 'claude-sonnet-5-5'])
+    expect([DEFAULT_OPENAI_MODEL, DEFAULT_ANTHROPIC_MODEL])
+      .toEqual(['gpt-6.1-sol', 'claude-sonnet-5-5'])
   })
 })
 
@@ -448,7 +449,9 @@ describe('C445-NEXT-STEPS', () => {
       GETTING_STARTED,
     ]
     const positions = order.map(text => output.indexOf(text))
-    for (const [index, text] of order.entries()) expect(positions[index], text).toBeGreaterThanOrEqual(0)
+    for (const [index, text] of order.entries()) {
+      expect(positions[index], text).toBeGreaterThanOrEqual(0)
+    }
     expect(positions).toEqual([...positions].sort((a, b) => a - b))
     const run = lineWith(output, RUN_EXAMPLES)
     expect(run).toContain('one passes')
@@ -465,7 +468,8 @@ describe('C445-NEXT-STEPS', () => {
     lineWith(output, 'npx agent-qa auth set --config default --type bearer-token')
     expect(output.indexOf('npx agent-qa install-browsers --chromium'))
       .toBeLessThan(output.indexOf('npx agent-qa auth set'))
-    expect(output.indexOf('npx agent-qa auth set')).toBeLessThan(output.indexOf('npx agent-qa validate'))
+    expect(output.indexOf('npx agent-qa auth set'))
+      .toBeLessThan(output.indexOf('npx agent-qa validate'))
     expect(output).not.toContain('auth login')
     expect(output).not.toContain(SUBSCRIPTION_AUTH_PACKAGE)
   })
@@ -489,8 +493,8 @@ describe('C445-NEXT-STEPS', () => {
       }
       const start = lines.findIndex(line => line.includes('Next steps:'))
       expect(start, args.join(' ')).toBeGreaterThanOrEqual(0)
-      expect(lines.slice(start).some(line => line.includes('npx agent-qa validate')), args.join(' '))
-        .toBe(true)
+      const validate = lines.slice(start).some(line => line.includes('npx agent-qa validate'))
+      expect(validate, args.join(' ')).toBe(true)
     }
   })
 })
