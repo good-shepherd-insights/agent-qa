@@ -13902,6 +13902,24 @@
       "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
       "fullName": "C437-WEBVIEW-OBSERVE the descendants of a contenteditable host are not listed as editable",
       "origin": "444.1 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a checked checkbox carries no value and is named by its label",
+      "origin": "444.1 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a radio option carries no value and is named by its label",
+      "origin": "444.1 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/android/src/__tests__/437-webview-observer.test.ts",
+      "fullName": "C437-WEBVIEW-OBSERVE a submit or button input carries no value and keeps its caption as its name",
+      "origin": "444.1 D-08"
     }
   ]
 }
