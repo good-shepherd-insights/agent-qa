@@ -2,7 +2,7 @@ import { readFile, mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { generateTestId } from '@vostride/agent-qa-ids'
-import { parse as parseYaml } from 'yaml'
+import { parseAllDocuments, parse as parseYaml } from 'yaml'
 import {
   discoverWorkspaceFiles,
   resolveWorkspaceFileTarget,
@@ -156,13 +156,18 @@ export function decodeUtf8(bytes: Uint8Array): string | undefined {
   }
 }
 
+// 2026-10-19 (444.1-11, D-19, D-21): every document's target is read, and the line pattern reads only top-level target lines.
 export function targetsForMarkerCheck(content: string): unknown[] {
   const targets: unknown[] = []
   try {
-    const parsed: unknown = parseYaml(content)
-    if (isMapping(parsed)) targets.push(parsed.target)
+    for (const doc of parseAllDocuments(content)) {
+      if (doc.errors.length === 0) {
+        const value: unknown = doc.toJS()
+        if (isMapping(value)) targets.push(value.target)
+      }
+    }
   } catch { /* the line pattern below still reads it */ }
-  for (const match of content.matchAll(/^[ \t]*target:[ \t]*(\S.*)$/gm)) targets.push(match[1])
+  for (const match of content.matchAll(/^target:[ \t]*(\S.*)$/gm)) targets.push(match[1])
   return targets
 }
 
