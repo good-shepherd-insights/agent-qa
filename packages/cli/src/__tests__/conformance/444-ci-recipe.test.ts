@@ -8,6 +8,7 @@ import { join, relative, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
+import { resumeLimitClause } from '../../curation/resume-limit.js'
 import { refuseWithoutRecordingTools } from './433-door-fixture.js'
 import {
   POPULATED_FAILURE_STEP_MARKER,
@@ -243,6 +244,32 @@ describe('C444-CI-RECIPE', () => {
     expect(run.argv[at + 1], `${run.line} names the report path`).toMatch(/^[^-].*\.xml$/u)
     expect(job.uploadPaths, 'the report the run writes is the report the job uploads').toContain(run.argv[at + 1])
     expect(job.runEnv, 'the run step sets CI').toMatchObject({ CI: 'true' })
+  })
+
+  it('the job keeps a job timeout as CI hygiene', () => {
+    const doc = parse(firstYamlBlock(readFileSync(CI_DOC, 'utf8'))) as {
+      jobs?: Record<string, { 'timeout-minutes'?: unknown }>
+    }
+    const jobs = Object.values(doc.jobs ?? {})
+    expect(jobs, 'docs/ci.md declares one job').toHaveLength(1)
+    const minutes = jobs[0]!['timeout-minutes']
+    expect(typeof minutes, 'the job sets timeout-minutes').toBe('number')
+    expect(Number.isInteger(minutes) && (minutes as number) > 0,
+      `timeout-minutes is a positive whole number: ${String(minutes)}`).toBe(true)
+  })
+
+  it('the post-run section bounds only the work after the verdict and words queued work with the CI resume limit', () => {
+    const markdown = readFileSync(CI_DOC, 'utf8')
+    const start = markdown.indexOf('\n## How long the post-run work takes\n')
+    expect(start, 'docs/ci.md has the post-run section').toBeGreaterThanOrEqual(0)
+    const end = markdown.indexOf('\n## ', start + 1)
+    const section = markdown.slice(start, end === -1 ? undefined : end).replace(/\s+/gu, ' ')
+    expect(section, 'queued work is worded with the clause the CLI prints')
+      .toContain(resumeLimitClause('any-host'))
+    expect(section).toContain('after the verdict')
+    expect(section).toContain('exit code')
+    expect(section).toContain('not finished')
+    expect(section, 'no promise of a later finish').not.toContain('for the next run or the daemon')
   })
 })
 
