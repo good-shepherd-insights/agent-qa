@@ -255,14 +255,18 @@ export const FRAME_PROBE_TIMEOUT_MS = 1_000
 // In-page judge for every candidate of one frame, in that frame's own viewport. Ancestors are
 // walked over the flat tree (assigned slot, parent element, shadow host), skipping a body whose
 // overflow propagates to the viewport. Self-contained: Playwright serializes it.
-// - hidden: computed visibility other than `visible`, opacity 0 on the element or an ancestor, an
-//   own box under 2x2 CSS px, or a box outside the viewport;
+// - hidden: computed visibility other than `visible`, opacity 0 on the element or an ancestor, a
+//   non-empty own box under 2x2 CSS px, or a box outside the viewport;
 // - unknown: a box a clipping ancestor (a nested scroller the search may not have moved) empties
 //   or shrinks under 2x2, or a hit test at its centre that lands on anything but the element (an
 //   overlay, a point removed by clip or clip-path, an approximate clip);
 // - visible: the hit lands on the element, inside it, or on an ancestor of a pointer-events:none
-//   element. A clip is skipped once the element or a node below the clipping ancestor is fixed or
-//   absolutely positioned, since it may escape the clip; the hit test then decides.
+//   or text-judged element. A clip is skipped once the element or a node below the clipping
+//   ancestor is fixed or absolutely positioned, since it may escape the clip; the hit test decides.
+// 2026-10-19 (444.1-01, D-04): a display:contents or zero-area element is judged by its contents'
+// client rects, and is unknown when they have no area or its own box clips them.
+// 2026-10-19 (444.1-01, D-04): the hit walks elementsFromPoint from the top, past elements that
+// are transparent: opacity 0, or unpainted (with their ::before and ::after) with no text there.
 function judgeCandidates(elements: unknown[]): unknown {
   const g = globalThis as any
   const doc = g.document
@@ -278,14 +282,53 @@ function judgeCandidates(elements: unknown[]): unknown {
     const position = g.getComputedStyle(node).position
     return position === 'fixed' || position === 'absolute'
   }
+  const contentRects = (node: any): any[] => {
+    const range = doc.createRange()
+    range.selectNodeContents(node)
+    return Array.from(range.getClientRects())
+  }
+  const replaced = /^(IMG|VIDEO|CANVAS|IFRAME|EMBED|OBJECT|SVG|INPUT|TEXTAREA|SELECT)$/
+  const unpainted = (s: any): boolean =>
+    s.backgroundImage === 'none' && /^(transparent|rgba\(.*,\s*0\))$/.test(s.backgroundColor)
+  const emptyPseudo = (p: any): boolean =>
+    p.content === 'none' || p.content === 'normal' || (p.content === '""' && unpainted(p))
+  const transparent = (node: any, x: number, y: number): boolean => {
+    const s = g.getComputedStyle(node)
+    if (s.opacity === '0') return true
+    if (node.namespaceURI !== 'http://www.w3.org/1999/xhtml') return false
+    if (replaced.test(node.tagName)) return false
+    // A shadow tree's boxes are retargeted to its host, so a host is never seen through.
+    if (node.shadowRoot || node.tagName.includes('-')) return false
+    if (!unpainted(s) || s.backdropFilter !== 'none') return false
+    if (!emptyPseudo(g.getComputedStyle(node, '::before'))) return false
+    if (!emptyPseudo(g.getComputedStyle(node, '::after'))) return false
+    return !contentRects(node).some(
+      (t) => t.left <= x && x <= t.right && t.top <= y && y <= t.bottom,
+    )
+  }
   const judge = (el: any): unknown => {
     const style = g.getComputedStyle(el)
     if (style.visibility !== 'visible') return { state: 'hidden' }
     for (let n = el; n; n = parentOf(n)) {
       if (g.getComputedStyle(n).opacity === '0') return { state: 'hidden' }
     }
-    const r = el.getBoundingClientRect()
-    if (r.width < 2 || r.height < 2) return { state: 'hidden' }
+    let r = el.getBoundingClientRect()
+    const byText = style.display === 'contents' || r.width === 0 || r.height === 0
+    if (byText) {
+      // A zero-area box that clips its own content shows none of its text.
+      const clipped = clips(el) || style.clip !== 'auto' || style.clipPath !== 'none'
+      if (style.display !== 'contents' && clipped) return { state: 'unknown' }
+      const rects = contentRects(el).filter((t) => t.width > 0 && t.height > 0)
+      if (rects.length === 0) return { state: 'unknown' }
+      r = {
+        left: Math.min(...rects.map((t) => t.left)),
+        top: Math.min(...rects.map((t) => t.top)),
+        right: Math.max(...rects.map((t) => t.right)),
+        bottom: Math.max(...rects.map((t) => t.bottom)),
+      }
+    } else if (r.width < 2 || r.height < 2) {
+      return { state: 'hidden' }
+    }
     let left = Math.max(r.left, 0)
     let top = Math.max(r.top, 0)
     let right = Math.min(r.right, g.innerWidth)
@@ -306,13 +349,17 @@ function judgeCandidates(elements: unknown[]): unknown {
       if (escapes(a)) positioned = true
     }
     if (right - left < 2 || bottom - top < 2) return { state: 'unknown' }
-    const hit = el.getRootNode().elementFromPoint((left + right) / 2, (top + bottom) / 2)
-    if (!hit) return { state: 'unknown' }
-    if (hit === el || el.contains(hit)) return { state: 'visible', rect: { left, top, right, bottom } }
-    if (style.pointerEvents === 'none') {
-      for (let a = parentOf(el); a; a = parentOf(a)) {
-        if (a === hit) return { state: 'visible', rect: { left, top, right, bottom } }
+    const x = (left + right) / 2
+    const y = (top + bottom) / 2
+    const seen = { state: 'visible', rect: { left, top, right, bottom } }
+    for (const hit of el.getRootNode().elementsFromPoint(x, y)) {
+      if (hit === el || el.contains(hit)) return seen
+      if (style.pointerEvents === 'none' || byText) {
+        for (let a = parentOf(el); a; a = parentOf(a)) {
+          if (a === hit) return seen
+        }
       }
+      if (!transparent(hit, x, y)) return { state: 'unknown' }
     }
     return { state: 'unknown' }
   }
