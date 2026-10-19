@@ -13998,6 +13998,30 @@
       "file": "packages/eval/src/extract/__tests__/444.1-planner-pair.test.ts",
       "fullName": "C444.1-EVAL-PLANNER-PAIR a ref-healed leg is replayed against the tree the planner saw",
       "origin": "444.1 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/web/src/__tests__/438-native-binding.test.ts",
+      "fullName": "C438-NATIVE-BINDING a row inside an article whose status line changes between observe and dispatch is dispatched onto the same row",
+      "origin": "444.1 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT an article never adds its prose to a nested row",
+      "origin": "444.1 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-row-text.test.ts",
+      "fullName": "C438-ROW-TEXT a leaf three levels deep carries every enclosing same-role row line",
+      "origin": "444.1 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/grounding/__tests__/438-stated-target.test.ts",
+      "fullName": "C438-JUDGE leaves with one name under different grandparents are told apart",
+      "origin": "444.1 D-17"
     }
   ]
 }
