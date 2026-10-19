@@ -81,7 +81,7 @@ export interface JobRecoveryHost {
    * would reclaim a job from the handler still running it.
    */
   recoverAbandonedClaims(fence: JobStoreFence): Promise<RecoverAbandonedClaimsOutcome>
-  /** Pump until the queue is empty. No timers, no sleeping, no backoff applied — not a dispatcher. */
+  /** Pump until no row is claimable. No timers, no sleeping — not a dispatcher. */
   resumePending(fence: JobStoreFence, maxJobs?: number): Promise<readonly RunNextJobOutcome[]>
   close(): void
 }

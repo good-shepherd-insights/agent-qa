@@ -517,18 +517,18 @@ const CHAIN_PUMP_BOUND = 16
  * The qualifier is load-bearing and was missing (WR-10): a throw does not END this loop, it
  * LEAVES it, skipping the starvation classification below and landing in the drain's catch.
  * That path is outside this domain by construction, and it is reported by the separate
- * `PostRunDrainOutcome` member `'threw'` — not by a sixth exit here, which would imply the
+ * `PostRunDrainOutcome` member `'threw'` — not by a fifth exit here, which would imply the
  * classification runs on a path where it never does.
  */
-type ChainPumpExit = 'bound' | 'budget' | 'empty' | 'aborted' | 'retry'
+type ChainPumpExit = 'bound' | 'budget' | 'empty' | 'aborted'
 
 /**
  * Per exit: does reaching it WITHOUT having observed this run's own chain mean the chain was
  * starved (WR-01 / T-388-18b)?
  *
- * A `Record` over the named exit type rather than another condition, deliberately: a sixth
+ * A `Record` over the named exit type rather than another condition, deliberately: a fifth
  * exit added to the pump fails to compile here until it is classified — the property the
- * shipped two-member disjunction lacked, which is how the `retry` exit fell through to a
+ * shipped two-member disjunction lacked, which is how the former `retry` exit fell through to a
  * bare `pending` for starved work.
  */
 const PUMP_EXIT_STARVES_OWN_CHAIN: Record<ChainPumpExit, boolean> = {
@@ -536,11 +536,6 @@ const PUMP_EXIT_STARVES_OWN_CHAIN: Record<ChainPumpExit, boolean> = {
   bound: true,
   // The budget was spent the same way: the clock ran out on foreign work.
   budget: true,
-  // The same story with a different trigger: a foreign row's backoff broke the pump before
-  // this run's chain was reachable — and 388-08's completeness gate made exactly that row
-  // common, because `markRetryable` clears `claimed_at` without setting `status` and there
-  // is no not-before column, so a retryable `curate-memory` stays the oldest claimable row.
-  retry: true,
   // An emptied queue is not starvation: the rows are gone because somebody ran them.
   empty: false,
   // An abort is not starvation: the user stopped this process.
@@ -895,11 +890,10 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
           }
           jobsRun += 1
           if (outcome.disposition === 'retry-scheduled') {
-            // Never sleep the run process on a backoff. The row stays queued and whoever
-            // holds the lease next — the daemon, or the next run's tail — picks it up.
+            // Never sleep the run process on a backoff. The store keeps the row out of every
+            // claim until its not-before time (444.1 D-23), so the pump goes on to the next one.
             drainOutcome = 'retry-scheduled'
-            pumpExit = 'retry'
-            break
+            continue
           }
         }
         // WR-01 / T-388-18b: the pump ended without ever reaching this run's chain, on an exit
