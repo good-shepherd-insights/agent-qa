@@ -116,12 +116,19 @@ If you want the pointer in the project's AGENTS.md as well,
   the four skills and the agent-qa server with all 20 of its tools, wrote and ran the example test
   above, read the run's evidence and quoted its $29.00 bag total, and the dashboard showed the same
   result. The run ended `healed` rather than `passed`.
+- Checked on 2026-10-21 with Codex CLI 0.163.0 and the agent-qa 0.2.0 packages: Codex listed the
+  four skills and loaded each one the request named with `$`, wrote and ran the example test above
+  through `npx agent-qa mcp --http`, read the run's evidence and quoted its $29.00 bag total, and
+  the dashboard showed the same result while `npx agent-qa mcp --http` kept port 3471. The run ended
+  `passed`.
 - `agent_qa_start_run` answers only when the run has its verdict, and `agent_qa_write_test` runs its
   checks before it answers, so either call can take as long as the tests it runs.
 - `agent_qa_start_run` answers with the run id, not the verdict. `agent_qa_get_run_overview` reads
   the verdict, and the skills call it.
 - `agent_qa_start_run` lists a `scope` argument that the agent-qa server refuses. Name the tests with
   `patterns` instead; Claude Code did so after the refusal.
+- `agent_qa_list_runs` answers no runs when it is given a `target`, because agent-qa records no
+  targets for a run. List runs without `target`, or read the run by its id, as Codex did.
 - A run can end `healed` rather than `passed`: every step passed, but agent-qa had to recover on
   the way. A healed run counts as a pass.
 - `agent_qa_write_test` can add steps the request did not name, such as opening the product page
