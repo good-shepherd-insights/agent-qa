@@ -14838,6 +14838,18 @@
       "file": "packages/cli/src/__tests__/446-contracts.test.ts",
       "fullName": "C446-CONTRACTS a key added to or removed from a schema is named by the comparison",
       "origin": "446 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-packed-skills.test.ts",
+      "fullName": "C446-PACKED-SKILLS every SKILL.md, agents/openai.yaml and named reference is in the staged CLI tarball and non-empty",
+      "origin": "446 D-14"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-packed-skills.test.ts",
+      "fullName": "C446-PACKED-SKILLS a missing or empty reference in the staged package is named",
+      "origin": "446 D-14"
     }
   ]
 }
