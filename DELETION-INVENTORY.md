@@ -6770,3 +6770,113 @@ and pinned by `init.test.ts`.
 The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
 verdict are recorded in `.planning/phases/445-setup-route-and-re-initialization/445-RECORD.md`
 § Gate, and the SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-20 — Phase 446: Packaged skills and host recipes
+
+This section appends to the register and rewrites no earlier section. Phase 446 made the four
+skills that ship in the `agent-qa` package work from that package, and gave Claude Code and Codex
+one recipe page each host was proven against: `agent-qa mcp --http` as the one owner of port 3471
+(D-05), the standalone no-dashboard line (D-26), one contracts file pinned to the schemas (D-13,
+D-29), the skills checked in the staged tarball (D-14), the config-key and doctor fix-text census
+(D-16), true Embedder fix texts (D-11, D-27), `npx agent-qa` in every guidance command (D-09), the
+placeholder explanations and the skill metadata (D-15), the recipe page and its links (D-01, D-07,
+D-08, D-10, D-22, D-23, D-28), and the live legs' fixes (D-18, D-25). The decisions are in
+`.planning/phases/446-packaged-skills-and-host-recipes/446-CONTEXT.md`. Written by 446-13 on
+2026-10-21.
+
+### How this inventory is measured
+
+Baseline `019f1cfa0` (where 446 began). Closing SHA `27a48e8c6` (446-12's last commit, the parent
+of the commit that adds this section). `git -C agent-qa diff --shortstat 019f1cfa0 27a48e8c6`: 70
+files changed, 2897 insertions, 258 deletions; under `packages/` outside `__tests__` directories,
+31 files, +321/−154. `--diff-filter=D`: 1 file deleted
+(`packages/mcp/references/agent-qa-contracts.json`, which took its directory with it).
+`--diff-filter=A`: 12 files added: `docs/coding-agents.md`, the two test helpers
+`cli/src/__tests__/conformance/cli-help.ts` and `config-keys.ts`, and 9 test files
+(`cli/src/__tests__/446-contracts`, under `conformance/` `446-doctor-fixes`, `446-packed-skills`,
+`446-port-owner` and `446-recipe`, `agent/src/authoring/__tests__/446-stated-price`,
+`mcp/src/__tests__/446-tool-schema`, `runner/src/loop/__tests__/446-requested-dialog` and
+`schema/src/__tests__/446-requested-dialog-handoff`). 47 commits, every one signed (`%G?` = `G`).
+The removed members below are read from each deleting commit's diff
+(`git -C agent-qa show --unified=0 <sha>`), not transcribed from a summary. Names are at
+`019f1cfa0`.
+
+### What was deleted
+
+| Member (file at `019f1cfa0`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `packages/mcp/references/agent-qa-contracts.json` (63 lines) and its `references/` directory | an unshipped second copy of the contracts file, in no package's `files` and read by nothing; it still said "Generate IDs with agent_qa_generate_id or `agent-qa ids generate <type>`" | `bf3efca33` (446-02) | `C446-CONTRACTS one contracts file ships and it names no source path` |
+| the top-level `"source": "packages/mcp/references/agent-qa-contracts.json"` key in `skills/agent-qa-authoring/references/agent-qa-contracts.json` and its mirror under `packages/cli/skills/` | pointed the shipped copy at the deleted file | `bf3efca33` (446-02) | `C446-CONTRACTS one contracts file ships and it names no source path` |
+| `mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' }` in `buildScaffoldConfig` and the word `MCP` in the services comment `# Infrastructure services (dashboard, MCP, cache, auth state, logging)` (`cli/src/commands/scaffold-content.ts`) | made every new workspace's dashboard co-host MCP on 3471, so the dashboard and `agent-qa mcp --http` fought for the port | `09f78926a` (446-01) | `C446-PORT-OWNER a fresh scaffold declares no services.mcp for any init platform`; `C446-PORT-OWNER a real init writes a config whose dashboard mount plan binds no MCP port` |
+| `EMBEDDER_FIX` (`cli/src/commands/doctor-knowledge-checks.ts`): "Set an explicit embedder profile in agent-qa.config.yaml (the daemon cannot resolve `deferred`), then restart the daemon." | doctor's Embedder fix for every fail state; it named a config key that does not exist | `b66c6e449` (446-05) | the three `C446-EMBEDDER-FIX` cells (`… both daemon states keep the fail status and name no config key` refuses `agent-qa.config.yaml` in either text) |
+| the clause ` or run agent-qa dashboard` of `LIVE_LINK_ABSENT_LINE` (`mcp/src/live-link.ts`), with the doc comment saying the line names a command | told a standalone MCP caller that running the dashboard adds a link, which stopped being true with D-05 | `22144755a` (446-01) | `C446-PORT-OWNER the standalone no-dashboard line names only services.dashboard.baseUrl` |
+| the authoring skill's Codex metadata claim `agent-qa local MCP server for schema, ID, authoring, and run tools.` (`skills/agent-qa-authoring/agents/openai.yaml` and its mirror) | named schema and ID tools the server no longer has | `b3f9ced13` (446-06) | `C446-SKILL-METADATA each agents/openai.yaml points at the agent-qa server on port 3471, prompts with its own skill name and claims no schema or ID tool` |
+| `join(root, 'packages/mcp/references')` in `validateNoStaleMcpToolPrefix` (`scripts/validate-publish-surface.mjs`) | scanned the deleted directory | `bf3efca33` (446-02) | `validate:publish` itself: a returned target with no directory fails it with `publish surface scan target missing: packages/mcp/references` (a gate leg) |
+| the Read First bullet `` `references/` `` and the rule "Keep schema references synchronized with core schemas." (`packages/mcp/AGENTS.md`) | pointed agents at the deleted directory | `bf3efca33` (446-02) | the Read First line: `MCP-DOC-PATHS names only Read First files that exist` (`cli/src/__tests__/431-instruction-safety.test.ts`, not registered, run in the gate's test leg); the rule is prose with no cell, and the file it named is noticed by `C446-CONTRACTS one contracts file ships and it names no source path` |
+
+None of the deleted lines was a registered gate row's subject before this phase.
+
+**Changed with no member deleted** (each read from its commit):
+
+| Before (at `019f1cfa0`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| `config.rootKeys` in both shipped contracts copies listed five keys (`workspace, services, registry, use, analytics`) | the nine root keys of `AgentQaConfigSchema` in schema order (`knowledge`, `plugins`, `allowProduction` and `eval` added); every other key list now derived from its schema at test time | `bf3efca33` (446-02) | `C446-CONTRACTS config.rootKeys in both copies are the config schema root keys in schema order`; `C446-CONTRACTS every other key list in both copies equals the schema it describes`; `C446-CONTRACTS a key added to or removed from a schema is named by the comparison` |
+| every CLI command the four skills (both trees), the generated knowledge guide, the root AGENTS.md pointer and `AGENT_QA_MCP_INSTRUCTIONS` quoted read bare `agent-qa …` | `npx agent-qa …` outside ```` ```text ```` sample answers, which stay as the CLI prints them; `AGENT_QUESTION_MAP` keeps bare verbs and only the guide's table adds `npx ` | `b3f9ced13` (446-06), `d74298e78` (446-07) | the four `C446-GUIDANCE-NPX` cells |
+| the knowledge skill and the guide named `knowledge diff <build>` without saying what `<build>` is | "`<build>` is a build ordinal or tag", and the five `--kind` values are named where `runs evidence --kind` is | `b3f9ced13` (446-06), `d74298e78` (446-07) | the two `C446-PLACEHOLDERS` cells |
+| no page said how to connect Claude Code or Codex | `docs/coding-agents.md`: the skill copy steps, Claude Code over stdio (`claude mcp add-json --scope project`, `"timeout":6000000`), Codex over `npx agent-qa mcp --http` at `http://127.0.0.1:3471/mcp` with `tool_timeout_sec = 6000`, the first-use sentences, the dashboard check and the Limits each live leg recorded | `0f21a23b6` (446-08), Limits `3cec93bcb` (446-11), `27a48e8c6` (446-12) | the five `C446-RECIPE` cells; `C446-GUIDANCE-NPX every CLI command the recipe page quotes outside a text block reads npx agent-qa` |
+| nothing linked such a page | `CODING_AGENTS_URL` (`cli/src/commands/knowledge-guide.ts`) on the pointer's Skills line and one guide line; `docs/getting-started.md` § 7, `README.md` and `packages/cli/README.md` link the page; the pointer stays at 9 lines and the guide at 50 | `48b0fb7db` (446-09) | the two `C446-RECIPE-LINKS` cells |
+| one Embedder fix text for both daemon fail states | `EMBEDDER_PROFILE_FIX` and `EMBEDDER_WORKER_FIX` behind a `fixInstructions` getter; statuses and messages unchanged | `b66c6e449` (446-05) | the three `C446-EMBEDDER-FIX` cells; the three `C446-DOCTOR-FIXES` cells hold every command, flag and key any doctor fix names |
+| `openai-subscription`'s `unsupportedParams: ['maxOutputTokens']` (`model/src/providers/builtins.ts`) | `['maxOutputTokens', 'temperature']`; the Codex backend refuses temperature (F-446-11-1) | `509991396` (446-11) | the two `C446-SUBSCRIPTION-TEMPERATURE` cells |
+| the falsifiable-assertion gate refused an unquoted money amount such as `$29.00` | `MONEY_AMOUNT_RE` counts it as a concrete expected value; a restated typed price, bare numbers and vague totals stay refused (owner decision "Accept stated prices", F-446-11-4) | `bae3510c5` (446-11) | the four `C446-STATED-PRICE` cells |
+| an open dialog was `bears-on-condition` or `unrelated` | a third account, `requested`, for a dialog that is the state the step asked to open or see; it does not block the pass (owner decision "Fix the dialog rule", F-446-11-7) | `069a26388` (446-11) | the five `C446-REQUESTED-DIALOG` cells; the two `C446-REQUESTED-DIALOG-HANDOFF` cells |
+| a union fold tool listed its input as `{type: object, oneOf: […]}` with no `properties`, which Claude Code 2.1.304 dropped silently (F-446-11-8) | `flatFoldInput` lists one object (an `action` enum and the arms' fields); calls are still validated against the strict union; `foldArmFindings` is on the barrel (delegated decision "Fix the tool schemas") | `a618d0e6b` (446-11) | the three `C446-TOOL-SCHEMA` cells |
+| the retired `agent_qa_schema_reference` route text said every tool advertises its op's own contract | it also says a fold lists its arms' fields as one object; the capability catalog regenerated for that one line | `a618d0e6b`, `3edb6f924` (446-11) | `398-regen-catalog.sh`'s freshness diff (`nothing to change`) |
+| release staging copied a package's local `.agent-qa/` runtime folder (508 MB in `packages/cli`) | `rejectGeneratedOrLocalFiles` skips `/.agent-qa/`; no tarball's content changed (owner decision) | `64c6ee3f4` (446-09) | the node:test `staging copies no package-local .agent-qa runtime folder` (`scripts/__tests__/release-stage-packages.test.mjs`, pinned by `node-tests.json`) |
+
+#### Registered gate rows
+
+The 2465 rows listed at `019f1cfa0` are still listed, unchanged and in order. 48 rows were appended
+(2513 in all), each with origin `446 D-NN`: D-01 1, D-05 3, D-07 1, D-08 1, D-09 4, D-10 2, D-11 2,
+D-13 4, D-14 2, D-15 3, D-16 5, D-18 2, D-22 1, D-25 14, D-26 1, D-27 1, D-28 1. Plans 446-01 to
+446-09 appended 32; the live Claude Code leg's four fixes (446-11) appended the other 16 (D-18 2,
+D-25 14). No row was re-titled or delisted. One registered cell's body changed, by the owner's
+decision of 2026-10-20 (`a4879a216`, 446-09): `C445-SCAFFOLD-HOSTS every URL init writes for every
+platform names only playground.vostride.dev` allows exactly
+`https://github.com/vostride/agent-qa/blob/main/docs/coding-agents.md` before its host check; its
+title, origin `445 D-04` and the registry row are unchanged.
+
+### What was retained, and why
+
+| Item | File | Why kept |
+|---|---|---|
+| the `services.mcp` schema key (`McpConfigSchema`, `mcp: McpConfigSchema.optional()`), the contracts file's `config.mcpFields`, and the dashboard co-host code (`mcpMountPlanFor`, `mountCoHostedMcp`) | `core/src/schema/services-schema.ts`, `cli/src/commands/dashboard.ts` | D-05: a workspace that declares `services.mcp` itself still co-hosts, and v2 workspaces scaffolded before 446 keep the block; `C446-PORT-OWNER a workspace that declares services.mcp still co-hosts on its port` |
+| the `AGENT_QA_MCP_PORT` overlay to `services.mcp.port` | `cli/src/config.ts:18` | D-29: setting it re-creates a declared `services.mcp` block and so a co-host on that port; kept as it is and not on the page |
+| `secrets.source: workspace.secretsFile` in both contracts copies | `skills/agent-qa-authoring/references/agent-qa-contracts.json` and its mirror | it names the secret marker's source; `C441-SKILL each contracts reference names the secret marker and template` |
+| the comment that `runs.start` "returns when the run has been ACCEPTED" | `agent/src/functions/ops/runs-start.ts:102` | D-25 corrects it only if the file is touched, and 446 did not touch it; the op answers at the verdict (READY-FUT-02 keeps that); a pending todo carries the correction |
+| `agent-qa skills` output, `AGENT_QUESTION_MAP`'s bare verbs, and the ```` ```text ```` sample answers | `cli/src/commands/skills.ts`, `knowledge-guide.ts`, the skills | D-04, D-29 and D-09 |
+| the `services.mcp` block in `test-fixtures/demo-init/agent-qa.config.yaml` | the frozen demo workspace | D-05 is a hard cut that rewrites no existing config |
+
+### What degrades, stated plainly
+
+- **A v2 workspace scaffolded before 446 keeps `services.mcp`,** so its dashboard still co-hosts on
+  3471, and whichever of it and `npx agent-qa mcp --http` starts second does not get the port; the
+  page's Limits says so and says to remove the block.
+- **A fold tool's listed input is a derived object.** A client that checks arguments against the
+  listing alone can send a field combination the server refuses; the server refuses it with the
+  strict union's message, before any handler runs.
+- **The doc URLs the shipped CLI prints return 404 until the release merge**, the recipe page's
+  included (Phase 448's pending todo).
+
+### The instruments that notice a return
+
+- **The 434 gate** must execute and pass all 2513 listed cells, the 48 appended by this phase with
+  their `446 D-NN` origins as well as the 2465 earlier rows.
+- **The cells named above** each failed at their RED commit or in a recorded mutation run on an
+  untracked copy; the records are under
+  `.planning/phases/446-packaged-skills-and-host-recipes/capture/`.
+
+### Gate at the time of writing
+
+The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
+verdict are recorded in `.planning/phases/446-packaged-skills-and-host-recipes/446-RECORD.md`
+§ Gate, and the SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
