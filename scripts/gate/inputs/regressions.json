@@ -14934,6 +14934,42 @@
       "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
       "fullName": "C446-PLACEHOLDERS the guide says the build placeholder is a build ordinal or tag and names the five evidence kinds",
       "origin": "446 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE every agent-qa command and flag the recipe page names exists in the shipped help",
+      "origin": "446 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE the Codex tool_timeout_sec and the Claude Code timeout are each above the scaffold per-test limit",
+      "origin": "446 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE npx agent-qa mcp --http alone serves http://127.0.0.1:3471/mcp, the URL every skill openai.yaml names",
+      "origin": "446 D-07"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE the page copies the four skills into .claude/skills and .agents/skills after mkdir -p and prompts each host with a skill name",
+      "origin": "446 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE the page names npm only, no CLAUDE.md step, no host settings file and none of the unattended leg flags",
+      "origin": "446 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-GUIDANCE-NPX every CLI command the recipe page quotes outside a text block reads npx agent-qa",
+      "origin": "446 D-09"
     }
   ]
 }
