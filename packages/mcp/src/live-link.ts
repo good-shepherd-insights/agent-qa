@@ -32,8 +32,8 @@
 // AND WHEN THERE IS NO BASE ANYWHERE, THE LINE IS A NAMED ABSENCE (RESEARCH Open Question 3). A
 // standalone `agent-qa mcp` with no configured dashboard has nothing to link to, and a fabricated
 // URL there would be exactly the dishonesty this milestone removes: a link that reads as an
-// affordance and answers nothing. `LIVE_LINK_ABSENT_LINE` says what is missing and what to do about
-// it, in the vocabulary of the two things that can supply a base, and contains no address at all.
+// affordance and answers nothing. `LIVE_LINK_ABSENT_LINE` says what is missing and names the config
+// knob that supplies a base, and contains no address at all.
 //
 // AND THERE ARE TWO ABSENCES, NOT ONE (2026-09-01, plan 10, WR-03 · T-408-22). A missing base and a
 // missing run id are different facts with different remedies, so they carry different sentences —
@@ -84,14 +84,11 @@ export function liveLinkLine(url: string): string {
 /**
  * What a carrier result says when no dashboard base exists ANYWHERE (RESEARCH Open Question 3).
  *
- * The wording is the researched recommendation verbatim, and both halves are load-bearing: it names
- * the config knob an operator sets to point this host at somebody's dashboard (the 387 D-10
- * mechanism), and it names the command that makes this machine one. It contains no URL, which is
- * the property the acceptance criterion asserts — an absence that fabricated an address would be
- * worse than no line at all.
+ * It names the config knob an operator sets to point this host at a dashboard (the 387 D-10
+ * mechanism). It contains no URL — an absence that fabricated an address would be worse than no
+ * line at all.
  */
-export const LIVE_LINK_ABSENT_LINE
-  = 'no dashboard configured — set services.dashboard.baseUrl or run agent-qa dashboard'
+export const LIVE_LINK_ABSENT_LINE = 'no dashboard configured — set services.dashboard.baseUrl'
 
 /**
  * What a carrier result says when a dashboard base EXISTS but this result names no run to link to
