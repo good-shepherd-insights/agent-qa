@@ -377,6 +377,22 @@ const LEADING_ARTICLES = ['a', 'an', 'that', 'the'] as const
 const TRAILING_PUNCTUATION_RE = /[.!?,;:\s]+$/
 const QUOTED_LITERAL_RE = /"([^"]*)"/g
 
+/**
+ * An unquoted money amount: a currency symbol with a number (446-11, D-25, the owner's decision).
+ *
+ * A PINNED PATTERN, never config. It widens D-09 clause (ii) toward ACCEPT, the direction every
+ * retune comment in this file warns about, so the case is stated here. `$29.00` names the one value
+ * the page must show exactly as `"$29.00"` does: the page shows that amount or it does not, so a
+ * wrong total fails the step. The currency symbol is what marks a value the page displays rather
+ * than a count in the instruction, which is why bare numbers (`1 item`, `29.00`), a symbol with no
+ * number, and vague wording (`the total is correct`) stay refused. The five symbols are the ones
+ * 440's stated values read, so a price the request states and the draft keeps is one this gate
+ * accepts. Read from the unquoted residue only, and compared against prior actions' quoted spans
+ * like any literal, so restating a typed price is still a tautology. The frozen corpus verdicts did
+ * not move (re-checked in 446-11); re-run it on any change here.
+ */
+const MONEY_AMOUNT_RE = /(?<![\p{L}\p{N}])[$€£¥₹]\d+(?:[.,]\d+)*(?![\p{L}\p{N}])/gu
+
 /** The frozen contract shape plan 01's `corpus-static-gates.test.ts` pinned (D-08). */
 export interface AssertionStrengthStep {
   readonly text: string
@@ -460,6 +476,10 @@ function quotedLiterals(text: string): string[] {
 /** The step with every double-quoted span removed, so prose scans cannot read a literal. */
 function unquotedResidue(text: string): string {
   return text.replace(QUOTED_LITERAL_RE, ' ')
+}
+
+function moneyAmounts(text: string): string[] {
+  return unquotedResidue(text).match(MONEY_AMOUNT_RE) ?? []
 }
 
 /** The step after its leading token, byte-for-byte — every caller normalizes for itself. */
@@ -630,7 +650,8 @@ function isMixedActAndVerify(text: string): boolean {
  *     of a closed continue set, and it is charged in the SAFE direction: what an omission from that
  *     set costs is a refused genuine draft, never an accepted vacuous one.
  * The AUTHOR's route out is a singular lexicon noun standing beside its state (`Verify the login
- * field is empty` passes, and is pinned), or quoting the literal the page must show. The
+ * field is empty` passes, and is pinned), quoting the literal the page must show, or stating a
+ * money amount (see `MONEY_AMOUNT_RE`). The
  * MAINTAINER's routes are an `ELEMENT_NOUNS` membership change or a `FUNCTION_WORDS` membership
  * change (both move the gate toward ACCEPT — one more subject the walk will answer TRUE on, one
  * more token it will cross to get there) or a `PAGE_WHOLE_NOUNS` membership change (which moves the
@@ -684,7 +705,8 @@ function captureSignatureHits(literals: readonly string[]): string[] {
  * entered yet, and an order-blind comparison would reject a legitimate pre-condition check for
  * restating something that comes later. What accumulates — and what the tautology comparison reads
  * — is the RAW span list; the concreteness arm and the capture-signature scan read the filtered
- * literals instead (see `quotedSpans`).
+ * literals instead (see `quotedSpans`). An unquoted money amount is concrete and is compared
+ * against the same span list (see `MONEY_AMOUNT_RE`).
  */
 export function classifyDraftSteps(steps: readonly string[]): StepClassificationRow[] {
   const priorActionLiterals = new Set<string>()
@@ -703,8 +725,10 @@ export function classifyDraftSteps(steps: readonly string[]): StepClassification
     const vacuityHit = (VACUOUS_ASSERTION_PHRASES as readonly string[])
       .find((phrase) => phrase === vacuityRemainder(stepText))
     const hits = captureSignatureHits(literals)
-    const tautology = spans.some((span) => priorActionLiterals.has(span))
-    const concrete = literals.length > 0 || namesElementInExpectedState(stepText)
+    const amounts = moneyAmounts(stepText)
+    const tautology = [...spans, ...amounts].some((value) => priorActionLiterals.has(value))
+    const concrete =
+      literals.length > 0 || amounts.length > 0 || namesElementInExpectedState(stepText)
 
     rows.push({
       stepText,
