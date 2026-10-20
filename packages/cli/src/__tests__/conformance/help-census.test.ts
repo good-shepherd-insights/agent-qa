@@ -47,7 +47,11 @@ import {
   CHAT_RESOLVER_TABLE,
   resolveClause,
 } from '@vostride/agent-qa-agent'
-import { AGENT_QA_TOOL_PROJECTIONS, V1_TOOL_MIGRATION_MAP } from '@vostride/agent-qa-mcp'
+import {
+  AGENT_QA_MCP_INSTRUCTIONS,
+  AGENT_QA_TOOL_PROJECTIONS,
+  V1_TOOL_MIGRATION_MAP,
+} from '@vostride/agent-qa-mcp'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -74,6 +78,7 @@ import { curationOutcomeLine } from '../../curation/curation-tail.js'
 import { createAgentQaProgram } from '../../program.js'
 import { registryOpIds } from './adapters.js'
 import { agentQaRoot, buildCatalogSkillRows, CHAT_ALIAS_PROBES } from './catalog.js'
+import { configKeyFindings } from './config-keys.js'
 import { SURFACE_ROSTER } from './roster.js'
 
 /** Sorted, so a named RED reads the same on every machine. */
@@ -581,6 +586,7 @@ function guidanceInputs(sourceRoot: string, packagedRoot: string): GuidanceInput
   const subjects: GuidanceSubject[] = [
     { name: 'generated guide', body: buildKnowledgeAgentGuide() },
     { name: 'root pointer', body: buildAgentInstructionPointer().join('\n') },
+    { name: 'MCP instructions', body: AGENT_QA_MCP_INSTRUCTIONS },
   ]
 
   const sourceSkills = skillDirectoriesIn(sourceRoot)
@@ -1323,5 +1329,56 @@ describe('C432-CURATION-COPY: curation and chat say where a change went, and poi
         expect(code.match(pattern), `${file} shows ${String(pattern)}`).toBeNull()
       }
     }
+  })
+})
+
+// C446-GUIDANCE-KEYS (446-04, D-16): every dotted config key in the guidance resolves in the schema
+function catalogOpIds(): ReadonlySet<string> {
+  return new Set(loadCapabilityCatalog().rows.flatMap((row) => (row.kind === 'op' ? [row.id] : [])))
+}
+
+describe('C446-GUIDANCE-KEYS', () => {
+  it('every dotted config key the guide, the pointer, the MCP instructions, the skills and the contracts file name resolves in the config schema', () => {
+    const { subjects } = liveGuidanceInputs()
+    const opIds = catalogOpIds()
+    expect(subjects.map((subject) => subject.name)).toContain('MCP instructions')
+    const contracts = subjects.filter((subject) => subject.name.endsWith('/agent-qa-contracts.json'))
+    expect(contracts.map((subject) => subject.name).sort()).toEqual([
+      'packages/cli/skills/agent-qa-authoring/references/agent-qa-contracts.json',
+      'skills/agent-qa-authoring/references/agent-qa-contracts.json',
+    ])
+
+    const live = configKeyFindings(subjects, opIds)
+    expect(live.findings, 'the guidance names a config key the schema refuses').toEqual([])
+    expect(live.scanned, 'the key census scanned no key').toBeGreaterThan(0)
+    const source = subjects.filter((subject) => subject.name.startsWith(`${SKILLS_SOURCE_DIR}/`))
+    const packaged = subjects.filter((subject) => subject.name.startsWith('packages/cli/skills/'))
+    expect(configKeyFindings(source, opIds).scanned, 'no key was scanned in the source skills')
+      .toBeGreaterThan(0)
+    expect(configKeyFindings(packaged, opIds).scanned, 'no key was scanned in the packaged skills')
+      .toBeGreaterThan(0)
+  })
+
+  it('a key the schema lacks is named, and a census that finds no key fails', () => {
+    const opIds = catalogOpIds()
+    const planted = configKeyFindings([{
+      name: 'planted',
+      body: [
+        'Set `safety.trustMode`, `services.mcp.tokens`, `embedder.profile`',
+        'and `workspace.secretsfile`.',
+        'Keep `workspace.secretsFile`, `use.timeout.test` and `services.dashboard.baseUrl`.',
+        'Read `runs.evidence`, then `record.md`; send `"action": "knowledge.accept"`.',
+      ].join('\n'),
+    }], opIds)
+    expect(planted.findings, 'the key census accepts a key the schema refuses').toEqual([
+      'planted: embedder.profile is not a config key',
+      'planted: safety.trustMode is not a config key',
+      'planted: services.mcp.tokens is not a config key',
+      'planted: workspace.secretsfile is not a config key',
+    ])
+    expect(planted.scanned).toBe(7)
+    expect(configKeyFindings([], opIds).findings).toEqual(['no config key was scanned'])
+    expect(configKeyFindings([{ name: 'generated guide', body: 'no keys here' }], opIds).findings)
+      .toEqual(['no config key was scanned'])
   })
 })
