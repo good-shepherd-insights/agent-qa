@@ -358,3 +358,51 @@ describe('C441-SKILL', () => {
     }
   })
 })
+
+// 2026-10-20 (446-06, D-15): the Codex metadata names the live server and no retired tool.
+describe('C446-SKILL-METADATA', () => {
+  const trees = [
+    SOURCE_SKILLS_DIR,
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../skills'),
+  ]
+
+  function descriptionsIn(value: unknown): string[] {
+    if (Array.isArray(value)) return value.flatMap(descriptionsIn)
+    if (value === null || typeof value !== 'object') return []
+    return Object.entries(value).flatMap(([key, inner]) => [
+      ...(key === 'description' && typeof inner === 'string' ? [inner] : []),
+      ...descriptionsIn(inner),
+    ])
+  }
+
+  it('each agents/openai.yaml points at the agent-qa server on port 3471, prompts with its own skill name and claims no schema or ID tool', () => {
+    const findings: string[] = []
+    let read = 0
+    for (const tree of trees) {
+      for (const name of SHIPPED_SKILLS) {
+        const file = path.join(tree, name, 'agents', 'openai.yaml')
+        const label = path.relative(path.dirname(SOURCE_SKILLS_DIR), file)
+        const metadata = parseYaml(readFileSync(file, 'utf8')) as {
+          interface?: { default_prompt?: string }
+          dependencies?: { tools?: Array<Record<string, unknown>> }
+        }
+        read += 1
+        const tools = metadata.dependencies?.tools ?? []
+        const live = tools.length === 1
+          && tools[0]?.type === 'mcp'
+          && tools[0]?.value === 'agent-qa'
+          && tools[0]?.transport === 'streamable_http'
+          && tools[0]?.url === 'http://127.0.0.1:3471/mcp'
+        if (!live) findings.push(`${label}: the tool dependency is not the agent-qa server on 127.0.0.1:3471`)
+        if (!(metadata.interface?.default_prompt ?? '').includes(`$${name}`)) {
+          findings.push(`${label}: the default prompt does not name $${name}`)
+        }
+        for (const description of descriptionsIn(metadata)) {
+          if (/\bschema\b|\bID\b/u.test(description)) findings.push(`${label}: "${description}" claims a schema or ID tool`)
+        }
+      }
+    }
+    expect(read).toBe(SHIPPED_SKILLS.length * 2)
+    expect(findings, 'a skill metadata file is stale').toEqual([])
+  })
+})

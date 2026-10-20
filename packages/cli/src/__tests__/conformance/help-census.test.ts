@@ -663,12 +663,16 @@ function toolCensus(subjects: readonly GuidanceSubject[]): CensusResult {
 interface Invocation {
   readonly text: string
   readonly flags: string[]
+  readonly prefixed: boolean
+  readonly fence: string
 }
 
 const STANDALONE_FLAG = /^--[a-z][a-z0-9-]*(?:\s+<[^>]+>)?$/u
 
 /**
- * Every `agent-qa …` invocation a document quotes: backtick spans, and lines of fenced blocks.
+ * Every `agent-qa …` or `npx agent-qa …` invocation a document quotes: backtick spans, and lines of
+ * fenced blocks. The stored text starts at `agent-qa`; `fence` is the info string of the block the
+ * invocation sat in, `''` outside one.
  *
  * A bare flag span (`--since`) that follows an invocation in the same paragraph is that
  * invocation's flag, which is how the reference lists a verb's options. Prose that merely says
@@ -678,15 +682,24 @@ function invocationsIn(body: string): readonly Invocation[] {
   const invocations: Invocation[] = []
   const paragraphs: string[] = []
   let paragraph: string[] = []
-  let fenced = false
+  let fence: string | undefined
   for (const line of body.split('\n')) {
-    if (line.trim().startsWith('```')) {
-      fenced = !fenced
+    const trimmed = line.trim()
+    if (trimmed.startsWith('```')) {
+      fence = fence === undefined ? (trimmed.slice(3).trim().split(/\s+/u)[0] ?? '') : undefined
       continue
     }
-    if (fenced) {
+    if (fence !== undefined) {
       const at = line.search(/(?:^|\s)agent-qa\s+[a-z]/u)
-      if (at >= 0) invocations.push({ text: line.slice(line.indexOf('agent-qa', at)).trim(), flags: [] })
+      if (at >= 0) {
+        const start = line.indexOf('agent-qa', at)
+        invocations.push({
+          text: line.slice(start).trim(),
+          flags: [],
+          prefixed: /(?:^|\s)npx\s+$/u.test(line.slice(0, start)),
+          fence,
+        })
+      }
       continue
     }
     if (line.trim() === '') {
@@ -702,8 +715,9 @@ function invocationsIn(body: string): readonly Invocation[] {
     let current: Invocation | undefined
     for (const match of text.matchAll(/`([^`]+)`/gu)) {
       const span = (match[1] ?? '').trim()
-      if (/^agent-qa\s+[a-z]/u.test(span)) {
-        current = { text: span, flags: [] }
+      if (/^(?:npx\s+)?agent-qa\s+[a-z]/u.test(span)) {
+        const prefixed = /^npx\s/u.test(span)
+        current = { text: prefixed ? span.replace(/^npx\s+/u, '') : span, flags: [], prefixed, fence: '' }
         invocations.push(current)
       } else if (current !== undefined && STANDALONE_FLAG.test(span)) {
         current.flags.push(span)
@@ -839,7 +853,7 @@ function manifestFindings(program: Command = createAgentQaProgram()): readonly s
 
   const projected = new Map(AGENT_QA_TOOL_PROJECTIONS.map((projection) => [projection.name, projection.ops]))
   for (const row of AGENT_QUESTION_MAP) {
-    const resolved = resolveInvocation(program, { text: row.cli, flags: [] })
+    const resolved = resolveInvocation(program, { text: row.cli, flags: [], prefixed: false, fence: '' })
     if (resolved.command === undefined) continue
     const entry = DEDICATED_READ_VERBS.find((verb) => verb.verb === commandPathOf(resolved.command!))
     const ops = projected.get(row.mcp) ?? []
@@ -1380,5 +1394,88 @@ describe('C446-GUIDANCE-KEYS', () => {
     expect(configKeyFindings([], opIds).findings).toEqual(['no config key was scanned'])
     expect(configKeyFindings([{ name: 'generated guide', body: 'no keys here' }], opIds).findings)
       .toEqual(['no config key was scanned'])
+  })
+})
+
+const SKILL_TREES = [`${SKILLS_SOURCE_DIR}/`, 'packages/cli/skills/'] as const
+
+function skillSubjects(): readonly GuidanceSubject[] {
+  return liveGuidanceInputs().subjects.filter((subject) =>
+    SKILL_TREES.some((tree) => subject.name.startsWith(tree)))
+}
+
+function bareInvocations(subjects: readonly GuidanceSubject[]): readonly string[] {
+  return subjects.flatMap((subject) => invocationsIn(subject.body)
+    .filter((invocation) => invocation.fence !== 'text' && !invocation.prefixed)
+    .map((invocation) => `${subject.name}: "${invocation.text}" is not prefixed with npx`))
+}
+
+// C446-GUIDANCE-NPX (446-06, D-09): every command a skill quotes can be copied and run with a local install
+describe('C446-GUIDANCE-NPX', () => {
+  it('every CLI command a source or packaged skill quotes outside a text block reads npx agent-qa', () => {
+    const skills = skillSubjects()
+    for (const tree of SKILL_TREES) {
+      const quoted = skills
+        .filter((subject) => subject.name.startsWith(tree))
+        .flatMap((subject) => invocationsIn(subject.body).filter((invocation) => invocation.fence !== 'text'))
+      expect(quoted.length, `no CLI command was found in ${tree}`).toBeGreaterThan(0)
+    }
+    expect(bareInvocations(skills), 'a skill quotes a CLI command without npx').toEqual([])
+  })
+
+  it('a bare agent-qa command outside a text block is named, and a text block quoting CLI output is not', () => {
+    const body = [
+      'Run `agent-qa runs list`, then `npx agent-qa runs overview <runId>`.',
+      '',
+      '```text',
+      'Next: agent-qa runs overview r-1',
+      '```',
+      '',
+      '```sh',
+      'agent-qa knowledge bundles',
+      'npx agent-qa knowledge inspect',
+      '```',
+    ].join('\n')
+    expect(invocationsIn(body).map(({ text, prefixed, fence }) => [text, prefixed, fence])).toEqual([
+      ['agent-qa runs overview r-1', false, 'text'],
+      ['agent-qa knowledge bundles', false, 'sh'],
+      ['agent-qa knowledge inspect', true, 'sh'],
+      ['agent-qa runs list', false, ''],
+      ['agent-qa runs overview <runId>', true, ''],
+    ])
+    expect(bareInvocations([{ name: 'planted', body }])).toEqual([
+      'planted: "agent-qa knowledge bundles" is not prefixed with npx',
+      'planted: "agent-qa runs list" is not prefixed with npx',
+    ])
+  })
+})
+
+const EVIDENCE_KINDS = ['console', 'network', 'a11y', 'aria', 'variables'] as const
+
+// C446-PLACEHOLDERS (446-06, D-15): a skill explains each placeholder where it uses it
+describe('C446-PLACEHOLDERS', () => {
+  it('every skill that names the build placeholder says it is a build ordinal or tag, and every skill that names runs evidence --kind names the five evidence kinds', () => {
+    const findings: string[] = []
+    let builds = 0
+    let kinds = 0
+    for (const subject of skillSubjects()) {
+      if (subject.body.includes('<build>')) {
+        builds += 1
+        if (!/build ordinal or tag/u.test(subject.body)) {
+          findings.push(`${subject.name}: names <build> without saying it is a build ordinal or tag`)
+        }
+      }
+      if (subject.body.includes('runs evidence') && subject.body.includes('--kind <kind>')) {
+        kinds += 1
+        for (const kind of EVIDENCE_KINDS) {
+          if (!new RegExp(`\\b${kind}\\b`, 'u').test(subject.body)) {
+            findings.push(`${subject.name}: names runs evidence --kind <kind> without the ${kind} kind`)
+          }
+        }
+      }
+    }
+    expect(builds, 'no skill names the build placeholder').toBeGreaterThan(0)
+    expect(kinds, 'no skill names runs evidence --kind').toBeGreaterThan(0)
+    expect(findings, 'a skill uses a placeholder it does not explain').toEqual([])
   })
 })
