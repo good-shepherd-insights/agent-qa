@@ -15018,6 +15018,48 @@
       "file": "packages/agent/src/authoring/__tests__/446-stated-price.test.ts",
       "fullName": "C446-STATED-PRICE vague totals, bare numbers and a price beside an action are still refused",
       "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/446-requested-dialog.test.ts",
+      "fullName": "C446-REQUESTED-DIALOG the verifier may answer that an open dialog is the state the step asked to open or see",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/446-requested-dialog.test.ts",
+      "fullName": "C446-REQUESTED-DIALOG the run 4 product step passes with the product dialog it opened accounted as requested",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/446-requested-dialog.test.ts",
+      "fullName": "C446-REQUESTED-DIALOG a confirmation dialog that bears on a condition still blocks",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/446-requested-dialog.test.ts",
+      "fullName": "C446-REQUESTED-DIALOG an unrelated dialog still does not block",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/runner/src/loop/__tests__/446-requested-dialog.test.ts",
+      "fullName": "C446-REQUESTED-DIALOG a requested dialog never rescues an unmet condition, and an unaccounted product dialog still blocks",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/446-requested-dialog-handoff.test.ts",
+      "fullName": "C446-REQUESTED-DIALOG-HANDOFF a handoff whose step records a requested dialog loads and reads as proven",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/schema/src/__tests__/446-requested-dialog-handoff.test.ts",
+      "fullName": "C446-REQUESTED-DIALOG-HANDOFF a dialog account the loader has no reading for is still refused",
+      "origin": "446 D-25"
     }
   ]
 }
