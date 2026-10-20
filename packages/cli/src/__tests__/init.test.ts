@@ -231,12 +231,12 @@ describe('init command', () => {
     expect(content).toContain('envFile: .env')
     expect(content).toContain('secretsFile: .env.secrets.local')
     expect(content).toContain('services:')
-    expect(content).toContain('mcp:')
+    expect(content).not.toContain('mcp:')
     expect(content).toContain('enabled: true')
-    expect(content).toContain('transport: http')
-    expect(content).toContain('host: 127.0.0.1')
-    expect(content).toContain('port: 3471')
-    expect(content).toContain('path: /mcp')
+    expect(content).not.toContain('transport: http')
+    expect(content).not.toContain('host: 127.0.0.1')
+    expect(content).not.toContain('port: 3471')
+    expect(content).not.toContain('path: /mcp')
     expect(content).toContain('recording:')
     expect(content).not.toContain('agent-qa-memory')
     expect(content).toContain('# knowledge:')
@@ -459,13 +459,7 @@ describe('init command', () => {
       expect(config.services.recording).toEqual({ enabled: true })
       expect(config.services).not.toHaveProperty('memory')
       expect(config.workspace).not.toHaveProperty('agentRules')
-      expect(config.services.mcp).toEqual({
-        enabled: true,
-        transport: 'http',
-        host: '127.0.0.1',
-        port: 3471,
-        path: '/mcp',
-      })
+      expect(config.services).not.toHaveProperty('mcp')
       expect(config.plugins).toEqual({
         auth: [{ package: '@vostride/agent-qa-subscription-auth' }],
       })

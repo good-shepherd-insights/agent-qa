@@ -18,7 +18,7 @@
 +# agent-qa init:end
 --- /dev/null
 +++ b/agent-qa.config.yaml
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,94 @@
 +# agent-qa Configuration
 +
 +# File discovery and project settings
@@ -35,19 +35,13 @@
 +  # testPathIgnore:
 +  #   - tests/archive/**/*.yaml
 +
-+# Infrastructure services (dashboard, MCP, cache, auth state, logging)
++# Infrastructure services (dashboard, cache, auth state, logging)
 +services:
 +  dashboard:
 +    port: 3100
 +    artifactsDir: .agent-qa/artifacts
 +    # Optional: persist dashboard state to a custom SQLite path.
 +    # dbPath: .agent-qa/dashboard.sqlite
-+  mcp:
-+    enabled: true
-+    transport: http
-+    host: 127.0.0.1
-+    port: 3471
-+    path: /mcp
 +  cache:
 +    dir: .agent-qa/cache
 +    ttl: 7d

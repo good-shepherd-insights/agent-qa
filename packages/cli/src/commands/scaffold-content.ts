@@ -178,7 +178,6 @@ export function buildScaffoldConfig(
     },
     services: {
       dashboard: { port: 3100, artifactsDir: '.agent-qa/artifacts' },
-      mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
       cache: { dir: facts.cacheDir, ttl: '7d' },
       authState: { dir: facts.authStatesDir },
       vision: { screenshotSize: DEFAULT_SCREENSHOT_SIZE, effectiveResolution: DEFAULT_EFFECTIVE_RESOLUTION },
@@ -236,7 +235,7 @@ export function addYamlComments(yamlStr: string): string {
     if (line.startsWith('workspace:')) {
       result += '# File discovery and project settings\n'
     } else if (line.startsWith('services:')) {
-      result += '\n# Infrastructure services (dashboard, MCP, cache, auth state, logging)\n'
+      result += '\n# Infrastructure services (dashboard, cache, auth state, logging)\n'
     } else if (line.startsWith('registry:')) {
       result += '\n# Committed knowledge root (optional block; these defaults apply when absent)\n'
       result += '# knowledge:\n'
