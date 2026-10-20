@@ -176,7 +176,7 @@
     {
       "arm": "retired",
       "note": "not-a-gap (397, 2026-08-16): a served COPY of a contract is exactly the drift that advertising the live contract replaced.",
-      "route": "every tool advertises its op's live `inputSchema`/`outputSchema` in `tools/list` (396 D-16), so a caller reads the contract the gate actually validates with.",
+      "route": "every tool advertises its op's live `inputSchema`/`outputSchema` in `tools/list` (396 D-16), so a caller reads the contract the gate actually validates with; a fold lists its arms' fields as one object, and its `action` field says which fields each action takes.",
       "v1Name": "agent_qa_schema_reference"
     },
     {
