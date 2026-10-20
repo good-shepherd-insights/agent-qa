@@ -164,8 +164,10 @@ describe('INIT-GUIDE-LIFECYCLE: init generates the thin knowledge guide', () => 
     }
     const guide = buildKnowledgeAgentGuide()
     for (const tool of guide.match(/agent_qa_[a-z_]+/g) ?? []) expect(tools.has(tool), tool).toBe(true)
-    for (const command of guide.match(/`agent-qa [a-z][a-z -]*/g) ?? []) {
-      expect(liveCommandPath(command.slice(1)).length, command).toBeGreaterThan(0)
+    const commands = guide.match(/`npx agent-qa [a-z][a-z -]*/g) ?? []
+    expect(commands.length).toBeGreaterThanOrEqual(AGENT_QUESTION_MAP.length)
+    for (const command of commands) {
+      expect(liveCommandPath(command.slice('`npx '.length)).length, command).toBeGreaterThan(0)
     }
   })
 
