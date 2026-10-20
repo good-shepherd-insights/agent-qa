@@ -292,7 +292,7 @@ describe('C446-RECIPE', () => {
     expect(lines.filter((line) => /CLAUDE\.md|AGENTS\.md|\.gitignore/u.test(line))).toEqual([])
     expect([...LEG_ONLY, ...HOST_SETTINGS_FILES].filter((text) => page.includes(text))).toEqual([])
     expect(page.split('--write-agent-instructions').length - 1,
-      'the page names --write-agent-instructions once').toBe(1)
+      'the page names --write-agent-instructions nowhere: D-32 withdrew the D-12 mention').toBe(0)
   })
 
   it('the page names no agent-qa init command, since each one does nothing or rebuilds the config in the initialized workspace it starts from', () => {

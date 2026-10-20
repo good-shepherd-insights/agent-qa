@@ -107,8 +107,23 @@ from the host's run result. A new workspace's dashboard does not use port 3471, 
 
 Neither host needs an AGENTS.md or CLAUDE.md step. The agent-qa MCP server sends both hosts a short
 pointer to agent-qa's commands and knowledge when they connect, and the skills carry the workflows.
-If you want the pointer in the project's AGENTS.md as well,
-`npx agent-qa init --write-agent-instructions` writes it there when it creates the workspace.
+If you want the pointer in the project's AGENTS.md as well, paste this block into it. It is the
+block init printed under "Coding agents: add this block to AGENTS.md at the project root" when it
+created the workspace:
+
+```md
+<!-- agent-qa init:start -->
+## agent-qa
+This project is tested with agent-qa. Read its data through
+agent-qa's commands (CLI with --json, or the agent_qa_* MCP
+tools), never through .agent-qa/ files, SQLite or index files.
+- Runs: `npx agent-qa runs list`, then `npx agent-qa runs overview <runId>`
+- Knowledge: read agent-qa-knowledge/AGENTS.md first
+- Skills: `npx agent-qa skills` lists them; host setup: https://github.com/vostride/agent-qa/blob/main/docs/coding-agents.md
+- Secrets: only the values in `workspace.secretsFile` are masked,
+  shown as `[secret:<name>]`; use temporary, limited test credentials
+<!-- agent-qa init:end -->
+```
 
 ## Limits
 
