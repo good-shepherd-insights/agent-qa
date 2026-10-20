@@ -14982,6 +14982,18 @@
       "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
       "fullName": "C446-RECIPE-LINKS the pointer keeps at most 9 lines and the guide at most 50 with the link, and the MCP instructions carry none",
       "origin": "446 D-28"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/strip-unsupported-params.test.ts",
+      "fullName": "C446-SUBSCRIPTION-TEMPERATURE the openai-subscription model sends no temperature on the wire when a caller asks for temperature 0",
+      "origin": "446 D-18"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/model/src/__tests__/strip-unsupported-params.test.ts",
+      "fullName": "C446-SUBSCRIPTION-TEMPERATURE a provider that accepts temperature keeps temperature 0 on the wire",
+      "origin": "446 D-18"
     }
   ]
 }
