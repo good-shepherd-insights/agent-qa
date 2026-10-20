@@ -127,10 +127,10 @@ tools), never through .agent-qa/ files, SQLite or index files.
 
 ## Limits
 
-- Checked on 2026-10-20 with Claude Code 2.1.304 and the agent-qa 0.2.0 packages: Claude Code found
+- Checked on 2026-10-21 with Claude Code 2.1.305 and the agent-qa 0.2.0 packages: Claude Code found
   the four skills and the agent-qa server with all 20 of its tools, wrote and ran the example test
   above, read the run's evidence and quoted its $29.00 bag total, and the dashboard showed the same
-  result. The run ended `healed` rather than `passed`.
+  result. The run ended `passed`.
 - Checked on 2026-10-21 with Codex CLI 0.163.0 and the agent-qa 0.2.0 packages: Codex listed the
   four skills and loaded each one the request named with `$`, wrote and ran the example test above
   through `npx agent-qa mcp --http`, read the run's evidence and quoted its $29.00 bag total, and
@@ -141,7 +141,7 @@ tools), never through .agent-qa/ files, SQLite or index files.
 - `agent_qa_start_run` answers with the run id, not the verdict. `agent_qa_get_run_overview` reads
   the verdict, and the skills call it.
 - `agent_qa_start_run` lists a `scope` argument that the agent-qa server refuses. Name the tests with
-  `patterns` instead; Claude Code did so after the refusal.
+  `patterns` instead, as the skills say; Claude Code and Codex both did so.
 - `agent_qa_list_runs` answers no runs when it is given a `target`, because agent-qa records no
   targets for a run. List runs without `target`, or read the run by its id, as Codex did.
 - A run can end `healed` rather than `passed`: every step passed, but agent-qa had to recover on
