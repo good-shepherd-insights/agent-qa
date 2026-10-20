@@ -387,9 +387,9 @@ const QUOTED_LITERAL_RE = /"([^"]*)"/g
  * than a count in the instruction, which is why bare numbers (`1 item`, `29.00`), a symbol with no
  * number, and vague wording (`the total is correct`) stay refused. The five symbols are the ones
  * 440's stated values read, so a price the request states and the draft keeps is one this gate
- * accepts. Read from the unquoted residue only, and compared against prior actions' quoted spans
- * like any literal, so restating a typed price is still a tautology. The frozen corpus verdicts did
- * not move (re-checked in 446-11); re-run it on any change here.
+ * accepts. Read from the unquoted residue only, and compared against earlier actions' quoted spans
+ * and money amounts, so restating a typed price, quoted or not, is still a tautology. The frozen
+ * corpus verdicts did not move (re-checked in 446-11 and 446-17); re-run it on any change here.
  */
 const MONEY_AMOUNT_RE = /(?<![\p{L}\p{N}])[$€£¥₹]\d+(?:[.,]\d+)*(?![\p{L}\p{N}])/gu
 
@@ -705,8 +705,9 @@ function captureSignatureHits(literals: readonly string[]): string[] {
  * entered yet, and an order-blind comparison would reject a legitimate pre-condition check for
  * restating something that comes later. What accumulates — and what the tautology comparison reads
  * — is the RAW span list; the concreteness arm and the capture-signature scan read the filtered
- * literals instead (see `quotedSpans`). An unquoted money amount is concrete and is compared
- * against the same span list (see `MONEY_AMOUNT_RE`).
+ * literals instead (see `quotedSpans`). An action's unquoted money amounts join that list beside its
+ * spans, and an assertion's money amount is concrete and is compared against it (see
+ * `MONEY_AMOUNT_RE`).
  */
 export function classifyDraftSteps(steps: readonly string[]): StepClassificationRow[] {
   const priorActionLiterals = new Set<string>()
@@ -718,6 +719,7 @@ export function classifyDraftSteps(steps: readonly string[]): StepClassification
 
     if (!isAssertionVerb(leadingToken(stepText))) {
       for (const span of spans) priorActionLiterals.add(span)
+      for (const amount of moneyAmounts(stepText)) priorActionLiterals.add(amount)
       rows.push({ stepText, role: 'action', falsifiable: false, captureSignatureHits: [] })
       continue
     }
