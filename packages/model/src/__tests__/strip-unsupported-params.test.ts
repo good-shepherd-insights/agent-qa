@@ -155,6 +155,48 @@ describe('createModel egress strip (auth-free capture proof)', () => {
   })
 })
 
+interface TemperatureWire {
+  called: boolean
+  temperature: number | undefined
+  keys: string[]
+}
+
+async function captureTemperature(provider: ModelProviderId): Promise<TemperatureWire> {
+  let captured: LanguageModelV3CallOptions | undefined
+  const model = createModel(captureProfile(provider), noneAuth, (text) => text, {
+    languageModels: { 'capture-model': captureModel((params) => { captured = params }) },
+  })
+  await generateText({ model, temperature: 0, maxRetries: 0, prompt: 'compile the test document' })
+  return {
+    called: captured !== undefined,
+    temperature: captured?.temperature,
+    keys: Object.keys(captured ?? {}),
+  }
+}
+
+// C446-SUBSCRIPTION-TEMPERATURE (446-11, D-18): the Codex subscription backend answers HTTP 400
+// "Unsupported parameter: temperature", and agent-qa's job-model calls ask for temperature 0
+describe('C446-SUBSCRIPTION-TEMPERATURE', () => {
+  beforeEach(() => {
+    overrideStore.clear()
+  })
+
+  it('the openai-subscription model sends no temperature on the wire when a caller asks for temperature 0', async () => {
+    const wire = await captureTemperature('openai-subscription')
+    expect(wire.called, 'the capture model was called').toBe(true)
+    expect(wire.keys, 'the wire params carry no temperature key').not.toContain('temperature')
+    expect(wire.temperature).toBeUndefined()
+  })
+
+  it('a provider that accepts temperature keeps temperature 0 on the wire', async () => {
+    for (const provider of ['anthropic-subscription', 'openai-compatible'] as const) {
+      const wire = await captureTemperature(provider)
+      expect(wire.called, `${provider} capture model was called`).toBe(true)
+      expect(wire.temperature, provider).toBe(0)
+    }
+  })
+})
+
 describe('provider unsupportedParams declarations', () => {
   it('declares maxOutputTokens unsupported for openai-subscription only', () => {
     expect(getProvider('openai-subscription')?.unsupportedParams).toContain('maxOutputTokens')
