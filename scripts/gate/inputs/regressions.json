@@ -15060,6 +15060,24 @@
       "file": "packages/schema/src/__tests__/446-requested-dialog-handoff.test.ts",
       "fullName": "C446-REQUESTED-DIALOG-HANDOFF a dialog account the loader has no reading for is still refused",
       "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/mcp/src/__tests__/446-tool-schema.test.ts",
+      "fullName": "C446-TOOL-SCHEMA every listed tool input is one plain object with properties and no top-level union",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/mcp/src/__tests__/446-tool-schema.test.ts",
+      "fullName": "C446-TOOL-SCHEMA a fold lists its action values and every field its arms take, requiring only what every arm requires",
+      "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/mcp/src/__tests__/446-tool-schema.test.ts",
+      "fullName": "C446-TOOL-SCHEMA an arm-invalid fold call is refused exactly as the strict fold union refuses it",
+      "origin": "446 D-25"
     }
   ]
 }
