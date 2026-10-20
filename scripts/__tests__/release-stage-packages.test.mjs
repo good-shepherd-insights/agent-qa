@@ -140,3 +140,22 @@ test('source skill validation fails on a missing or empty knowledge reference', 
     })
   }
 })
+
+test('staging copies no package-local .agent-qa runtime folder', async () => {
+  await withTemp(async (tempDir) => {
+    const fixture = await fixtureRepo(tempDir)
+    const runtimeFile = join(fixture, 'packages', 'cli', '.agent-qa', 'artifacts', 'working-memory-flush-fixture.json')
+    await mkdir(dirname(runtimeFile), { recursive: true })
+    await writeFile(runtimeFile, '{}\n')
+    assert.ok(existsSync(runtimeFile))
+
+    const stagedDir = join(tempDir, 'staged')
+    await stagePublishPackages({ rootDir: fixture, targetVersion: '0.1.1', outputDir: stagedDir })
+    const cliDir = join(stagedDir, 'cli')
+    assert.ok(existsSync(join(cliDir, 'package.json')), 'the CLI package was not staged')
+    const runtimeCopies = filesUnder(cliDir)
+      .map(file => relative(cliDir, file).split('\\').join('/'))
+      .filter(file => file.split('/').includes('.agent-qa'))
+    assert.deepEqual(runtimeCopies, [])
+  })
+})
