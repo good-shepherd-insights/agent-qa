@@ -39,7 +39,8 @@ export function seedBuiltins(): void {
     // RUNX-01: the codex/ChatGPT-subscription Responses backend rejects the output cap
     // (`max_output_tokens`) with HTTP 400. Strip it at egress for this provider ONLY —
     // standard OpenAI-compatible `.chat()` endpoints and Anthropic support the cap.
-    unsupportedParams: ['maxOutputTokens'],
+    // 2026-10-20 (446-11, D-18): it also answers 400 "Unsupported parameter: temperature".
+    unsupportedParams: ['maxOutputTokens', 'temperature'],
   })
   registerProvider({
     id: 'anthropic-subscription',
