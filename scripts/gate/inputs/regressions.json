@@ -14814,6 +14814,30 @@
       "file": "packages/cli/src/__tests__/conformance/446-port-owner.test.ts",
       "fullName": "C446-PORT-OWNER the standalone no-dashboard line names only services.dashboard.baseUrl",
       "origin": "446 D-26"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/446-contracts.test.ts",
+      "fullName": "C446-CONTRACTS config.rootKeys in both copies are the config schema root keys in schema order",
+      "origin": "446 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/446-contracts.test.ts",
+      "fullName": "C446-CONTRACTS every other key list in both copies equals the schema it describes",
+      "origin": "446 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/446-contracts.test.ts",
+      "fullName": "C446-CONTRACTS one contracts file ships and it names no source path",
+      "origin": "446 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/446-contracts.test.ts",
+      "fullName": "C446-CONTRACTS a key added to or removed from a schema is named by the comparison",
+      "origin": "446 D-13"
     }
   ]
 }
