@@ -8,6 +8,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
+import { LIVE_LINK_ABSENT_LINE } from '@vostride/agent-qa-mcp'
+
 import { mcpMountPlanFor } from '../../commands/dashboard.js'
 import {
   SUPPORTED_INIT_PLATFORMS,
@@ -88,5 +90,12 @@ describe('C446-PORT-OWNER', () => {
     expect(mcpMountPlanFor({ services: { mcp: { enabled: true, port: 3471 } } }))
       .toEqual({ mount: true, port: 3471 })
     expect(mcpMountPlanFor({ services: { mcp: { enabled: false, port: 3471 } } }).mount).toBe(false)
+  })
+
+  it('the standalone no-dashboard line names only services.dashboard.baseUrl', () => {
+    expect(LIVE_LINK_ABSENT_LINE).toBe('no dashboard configured — set services.dashboard.baseUrl')
+    expect(LIVE_LINK_ABSENT_LINE).toContain('services.dashboard.baseUrl')
+    expect(LIVE_LINK_ABSENT_LINE).not.toContain('http')
+    expect(LIVE_LINK_ABSENT_LINE).not.toMatch(/agent-qa dashboard|\brun\b/u)
   })
 })
