@@ -72,4 +72,34 @@ describe('C446-STATED-PRICE', () => {
     expect(mixed.pass).toBe(false)
     expect(mixed.reason).toContain('acts and verifies in one step')
   })
+
+  it('an unquoted price a prior action stated is refused as a restatement', () => {
+    const drafts = [
+      ['Type $29.00 into the Amount field', 'Verify the bag total is $29.00'],
+      ['Enter €5 as the tip', 'Check the tip shows €5'],
+      ['Type $29.00 into the Amount field', 'Verify the bag total is "$29.00"'],
+    ]
+    for (const steps of drafts) {
+      const gate = assertionStrengthGate({ steps })
+
+      expect(gate.table[1]?.tautologyHit, `${steps[1]} restates ${steps[0]}`).toBe(true)
+      expect(gate.table[1]?.falsifiable, steps[1]).toBe(false)
+      expect(gate.pass, steps.join(' / ')).toBe(false)
+      expect(gate.reason).toContain('restates a prior action')
+    }
+  })
+
+  it('a different price in a prior action, or the same price in a later action, leaves the stated total falsifiable', () => {
+    const drafts = [
+      ['Type $10.00 into the Amount field', 'Verify the bag total is $29.00'],
+      ['Type $29.00 into the Amount field', 'Verify the bag total is $29'],
+      ['Verify the bag total is $29.00', 'Type $29.00 into the Amount field'],
+    ]
+    for (const steps of drafts) {
+      const row = classifyDraftSteps(steps).find((candidate) => candidate.role === 'assertion')
+
+      expect(row?.falsifiable, steps.join(' / ')).toBe(true)
+      expect(row?.tautologyHit, steps.join(' / ')).toBeUndefined()
+    }
+  })
 })
