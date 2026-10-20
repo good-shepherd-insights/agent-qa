@@ -1448,6 +1448,20 @@ describe('C446-GUIDANCE-NPX', () => {
       'planted: "agent-qa runs list" is not prefixed with npx',
     ])
   })
+
+  // 2026-10-20 (446-07, D-09, D-29): the map keeps bare verbs; only its rendering adds npx
+  it('every CLI command the guide, the pointer and the MCP instructions quote reads npx agent-qa, while the question map keeps bare verbs', () => {
+    const names: readonly string[] = ['generated guide', 'root pointer', 'MCP instructions']
+    const generated = liveGuidanceInputs().subjects.filter((subject) => names.includes(subject.name))
+    expect(generated.map((subject) => subject.name)).toEqual(names)
+    for (const subject of generated) {
+      expect(invocationsIn(subject.body).length, `no CLI command was found in the ${subject.name}`)
+        .toBeGreaterThan(0)
+    }
+    expect(bareInvocations(generated), 'generated guidance quotes a CLI command without npx').toEqual([])
+    expect(AGENT_QUESTION_MAP.map((row) => row.cli).filter((cli) => !cli.startsWith('agent-qa ')))
+      .toEqual([])
+  })
 })
 
 const EVIDENCE_KINDS = ['console', 'network', 'a11y', 'aria', 'variables'] as const
@@ -1477,5 +1491,15 @@ describe('C446-PLACEHOLDERS', () => {
     expect(builds, 'no skill names the build placeholder').toBeGreaterThan(0)
     expect(kinds, 'no skill names runs evidence --kind').toBeGreaterThan(0)
     expect(findings, 'a skill uses a placeholder it does not explain').toEqual([])
+  })
+
+  it('the guide says the build placeholder is a build ordinal or tag and names the five evidence kinds', () => {
+    const guide = buildKnowledgeAgentGuide()
+    const prose = guide.split('\n')
+      .filter((line) => line.includes('knowledge diff <build>') && !line.startsWith('|'))
+    expect(prose.length, 'the guide names knowledge diff <build> nowhere outside its table').toBeGreaterThan(0)
+    expect(prose.filter((line) => !/build ordinal or tag/u.test(line)), 'the guide leaves <build> unexplained')
+      .toEqual([])
+    expect(EVIDENCE_KINDS.filter((kind) => !new RegExp(`\\b${kind}\\b`, 'u').test(guide))).toEqual([])
   })
 })
