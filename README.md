@@ -105,6 +105,7 @@ JSON fields you actually read, not on line ordering between the two writers.
 - [Full docs](https://vostride.com/docs/agent-qa)
 - [Quickstart](docs/getting-started.md) — from an empty directory to a first run
 - [Re-initializing a workspace from before v2](docs/re-initialize.md) — what it loses and keeps, and every step
+- [Claude Code and Codex](docs/coding-agents.md) — the skills and the MCP server in each coding agent
 - [CLI reference](https://vostride.com/docs/agent-qa/cli)
 - [Dashboard](https://vostride.com/docs/agent-qa/dashboard)
 - [Configuration](https://vostride.com/docs/agent-qa/configuration)

@@ -6,6 +6,8 @@
 
 export const KNOWLEDGE_SKILL_NAME = 'agent-qa-knowledge'
 
+export const CODING_AGENTS_URL = 'https://github.com/vostride/agent-qa/blob/main/docs/coding-agents.md'
+
 /** Transitional: M7 makes agent setup default-on and may retire it (OAS-AGENT-01, D-02). */
 export const WRITE_AGENT_INSTRUCTIONS_FLAG = '--write-agent-instructions'
 
@@ -108,6 +110,7 @@ export function buildKnowledgeAgentGuide(): string {
     '',
     `The \`${KNOWLEDGE_SKILL_NAME}\` skill has the workflow, with the depth in its references/ folder;`,
     '`npx agent-qa skills` prints where it is.',
+    `Connecting Claude Code or Codex: ${CODING_AGENTS_URL}`,
     '',
   ].join('\n')
 }
@@ -121,7 +124,7 @@ export function buildAgentInstructionPointer(): readonly string[] {
     'tools), never through .agent-qa/ files, SQLite or index files.',
     '- Runs: `npx agent-qa runs list`, then `npx agent-qa runs overview <runId>`',
     '- Knowledge: read agent-qa-knowledge/AGENTS.md first',
-    '- Skills: `npx agent-qa skills` lists them and their folder',
+    `- Skills: \`npx agent-qa skills\` lists them; host setup: ${CODING_AGENTS_URL}`,
     '- Secrets: only the values in `workspace.secretsFile` are masked,',
     '  shown as `[secret:<name>]`; use temporary, limited test credentials',
   ])

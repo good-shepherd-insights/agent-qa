@@ -55,6 +55,7 @@ npx agent-qa run suites/examples.suite.yaml
 - [Full docs](https://vostride.com/docs/agent-qa)
 - [Quickstart](https://github.com/vostride/agent-qa/blob/main/docs/getting-started.md) — from an empty directory to a first run
 - [Re-initializing a workspace from before v2](https://github.com/vostride/agent-qa/blob/main/docs/re-initialize.md)
+- [Claude Code and Codex](https://github.com/vostride/agent-qa/blob/main/docs/coding-agents.md) — the skills and the MCP server in each coding agent
 - [CLI reference](https://vostride.com/docs/agent-qa/cli)
 - [Dashboard](https://vostride.com/docs/agent-qa/dashboard)
 - [Configuration](https://vostride.com/docs/agent-qa/configuration)

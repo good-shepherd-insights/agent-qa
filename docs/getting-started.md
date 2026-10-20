@@ -194,6 +194,10 @@ show the new files as well as changes to files you already committed. Both examp
 under the `komazon` product, so a record can name the cart-total test's `?bug=cart-total` address.
 Commit the records you want to keep.
 
+### Use agent-qa from Claude Code or Codex
+
+To let Claude Code or Codex write and run tests with agent-qa's skills and MCP server, follow [coding-agents.md](coding-agents.md).
+
 ## When something is missing
 
 | Situation | What agent-qa prints | Fix |
