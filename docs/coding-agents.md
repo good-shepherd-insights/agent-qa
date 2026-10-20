@@ -112,8 +112,22 @@ If you want the pointer in the project's AGENTS.md as well,
 
 ## Limits
 
+- Checked on 2026-10-20 with Claude Code 2.1.304 and the agent-qa 0.2.0 packages: Claude Code found
+  the four skills and the agent-qa server with all 20 of its tools, wrote and ran the example test
+  above, read the run's evidence and quoted its $29.00 bag total, and the dashboard showed the same
+  result. The run ended `healed` rather than `passed`.
 - `agent_qa_start_run` answers only when the run has its verdict, and `agent_qa_write_test` runs its
   checks before it answers, so either call can take as long as the tests it runs.
+- `agent_qa_start_run` answers with the run id, not the verdict. `agent_qa_get_run_overview` reads
+  the verdict, and the skills call it.
+- `agent_qa_start_run` lists a `scope` argument that the agent-qa server refuses. Name the tests with
+  `patterns` instead; Claude Code did so after the refusal.
+- A run can end `healed` rather than `passed`: every step passed, but agent-qa had to recover on
+  the way. A healed run counts as a pass.
+- `agent_qa_write_test` can add steps the request did not name, such as opening the product page
+  first. Read the test file it writes.
+- When the model provider refuses a call, the tool's error can carry only the HTTP status text, such
+  as `Bad Request`, and not the provider's reason.
 - Without the `"timeout"` above, Claude Code stops waiting after 30 minutes in which a stdio server
   sends nothing, and agent-qa sends nothing until it answers.
 - With Codex, agent-qa's browser runs in the `npx agent-qa mcp --http` process you started, outside
