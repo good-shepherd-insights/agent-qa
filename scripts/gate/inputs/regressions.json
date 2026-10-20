@@ -14790,6 +14790,30 @@
       "file": "packages/cli/src/__tests__/conformance/445-hard-cut.test.ts",
       "fullName": "C445-HARD-CUT the old knowledge gitignore refusal prints its message and exits 1 with no stack frame",
       "origin": "445 D-43"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-port-owner.test.ts",
+      "fullName": "C446-PORT-OWNER a fresh scaffold declares no services.mcp for any init platform",
+      "origin": "446 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-port-owner.test.ts",
+      "fullName": "C446-PORT-OWNER a real init writes a config whose dashboard mount plan binds no MCP port",
+      "origin": "446 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-port-owner.test.ts",
+      "fullName": "C446-PORT-OWNER a workspace that declares services.mcp still co-hosts on its port",
+      "origin": "446 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-port-owner.test.ts",
+      "fullName": "C446-PORT-OWNER the standalone no-dashboard line names only services.dashboard.baseUrl",
+      "origin": "446 D-26"
     }
   ]
 }
