@@ -21,7 +21,7 @@
 //   single   — one op, called with the caller's arguments unchanged.
 //   union    — D-01's fold. The discriminant names the arm, is CHECKED against the tool's declared
 //              op set, is stripped, and the rest goes to that op. The check is T-396-10's mitigation:
-//              a caller cannot smuggle an op this tool does not declare, and even if the advertised
+//              a caller cannot smuggle an op this tool does not declare, and even if the composed
 //              union were wrong, `invokeFunction` re-validates against the op's own contract.
 //   pipeline — D-02's one read door. Two `invokeFunction` calls, the second reached only through the
 //              first's resolved arm. Two calls and not one because that is what the resolve-then-get
@@ -143,7 +143,7 @@ function resolveSpecs(
 /**
  * Read a fold call's arm, refusing anything the tool does not declare (T-396-10).
  *
- * The SDK has already validated the arguments against the advertised discriminated union, so this
+ * The SDK has already validated the arguments against the fold's discriminated union, so this
  * check is the SECOND reading of the same fact — kept for the reason every other double-check in
  * this layer is kept: the two readings have independent sources (the composed schema in
  * `@vostride/agent-qa-schema`, the op list in `mapping.ts`), so a disagreement between them is
@@ -310,8 +310,8 @@ function decorateCarrierResult(input: {
 /**
  * The one generic tool handler.
  *
- * Input validation happened twice before the invoke — once by the SDK against the advertised
- * schema, once inside `invokeFunction` against the op's own — and both parses are kept, because
+ * Input validation happened twice before the invoke — once by the SDK against the tool's input
+ * contract, once inside `invokeFunction` against the op's own — and both parses are kept, because
  * they are the same check made by two independent parties.
  */
 function createProjectionHandler(

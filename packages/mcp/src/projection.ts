@@ -12,6 +12,8 @@
 // `toSchemaProjection` and hand the result to `fromJsonSchema`. Both work; having both is the
 // defect. The route taken is the one where the object advertised in `tools/list` and the object
 // `invokeFunction` validates against are the SAME object rather than two derivations of it.
+// 2026-10-20 (446-11, D-25): a union fold's listing is the one derived view (`flatFoldInput`);
+// its calls are still validated against the composed contract itself.
 //
 // 2026-09-28 (431-03, D-03 · research A1): that object may now be a canonical `OutputContract`
 // from `@vostride/agent-qa-schema`. Its `validate` IS the op's runtime schema (the same object
@@ -284,12 +286,16 @@ export function toRegisterToolConfig(
 
   const description = describe(projection, specs)
   const meta = listingMeta(projection)
+  const fold = compositionOf(projection) === 'union'
+  const inputSchema = fold ? flatFoldInput(projection, advertised.input) : advertised.input
+  // Converted once here, so a fold that cannot be listed fails the build rather than tools/list.
+  if (fold) inputSchema['~standard'].jsonSchema.input({ target: JSON_SCHEMA_CONVERSION_TARGET })
   return {
     title: projection.name,
     description: maskText(
       degradation === undefined ? description : description + degradationSentence(degradation),
     ),
-    inputSchema: advertised.input,
+    inputSchema,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     annotations: deriveAnnotations(specs),
     // 408 D-05: the App reference, DERIVED from the projection's own carrier declaration by the
@@ -323,6 +329,121 @@ function listingMeta(projection: ToolProjection): Record<string, unknown> | unde
       : { [MAX_RESULT_SIZE_META_KEY]: projection.maxResultSizeChars }),
   }
   return Object.keys(meta).length === 0 ? undefined : meta
+}
+
+type JsonObject = Record<string, unknown>
+
+// 2026-10-20 (446-11, D-25 · F-446-11-8): Claude Code drops a tool whose listed input is a
+// top-level oneOf. A fold therefore lists one object (an `action` enum beside its arms' fields),
+// while the SDK still validates each call against the strict union.
+function flatFoldInput(
+  projection: ToolProjection,
+  input: StandardSchemaWithJSON,
+): StandardSchemaWithJSON {
+  const standard = input['~standard']
+  return {
+    '~standard': {
+      version: standard.version,
+      vendor: standard.vendor,
+      validate: (value, options) => standard.validate(value, options),
+      jsonSchema: {
+        input: (options) => flatFoldDocument(projection, standard.jsonSchema.input(options)),
+        output: (options) => standard.jsonSchema.output(options),
+      },
+    },
+  }
+}
+
+interface FoldField {
+  readonly shapes: JsonObject[]
+  readonly notes: string[]
+  readonly usedBy: string[]
+  readonly requiredBy: string[]
+}
+
+function flatFoldDocument(projection: ToolProjection, document: JsonObject): JsonObject {
+  const key = projection.discriminant!
+  const { oneOf, type: _type, ...rest } = document
+  const arms = Array.isArray(oneOf) ? (oneOf as JsonObject[]) : []
+  const unsupported = ['anyOf', 'allOf', 'properties'].filter((name) => rest[name] !== undefined)
+  if (arms.length !== projection.ops.length || unsupported.length > 0) {
+    throw new McpProjectionError(
+      projection.name,
+      `has an input contract that is not a ${projection.ops.length}-arm union of objects, so it `
+        + 'cannot be listed as one object',
+    )
+  }
+
+  const ops: string[] = []
+  const fields = new Map<string, FoldField>()
+  let actionNote: string | undefined
+  let strict = true
+  for (const arm of arms) {
+    const properties = (arm.properties ?? {}) as Record<string, JsonObject>
+    const opId = properties[key]?.const
+    if (arm.type !== 'object' || typeof opId !== 'string' || !projection.ops.includes(opId)) {
+      throw new McpProjectionError(
+        projection.name,
+        `has a union arm that is not an object selected by a declared ${key}`,
+      )
+    }
+    ops.push(opId)
+    if (arm.additionalProperties !== false) strict = false
+    actionNote ??= properties[key]?.description as string | undefined
+    const required = (arm.required ?? []) as readonly string[]
+    for (const [name, schema] of Object.entries(properties)) {
+      if (name === key) continue
+      const field = fields.get(name) ?? { shapes: [], notes: [], usedBy: [], requiredBy: [] }
+      const { description, ...shape } = schema
+      if (!field.shapes.some((seen) => JSON.stringify(seen) === JSON.stringify(shape))) {
+        field.shapes.push(shape)
+      }
+      if (typeof description === 'string' && !field.notes.includes(description)) {
+        field.notes.push(description)
+      }
+      field.usedBy.push(opId)
+      if (required.includes(name)) field.requiredBy.push(opId)
+      fields.set(name, field)
+    }
+  }
+
+  const perAction = ops.map((opId) => {
+    const taken = [...fields].filter(([, field]) => field.usedBy.includes(opId))
+    const listed = taken.map(([name, field]) =>
+      field.requiredBy.includes(opId) ? name : `${name} (optional)`,
+    )
+    return `${opId} takes ${listed.length === 0 ? 'no other field' : listed.join(', ')}.`
+  })
+  const properties: Record<string, JsonObject> = {
+    [key]: {
+      type: 'string',
+      enum: ops,
+      description: [actionNote, ...perAction].filter(Boolean).join(' '),
+    },
+  }
+  const required = [key]
+  for (const [name, field] of fields) {
+    const scope = field.usedBy.length === ops.length
+      ? 'every action'
+      : `${field.usedBy.join(' or ')} only`
+    const need = field.requiredBy.length === 0
+      ? 'optional'
+      : field.requiredBy.length === field.usedBy.length
+        ? 'required'
+        : `required for ${field.requiredBy.join(' or ')}`
+    const shape = field.shapes.length === 1 ? field.shapes[0]! : { anyOf: field.shapes }
+    const description = [...field.notes, `For ${scope}; ${need}.`].join(' ')
+    properties[name] = { ...shape, description }
+    if (field.requiredBy.length === ops.length) required.push(name)
+  }
+
+  return {
+    ...rest,
+    type: 'object',
+    properties,
+    required,
+    ...(strict ? { additionalProperties: false } : {}),
+  }
 }
 
 /** A projection that cannot be derived honestly, named with the tool it is about. */

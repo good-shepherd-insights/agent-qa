@@ -107,7 +107,8 @@ export const V1_TOOL_MIGRATION_MAP: readonly V1ToolMigrationEntry[] = Object.fre
       + 'advertising the live contract replaced.',
     route:
       'every tool advertises its op\'s live `inputSchema`/`outputSchema` in `tools/list` (396 D-16), '
-      + 'so a caller reads the contract the gate actually validates with.',
+      + 'so a caller reads the contract the gate actually validates with; a fold lists its arms\' '
+      + 'fields as one object, and its `action` field says which fields each action takes.',
   }),
   // 4
   Object.freeze({

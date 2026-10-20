@@ -38,6 +38,7 @@ export type { AgentQaMcpDepsResolver } from './http.js'
 // conversion recipe for one comparison — which D-06 rules out by name.
 export {
   armWithoutDiscriminant,
+  foldArmFindings,
   stripRedundantObjectStamp,
   withoutDialect,
   withoutLegacyResultWrap,

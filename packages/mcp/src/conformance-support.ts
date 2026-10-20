@@ -1,7 +1,8 @@
 // The ONE lens two schema-comparison suites look through (2026-08-16, Phase 397 D-06 · MCPS-02).
 //
 // WHAT THIS FILE IS. Four normalisations that make an advertised JSON-Schema document and the
-// function layer's own inert projection comparable, and NOTHING ELSE. It converts nothing, builds
+// function layer's own inert projection comparable, plus one fold check (`foldArmFindings`,
+// 2026-10-20, 446-11), and NOTHING ELSE. It converts nothing, builds
 // nothing, reaches nothing: the functions below are pure, take plain objects, return plain objects,
 // and name no package. That is why the file adds no entry to this package's dependency census —
 // there is no specifier in it to add.
@@ -69,7 +70,7 @@ export function stripRedundantObjectStamp(document: JsonDocument): JsonDocument 
 }
 
 /**
- * One advertised union arm, with the fold's discriminant taken back out.
+ * One union arm of a fold's composed contract, with the fold's discriminant taken back out.
  *
  * `required: []` is DROPPED rather than kept, and the case is real rather than defensive:
  * `config.undo.propose` takes an all-optional input, so its own projection carries no `required`
@@ -85,6 +86,60 @@ export function armWithoutDiscriminant(arm: JsonDocument, discriminant: string):
   const rebuilt: JsonDocument = { ...arm, properties, required }
   if (required.length === 0) delete rebuilt.required
   return rebuilt
+}
+
+/**
+ * What a fold's one listed object leaves out of, or adds to, one arm's own contract.
+ *
+ * 2026-10-20 (446-11, D-25): a fold lists one object instead of its union, so an arm is no longer
+ * a member to compare whole. It is covered when the `discriminant` enum names it, every field it
+ * takes is listed with its own shape (the listing may add a description, never drop one), and the
+ * listing requires nothing the arm does not. That a call is still validated arm by arm is the
+ * C446-TOOL-SCHEMA counter-cell's claim, not this lens's.
+ */
+export function foldArmFindings(
+  listed: JsonDocument,
+  discriminant: string,
+  opId: string,
+  own: JsonDocument,
+): readonly string[] {
+  const findings: string[] = []
+  for (const key of ['oneOf', 'anyOf', 'allOf']) {
+    if (listed[key] !== undefined) findings.push(`the listing carries a top-level ${key}`)
+  }
+  if (listed.type !== 'object') findings.push('the listing is not type object')
+  const properties = (listed.properties ?? {}) as Record<string, JsonDocument>
+  const selector = properties[discriminant]?.enum
+  if (!Array.isArray(selector) || !selector.includes(opId)) {
+    findings.push(`${discriminant} does not list ${opId}`)
+  }
+  const ownProperties = (own.properties ?? {}) as Record<string, JsonDocument>
+  for (const [name, field] of Object.entries(ownProperties)) {
+    const shown = properties[name]
+    if (shown === undefined) {
+      findings.push(`${name} is not listed`)
+      continue
+    }
+    const { description: ownNote, ...ownShape } = field
+    const { description: shownNote, ...shownShape } = shown
+    const merged = Array.isArray(shownShape.anyOf) && Object.keys(shownShape).length === 1
+    const shapes = merged ? [shownShape, ...(shownShape.anyOf as readonly unknown[])] : [shownShape]
+    if (!shapes.some((shape) => JSON.stringify(shape) === JSON.stringify(ownShape))) {
+      findings.push(`${name} is listed with another shape`)
+    }
+    const kept = typeof shownNote === 'string' && shownNote.includes(String(ownNote))
+    if (typeof ownNote === 'string' && !kept) {
+      findings.push(`${name} lost its own description`)
+    }
+  }
+  const allowed = new Set([discriminant, ...((own.required ?? []) as readonly string[])])
+  for (const name of (listed.required ?? []) as readonly string[]) {
+    if (!allowed.has(name)) findings.push(`the listing requires ${name}, which ${opId} does not`)
+  }
+  if (own.additionalProperties === false && listed.additionalProperties !== false) {
+    findings.push('the listing admits fields no arm takes')
+  }
+  return findings
 }
 
 /**

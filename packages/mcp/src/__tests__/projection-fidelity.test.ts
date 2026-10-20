@@ -55,6 +55,7 @@ import { buildAgentQaMcpServer } from '../catalog.js'
 // travelled with them; read those before widening any of the three.
 import {
   armWithoutDiscriminant,
+  foldArmFindings,
   type JsonDocument,
   withoutDialect,
   withoutLegacyResultWrap,
@@ -187,14 +188,25 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
         checked += 1
       }
 
+      // 2026-10-20 (446-11, D-25): a fold lists one object, so each arm is checked twice — the
+      // listing covers it, and the composed union the call is validated with carries it whole.
       if (inputComparable && composition === 'union') {
-        const arms = (withoutDialect(tool!.inputSchema).oneOf ?? []) as readonly JsonDocument[]
+        const listed = withoutDialect(tool!.inputSchema)
+        const composed = advertisedContracts(projection)!.input['~standard'].jsonSchema.input({
+          target: 'draft-2020-12',
+        })
+        const arms = (withoutDialect(composed).oneOf ?? []) as readonly JsonDocument[]
         expect(arms.length, `${projection.name} arms`).toBe(projection.ops.length)
         projection.ops.forEach((opId, at) => {
+          const own = withoutDialect(declared.get(opId)!.input)
+          expect(
+            foldArmFindings(listed, projection.discriminant!, opId, own),
+            `${projection.name} listing for ${opId}`,
+          ).toEqual([])
           expect(
             armWithoutDiscriminant(arms[at]!, projection.discriminant!),
             `${projection.name} arm ${opId}`,
-          ).toEqual(withoutDialect(declared.get(opId)!.input))
+          ).toEqual(own)
           checked += 1
         })
       }
@@ -280,19 +292,18 @@ describe('the advertised schema equals the function layer\'s own projection (D-1
   // dropped without any shape changing.
   it('carries a field description from the zod contract all the way to the wire', async () => {
     const advertised = new Map((await advertise()).map((tool) => [tool.name, tool]))
+    // 2026-10-20 (446-11, D-25): the fold lists one object, so the prose rides its `action` field.
     const fold = withoutDialect(advertised.get('agent_qa_change_config')!.inputSchema)
-    const arms = (fold.oneOf ?? []) as readonly JsonDocument[]
-    const discriminant = (arms[0]!.properties as JsonDocument).action as JsonDocument
+    const discriminant = (fold.properties as JsonDocument).action as JsonDocument
 
-    expect(discriminant.const).toBe('config.field.set')
+    expect((discriminant.enum as readonly string[])[0]).toBe('config.field.set')
     expect(discriminant.description).toContain('Which registry operation this call is for')
 
     // 2026-09-30 (432-12 D-05): the apply doors' authored envelope is gone with them, so the second
     // conversion route has no tool on it. The knowledge change fold carries the same prose.
     const knowledge = withoutDialect(advertised.get('agent_qa_change_knowledge')!.inputSchema)
-    const knowledgeArms = (knowledge.oneOf ?? []) as readonly JsonDocument[]
-    const knowledgeDiscriminant = (knowledgeArms[0]!.properties as JsonDocument).action as JsonDocument
-    expect(knowledgeDiscriminant.const).toBe('knowledge.accept')
+    const knowledgeDiscriminant = (knowledge.properties as JsonDocument).action as JsonDocument
+    expect((knowledgeDiscriminant.enum as readonly string[])[0]).toBe('knowledge.accept')
     expect(knowledgeDiscriminant.description).toContain('Which registry operation this call is for')
   })
 })

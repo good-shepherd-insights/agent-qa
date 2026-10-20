@@ -554,9 +554,10 @@ export const AGENT_QA_TOOL_PROJECTIONS: readonly ToolProjection[] = Object.freez
  *
  * Exactly two reasons an entry exists here, and no third:
  *
- *  1. A UNION FOLD advertises the discriminated union of its arms' own DTOs, composed in
+ *  1. A UNION FOLD validates with the discriminated union of its arms' own DTOs, composed in
  *     `@vostride/agent-qa-schema` (see `functions/tool-folds.ts` for why it is composed there and
  *     not here). Its output is the union of the arms' own outputs, collapsed when they are one.
+ *     Its input is listed as one object by `projection.ts` (2026-10-20, 446-11).
  *  2. THE PIPELINE advertises the FIRST op's contract on both sides: a caller hands `entities.resolve`
  *     the reference it has, and reads back the resolution union — a card, a small disambiguation
  *     set, or an honest miss. `entities.get` runs inside the resolved arm and contributes no shape

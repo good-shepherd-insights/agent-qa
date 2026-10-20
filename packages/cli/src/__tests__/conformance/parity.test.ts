@@ -42,12 +42,14 @@ import {
   CHAT_RESOLVER_CALLER,
 } from '@vostride/agent-qa-agent-local'
 import {
+  advertisedContracts,
   AGENT_QA_OP_CONTRACTS,
   AGENT_QA_TOOL_PROJECTIONS,
   armWithoutDiscriminant,
   buildAgentQaMcpServer,
   compositionOf,
   DEGRADED_OUTPUT_CONTRACTS,
+  foldArmFindings,
   UNPROJECTED_OPS,
   withoutDialect,
   withoutLegacyResultWrap,
@@ -2251,13 +2253,24 @@ describe('the parity suite ranges the registry census over every rostered surfac
         } else if (inputPlan.kind === 'arm') {
           // THE UNION-ARM NORMALISATION, through the lens's own function: the fold adds a
           // discriminant key whose value is the op id, and taking it back out is what makes the
-          // advertised arm and the op's own document the same claim.
-          const arms = (withoutDialect(tool!.inputSchema).oneOf ?? []) as readonly JsonDocument[]
+          // composed arm and the op's own document the same claim. 2026-10-20 (446-11, D-25): the
+          // fold lists one object, so the listing is held to the lens's fold check, and the arm
+          // compared whole is the composed union's, which is what the call is validated with.
+          const listed = withoutDialect(tool!.inputSchema)
+          expect(
+            foldArmFindings(listed, projection.discriminant!, opId, ownInput),
+            `${opId} on mcp (input, listed by ${projection.name}): the listing does not cover `
+              + 'this capability\'s own contract',
+          ).toEqual([])
+          const composed = advertisedContracts(projection)!.input['~standard'].jsonSchema.input({
+            target: 'draft-2020-12',
+          })
+          const arms = (withoutDialect(composed).oneOf ?? []) as readonly JsonDocument[]
           expect(arms.length, `${projection.name}: fold arms vs declared ops`)
             .toBe(projection.ops.length)
           expect(
             armWithoutDiscriminant(arms[inputPlan.at]!, projection.discriminant!),
-            `${opId} on mcp (input, arm ${inputPlan.at} of ${projection.name}): the advertised `
+            `${opId} on mcp (input, arm ${inputPlan.at} of ${projection.name}): the composed `
               + 'shape is not this capability\'s own contract',
           ).toEqual(ownInput)
           inputsCompared += 1
@@ -2412,6 +2425,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         'stripRedundantObjectStamp',
         'armWithoutDiscriminant',
         'withoutLegacyResultWrap',
+        'foldArmFindings',
       ]) {
         for (const keyword of definitionKeywords) {
           expect(code, `${file} defines its own ${normaliser} instead of importing the one lens`)
