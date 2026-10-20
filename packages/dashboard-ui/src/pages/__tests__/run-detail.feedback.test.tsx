@@ -859,7 +859,8 @@ describe('426-05 the pinned target and per-address drafts', () => {
     expect(stored(localStorage)).toEqual([])
     expect(stored(sessionStorage)).toEqual([])
     expect(location()).toBe(before)
-    expect(location()).not.toContain('draft')
+    // The run id is random words and can itself contain "draft".
+    expect(location().replace(RUN_ID, '')).not.toContain('draft')
     expect(window.location.search).toBe(searchBefore)
     expect(noteField()!.value).toBe('draft text only in memory')
   })
