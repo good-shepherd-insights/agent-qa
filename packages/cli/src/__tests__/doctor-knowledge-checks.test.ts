@@ -289,6 +289,7 @@ describe('createKnowledgeChecks', () => {
     const { checks, embedder, rung } = await runChecks(project, baseProbes({
       readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
       readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+      daemonLive: () => true,
       readDaemonEventLedger: () => ({
         events: [
           { kind: 'embedder-worker-start' },
@@ -653,10 +654,11 @@ describe('C446-EMBEDDER-FIX', () => {
     stderr: 'Error: Embedder worker could not resolve profile: deferred\n    at /home/u/.agent-qa/worker.js',
   }
 
-  async function daemonState(events: Record<string, unknown>[]) {
+  async function daemonState(events: Record<string, unknown>[], live = true) {
     const { checks, embedder } = await runChecks(makeProject(), baseProbes({
       ...liveLease,
       readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+      daemonLive: () => live,
       readDaemonEventLedger: () => ({ events: events as never }),
     }))
     return { embedder, fix: checks[1]!.fixInstructions }
@@ -702,5 +704,54 @@ describe('C446-EMBEDDER-FIX', () => {
     const project = makeProject()
     const skip = await runChecks({ ...project, config: null as never }, baseProbes())
     expect([pass.embedder.status, warn.embedder.status, skip.embedder.status]).toEqual(['pass', 'warn', 'skip'])
+  })
+
+  it('a worker that exited with crash or start-error says it exited with an error, not that the daemon is idle', async () => {
+    const worker = 'The daemon starts its embedder worker when a run needs it, so an idle daemon shows this row. Stop the daemon with `npx agent-qa daemon stop` to clear it.'
+    for (const reason of ['crash', 'start-error']) {
+      const { embedder, fix } = await daemonState([
+        { kind: 'embedder-worker-start' },
+        { kind: 'embedder-worker-exit', reason, stderr: 'Error: worker exited with code 1' },
+      ])
+      expect(embedder).toEqual({ status: 'fail', message: `embedder worker failed to start: ${reason}` })
+      expect(fix, reason).not.toBe(worker)
+      expect(fix, reason).toContain('exited with an error')
+      expect(fix, reason).toContain('npx agent-qa daemon stop')
+      expect(fix, reason).not.toContain('idle daemon')
+    }
+  })
+
+  it('idle, daemon-stop and replace exits and no recorded exit keep the idle worker text', async () => {
+    const worker = 'The daemon starts its embedder worker when a run needs it, so an idle daemon shows this row. Stop the daemon with `npx agent-qa daemon stop` to clear it.'
+    for (const reason of ['idle', 'daemon-stop', 'replace']) {
+      const { embedder, fix } = await daemonState([{ kind: 'embedder-worker-exit', reason, stderr: '' }])
+      expect(embedder).toEqual({ status: 'fail', message: `embedder worker failed to start: ${reason}` })
+      expect(fix, reason).toBe(worker)
+    }
+    const { embedder, fix } = await daemonState([])
+    expect(embedder).toEqual({ status: 'fail', message: 'embedder worker failed to start: no registration published' })
+    expect(fix).toBe(worker)
+  })
+
+  it('with no live daemon the fix says daemon stop cannot clear the row and names the daemon start that takes the lease over', async () => {
+    const states = [
+      { events: [profileExit], message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT },
+      {
+        events: [{ kind: 'embedder-worker-exit', reason: 'crash', stderr: 'Error: worker exited with code 1' }],
+        message: 'embedder worker failed to start: crash',
+      },
+      { events: [], message: 'embedder worker failed to start: no registration published' },
+    ]
+    const fixes = new Set<string>()
+    for (const { events, message } of states) {
+      const { embedder, fix } = await daemonState(events, false)
+      expect(embedder).toEqual({ status: 'fail', message })
+      expect(fix, message).toContain('No agent-qa daemon is running')
+      expect(fix, message).toContain('cannot clear')
+      expect(fix, message).toContain('`npx agent-qa daemon`')
+      expect(fix, message).not.toContain('/home/u/.agent-qa/worker.js')
+      fixes.add(fix)
+    }
+    expect(fixes.size).toBe(1)
   })
 })
