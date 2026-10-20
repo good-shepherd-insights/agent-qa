@@ -487,7 +487,10 @@ function hasCompleteConditionVerdictsShape(value: unknown): boolean {
           (dialog) =>
             isNonArrayObject(dialog) &&
             typeof dialog.name === 'string' &&
-            isOneOf(['bears-on-condition', 'unrelated', 'unaccounted'], dialog.account),
+            isOneOf(
+              ['bears-on-condition', 'requested', 'unrelated', 'unaccounted'],
+              dialog.account,
+            ),
         )))
   )
 }

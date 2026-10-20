@@ -108,7 +108,9 @@ export function applyDialogGuard(
       return name === '' ? accounted === '' || accounted === dialog.role : accounted === name
     })
     const account =
-      match?.account === 'bears-on-condition' || match?.account === 'unrelated'
+      match?.account === 'bears-on-condition' ||
+      match?.account === 'requested' ||
+      match?.account === 'unrelated'
         ? match.account
         : 'unaccounted'
     return { name: bound(collapse(mask(dialog.name)), NAME_MAX), account }

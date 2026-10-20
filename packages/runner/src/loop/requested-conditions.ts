@@ -350,7 +350,8 @@ function judgeOne(
  * unverified condition; a met condition needs a citation the runner finds (or a screenshot
  * citation when an image was attached) and reasoning that does not admit the action did not
  * happen; the runner's own checks (condition-guards.ts) then only lower a met verdict. The step
- * passes only when there is a condition, every verdict is met and every open dialog is unrelated.
+ * passes only when there is a condition, every verdict is met and every open dialog is unrelated
+ * or the state the step asked to open or see (requested).
  */
 export function judgeConditions(input: JudgeConditionsInput): ConditionJudgeResult {
   const maskedStep = collapse(input.mask(input.stepText))
@@ -400,7 +401,7 @@ export function judgeConditions(input: JudgeConditionsInput): ConditionJudgeResu
   const pass =
     conditions.length > 0 &&
     conditions.every((condition) => condition.verdict === 'met') &&
-    openDialogs.every((dialog) => dialog.account === 'unrelated')
+    openDialogs.every((dialog) => dialog.account === 'unrelated' || dialog.account === 'requested')
   return { evidence, pass, reason: pass ? '' : formatUnprovenReason(conditions, openDialogs) }
 }
 

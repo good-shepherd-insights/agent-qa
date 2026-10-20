@@ -830,11 +830,11 @@ Requested conditions:
 - A condition that something is absent from the screen, such as "no error is shown", is met when the current screen shows none where it would appear. A condition that the app did not do something, such as "no message was sent", needs the app's own evidence, such as a sent list or a draft badge; the run's record shows only what the run itself did.
 - When the step or the author's context expects an error or a refusal, showing it meets the condition and isAppError is false. An application error that neither the step nor the author's context expects fails the step even when it is unrelated to the step's own outcome: set isAppError true.
 - Tag each condition's needs: visual when only a picture can settle it (a colour, a layout, an image's content); persistence for a saved or kept value; limit-max or limit-min for a control at its maximum or minimum, with that control's ref; file for a saved file, with the expected file name, whether its content must match exactly or contain whole lines, and the expected text read from the step or the screen; otherwise none.
-- List every dialog still open on the final screen and account for it: bears-on-condition when it shows a condition is not done, such as an unsaved-changes or confirmation dialog; unrelated when it does not, such as a cookie banner.
+- List every dialog still open on the final screen and account for it: bears-on-condition when it shows a condition is not done, such as an unsaved-changes or confirmation dialog; requested when it is the state the step asks to open or see, such as the product dialog a step opens; unrelated when it is neither, such as a cookie banner.
 
 Return a JSON object with:
 - conditions: every condition the step requests, each with quote (the exact step words it covers), verdict (met, not-met, unverified or inconclusive), needs (none, visual, persistence, limit-max, limit-min or file), controlRef (the control's ref for limit-max or limit-min, otherwise empty), file (the expected file name, match none, exact or lines, and the expected text; empty for other conditions), citations (each a source, one of start-screen, final-screen, action, read, carried or screenshot, and a quote copied exactly from that part) and reasoning
-- dialogs: every dialog still open on the final screen, with its name, its account (bears-on-condition or unrelated) and reasoning
+- dialogs: every dialog still open on the final screen, with its name, its account (bears-on-condition, requested or unrelated) and reasoning
 - isAppError (boolean): whether the screen shows an application error that the step and the author's context do not expect
 - reasoning (string): a short overall explanation of the judgment`
 }

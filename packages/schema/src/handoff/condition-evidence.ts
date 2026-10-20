@@ -81,7 +81,7 @@ export interface ConditionRecord {
 /** An open dialog on the final screen and how the verifier accounted for it. */
 export interface OpenDialogAccount {
   name: string
-  account: 'bears-on-condition' | 'unrelated' | 'unaccounted'
+  account: 'bears-on-condition' | 'requested' | 'unrelated' | 'unaccounted'
 }
 
 export interface ConditionVerdictsEvidence {

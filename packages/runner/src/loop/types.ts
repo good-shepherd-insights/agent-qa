@@ -113,7 +113,7 @@ export interface ConditionJudgment {
 /** An open dialog as the verifier accounted for it (439 D-16). */
 export interface DialogAccount {
   name: string
-  account: 'bears-on-condition' | 'unrelated'
+  account: 'bears-on-condition' | 'requested' | 'unrelated'
   reasoning: string
 }
 

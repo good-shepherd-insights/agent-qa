@@ -63,8 +63,10 @@ export const VerificationResultSchema = z.object({
       z.object({
         name: z.string().describe("The open dialog's name"),
         account: z
-          .enum(['bears-on-condition', 'unrelated'])
-          .describe('Whether the open dialog bears on a condition or is unrelated'),
+          .enum(['bears-on-condition', 'requested', 'unrelated'])
+          .describe(
+            'Whether the open dialog bears on a condition, is the state the step asks to open or see, or is unrelated',
+          ),
         reasoning: z.string().describe('Why'),
       }),
     )
