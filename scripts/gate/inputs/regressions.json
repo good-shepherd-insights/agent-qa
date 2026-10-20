@@ -15078,6 +15078,36 @@
       "file": "packages/mcp/src/__tests__/446-tool-schema.test.ts",
       "fullName": "C446-TOOL-SCHEMA an arm-invalid fold call is refused exactly as the strict fold union refuses it",
       "origin": "446 D-25"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-START-RUN-ARGS no source or packaged skill names an agent_qa_start_run argument the local run core refuses",
+      "origin": "446 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-START-RUN-ARGS the authoring and debug-fix skills in both trees name the tests to run with patterns, an argument the run core accepts",
+      "origin": "446 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-START-RUN-ARGS a planted scope claim is named, a sentence saying the server refuses scope is not, and a census that finds no agent_qa_start_run passage fails",
+      "origin": "446 D-30"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-RUN-FILTERS no source or packaged skill offers target as an agent_qa_list_runs or runs list filter",
+      "origin": "446 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-RUN-FILTERS a planted target filter is named, a sentence saying target answers no runs is not, and a census that finds no list passage fails",
+      "origin": "446 D-31"
     }
   ]
 }
