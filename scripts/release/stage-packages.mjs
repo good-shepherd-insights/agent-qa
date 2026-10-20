@@ -21,6 +21,7 @@ function rejectGeneratedOrLocalFiles(path) {
     '/node_modules/',
     '/.turbo/',
     '/.git/',
+    '/.agent-qa/',
   ].some(segment => normalized.includes(segment))
     && !normalized.endsWith('/pnpm-lock.yaml')
     && !normalized.endsWith('/package-lock.json')
