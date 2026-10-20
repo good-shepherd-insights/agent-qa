@@ -15150,6 +15150,18 @@
       "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
       "fullName": "C446-EMBEDDER-FIX with no live daemon the fix says daemon stop cannot clear the row and names the daemon start that takes the lease over",
       "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/446-stated-price.test.ts",
+      "fullName": "C446-STATED-PRICE an unquoted price a prior action stated is refused as a restatement",
+      "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/agent/src/authoring/__tests__/446-stated-price.test.ts",
+      "fullName": "C446-STATED-PRICE a different price in a prior action, or the same price in a later action, leaves the stated total falsifiable",
+      "origin": "446 D-32"
     }
   ]
 }
