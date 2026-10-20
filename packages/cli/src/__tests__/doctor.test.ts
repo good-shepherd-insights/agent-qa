@@ -1119,7 +1119,8 @@ targets:
     // workspace and validation rows fail on their own account, so an assertion about it would be
     // about them. "Degraded by design still exits 0" is the WARN cell below, on a healthy host.
     expect(getOutput()).not.toContain('Fix: Rebuild the index')
-    expect(getOutput()).not.toContain('Fix: Set an explicit embedder profile')
+    expect(getOutput()).not.toContain('Fix: v2 does not download the embedding model')
+    expect(getOutput()).not.toContain('Fix: The daemon starts its embedder worker')
   })
 
   it('passes the retrieval rows and warns Learning mode on a healthy host without an eval root', async () => {
@@ -1197,7 +1198,8 @@ targets:
     )
     expect(rowFor('Embedder')).toContain('FAIL')
     expect(getOutput()).not.toContain('/home/u/worker.js')
-    expect(getOutput()).toContain('Fix: Set an explicit embedder profile in agent-qa.config.yaml')
+    expect(getOutput()).toContain('Fix: v2 does not download the embedding model')
+    expect(getOutput()).not.toContain('agent-qa.config.yaml (the daemon')
   })
 
   // -------------------------------------------------------------------------

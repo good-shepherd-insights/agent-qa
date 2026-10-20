@@ -302,7 +302,7 @@ describe('createKnowledgeChecks', () => {
     }))
     expect(embedder).toEqual({ status: 'fail', message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT })
     expect(embedder.message).not.toContain('/home/u/.agent-qa/worker.js')
-    expect(checks[1].fixInstructions).toContain('Set an explicit embedder profile')
+    expect(checks[1].fixInstructions).toContain('v2 does not download the embedding model')
     expect(rung.status).not.toBe('fail')
   })
 

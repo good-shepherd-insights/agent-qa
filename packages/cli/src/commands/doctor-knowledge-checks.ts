@@ -90,8 +90,10 @@ export const NO_KNOWLEDGE_ROOT_MESSAGE = 'no knowledge root configured'
 export const EMBEDDER_WORKER_NOT_REGISTERED_TEXT = 'daemon embedder worker not registered: could not resolve profile (deferred)'
 
 const STORE_FIX_PREFIX = 'Rebuild the index with `agent-qa knowledge rebuild-index`, or remove the corrupt file at'
-const EMBEDDER_FIX =
-  'Set an explicit embedder profile in agent-qa.config.yaml (the daemon cannot resolve `deferred`), then restart the daemon.'
+export const EMBEDDER_PROFILE_FIX =
+  'v2 does not download the embedding model, and knowledge search works without it. Stop the daemon with `npx agent-qa daemon stop` to clear this row.'
+export const EMBEDDER_WORKER_FIX =
+  'The daemon starts its embedder worker when a run needs it, so an idle daemon shows this row. Stop the daemon with `npx agent-qa daemon stop` to clear it.'
 const RUNG_FIX = 'Run the checks above; the rung follows from the store and embedder rows.'
 const LEARNING_MODE_FIX =
   'Replay gating is not bound on this host. Seed the eval root and commit a measured noise floor with `agent-qa eval floor --commit`; repair any reported posture refusal.'
@@ -237,9 +239,12 @@ function createKnowledgeStoreCheck(context: KnowledgeCheckContext): DoctorCheck 
 }
 
 function createEmbedderCheck(context: KnowledgeCheckContext): DoctorCheck {
+  let failState: 'profile' | 'worker' = 'worker'
   return {
     name: 'Embedder',
-    fixInstructions: EMBEDDER_FIX,
+    get fixInstructions() {
+      return failState === 'profile' ? EMBEDDER_PROFILE_FIX : EMBEDDER_WORKER_FIX
+    },
     check: async (): Promise<CheckResult> => {
       if (context.knowledgeRoot === null) return SKIPPED
       const { embedder, embedderRung, daemon } = await context.probe()
@@ -251,8 +256,10 @@ function createEmbedderCheck(context: KnowledgeCheckContext): DoctorCheck {
       if (daemon !== undefined && daemon.registration.kind !== 'parsed') {
         const stderr = stringField(daemon.lastExit, 'stderr') ?? ''
         if (stderr.includes('could not resolve profile')) {
+          failState = 'profile'
           return { status: 'fail', message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT }
         }
+        failState = 'worker'
         const reason = stringField(daemon.lastExit, 'reason') ?? 'no registration published'
         return { status: 'fail', message: `embedder worker failed to start: ${reason}` }
       }
