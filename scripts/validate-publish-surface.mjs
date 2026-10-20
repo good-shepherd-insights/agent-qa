@@ -261,7 +261,6 @@ function validateNoStaleMcpToolPrefix(errors) {
     ...requiredSkills.map(skillName => join(root, 'skills', skillName)),
     join(root, 'packages/cli/skills'),
     join(root, 'packages/mcp/src'),
-    join(root, 'packages/mcp/references'),
   ]
   for (const target of scanned) {
     if (!existsSync(target)) {

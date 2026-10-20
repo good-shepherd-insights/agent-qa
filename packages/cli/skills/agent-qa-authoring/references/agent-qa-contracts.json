@@ -1,6 +1,5 @@
 {
   "version": 1,
-  "source": "packages/mcp/references/agent-qa-contracts.json",
   "ids": {
     "instruction": "Never mint or hand-write an ID. IDs are minted host-side where the entity is written; read the id back off the entity card `agent_qa_get_entity` returns.",
     "contracts": [
@@ -12,7 +11,17 @@
     ]
   },
   "config": {
-    "rootKeys": ["workspace", "services", "registry", "use", "analytics"],
+    "rootKeys": [
+      "workspace",
+      "services",
+      "knowledge",
+      "registry",
+      "use",
+      "plugins",
+      "analytics",
+      "allowProduction",
+      "eval"
+    ],
     "mcpFields": ["enabled", "transport", "host", "port", "path"]
   },
   "test": {

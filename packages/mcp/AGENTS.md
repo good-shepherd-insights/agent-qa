@@ -21,7 +21,6 @@ through `invokeFunction`; the CLI's `agent-qa mcp` serves it over stdio or HTTP.
 - `src/http.ts`
 - `DELETION-INVENTORY.md`
 - `src/__tests__/`
-- `references/`
 
 ## Commands
 
@@ -33,7 +32,6 @@ through `invokeFunction`; the CLI's `agent-qa mcp` serves it over stdio or HTTP.
 
 - Public MCP tools use `agent_qa_*`.
 - Do not introduce a stale no-separator MCP tool prefix.
-- Keep schema references synchronized with core schemas.
 - Authoring and run tools that need dashboard state must keep explicit dashboard
   URL handling and clear errors when the dashboard is unavailable.
 - Keep local HTTP defaults loopback-only unless a plan explicitly changes
