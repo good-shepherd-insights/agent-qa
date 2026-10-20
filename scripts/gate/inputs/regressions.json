@@ -15132,6 +15132,24 @@
       "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
       "fullName": "C446-RECIPE the page shows the AGENTS.md pointer block init prints, line for line",
       "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
+      "fullName": "C446-EMBEDDER-FIX a worker that exited with crash or start-error says it exited with an error, not that the daemon is idle",
+      "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
+      "fullName": "C446-EMBEDDER-FIX idle, daemon-stop and replace exits and no recorded exit keep the idle worker text",
+      "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
+      "fullName": "C446-EMBEDDER-FIX with no live daemon the fix says daemon stop cannot clear the row and names the daemon start that takes the lease over",
+      "origin": "446 D-32"
     }
   ]
 }
