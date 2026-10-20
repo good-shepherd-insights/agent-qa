@@ -3,8 +3,8 @@
 Load this when `SKILL.md`'s workflow is not enough: what the words in an answer mean, and a sample
 call and answer for every read. Ids in the samples are illustrative; use the ones your reads
 return. Every CLI verb takes `--json`, which prints what the matching MCP tool answers, except that
-`agent-qa knowledge inspect` and `agent-qa knowledge diff <build>` print only the `records` and
-`changes` array of that answer. Test, step and sub-action numbers are zero-based.
+`npx agent-qa knowledge inspect` and `npx agent-qa knowledge diff <build>` print only the
+`records` and `changes` array of that answer. Test, step and sub-action numbers are zero-based.
 
 ## Record kinds
 
@@ -79,7 +79,7 @@ twice. Wrong knowledge is corrected by new feedback (a run mark) or by forgettin
 
 ### `agent_qa_list_runs`
 
-Which runs exist, newest first. CLI: `agent-qa runs list`, with `--verdict`, `--test`,
+Which runs exist, newest first. CLI: `npx agent-qa runs list`, with `--verdict`, `--test`,
 `--target`, `--since` (RFC3339 with an offset) and `--limit` (default 20).
 
 Call: `{ "verdict": "failed", "limit": 2 }`
@@ -96,7 +96,7 @@ Next: agent-qa runs overview r-brisk-heron
 ### `agent_qa_get_run_overview`
 
 The whole picture of one completed run, with the address of everything it recorded. CLI:
-`agent-qa runs overview <runId>`.
+`npx agent-qa runs overview <runId>`.
 
 Call: `{ "runId": "r-brisk-heron" }`
 
@@ -122,8 +122,8 @@ Next: agent-qa runs evidence r-brisk-heron --test 0 --step 2 --kind console
 ### `agent_qa_get_run_evidence`
 
 One step's console, network, a11y, aria or variables document, or one blob by sha. CLI:
-`agent-qa runs evidence <runId> --test <n> --step <n> --kind <kind>`; for a screenshot,
-`agent-qa runs evidence <runId> --screenshot <sha> --out <file>` writes a new file and never
+`npx agent-qa runs evidence <runId> --test <n> --step <n> --kind <kind>`; for a screenshot,
+`npx agent-qa runs evidence <runId> --screenshot <sha> --out <file>` writes a new file and never
 overwrites one.
 
 Call: `{ "action": "runs.evidence", "runId": "r-brisk-heron", "testIndex": 0, "stepIndex": 2, "kind": "console" }`
@@ -142,7 +142,7 @@ Answer: an image content block (PNG or JPEG) you can look at.
 ### `agent_qa_get_run_knowledge`
 
 What one run used and learned: the records served at each step and the changes it caused. CLI:
-`agent-qa runs knowledge <runId>`.
+`npx agent-qa runs knowledge <runId>`.
 
 Call: `{ "runId": "r-brisk-heron" }`
 
@@ -161,7 +161,7 @@ Next: agent-qa knowledge show fact-pay-button
 ### `agent_qa_explain_brief`
 
 Why one step's brief said what it said, from its recorded trace. CLI:
-`agent-qa knowledge brief-why <runId> --step <n>`, with `--test <testId>` when the run has
+`npx agent-qa knowledge brief-why <runId> --step <n>`, with `--test <testId>` when the run has
 several tests and `--record <recordId>` to narrow to one record.
 
 Call: `{ "runId": "r-brisk-heron", "testId": "t-checkout-pay", "stepIndex": 2 }`
@@ -178,7 +178,7 @@ Next: agent-qa knowledge show fact-pay-button
 
 ### `agent_qa_show_knowledge_record`
 
-One record with the provenance that justifies it. CLI: `agent-qa knowledge show <recordId>`.
+One record with the provenance that justifies it. CLI: `npx agent-qa knowledge show <recordId>`.
 
 Call: `{ "recordId": "fact-pay-button" }`
 
@@ -194,7 +194,7 @@ Next: agent-qa knowledge brief-why r-quiet-lark --step 2 --test t-checkout-pay -
 
 ### `agent_qa_list_knowledge_bundles`
 
-Every committed bundle with its status, trust and counters. CLI: `agent-qa knowledge bundles`.
+Every committed bundle with its status, trust and counters. CLI: `npx agent-qa knowledge bundles`.
 
 Call: `{}`
 
@@ -219,7 +219,7 @@ fact-pay-button
 ### `agent_qa_inspect_knowledge_records`
 
 Records filtered by product, scope, kind, status, anchor, record id or build. CLI:
-`agent-qa knowledge inspect`, with `--product`, `--scope`, `--kind`, `--status`, `--anchor`,
+`npx agent-qa knowledge inspect`, with `--product`, `--scope`, `--kind`, `--status`, `--anchor`,
 `--record`, `--as-of-build` and `--unresolved`.
 
 Call: `{ "filter": { "product": "shop", "kind": "caution" } }`
@@ -244,7 +244,7 @@ caution-slow-3ds
 ### `agent_qa_diff_knowledge_records`
 
 What changed after a build. The CLI takes a build ordinal or tag:
-`agent-qa knowledge diff <build>`; the tool takes the ordinal.
+`npx agent-qa knowledge diff <build>`; the tool takes the ordinal.
 
 Call: `{ "sinceOrdinal": 12 }`
 
@@ -263,7 +263,7 @@ superseded (1)
 ### `agent_qa_list_knowledge_gates`
 
 A record's gate receipts, its standing on each gate and the live promotion verdict. CLI:
-`agent-qa knowledge gates <recordId>`.
+`npx agent-qa knowledge gates <recordId>`.
 
 Call: `{ "recordId": "fact-pay-button" }`
 

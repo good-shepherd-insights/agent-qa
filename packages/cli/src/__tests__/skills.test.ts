@@ -254,7 +254,7 @@ describe('the agent-qa-knowledge skill', () => {
     const body = readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')
     expect(AGENT_QUESTION_MAP.length).toBeGreaterThan(0)
     for (const row of AGENT_QUESTION_MAP) {
-      expect(body, row.question).toContain(`| ${row.question} | \`${row.mcp}\` | \`${row.cli}\` |`)
+      expect(body, row.question).toContain(`| ${row.question} | \`${row.mcp}\` | \`npx ${row.cli}\` |`)
     }
   })
 
