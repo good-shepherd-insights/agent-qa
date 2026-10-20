@@ -15108,6 +15108,30 @@
       "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
       "fullName": "C446-RUN-FILTERS a planted target filter is named, a sentence saying target answers no runs is not, and a census that finds no list passage fails",
       "origin": "446 D-31"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-NO-INIT-FORCE no agent-facing guidance offers agent-qa init with --force, which rebuilds the workspace config",
+      "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-NO-INIT-FORCE an init command with --force in planted guidance is named, a plain init is not, and a census that scans nothing fails",
+      "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE the page names no agent-qa init command, since each one does nothing or rebuilds the config in the initialized workspace it starts from",
+      "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE the page shows the AGENTS.md pointer block init prints, line for line",
+      "origin": "446 D-32"
     }
   ]
 }
