@@ -14922,6 +14922,18 @@
       "file": "packages/cli/src/__tests__/skills.test.ts",
       "fullName": "C446-SKILL-METADATA each agents/openai.yaml points at the agent-qa server on port 3471, prompts with its own skill name and claims no schema or ID tool",
       "origin": "446 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-GUIDANCE-NPX every CLI command the guide, the pointer and the MCP instructions quote reads npx agent-qa, while the question map keeps bare verbs",
+      "origin": "446 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-PLACEHOLDERS the guide says the build placeholder is a build ordinal or tag and names the five evidence kinds",
+      "origin": "446 D-15"
     }
   ]
 }
