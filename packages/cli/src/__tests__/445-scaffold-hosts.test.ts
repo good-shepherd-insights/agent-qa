@@ -1,4 +1,5 @@
-// C445-SCAFFOLD-HOSTS (445-02, D-04): every URL init writes names only the playground host
+// C445-SCAFFOLD-HOSTS (445-02, D-04): every URL init writes names only the playground host,
+// except agent-qa's own recipe page (446-09, owner decision 2026-10-20)
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
 
@@ -69,6 +70,7 @@ const mockWriteFileSync = vi.mocked(writeFileSync)
 const PLATFORMS = ['web', 'android', 'ios', 'web+android', 'web+ios'] as const
 const WEB_PLATFORMS = new Set(['web', 'web+android', 'web+ios'])
 const PLAYGROUND_HOST = 'playground.vostride.dev'
+const AGENT_QA_RECIPE_URL = 'https://github.com/vostride/agent-qa/blob/main/docs/coding-agents.md'
 const RETIRED_HOSTS = [
   'example.com',
   'iana.org',
@@ -125,7 +127,9 @@ describe('C445-SCAFFOLD-HOSTS', () => {
       const writes = await writesFor(platform)
       expect(writes.length, `${platform}: init wrote no file`).toBeGreaterThan(0)
       const urls = writes.flatMap(write =>
-        (write.content.match(URL_PATTERN) ?? []).map(url => ({ file: write.path, url })),
+        (write.content.match(URL_PATTERN) ?? [])
+          .filter(url => url !== AGENT_QA_RECIPE_URL)
+          .map(url => ({ file: write.path, url })),
       )
       if (WEB_PLATFORMS.has(platform)) {
         expect(urls.length, `${platform}: init wrote no URL at all`).toBeGreaterThan(0)
