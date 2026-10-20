@@ -47,6 +47,15 @@ const knowledgeProbeStubs = vi.hoisted(() => ({
   readEmbedderWorkerRegistration: vi.fn(() => ({ kind: 'absent' as const })),
 }))
 
+// 446-16 (D-32): the Embedder fix reads daemon liveness from the registration, as daemon stop does;
+// the real module reads agent-local daemon capabilities this suite does not bind.
+const daemonRegistrationStubs = vi.hoisted(() => ({
+  readDaemonRegistration: vi.fn(() => ({ kind: 'absent' as const })),
+  processIsAlive: vi.fn(() => false),
+}))
+
+vi.mock('../daemon/registration.js', () => daemonRegistrationStubs)
+
 vi.mock('@vostride/agent-qa-agent-local', async () => {
   const knowledge = await vi.importActual<typeof import('@vostride/agent-qa-knowledge-local')>(
     '@vostride/agent-qa-knowledge-local',
@@ -1181,6 +1190,11 @@ targets:
   it('names the folded 399 failure by its cause when a live daemon lease published no worker registration', async () => {
     knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'parsed', lease: {} } as never)
     knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    daemonRegistrationStubs.readDaemonRegistration.mockReturnValueOnce({
+      kind: 'parsed',
+      registration: { pid: 4242 },
+    } as never)
+    daemonRegistrationStubs.processIsAlive.mockReturnValueOnce(true)
     mockReadFileSync.mockImplementation((target) => (
       String(target).endsWith('daemon-events.jsonl')
         ? `${JSON.stringify({

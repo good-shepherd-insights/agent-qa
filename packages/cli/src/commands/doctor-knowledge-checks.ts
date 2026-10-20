@@ -52,6 +52,7 @@ import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 // every doctor invocation (the host-to-host import trap 422-09 recorded).
 import { MISDIRECTION_POSTURE_BOUND_AT_HOST } from '../curation/misdirection-run-state.js'
 import { readDaemonEventLedger, type DaemonEvent } from '../daemon/events.js'
+import { processIsAlive, readDaemonRegistration } from '../daemon/registration.js'
 import type { CheckResult, DoctorCheck } from './doctor.js'
 
 const { foldRetrievalRung, indexDbPath } = LOCAL_KNOWLEDGE_PROBES
@@ -94,6 +95,10 @@ export const EMBEDDER_PROFILE_FIX =
   'v2 does not download the embedding model, and knowledge search works without it. Stop the daemon with `npx agent-qa daemon stop` to clear this row.'
 export const EMBEDDER_WORKER_FIX =
   'The daemon starts its embedder worker when a run needs it, so an idle daemon shows this row. Stop the daemon with `npx agent-qa daemon stop` to clear it.'
+export const EMBEDDER_CRASH_FIX =
+  'The daemon\'s embedder worker exited with an error, and knowledge search works without it. Stop the daemon with `npx agent-qa daemon stop` to clear this row.'
+export const EMBEDDER_NO_DAEMON_FIX =
+  'No agent-qa daemon is running, so `npx agent-qa daemon stop` cannot clear this row: the knowledge writer lease belongs to another agent-qa process, or to one that did not stop cleanly. Once no agent-qa command is running, start `npx agent-qa daemon`, which takes a stale lease over, and stop it with `npx agent-qa daemon stop`.'
 const RUNG_FIX = 'Run the checks above; the rung follows from the store and embedder rows.'
 const LEARNING_MODE_FIX =
   'Replay gating is not bound on this host. Seed the eval root and commit a measured noise floor with `agent-qa eval floor --commit`; repair any reported posture refusal.'
@@ -114,6 +119,7 @@ export interface KnowledgeCheckProbes {
   readWriterLease?: (knowledgeRoot: string) => ReadWriterLeaseOutcome
   readEmbedderWorkerRegistration?: (agentQaRoot: string) => ReadEmbedderWorkerRegistrationOutcome
   readDaemonEventLedger?: (agentQaRoot: string) => { events: readonly DaemonEvent[] }
+  daemonLive?: (agentQaRoot: string) => boolean
 }
 
 export interface CreateKnowledgeChecksInput {
@@ -127,6 +133,7 @@ export interface CreateKnowledgeChecksInput {
 interface DaemonHalf {
   registration: ReadEmbedderWorkerRegistrationOutcome
   lastExit: DaemonEvent | undefined
+  live: boolean
 }
 
 interface KnowledgeProbe {
@@ -199,6 +206,12 @@ function lastEmbedderWorkerExit(events: readonly DaemonEvent[]): DaemonEvent | u
   return undefined
 }
 
+// The first two checks `daemon stop` makes: a parsed registration whose pid is alive.
+function registeredDaemonLive(agentQaRoot: string): boolean {
+  const outcome = readDaemonRegistration(agentQaRoot)
+  return outcome.kind === 'parsed' && processIsAlive(outcome.registration.pid)
+}
+
 function stringField(event: DaemonEvent | undefined, field: string): string | undefined {
   const value = event?.[field]
   return typeof value === 'string' ? value : undefined
@@ -239,11 +252,17 @@ function createKnowledgeStoreCheck(context: KnowledgeCheckContext): DoctorCheck 
 }
 
 function createEmbedderCheck(context: KnowledgeCheckContext): DoctorCheck {
-  let failState: 'profile' | 'worker' = 'worker'
+  let failState: 'profile' | 'worker' | 'crash' | 'no-daemon' = 'worker'
+  const fixes = {
+    profile: EMBEDDER_PROFILE_FIX,
+    worker: EMBEDDER_WORKER_FIX,
+    crash: EMBEDDER_CRASH_FIX,
+    'no-daemon': EMBEDDER_NO_DAEMON_FIX,
+  }
   return {
     name: 'Embedder',
     get fixInstructions() {
-      return failState === 'profile' ? EMBEDDER_PROFILE_FIX : EMBEDDER_WORKER_FIX
+      return fixes[failState]
     },
     check: async (): Promise<CheckResult> => {
       if (context.knowledgeRoot === null) return SKIPPED
@@ -255,12 +274,15 @@ function createEmbedderCheck(context: KnowledgeCheckContext): DoctorCheck {
       // every run of the day with none.
       if (daemon !== undefined && daemon.registration.kind !== 'parsed') {
         const stderr = stringField(daemon.lastExit, 'stderr') ?? ''
+        const exitReason = stringField(daemon.lastExit, 'reason')
         if (stderr.includes('could not resolve profile')) {
-          failState = 'profile'
+          failState = daemon.live ? 'profile' : 'no-daemon'
           return { status: 'fail', message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT }
         }
-        failState = 'worker'
-        const reason = stringField(daemon.lastExit, 'reason') ?? 'no registration published'
+        failState = !daemon.live
+          ? 'no-daemon'
+          : exitReason === 'crash' || exitReason === 'start-error' ? 'crash' : 'worker'
+        const reason = exitReason ?? 'no registration published'
         return { status: 'fail', message: `embedder worker failed to start: ${reason}` }
       }
 
@@ -593,6 +615,7 @@ export function createKnowledgeChecks(
   const registration =
     probes.readEmbedderWorkerRegistration ?? LOCAL_KNOWLEDGE_PROBES.readEmbedderWorkerRegistration
   const ledger = probes.readDaemonEventLedger ?? readDaemonEventLedger
+  const daemonLive = probes.daemonLive ?? registeredDaemonLive
   const buildPosture = probes.buildPromotionPosture ?? buildPromotionPostureResolver
 
   let pending: Promise<KnowledgeProbe> | undefined
@@ -644,7 +667,11 @@ export function createKnowledgeChecks(
       } catch {
         events = []
       }
-      daemon = { registration: registration(agentQaRoot), lastExit: lastEmbedderWorkerExit(events) }
+      daemon = {
+        registration: registration(agentQaRoot),
+        lastExit: lastEmbedderWorkerExit(events),
+        live: daemonLive(agentQaRoot),
+      }
     }
 
     return {
