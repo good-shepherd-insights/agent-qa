@@ -1,12 +1,19 @@
 // C446-RECIPE (446-08, D-10): the coding-agent recipes name only shipped commands and safe timeouts
+// C446-RECIPE-LINKS (446-09, D-10, D-28): every starting point links the recipe page within its bounds
 
-import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
+import { AGENT_QA_MCP_INSTRUCTIONS } from '@vostride/agent-qa-mcp'
+
+import {
+  buildAgentInstructionPointer,
+  buildKnowledgeAgentGuide,
+} from '../../commands/knowledge-guide.js'
 import { buildScaffoldConfig } from '../../commands/scaffold-content.js'
 import { agentQaRoot } from './catalog.js'
 import {
@@ -45,6 +52,7 @@ const LEG_ONLY = [
 ]
 const HOST_SETTINGS_FILES = ['settings.json', 'settings.local.json']
 const HELP_BUDGET_MS = 180_000
+const RECIPE_URL = 'https://github.com/vostride/agent-qa/blob/main/docs/coding-agents.md'
 
 interface Block {
   readonly info: string
@@ -235,5 +243,29 @@ describe('C446-RECIPE', () => {
     expect([...LEG_ONLY, ...HOST_SETTINGS_FILES].filter((text) => page.includes(text))).toEqual([])
     expect(page.split('--write-agent-instructions').length - 1,
       'the page names --write-agent-instructions once').toBe(1)
+  })
+})
+
+describe('C446-RECIPE-LINKS', () => {
+  it('getting-started, both READMEs, the pointer and the guide each link the recipe page', () => {
+    const read = (path: string): string => readFileSync(join(agentQaRoot(), path), 'utf8')
+    expect(existsSync(PAGE), 'docs/coding-agents.md exists').toBe(true)
+    const subjects: [string, string, string][] = [
+      ['docs/getting-started.md', read('docs/getting-started.md'), '](coding-agents.md)'],
+      ['README.md', read('README.md'), '](docs/coding-agents.md)'],
+      ['packages/cli/README.md', read('packages/cli/README.md'), RECIPE_URL],
+      ['the root pointer', buildAgentInstructionPointer().join('\n'), RECIPE_URL],
+      ['the generated guide', buildKnowledgeAgentGuide(), RECIPE_URL],
+    ]
+    expect(subjects.every(([, text]) => text.length > 0), 'every subject has text').toBe(true)
+    expect(subjects.filter(([, text, link]) => !text.includes(link))
+      .map(([label, , link]) => `${label} does not link ${link}`)).toEqual([])
+  })
+
+  it('the pointer keeps at most 9 lines and the guide at most 50 with the link, and the MCP instructions carry none', () => {
+    expect(buildAgentInstructionPointer().length, 'pointer lines').toBeLessThanOrEqual(9)
+    expect(buildKnowledgeAgentGuide().split('\n').length, 'guide lines').toBeLessThanOrEqual(50)
+    expect(AGENT_QA_MCP_INSTRUCTIONS.length, 'the MCP instructions have text').toBeGreaterThan(0)
+    expect(AGENT_QA_MCP_INSTRUCTIONS).not.toContain('coding-agents')
   })
 })
