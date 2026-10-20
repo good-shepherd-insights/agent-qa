@@ -14862,6 +14862,42 @@
       "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
       "fullName": "C446-GUIDANCE-KEYS a key the schema lacks is named, and a census that finds no key fails",
       "origin": "446 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
+      "fullName": "C446-EMBEDDER-FIX a daemon worker that could not resolve its profile says v2 downloads no embedding model and daemon stop clears the row",
+      "origin": "446 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
+      "fullName": "C446-EMBEDDER-FIX an idle daemon with no worker registration says the worker starts when a run needs it and daemon stop clears the row",
+      "origin": "446 D-27"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/doctor-knowledge-checks.test.ts",
+      "fullName": "C446-EMBEDDER-FIX both daemon states keep the fail status and name no config key",
+      "origin": "446 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-doctor-fixes.test.ts",
+      "fullName": "C446-DOCTOR-FIXES every agent-qa command and flag a doctor fix names exists in the shipped help",
+      "origin": "446 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-doctor-fixes.test.ts",
+      "fullName": "C446-DOCTOR-FIXES every config key a doctor fix names resolves in the config schema",
+      "origin": "446 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-doctor-fixes.test.ts",
+      "fullName": "C446-DOCTOR-FIXES a phantom command, flag or key in a fix text is named",
+      "origin": "446 D-16"
     }
   ]
 }
