@@ -675,11 +675,12 @@ interface Invocation {
 }
 
 const STANDALONE_FLAG = /^--[a-z][a-z0-9-]*(?:\s+<[^>]+>)?$/u
+const MARKDOWN_FENCES: readonly string[] = ['md', 'markdown']
 
 /**
  * Every `agent-qa …` or `npx agent-qa …` invocation a document quotes: backtick spans, and lines of
- * fenced blocks. The stored text starts at `agent-qa`; `fence` is the info string of the block the
- * invocation sat in, `''` outside one.
+ * fenced blocks other than markdown ones, whose spans are read as prose. The stored text starts at
+ * `agent-qa`; `fence` is the info string of the block the invocation sat in, `''` outside one.
  *
  * A bare flag span (`--since`) that follows an invocation in the same paragraph is that
  * invocation's flag, which is how the reference lists a verb's options. Prose that merely says
@@ -696,7 +697,7 @@ function invocationsIn(body: string): readonly Invocation[] {
       fence = fence === undefined ? (trimmed.slice(3).trim().split(/\s+/u)[0] ?? '') : undefined
       continue
     }
-    if (fence !== undefined) {
+    if (fence !== undefined && !MARKDOWN_FENCES.includes(fence)) {
       const at = line.search(/(?:^|\s)agent-qa\s+[a-z]/u)
       if (at >= 0) {
         const start = line.indexOf('agent-qa', at)
@@ -1454,6 +1455,9 @@ describe('C446-GUIDANCE-NPX', () => {
       'planted: "agent-qa knowledge bundles" is not prefixed with npx',
       'planted: "agent-qa runs list" is not prefixed with npx',
     ])
+    const markdown = ['```md', '<!-- agent-qa init:start -->', '- Runs: `agent-qa runs list`', '```'].join('\n')
+    expect(invocationsIn(markdown).map(({ text, prefixed, fence }) => [text, prefixed, fence]))
+      .toEqual([['agent-qa runs list', false, '']])
   })
 
   // 2026-10-20 (446-07, D-09, D-29): the map keeps bare verbs; only its rendering adds npx
