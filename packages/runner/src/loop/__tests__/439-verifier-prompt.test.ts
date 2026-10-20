@@ -27,7 +27,7 @@ const REQUIRED_SENTENCES = [
   'A condition that something is absent from the screen, such as "no error is shown", is met when the current screen shows none where it would appear. A condition that the app did not do something, such as "no message was sent", needs the app\'s own evidence, such as a sent list or a draft badge; the run\'s record shows only what the run itself did.',
   "When the step or the author's context expects an error or a refusal, showing it meets the condition and isAppError is false. An application error that neither the step nor the author's context expects fails the step even when it is unrelated to the step's own outcome: set isAppError true.",
   "Tag each condition's needs: visual when only a picture can settle it (a colour, a layout, an image's content); persistence for a saved or kept value; limit-max or limit-min for a control at its maximum or minimum, with that control's ref; file for a saved file, with the expected file name, whether its content must match exactly or contain whole lines, and the expected text read from the step or the screen; otherwise none.",
-  'List every dialog still open on the final screen and account for it: bears-on-condition when it shows a condition is not done, such as an unsaved-changes or confirmation dialog; unrelated when it does not, such as a cookie banner.',
+  'List every dialog still open on the final screen and account for it: bears-on-condition when it shows a condition is not done, such as an unsaved-changes or confirmation dialog; requested when it is the state the step asks to open or see, such as the product dialog a step opens; unrelated when it is neither, such as a cookie banner.',
 ]
 
 const SCREENSHOT_PARAGRAPH = 'Analyze the attached screenshot'
