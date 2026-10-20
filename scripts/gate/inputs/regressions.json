@@ -14898,6 +14898,30 @@
       "file": "packages/cli/src/__tests__/conformance/446-doctor-fixes.test.ts",
       "fullName": "C446-DOCTOR-FIXES a phantom command, flag or key in a fix text is named",
       "origin": "446 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-GUIDANCE-NPX every CLI command a source or packaged skill quotes outside a text block reads npx agent-qa",
+      "origin": "446 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-GUIDANCE-NPX a bare agent-qa command outside a text block is named, and a text block quoting CLI output is not",
+      "origin": "446 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
+      "fullName": "C446-PLACEHOLDERS every skill that names the build placeholder says it is a build ordinal or tag, and every skill that names runs evidence --kind names the five evidence kinds",
+      "origin": "446 D-15"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/skills.test.ts",
+      "fullName": "C446-SKILL-METADATA each agents/openai.yaml points at the agent-qa server on port 3471, prompts with its own skill name and claims no schema or ID tool",
+      "origin": "446 D-15"
     }
   ]
 }
