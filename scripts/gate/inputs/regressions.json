@@ -14970,6 +14970,18 @@
       "file": "packages/cli/src/__tests__/conformance/help-census.test.ts",
       "fullName": "C446-GUIDANCE-NPX every CLI command the recipe page quotes outside a text block reads npx agent-qa",
       "origin": "446 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE-LINKS getting-started, both READMEs, the pointer and the guide each link the recipe page",
+      "origin": "446 D-10"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/446-recipe.test.ts",
+      "fullName": "C446-RECIPE-LINKS the pointer keeps at most 9 lines and the guide at most 50 with the link, and the MCP instructions carry none",
+      "origin": "446 D-28"
     }
   ]
 }
