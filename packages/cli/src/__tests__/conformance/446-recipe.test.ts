@@ -14,6 +14,7 @@ import {
   buildAgentInstructionPointer,
   buildKnowledgeAgentGuide,
 } from '../../commands/knowledge-guide.js'
+import { AGENT_QA_INIT_MARKDOWN_BLOCK, renderManagedBlock } from '../../commands/managed-block.js'
 import { buildScaffoldConfig } from '../../commands/scaffold-content.js'
 import { agentQaRoot } from './catalog.js'
 import {
@@ -53,6 +54,7 @@ const LEG_ONLY = [
 const HOST_SETTINGS_FILES = ['settings.json', 'settings.local.json']
 const HELP_BUDGET_MS = 180_000
 const RECIPE_URL = 'https://github.com/vostride/agent-qa/blob/main/docs/coding-agents.md'
+const INIT_COMMAND = /\bagent-qa\s+init\b/u
 
 interface Block {
   readonly info: string
@@ -77,6 +79,54 @@ function blocksIn(markdown: string): Block[] {
     info: match[1]!,
     lines: match[2]!.split('\n').map((line) => line.trim()).filter((line) => line !== ''),
   }))
+}
+
+function afterIntroduction(page: string): string {
+  const lines = page.split('\n')
+  const first = lines.findIndex((line) => line.startsWith('## '))
+  return first === -1 ? '' : lines.slice(first).join('\n')
+}
+
+function inlineSpans(markdown: string): string[] {
+  const spans: string[] = []
+  let fenced = false
+  for (const line of markdown.split('\n')) {
+    if (/^\s*```/u.test(line)) fenced = !fenced
+    else if (!fenced) spans.push(...[...line.matchAll(/`([^`]+)`/gu)].map((match) => match[1]!))
+  }
+  return spans
+}
+
+// 2026-10-21 (446-15, D-32): the pointer starts with `## agent-qa`, so a fence-aware read ends the section
+function rawSectionOf(page: string, heading: string): string[] {
+  const lines = page.split('\n')
+  const start = lines.indexOf(`## ${heading}`)
+  if (start === -1) return []
+  const section: string[] = []
+  let fenced = false
+  for (const line of lines.slice(start + 1)) {
+    if (/^```/u.test(line)) fenced = !fenced
+    else if (!fenced && line.startsWith('## ')) break
+    section.push(line)
+  }
+  return section
+}
+
+function rawBlocksIn(lines: readonly string[]): { info: string; lines: string[] }[] {
+  const blocks: { info: string; lines: string[] }[] = []
+  let open: { info: string; lines: string[] } | undefined
+  for (const line of lines) {
+    const fence = /^```(\S*)$/u.exec(line)
+    if (open === undefined) {
+      if (fence !== null) open = { info: fence[1]!, lines: [] }
+    } else if (fence !== null && fence[1] === '') {
+      blocks.push(open)
+      open = undefined
+    } else {
+      open.lines.push(line)
+    }
+  }
+  return blocks
 }
 
 function proseSentences(page: string): string[] {
@@ -243,6 +293,28 @@ describe('C446-RECIPE', () => {
     expect([...LEG_ONLY, ...HOST_SETTINGS_FILES].filter((text) => page.includes(text))).toEqual([])
     expect(page.split('--write-agent-instructions').length - 1,
       'the page names --write-agent-instructions once').toBe(1)
+  })
+
+  it('the page names no agent-qa init command, since each one does nothing or rebuilds the config in the initialized workspace it starts from', () => {
+    const body = afterIntroduction(readPage())
+    const lines = shellLines(body)
+    const spans = inlineSpans(body)
+    expect(lines.length, 'the page has shell lines after its introduction').toBeGreaterThan(0)
+    expect(spans.length, 'the page has inline code spans after its introduction').toBeGreaterThan(0)
+    expect([...lines, ...spans].filter((text) => INIT_COMMAND.test(text)),
+      'the page names an agent-qa init command').toEqual([])
+  })
+
+  it('the page shows the AGENTS.md pointer block init prints, line for line', () => {
+    const section = rawSectionOf(readPage(), 'AGENTS.md')
+    expect(section.length, 'the page has an AGENTS.md section').toBeGreaterThan(0)
+    const md = rawBlocksIn(section).filter((block) => block.info === 'md')
+    expect(md.length, 'the AGENTS.md section has one md block').toBe(1)
+    expect(md[0]!.lines).toEqual(renderManagedBlock({
+      descriptor: AGENT_QA_INIT_MARKDOWN_BLOCK,
+      body: buildAgentInstructionPointer(),
+      target: 'AGENTS.md',
+    }).split('\n'))
   })
 })
 
