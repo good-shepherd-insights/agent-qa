@@ -7005,3 +7005,141 @@ The round's record gate measures agent-qa HEAD after this section lands. Its leg
 verdict are recorded in `.planning/phases/446-packaged-skills-and-host-recipes/446-RECORD.md`
 § Gap round 1, and the SHA in its § Final SHA (gap round 1), rather than quoted here. The red run
 at `19e355e71` and the gap-round-2 runs are in the same section, under § Gap round 2 (D-35).
+
+## 2026-10-21 — Phase 447: Analytics identity and privacy
+
+This section appends to the register and rewrites no earlier section. Phase 447 made analytics
+tell the truth about who uses the release without leaking data, slowing a command or changing a
+result: one race-safe anonymous installation id per home shared by every local caller (D-01 to
+D-05), a personless in-memory `ci_` id per CI invocation (D-04, D-11), the agent product as an
+attribute and never an identity (D-11, D-12), `analytics.privacy: true` as the only opt-out with
+`DO_NOT_TRACK` support removed (D-06), no transport object when opted out or keyless (D-08), the
+MCP raw-config privacy fallback (D-09), `is_internal` as an event property (D-13), the submitter's
+agent product on daemon jobs (D-14, as narrowed), run outcomes from the MCP, chat and daemon doors
+(D-16), and delivery that never waits on the network mid-command (D-20 to D-22). The decisions are
+in `.planning/phases/447-analytics-identity-and-privacy/447-CONTEXT.md`, and the requirement
+amendments in `.planning/REQUIREMENTS.md` reconciliation 27. Written by 447-10 on 2026-10-21.
+
+### How this inventory is measured
+
+Baseline `d941f9068` (where 447 began, 446's final SHA). Closing SHA `a36769205` (447-09's last
+commit, the parent of the commit that adds this section). `git -C agent-qa diff --shortstat
+d941f9068 a36769205`: 32 files changed, 1757 insertions, 612 deletions; under `packages/` outside
+`__tests__` directories, 18 files, +286/−372 (9 in `packages/analytics`, 9 in `packages/cli/src`);
+under `scripts/` outside `__tests__`, `release/posthog.mjs` and `gate/inputs/regressions.json`.
+`--diff-filter=D`: no file deleted. `--diff-filter=A`: 3 test files added
+(`analytics/src/__tests__/447-identity-store.test.ts`, `analytics/src/__tests__/447-delivery.test.ts`
+and `cli/src/__tests__/conformance/447-analytics-doors.test.ts`). 33 commits, every one signed
+(`%G?` = `G`), none with an attribution line. No `docs/` path, README, NOTICE, file under
+`packages/mcp/src` or `packages/core/src/schema/analytics-schema.ts` changed (D-10, D-15, D-07).
+The removed members below are read from each deleting commit's diff
+(`git -C agent-qa show --unified=0 <sha>`), not transcribed from a summary. Names are at
+`d941f9068`.
+
+### What was deleted
+
+| Member (file at `d941f9068`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `isDoNotTrack` and its barrel export, the `'do-not-track'` member of `AnalyticsOptOutReason`, `resolveOptOutReasons`, and `ComposeAnalyticsOptions.env` (`analytics/src/compose.ts`, `index.ts`) | read `DO_NOT_TRACK` from the environment handed to `composeAnalytics` as a second opt-out beside `analytics.privacy` | `1496fdc38` (447-03); the CLI binding's `env` argument to `composeAnalytics` in `2eaf6e613` | `C447-NO-DNT the config privacy flag is the only opt-out`; `C447-NO-DNT no shipped source in analytics or cli spells DO_NOT_TRACK` |
+| the `u_CI` arm (an `env.CI` check returning `{ distinctId: 'u_CI', runtimeContext: 'ci' }`), the `` `u_AGENT-${agentProduct}` `` arm, the bare `u_AGENT` arm and `hasUnknownAgentSignal` (`analytics/src/identity.ts`) | gave every CI run one shared id and every coding agent its own shared id, so neither ever counted as the installation | `497d689ed` (447-02) | `C447-NO-SHARED-ID no shipped source in analytics or cli spells a shared legacy id`; `C447-IDENTITY-SHARED every local caller under one home resolves the same id, and two homes resolve two`; `C447-CI-PERSONLESS a CI resolution mints a ci_ id and leaves an existing record byte-identical and a fresh home empty` |
+| the `needsMigration` field and the rewrite it triggered (`identity.ts`) | rewrote a valid record that lacked `is_internal`, one more write that could race | `2a430485d` (447-02) | `C447-IDENTITY-ADOPT a valid record without is_internal is adopted with its bytes unchanged` |
+| `writeAnalyticsIdentity` and its barrel export (`identity.ts`, `index.ts`) | the plain `writeFile` that created or replaced the record, so concurrent first launches each wrote their own id | `2a430485d` (447-02); replaced by the module-local exclusive temp-file `link` or `rename` with a read-back | `C447-IDENTITY-RACE five concurrent first resolutions on a fresh home all return the one stored id`; `C447-IDENTITY-INVALID a record that is not a valid id is replaced by a valid one that is read back` |
+| the `'agent'` member of `ANALYTICS_RUNTIME_CONTEXTS` (`analytics/src/events.ts`) | the runtime context the agent arms sent | `497d689ed` (447-02) | `C447-RUNTIME-CONTEXT a coding agent resolves as user with its product, an unrecognised AGENT as unknown, and the vocabulary is user and ci` |
+| `NoopTransport` (`analytics/src/transports.ts`), its barrel export, the `'noop'` member of `AnalyticsTransportKind`, and the release check's `NoopTransport` literal (`scripts/release/posthog.mjs`) | the transport an opted-out or keyless composition built and fed every capture to | `ee237b0e2` (447-04); the release check in `372989cca` | `C447-NO-TRANSPORT an opted-out or keyless composition holds no transport object`; `C447-NO-TRANSPORT an opted-out or blank-key host constructs no transport and resolves no identity`; `C447-NO-TRANSPORT the release check accepts the no-transport composition and refuses one without it` (node:test) |
+| `ANONYMOUS_ANALYTICS_IDENTITY` (`{ distinctId: 'anonymous' }`) and `resolveAnonymousIdentity` (`analytics/src/port.ts`, `index.ts`), the `compose.ts` default that used it, and the host's `let identity = ANONYMOUS_ANALYTICS_IDENTITY` (`cli/src/composition/analytics-host.ts`) | a shared constant id every event fell back to when no identity was resolved | `0ea8a38fd` (447-05) | `C447-IDENTITY-BOUND a stalled identity resolution releases composition at the bound and nothing is sent under any id`; `C447-IDENTITY-STORAGE-FAILURE an identity location that cannot be written composes a host that sends nothing and init still exits 0` |
+| `properties.$set = { is_internal: true }` (`analytics/src/transports.ts`) | a person-property stamp PostHog drops on events sent with `$process_person_profile: false`, so internal use could not be filtered | `6de36a2b2` (447-07); replaced by the event property `is_internal: true`, sent only when true | `C447-IS-INTERNAL an internal identity leaves is_internal true as an event property and no person-property stamp` |
+
+None of the deleted lines was a registered gate row's subject before this phase. Unregistered test
+cells were deleted with the members they pinned, each by title in its plan's SUMMARY: two in
+`identity.test.ts` (`2a430485d`, `497d689ed`); in `compose.test.ts` the
+`isDoNotTrack — the permissive reading, pinned (RESEARCH A1)` describe, ten `DO_NOT_TRACK`
+decision-table rows and two census cells; two `network-differential.test.ts` cells and two
+`analytics-host.test.ts` cells (`1496fdc38`, `2eaf6e613`).
+
+### Changed with no member deleted
+
+Each read from its commit:
+
+| Before (at `d941f9068`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| a missing record was created with `writeFile`; an invalid one was overwritten in place | the record is written to `<identityPath>.<randomUUID>.tmp` (`wx`, `0o600`), then `link`ed into place (an `EEXIST` loser reads the winner's id) or `rename`d over an invalid record, and every creator reads back what is stored | `2a430485d` (447-02) | `C447-IDENTITY-RACE …`; `C447-IDENTITY-INVALID …` |
+| CI was decided inside the analytics package from `env.CI` | `ResolveAnalyticsIdentityOptions.ci`: the host passes `resolveRunExecutionContext() === 'ci'` from `@vostride/agent-qa-agent-local`, imported dynamically on the sending arm; a CI resolution is `'ci_' + randomUUID()` in memory and touches no file | `497d689ed` (447-02), `c6bfed5f1` (447-05) | `C447-CI-PERSONLESS …`; `C447-CI-DETECTOR the host classifies CI through the execution-context detector and passes it to identity resolution`; `C447-CI-DISTINCT two CI compositions carry two different ci_ ids, each one stable across its own events` |
+| a non-empty unrecognised `AGENT` produced the `u_AGENT` id | it is the `agent_product` value `'unknown'`; `AGENT=''` is no agent | `497d689ed` (447-02) | `C447-RUNTIME-CONTEXT …` |
+| identity resolution was unbounded and a resolver throw failed composition (and `init`) | `ANALYTICS_IDENTITY_TIMEOUT_MS = 1_000`; a throw or a timeout leaves the identity unset and the port drops every capture; the command's result and exit code are unchanged | `0ea8a38fd` (447-05) | `C447-IDENTITY-BOUND …`; `C447-IDENTITY-STORAGE-FAILURE …` |
+| `agent-qa mcp` handed an invalid config to the opt-out decision as `undefined` | `config ?? await readAnalyticsPrivacyDeclaration(globalOpts.config)`, the fallback `chat` and `init` use; the `McpCommandDeps { composeAnalytics? }` seam | `9080f8494` (447-06) | `C447-MCP-PRIVACY agent-qa mcp honours analytics.privacy when the config fails validation`; `C447-MCP-PRIVACY agent-qa mcp does not report the config reason when an invalid config declares no privacy` |
+| `BestEffortAnalyticsPort.flush()` awaited `transport.flush()`, so a stalled PostHog held a run's end-of-run flush | `flush()` awaits only the local captures, starts the send and tracks it in a private `sending` set; `shutdown()` waits for flush, every tracked send and `transport.shutdown()` inside the existing unref'd 2 s race | `9f18340a3` (447-07) | `C447-FLUSH-NONBLOCKING a mid-command flush returns before a transport flush that never settles`; `C447-VERDICT-UNCHANGED a stalled transport and a failing sink leave the run subscriber flush settled and the reported verdict unchanged`; `C447-SHUTDOWN-BUDGET shutdown with a never-settling transport returns when the 2 s budget fires and not before` |
+| `BaseProperties` had no `is_internal` | `is_internal: z.literal(true).optional()` | `6de36a2b2` (447-07) | `C447-IS-INTERNAL …`; `C447-SINK-ALLOWLIST …` |
+| only `agent-qa run` attached the analytics run subscriber | `createComposedRunExecution` (MCP stdio and HTTP, chat) and `composeDaemonRunExecution` attach `buildAnalyticsRunSubscriber` through the drive's `subscribers` option when the host composed analytics, subscribed directly from the start of the run | `8f1bdead5` (447-08) | `C447-DOOR-OUTCOME a run started through the MCP and chat host compositions emits its run outcome`; `C447-DAEMON-OUTCOME a daemon-dispatched run emits its run outcome beside the job event`; `C447-SINK-ALLOWLIST every captured event carries only its member allowlisted metadata and the capture is not empty`; `C447-DOOR-VERDICT-UNCHANGED a stalled transport and a failing sink at the MCP host leave the run ack and its recorded verdict equal to the control` |
+| the strict daemon `invokeEnvelopeSchema` carried no submitter context, so a daemon stamped its launcher's agent product on every job | an optional `agentProduct` (from `resolveAnalyticsAgentProduct(process.env)` in `openInvokeResponse`) reaches the job through `currentInvokeAgentProduct()`; the job's `test_run.completed` and `daemon.job.completed` carry it, else `'unknown'`; `recordRunOutcome` takes the per-job host | `251c01b47` (447-09) | `C447-DAEMON-CONTEXT a daemon job reports its submitter agent product, and unknown when none was carried` |
+
+Comments and prose that the changes made false were corrected in the same commits (`compose.ts`,
+`index.ts`, `ownership-contract.ts`, `port.ts`, `transports.ts`, `run-subscriber.ts`,
+`packages/analytics/AGENTS.md`, `analytics-host.ts`, `run-session-composition.ts`, and comment
+lines only in `mcp.ts`, `chat.ts` and `config.ts`).
+
+No ledger was regenerated: at `a36769205` `398-regen-catalog.sh` printed `nothing to change` (52
+rows, 33 migration entries). `397-regen-golden.sh` first refused because three unregistered layout
+cells of `evidence layout backstops on the shipped bundle (424-29)` went red under load (WINDOWS
+583; the file passed alone), and its one re-run at the same SHA (D-39) printed `nothing to change`
+(44 capabilities).
+
+### Registered gate rows
+
+The 2527 rows listed at `d941f9068` are still listed, unchanged and in order. 27 rows were appended
+(2554 in all), each with origin `447 D-NN`: D-01 1, D-02 1, D-03 1, D-04 1, D-05 3, D-06 2, D-08 3,
+D-09 2, D-11 3, D-12 1, D-13 1, D-14 1, D-16 2, D-17 1, D-20 1, D-21 2, D-22 1. Plan 447-02 appended
+7, 447-03 2, 447-04 3 (one `node-test`), 447-05 4, 447-06 2, 447-07 4, 447-08 4 and 447-09 1. No row
+was re-titled or delisted, and no registered cell's title or body changed. Shared helpers beside
+registered cells did change: `dispatchThroughDaemon` (`daemon-run-execution.test.ts`, used by the
+two `C443-DAEMON-RECORD` rows) gained two optional inputs and records the payload's `distinctId`,
+and the unregistered PARITY cell's `daemon.job.completed` key-set pin lists `agent_product`
+(`251c01b47`).
+
+### What was retained, and why
+
+| Item | File | Why kept |
+|---|---|---|
+| the record's path and two-key format `{ distinctId, is_internal }`, `readAnalyticsIdentity`, `getAnalyticsIdentityPath`, `generateAnalyticsUserId`, `LOCAL_ANALYTICS_ID_PATTERN` | `analytics/src/identity.ts` | D-05: an existing valid id is adopted as it is; only the write path changed |
+| the `analytics.privacy` schema key and `disableGeoip: false` | `core/src/schema/analytics-schema.ts`, `analytics/src/compose.ts` | D-07 (no new config key) and D-10 (transport settings unchanged) |
+| the inert `DO_NOT_TRACK: '1'` in `GATE_ENV` and in CLI test fixtures | `scripts/gate/host.mjs:7`, CLI `__tests__` | settled after research: cleaning them would force rewrites of two gate-script tests; nothing reads them now, and no test relies on them to stay off PostHog (D-22) |
+| the `agent-qa.mcp.tool.invoked` member of the event union, with no emitter | `analytics/src/events.ts` | D-18: the `packages/mcp` observation hook it needs is V3-B's |
+| the masking choke point: `maskEventForSend` called once in the PostHog transport | `analytics/src/transports.ts` | D-19 |
+| the `resolveAnalyticsAgentProduct` table and `ANALYTICS_AGENT_PRODUCTS` | `analytics/src/identity.ts`, `events.ts` | D-11: the product is now an attribute, read from the same table |
+| no convergence logic when two processes find the same invalid record in the same instant | `analytics/src/identity.ts` | D-02 (no locks, retries or extra convergence); research A2 |
+| `release.yml` writing the real PostHog key before the tests, and the gitignored generated key file | `.github/workflows/release.yml:69-72`, `packages/analytics/src/posthog-project.ts` | D-22: the reorder is Phase 448's, filed as `.planning/todos/pending/2026-10-21-release-workflow-writes-the-posthog-key-after-the-tests.md` |
+| no analytics for `ask`, `fn` and dashboard-started runs | `cli/src/commands/ask.ts`, `cli/src/commands/fn.ts`, the dashboard | D-16: only doors that already compose analytics |
+
+### What degrades, stated plainly
+
+- **Users who set only `DO_NOT_TRACK` are tracked** unless they set `analytics.privacy: true`
+  (D-06, accepted by the owner). Analytics is undocumented (D-10), so nothing tells them.
+- **Saved PostHog insights go stale** where they filter on `runtime_context = agent` (no event
+  sends it now) or on the `is_internal` person property (now an event property).
+- **The legacy shared ids (`u_CI`, `u_AGENT`, `u_AGENT-<product>`) stay a separate series.** They
+  are never aliased into a new id (D-11); `agent_qa_version` marks the cutover.
+- **A dev checkout whose generated key file holds a real key can send from local test runs.**
+  With `DO_NOT_TRACK` inert, nothing but `analytics.privacy: true` stops a test that composes a
+  real host there; the release workflow's key ordering is Phase 448's todo.
+- **Codex-driven `agent-qa mcp --http` runs carry no `agent_product`** (D-15, skipped: the name is
+  sent only on `initialize`, and the HTTP face builds a fresh server per request).
+- **Two processes that read the same invalid record in the same instant** can each rename and
+  return different ids for that invocation (research A2); the next resolution reads one stored id.
+- **A daemon job submitted from CI carries the daemon's own `ci_` id,** not the submitter's (D-14
+  as narrowed: no `ciId` on the envelope).
+
+### The instruments that notice a return
+
+- **The 434 gate** must execute and pass all 2554 listed cells, the 27 appended by this phase with
+  their `447 D-NN` origins as well as the 2527 earlier rows.
+- **The cells named above** each failed at their RED commit or in a recorded mutation run on an
+  untracked copy, except the characterization cells `C447-IDENTITY-INVALID`,
+  `C447-SHUTDOWN-BUDGET` and `C447-DOOR-VERDICT-UNCHANGED`, which passed at their RED commit by
+  design; the records are under `.planning/phases/447-analytics-identity-and-privacy/capture/`.
+- **The release check** (`scripts/release/posthog.mjs`) refuses a `compose.ts` without the
+  no-transport type line.
+
+### Gate at the time of writing
+
+The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
+verdict are recorded in `.planning/phases/447-analytics-identity-and-privacy/447-RECORD.md`
+§ Gate, and the SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
