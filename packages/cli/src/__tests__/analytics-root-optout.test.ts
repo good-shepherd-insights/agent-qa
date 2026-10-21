@@ -36,6 +36,7 @@ import type {
   CliAnalyticsHost,
   ComposeAnalyticsHostInput,
 } from '../composition/analytics-host.js'
+import type { AnalyticsCapturePayload } from '@vostride/agent-qa-analytics'
 
 /** A non-blank key, so the opted-IN arm is genuinely `'posthog'` and the transport assert bites. */
 const CELL_PROJECT_KEY = 'phc_root_optout_cell'
@@ -516,5 +517,71 @@ describe('the daemon root — the control that shows the assertion discriminates
     const host = await runDaemon(configPath)
 
     expect(host?.optOutReasons).not.toContain('config-privacy')
+  })
+})
+
+const CI_MARKERS = [
+  'CI',
+  'GITHUB_ACTIONS',
+  'GITLAB_CI',
+  'CIRCLECI',
+  'BUILDKITE',
+  'JENKINS_URL',
+  'TRAVIS',
+  'APPVEYOR',
+  'TF_BUILD',
+  'CODEBUILD_BUILD_ID',
+  'DRONE',
+  'SEMAPHORE',
+  'BITBUCKET_BUILD_NUMBER',
+  'TEAMCITY_VERSION',
+]
+
+describe('C447-IDENTITY-STORAGE-FAILURE', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('an identity location that cannot be written composes a host that sends nothing and init still exits 0', async () => {
+    for (const name of CI_MARKERS) vi.stubEnv(name, '')
+    const { dir } = fixtureProject(roots, { withConfig: false })
+    const home = mkdtempSync(join(tmpdir(), 'agent-qa-447-xdg-'))
+    roots.push(home)
+    // A regular file where the data directory should be: mkdir under it fails for every user.
+    const xdgFile = join(home, 'xdg-file')
+    writeFileSync(xdgFile, 'not a directory\n', 'utf8')
+    const captured: AnalyticsCapturePayload[] = []
+    const hosts: CliAnalyticsHost[] = []
+    const composeAnalytics = async (input: ComposeAnalyticsHostInput): Promise<CliAnalyticsHost> => {
+      const host = await composeAnalyticsHost({
+        ...input,
+        env: { XDG_DATA_HOME: xdgFile },
+        projectKey: CELL_PROJECT_KEY,
+        posthogTransportFactory: () => ({
+          capture: (payload) => {
+            captured.push(payload)
+          },
+          flush: () => {},
+          shutdown: () => {},
+        }),
+      })
+      hosts.push(host)
+      return host
+    }
+
+    const outcome = await runInit(dir, { composeAnalytics }).then(
+      (result) => ({ ok: true as const, ...result }),
+      (error: unknown) => ({ ok: false as const, error }),
+    )
+
+    expect(outcome.ok, `init failed: ${outcome.ok ? '' : String(outcome.error)}`).toBe(true)
+    expect(outcome.ok && (outcome.exitCode === undefined || outcome.exitCode === 0)).toBe(true)
+    expect(existsSync(join(dir, 'agent-qa.config.yaml'))).toBe(true)
+    expect(hosts).toHaveLength(1)
+    expect(hosts[0]?.transportKind).toBe('posthog')
+    expect(captured).toEqual([])
   })
 })

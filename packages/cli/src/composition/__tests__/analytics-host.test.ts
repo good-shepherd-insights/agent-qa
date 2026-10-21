@@ -591,3 +591,54 @@ describe('C447-NO-TRANSPORT', () => {
     expect(keylessResolver).not.toHaveBeenCalled()
   })
 })
+
+function nextTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+describe('C447-IDENTITY-BOUND', () => {
+  it('a stalled identity resolution releases composition at the bound and nothing is sent under any id', async () => {
+    // Loaded before the clock is faked, so a dynamic import by the host resolves from the cache.
+    await import('@vostride/agent-qa-agent-local')
+    const transport = recordingTransport()
+    let called = false
+    const resolveIdentity = () => {
+      called = true
+      return new Promise<never>(() => {})
+    }
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      let settled = false
+      const composing = composeAnalyticsHost({
+        surface: 'cli',
+        env: {},
+        transportOverride: transport,
+        resolveIdentity,
+      }).then((host) => {
+        settled = true
+        return host
+      })
+      for (let turn = 0; !called && turn < 1000; turn += 1) await nextTurn()
+      expect(called).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(999)
+      await nextTurn()
+      expect(settled, 'composition settled before the bound').toBe(false)
+
+      await vi.advanceTimersByTimeAsync(1)
+      for (let turn = 0; !settled && turn < 1000; turn += 1) await nextTurn()
+      expect(settled, 'composition is still pending at 1000 ms').toBe(true)
+
+      const host = await composing
+      host.port.capture(analyticsEvent(host, 'agent-qa.explain.answered', { cited_row_count: 1 }))
+      await host.flush()
+
+      expect(host.transportKind).toBe('posthog')
+      expect(host.properties.runtime_context).toBeUndefined()
+      expect(transport.sent).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
