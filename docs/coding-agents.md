@@ -127,7 +127,7 @@ tools), never through .agent-qa/ files, SQLite or index files.
 
 ## Limits
 
-- Checked on 2026-10-21 with Claude Code 2.1.305 and the agent-qa 0.2.0 packages: Claude Code found
+- Checked on 2026-10-21 with Claude Code 2.1.306 and the agent-qa 0.2.0 packages: Claude Code found
   the four skills and the agent-qa server with all 20 of its tools, wrote and ran the example test
   above, read the run's evidence and quoted its $29.00 bag total, and the dashboard showed the same
   result. The run ended `passed`.
