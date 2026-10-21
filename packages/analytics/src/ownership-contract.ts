@@ -19,11 +19,8 @@ export const AGENT_QA_ANALYTICS_ALLOWED_RESPONSIBILITIES = [
     + 'telemetry failure from reaching the host',
   'the closed typed event union: which events exist, what each one carries, and the range guard '
     + 'that refuses an unconstrained string field',
-  // The variable is described rather than named here on purpose: the cell asserting a single
-  // decision site scans string literals as well as code, so spelling it out in this declaration
-  // would make the contract itself the second reader of the thing it forbids reading twice.
-  'the opt-out decision: resolving the do-not-track environment convention or the config privacy '
-    + 'flag ONCE, at composition, to a transport — never inside a send path',
+  'the opt-out decision: resolving the config privacy flag ONCE, at composition, to a transport — '
+    + 'never inside a send path',
   'the send seam applying the host\'s declared-secret mask, before any serialization-dependent '
     + 'matching',
   // 2026-08-17 (Phase 398 plan 06 task 3, D-17). Both lines describe things MOVED here from

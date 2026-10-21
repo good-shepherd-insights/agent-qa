@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { composeAnalytics, isDoNotTrack } from '../compose.js'
+import { composeAnalytics } from '../compose.js'
 import { NoopTransport } from '../transports.js'
-import { PACKAGE_SRC_DIR, packageSourceFiles, sourceModulesContaining } from './source-scan.js'
+import { PACKAGE_SRC_DIR, packageSourceFiles } from './source-scan.js'
 import type { ComposeAnalyticsOptions } from '../compose.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '../port.js'
 import type { PosthogTransportFactory, PosthogTransportOptions } from '../transports.js'
@@ -56,53 +56,18 @@ function spyingPosthogFactory(): { factory: PosthogTransportFactory; calls: Post
 const ENABLED_KEY = 'phc_test_key'
 
 describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () => {
-  // THE RESOLUTION TABLE. Two independent inputs, and deny wins over both: either one alone opts
-  // out, and neither one can opt back IN over the other. The `''`/`'0'`/`'false'` row is the
-  // permissive reading RESEARCH A1 flagged as unratified — pinned here so the choice is a fact
-  // about the code rather than about whoever reads the spec next.
   it.each([
-    { label: 'DO_NOT_TRACK=1', env: { DO_NOT_TRACK: '1' }, config: undefined, optedOut: true },
-    { label: 'DO_NOT_TRACK=true', env: { DO_NOT_TRACK: 'true' }, config: undefined, optedOut: true },
-    { label: 'DO_NOT_TRACK=yes', env: { DO_NOT_TRACK: 'yes' }, config: undefined, optedOut: true },
-    { label: 'DO_NOT_TRACK=""', env: { DO_NOT_TRACK: '' }, config: undefined, optedOut: false },
-    { label: 'DO_NOT_TRACK=0', env: { DO_NOT_TRACK: '0' }, config: undefined, optedOut: false },
-    { label: 'DO_NOT_TRACK=false', env: { DO_NOT_TRACK: 'false' }, config: undefined, optedOut: false },
-    { label: 'DO_NOT_TRACK absent', env: {}, config: undefined, optedOut: false },
-    { label: 'privacy false', env: {}, config: { analytics: { privacy: false } }, optedOut: false },
-    { label: 'privacy true alone', env: {}, config: { analytics: { privacy: true } }, optedOut: true },
-    {
-      label: 'both set — deny wins',
-      env: { DO_NOT_TRACK: '1' },
-      config: { analytics: { privacy: true } },
-      optedOut: true,
-    },
-    {
-      label: 'privacy true while DO_NOT_TRACK=0 — deny still wins',
-      env: { DO_NOT_TRACK: '0' },
-      config: { analytics: { privacy: true } },
-      optedOut: true,
-    },
-  ])('$label resolves optedOut=$optedOut', ({ env, config, optedOut }) => {
+    { label: 'privacy true', config: { analytics: { privacy: true } }, optedOut: true },
+    { label: 'privacy false', config: { analytics: { privacy: false } }, optedOut: false },
+    { label: 'privacy absent', config: { analytics: {} }, optedOut: false },
+    { label: 'no analytics block', config: {}, optedOut: false },
+  ])('$label resolves optedOut=$optedOut', ({ config, optedOut }) => {
     const sink = new CountingSink()
-    const composed = composeAnalytics({ env, config, projectKey: ENABLED_KEY, transportOverride: sink })
+    const composed = composeAnalytics({ config, projectKey: ENABLED_KEY, transportOverride: sink })
 
     expect(composed.optedOut).toBe(optedOut)
     expect(composed.transportKind).toBe(optedOut ? 'noop' : 'posthog')
     expect(composed.transport instanceof NoopTransport).toBe(optedOut)
-  })
-
-  it('names WHICH input opted out, and reports both when both did', () => {
-    expect(composeAnalytics({ env: { DO_NOT_TRACK: '1' } }).optOutReasons).toEqual(['do-not-track'])
-    expect(composeAnalytics({ config: { analytics: { privacy: true } } }).optOutReasons).toEqual([
-      'config-privacy',
-    ])
-    expect(
-      composeAnalytics({
-        env: { DO_NOT_TRACK: '1' },
-        config: { analytics: { privacy: true } },
-      }).optOutReasons,
-    ).toEqual(['do-not-track', 'config-privacy'])
-    expect(composeAnalytics({ env: {} }).optOutReasons).toEqual([])
   })
 
   // THE STRUCTURAL CLAIM, and the one a `disabled` boolean cannot make. It is not that the PostHog
@@ -111,7 +76,7 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
   it('opted out constructs NO PostHog transport at all', () => {
     const spy = spyingPosthogFactory()
     const composed = composeAnalytics({
-      env: { DO_NOT_TRACK: '1' },
+      config: { analytics: { privacy: true } },
       projectKey: ENABLED_KEY,
       posthogTransportFactory: spy.factory,
     })
@@ -123,7 +88,6 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
   it('opted in constructs the PostHog transport exactly once, with the resolved key and host', () => {
     const spy = spyingPosthogFactory()
     composeAnalytics({
-      env: {},
       projectKey: ENABLED_KEY,
       projectHost: 'https://sink.invalid',
       posthogTransportFactory: spy.factory,
@@ -140,7 +104,7 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
   it('an opted-out composition ignores a transport override entirely', async () => {
     const sink = new CountingSink()
     const composed = composeAnalytics({
-      env: { DO_NOT_TRACK: '1' },
+      config: { analytics: { privacy: true } },
       projectKey: ENABLED_KEY,
       transportOverride: sink,
     })
@@ -157,45 +121,18 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
   // conflating them would report a developer checkout as a user who declined.
   it('an empty project key yields a noop transport without claiming the user opted out', () => {
     const spy = spyingPosthogFactory()
-    const composed = composeAnalytics({ env: {}, projectKey: '   ', posthogTransportFactory: spy.factory })
+    const composed = composeAnalytics({ projectKey: '   ', posthogTransportFactory: spy.factory })
 
     expect(composed.optedOut).toBe(false)
     expect(composed.optOutReasons).toEqual([])
     expect(composed.transportKind).toBe('noop')
     expect(spy.calls).toEqual([])
   })
-
-  // THE DECISION SITE IS SINGULAR, asserted over the package's own source rather than promised in a
-  // comment. A second file reading the variable is a second answer to the question. The scan reads
-  // CODE — comments discussing the convention are not reads of it — so no file needs excluding, and
-  // in particular the ownership contract is not exempted from the rule it declares.
-  it('no module outside compose.ts reads the opt-out environment variable', () => {
-    expect(sourceModulesContaining('DO_NOT_TRACK')).toEqual(['compose.ts'])
-  })
-})
-
-describe('isDoNotTrack — the permissive reading, pinned (RESEARCH A1)', () => {
-  it.each([
-    ['1', true],
-    ['true', true],
-    ['TRUE', true],
-    ['on', true],
-    ['  1  ', true],
-    ['', false],
-    ['   ', false],
-    ['0', false],
-    ['false', false],
-    ['FALSE', false],
-    [undefined, false],
-  ])('isDoNotTrack(%o) === %s', (value, expected) => {
-    expect(isDoNotTrack(value)).toBe(expected)
-  })
 })
 
 describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, edge ANLY-01/empty)', () => {
   it('never throws into the host, whatever the transport does', async () => {
     const composed = composeAnalytics({
-      env: {},
       projectKey: ENABLED_KEY,
       transportOverride: new ThrowingTransport(),
     })
@@ -214,7 +151,6 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
   it('swallows a SYNCHRONOUS throw out of the identity resolver', () => {
     const sink = new CountingSink()
     const composed = composeAnalytics({
-      env: {},
       projectKey: ENABLED_KEY,
       transportOverride: sink,
       identity: () => {
@@ -237,7 +173,6 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
     process.on('unhandledRejection', listener)
     try {
       const composed = composeAnalytics({
-        env: {},
         projectKey: ENABLED_KEY,
         transportOverride: new ThrowingTransport(),
       })
@@ -255,7 +190,7 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
 
   it('flush on an empty queue makes NO call on the transport and still resolves', async () => {
     const sink = new CountingSink()
-    const composed = composeAnalytics({ env: {}, projectKey: ENABLED_KEY, transportOverride: sink })
+    const composed = composeAnalytics({ projectKey: ENABLED_KEY, transportOverride: sink })
 
     await expect(composed.port.flush()).resolves.toBeUndefined()
 
@@ -265,7 +200,7 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
 
   it('flush after a capture reaches the transport exactly once', async () => {
     const sink = new CountingSink()
-    const composed = composeAnalytics({ env: {}, projectKey: ENABLED_KEY, transportOverride: sink })
+    const composed = composeAnalytics({ projectKey: ENABLED_KEY, transportOverride: sink })
 
     composed.port.capture({ name: 'agent-qa.probe', properties: { surface: 'cli' } })
     await composed.port.flush()
@@ -282,7 +217,7 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
 
   it('shutdown reaches the transport even when nothing was ever captured', async () => {
     const sink = new CountingSink()
-    const composed = composeAnalytics({ env: {}, projectKey: ENABLED_KEY, transportOverride: sink })
+    const composed = composeAnalytics({ projectKey: ENABLED_KEY, transportOverride: sink })
 
     await composed.port.shutdown()
 

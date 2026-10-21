@@ -12,10 +12,7 @@ import type { AnalyticsPort } from './port.js'
 // The ownership contract is NOT re-exported: `pnpm validate:publish` refuses a dist that ships it,
 // and `packages/arch` imports it by relative path, which is the sanctioned route.
 
-// `composeAnalytics` is the entry point a host is meant to use, and `isDoNotTrack` rides along
-// beside it because a host that wants to REPORT the posture (a `--verbose` line, a doctor command)
-// should ask the same predicate the decision used rather than re-read the variable its own way.
-export { composeAnalytics, isDoNotTrack } from './compose.js'
+export { composeAnalytics } from './compose.js'
 export type {
   AnalyticsOptOutConfig,
   AnalyticsOptOutReason,

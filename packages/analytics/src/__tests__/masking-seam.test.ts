@@ -65,7 +65,6 @@ async function sendThroughShippedPath(
   options: { distinctId: string; maskingContext?: { mask(text: string): string } },
 ): Promise<string> {
   const composed = composeAnalytics<AgentQaAnalyticsEvent>({
-    env: {},
     projectKey: PROJECT_KEY,
     projectHost: sink.origin,
     identity: () => ({ distinctId: options.distinctId }),

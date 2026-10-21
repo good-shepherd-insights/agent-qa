@@ -1,29 +1,6 @@
-// THE OPT-OUT DECISION SITE. There is exactly one, and it is here (Phase 398 plan 03, D-19 ·
-// ANLY-01).
-//
-// 2026-08-17. Read this before adding an environment read anywhere else in this package, because
-// the property being protected is not "the opt-out is respected" — it is that the opt-out CANNOT be
-// bypassed by code written later, including code written by someone who never read this comment.
-//
-// The v1 module resolved the question with a `disabled` boolean consulted at the top of `capture()`
-// and `flush()`, and constructed its PostHog transport in the constructor before consulting
-// anything but `config.analytics.privacy`. Two consequences followed, and neither is a bug in the
-// usual sense — the code did what it said. First, a process that had opted out still held a live
-// PostHog client with the project key in it, one `if` away from sending; anything that reached the
-// transport directly, or any future send path that forgot the guard, fired. Second, `DO_NOT_TRACK`
-// was not handled at all: the ONLY opt-out was a config flag, which a user who set the ecosystem's
-// standard variable had no way to discover.
-//
-// What replaces it is a decision made ONCE, before any transport object exists, whose ANSWER IS THE
-// OBJECT. Opted out means the noop transport was constructed and the PostHog transport was not —
-// there is no live client in the process to bypass a guard to reach, because there is no client.
-// That is what makes the claim structural rather than behavioural, and it is why the cell that
-// matters asserts the PostHog factory was never CALLED rather than that it sent nothing.
-//
-// Two inputs, and DENY WINS over both. `DO_NOT_TRACK` is the ecosystem convention; the config
-// privacy flag is what shipped. Either one alone opts out, and neither can opt back in over the
-// other — `DO_NOT_TRACK=0` beside `privacy: true` is still opted out, because a user who set the
-// flag meant it and an unset variable is not a request to be tracked.
+// The one opt-out decision site. It is made once, before any transport exists, and its answer is
+// the transport: opted out builds the noop transport and never the PostHog one.
+// `analytics.privacy: true` is the only input (447-03, D-06).
 
 import { createAnalyticsPort, resolveAnonymousIdentity } from './port.js'
 import { createPosthogTransport, NoopTransport } from './transports.js'
@@ -37,7 +14,7 @@ import type {
 } from './port.js'
 import type { PosthogTransportFactory } from './transports.js'
 
-export type AnalyticsOptOutReason = 'do-not-track' | 'config-privacy'
+export type AnalyticsOptOutReason = 'config-privacy'
 
 export type AnalyticsTransportKind = 'noop' | 'posthog'
 
@@ -48,8 +25,6 @@ export interface AnalyticsOptOutConfig {
 }
 
 export interface ComposeAnalyticsOptions {
-  /** The host's environment slice. Passed in rather than read off `process` so composition is pure. */
-  readonly env?: Readonly<Record<string, string | undefined>>
   readonly config?: AnalyticsOptOutConfig
   readonly identity?: AnalyticsIdentityResolver
   readonly projectKey?: string
@@ -76,37 +51,11 @@ export interface ComposedAnalytics<TEvent extends AnalyticsEventEnvelope = Analy
   readonly transportKind: AnalyticsTransportKind
 }
 
-/**
- * The permissive reading of the `DO_NOT_TRACK` convention: present, and not one of the three
- * spellings that mean "no".
- *
- * RESEARCH A1 recorded that adopters split between "any value opts out" and "a truthy value opts
- * out", and that D-19's tested value is `DO_NOT_TRACK=1`. The split only reaches values nobody sets
- * deliberately, so the tie is broken toward the user: an unrecognised value opts OUT. Comparison is
- * trimmed and case-folded because a variable exported from a shell script arrives with whatever
- * whitespace the script left on it.
- */
-export function isDoNotTrack(value: string | undefined): boolean {
-  if (value === undefined) return false
-  const normalized = value.trim().toLowerCase()
-  return normalized !== '' && normalized !== '0' && normalized !== 'false'
-}
-
-function resolveOptOutReasons(
-  env: Readonly<Record<string, string | undefined>>,
-  config: AnalyticsOptOutConfig | undefined,
-): AnalyticsOptOutReason[] {
-  const reasons: AnalyticsOptOutReason[] = []
-  if (isDoNotTrack(env.DO_NOT_TRACK)) reasons.push('do-not-track')
-  if (config?.analytics?.privacy === true) reasons.push('config-privacy')
-  return reasons
-}
-
 export function composeAnalytics<TEvent extends AnalyticsEventEnvelope = AnalyticsEventEnvelope>(
   options: ComposeAnalyticsOptions = {},
 ): ComposedAnalytics<TEvent> {
-  const optOutReasons = resolveOptOutReasons(options.env ?? {}, options.config)
-  const optedOut = optOutReasons.length > 0
+  const optedOut = options.config?.analytics?.privacy === true
+  const optOutReasons: AnalyticsOptOutReason[] = optedOut ? ['config-privacy'] : []
 
   // The whole decision, in one expression, before any transport exists. Note what is NOT reachable
   // from the deny arm: not the override, not the factory, not the project key. A transport built on

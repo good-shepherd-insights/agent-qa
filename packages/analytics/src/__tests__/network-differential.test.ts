@@ -32,11 +32,12 @@ import { composeAnalytics } from '../compose.js'
 import { AgentQaAnalyticsEventSchema, ANALYTICS_MCP_TOOL_NAMES } from '../events.js'
 import { createPosthogTransport } from '../transports.js'
 import { readOutgoingBody, startWireSink, type WireSink } from './wire-sink.js'
-import type { ComposeAnalyticsOptions } from '../compose.js'
+import type { AnalyticsOptOutConfig, ComposeAnalyticsOptions } from '../compose.js'
 import type { AgentQaAnalyticsEvent } from '../events.js'
 
 const PROJECT_KEY = 'phc_zero_network_differential'
 const MOCK_ORIGIN = 'http://analytics.differential.test'
+const OPTED_OUT: AnalyticsOptOutConfig = { analytics: { privacy: true } }
 
 /**
  * The events the arms drive, PRODUCED through the shipped schema rather than written as literals.
@@ -111,12 +112,12 @@ function assertTwoSidedOrFatal(label: string, optedOut: number, optedIn: number)
       + `interception before reading anything into the opt-out result.`,
     )
   }
-  expect(optedOut, `${label}: DO_NOT_TRACK=1 must produce ZERO attempts`).toBe(0)
-  expect(optedIn, `${label}: DNT unset must produce attempts (else the wire is torn)`)
+  expect(optedOut, `${label}: analytics.privacy true must produce ZERO attempts`).toBe(0)
+  expect(optedIn, `${label}: analytics.privacy unset must produce attempts (else the wire is torn)`)
     .toBeGreaterThan(0)
 }
 
-describe('zero-network under DO_NOT_TRACK (D-19)', () => {
+describe('zero-network under analytics.privacy (D-19, D-06)', () => {
   let originalDispatcher: Dispatcher
 
   beforeEach(() => {
@@ -147,7 +148,7 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
       socketConnects: number
     }
 
-    async function runArm(env: Record<string, string | undefined>): Promise<DispatcherArm> {
+    async function runArm(config?: AnalyticsOptOutConfig): Promise<DispatcherArm> {
       const agent = new MockAgent()
       agent.disableNetConnect()
 
@@ -168,7 +169,7 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
       const socketSpy = vi.spyOn(net.Socket.prototype, 'connect')
       try {
         await driveEmitAndFlush({
-          env,
+          config,
           projectKey: PROJECT_KEY,
           projectHost: MOCK_ORIGIN,
         })
@@ -179,9 +180,9 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
       }
     }
 
-    it('DO_NOT_TRACK=1 produces zero dispatches and zero sockets; DNT unset produces dispatches', async () => {
-      const optedOut = await runArm({ DO_NOT_TRACK: '1' })
-      const optedIn = await runArm({})
+    it('privacy true produces zero dispatches and zero sockets; privacy unset produces dispatches', async () => {
+      const optedOut = await runArm(OPTED_OUT)
+      const optedIn = await runArm()
 
       assertTwoSidedOrFatal('fetch layer', optedOut.dispatcherHits, optedIn.dispatcherHits)
       // The opted-out arm also touched no socket, so the zero above is not "it went somewhere the
@@ -210,14 +211,14 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
       serverRequests: number
     }
 
-    async function runArm(env: Record<string, string | undefined>): Promise<SocketArm> {
+    async function runArm(config?: AnalyticsOptOutConfig): Promise<SocketArm> {
       // NO MockAgent here on purpose. This arm runs on the real global dispatcher so a real socket
       // is opened to a real listener — which is what makes the spy's zero on the other arm mean
       // "nothing was dialled" rather than "something intercepted it first".
       const before = sink.requests.length
       const socketSpy = vi.spyOn(net.Socket.prototype, 'connect')
       try {
-        await driveEmitAndFlush({ env, projectKey: PROJECT_KEY, projectHost: sink.origin })
+        await driveEmitAndFlush({ config, projectKey: PROJECT_KEY, projectHost: sink.origin })
         return {
           socketConnects: socketSpy.mock.calls.length,
           serverRequests: sink.requests.length - before,
@@ -227,49 +228,12 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
       }
     }
 
-    it('DO_NOT_TRACK=1 dials no socket; DNT unset dials one and the server sees the request', async () => {
-      const optedOut = await runArm({ DO_NOT_TRACK: '1' })
-      const optedIn = await runArm({})
+    it('privacy true dials no socket; privacy unset dials one and the server sees the request', async () => {
+      const optedOut = await runArm(OPTED_OUT)
+      const optedIn = await runArm()
 
       assertTwoSidedOrFatal('socket layer', optedOut.socketConnects, optedIn.socketConnects)
       assertTwoSidedOrFatal('server receipt', optedOut.serverRequests, optedIn.serverRequests)
-    })
-
-    it('the config privacy flag walls the socket exactly as DO_NOT_TRACK does', async () => {
-      const socketSpy = vi.spyOn(net.Socket.prototype, 'connect')
-      const before = sink.requests.length
-      await driveEmitAndFlush({
-        env: {},
-        config: { analytics: { privacy: true } },
-        projectKey: PROJECT_KEY,
-        projectHost: sink.origin,
-      })
-      const optedOutConnects = socketSpy.mock.calls.length
-      const optedOutRequests = sink.requests.length - before
-      socketSpy.mockRestore()
-
-      const optedIn = await runArm({})
-      assertTwoSidedOrFatal('socket layer (config privacy)', optedOutConnects, optedIn.socketConnects)
-      assertTwoSidedOrFatal('server receipt (config privacy)', optedOutRequests, optedIn.serverRequests)
-    })
-
-    // D-19's deny-wins clause, measured at the wire rather than at the reason list: a user who set
-    // the variable to `0` beside a config opt-out is still opted out, and the socket is where that
-    // has to be true.
-    it('DO_NOT_TRACK=0 beside config privacy still dials nothing (deny wins)', async () => {
-      const socketSpy = vi.spyOn(net.Socket.prototype, 'connect')
-      const before = sink.requests.length
-      await driveEmitAndFlush({
-        env: { DO_NOT_TRACK: '0' },
-        config: { analytics: { privacy: true } },
-        projectKey: PROJECT_KEY,
-        projectHost: sink.origin,
-      })
-      const connects = socketSpy.mock.calls.length
-      socketSpy.mockRestore()
-
-      expect(connects).toBe(0)
-      expect(sink.requests.length - before).toBe(0)
     })
   })
 
@@ -314,9 +278,9 @@ describe('zero-network under DO_NOT_TRACK (D-19)', () => {
       }
     }
 
-    it('DO_NOT_TRACK=1 never reaches the sink; DNT unset reaches it with the real batch', async () => {
-      const optedOut = await runArm({ env: { DO_NOT_TRACK: '1' } })
-      const optedIn = await runArm({ env: {} })
+    it('privacy true never reaches the sink; privacy unset reaches it with the real batch', async () => {
+      const optedOut = await runArm({ config: OPTED_OUT })
+      const optedIn = await runArm({})
 
       assertTwoSidedOrFatal('sandboxed sink', optedOut.calls.length, optedIn.calls.length)
       // No socket on either arm — the sink replaced the wire, so an observed connect would mean a
