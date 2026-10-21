@@ -31,6 +31,7 @@ import { createChatCommand } from '../commands/chat.js'
 import { createDaemonCommand } from '../commands/daemon.js'
 import type { DaemonCommandDeps } from '../commands/daemon.js'
 import { createInitCommand } from '../commands/init.js'
+import { createMcpCommand } from '../commands/mcp.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import type {
   CliAnalyticsHost,
@@ -583,5 +584,56 @@ describe('C447-IDENTITY-STORAGE-FAILURE', () => {
     expect(hosts).toHaveLength(1)
     expect(hosts[0]?.transportKind).toBe('posthog')
     expect(captured).toEqual([])
+  })
+})
+
+// 2026-10-21 (447-06, D-09): `--http 0` is refused inside the serve `try`, so the action composes
+// its analytics and its host, then returns through its own `finally` and `catch` without serving.
+async function runMcp(
+  configPath: string,
+  deps: { composeAnalytics: typeof composeAnalyticsHost },
+): Promise<void> {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const previousExitCode = process.exitCode
+  process.exitCode = undefined
+  try {
+    const program = new Command()
+      .option('--config <path>', 'config file path')
+      .addCommand((createMcpCommand as (deps: unknown) => Command)(deps))
+    program.exitOverride()
+    await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'mcp', '--http', '0'])
+  } finally {
+    process.exitCode = previousExitCode
+    error.mockRestore()
+  }
+}
+
+describe('C447-MCP-PRIVACY', () => {
+  const roots: string[] = []
+
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('agent-qa mcp honours analytics.privacy when the config fails validation', async () => {
+    const { configPath } = invalidConfigDeclaringPrivacy(roots, { privacy: true })
+    const recorder = recordingCompose()
+
+    await runMcp(configPath, { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    expect(recorder.hosts[0]?.optOutReasons).toContain('config-privacy')
+    expect(recorder.hosts[0]?.transportKind).toBe('none')
+  })
+
+  it('agent-qa mcp does not report the config reason when an invalid config declares no privacy', async () => {
+    const { configPath } = invalidConfigDeclaringPrivacy(roots)
+    const recorder = recordingCompose()
+
+    await runMcp(configPath, { composeAnalytics: recorder.compose })
+
+    expect(recorder.hosts).toHaveLength(1)
+    expect(recorder.hosts[0]?.optOutReasons).not.toContain('config-privacy')
+    expect(recorder.hosts[0]?.transportKind).toBe('posthog')
   })
 })
