@@ -1,7 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { composeAnalytics, isDoNotTrack } from '../compose.js'
 import { NoopTransport } from '../transports.js'
-import { sourceModulesContaining } from './source-scan.js'
+import { PACKAGE_SRC_DIR, packageSourceFiles, sourceModulesContaining } from './source-scan.js'
+import type { ComposeAnalyticsOptions } from '../compose.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '../port.js'
 import type { PosthogTransportFactory, PosthogTransportOptions } from '../transports.js'
 
@@ -285,5 +288,43 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
 
     expect(sink.shutdownCount).toBe(1)
     expect(sink.flushCount).toBe(0)
+  })
+})
+
+describe('C447-NO-DNT', () => {
+  it('the config privacy flag is the only opt-out', () => {
+    const first = spyingPosthogFactory()
+    const withVariable = composeAnalytics({
+      env: { DO_NOT_TRACK: '1' },
+      projectKey: ENABLED_KEY,
+      posthogTransportFactory: first.factory,
+    } as ComposeAnalyticsOptions)
+
+    expect(withVariable.optedOut).toBe(false)
+    expect(withVariable.optOutReasons).toEqual([])
+    expect(withVariable.transportKind).toBe('posthog')
+    expect(first.calls.length).toBe(1)
+
+    const second = spyingPosthogFactory()
+    const withPrivacy = composeAnalytics({
+      config: { analytics: { privacy: true } },
+      projectKey: ENABLED_KEY,
+      posthogTransportFactory: second.factory,
+    })
+
+    expect(withPrivacy.optedOut).toBe(true)
+    expect(withPrivacy.optOutReasons).toEqual(['config-privacy'])
+    expect(second.calls).toEqual([])
+  })
+
+  it('no shipped source in analytics or cli spells DO_NOT_TRACK', () => {
+    const files = [
+      ...packageSourceFiles(PACKAGE_SRC_DIR),
+      ...packageSourceFiles(join(PACKAGE_SRC_DIR, '..', '..', 'cli', 'src')),
+    ]
+    const offenders = files.filter((file) => readFileSync(file, 'utf8').includes('DO_NOT_TRACK'))
+
+    expect(files.length).toBeGreaterThan(10)
+    expect(offenders).toEqual([])
   })
 })
