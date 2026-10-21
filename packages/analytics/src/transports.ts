@@ -64,8 +64,9 @@ class PosthogTransport implements AnalyticsTransport {
    * (a cell counts the call sites in shipped source and refuses any number but one).
    *
    * `flush`/`shutdown` are not second seams: everything they drain arrived through this method, so
-   * masking here ranges the whole queue. `$set` is stamped AFTER the mask because its only content
-   * is a boolean this file writes — there is no caller string in it to mask.
+   * masking here ranges the whole queue. `is_internal` is added AFTER the mask because it is a
+   * boolean this file writes — there is no caller string in it to mask. It is an event property,
+   * sent only when true (447-07, D-13).
    */
   capture(payload: AnalyticsCapturePayload): void {
     let masked: AnalyticsCapturePayload
@@ -77,7 +78,7 @@ class PosthogTransport implements AnalyticsTransport {
     }
     const properties: Record<string, unknown> = { ...masked.event.properties }
     if (masked.isInternal === true) {
-      properties.$set = { is_internal: true }
+      properties.is_internal = true
     }
 
     this.client.capture({

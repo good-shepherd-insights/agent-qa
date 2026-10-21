@@ -274,6 +274,7 @@ const BASE_KEYS = [
   'agent_qa_version',
   'surface',
   'runtime_context',
+  'is_internal',
   'agent_product',
   '$process_person_profile',
 ]

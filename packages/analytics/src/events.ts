@@ -201,6 +201,7 @@ const BaseProperties = {
   agent_qa_version: AgentQaVersionSchema.optional(),
   surface: z.enum(ANALYTICS_EMITTING_HOSTS).optional(),
   runtime_context: z.enum(ANALYTICS_RUNTIME_CONTEXTS).optional(),
+  is_internal: z.literal(true).optional(),
   agent_product: z.enum(ANALYTICS_AGENT_PRODUCTS).optional(),
   // PostHog's own directive, a literal `false` and never anything else: it suppresses person-profile
   // creation, which is what keeps an anonymous distinct id anonymous on their side too.
