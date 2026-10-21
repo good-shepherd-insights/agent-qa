@@ -15234,6 +15234,30 @@
       "file": "scripts/__tests__/release-posthog.test.mjs",
       "fullName": "C447-NO-TRANSPORT the release check accepts the no-transport composition and refuses one without it",
       "origin": "447 D-08"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/analytics-root-optout.test.ts",
+      "fullName": "C447-IDENTITY-STORAGE-FAILURE an identity location that cannot be written composes a host that sends nothing and init still exits 0",
+      "origin": "447 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/analytics-host.test.ts",
+      "fullName": "C447-IDENTITY-BOUND a stalled identity resolution releases composition at the bound and nothing is sent under any id",
+      "origin": "447 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/analytics-host.test.ts",
+      "fullName": "C447-CI-DETECTOR the host classifies CI through the execution-context detector and passes it to identity resolution",
+      "origin": "447 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/composition/__tests__/analytics-host.test.ts",
+      "fullName": "C447-CI-DISTINCT two CI compositions carry two different ci_ ids, each one stable across its own events",
+      "origin": "447 D-11"
     }
   ]
 }
