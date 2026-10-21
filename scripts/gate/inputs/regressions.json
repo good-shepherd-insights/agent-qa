@@ -15204,6 +15204,18 @@
       "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
       "fullName": "C447-RUNTIME-CONTEXT a coding agent resolves as user with its product, an unrecognised AGENT as unknown, and the vocabulary is user and ci",
       "origin": "447 D-12"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/compose.test.ts",
+      "fullName": "C447-NO-DNT the config privacy flag is the only opt-out",
+      "origin": "447 D-06"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/compose.test.ts",
+      "fullName": "C447-NO-DNT no shipped source in analytics or cli spells DO_NOT_TRACK",
+      "origin": "447 D-06"
     }
   ]
 }
