@@ -149,8 +149,11 @@ export async function composeAnalyticsHost(
   if (composed.transportKind === 'posthog') {
     const resolve = input.resolveIdentity ?? resolveAnalyticsIdentity
     try {
+      // 447-05 (D-11): CI is the run detector's answer, reached through agent-local (the firewall).
+      const { resolveRunExecutionContext } = await import('@vostride/agent-qa-agent-local')
+      const ci = resolveRunExecutionContext() === 'ci'
       const resolved = await withTimeout(
-        resolve({ env: { ...(input.env ?? process.env) } }),
+        resolve({ env: { ...(input.env ?? process.env) }, ci }),
         ANALYTICS_IDENTITY_TIMEOUT_MS,
       )
       identity = {
