@@ -21,7 +21,7 @@ export type {
   ComposedAnalytics,
 } from './compose.js'
 
-export { createAnalyticsPort, ANONYMOUS_ANALYTICS_IDENTITY, resolveAnonymousIdentity } from './port.js'
+export { createAnalyticsPort } from './port.js'
 export type {
   AnalyticsCapturePayload,
   AnalyticsEventEnvelope,

@@ -2,7 +2,7 @@
 // the transport: opted out or keyless builds none at all (447-04, D-08).
 // `analytics.privacy: true` is the only input (447-03, D-06).
 
-import { createAnalyticsPort, resolveAnonymousIdentity } from './port.js'
+import { createAnalyticsPort } from './port.js'
 import { createPosthogTransport } from './transports.js'
 import { AGENT_QA_POSTHOG_HOST, AGENT_QA_POSTHOG_KEY } from './posthog-project.js'
 import type { AnalyticsMaskingContext } from './masking-seam.js'
@@ -62,7 +62,7 @@ export function composeAnalytics<TEvent extends AnalyticsEventEnvelope = Analyti
   return {
     port: createAnalyticsPort<TEvent>({
       transport,
-      identity: options.identity ?? resolveAnonymousIdentity,
+      identity: options.identity ?? noIdentity,
     }),
     transport,
     optedOut,
@@ -70,6 +70,10 @@ export function composeAnalytics<TEvent extends AnalyticsEventEnvelope = Analyti
     transportKind,
   }
 }
+
+// No shared default id: a port composed without a resolver sends nothing (447-05, D-05).
+const noIdentity: AnalyticsIdentityResolver = () =>
+  Promise.reject(new Error('no analytics identity was supplied'))
 
 interface ChosenTransport {
   readonly transport: AnalyticsTransport | undefined

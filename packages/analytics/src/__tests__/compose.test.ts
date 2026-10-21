@@ -199,13 +199,17 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
 
   it('flush after a capture reaches the transport exactly once', async () => {
     const sink = new CountingSink()
-    const composed = composeAnalytics({ projectKey: ENABLED_KEY, transportOverride: sink })
+    const composed = composeAnalytics({
+      projectKey: ENABLED_KEY,
+      transportOverride: sink,
+      identity: () => ({ distinctId: 'u_compose-cell' }),
+    })
 
     composed.port.capture({ name: 'agent-qa.probe', properties: { surface: 'cli' } })
     await composed.port.flush()
 
     expect(sink.captured.map((payload) => payload.event.name)).toEqual(['agent-qa.probe'])
-    expect(sink.captured[0]?.distinctId).toBe('anonymous')
+    expect(sink.captured[0]?.distinctId).toBe('u_compose-cell')
     expect(sink.flushCount).toBe(1)
 
     // And a second flush with nothing new captured is a no-op again — the counter resets with the

@@ -3,11 +3,7 @@
 // only when the transport `composeAnalytics` chose will send) and never decides the opt-out itself.
 // It holds no module-level state.
 
-import {
-  ANONYMOUS_ANALYTICS_IDENTITY,
-  composeAnalytics,
-  resolveAnalyticsIdentity,
-} from '@vostride/agent-qa-analytics'
+import { composeAnalytics, resolveAnalyticsIdentity } from '@vostride/agent-qa-analytics'
 import type {
   AgentQaAnalyticsEvent,
   AgentQaAnalyticsPort,
@@ -66,6 +62,8 @@ function readCliPackageVersion(): string {
 
 export const CLI_ANALYTICS_AGENT_QA_VERSION = readCliPackageVersion()
 
+export const ANALYTICS_IDENTITY_TIMEOUT_MS = 1_000
+
 export interface ComposeAnalyticsHostInput {
   /** Which process is emitting. A host names itself; nothing infers it. */
   surface: CliAnalyticsSurface
@@ -122,9 +120,8 @@ export interface CliAnalyticsHost {
 export async function composeAnalyticsHost(
   input: ComposeAnalyticsHostInput,
 ): Promise<CliAnalyticsHost> {
-  // Assigned below, before anything can capture: the port resolves the identity lazily, at the
-  // first `capture()`, and there is no capture between this line and the assignment.
-  let identity: AnalyticsIdentity = ANONYMOUS_ANALYTICS_IDENTITY
+  // Assigned below only when resolution succeeds; until then every capture is dropped (D-05).
+  let identity: AnalyticsIdentity | undefined
   let masking: AnalyticsMaskingContext | undefined = input.maskingContext
 
   const composed = composeAnalytics<AgentQaAnalyticsEvent>({
@@ -137,7 +134,7 @@ export async function composeAnalyticsHost(
     ...(input.posthogTransportFactory === undefined
       ? {}
       : { posthogTransportFactory: input.posthogTransportFactory }),
-    identity: () => identity,
+    identity: () => identity ?? Promise.reject(new Error('analytics identity unavailable')),
   })
 
   const properties: AnalyticsRunStandardProperties = {
@@ -151,13 +148,20 @@ export async function composeAnalyticsHost(
   // transport while reporting `optedOut: false`, and must not mint an identity either.
   if (composed.transportKind === 'posthog') {
     const resolve = input.resolveIdentity ?? resolveAnalyticsIdentity
-    const resolved = await resolve({ env: { ...(input.env ?? process.env) } })
-    identity = {
-      distinctId: resolved.distinctId,
-      ...(resolved.isInternal === true ? { isInternal: true } : {}),
+    try {
+      const resolved = await withTimeout(
+        resolve({ env: { ...(input.env ?? process.env) } }),
+        ANALYTICS_IDENTITY_TIMEOUT_MS,
+      )
+      identity = {
+        distinctId: resolved.distinctId,
+        ...(resolved.isInternal === true ? { isInternal: true } : {}),
+      }
+      properties.runtime_context = resolved.runtimeContext
+      if (resolved.agentProduct !== undefined) properties.agent_product = resolved.agentProduct
+    } catch {
+      // Telemetry stays off for this invocation; nothing falls back to a shared id (D-05).
     }
-    properties.runtime_context = resolved.runtimeContext
-    if (resolved.agentProduct !== undefined) properties.agent_product = resolved.agentProduct
   }
 
   return {
@@ -172,6 +176,17 @@ export async function composeAnalyticsHost(
     flush: () => composed.port.flush(),
     shutdown: () => composed.port.shutdown(),
   }
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('analytics identity timed out')), ms)
+      timer.unref?.()
+    }),
+  ]).finally(() => clearTimeout(timer))
 }
 
 /**

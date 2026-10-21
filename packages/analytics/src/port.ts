@@ -207,16 +207,3 @@ export function createAnalyticsPort<TEvent extends AnalyticsEventEnvelope = Anal
 ): AnalyticsPort<TEvent> {
   return new BestEffortAnalyticsPort<TEvent>(options)
 }
-
-/**
- * The identity stand-in for plan 03.
- *
- * 2026-08-17 (Phase 398 plan 03): the real store — `~/.agent-qa/analytics.json`, the `id-agent`
- * word id, the `XDG_DATA_HOME` override — re-homes from `core/src/analytics/identity.ts` in plan
- * 06, which owns that move and its carried-over cells. Until then the resolver is an explicit
- * injected dependency with a constant default, so the port's shape does not change when the real
- * one arrives and no host silently gets a different identity than it had.
- */
-export const ANONYMOUS_ANALYTICS_IDENTITY: AnalyticsIdentity = { distinctId: 'anonymous' }
-
-export const resolveAnonymousIdentity: AnalyticsIdentityResolver = () => ANONYMOUS_ANALYTICS_IDENTITY

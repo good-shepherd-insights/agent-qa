@@ -89,7 +89,10 @@ function realUnionEvents(): AgentQaAnalyticsEvent[] {
  * queue there too, so a wall that only holds until the process decides to exit is not a wall.
  */
 async function driveEmitAndFlush(options: ComposeAnalyticsOptions): Promise<void> {
-  const composed = composeAnalytics<AgentQaAnalyticsEvent>(options)
+  const composed = composeAnalytics<AgentQaAnalyticsEvent>({
+    ...options,
+    identity: () => ({ distinctId: 'u_network-differential' }),
+  })
   for (const event of realUnionEvents()) composed.port.capture(event)
   await composed.port.flush()
   await composed.port.shutdown()
