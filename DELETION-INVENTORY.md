@@ -6892,6 +6892,16 @@ package that ships (D-33). The decisions are in
 `.planning/phases/446-packaged-skills-and-host-recipes/446-CONTEXT.md` § Gap round 1. Written by
 446-19 on 2026-10-21.
 
+The round's record gate at `19e355e71` (the commit that first added this section) ran every
+registered cell green, but its audit leg failed on two high advisories for
+`@modelcontextprotocol/server` 2.0.0. The owner chose gap round 2: upgrade the MCP SDK to
+owner-approved versions only (D-35), re-bless the CLI dependency wall for it (D-36), and treat a
+red caused only by a timing cell that passes alone as one re-run at the same SHA (D-37 to D-39);
+the 23 tarballs were re-staged and both live legs re-run once more (446-21). Those decisions are in
+the same file, § Gap round 2. Gap round 2 deleted no member; its changes are in § What changed with
+no member deleted and § What was retained, and why below, added by 446-19 on 2026-10-21 in a
+second commit that touches only this file.
+
 ### How this inventory is measured
 
 Baseline `142dde2f6` (446's final SHA before the round). Closing SHA `a296134a4` (446-18's commit,
@@ -6903,6 +6913,15 @@ directories, 7 files, +52/−18 (the two skill mirrors' four files under `packag
 (`%G?` = `G`). The removed members below are read from each deleting commit's diff
 (`git -C agent-qa show --unified=0 <sha>`), not transcribed from a summary. Names are at
 `142dde2f6`.
+
+Re-measured for gap round 2, to closing SHA `8cf14091a` (446-21's commit, the parent of the commit
+that adds the gap-round-2 rows): `git -C agent-qa diff --shortstat 142dde2f6 8cf14091a`: 23 files
+changed, 715 insertions, 71 deletions; under `packages/` outside `__tests__` directories, 9 files,
++57/−23 (the seven above plus `packages/cli/package.json` and `packages/mcp/package.json`); and
+`pnpm-lock.yaml` at the root. `--diff-filter=D`: no file deleted. `--diff-filter=A`: no file added.
+22 commits, every one signed (`%G?` = `G`): the 18 above, `19e355e71` (this section),
+`4a104d64f` and `e12491ef8` (446-20) and `8cf14091a` (446-21). From `19e355e71` to `8cf14091a`:
+5 files changed, 34 insertions, 38 deletions.
 
 ### What was deleted
 
@@ -6929,9 +6948,16 @@ Each read from its commit:
 | the page's § AGENTS.md offered the init command above | the section shows, in one ```` ```md ```` block, the pointer block init prints under "Coding agents: add this block to AGENTS.md at the project root", to paste | `687e2343e` (446-15) | `C446-RECIPE the page shows the AGENTS.md pointer block init prints, line for line` |
 | the guidance census's command reader `invocationsIn` read every line of every fenced block as a possible command | a fenced `md` or `markdown` block is read as markdown prose, whose code spans are the commands it quotes (`MARKDOWN_FENCES`); test-only, needed so the page's pasted pointer block (HTML markers, several code spans a line) is read as what it is | `5d9f9b7c8` (446-15) | `C446-GUIDANCE-NPX a bare agent-qa command outside a text block is named, and a text block quoting CLI output is not` (one assertion added) |
 | the page's § Limits Claude Code line read "Checked on 2026-10-20 with Claude Code 2.1.304 … The run ended `healed` rather than `passed`.", and the `scope` limit ended "Claude Code did so after the refusal" | "Checked on 2026-10-21 with Claude Code 2.1.305 … The run ended `passed`."; the `scope` limit ends "as the skills say; Claude Code and Codex both did so" (the gap-round legs, 446-18); the Codex line's text is unchanged | `a296134a4` (446-18) | no cell pins the Limits wording; the page's `C446-RECIPE` cells and `C446-GUIDANCE-NPX every CLI command the recipe page quotes outside a text block reads npx agent-qa` read the whole page |
+| the MCP SDK at 2.0.0: `packages/cli/package.json` pinned `@modelcontextprotocol/server` `2.0.0` and the dev-only `@modelcontextprotocol/client` `2.0.0`; `packages/mcp/package.json` pinned `@modelcontextprotocol/node` `2.0.0`, `server` `2.0.0` and the dev-only `client` `2.0.0`; the lockfile resolved `@modelcontextprotocol/core` 2.0.0 through them, and `pnpm audit --prod` read 2 high (GHSA-46jr-4wx8-v453, GHSA-jm63-cq47-j5jp) | gap round 2 (D-35): the five exact pins read `server` `2.3.1`, `node` `2.1.1` and `client` `2.3.1`, so one `@modelcontextprotocol/core` 2.3.1 resolves through them; in `pnpm-lock.yaml` only the four SDK packages' `packages:` and `snapshots:` keys and the five importer specifiers moved (769 other `packages:` and 465 other `snapshots:` blocks byte-identical; `lockfileVersion`, `settings` and `overrides` unchanged); hono 4.12.34 and @hono/node-server 1.19.17 keep their versions under the root `pnpm.overrides`, `node` 2.1.1 now listing them as dependencies where 2.0.0 had hono as an optional peer; the audit reads 0 high and 0 critical. No member deleted, no source file changed | `4a104d64f` (446-20) | the record gate's audit leg (`auditFindings`, high and critical only); every registered MCP cell runs on the new SDK in the record gate |
+| the Phase 421 dependency wall pinned the CLI's runtime dependency set as `dependencyPins.cli` `0ac4708d…` | `dependencyPins.cli` `e85aea694cee7b3a437f33076e6718995bfd13d21a80f20a85164e3607d15624`, recomputed with the wall's own expression, and one dated line in the comment above the pin map, "Re-blessed 2026-10-21 for cli only (446-20, D-35/D-36): @modelcontextprotocol/server 2.0.0 -> 2.3.1."; `internalPins.cli` and every other pin unchanged (D-36, the 424-35 playwright-core precedent) | `e12491ef8` (446-20) | the unregistered arch cell `421 judge panel walls pins runtime versions and exact ownership edges for cli` (`packages/arch/src/__tests__/421-judge-panel-walls.test.ts`), which runs in turbo-test and `validate:arch` |
+| the page's § Limits Claude Code line read "Checked on 2026-10-21 with Claude Code 2.1.305 …" | "Checked on 2026-10-21 with Claude Code 2.1.306 …" (the gap-round-2 legs, 446-21); its date, wording and "The run ended `passed`." unchanged, and the Codex line's text unchanged | `8cf14091a` (446-21) | as for `a296134a4` above |
 
 No ledger was regenerated: `397-regen-golden.sh` and `398-regen-catalog.sh` printed `nothing to
-change` at the gap-round candidate `95c09a38c` (446-18) and again at `a296134a4` (446-19).
+change` at the gap-round candidate `95c09a38c` (446-18) and again at `a296134a4` (446-19). At the
+gap-round-2 candidate `e12491ef8` (446-21), `398-regen-catalog.sh` printed `nothing to change`;
+`397-regen-golden.sh` first refused because the unregistered layout cell `REVIEW-VIDEO-CONTROLS:
+timed and ordinal long-duration controls fit at 400px and actual browser zoom` timed out under load,
+and its one re-run at the same SHA (D-39) printed `nothing to change`.
 
 ### Registered gate rows
 
@@ -6957,6 +6983,9 @@ The three earlier `C446-EMBEDDER-FIX` cells kept their bodies; their shared help
 now also passes `daemonLive: () => live`, so they read the live-daemon texts they always asserted
 (`23e8fbc40`).
 
+Gap round 2 appended no row and changed no registered cell's title or body: the registry still has
+2527 rows. Its one test change, the wall pin in `e12491ef8`, is in an unregistered cell.
+
 ### What was retained, and why
 
 | Item | File | Why kept |
@@ -6966,9 +6995,13 @@ now also passes `daemonLive: () => live`, so they read the live-daemon texts the
 | init's agent-instructions flag | `WRITE_AGENT_INSTRUCTIONS_FLAG` (`packages/cli/src/commands/knowledge-guide.ts:12`) and init | D-12: the flag ships; only the page's mention was withdrawn (D-32) |
 | the Embedder row's `fail` status and its messages | `packages/cli/src/commands/doctor-knowledge-checks.ts` | D-11 and D-27; only the fix texts changed (WR-01). Whether an idle daemon should fail the row is the pending todo `2026-10-20-doctor-fails-the-embedder-row-on-an-idle-daemon` |
 | the review's info items IN-01 to IN-05 | as `446-REVIEW.md` found them | D-32 fixes the four warnings only. IN-01 (no current reader reaches the getter's default text) and IN-04 (an idle daemon is a fail row, the owner's D-11) stay skipped; IN-02, IN-03 and IN-05 are the pending todo `2026-10-21-446-review-info-items` |
+| the 13 lines that name SDK 2.0.0 as what was measured or composed on it, and agent-qa's own server version `AGENT_QA_MCP_SERVER_VERSION = '2.0.0'` | `packages/mcp/src/app-resource.ts`, `packages/mcp/src/task-seam.ts`, tests under `packages/mcp/src/__tests__/` and `packages/cli/src/__tests__/`; `packages/mcp/src/catalog.ts:80` | D-35 approves the version pins only; each line records what was true on 2.0.0, and the constant is agent-qa's version on the wire, not the SDK's. Two lines describe the SDK in the present tense ("while this package ships the 2.0.0 split SDK", `app-resource.ts:204` and `ext-apps-constants.test.ts:23`) and are now false; a later reword should take them first |
+| no `maxToolInputElements` on the `McpServer` and no lower `maxRequestBodySize` on `createMcpHandler` | `packages/mcp/src/catalog.ts` (`buildAgentQaMcpServer`), `packages/mcp/src/http.ts` (`createAgentQaMcpNodeHandler`) | GHSA-46jr-4wx8-v453 is residual on 2.3.1: upgrading turns neither limit on (no element limit by default; a 4 MiB body). Both HTTP faces bind 127.0.0.1 and refuse a non-localhost Host or Origin, the reach `446-SECURITY.md` AR-01 accepts. Setting them is a product change outside D-35, left to the owner (`capture/446-20-exposure-d35.json`) |
+| the advisories below high the audit still lists | hono 4.12.34 (five moderates, under the root override), sprintf-js 1.1.3 (one moderate), @ai-sdk/provider-utils 4.0.26 (one low) | D-35 changes the SDK only; the record gate fails on high and critical only |
 
 ### Gate at the time of writing
 
 The round's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
 verdict are recorded in `.planning/phases/446-packaged-skills-and-host-recipes/446-RECORD.md`
-§ Gap round 1, and the SHA in its § Final SHA (gap round 1), rather than quoted here.
+§ Gap round 1, and the SHA in its § Final SHA (gap round 1), rather than quoted here. The red run
+at `19e355e71` and the gap-round-2 runs are in the same section, under § Gap round 2 (D-35).
