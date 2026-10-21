@@ -15258,6 +15258,18 @@
       "file": "packages/cli/src/composition/__tests__/analytics-host.test.ts",
       "fullName": "C447-CI-DISTINCT two CI compositions carry two different ci_ ids, each one stable across its own events",
       "origin": "447 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/analytics-root-optout.test.ts",
+      "fullName": "C447-MCP-PRIVACY agent-qa mcp honours analytics.privacy when the config fails validation",
+      "origin": "447 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/analytics-root-optout.test.ts",
+      "fullName": "C447-MCP-PRIVACY agent-qa mcp does not report the config reason when an invalid config declares no privacy",
+      "origin": "447 D-09"
     }
   ]
 }
