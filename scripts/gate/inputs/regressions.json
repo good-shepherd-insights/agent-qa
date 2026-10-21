@@ -15318,6 +15318,12 @@
       "file": "packages/cli/src/__tests__/conformance/447-analytics-doors.test.ts",
       "fullName": "C447-DOOR-VERDICT-UNCHANGED a stalled transport and a failing sink at the MCP host leave the run ack and its recorded verdict equal to the control",
       "origin": "447 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/daemon/__tests__/daemon-run-execution.test.ts",
+      "fullName": "C447-DAEMON-CONTEXT a daemon job reports its submitter agent product, and unknown when none was carried",
+      "origin": "447 D-14"
     }
   ]
 }
