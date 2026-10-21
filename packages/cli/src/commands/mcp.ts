@@ -64,7 +64,7 @@ import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-h
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import type { DeclaredSecretMask } from '../composition/declared-secrets.js'
 import { composeCliLocalAgent, withRunDoor } from '../composition/local-agent-host.js'
-import { resolveConfig } from '../config.js'
+import { readAnalyticsPrivacyDeclaration, resolveConfig } from '../config.js'
 
 /** The one line the stdio host prints, on stderr, once the server is listening. */
 export const MCP_STDIO_STARTUP_MESSAGE =
@@ -204,7 +204,11 @@ function refuse(res: ServerResponse, status: number, error: string): void {
   res.end(JSON.stringify({ error }))
 }
 
-export function createMcpCommand(): Command {
+export interface McpCommandDeps {
+  composeAnalytics?: typeof composeAnalyticsHost
+}
+
+export function createMcpCommand(deps: McpCommandDeps = {}): Command {
   const cmd = new Command('mcp')
     .description('Start MCP (Model Context Protocol) server over stdio, or over loopback HTTP')
     .option(
@@ -251,15 +255,11 @@ export function createMcpCommand(): Command {
         const declared = composeMcpMasking({ configPath })
         const maskText = declared.mask
 
-        // 398-10 (D-17/D-19/D-20): THIS COMMAND'S ANALYTICS COMPOSITION ROOT. Composed after the
-        // declared-secret mask above and pointed at it immediately, because the project's declared
-        // secrets are exactly the values that must never ride an event off the machine.
-        //
-        // `config` may be `undefined` here — the read above is tolerant on purpose — and that is a
-        // real posture rather than a gap.
-        const analytics = await composeAnalyticsHost({
+        // 2026-10-21 (447-06, D-09): an invalid config's privacy flag is read raw, as in chat.
+        const analyticsConfig = config ?? await readAnalyticsPrivacyDeclaration(globalOpts.config)
+        const analytics = await (deps.composeAnalytics ?? composeAnalyticsHost)({
           surface: 'mcp',
-          ...(config === undefined ? {} : { config }),
+          ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
           maskingContext: { mask: maskText },
         })
 
