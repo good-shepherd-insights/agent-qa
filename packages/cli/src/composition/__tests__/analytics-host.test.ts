@@ -533,3 +533,61 @@ describe('C441-ANALYTICS', () => {
     expect(direct).toEqual([])
   })
 })
+
+describe('C447-NO-TRANSPORT', () => {
+  it('an opted-out or blank-key host constructs no transport and resolves no identity', async () => {
+    const optedOutFactory = vi.fn(() => recordingTransport())
+    const override = { capture: vi.fn(), flush: vi.fn(), shutdown: vi.fn() }
+    const optedOutResolver = vi.fn(async () => ({
+      distinctId: 'u_should-never-be-resolved',
+      runtimeContext: 'user' as const,
+    }))
+    const optedOut = await composeAnalyticsHost({
+      surface: 'cli',
+      env: {},
+      config: { analytics: { privacy: true } },
+      projectKey: 'phc_cell',
+      posthogTransportFactory: optedOutFactory,
+      transportOverride: override,
+      resolveIdentity: optedOutResolver,
+    })
+    optedOut.port.capture(
+      analyticsEvent(optedOut, 'agent-qa.explain.answered', { cited_row_count: 1 }),
+    )
+    await optedOut.flush()
+    await optedOut.shutdown()
+
+    expect(optedOut.optedOut).toBe(true)
+    expect(optedOut.optOutReasons).toEqual(['config-privacy'])
+    expect(optedOut.transportKind).toBe('none')
+    expect(optedOutFactory).not.toHaveBeenCalled()
+    expect(override.capture).not.toHaveBeenCalled()
+    expect(override.flush).not.toHaveBeenCalled()
+    expect(override.shutdown).not.toHaveBeenCalled()
+    expect(optedOutResolver).not.toHaveBeenCalled()
+
+    const keylessFactory = vi.fn(() => recordingTransport())
+    const keylessResolver = vi.fn(async () => ({
+      distinctId: 'u_should-never-be-resolved',
+      runtimeContext: 'user' as const,
+    }))
+    const keyless = await composeAnalyticsHost({
+      surface: 'cli',
+      env: {},
+      projectKey: '   ',
+      posthogTransportFactory: keylessFactory,
+      resolveIdentity: keylessResolver,
+    })
+    keyless.port.capture(
+      analyticsEvent(keyless, 'agent-qa.explain.answered', { cited_row_count: 1 }),
+    )
+    await keyless.flush()
+    await keyless.shutdown()
+
+    expect(keyless.optedOut).toBe(false)
+    expect(keyless.optOutReasons).toEqual([])
+    expect(keyless.transportKind).toBe('none')
+    expect(keylessFactory).not.toHaveBeenCalled()
+    expect(keylessResolver).not.toHaveBeenCalled()
+  })
+})

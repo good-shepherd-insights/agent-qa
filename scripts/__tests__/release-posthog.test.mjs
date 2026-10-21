@@ -98,3 +98,25 @@ test('parses and dispatches node scripts/release/posthog.mjs --write', async () 
     await rm(rootDir, { recursive: true, force: true })
   }
 })
+
+test('C447-NO-TRANSPORT the release check accepts the no-transport composition and refuses one without it', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'agent-qa-release-posthog-no-transport-'))
+  try {
+    createPosthogFixture(rootDir)
+    const composePath = join(rootDir, 'packages/analytics/src/compose.ts')
+
+    const typeLine = "export type AnalyticsTransportKind = 'none' | 'posthog'\n"
+    writeFileSync(composePath, `${typeLine}export const marker = 'no transport'\n`)
+    assert.doesNotThrow(() =>
+      validatePosthogReleaseArtifacts({ rootDir, projectKey: 'phc_test_key' }),
+    )
+
+    writeFileSync(composePath, "export const marker = 'no transport'\n")
+    assert.throws(
+      () => validatePosthogReleaseArtifacts({ rootDir, projectKey: 'phc_test_key' }),
+      /no-transport arm/,
+    )
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+})

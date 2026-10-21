@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { composeAnalytics } from '../compose.js'
 import { NoopTransport } from '../transports.js'
 import { PACKAGE_SRC_DIR, packageSourceFiles } from './source-scan.js'
@@ -261,5 +261,38 @@ describe('C447-NO-DNT', () => {
 
     expect(files.length).toBeGreaterThan(10)
     expect(offenders).toEqual([])
+  })
+})
+
+describe('C447-NO-TRANSPORT', () => {
+  it('an opted-out or keyless composition holds no transport object', async () => {
+    const arms = [
+      {
+        options: { config: { analytics: { privacy: true } }, projectKey: ENABLED_KEY },
+        optedOut: true,
+      },
+      { options: { projectKey: '   ' }, optedOut: false },
+    ]
+
+    for (const arm of arms) {
+      const spy = spyingPosthogFactory()
+      const identity = vi.fn(() => ({ distinctId: 'u_should-never-be-resolved' }))
+      const composed = composeAnalytics({
+        ...arm.options,
+        posthogTransportFactory: spy.factory,
+        identity,
+      })
+
+      expect(composed.transport).toBeUndefined()
+      expect(composed.transportKind).toBe('none')
+      expect(composed.optedOut).toBe(arm.optedOut)
+
+      composed.port.capture({ name: 'agent-qa.probe', properties: {} })
+      await expect(composed.port.flush()).resolves.toBeUndefined()
+      await expect(composed.port.shutdown()).resolves.toBeUndefined()
+
+      expect(spy.calls).toEqual([])
+      expect(identity).not.toHaveBeenCalled()
+    }
   })
 })
