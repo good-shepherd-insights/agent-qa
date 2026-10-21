@@ -15294,6 +15294,30 @@
       "file": "packages/analytics/src/__tests__/447-delivery.test.ts",
       "fullName": "C447-IS-INTERNAL an internal identity leaves is_internal true as an event property and no person-property stamp",
       "origin": "447 D-13"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/447-analytics-doors.test.ts",
+      "fullName": "C447-DOOR-OUTCOME a run started through the MCP and chat host compositions emits its run outcome",
+      "origin": "447 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/daemon/__tests__/daemon-run-execution.test.ts",
+      "fullName": "C447-DAEMON-OUTCOME a daemon-dispatched run emits its run outcome beside the job event",
+      "origin": "447 D-16"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/447-analytics-doors.test.ts",
+      "fullName": "C447-SINK-ALLOWLIST every captured event carries only its member allowlisted metadata and the capture is not empty",
+      "origin": "447 D-17"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/cli/src/__tests__/conformance/447-analytics-doors.test.ts",
+      "fullName": "C447-DOOR-VERDICT-UNCHANGED a stalled transport and a failing sink at the MCP host leave the run ack and its recorded verdict equal to the control",
+      "origin": "447 D-21"
     }
   ]
 }
