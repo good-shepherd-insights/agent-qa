@@ -35,6 +35,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
+import type { AnalyticsAgentProduct } from '@vostride/agent-qa-analytics'
 import { DashboardDatabase, resolveRunOwnerHost } from '@vostride/agent-qa-dashboard'
 import {
   getActiveExecutionContext,
@@ -55,6 +56,7 @@ import {
 import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { UNINSTALLED_AUTH_PLUGIN_PACKAGE } from '../../composition/__tests__/in-process-run-fixture.js'
 import { invokeViaDaemon } from '../client.js'
+import { invokeEnvelopeSchema } from '../server.js'
 import { DAEMON_EVENTS_FILE } from '../events.js'
 import { runDaemonHost } from '../host.js'
 import type { DaemonHostOperations } from '../host.js'
@@ -210,6 +212,7 @@ function runDirFiles(fixture: InProcessFixture): string[] {
 interface CapturedEvent {
   readonly name: string
   readonly properties: Record<string, unknown>
+  readonly distinctId?: string
 }
 
 /**
@@ -223,6 +226,10 @@ async function dispatchThroughDaemon(input: {
   readonly varyAmbient?: 'ci' | 'local-interactive'
   /** Extra `runs.start` fields, so a cell can send one the seam must refuse. */
   readonly extraRequestFields?: Readonly<Record<string, unknown>>
+  /** The agent product the daemon's own analytics host resolved at startup. */
+  readonly daemonAgentProduct?: AnalyticsAgentProduct
+  /** The submitter's environment while it calls `invokeViaDaemon`; `undefined` deletes a name. */
+  readonly submitterEnv?: Readonly<Record<string, string | undefined>>
 }): Promise<{
   /** The ack, when the dispatch succeeded. */
   acknowledged: unknown
@@ -249,11 +256,17 @@ async function dispatchThroughDaemon(input: {
     surface: 'daemon',
     env: {},
     transportOverride: {
-      capture: (payload) => { sent.push(payload.event as CapturedEvent) },
+      capture: (payload) => {
+        sent.push({ ...(payload.event as CapturedEvent), distinctId: payload.distinctId })
+      },
       flush: () => {},
       shutdown: () => {},
     },
-    resolveIdentity: async () => ({ distinctId: 'u_daemon-cell', runtimeContext: 'user' }),
+    resolveIdentity: async () => ({
+      distinctId: 'u_daemon-cell',
+      runtimeContext: 'user',
+      ...(input.daemonAgentProduct === undefined ? {} : { agentProduct: input.daemonAgentProduct }),
+    }),
   })
 
   const running = runDaemonHost({
@@ -283,6 +296,7 @@ async function dispatchThroughDaemon(input: {
   let acknowledged: unknown
   let refusal: unknown
   try {
+    for (const [name, value] of Object.entries(input.submitterEnv ?? {})) vi.stubEnv(name, value)
     acknowledged = await invokeViaDaemon({
       agentQaRoot: fixture.agentQaRoot,
       functionId: 'runs.start',
@@ -291,6 +305,7 @@ async function dispatchThroughDaemon(input: {
   } catch (error) {
     refusal = error
   } finally {
+    if (input.submitterEnv !== undefined) vi.unstubAllEnvs()
     const stdoutWrites = stdoutWrite.mock.calls.length
     stdoutWrite.mockRestore()
     writesToStdout = stdoutWrites
@@ -859,4 +874,65 @@ describe('C447-DAEMON-OUTCOME', () => {
       await target.close()
     }
   }, 180_000)
+})
+
+const AGENT_MARKERS = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CURSOR_AGENT',
+  'GEMINI_CLI',
+  'AUGMENT_AGENT',
+  'GOOSE_TERMINAL',
+  'OPENCODE_CLIENT',
+  'CODEX_SANDBOX',
+  'CLINE_ACTIVE',
+  'AGENT',
+] as const
+
+// 2026-10-21 (447-09, D-14): a job is attributed to its submitter, never to the daemon's launcher.
+describe('C447-DAEMON-CONTEXT', () => {
+  it('a daemon job reports its submitter agent product, and unknown when none was carried', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const noAgent = Object.fromEntries(AGENT_MARKERS.map((name) => [name, undefined]))
+      const arms = [
+        { submitterEnv: { ...noAgent, CLAUDECODE: '1' }, expected: 'claude_code' },
+        { submitterEnv: noAgent, expected: 'unknown' },
+      ]
+      for (const arm of arms) {
+        const project = daemonProject({ origin: target.origin, environment: 'local' })
+        const { acknowledged, refusal, analyticsEvents } = await dispatchThroughDaemon({
+          project,
+          patterns: [project.fixture.testPattern],
+          daemonAgentProduct: 'cursor',
+          submitterEnv: arm.submitterEnv,
+        })
+
+        expect(refusal, `runs.start refused: ${String(refusal)}`).toBeUndefined()
+        const runId = (acknowledged as { runId?: string }).runId
+        expect(runId, 'runs.start acknowledged no run').toMatch(/^r_/)
+        const jobEvents = analyticsEvents.filter(
+          (event) =>
+            event.name === 'agent-qa.test_run.completed' ||
+            event.name === 'agent-qa.daemon.job.completed',
+        )
+        expect(jobEvents.map((event) => event.name).sort(), 'the job events').toEqual([
+          'agent-qa.daemon.job.completed',
+          'agent-qa.test_run.completed',
+        ])
+        for (const event of jobEvents) {
+          expect(event.properties.agent_product, `${event.name} agent_product`).toBe(arm.expected)
+          expect(event.distinctId, `${event.name} distinct id`).toBe('u_daemon-cell')
+        }
+      }
+
+      const envelope = { schemaVersion: 1, functionId: 'runs.start', input: {} }
+      const carried = invokeEnvelopeSchema.safeParse({ ...envelope, agentProduct: 'claude_code' })
+      expect(carried.success, 'the envelope refused agentProduct').toBe(true)
+      expect(invokeEnvelopeSchema.safeParse({ ...envelope, ciId: 'ci_x' }).success).toBe(false)
+    } finally {
+      await target.close()
+    }
+  }, 360_000)
 })
