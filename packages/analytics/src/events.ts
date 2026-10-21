@@ -110,7 +110,8 @@ const NonNegativeNumber = z.number().min(0)
  */
 export const ANALYTICS_EMITTING_HOSTS = ['cli', 'chat', 'mcp', 'daemon'] as const
 
-export const ANALYTICS_RUNTIME_CONTEXTS = ['user', 'ci', 'agent'] as const
+// 2026-10-21 (447-02, D-12): a coding agent is a user; its product rides as `agent_product`.
+export const ANALYTICS_RUNTIME_CONTEXTS = ['user', 'ci'] as const
 
 // Carried from the v1 module unchanged. Retune when a new coding agent shows up in the wild; the
 // `unknown` arm is what keeps an unrecognised one from needing a schema change to be reported.

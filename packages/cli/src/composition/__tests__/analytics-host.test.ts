@@ -249,7 +249,7 @@ describe('composeAnalyticsHost', () => {
     const transport = recordingTransport()
     const resolveIdentity = vi.fn(async () => ({
       distinctId: 'u_test-identity',
-      runtimeContext: 'agent' as const,
+      runtimeContext: 'user' as const,
       agentProduct: 'claude_code' as const,
       isInternal: true,
     }))
@@ -274,7 +274,7 @@ describe('composeAnalyticsHost', () => {
       'u_test-identity',
     ])
     expect(transport.sent.every((payload) => payload.isInternal === true)).toBe(true)
-    expect(host.properties.runtime_context).toBe('agent')
+    expect(host.properties.runtime_context).toBe('user')
     expect(host.properties.agent_product).toBe('claude_code')
     expect(host.properties.surface).toBe('mcp')
     expect(host.properties.$process_person_profile).toBe(false)

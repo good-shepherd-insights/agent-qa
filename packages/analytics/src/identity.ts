@@ -1,4 +1,4 @@
-// The anonymous installation identity (re-homed from core in 398-06; 447-02 made creation race-safe).
+// The anonymous installation identity (re-homed from core in 398-06; race-safe since 447-02).
 // The record is `{distinctId, is_internal}` at the carried path and nothing else (prohibition P3).
 // Whether anything is sent is `compose.ts`'s call; this module only answers "who, anonymously".
 
@@ -9,17 +9,9 @@ import { dirname, join } from 'node:path'
 import { idAgent } from 'id-agent'
 import { ANALYTICS_AGENT_PRODUCTS, ANALYTICS_RUNTIME_CONTEXTS } from './events.js'
 
-/**
- * The runtime contexts and agent products, read off the union's OWN vocabularies.
- *
- * Restating these as a second literal list is how the reported `agent_product` and the accepted
- * `agent_product` drift apart: the union would keep refusing a value this module happily resolved,
- * and the only symptom would be events silently failing to parse. `unknown` is excluded from the
- * detected set on purpose — it is the union's arm for an agent nobody has taught this table about,
- * never something the detector below returns.
- */
+// Read off the union's own vocabularies, so a resolved value is always one the union accepts.
 export type AnalyticsRuntimeContext = (typeof ANALYTICS_RUNTIME_CONTEXTS)[number]
-export type AnalyticsAgentProduct = Exclude<(typeof ANALYTICS_AGENT_PRODUCTS)[number], 'unknown'>
+export type AnalyticsAgentProduct = (typeof ANALYTICS_AGENT_PRODUCTS)[number]
 
 /** The id scheme, named so a cell can assert it rather than a reader having to trust a comment. */
 export const ANALYTICS_USER_ID_PREFIX = 'u'
@@ -46,6 +38,7 @@ type StoreRead =
 
 export interface ResolveAnalyticsIdentityOptions {
   env?: Record<string, string | undefined>
+  ci?: boolean
   identityPath?: string
   homeDir?: string
 }
@@ -133,33 +126,20 @@ export function resolveAnalyticsAgentProduct(
   if (env.CODEX_SANDBOX !== undefined) return 'codex'
   if (env.CLINE_ACTIVE !== undefined) return 'cline'
   if (env.AGENT === 'amp') return 'amp'
+  if (typeof env.AGENT === 'string' && env.AGENT.length > 0) return 'unknown'
   return undefined
 }
 
-function hasUnknownAgentSignal(env: Record<string, string | undefined>): boolean {
-  return typeof env.AGENT === 'string' && env.AGENT.length > 0
-}
-
-// The one entry point a composition root calls. The CI and agent arms touch no file.
+// The one entry point a composition root calls. The host decides `ci` (D-11); a CI resolution is a
+// fresh in-memory id and touches no file (D-04).
 export async function resolveAnalyticsIdentity(
   options: ResolveAnalyticsIdentityOptions = {},
 ): Promise<ResolvedAnalyticsIdentity> {
   const env = options.env ?? process.env
-  if (env.CI === 'true') {
-    return { distinctId: 'u_CI', runtimeContext: 'ci' }
-  }
-
   const agentProduct = resolveAnalyticsAgentProduct(env)
-  if (agentProduct) {
-    return {
-      distinctId: `u_AGENT-${agentProduct}`,
-      runtimeContext: 'agent',
-      agentProduct,
-    }
-  }
-
-  if (hasUnknownAgentSignal(env)) {
-    return { distinctId: 'u_AGENT', runtimeContext: 'agent' }
+  const attribution = agentProduct === undefined ? {} : { agentProduct }
+  if (options.ci === true) {
+    return { distinctId: 'ci_' + randomUUID(), runtimeContext: 'ci', ...attribution }
   }
 
   const identityPath = options.identityPath ?? getAnalyticsIdentityPath(env, options.homeDir)
@@ -173,5 +153,6 @@ export async function resolveAnalyticsIdentity(
     distinctId: stored.record.distinctId,
     runtimeContext: 'user',
     isInternal: stored.record.is_internal,
+    ...attribution,
   }
 }

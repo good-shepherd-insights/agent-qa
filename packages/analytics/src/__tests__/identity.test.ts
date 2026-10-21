@@ -153,32 +153,12 @@ describe('the identity store round-trip', () => {
     expect((await stat(identityPath)).mode & 0o777).toBe(0o600)
   })
 
-  it('short-circuits CI and agent contexts without touching the store at all', async () => {
-    const ci = await resolveAnalyticsIdentity({ env: { CI: 'true', XDG_DATA_HOME: dataHome } })
-    expect(ci).toEqual({ distinctId: 'u_CI', runtimeContext: 'ci' })
-
-    const agent = await resolveAnalyticsIdentity({
-      env: { CLAUDECODE: '1', XDG_DATA_HOME: dataHome },
-    })
-    expect(agent).toEqual({
-      distinctId: 'u_AGENT-claude_code',
-      runtimeContext: 'agent',
-      agentProduct: 'claude_code',
-    })
-
-    const unknownAgent = await resolveAnalyticsIdentity({
-      env: { AGENT: 'something-new', XDG_DATA_HOME: dataHome },
-    })
-    expect(unknownAgent).toEqual({ distinctId: 'u_AGENT', runtimeContext: 'agent' })
-
-    // No id was minted for any of the three, so no store exists to leak one.
-    expect(existsSync(identityPath)).toBe(false)
-  })
-
   it('detects the agent products the carried table names', () => {
     expect(resolveAnalyticsAgentProduct({ CURSOR_AGENT: '1' })).toBe('cursor')
     expect(resolveAnalyticsAgentProduct({ AGENT: 'goose' })).toBe('goose')
     expect(resolveAnalyticsAgentProduct({ AGENT: 'amp' })).toBe('amp')
+    expect(resolveAnalyticsAgentProduct({ AGENT: 'something-new' })).toBe('unknown')
+    expect(resolveAnalyticsAgentProduct({ AGENT: '' })).toBeUndefined()
     expect(resolveAnalyticsAgentProduct({})).toBeUndefined()
   })
 })
