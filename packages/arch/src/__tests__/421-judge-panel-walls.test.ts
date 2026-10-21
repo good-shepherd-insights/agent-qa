@@ -30,12 +30,13 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 // @vostride/agent-qa-safety-local edge was REMOVED with the replay and judge calibration audit
 // scopes, its last imports. Both digests were recomputed by this wall's own expression; no edge
 // was added.
+// Re-blessed 2026-10-21 for cli only (446-20, D-35/D-36): @modelcontextprotocol/server 2.0.0 -> 2.3.1.
 const dependencyPins = {
   eval: '3dfdd67ac8febb33dc7f7d027408677ff5f7852b02c6df15d221b5395c9b5371',
   'eval-local': 'ff1e17649560aefa89a3be3e75ff96ac2943502ff2d83d4ce7c6fc3614885ad4',
   'knowledge-local': 'a88a5eaa4fb407dbfc466da9ffae57698962ca15abf7b3bceb800ee6c4a57243',
   'agent-local': 'b2e720e8c49b10e5882523a1cffdfa8e502619dd3e1e799e1078eba3dc6d01d0',
-  cli: '0ac4708d4e07a047da6119c6e393ee62432597aff39b2ce8786d9f4a48445f0a',
+  cli: 'e85aea694cee7b3a437f33076e6718995bfd13d21a80f20a85164e3607d15624',
 }
 const internalPins: Record<string, string> = {
   eval: 'f09db8107041e27d15929be67224e779d7ecaca3b45594f7c63cee45c9c200ed',
