@@ -12,7 +12,7 @@
 //      zero-network differential cannot see this, because nothing goes near a socket.
 
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -640,5 +640,103 @@ describe('C447-IDENTITY-BOUND', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+const CI_MARKERS = [
+  'CI',
+  'GITHUB_ACTIONS',
+  'GITLAB_CI',
+  'CIRCLECI',
+  'BUILDKITE',
+  'JENKINS_URL',
+  'TRAVIS',
+  'APPVEYOR',
+  'TF_BUILD',
+  'CODEBUILD_BUILD_ID',
+  'DRONE',
+  'SEMAPHORE',
+  'BITBUCKET_BUILD_NUMBER',
+  'TEAMCITY_VERSION',
+]
+
+function clearCiMarkers(): void {
+  for (const name of CI_MARKERS) vi.stubEnv(name, '')
+}
+
+const c447Roots: string[] = []
+
+afterAll(() => {
+  for (const root of c447Roots) rmSync(root, { recursive: true, force: true })
+})
+
+describe('C447-CI-DETECTOR', () => {
+  it('the host classifies CI through the execution-context detector and passes it to identity resolution', async () => {
+    const arms: {
+      readonly label: string
+      readonly markers: Readonly<Record<string, string>>
+      readonly env?: Readonly<Record<string, string>>
+      readonly ci: boolean
+    }[] = [
+      { label: 'markers cleared', markers: {}, ci: false },
+      { label: 'CI=1', markers: { CI: '1' }, ci: true },
+      { label: 'JENKINS_URL alone', markers: { JENKINS_URL: 'http://ci.invalid' }, ci: true },
+      { label: 'CI only in the host env input', markers: {}, env: { CI: 'true' }, ci: false },
+    ]
+
+    for (const arm of arms) {
+      clearCiMarkers()
+      for (const [name, value] of Object.entries(arm.markers)) vi.stubEnv(name, value)
+      const resolveIdentity = vi.fn(async () => ({
+        distinctId: 'u_ci-detector-cell',
+        runtimeContext: 'user' as const,
+      }))
+
+      const host = await composeAnalyticsHost({
+        surface: 'cli',
+        env: arm.env ?? {},
+        projectKey: 'phc_cell',
+        posthogTransportFactory: () => ({ capture: () => {}, flush: () => {}, shutdown: () => {} }),
+        resolveIdentity,
+      })
+
+      expect(host.transportKind, arm.label).toBe('posthog')
+      expect(resolveIdentity, arm.label).toHaveBeenCalledTimes(1)
+      expect(resolveIdentity, arm.label).toHaveBeenCalledWith(
+        expect.objectContaining({ ci: arm.ci }),
+      )
+    }
+  })
+})
+
+describe('C447-CI-DISTINCT', () => {
+  it('two CI compositions carry two different ci_ ids, each one stable across its own events', async () => {
+    vi.stubEnv('CI', '1')
+    const home = mkdtempSync(join(tmpdir(), 'agent-qa-447-ci-home-'))
+    c447Roots.push(home)
+
+    const ids: string[] = []
+    for (let composition = 0; composition < 2; composition += 1) {
+      const transport = recordingTransport()
+      const host = await composeAnalyticsHost({
+        surface: 'cli',
+        env: { XDG_DATA_HOME: home },
+        transportOverride: transport,
+      })
+      host.port.capture(analyticsEvent(host, 'agent-qa.explain.answered', { cited_row_count: 1 }))
+      host.port.capture(analyticsEvent(host, 'agent-qa.explain.answered', { cited_row_count: 2 }))
+      await host.flush()
+
+      expect(transport.sent).toHaveLength(2)
+      const [first, second] = transport.sent.map((payload) => payload.distinctId)
+      expect(first).toMatch(/^ci_/)
+      expect(second).toBe(first)
+      expect(host.properties.runtime_context).toBe('ci')
+      ids.push(first as string)
+    }
+
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).not.toBe(ids[1])
+    expect(existsSync(join(home, 'agent-qa'))).toBe(false)
   })
 })
