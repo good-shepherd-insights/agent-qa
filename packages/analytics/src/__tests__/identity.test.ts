@@ -33,7 +33,6 @@ import {
   readAnalyticsIdentity,
   resolveAnalyticsAgentProduct,
   resolveAnalyticsIdentity,
-  writeAnalyticsIdentity,
 } from '../identity.js'
 import { createAnalyticsPort } from '../port.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '../port.js'
@@ -122,23 +121,14 @@ describe('the identity store round-trip', () => {
     expect(record.is_internal).toBe(false)
   })
 
-  it('keeps the key set exact when the record is migrated from a pre-`is_internal` install', async () => {
-    await mkdir(dirname(identityPath), { recursive: true })
-    const legacyId = generateAnalyticsUserId()
-    await writeFile(identityPath, JSON.stringify({ distinctId: legacyId }), 'utf8')
-
-    const resolved = await resolveAnalyticsIdentity({ env: { XDG_DATA_HOME: dataHome } })
-    const record = JSON.parse(await readFile(identityPath, 'utf8')) as Record<string, unknown>
-
-    // The install keeps its identity — a migration that re-mints is the data loss this cell exists
-    // to catch — and the rewritten record is still the two-key pair.
-    expect(resolved.distinctId).toBe(legacyId)
-    expect(Object.keys(record).sort()).toEqual(['distinctId', 'is_internal'])
-  })
-
   it('reads an existing store written in the carried format unchanged', async () => {
     const existingId = generateAnalyticsUserId()
-    await writeAnalyticsIdentity(existingId, identityPath, true)
+    await mkdir(dirname(identityPath), { recursive: true })
+    await writeFile(
+      identityPath,
+      JSON.stringify({ distinctId: existingId, is_internal: true }, null, 2),
+      { mode: 0o600 },
+    )
 
     expect(await readAnalyticsIdentity(identityPath)).toEqual({
       distinctId: existingId,

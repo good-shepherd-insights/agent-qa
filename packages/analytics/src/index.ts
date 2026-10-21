@@ -80,7 +80,7 @@ export type { AgentQaAnalyticsEvent, AnalyticsEventName } from './events.js'
 export { maskEventForSend } from './masking-seam.js'
 export type { AnalyticsMaskingContext } from './masking-seam.js'
 
-// The anonymous identity store, re-homed from `core` with its mechanics intact (plan 06, D-17).
+// The anonymous identity store, re-homed from `core` (plan 06, D-17).
 // The store functions are published rather than hidden behind `resolveAnalyticsIdentity` because a
 // host that wants to REPORT the identity (a doctor command, a `--verbose` line) should read the
 // same record the resolver reads instead of re-deriving the path its own way.
@@ -92,7 +92,6 @@ export {
   readAnalyticsIdentity,
   resolveAnalyticsAgentProduct,
   resolveAnalyticsIdentity,
-  writeAnalyticsIdentity,
 } from './identity.js'
 export type {
   AnalyticsAgentProduct,
