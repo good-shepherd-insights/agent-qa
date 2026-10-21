@@ -1,12 +1,12 @@
 // The analytics port (Phase 398 plan 03, D-17 / D-19 · ANLY-01).
 //
 // WHAT SURVIVED THE RE-DERIVATION, and what did not. The v1 module's transport split — a small
-// `capture`/`flush` interface with a noop implementation and an injectable factory, every call
-// wrapped best-effort — was the one part of it that was right, and it is carried over here
-// deliberately. What is NOT carried: the `if (this.disabled) return` guard inside `capture()`, the
-// per-instance privacy decision taken in the constructor, the module-level `defaultAnalyticsService`
-// singleton, and the ambient `captureAnalytics`/`flushAnalytics` helpers that let any caller in the
-// process reach telemetry without ever naming it as a dependency. The opt-out decision lives in
+// `capture`/`flush` interface with an injectable factory, every call wrapped best-effort — was the
+// one part of it that was right, and it is carried over here deliberately. What is NOT carried:
+// the `if (this.disabled) return` guard inside `capture()`, the per-instance privacy decision taken
+// in the constructor, the module-level `defaultAnalyticsService` singleton, and the ambient
+// `captureAnalytics`/`flushAnalytics` helpers that let any caller in the process reach telemetry
+// without ever naming it as a dependency. The opt-out decision lives in
 // `compose.ts` and nowhere else; there is no ambient anything here.
 //
 // WHY `capture` RETURNS `void`. A host emits an event on a path it does not want to await — a run
@@ -43,7 +43,7 @@ export interface AnalyticsCapturePayload {
 }
 
 /**
- * The wire side. Implementations may be synchronous (noop, test sinks) or asynchronous (PostHog);
+ * The wire side. Implementations may be synchronous (test sinks) or asynchronous (PostHog);
  * the port normalises both and swallows either one's failures.
  *
  * `flush` and `shutdown` are separate on purpose. A host flushes at natural boundaries — a run
@@ -71,7 +71,8 @@ export interface AnalyticsPort<TEvent extends AnalyticsEventEnvelope = Analytics
 }
 
 export interface AnalyticsPortOptions {
-  readonly transport: AnalyticsTransport
+  /** Absent when opted out or keyless: the port then drops every capture (447-04, D-08). */
+  readonly transport?: AnalyticsTransport
   readonly identity: AnalyticsIdentityResolver
   /**
    * How long `shutdown` will wait for the transport before releasing its caller (T-398-35 / WR-02).
@@ -99,7 +100,7 @@ export const DEFAULT_ANALYTICS_SHUTDOWN_TIMEOUT_MS = 2_000
  * trade the whole package is built around.
  */
 class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements AnalyticsPort<TEvent> {
-  private readonly transport: AnalyticsTransport
+  private readonly transport: AnalyticsTransport | undefined
   private readonly identity: AnalyticsIdentityResolver
   private readonly shutdownTimeoutMs: number
   private inFlight: Promise<void>[] = []
@@ -127,11 +128,13 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
    * reds; that is the guard this method actually has.
    */
   capture(event: TEvent): void {
+    const transport = this.transport
+    if (transport === undefined) return
     this.capturedSinceFlush += 1
     this.inFlight.push(
       (async () => {
         const identity = await this.identity()
-        await this.transport.capture({
+        await transport.capture({
           distinctId: identity.distinctId,
           ...(identity.isInternal === true ? { isInternal: true } : {}),
           event,
@@ -148,6 +151,8 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
    * and the promise still resolves.
    */
   async flush(): Promise<void> {
+    const transport = this.transport
+    if (transport === undefined) return
     try {
       const pending = this.inFlight
       const captured = this.capturedSinceFlush
@@ -156,7 +161,7 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
 
       await Promise.all(pending)
       if (captured === 0) return
-      await this.transport.flush()
+      await transport.flush()
     } catch {
       // Best-effort.
     }
@@ -168,6 +173,8 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
    * timer because the session happened to be silent" keeps a process alive.
    */
   async shutdown(): Promise<void> {
+    const transport = this.transport
+    if (transport === undefined) return
     // THE TIME BOUND (T-398-35 / review WR-02). Everything below is still best-effort; what the
     // race adds is that "best effort" cannot mean "forever". The transport is ASKED to wind down
     // and given its budget — the bound releases the CALLER, it does not skip the drain, and events
@@ -180,7 +187,7 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
       await Promise.race([
         (async () => {
           await this.flush()
-          await this.transport.shutdown()
+          await transport.shutdown()
         })(),
         new Promise<void>((resolve) => {
           timer = setTimeout(resolve, this.shutdownTimeoutMs)

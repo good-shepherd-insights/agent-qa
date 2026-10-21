@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { composeAnalytics } from '../compose.js'
-import { NoopTransport } from '../transports.js'
 import { PACKAGE_SRC_DIR, packageSourceFiles } from './source-scan.js'
 import type { ComposeAnalyticsOptions } from '../compose.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from '../port.js'
@@ -66,8 +65,8 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
     const composed = composeAnalytics({ config, projectKey: ENABLED_KEY, transportOverride: sink })
 
     expect(composed.optedOut).toBe(optedOut)
-    expect(composed.transportKind).toBe(optedOut ? 'noop' : 'posthog')
-    expect(composed.transport instanceof NoopTransport).toBe(optedOut)
+    expect(composed.transportKind).toBe(optedOut ? 'none' : 'posthog')
+    expect(composed.transport === undefined).toBe(optedOut)
   })
 
   // THE STRUCTURAL CLAIM, and the one a `disabled` boolean cannot make. It is not that the PostHog
@@ -82,7 +81,7 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
     })
 
     expect(spy.calls).toEqual([])
-    expect(composed.transport instanceof NoopTransport).toBe(true)
+    expect(composed.transport === undefined).toBe(true)
   })
 
   it('opted in constructs the PostHog transport exactly once, with the resolved key and host', () => {
@@ -114,7 +113,7 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
 
     expect(sink.captured).toEqual([])
     expect(sink.flushCount).toBe(0)
-    expect(composed.transport instanceof NoopTransport).toBe(true)
+    expect(composed.transport === undefined).toBe(true)
   })
 
   // An empty project key is not an opt-out — it is nothing to send TO. Kept distinct because
@@ -125,7 +124,7 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
 
     expect(composed.optedOut).toBe(false)
     expect(composed.optOutReasons).toEqual([])
-    expect(composed.transportKind).toBe('noop')
+    expect(composed.transportKind).toBe('none')
     expect(spy.calls).toEqual([])
   })
 })

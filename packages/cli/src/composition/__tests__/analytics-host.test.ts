@@ -215,7 +215,7 @@ describe('composeAnalyticsHost', () => {
     await host.flush()
 
     expect(host.optedOut).toBe(false)
-    expect(host.transportKind).toBe('noop')
+    expect(host.transportKind).toBe('none')
     expect(resolveIdentity).not.toHaveBeenCalled()
   })
 

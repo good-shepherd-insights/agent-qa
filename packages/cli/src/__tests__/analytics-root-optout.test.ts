@@ -8,11 +8,11 @@
 // every existing cell stayed green. These cells enter at the HOST layer — the shipped command's own
 // action — which is the only altitude from which a dropped argument is visible.
 //
-// THE VACUITY TRAP, AND WHY EVERY CELL ASSERTS `optOutReasons`. `composeAnalytics` returns the noop
+// THE VACUITY TRAP, AND WHY EVERY CELL ASSERTS `optOutReasons`. `composeAnalytics` returns no
 // transport in TWO states: the caller opted out, AND the PostHog project key is blank. The
 // committed key file ships blank and the release pipeline fills it, so in this test process
-// `transportKind` is `'noop'` ALREADY, on every host, with or without a config. A cell asserting
-// only `transportKind === 'noop'` would be GREEN ON THE BROKEN BUILD. `optOutReasons` is computed
+// `transportKind` is `'none'` ALREADY, on every host, with or without a config. A cell asserting
+// only `transportKind === 'none'` would be GREEN ON THE BROKEN BUILD. `optOutReasons` is computed
 // by `composeAnalytics` purely from the config, independently of any project key, and carries
 // `'config-privacy'` exactly when `config.analytics.privacy === true` REACHED the decision. Every
 // cell below therefore asserts the reason on the privacy arm and its ABSENCE on a
@@ -240,7 +240,7 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
       + 'declaration was dropped between the config file and composeAnalytics',
     ).toContain('config-privacy')
     expect(host?.optedOut).toBe(true)
-    expect(host?.transportKind).toBe('noop')
+    expect(host?.transportKind).toBe('none')
     expect(
       recorder.inputs[0]?.config,
       `${CHAT_ROOT}'s analytics composition root handed no config to the one opt-out decision, `
@@ -290,7 +290,7 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
       + 'that DECLARES analytics.privacy: true and merely fails schema validation for an '
       + 'unrelated reason. The declaration was discarded and telemetry was composed against it.',
     ).toContain('config-privacy')
-    expect(host?.transportKind).toBe('noop')
+    expect(host?.transportKind).toBe('none')
     // And the surface still opened — the fix reads the document, it does not start refusing it.
     expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
   })
@@ -369,7 +369,7 @@ describe('the init composition root honours analytics.privacy (398-14, D-19)', (
       + 'reason — the declaration in the directory it is scaffolding never reached composeAnalytics',
     ).toContain('config-privacy')
     expect(host?.optedOut).toBe(true)
-    expect(host?.transportKind).toBe('noop')
+    expect(host?.transportKind).toBe('none')
     expect(recorder.inputs[0]?.config).toBeDefined()
   })
 
@@ -405,7 +405,7 @@ describe('the init composition root honours analytics.privacy (398-14, D-19)', (
       + 'unrelated reason. The declaration was discarded and init events were composed against it.',
     ).toContain('config-privacy')
     expect(host?.optedOut).toBe(true)
-    expect(host?.transportKind).toBe('noop')
+    expect(host?.transportKind).toBe('none')
     // Availability half: it still scaffolded.
     expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
   })
@@ -448,7 +448,7 @@ describe('the init composition root honours analytics.privacy (398-14, D-19)', (
  * be a finding about the assertion, not about the daemon.
  *
  * No `vi.mock` of the analytics binding: the composed host is read straight off the shipped root
- * through the `runHost` dep it is handed to. The transport is `noop` on BOTH arms here (the
+ * through the `runHost` dep it is handed to. The transport kind is `none` on BOTH arms here (the
  * committed project key is blank and this root admits no key seam), which is exactly why
  * `optOutReasons` and not `transportKind` is the discriminator.
  */
@@ -507,7 +507,7 @@ describe('the daemon root — the control that shows the assertion discriminates
 
     expect(host?.optOutReasons).toContain('config-privacy')
     expect(host?.optedOut).toBe(true)
-    expect(host?.transportKind).toBe('noop')
+    expect(host?.transportKind).toBe('none')
   })
 
   it('does NOT report the config reason when no analytics block is declared', async () => {

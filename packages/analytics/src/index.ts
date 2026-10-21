@@ -109,7 +109,7 @@ export type {
   AnalyticsTriggerSource,
 } from './run-subscriber.js'
 
-export { createPosthogTransport, NoopTransport } from './transports.js'
+export { createPosthogTransport } from './transports.js'
 export type {
   PosthogAnalyticsClient,
   PosthogTransportFactory,

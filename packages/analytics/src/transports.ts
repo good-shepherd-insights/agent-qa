@@ -1,45 +1,12 @@
-// The two transports (Phase 398 plan 03, D-17 / D-19 · ANLY-01).
-//
-// NEITHER TRANSPORT READS THE ENVIRONMENT, and neither one decides anything. That is the whole
-// content of D-19 at this layer: by the time a transport exists, the opt-out question has already
-// been answered in `compose.ts`, and the answer is expressed by WHICH of these two objects was
-// constructed. A `disabled` flag checked inside a send path — the v1 shape — leaves a live PostHog
-// client sitting in the process one branch away from firing.
-//
-// There is no module-level state in this file. Every value a transport needs arrives through its
-// constructor argument.
+// The PostHog transport (Phase 398 plan 03, D-17 / D-19 · ANLY-01). It reads no environment and
+// decides nothing: the opt-out was answered in `compose.ts`, and the answer is whether a transport
+// exists at all (447-04, D-08). There is no module-level state in this file.
 
 import { PostHog } from 'posthog-node'
 import type { PostHogOptions } from 'posthog-node'
 import { maskEventForSend } from './masking-seam.js'
 import type { AnalyticsMaskingContext } from './masking-seam.js'
 import type { AnalyticsCapturePayload, AnalyticsTransport } from './port.js'
-
-/**
- * Records nothing and counts calls.
- *
- * The counters are the point: "opted out" has to be observable as ZERO send attempts rather than as
- * an absent assertion, and a transport that silently discards is indistinguishable from a transport
- * nobody called. Plan 06's network differential asserts the same claim one layer down, at the
- * socket; this one lets a composition-level cell see it without a wire at all.
- */
-export class NoopTransport implements AnalyticsTransport {
-  captureCount = 0
-  flushCount = 0
-  shutdownCount = 0
-
-  capture(): void {
-    this.captureCount += 1
-  }
-
-  flush(): void {
-    this.flushCount += 1
-  }
-
-  shutdown(): void {
-    this.shutdownCount += 1
-  }
-}
 
 /**
  * The subset of the PostHog client this transport uses.
