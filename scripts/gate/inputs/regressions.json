@@ -52,12 +52,6 @@
     {
       "runner": "vitest",
       "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
-      "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: in-repo demo-project reads stay inside the root",
-      "origin": "434 D-14"
-    },
-    {
-      "runner": "vitest",
-      "file": "packages/arch/src/__tests__/434-no-super-repo-reads.test.ts",
       "fullName": "C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: this file matches none of its own rules",
       "origin": "434 D-14"
     },

@@ -14,8 +14,8 @@
  * ONLY CALL AND `new` EXPRESSIONS ARE READ, through the TypeScript AST, plus declared names for
  * the parent-root naming rule. Comments never reach the AST, and a string held as an object
  * property value is data rather than a call argument, so neither can be a hit. Nor is the operand
- * of an expectation matcher: it is compared with what the code produced, never resolved. The
- * in-repo demo project is inside the root and is not flagged.
+ * of an expectation matcher: it is compared with what the code produced, never resolved.
+ * A path that climbs no higher than the repository root is inside it and is not flagged.
  *
  * Every needle in the planted sources below is assembled from two halves at run time, so this
  * file's raw text spells none of them and the self-match cell scans it like any other file.
@@ -218,6 +218,7 @@ describe('C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent
     expect(plantedRules(`new URL('${UP.repeat(5)}x', import.meta.url)`)).toEqual(['R-URL'])
     expect(plantedRules(`new URL('${UP.repeat(4)}x', import.meta.url)`)).toEqual([])
     expect(plantedRules(`resolve(${fileDir}, '${UP.repeat(5)}x')`)).toEqual(['R-CLIMB'])
+    expect(plantedRules(`resolve(${fileDir}, '${UP.repeat(4)}x')`)).toEqual([])
     expect(plantedRules(`resolve(${'AGENT_QA'}_ROOT, '..')`)).toEqual(['R-ROOT-UP'])
     expect(plantedRules(`const ${'SUPER'}_ROOT = '/tmp'`)).toEqual(['R-SUPER'])
     expect(plantedRules(`read('${UP}${DEMO}/init/a.json')`)).toEqual(['R-DEMO'])
@@ -237,19 +238,6 @@ describe('C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent
     for (const file of Object.keys(ALLOWED_ESCAPES)) {
       expect(UNIVERSE, file).toContain(file)
       expect(REAL_HITS.filter(hit => hit.file === file).length, file).toBeGreaterThan(0)
-    }
-  })
-
-  it('C434-NO-SUPER-REPO-READS: in-repo demo-project reads stay inside the root', () => {
-    const project = `${UP.repeat(4)}${DEMO}-project`
-    expect(plantedRules(`readFileSync(new URL('${project}/agent-qa.config.yaml', import.meta.url))`)).toEqual([])
-    expect(plantedRules(`resolve(dirname(fileURLToPath(import.meta.url)), '${project}')`)).toEqual([])
-    for (const file of [
-      'packages/dashboard-ui/src/lib/__tests__/runtime-paths-static.test.ts',
-      'packages/dashboard-ui/src/lib/__tests__/public-naming-static.test.ts',
-    ]) {
-      expect(UNIVERSE, file).toContain(file)
-      expect(REAL_HITS.filter(hit => hit.file === file).map(describeHit), file).toEqual([])
     }
   })
 
