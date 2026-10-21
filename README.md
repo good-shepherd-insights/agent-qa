@@ -8,8 +8,6 @@
   <p>
     <a href="https://vostride.com/docs/agent-qa">Docs</a>
     ·
-    <a href="https://github.com/vostride/agent-qa/tree/main/demo-project">Demo</a>
-    ·
     <a href="https://github.com/vostride/agent-qa/issues">Issues</a>
   </p>
 </div>
