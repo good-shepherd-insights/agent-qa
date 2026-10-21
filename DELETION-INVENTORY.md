@@ -7143,3 +7143,175 @@ and the unregistered PARITY cell's `daemon.job.completed` key-set pin lists `age
 The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
 verdict are recorded in `.planning/phases/447-analytics-identity-and-privacy/447-RECORD.md`
 § Gate, and the SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-22 — Phase 447.1: Remove demo-project
+
+This section appends to the register and rewrites no earlier section. Phase 447.1 deleted
+`demo-project/`, a sample workspace that read as an official, working agent-qa demo and was not
+one (D-01), and every reference to it outside this file, with no census cell in its place (D-02).
+The tests that read it now inline what they need or check the config `agent-qa init` writes
+(D-03); the C434 cell that vouched for it left with its gate row, and its one generic check moved
+into the registered rule cell (D-04); the two oddly named fixtures became
+`test-fixtures/eval-workspace` (D-06) and `test-fixtures/legacy-handoff` (D-07); and the README
+header lost its Demo link (D-08). The decisions are in
+`.planning/phases/447.1-remove-demo-project/447.1-CONTEXT.md`, and the requirement is EVAL-07
+(`.planning/REQUIREMENTS.md` reconciliation 28). Written by 447.1-05 on 2026-10-22.
+
+### How this inventory is measured
+
+Baseline `1c9fd96f4` (447's final SHA, where 447.1 began). Closing SHA `3e8dc7027` (447.1-04's
+commit, the parent of the commit that adds this section). `git -C agent-qa diff -M --shortstat
+1c9fd96f4 3e8dc7027`: 228 files changed, 60 insertions, 579 deletions. The 24 files of
+`demo-project/` account for 461 deletions and the 183 moved fixture files for none; the other 21
+files (`README.md`, `scripts/gate/inputs/regressions.json` and 19 files of test code under
+`__tests__` directories) for +60/−118. No file under `packages/` outside a `__tests__` directory
+changed. `--diff-filter=D -M`: the 24 files of `demo-project/` and
+`packages/dashboard-ui/src/lib/__tests__/public-naming-static.test.ts`. `--diff-filter=R -M`: 184
+renames, the 181 files of `test-fixtures/demo-init/` to `test-fixtures/eval-workspace/`, the 2 of
+`test-fixtures/436-pre-change/` to `test-fixtures/legacy-handoff/`, and
+`packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts` to
+`packages/cli/src/__tests__/eval-workspace-fixture-manifest.test.ts`. `--diff-filter=A`: none. Six
+commits up to the closing SHA and this section's commit, seven in all, every one signed
+(`%G?` = `G`), none with an attribution line. No product source, `docs/` path, fixture byte,
+`MANIFEST.json` or pinned hash changed: each fixture keeps its git tree object (`1b92835b0` for
+`eval-workspace`, `43590181e` for `legacy-handoff`). The removed members below are read from each
+deleting commit's diff (`git -C agent-qa show --unified=0 <sha>`), not transcribed from a summary.
+Names are at `1c9fd96f4`.
+
+### What was deleted
+
+| Member (file at `1c9fd96f4`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `demo-project/`, its 24 tracked files listed below | a sample workspace made to try agent-qa early on: a config and a release config, a hooks file and five hook scripts, a suite, numbered web lanes for hooks and `runJs`, three acceptance chains, the W3C "BAD" accessibility lane and its script, the Android and iOS Settings lanes, and a release action pack with its preflight script | `6cae69edf` (447.1-02) | none (D-02: no census cell, by owner decision; the one-time search is in `447.1-RECORD.md` § No-reference search) |
+| `packages/dashboard-ui/src/lib/__tests__/public-naming-static.test.ts`, one cell: `public naming static contract uses agent-qa in public demo fixture copy` | read four demo files and checked their product-name wording | `9ea61a005` (447.1-02) | none needed: it checked only wording inside the deleted files |
+| four demo cells of `packages/dashboard-ui/src/lib/__tests__/runtime-paths-static.test.ts`: `runtime path static contract keeps the demo config cache under the runtime root`, `runtime path static contract keeps the retired memory config surface out of the demo configs (Phase 373, KDIR-03)`, `runtime path static contract keeps the demo config on the canonical workspace sample` and `runtime path static contract keeps public mobile app-state examples and removed knobs guarded`, with the `demoConfig` and `releaseConfig` reads and the `readFiles` helper | checked the demo configs for the cache under `.agent-qa`, no `memory:` or `agentRules`, the workspace globs and files, `appState: preserve` and no `actionProofs` | `05a9f141d` (447.1-01); the fourth cell's product check stayed under a new title (below) | the init-config cell `init generated config schema compatibility writes the %s config with the cache under .agent-qa, the canonical workspace and preserved app state, and no retired key or reconciliation` (four cases, unregistered) |
+| the cell `C434-NO-SUPER-REPO-READS: in-repo demo-project reads stay inside the root` in `packages/arch/src/__tests__/434-no-super-repo-reads.test.ts`, and its gate row | planted two reads four levels up into the demo and checked neither was flagged, and that the two dashboard-ui files reading the demo were in the scan universe with no hit | `9ea61a005` (447.1-02) | its in-root `resolve()` check now sits in the registered rule cell `C434-NO-SUPER-REPO-READS: every detection rule fires on its planted shape and ignores comments and data strings` |
+| the `demo-project/agent-qa.config.yaml` entry of the strategy cell's config list (`packages/agent-local/src/__tests__/strategy-config-unreachable.test.ts`) | had the registered strategy cell check that the demo config names no reconciliation | `05a9f141d` (447.1-01) | the init-config cell's `reconcil` assertion; the strategy cell for the fixture config |
+
+The directory's 24 tracked files, as `git -C agent-qa ls-tree -r --name-only 1c9fd96f4 demo-project`
+prints them:
+
+```
+demo-project/agent-qa.config.yaml
+demo-project/agent-qa.release.config.yaml
+demo-project/hooks.yaml
+demo-project/hooks/fetch-api-data.js
+demo-project/hooks/fetch-hn-top-story.js
+demo-project/hooks/generate-timestamp.sh
+demo-project/hooks/log-cleanup.sh
+demo-project/hooks/set-runtime-env.js
+demo-project/release-action-pack/upload-fixture.txt
+demo-project/scripts/lane-wai-bad.sh
+demo-project/scripts/release-action-preflight.mjs
+demo-project/suites/acceptance.suite.yaml
+demo-project/tests/fixtures/sample-upload.txt
+demo-project/tests/mobile/android-settings.yaml
+demo-project/tests/mobile/ios-settings.yaml
+demo-project/tests/web/38-hooks-demo.yaml
+demo-project/tests/web/40-hook-runjs-compare.yaml
+demo-project/tests/web/41-env-runjs-compare.yaml
+demo-project/tests/web/43-inline-hook-demo.yaml
+demo-project/tests/web/45-hook-and-runjs-prestep.yaml
+demo-project/tests/web/acceptance/capture-chain.yaml
+demo-project/tests/web/acceptance/hook-variable-chain.yaml
+demo-project/tests/web/acceptance/variable-resolution.yaml
+demo-project/tests/web/bad-a11y.yaml
+```
+
+Two more files went with the directory but were never tracked: `demo-project/.env` and
+`demo-project/.env.secrets.local`, both ignored and empty. They were removed from disk with `rm`
+and the directory with `rmdir` after `6cae69edf`; neither was ever staged.
+
+Of the deleted lines, only the C434 cell was a registered gate row's subject. The other deleted
+cells were unregistered: the `public-naming-static.test.ts` cell and three of the four
+`runtime-paths-static.test.ts` cells (the fourth was re-titled, below).
+
+### Changed with no member deleted
+
+Each read from its commit:
+
+| Before (at `1c9fd96f4`) | After | Commit | The cell that pins it |
+|---|---|---|---|
+| `init-config-schema.test.ts` parsed init's config for each platform but asserted none of what the demo-config cells meant | the module constant `CANONICAL_WORKSPACE` and a four-case `it.each` on `renderScaffoldConfigYaml(buildDefaultConfig(...))` for web, android, ios and web+android: the cache dir is `.agent-qa/cache`, the workspace is exactly the five keys `buildScaffoldConfig` writes, `use.mobile.appState` is `preserve` on every platform, and the written YAML holds no `memory:`, `agentRules`, `actionProofs` or `reconcil` | `80fe73102` (447.1-01) | `init generated config schema compatibility writes the %s config with the cache under .agent-qa, the canonical workspace and preserved app state, and no retired key or reconciliation` |
+| `runtime path static contract keeps public mobile app-state examples and removed knobs guarded` | `runtime path static contract keeps the removed noReset knob out of the YAML completions`, holding only its product check (`yamlCompletions` has no `noReset`) | `05a9f141d` (447.1-01) | itself (unregistered) |
+| the registered strategy cell checked two configs, the demo's and `test-fixtures/demo-init/agent-qa.config.yaml` | it checks the fixture config alone, now `test-fixtures/eval-workspace/agent-qa.config.yaml`, and its comment points to the CLI's init-config cell | `05a9f141d` (447.1-01); the path in `5a497b89e` (447.1-03) | `the seam exists, and exists only as a composition option is named in the composition input and in no configuration document` |
+| the registered C434 rule cell planted only climbs above the root | it also plants a `resolve()` exactly four levels up to the neutral target `x`, which must not be flagged, beside the five-level `R-CLIMB` case | `9ea61a005` (447.1-02) | `C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: every detection rule fires on its planted shape and ignores comments and data strings` |
+| the 434 test's header: "The in-repo demo project is inside the root and is not flagged." | "A path that climbs no higher than the repository root is inside it and is not flagged." | `9ea61a005` (447.1-02) | none (a comment) |
+| the authoring-scope `WORKSPACE_BLOCK` comment cited the demo config as the house shape, verbatim | it cites the config `agent-qa init` writes (`buildScaffoldConfig`), which the inline block matches | `05a9f141d` (447.1-01) | none (a comment); the init-config cell pins the scaffold |
+| the README header: Docs · Demo · Issues, with Demo linking to `github.com/vostride/agent-qa/tree/main/demo-project` | Docs · Issues, with no replacement link (D-08) | `6cae69edf` (447.1-02) | none (D-02) |
+| `test-fixtures/demo-init/` (181 files), read by `demo-init-fixture-manifest.test.ts` and seven other files | `test-fixtures/eval-workspace/`, the same tree object `1b92835b0`; the manifest test is `eval-workspace-fixture-manifest.test.ts`; the eight readers each changed one path segment: the manifest test, `judge-panel-acceptance.test.ts`, `promotion-host-proof.ts`, `promotion-posture.test.ts`, `commands/__tests__/eval-judge-calibrate.test.ts`, `judge-panel-contract.test.ts`, `judge-panel-tracer.test.ts` and `strategy-config-unreachable.test.ts` | `5a497b89e` (447.1-03) | the three `EVAL-WORKSPACE-FIXTURE` cells, against unchanged pinned hashes |
+| `test-fixtures/436-pre-change/` (2 files), read by six files | `test-fixtures/legacy-handoff/`, the same tree object `43590181e`; the six readers each changed one path segment: `436-pre-change-handoff.test.ts`, `436-runtime-key-sets.test.ts`, `438-key-sets.test.ts`, `439-key-sets.test.ts`, `446-requested-dialog-handoff.test.ts` and the `join` segment in `router.test.ts` | `3e8dc7027` (447.1-04) | the five `C436-PRE-CHANGE-HANDOFF` cells |
+
+Comments that the changes made false were corrected in the same commits (the strategy cell's,
+the authoring-scope comment and the 434 header).
+
+No ledger was regenerated and the 397 and 398 regen scripts were not run: the phase changes no
+product source and no conformance file (planner decision 4).
+
+### Registered gate rows
+
+The 2554 rows listed at `1c9fd96f4` are still listed, unchanged and in order, except four.
+
+One row was delisted, the first delisting in this register: index 8, runner `vitest`, file
+`packages/arch/src/__tests__/434-no-super-repo-reads.test.ts`, origin `434 D-14`, full name
+`C434-NO-SUPER-REPO-READS — test code reads nothing outside the agent-qa root (434 D-14) C434-NO-SUPER-REPO-READS: in-repo demo-project reads stay inside the root`.
+It left in `9ea61a005` (447.1-02), the commit that deleted its cell, because the cell vouched only
+for the removed directory and the owner ruled that no reference to it remains (D-02, D-04).
+
+Three rows were re-titled in place by 447.1-03 (`5a497b89e`, same index, 13 to 15 at `1c9fd96f4`
+and 12 to 14 after the delisting; same runner `vitest` and origin `434 D-11`; file
+`packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts` became
+`packages/cli/src/__tests__/eval-workspace-fixture-manifest.test.ts`):
+
+- `DEMO-INIT-FIXTURE: the manifest lists every vendored file and nothing else` became `EVAL-WORKSPACE-FIXTURE: the manifest lists every vendored file and nothing else`
+- `DEMO-INIT-FIXTURE: every vendored file matches its manifest sha-256 and size` became `EVAL-WORKSPACE-FIXTURE: every vendored file matches its manifest sha-256 and size`
+- `DEMO-INIT-FIXTURE: the frozen judge contracts and config keep their pinned hashes` became `EVAL-WORKSPACE-FIXTURE: the frozen judge contracts and config keep their pinned hashes`
+
+The registered rule cell (`C434-NO-SUPER-REPO-READS: every detection rule fires on its planted shape and ignores comments and data strings`)
+and the strategy row (`the seam exists, and exists only as a composition option is named in the composition input and in no configuration document`)
+kept their titles and entries; their bodies changed (above). The five `C436-PRE-CHANGE-HANDOFF`
+rows name only `436-pre-change-handoff.test.ts`, which kept its name, and are unchanged. No row was
+appended: 2553 in all.
+
+### What was retained, and why
+
+| Item | File | Why kept |
+|---|---|---|
+| line 6726, which names the delisted C434 row | `DELETION-INVENTORY.md` | history (D-05); this file is the one place the removed directory may be named (D-02) |
+| lines 1789 and 6857, which name `test-fixtures/demo-init/agent-qa.config.yaml` | `DELETION-INVENTORY.md` | history: they record what Phases 436 and 446 did to the fixture under its old name |
+| the `source` provenance: the super-repo SHA and the `demo/init/...` paths the frozen files were extracted from | `test-fixtures/eval-workspace/MANIFEST.json` | it records where the files came from, the super-repo `demo/init`, not the deleted directory; no test reads it, and a fixture is moved, never edited (planner decision 2) |
+| the test file names `436-pre-change-handoff.test.ts`, `436-runtime-key-sets.test.ts`, `438-key-sets.test.ts`, `439-key-sets.test.ts`, `446-requested-dialog-handoff.test.ts`, and the five `C436-PRE-CHANGE-HANDOFF` titles | `packages/schema/src/__tests__/` | D-07: phase-numbered test names are the codebase convention, and the gate rows name only the test file |
+| `const demo` in `promotion-host-proof.ts` and `promotion-posture.test.ts`, and the registered `buildPromotionPostureResolver D-10 demo/init exposes measured host facts and synchronous per-candidate selection` | `packages/cli/src/__tests__/` | they name the super-repo `demo/init` lineage of the eval fixture, not the deleted directory; re-titling that registered row was outside this phase's register delta |
+| `DEMO` and `DEMO_DIRS` | `packages/arch/src/__tests__/434-no-super-repo-reads.test.ts` | the `R-DEMO` rule still uses them to catch reads of the super-repo's `demo/init` and `demo/acceptance` |
+| `PRE_CHANGE_HANDOFF_PATH` | `packages/agent/src/authoring/__tests__/router.test.ts` | it names what the file holds, the pre-change handoff, not the old directory; only its path segment changed |
+
+### What degrades, stated plainly
+
+- **The demo's manual lanes cannot be run from agent-qa:** the W3C "BAD" accessibility site, the
+  hook and variable chains, and the Android and iOS Settings apps, until their QAval evals land
+  (`product.a11y-findings`, `product.hooks-and-variables`, the mobile probe app; D-01).
+- **The GitHub remote's `main` still shows `demo-project/`** until the release branch merges; the
+  README link that pointed at it is already gone from this branch.
+- **Nothing in the tree stops the name returning.** By owner decision there is no census cell
+  (D-02); the one-time search at the final SHA records that it is gone, and nothing re-runs it.
+
+### The instruments that notice a return
+
+- **The 434 gate** must execute and pass all 2553 listed rows, the three re-titled
+  `EVAL-WORKSPACE-FIXTURE` rows among them.
+- **The init-config cell** (four cases, unregistered) fails if the config `agent-qa init` writes
+  loses the cache under `.agent-qa`, the canonical workspace or preserved app state, or gains a
+  retired key or a reconciliation mention.
+- **The strategy cell** fails if its fixture config is missing or mentions reconciliation.
+- **The rule cell** fails if a `resolve()` that climbs exactly to the root is flagged, or one more
+  `../` is not.
+- **The three `EVAL-WORKSPACE-FIXTURE` cells** fail if a fixture file appears, disappears or
+  drifts from its pinned hash; **the five `C436-PRE-CHANGE-HANDOFF` cells** fail if the legacy
+  handoff stops reading.
+- **For the removed directory, no instrument, by decision (D-02).**
+
+### Gate at the time of writing
+
+The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
+verdict are recorded in `.planning/phases/447.1-remove-demo-project/447.1-RECORD.md` § Gate, and
+the SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
