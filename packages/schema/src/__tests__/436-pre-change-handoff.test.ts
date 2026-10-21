@@ -12,7 +12,7 @@ import {
 } from '../index'
 import type { CompletedRunHandoff } from '../index'
 
-const fixtureDir = new URL('../../../../test-fixtures/436-pre-change/', import.meta.url)
+const fixtureDir = new URL('../../../../test-fixtures/legacy-handoff/', import.meta.url)
 const handoffBytes = readFileSync(new URL('handoff.json', fixtureDir))
 const manifest = JSON.parse(readFileSync(new URL('MANIFEST.json', fixtureDir), 'utf8')) as {
   frozen: boolean

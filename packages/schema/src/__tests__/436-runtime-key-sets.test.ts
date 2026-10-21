@@ -83,7 +83,7 @@ describe('C436-KEY-SETS', () => {
 
   it('projectSubActionRecorded still drops localEffect, a reader-only member (D-17)', () => {
     const handoff = JSON.parse(readFileSync(
-      new URL('../../../../test-fixtures/436-pre-change/handoff.json', import.meta.url), 'utf8')) as CompletedRunHandoff
+      new URL('../../../../test-fixtures/legacy-handoff/handoff.json', import.meta.url), 'utf8')) as CompletedRunHandoff
     const subAction = handoff.tests[0]!.steps[0]!.subActions[0]!
     expect(subAction.localEffect, 'the frozen fixture lost its localEffect').toBeDefined()
     const payload = projectSubActionRecorded(subAction, { testIndex: 0, stepIndex: 0, subActionIndex: 0 }, (value) => value)

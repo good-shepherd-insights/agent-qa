@@ -430,7 +430,7 @@ describe('the router is total where it can be and refuses by name where it canno
 // ---- 436 D-14: a limit stop is indefinitive and stops; cycle and stagnation route nothing ----
 
 const AGENT_QA_ROOT = join(import.meta.dirname, '..', '..', '..', '..', '..')
-const PRE_CHANGE_HANDOFF_PATH = join(AGENT_QA_ROOT, 'test-fixtures', '436-pre-change', 'handoff.json')
+const PRE_CHANGE_HANDOFF_PATH = join(AGENT_QA_ROOT, 'test-fixtures', 'legacy-handoff', 'handoff.json')
 
 const ACTION_LIMIT_ON_STEP_1: LimitStopFixture = {
   stepIndex: 1,

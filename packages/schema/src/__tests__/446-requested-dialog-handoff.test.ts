@@ -8,7 +8,7 @@ import { guardCompletedRunHandoff, stepOutcomeUnproven } from '../index'
 import type { CompletedRunHandoff } from '../index'
 
 const preChangeHandoff = new URL(
-  '../../../../test-fixtures/436-pre-change/handoff.json',
+  '../../../../test-fixtures/legacy-handoff/handoff.json',
   import.meta.url,
 )
 
