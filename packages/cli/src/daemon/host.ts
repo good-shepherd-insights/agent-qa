@@ -659,6 +659,9 @@ async function composeDaemonRunExecution(input: {
     await import('../commands/run.js')
   const { refuseUnhonourableRequestFields, runInProcessCliRun } =
     await import('../composition/in-process-run-execution.js')
+  const analytics = input.analytics
+  const runSession =
+    analytics === undefined ? undefined : await import('../run-session-composition.js')
 
   /**
    * The one place a dispatched run is known to have finished, and both per-run effects live here.
@@ -766,6 +769,19 @@ async function composeDaemonRunExecution(input: {
               ...(daemonAuthority === undefined ? {} : { writerAuthority: daemonAuthority }),
             },
             onSession: (session) => { startedRunId = session.id as unknown as string },
+            // 2026-10-21 (447-08, D-16): subscribed directly, because `attachRunSubscribers`'
+            // wire reporter can print to stdout.
+            ...(analytics === undefined || runSession === undefined ? {} : {
+              subscribers: ({ session }) => {
+                const subscriber = runSession.buildAnalyticsRunSubscriber({
+                  analytics,
+                  triggerSource: 'daemon',
+                  runner: 'local',
+                })
+                session.subscribe(runSession.REPLAY_FROM_START, subscriber.handler)
+                return { flush: async () => { await subscriber.flush?.() } }
+              },
+            }),
             warn: (message: string) => input.logger.info(message),
           },
           request,

@@ -311,6 +311,7 @@ function createComposedRunExecution(input: {
   readonly resolveExecutionContext: ComposeLocalAgentInput['resolveExecutionContext']
   readonly runBridge?: ComposeCliLocalAgentInput['runBridge']
   readonly runTrigger?: RunAttributeTrigger
+  readonly analytics?: CliAnalyticsHost
 }): RunExecutionPort {
   const selectTrustPriors = bindTrustPriorsToConfig(input)
   return {
@@ -323,6 +324,9 @@ function createComposedRunExecution(input: {
         refuseUnhonourableRequestFields,
         runInProcessCliRun,
       } = await import('./in-process-run-execution.js')
+      const analytics = input.analytics
+      const runSession =
+        analytics === undefined ? undefined : await import('../run-session-composition.js')
 
       // THE REFUSAL COMES FIRST, and at THIS door rather than only inside the drive: the
       // preflight below reads the caller's config and secrets, which a refused call should not
@@ -383,6 +387,19 @@ function createComposedRunExecution(input: {
               input.runBridge?.onSession?.(session)
             },
             runRecord,
+            // 2026-10-21 (447-08, D-16): subscribed directly, because `attachRunSubscribers`'
+            // wire reporter can print to stdout.
+            ...(analytics === undefined || runSession === undefined ? {} : {
+              subscribers: ({ session }) => {
+                const subscriber = runSession.buildAnalyticsRunSubscriber({
+                  analytics,
+                  triggerSource: trigger,
+                  runner: 'local',
+                })
+                session.subscribe(runSession.REPLAY_FROM_START, subscriber.handler)
+                return { flush: async () => { await subscriber.flush?.() } }
+              },
+            }),
             ...(input.runBridge?.resolveAppiumUrl === undefined
               ? {}
               : { resolveAppiumUrl: input.runBridge.resolveAppiumUrl }),
@@ -2027,6 +2044,7 @@ export function composeCliLocalAgent(input: ComposeCliLocalAgentInput): LocalAge
       resolveExecutionContext: input.resolveExecutionContext,
       ...(input.runBridge === undefined ? {} : { runBridge: input.runBridge }),
       ...(input.runTrigger === undefined ? {} : { runTrigger: input.runTrigger }),
+      ...(analytics === undefined ? {} : { analytics }),
     }),
     // 403 D-03: the live-view mint seam, forwarded untouched on the same house rule.
     ...(input.liveView === undefined ? {} : { liveView: input.liveView }),
