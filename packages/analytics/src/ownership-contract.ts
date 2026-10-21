@@ -15,7 +15,7 @@ export const AGENT_QA_ANALYTICS_PACKAGE_CLASSES = ['adapter'] as const
 // owns rather than something a reviewer has to notice.
 export const AGENT_QA_ANALYTICS_ALLOWED_RESPONSIBILITIES = [
   'the product-analytics port and its transports: the `AnalyticsPort`/`AnalyticsTransport` split, '
-    + 'the noop and PostHog transports behind it, and the best-effort boundary that keeps a '
+    + 'the PostHog transport behind it, and the best-effort boundary that keeps a '
     + 'telemetry failure from reaching the host',
   'the closed typed event union: which events exist, what each one carries, and the range guard '
     + 'that refuses an unconstrained string field',

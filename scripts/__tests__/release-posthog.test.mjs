@@ -22,7 +22,8 @@ function createPosthogFixture(rootDir, distKey = 'phc_test_key', packagePath = '
   mkdirSync(distDir, { recursive: true })
   writeFileSync(
     join(sourceDir, 'compose.ts'),
-    'import { NoopTransport } from "./transports.js"\nexport const marker = "the deny arm stays local"\n',
+    "export type AnalyticsTransportKind = 'none' | 'posthog'\n"
+      + 'export const marker = "the deny arm stays local"\n',
   )
   const runtimeText = `var AGENT_QA_POSTHOG_KEY = "${distKey}"\nvar AGENT_QA_POSTHOG_HOST = "https://us.i.posthog.com"\n`
   writeFileSync(join(distDir, 'index.js'), runtimeText)

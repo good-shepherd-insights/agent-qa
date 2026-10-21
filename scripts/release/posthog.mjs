@@ -62,13 +62,14 @@ export function validatePosthogReleaseArtifacts(options = {}) {
   }
   if ((options.logText ?? '').includes(projectKey)) throw new Error('raw POSTHOG_PROJECT_KEY leaked in logs')
 
-  // The opt-out arm and the build-time-only key, asserted on the composition root that now owns
-  // both. `compose.ts` is where the baked key is read and where the deny arm picks its transport,
-  // so it is the file whose regression would ship a release that always talks to PostHog.
+  // The opt-out arm and the build-time-only key, asserted on the composition root that owns both:
+  // `compose.ts` reads the baked key and its deny arm builds no transport (447-04, D-08).
   const composePath = join(rootDir, 'packages/analytics/src/compose.ts')
   if (!existsSync(composePath)) throw new Error('analytics composition source is missing')
   const composeText = readFileSync(composePath, 'utf8')
-  if (!composeText.includes('NoopTransport')) throw new Error('analytics composition must preserve NoopTransport')
+  if (!composeText.includes("export type AnalyticsTransportKind = 'none' | 'posthog'")) {
+    throw new Error('analytics composition must keep the no-transport arm')
+  }
   if (composeText.includes('process.env.AGENT_QA_POSTHOG_KEY')) {
     throw new Error('analytics runtime must not read process.env.AGENT_QA_POSTHOG_KEY')
   }

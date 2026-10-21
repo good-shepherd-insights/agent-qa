@@ -7,7 +7,7 @@
 // zero, opted in must observe more than zero, and the pair being equal is a FATAL that names the
 // torn wire rather than a green run.
 //
-// WHERE THE ASSERTIONS SIT. Not on `NoopTransport.captureCount` — a broken port that never calls
+// WHERE THE ASSERTIONS SIT. Not on a transport's own call count — a broken port that never calls
 // its transport satisfies that on both arms. Two network layers instead:
 //
 //   1. The undici global dispatcher. posthog-node 5.33.2 sends through global `fetch`

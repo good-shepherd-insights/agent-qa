@@ -69,7 +69,7 @@ export const REPLAY_FROM_START = 1
  * the config; it is now expressed by which transport the composed port holds.
  */
 export function buildAnalyticsRunSubscriber(input: {
-  /** The invocation's composed analytics. Opted out ⇒ this subscriber emits into a noop transport. */
+  /** The invocation's composed analytics. Opted out ⇒ its port has no transport. */
   analytics: CliAnalyticsHost
   /** `agent-qa.trigger` off the resolved run attributes. Anything unrecognised normalises to `unknown`. */
   triggerSource?: string

@@ -11,7 +11,7 @@
 //
 //   1. The `disabled` flag. The v1 subscriber re-read the privacy posture and no-op'd inside its
 //      own handler, which made it the SECOND place in the process deciding whether telemetry
-//      happens. It is not a decision here at all: an opted-out host composes a port over the noop
+//      happens. It is not a decision here at all: an opted-out host composes a port with no
 //      transport, so this module emits into a wall and never learns the difference. One decision
 //      site, in `compose.ts`, is what D-19 buys and what the ownership contract forbids re-opening.
 //   2. The environment read for run attributes. `AGENT_QA_RUN_ATTRIBUTES_JSON` was parsed here,
@@ -73,7 +73,7 @@ export interface AnalyticsRunStandardProperties {
 }
 
 export interface AnalyticsRunSubscriberOptions {
-  /** The composed port. An opted-out host passes one over the noop transport; see the header. */
+  /** The composed port. An opted-out host passes one with no transport; see the header. */
   port: AnalyticsPort<AgentQaAnalyticsEvent>
   /** How the run was triggered, as known at the composition root. */
   triggerSource?: string

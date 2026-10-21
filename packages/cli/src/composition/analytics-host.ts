@@ -147,14 +147,8 @@ export async function composeAnalyticsHost(
     $process_person_profile: false,
   }
 
-  // THE GATE IS "IS THERE A TRANSPORT THAT SENDS", NOT MERELY "DID THEY OPT OUT".
-  //
-  // A checkout with a blank project key composes a `noop` transport while reporting `optedOut:
-  // false` — deliberately, because a developer who never configured PostHog is not a user who
-  // declined tracking. But the file this resolution WRITES is real either way, and the v1 module
-  // never wrote it in that state: its `disabled` flag was `privacy || no project key`, so
-  // `capture()` returned before any identity existed. Gating on the transport keeps that exact
-  // behaviour — an identity is minted when, and only when, something is going to send it.
+  // The gate is "is there a transport", not "did they opt out": a blank-key checkout composes no
+  // transport while reporting `optedOut: false`, and must not mint an identity either.
   if (composed.transportKind === 'posthog') {
     const resolve = input.resolveIdentity ?? resolveAnalyticsIdentity
     const resolved = await resolve({ env: { ...(input.env ?? process.env) } })

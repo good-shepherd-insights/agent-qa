@@ -5,10 +5,10 @@ Inherit the root `agent-qa/AGENTS.md` branding, security, and release rules.
 ## Scope
 
 This package is the product-analytics home. It owns the `AnalyticsPort` and
-`AnalyticsTransport` interfaces, the closed typed event union, the noop and
-PostHog transports, and `composeAnalytics` — the one place the opt-out decision
-is made. Hosts bind it at their composition roots; the agent's function layer
-never sees it.
+`AnalyticsTransport` interfaces, the closed typed event union, the PostHog
+transport, and `composeAnalytics` — the one place the opt-out decision is made;
+opted out or keyless, it composes a port with no transport. Hosts bind it at
+their composition roots; the agent's function layer never sees it.
 
 ## Read First
 
