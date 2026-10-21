@@ -3,9 +3,9 @@
 // TWO CLAIMS ARE MEASURED HERE THAT NOTHING ELSE MEASURES.
 //
 //   1. THE ONE DECISION SITE SURVIVED THE REWIRE. `composeAnalytics` is called from exactly one
-//      shipped file in this package, and `DO_NOT_TRACK` is read from none of them. The package's
-//      own cells prove the decision is made once INSIDE `compose.ts`; these prove that six hosts
-//      binding it did not quietly open a second door (T-398-07).
+//      shipped file in this package. The package's own cells prove the decision is made once
+//      INSIDE `compose.ts`; these prove that six hosts binding it did not quietly open a second
+//      door (T-398-07).
 //   2. OPTING OUT LEAVES NO TRACE ON DISK. `resolveAnalyticsIdentity` mints and writes
 //      `~/.agent-qa/analytics.json`. The port has no early return, so an opted-out host would
 //      resolve an identity — and persist one — on its way to a transport that sends nothing. The
@@ -163,18 +163,6 @@ describe('composeAnalyticsHost', () => {
     expect(callers).toEqual(['composition/analytics-host.ts'])
   })
 
-  it('reads DO_NOT_TRACK nowhere in this package — the decision belongs to compose.ts', () => {
-    const readers = shippedSourceFiles(CLI_SRC)
-      .filter((file) => readFileSync(file, 'utf8').includes('DO_NOT_TRACK'))
-      .map((file) => file.slice(CLI_SRC.length))
-      .sort()
-
-    // `analytics-host.ts` names the variable in its own header prose; the census is over shipped
-    // source including comments, so the file that explains the rule is allowed to mention it and
-    // nothing else may. A read would be `env.DO_NOT_TRACK`, which this pattern also catches.
-    expect(readers.filter((file) => file !== 'composition/analytics-host.ts')).toEqual([])
-  })
-
   it('reads the same version --version prints — the second reader cannot drift', () => {
     // `analytics-host.ts` reads this package's own manifest rather than calling core's reader,
     // because the surface firewall does not admit core and the barrel that does is too heavy to
@@ -182,20 +170,6 @@ describe('composeAnalyticsHost', () => {
     // real cost, and this is what pays it down: the day the two disagree, this reds instead of a
     // version field quietly disagreeing with what `agent-qa --version` prints.
     expect(CLI_ANALYTICS_AGENT_QA_VERSION).toBe(getAgentQaVersion())
-  })
-
-  it('opts out on DO_NOT_TRACK and reports the reason without re-reading the variable', async () => {
-    const host = await composeAnalyticsHost({
-      surface: 'cli',
-      env: { DO_NOT_TRACK: '1' },
-      resolveIdentity: async () => {
-        throw new Error('identity must not be resolved on the opted-out arm')
-      },
-    })
-
-    expect(host.optedOut).toBe(true)
-    expect(host.optOutReasons).toEqual(['do-not-track'])
-    expect(host.transportKind).toBe('noop')
   })
 
   it('mints NO identity file while opted out (the v1 early return, preserved)', async () => {

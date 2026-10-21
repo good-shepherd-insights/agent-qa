@@ -1,34 +1,7 @@
-// THE CLI'S BINDING OF `composeAnalytics` (Phase 398 plan 10, D-17 / D-19 / D-20 · ANLY-01).
-//
-// WHAT THIS FILE IS AND IS NOT. It is the one place in `packages/cli` that names
-// `@vostride/agent-qa-analytics`'s `composeAnalytics`, and every host — run, chat, daemon, mcp,
-// init — calls it once at its own composition root and holds the object it returns. It is NOT a
-// second decision site: the opt-out question is asked and answered inside `composeAnalytics`, and
-// this function neither reads `DO_NOT_TRACK` nor inspects `config.analytics.privacy`. A cell counts
-// the shipped call sites of `composeAnalytics` in this package and refuses any number but one, and
-// a second cell counts the shipped reads of `DO_NOT_TRACK` here and refuses any number but zero.
-//
-// WHAT IT ADDS, and why each addition belongs to a HOST rather than to the package:
-//
-//   1. THE STANDARD PROPERTIES. Version, surface, runtime context and agent product are facts
-//      about the process that started, which is exactly what a composition root knows and a
-//      library does not. They are resolved once here and handed to every emitter, so two events
-//      from one invocation cannot disagree about which surface produced them.
-//   2. THE IDENTITY GATE. `resolveAnalyticsIdentity` MINTS AND WRITES `~/.agent-qa/analytics.json`
-//      on a machine that has none. Under the v1 module that write could not happen while opted
-//      out, because `capture()` returned before the identity was ever resolved. The port has no
-//      such early return — it resolves the identity and then hands the payload to whichever
-//      transport exists — so a naive rewire would make `DO_NOT_TRACK=1` MINT A PERSISTENT
-//      ANONYMOUS USER ID on first use. That is not a network leak, and the zero-network
-//      differential would still pass, which is precisely why it is written down here: a user who
-//      set the ecosystem's opt-out variable did not ask for a new identity file either.
-//
-//      The gate reads `composed.optedOut` — the ANSWER the one decision produced — rather than
-//      re-deriving it. Reading the decision is not making it.
-//
-// THERE IS STILL NO AMBIENT ANYTHING. This module exports a function that RETURNS a host object.
-// It holds no module-level state, there is no `getAnalytics()`, and a file that has not been handed
-// a `CliAnalyticsHost` cannot emit.
+// The CLI's one binding of `composeAnalytics`. Every host calls it once per invocation at its
+// composition root. It adds the standard properties and the identity gate (an identity is resolved
+// only when the transport `composeAnalytics` chose will send) and never decides the opt-out itself.
+// It holds no module-level state.
 
 import {
   ANONYMOUS_ANALYTICS_IDENTITY,
@@ -123,7 +96,7 @@ export interface ComposeAnalyticsHostInput {
  *
  * `port` is the only way to emit. `flush`/`shutdown` are forwarded rather than re-implemented so a
  * host's teardown is the port's teardown; `optedOut`/`optOutReasons`/`transportKind` are reported
- * for a `--verbose` or doctor line, so a host never re-reads the variable to describe the posture.
+ * for a `--verbose` or doctor line, so a host never re-derives the posture to describe it.
  */
 export interface CliAnalyticsHost {
   readonly port: AgentQaAnalyticsPort
@@ -155,7 +128,6 @@ export async function composeAnalyticsHost(
   let masking: AnalyticsMaskingContext | undefined = input.maskingContext
 
   const composed = composeAnalytics<AgentQaAnalyticsEvent>({
-    env: input.env ?? process.env,
     ...(input.config === undefined ? {} : { config: input.config }),
     // The forwarding seam — see `bindMaskingContext`. Always supplied, so the send path's masking
     // call exists from the first event whether or not a mask has been bound yet.

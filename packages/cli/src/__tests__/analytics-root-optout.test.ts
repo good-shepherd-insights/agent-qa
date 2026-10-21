@@ -13,9 +13,9 @@
 // committed key file ships blank and the release pipeline fills it, so in this test process
 // `transportKind` is `'noop'` ALREADY, on every host, with or without a config. A cell asserting
 // only `transportKind === 'noop'` would be GREEN ON THE BROKEN BUILD. `optOutReasons` is computed
-// by `resolveOptOutReasons` purely from the env and the config, independently of any project key,
-// and carries `'config-privacy'` exactly when `config.analytics.privacy === true` REACHED the
-// decision. Every cell below therefore asserts the reason on the privacy arm and its ABSENCE on a
+// by `composeAnalytics` purely from the config, independently of any project key, and carries
+// `'config-privacy'` exactly when `config.analytics.privacy === true` REACHED the decision. Every
+// cell below therefore asserts the reason on the privacy arm and its ABSENCE on a
 // control arm, and asserts `transportKind` beside it — with a non-blank `projectKey` injected
 // wherever the seam admits one, so the transport assertion is load-bearing too.
 
@@ -141,9 +141,9 @@ interface RecordedComposition {
  *
  * It delegates to the REAL `composeAnalyticsHost`, so the opt-out decision, the identity gate and
  * the transport selection every assertion reads are the shipped ones. What it adds is only what
- * keeps the measurement hermetic: `env: {}` so the developer's own ecosystem opt-out variable
- * cannot decide the outcome, a non-blank project key, a transport that records and sends nothing,
- * and an identity stub so no real home directory is touched.
+ * keeps the measurement hermetic: `env: {}` so the identity resolution never sees the developer's
+ * own environment, a non-blank project key, a transport that records and sends nothing, and an
+ * identity stub so no real home directory is touched.
  */
 function recordingCompose(): RecordedComposition {
   const inputs: ComposeAnalyticsHostInput[] = []

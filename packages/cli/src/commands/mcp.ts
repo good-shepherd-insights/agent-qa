@@ -256,11 +256,7 @@ export function createMcpCommand(): Command {
         // secrets are exactly the values that must never ride an event off the machine.
         //
         // `config` may be `undefined` here — the read above is tolerant on purpose — and that is a
-        // real posture rather than a gap: with no config there is no `analytics.privacy` to honour,
-        // and the ecosystem opt-out variable is read inside `composeAnalytics` either way. (That
-        // variable is deliberately not SPELLED anywhere in this file: a census over this package's
-        // shipped source refuses any mention of it outside the one binding that explains the rule,
-        // and a census that had to tell prose from code would be a weaker census.)
+        // real posture rather than a gap.
         const analytics = await composeAnalyticsHost({
           surface: 'mcp',
           ...(config === undefined ? {} : { config }),

@@ -339,10 +339,6 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         //
         // `loadAuthPlugins: false` because this read exists for one boolean: a telemetry read has
         // no business executing a project's auth plugins as a side effect.
-        //
-        // The ecosystem opt-out variable is honoured regardless and is read inside
-        // `composeAnalytics` — deliberately unspelled in this file; see the census in
-        // `composition/analytics-host.ts`, which cannot tell prose from code and is stronger for it.
         let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
         try {
           config = await resolveConfig({

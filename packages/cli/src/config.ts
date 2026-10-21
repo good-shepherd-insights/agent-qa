@@ -328,13 +328,8 @@ export function formatConfigDebug(
  *      away).
  *
  * In state 2 a user set a shipped privacy control and was transmitted anyway, silently, with the
- * surface working normally so nothing ever looked wrong. The ecosystem opt-out environment
- * variable still walled it, so this was never a total failure — but a product cannot ship a config
- * field and then honour it only when the REST of the document happens to validate.
- *
- * (That variable is deliberately not spelled here: a census in `composition/__tests__` refuses any
- * shipped file but `composition/analytics-host.ts` naming it, so that grepping for a second reader
- * of the ecosystem opt-out stays unambiguous. It caught this comment on the first run.)
+ * surface working normally so nothing ever looked wrong. A product cannot ship a config field and
+ * then honour it only when the REST of the document happens to validate.
  *
  * READING IS NOT VALIDATING. Extracting one boolean from a parsed document does not require the
  * document to be well-formed anywhere else, so honouring the declaration costs the availability
