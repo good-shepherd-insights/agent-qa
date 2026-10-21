@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { buildDefaultConfig } from '../commands/init.js'
+import { renderScaffoldConfigYaml } from '../commands/scaffold-content.js'
 
 const SCREENSHOT_SIZE_BYTES = 256 * 1024
+const CANONICAL_WORKSPACE = {
+  testMatch: ['tests/**/*.yaml'],
+  suiteMatch: ['suites/**/*.suite.yaml'],
+  hooksFile: 'hooks.yaml',
+  envFile: '.env',
+  secretsFile: '.env.secrets.local',
+}
 const EXPECTED_TIMEOUT_MS = {
   step: 1200000,
   test: 5400000,
@@ -63,6 +71,24 @@ describe('init generated config schema compatibility', () => {
           url: 'https://playground.vostride.dev/shop/?bug=cart-total',
         })
       }
+    },
+  )
+
+  it.each(['web', 'android', 'ios', 'web+android'] as const)(
+    'writes the %s config with the cache under .agent-qa, the canonical workspace and preserved app state, and no retired key or reconciliation',
+    (platform) => {
+      const config = buildDefaultConfig(platform, 'anthropic-subscription', 'claude-sonnet-4-6')
+      const parsed = parseGeneratedConfig(config)
+      const written = renderScaffoldConfigYaml(config)
+
+      expect(parsed.services?.cache?.dir).toBe('.agent-qa/cache')
+      expect(written).toContain('dir: .agent-qa/cache')
+      expect(config.workspace).toEqual(CANONICAL_WORKSPACE)
+      expect(parsed.use?.mobile?.appState).toBe('preserve')
+      for (const retired of ['memory:', 'agentRules', 'actionProofs']) {
+        expect(written).not.toContain(retired)
+      }
+      expect(written.toLowerCase()).not.toContain('reconcil')
     },
   )
 
