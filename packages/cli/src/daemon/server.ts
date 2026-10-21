@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
 import { chmodSync, lstatSync, mkdirSync, realpathSync, rmSync, unlinkSync } from 'node:fs'
 import {
@@ -13,6 +14,8 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
+import { ANALYTICS_AGENT_PRODUCTS } from '@vostride/agent-qa-analytics'
+import type { AnalyticsAgentProduct } from '@vostride/agent-qa-analytics'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
@@ -33,10 +36,18 @@ export const invokeEnvelopeSchema = z
     schemaVersion: z.literal(INVOKE_ENVELOPE_SCHEMA_VERSION),
     functionId: z.string().min(1),
     input: z.unknown(),
+    agentProduct: z.enum(ANALYTICS_AGENT_PRODUCTS).optional(),
   })
   .strict()
 
 export type InvokeEnvelope = z.infer<typeof invokeEnvelopeSchema>
+
+// 2026-10-21 (447-09, D-14): the submitter's agent product, scoped to the request that carried it.
+const invokeAgentProductScope = new AsyncLocalStorage<AnalyticsAgentProduct | undefined>()
+
+export function currentInvokeAgentProduct(): AnalyticsAgentProduct | undefined {
+  return invokeAgentProductScope.getStore()
+}
 
 export const nudgeEnvelopeSchema = z
   .object({
@@ -596,11 +607,8 @@ async function handleInvoke(
 
   try {
     const envelope = await parseEnvelope(request)
-    const result = await invokeFunction(
-      registry,
-      envelope.functionId,
-      envelope.input,
-      DAEMON_FUNCTION_CALLER,
+    const result = await invokeAgentProductScope.run(envelope.agentProduct, () =>
+      invokeFunction(registry, envelope.functionId, envelope.input, DAEMON_FUNCTION_CALLER),
     )
     if (isAsyncIterable(result)) {
       await writeEventStream(response, result, streamResponses)

@@ -86,6 +86,7 @@ import {
 import { appendDaemonEvent } from './events.js'
 import type { DaemonEvent } from './events.js'
 import {
+  currentInvokeAgentProduct,
   DAEMON_FUNCTION_CALLER,
   DAEMON_IDENTITY_SCHEMA_VERSION,
   daemonSocketOwnershipFor,
@@ -672,10 +673,14 @@ async function composeDaemonRunExecution(input: {
    * happened, which is worse than silence. `duration_ms` stays absent because nothing here measured
    * an interval; a duration off this callback's clock would be the time since this process noticed.
    */
-  const recordRunOutcome = (runId: string, outcome: 'completed' | 'failed'): void => {
+  const recordRunOutcome = (
+    host: CliAnalyticsHost | undefined,
+    runId: string,
+    outcome: 'completed' | 'failed',
+  ): void => {
     input.recordDaemonEvent({ kind: 'run-completed', runId, outcome })
-    input.analytics?.port.capture(
-      analyticsEvent(input.analytics, 'agent-qa.daemon.job.completed', {
+    host?.port.capture(
+      analyticsEvent(host, 'agent-qa.daemon.job.completed', {
         job_kind: 'run',
         outcome,
         // Through the union's OWN filter: `run_id` is a known-id codec, nothing parses an event on
@@ -688,6 +693,17 @@ async function composeDaemonRunExecution(input: {
 
   return {
     async execute(request) {
+      // 2026-10-21 (447-09, D-14): the job is its submitter's, so it reports the submitter's product.
+      const jobAnalytics: CliAnalyticsHost | undefined =
+        analytics === undefined
+          ? undefined
+          : {
+              ...analytics,
+              properties: {
+                ...analytics.properties,
+                agent_product: currentInvokeAgentProduct() ?? 'unknown',
+              },
+            }
       // (0) THE REFUSAL, BEFORE ANYTHING IS READ — and it is made HERE rather than left to the
       // drive's own step (0) because this door reads its own preflight, which happens first. Before
       // 442-08 that preflight loaded auth plugins, so a `runs.start` naming `scope` reported
@@ -771,10 +787,10 @@ async function composeDaemonRunExecution(input: {
             onSession: (session) => { startedRunId = session.id as unknown as string },
             // 2026-10-21 (447-08, D-16): subscribed directly, because `attachRunSubscribers`'
             // wire reporter can print to stdout.
-            ...(analytics === undefined || runSession === undefined ? {} : {
+            ...(jobAnalytics === undefined || runSession === undefined ? {} : {
               subscribers: ({ session }) => {
                 const subscriber = runSession.buildAnalyticsRunSubscriber({
-                  analytics,
+                  analytics: jobAnalytics,
                   triggerSource: 'daemon',
                   runner: 'local',
                 })
@@ -791,13 +807,17 @@ async function composeDaemonRunExecution(input: {
         // and no longer does NOT mean), so no fold of its own can have touched it — which is why
         // the outcome is read off it rather than off a second verdict table minted here.
         // Byte-identical semantics to the child's exit code it replaces.
-        recordRunOutcome(finished.runId, finished.exitCode === 0 ? 'completed' : 'failed')
+        recordRunOutcome(
+          jobAnalytics,
+          finished.runId,
+          finished.exitCode === 0 ? 'completed' : 'failed',
+        )
         return { runId: asRunId(finished.runId) }
       } catch (error) {
         if (error instanceof RunDeniedError) {
           // A refused run is a failed JOB and never a crashed daemon; the refusal itself travels on
           // to the caller with the core's own reason.
-          recordRunOutcome(error.runId, 'failed')
+          recordRunOutcome(jobAnalytics, error.runId, 'failed')
           throw error
         }
         if (startedRunId === undefined) throw error
@@ -807,7 +827,7 @@ async function composeDaemonRunExecution(input: {
         input.logger.error(
           `Dispatched run ${startedRunId} failed: ${error instanceof Error ? error.message : String(error)}`,
         )
-        recordRunOutcome(startedRunId, 'failed')
+        recordRunOutcome(jobAnalytics, startedRunId, 'failed')
         return { runId: asRunId(startedRunId) }
       } finally {
         runRecord.close()

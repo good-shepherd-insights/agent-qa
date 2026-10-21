@@ -399,9 +399,10 @@ describe('the daemon dispatches runs through the in-process core (401-06, INVK-0
           run_id: runId,
           surface: 'daemon',
         })
-        // Byte-identical to the key set the OLD wire emitted (measured pre-change; see SUMMARY).
+        // The OLD wire's key set (measured pre-change; see SUMMARY), plus 447-09's agent_product.
         expect(Object.keys(jobEvents[0]?.properties ?? {}).sort()).toEqual([
           '$process_person_profile',
+          'agent_product',
           'agent_qa_version',
           'job_kind',
           'outcome',

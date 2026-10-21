@@ -7,6 +7,7 @@ import {
   StreamReplayFloorError,
   UnknownFunctionError,
 } from '@vostride/agent-qa-agent'
+import { resolveAnalyticsAgentProduct } from '@vostride/agent-qa-analytics'
 
 import {
   classifyDaemonRegistration,
@@ -186,10 +187,12 @@ function openInvokeResponse(
   functionId: string,
   input: unknown,
 ): Promise<IncomingMessage> {
+  const agentProduct = resolveAnalyticsAgentProduct(process.env)
   const body = JSON.stringify({
     schemaVersion: INVOKE_ENVELOPE_SCHEMA_VERSION,
     functionId,
     input,
+    ...(agentProduct === undefined ? {} : { agentProduct }),
   })
 
   return new Promise((resolveResponse, rejectResponse) => {
