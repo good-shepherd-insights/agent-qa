@@ -15270,6 +15270,30 @@
       "file": "packages/cli/src/__tests__/analytics-root-optout.test.ts",
       "fullName": "C447-MCP-PRIVACY agent-qa mcp does not report the config reason when an invalid config declares no privacy",
       "origin": "447 D-09"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-delivery.test.ts",
+      "fullName": "C447-FLUSH-NONBLOCKING a mid-command flush returns before a transport flush that never settles",
+      "origin": "447 D-20"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-delivery.test.ts",
+      "fullName": "C447-VERDICT-UNCHANGED a stalled transport and a failing sink leave the run subscriber flush settled and the reported verdict unchanged",
+      "origin": "447 D-21"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-delivery.test.ts",
+      "fullName": "C447-SHUTDOWN-BUDGET shutdown with a never-settling transport returns when the 2 s budget fires and not before",
+      "origin": "447 D-22"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-delivery.test.ts",
+      "fullName": "C447-IS-INTERNAL an internal identity leaves is_internal true as an event property and no person-property stamp",
+      "origin": "447 D-13"
     }
   ]
 }
