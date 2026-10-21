@@ -105,6 +105,7 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
   private readonly shutdownTimeoutMs: number
   private inFlight: Promise<void>[] = []
   private capturedSinceFlush = 0
+  private readonly sending = new Set<Promise<void>>()
 
   constructor(options: AnalyticsPortOptions) {
     this.transport = options.transport
@@ -149,6 +150,10 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
    * transport is a send, so a host that flushes on every command return would otherwise poke the
    * wire once per invocation whether or not anything happened. Zero captures in, zero calls out,
    * and the promise still resolves.
+   *
+   * 2026-10-21 (447-07, D-20): flush awaits the local captures and STARTS the send without awaiting
+   * it, so a stalled network never holds a run's verdict or a command's return; `shutdown` waits
+   * for the started sends inside its bound.
    */
   async flush(): Promise<void> {
     const transport = this.transport
@@ -161,7 +166,11 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
 
       await Promise.all(pending)
       if (captured === 0) return
-      await transport.flush()
+      const send = (async () => {
+        await transport.flush()
+      })().catch(() => {})
+      this.sending.add(send)
+      void send.finally(() => this.sending.delete(send))
     } catch {
       // Best-effort.
     }
@@ -187,6 +196,7 @@ class BestEffortAnalyticsPort<TEvent extends AnalyticsEventEnvelope> implements 
       await Promise.race([
         (async () => {
           await this.flush()
+          await Promise.all([...this.sending])
           await transport.shutdown()
         })(),
         new Promise<void>((resolve) => {

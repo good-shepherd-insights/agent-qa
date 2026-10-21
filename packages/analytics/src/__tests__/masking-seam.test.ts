@@ -72,6 +72,7 @@ async function sendThroughShippedPath(
   })
   composed.port.capture(realEvent())
   await composed.port.flush()
+  await composed.port.shutdown()
   return sink.requests.at(-1)?.text ?? ''
 }
 
@@ -103,8 +104,8 @@ async function sendPayloadThroughTransport(
   // pre-CR-01 transport, whose `flush()` called `client.shutdown()`, delivered a same-tick
   // capture-then-flush. Nothing is lost in the product — a later boundary flush, the 10s flush timer
   // or the exit shutdown carries it — but a cell that reads the wire in the same tick has to drain
-  // the way a host's exit does. The sibling helper above goes through the port, whose flush awaits
-  // its own in-flight captures first, so it is not in this race.
+  // the way a host's exit does. The sibling helper above drains the same way, through the port's
+  // shutdown, because the port's flush starts the send without awaiting it (447-07, D-20).
   await transport.shutdown()
   return sink.requests.at(-1)?.text ?? ''
 }
