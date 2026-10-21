@@ -136,7 +136,7 @@ it('treats an empty declaration as no judge', async () => {
 
 it('publishes the frozen v2 constitution and sanctioned public panel binding', () => {
   expect(publicApi).toHaveProperty('bindJudgePanel', expect.any(Function))
-  const oldFile = new URL('../../../../test-fixtures/demo-init/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url)
+  const oldFile = new URL('../../../../test-fixtures/eval-workspace/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url)
   const before = readFileSync(oldFile, 'utf8')
   expect(sha256hex(before)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
   const projection = projectJudgeConfigContract()
@@ -155,7 +155,7 @@ it('publishes the frozen v2 constitution and sanctioned public panel binding', (
   expect(store.writeText(path, text)).toEqual({ kind: 'written' })
   expect(store.writeText(path, text)).toEqual({ kind: 'unchanged' })
   expect(readFileSync(join(root, path), 'utf8')).toBe(text)
-  expect(readFileSync(new URL('../../../../test-fixtures/demo-init/agent-qa-eval/contracts/judge-config.v2.json', import.meta.url), 'utf8')).toBe(text)
+  expect(readFileSync(new URL('../../../../test-fixtures/eval-workspace/agent-qa-eval/contracts/judge-config.v2.json', import.meta.url), 'utf8')).toBe(text)
   expect(readFileSync(oldFile, 'utf8')).toBe(before)
   const bindingSource = readFileSync(new URL('../judge-binding.ts', import.meta.url), 'utf8')
   expect(bindingSource.match(/\bcreateModel\s*\(/g)).toHaveLength(1)

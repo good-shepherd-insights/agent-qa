@@ -23,8 +23,8 @@ const calls = (node: ts.Node) => {
 afterEach(() => vi.restoreAllMocks())
 
 it('reproduces complete frozen v2 bytes and preserves historical v1 and both material hashes', () => {
-  const v1 = read('test-fixtures/demo-init/agent-qa-eval/contracts/judge-config.v1.json')
-  const v2 = read('test-fixtures/demo-init/agent-qa-eval/contracts/judge-config.v2.json')
+  const v1 = read('test-fixtures/eval-workspace/agent-qa-eval/contracts/judge-config.v1.json')
+  const v2 = read('test-fixtures/eval-workspace/agent-qa-eval/contracts/judge-config.v2.json')
   expect(sha(v1)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
   expect(sha(v2)).toBe('7fc8f16e4210333638a7dd51f36cd9cc291c7a3a72809d96cc623de578b272ec')
   const projection = projectJudgeConfigContract()

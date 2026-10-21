@@ -32,7 +32,7 @@ vi.mock('../llm-utils.js', async importOriginal => {
 // rather than aborting the suite with an unresolved-module error.
 const subjectPath = fileURLToPath(new URL('../curation/promotion-posture.ts', import.meta.url))
 const subject = existsSync(subjectPath) ? await import(subjectPath) : undefined
-const demo = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../test-fixtures/demo-init')
+const demo = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../test-fixtures/eval-workspace')
 const roots: string[] = []
 const candidate: PromotionPostureCandidate = {
   id: 'candidate-posture', product: 'example-web', scope: { tier: 'product', key: 'example-web' },

@@ -75,20 +75,20 @@
     },
     {
       "runner": "vitest",
-      "file": "packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts",
-      "fullName": "DEMO-INIT-FIXTURE: the manifest lists every vendored file and nothing else",
+      "file": "packages/cli/src/__tests__/eval-workspace-fixture-manifest.test.ts",
+      "fullName": "EVAL-WORKSPACE-FIXTURE: the manifest lists every vendored file and nothing else",
       "origin": "434 D-11"
     },
     {
       "runner": "vitest",
-      "file": "packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts",
-      "fullName": "DEMO-INIT-FIXTURE: every vendored file matches its manifest sha-256 and size",
+      "file": "packages/cli/src/__tests__/eval-workspace-fixture-manifest.test.ts",
+      "fullName": "EVAL-WORKSPACE-FIXTURE: every vendored file matches its manifest sha-256 and size",
       "origin": "434 D-11"
     },
     {
       "runner": "vitest",
-      "file": "packages/cli/src/__tests__/demo-init-fixture-manifest.test.ts",
-      "fullName": "DEMO-INIT-FIXTURE: the frozen judge contracts and config keep their pinned hashes",
+      "file": "packages/cli/src/__tests__/eval-workspace-fixture-manifest.test.ts",
+      "fullName": "EVAL-WORKSPACE-FIXTURE: the frozen judge contracts and config keep their pinned hashes",
       "origin": "434 D-11"
     },
     {
