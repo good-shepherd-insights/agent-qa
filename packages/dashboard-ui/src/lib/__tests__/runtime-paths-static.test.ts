@@ -3,8 +3,6 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
-const demoConfig = readFileSync(new URL('../../../../../demo-project/agent-qa.config.yaml', import.meta.url), 'utf-8')
-const releaseConfig = readFileSync(new URL('../../../../../demo-project/agent-qa.release.config.yaml', import.meta.url), 'utf-8')
 const yamlCompletions = readFileSync(new URL('../yaml-completions.ts', import.meta.url), 'utf-8')
 const workspaceResolverTest = readFileSync(new URL('../../../../../packages/core/src/workspace/__tests__/workspace-paths.test.ts', import.meta.url), 'utf-8')
 
@@ -37,33 +35,7 @@ function readSource(relativeRoot: string): string {
     .join('\n')
 }
 
-function readFiles(relativeRoot: string, include: RegExp): string {
-  return filesMatching(relativeRoot, include)
-    .map((file) => readFileSync(file, 'utf-8'))
-    .join('\n')
-}
-
 describe('runtime path static contract', () => {
-  it('keeps the demo config cache under the runtime root', () => {
-    expect(demoConfig).toContain('dir: .agent-qa/cache')
-  })
-
-  it('keeps the retired memory config surface out of the demo configs (Phase 373, KDIR-03)', () => {
-    expect(demoConfig).not.toContain('memory:')
-    expect(releaseConfig).not.toContain('memory:')
-  })
-
-  it('keeps the demo config on the canonical workspace sample', () => {
-    expect(demoConfig).toContain('tests/web/**/*.yaml')
-    expect(demoConfig).toContain('tests/mobile/**/*.yaml')
-    expect(demoConfig).toContain('tests/farm/**/*.yaml')
-    expect(demoConfig).toContain('suites/**/*.suite.yaml')
-    expect(demoConfig).toContain('hooksFile: hooks.yaml')
-    expect(demoConfig).not.toContain('agentRules')
-    expect(demoConfig).toContain('envFile: .env')
-    expect(demoConfig).toContain('secretsFile: .env.secrets.local')
-  })
-
   it('keeps legacy runtime path fallbacks out of CLI and dashboard source', () => {
     const cliSource = readSource('packages/cli/src/')
     const dashboardSource = readSource('packages/dashboard-server/src/')
@@ -122,13 +94,7 @@ describe('runtime path static contract', () => {
     expect(workspaceResolverTest).toContain('config/env/secrets.local')
   })
 
-  it('keeps public mobile app-state examples and removed knobs guarded', () => {
-    const demoProjectFiles = readFiles('demo-project/', /\.(ya?ml|mjs)$/)
-
-    expect(demoConfig).toContain('appState: preserve')
-    expect(releaseConfig).toContain('appState: preserve')
-    expect(releaseConfig).not.toContain('actionProofs')
-    expect(demoProjectFiles).not.toContain('actionProofs')
+  it('keeps the removed noReset knob out of the YAML completions', () => {
     expect(yamlCompletions).not.toContain('noReset')
   })
 

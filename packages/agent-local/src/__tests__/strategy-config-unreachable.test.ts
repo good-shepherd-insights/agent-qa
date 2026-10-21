@@ -292,12 +292,11 @@ describe('the seam exists, and exists only as a composition option', () => {
       'utf8',
     )
     expect(composition).toContain('readonly chatReconcile?: ReconcileStrategy')
-    // And a project configuration cannot name it: the configs a person edits say nothing about reconciliation.
+    // And a project configuration cannot name it. The config `agent-qa init` writes is checked
+    // in the CLI's init-config-schema.test.ts; this package does not depend on the CLI.
     const root = fileURLToPath(new URL('../../../../', import.meta.url))
-    for (const config of ['demo-project/agent-qa.config.yaml', 'test-fixtures/demo-init/agent-qa.config.yaml']) {
-      const path = join(root, config)
-      expect(existsSync(path), path).toBe(true)
-      expect(readFileSync(path, 'utf8').toLowerCase()).not.toContain('reconcil')
-    }
+    const path = join(root, 'test-fixtures/demo-init/agent-qa.config.yaml')
+    expect(existsSync(path), path).toBe(true)
+    expect(readFileSync(path, 'utf8').toLowerCase()).not.toContain('reconcil')
   })
 })

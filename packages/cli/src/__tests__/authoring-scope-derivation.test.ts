@@ -21,7 +21,7 @@ import {
   deriveDefaultAuthoringScope,
 } from '../composition/local-agent-host.js'
 
-// The house shape, verbatim from `demo-project/agent-qa.config.yaml`, for the reason
+// The house shape, as `agent-qa init` writes it (`buildScaffoldConfig`), for the reason
 // `draft-shelf-admission.test.ts` gives: a bespoke workspace measures a workspace nobody has. The
 // `use.mobile.appState` line is not decoration — `resolveConfig` REFUSES a config without it, so a
 // fixture omitting it would measure the config validator rather than the derivation.
