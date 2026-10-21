@@ -831,3 +831,32 @@ describe('C443-DAEMON-RECORD', () => {
     }
   }, 180_000)
 })
+
+// 2026-10-21 (447-08, D-16): a dispatched run reports its outcome beside the job event, printing nothing.
+describe('C447-DAEMON-OUTCOME', () => {
+  it('a daemon-dispatched run emits its run outcome beside the job event', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const project = daemonProject({ origin: target.origin, environment: 'local' })
+      const { fixture } = project
+      const { acknowledged, refusal, analyticsEvents, stdoutWrites } =
+        await dispatchThroughDaemon({ project, patterns: [fixture.testPattern] })
+
+      expect(refusal, `runs.start refused: ${String(refusal)}`).toBeUndefined()
+      const runId = (acknowledged as { runId?: string }).runId
+      expect(runId, 'runs.start acknowledged no run').toMatch(/^r_/)
+      expect(stdoutWrites, 'the daemon wrote to stdout').toBe(0)
+      expect(
+        analyticsEvents.filter((event) => event.name === 'agent-qa.daemon.job.completed'),
+        'the job events',
+      ).toHaveLength(1)
+      const outcomes = analyticsEvents.filter((event) => event.name === 'agent-qa.test_run.completed')
+      expect(outcomes.map((event) => event.properties), 'the run outcomes').toEqual([
+        expect.objectContaining({ run_id: runId, trigger_source: 'daemon', surface: 'daemon' }),
+      ])
+    } finally {
+      await target.close()
+    }
+  }, 180_000)
+})
