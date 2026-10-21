@@ -15162,6 +15162,48 @@
       "file": "packages/agent/src/authoring/__tests__/446-stated-price.test.ts",
       "fullName": "C446-STATED-PRICE a different price in a prior action, or the same price in a later action, leaves the stated total falsifiable",
       "origin": "446 D-32"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
+      "fullName": "C447-IDENTITY-RACE five concurrent first resolutions on a fresh home all return the one stored id",
+      "origin": "447 D-02"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
+      "fullName": "C447-IDENTITY-ADOPT a valid record without is_internal is adopted with its bytes unchanged",
+      "origin": "447 D-05"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
+      "fullName": "C447-IDENTITY-INVALID a record that is not a valid id is replaced by a valid one that is read back",
+      "origin": "447 D-01"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
+      "fullName": "C447-IDENTITY-SHARED every local caller under one home resolves the same id, and two homes resolve two",
+      "origin": "447 D-03"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
+      "fullName": "C447-CI-PERSONLESS a CI resolution mints a ci_ id and leaves an existing record byte-identical and a fresh home empty",
+      "origin": "447 D-04"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
+      "fullName": "C447-NO-SHARED-ID no shipped source in analytics or cli spells a shared legacy id",
+      "origin": "447 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/analytics/src/__tests__/447-identity-store.test.ts",
+      "fullName": "C447-RUNTIME-CONTEXT a coding agent resolves as user with its product, an unrecognised AGENT as unknown, and the vocabulary is user and ci",
+      "origin": "447 D-12"
     }
   ]
 }
