@@ -429,8 +429,6 @@ export type {
   EmbedderWorkerIncarnationVerdict,
   EmbedderWorkerTimeoutPhase,
   EmbedderWorkerRegistration,
-  LegacyEmbedderWorkerRegistration,
-  OwnedEmbedderWorkerRegistration,
   ReadEmbedderWorkerRegistrationOutcome,
 } from './embedder-worker/worker-registration.js'
 export {

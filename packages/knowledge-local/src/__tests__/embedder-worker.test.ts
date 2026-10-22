@@ -43,6 +43,7 @@ import {
   readEmbedderWorkerRegistration,
   removeEmbedderWorkerRegistration,
   writeEmbedderWorkerRegistration,
+  type EmbedderWorkerRegistration,
 } from '../embedder-worker/worker-registration.js'
 import {
   runEmbedderWorker,
@@ -206,8 +207,8 @@ describe.sequential('embedder worker discovery', () => {
     await expect(discoverEmbedderWorker(agentQaRoot)).resolves.toEqual({ kind: 'no-worker' })
   })
 
-  it('round-trips v3 identity and atomically recovers stale v2 and v1 registrations', () => {
-    const projectRoot = temporaryProject('registration-v3')
+  it('round-trips the current identity and reads every older registration shape as malformed', () => {
+    const projectRoot = temporaryProject('registration-current')
     const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
     const registrationPath = embedderWorkerRegistrationPath(agentQaRoot)
     const instanceId = '00000000-0000-4000-8000-000000000101'
@@ -216,8 +217,8 @@ describe.sequential('embedder worker discovery', () => {
       project: string,
       instance: string,
     ) => string)(agentQaRoot, projectRoot, instanceId)
-    const expected = {
-      schemaVersion: 3,
+    const expected: EmbedderWorkerRegistration = {
+      schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
       instanceId,
       pid: process.pid,
       socketPath,
@@ -227,93 +228,64 @@ describe.sequential('embedder worker discovery', () => {
         ?? EMBEDDER_WORKER_UNVERIFIABLE_INCARNATION,
     }
 
-    expect(EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION).toBe(3)
-    writeEmbedderWorkerRegistration(agentQaRoot, expected as never)
+    expect(EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION).toBe(2)
+    writeEmbedderWorkerRegistration(agentQaRoot, expected)
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toEqual({
       kind: 'parsed',
       registration: expected,
     })
 
-    // A v3 file missing the incarnation is not a registration at all: the field the signal decision
-    // depends on may never be optional, or the guard is bypassable by omission.
+    // The incarnation is what every signal decision depends on, so a file without it is not a
+    // registration at all.
     const { incarnation: _omitted, ...withoutIncarnation } = expected
     writeFileSync(registrationPath, `${JSON.stringify(withoutIncarnation)}\n`)
     expect(readEmbedderWorkerRegistration(agentQaRoot)).toEqual({ kind: 'malformed' })
-
-    // v2 predates the incarnation field, so it joins v1 as stale-recoverable rather than parsed:
-    // a resident worker that cannot prove which process it is gets replaced, never adopted.
-    const superseded = {
-      schemaVersion: 2,
-      instanceId,
-      pid: process.pid,
-      socketPath,
-      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
-      startedAtMs: expected.startedAtMs,
-    } as const
-    writeFileSync(registrationPath, `${JSON.stringify(superseded)}\n`)
-    expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
-      kind: 'stale-recoverable',
-      registration: { schemaVersion: 2, instanceId },
-    })
-    expect(removeEmbedderWorkerRegistration(agentQaRoot, superseded)).toBe(true)
-    expect(removeEmbedderWorkerRegistration(agentQaRoot, superseded)).toBe(false)
-
-    const legacy = {
-      schemaVersion: 1,
-      pid: process.pid,
-      socketPath,
-      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
-      startedAtMs: expected.startedAtMs,
-    } as const
-    writeFileSync(registrationPath, `${JSON.stringify(legacy)}\n`)
-    expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
-      kind: 'stale-recoverable',
-      registration: { schemaVersion: 1 },
-    })
-    expect(removeEmbedderWorkerRegistration(agentQaRoot, legacy)).toBe(true)
-    expect(removeEmbedderWorkerRegistration(agentQaRoot, legacy)).toBe(false)
   })
 
-  it('refuses to delete a v3 successor while removing a superseded v2 predecessor', () => {
-    const projectRoot = temporaryProject('v2-successor-safety')
+  it.each([
+    {
+      shape: 'no instanceId and no incarnation, stamped 1',
+      planted: {
+        schemaVersion: 1,
+        pid: process.pid,
+        socketPath: '/tmp/agent-qa-embedder-older.sock',
+        profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+        startedAtMs: 101,
+      },
+    },
+    {
+      shape: 'an instanceId and no incarnation, stamped 2',
+      planted: {
+        schemaVersion: 2,
+        instanceId: '00000000-0000-4000-8000-000000000102',
+        pid: process.pid,
+        socketPath: '/tmp/agent-qa-embedder-older.sock',
+        profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+        startedAtMs: 102,
+      },
+    },
+    {
+      shape: 'every current field, stamped 3',
+      planted: {
+        schemaVersion: 3,
+        instanceId: '00000000-0000-4000-8000-000000000103',
+        pid: process.pid,
+        socketPath: '/tmp/agent-qa-embedder-older.sock',
+        profile: STATIC_FLOOR_EMBEDDING_PROFILE,
+        startedAtMs: 103,
+        incarnation: 'proc-starttime:103',
+      },
+    },
+  ])('reads a registration with $shape as malformed', ({ planted }) => {
+    const projectRoot = temporaryProject('registration-older')
     const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
     const registrationPath = embedderWorkerRegistrationPath(agentQaRoot)
-    const predecessor = {
-      schemaVersion: 2,
-      instanceId: '00000000-0000-4000-8000-000000000106',
-      pid: process.pid,
-      socketPath: join(agentQaRoot, 'embedder-worker-legacy.sock'),
-      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
-      startedAtMs: 106,
-    } as const
-    const successorBytes = Buffer.from(`${JSON.stringify({
-      schemaVersion: 3,
-      instanceId: '00000000-0000-4000-8000-000000000107',
-      pid: process.pid,
-      socketPath: join(agentQaRoot, 'embedder-worker-successor.sock'),
-      profile: STATIC_FLOOR_EMBEDDING_PROFILE,
-      startedAtMs: 107,
-      incarnation: 'proc-starttime:107',
-    })}\n`)
     mkdirSync(agentQaRoot, { recursive: true })
-    writeFileSync(registrationPath, `${JSON.stringify(predecessor)}\n`)
+    const bytes = Buffer.from(`${JSON.stringify(planted)}\n`)
+    writeFileSync(registrationPath, bytes)
 
-    const removeWithBarrier = removeEmbedderWorkerRegistration as unknown as (
-      root: string,
-      expected: typeof predecessor,
-      options: { afterQuarantine: () => void },
-    ) => boolean
-    // The predecessor's own removal succeeds — it owned the bytes it quarantined — and the v3
-    // successor published across the barrier survives untouched. Superseded schemas get the same
-    // successor-safety guarantee as v1, which is what makes replacing them safe without a shim.
-    expect(removeWithBarrier(agentQaRoot, predecessor, {
-      afterQuarantine: () => writeFileSync(registrationPath, successorBytes),
-    })).toBe(true)
-    expect(readFileSync(registrationPath)).toEqual(successorBytes)
-    expect(readEmbedderWorkerRegistration(agentQaRoot)).toMatchObject({
-      kind: 'parsed',
-      registration: { instanceId: '00000000-0000-4000-8000-000000000107' },
-    })
+    expect(readEmbedderWorkerRegistration(agentQaRoot)).toEqual({ kind: 'malformed' })
+    expect(readFileSync(registrationPath)).toEqual(bytes)
   })
 
   it('answers match, mismatch, and unverifiable for a registered pid current occupant', async () => {
@@ -321,7 +293,7 @@ describe.sequential('embedder worker discovery', () => {
     const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
     const instanceId = '00000000-0000-4000-8000-000000000108'
     const live = {
-      schemaVersion: 3,
+      schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
       instanceId,
       pid: process.pid,
       socketPath: join(agentQaRoot, 'embedder-worker-verdict.sock'),
@@ -392,7 +364,7 @@ describe.sequential('embedder worker discovery', () => {
       instance: string,
     ) => string
     const predecessor = {
-      schemaVersion: 3,
+      schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
       instanceId: '00000000-0000-4000-8000-000000000104',
       pid: process.pid,
       socketPath: derive(
@@ -526,7 +498,7 @@ describe.sequential('embedder worker discovery', () => {
       incarnation: string
     }
     expect(registeredWorker).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
       pid: child.pid,
       profile: STATIC_FLOOR_EMBEDDING_PROFILE,
     })
@@ -655,7 +627,7 @@ describe('C442-INCARNATION-FORMAT', () => {
     const agentQaRoot = embedderWorkerAgentQaRoot(projectRoot)
     const own = resolveProcessIncarnation(process.pid)
     const live = {
-      schemaVersion: 3,
+      schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
       instanceId: '00000000-0000-4000-8000-000000000442',
       pid: process.pid,
       socketPath: join(agentQaRoot, 'embedder-worker-format.sock'),

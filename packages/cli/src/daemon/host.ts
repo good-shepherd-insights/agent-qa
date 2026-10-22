@@ -155,9 +155,6 @@ export type EmbedderWorkerRegistration = Extract<
 type ReadEmbedderWorkerRegistrationOutcome = ReturnType<
   typeof LOCAL_DAEMON_CAPABILITIES.readEmbedderWorkerRegistration
 >
-type OwnedEmbedderWorkerRegistration = Parameters<
-  typeof LOCAL_DAEMON_CAPABILITIES.removeEmbedderWorkerRegistration
->[1]
 
 // 2026-08-23 — D-04: THE TYPED BUS EVENT LOG IS THE RUN'S RECORD, and the two run-scoped capture
 // constants that used to live on this line are gone with the child that produced them.
@@ -291,7 +288,7 @@ export interface DaemonHostOperations {
   unlinkEmbedderWorkerSocket(socketPath: string): void
   removeEmbedderWorkerRegistration(
     agentQaRoot: string,
-    expected: OwnedEmbedderWorkerRegistration,
+    expected: EmbedderWorkerRegistration,
   ): boolean
   resetEmbedderCapability(): void
   randomUUID(): string
@@ -1330,15 +1327,10 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   }
 
   const cleanOwnedEmbedderWorkerResources = (
-    registration: OwnedEmbedderWorkerRegistration,
+    registration: EmbedderWorkerRegistration,
   ): void => {
     operations.removeEmbedderWorkerRegistration(input.agentQaRoot, registration)
-    // Only the current schema reaches cleanup through a generation-path validation, so only its
-    // socket is provably ours to unlink. Superseded schemas get their registration quarantined and
-    // their named path left alone, exactly as Plan 24 decided for v1.
-    if (registration.schemaVersion === 3) {
-      operations.unlinkEmbedderWorkerSocket(registration.socketPath)
-    }
+    operations.unlinkEmbedderWorkerSocket(registration.socketPath)
     operations.resetEmbedderCapability()
   }
 
@@ -1381,7 +1373,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     | { readonly kind: 'adopt'; readonly registration: EmbedderWorkerRegistration }
     | {
         readonly kind: 'spawn'
-        readonly outcome: 'fresh' | 'replaced' | 'stale-recovered'
+        readonly outcome: 'fresh' | 'replaced'
         readonly replacedRegistration?: EmbedderWorkerRegistration
         /** True when a live registered pid was left alone because it could not be attributed. */
         readonly signalWithheld?: boolean
@@ -1396,10 +1388,6 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     if (outcome.kind === 'absent') return { kind: 'spawn', outcome: 'fresh' }
     if (outcome.kind === 'malformed') {
       throw new Error('Embedder worker registration is malformed; refusing to overwrite it')
-    }
-    if (outcome.kind === 'stale-recoverable') {
-      cleanOwnedEmbedderWorkerResources(outcome.registration)
-      return { kind: 'spawn', outcome: 'stale-recovered' }
     }
 
     const registration = outcome.registration

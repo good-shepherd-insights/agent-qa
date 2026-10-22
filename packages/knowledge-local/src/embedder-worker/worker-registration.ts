@@ -25,7 +25,7 @@ import { z } from 'zod'
 import type { EmbedderPort } from '../embedder-port.js'
 
 export const EMBEDDER_WORKER_REGISTRATION_FILE = 'embedder-worker.json'
-export const EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION = 3
+export const EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION = 2
 
 /**
  * What a worker records when it cannot attribute its own process.
@@ -80,36 +80,6 @@ export const embeddingProfileSchema = z
   })
   .strict()
 
-const v1EmbedderWorkerRegistrationSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    pid: z.number().int().positive(),
-    socketPath: z.string().min(1),
-    profile: embeddingProfileSchema,
-    startedAtMs: z.number().int().nonnegative(),
-  })
-  .strict()
-
-/**
- * v2 predates the incarnation field, so it can never be adopted — only recovered.
- *
- * There is no upgrade shim by design (the v2-rewrite no-shims rule): a resident v2 worker carries
- * no proof of which process it is, and the one thing this plan forbids is signalling a pid on
- * evidence weaker than an OS-anchored identity. Demoting v2 to stale-recoverable is the only
- * reading that keeps that promise — the registration is quarantined, the pid is left alone, and a
- * fresh v3 generation starts on its own socket.
- */
-const v2EmbedderWorkerRegistrationSchema = z
-  .object({
-    schemaVersion: z.literal(2),
-    instanceId: z.string().uuid(),
-    pid: z.number().int().positive(),
-    socketPath: z.string().min(1),
-    profile: embeddingProfileSchema,
-    startedAtMs: z.number().int().nonnegative(),
-  })
-  .strict()
-
 export const embedderWorkerRegistrationSchema = z
   .object({
     schemaVersion: z.literal(EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION),
@@ -124,17 +94,10 @@ export const embedderWorkerRegistrationSchema = z
   .strict()
 
 export type EmbedderWorkerRegistration = z.infer<typeof embedderWorkerRegistrationSchema>
-export type LegacyEmbedderWorkerRegistration =
-  | z.infer<typeof v1EmbedderWorkerRegistrationSchema>
-  | z.infer<typeof v2EmbedderWorkerRegistrationSchema>
-export type OwnedEmbedderWorkerRegistration =
-  | EmbedderWorkerRegistration
-  | LegacyEmbedderWorkerRegistration
 
 export type ReadEmbedderWorkerRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
-  | { kind: 'stale-recoverable'; registration: LegacyEmbedderWorkerRegistration }
   | { kind: 'parsed'; registration: EmbedderWorkerRegistration }
 
 export type ProcessIsAlive = (pid: number) => boolean
@@ -298,15 +261,7 @@ function readEmbedderWorkerRegistrationFile(
   try {
     const parsedJson = JSON.parse(raw) as unknown
     const parsed = embedderWorkerRegistrationSchema.safeParse(parsedJson)
-    if (parsed.success) return { kind: 'parsed', registration: parsed.data }
-    const superseded = v2EmbedderWorkerRegistrationSchema.safeParse(parsedJson)
-    if (superseded.success) {
-      return { kind: 'stale-recoverable', registration: superseded.data }
-    }
-    const legacy = v1EmbedderWorkerRegistrationSchema.safeParse(parsedJson)
-    return legacy.success
-      ? { kind: 'stale-recoverable', registration: legacy.data }
-      : { kind: 'malformed' }
+    return parsed.success ? { kind: 'parsed', registration: parsed.data } : { kind: 'malformed' }
   } catch {
     return { kind: 'malformed' }
   }
@@ -332,22 +287,14 @@ export function embedderWorkerProcessIsAlive(pid: number): boolean {
 }
 
 function sameRegistration(
-  left: OwnedEmbedderWorkerRegistration,
-  right: OwnedEmbedderWorkerRegistration,
+  left: EmbedderWorkerRegistration,
+  right: EmbedderWorkerRegistration,
 ): boolean {
-  if (left.schemaVersion !== right.schemaVersion) return false
-  const sharedFieldsMatch = left.pid === right.pid
+  return left.pid === right.pid
     && left.startedAtMs === right.startedAtMs
     && left.socketPath === right.socketPath
-  if (left.schemaVersion === 3 && right.schemaVersion === 3) {
-    return sharedFieldsMatch
-      && left.instanceId === right.instanceId
-      && left.incarnation === right.incarnation
-  }
-  if (left.schemaVersion === 2 && right.schemaVersion === 2) {
-    return sharedFieldsMatch && left.instanceId === right.instanceId
-  }
-  return sharedFieldsMatch
+    && left.instanceId === right.instanceId
+    && left.incarnation === right.incarnation
 }
 
 export interface RemoveEmbedderWorkerRegistrationOptions {
@@ -360,15 +307,12 @@ export interface RemoveEmbedderWorkerRegistrationOptions {
 /** Atomically quarantine and remove only the exact registration owned by the caller. */
 export function removeEmbedderWorkerRegistration(
   agentQaRoot: string,
-  expected: OwnedEmbedderWorkerRegistration,
+  expected: EmbedderWorkerRegistration,
   options: RemoveEmbedderWorkerRegistrationOptions = {},
 ): boolean {
   const file = embedderWorkerRegistrationPath(agentQaRoot)
   const parent = dirname(file)
-  const ownerDiscriminator = expected.schemaVersion === 1
-    ? `legacy-${expected.pid}-${expected.startedAtMs}`
-    : expected.instanceId
-  const quarantine = `${file}.remove-${ownerDiscriminator}-${randomUUID()}`
+  const quarantine = `${file}.remove-${expected.instanceId}-${randomUUID()}`
   const fsyncDirectory = options.fsyncDirectory ?? bestEffortFsyncDirectory
 
   try {
@@ -381,10 +325,7 @@ export function removeEmbedderWorkerRegistration(
   options.afterQuarantine?.(quarantine)
 
   const outcome = readEmbedderWorkerRegistrationFile(quarantine)
-  const quarantinedRegistration = outcome.kind === 'parsed'
-    || outcome.kind === 'stale-recoverable'
-    ? outcome.registration
-    : undefined
+  const quarantinedRegistration = outcome.kind === 'parsed' ? outcome.registration : undefined
   if (
     quarantinedRegistration !== undefined
     && sameRegistration(quarantinedRegistration, expected)

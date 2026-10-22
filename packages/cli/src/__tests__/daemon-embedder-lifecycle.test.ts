@@ -19,7 +19,11 @@ import type {
   JobRecoveryHost,
   LocalAgentHost,
 } from '@vostride/agent-qa-agent-local'
-import { resolveProcessIncarnation } from '@vostride/agent-qa-knowledge-local'
+import {
+  EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
+  readEmbedderWorkerRegistration,
+  resolveProcessIncarnation,
+} from '@vostride/agent-qa-knowledge-local'
 import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -63,7 +67,7 @@ function orphanRegistration(
   overrides: Partial<Pick<EmbedderWorkerRegistration, 'pid' | 'incarnation'>> = {},
 ): EmbedderWorkerRegistration {
   return {
-    schemaVersion: 3,
+    schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
     instanceId,
     pid: overrides.pid ?? (instanceId === REUSED_PID_INSTANCE_ID ? 8_802 : 8_801),
     socketPath: join(tmpdir(), `agent-qa-orphan-${instanceId}.sock`),
@@ -217,6 +221,8 @@ function startHarness(
     /** Omit the process-control stubs so the daemon drives real signals against real pids. */
     realProcessControl: boolean
     incarnationVerdict: 'match' | 'mismatch' | 'unverifiable'
+    /** Bytes left at the registration path, read back through the real registration schema. */
+    plantedRegistrationBytes: Buffer
   }> = {},
 ): LifecycleHarness {
   const root = mkdtempSync(join(tmpdir(), `agent-qa-daemon-embedder-${label}-`))
@@ -351,7 +357,7 @@ function startHarness(
       const instanceId = request.args[3]
       if (instanceId === undefined) throw new Error('Worker instance id was not passed')
       const registration: EmbedderWorkerRegistration = {
-        schemaVersion: 3,
+        schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
         instanceId,
         pid: worker.pid,
         socketPath: join(agentQaRoot, `embedder-worker-${instanceId}.sock`),
@@ -384,7 +390,7 @@ function startHarness(
         typeof parsed === 'object'
         && parsed !== null
         && 'schemaVersion' in parsed
-        && parsed.schemaVersion === 3
+        && parsed.schemaVersion === EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION
         && 'instanceId' in parsed
         && 'incarnation' in parsed
       ) {
@@ -447,6 +453,12 @@ function startHarness(
     },
     resetEmbedderCapability: resetCapability,
   } as unknown as Partial<DaemonHostOperations> & Record<string, unknown>
+
+  if (overrides.plantedRegistrationBytes !== undefined) {
+    mkdirSync(agentQaRoot, { recursive: true })
+    writeFileSync(workerRegistrationPath, overrides.plantedRegistrationBytes)
+    operations.readEmbedderWorkerRegistration = () => readEmbedderWorkerRegistration(agentQaRoot)
+  }
 
   if (overrides.realProcessControl === true) {
     // Production liveness, incarnation, and signal delivery. Only the daemon's surroundings stay
@@ -1104,6 +1116,60 @@ describe('daemon embedder-worker lifecycle', () => {
     20_000,
   )
 
+  it.each([
+    {
+      shape: 'no instanceId and no incarnation, stamped 1',
+      planted: {
+        schemaVersion: 1,
+        pid: 8_811,
+        socketPath: join(tmpdir(), 'agent-qa-older-registration.sock'),
+        profile: DEFAULT_EMBEDDING_PROFILE,
+        startedAtMs: 1_785_000_000_000,
+      },
+    },
+    {
+      shape: 'an instanceId and no incarnation, stamped 2',
+      planted: {
+        schemaVersion: 2,
+        instanceId: ORPHAN_INSTANCE_ID,
+        pid: 8_812,
+        socketPath: join(tmpdir(), `agent-qa-orphan-${ORPHAN_INSTANCE_ID}.sock`),
+        profile: DEFAULT_EMBEDDING_PROFILE,
+        startedAtMs: 1_785_000_000_000,
+      },
+    },
+    {
+      shape: 'every current field, stamped 3',
+      planted: { ...orphanRegistration(), schemaVersion: 3, pid: 8_813 },
+    },
+  ])(
+    'an older registration file is refused, left in place, and no pid is signalled: $shape',
+    async ({ planted }) => {
+      const bytes = Buffer.from(`${JSON.stringify(planted)}\n`)
+      const harness = startHarness('older-registration', [drainReport(1, 0)], {
+        plantedRegistrationBytes: bytes,
+      })
+      await waitUntil(() => harness.isStarted(), 'daemon did not start')
+
+      harness.fireInterval(CURATION_QUEUE_POLL_MS)
+      await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'drain did not finish')
+
+      expect(harness.errors).toContainEqual(expect.stringContaining('refusing to overwrite it'))
+      expect(harness.processSignals).toEqual([])
+      expect(harness.workers).toHaveLength(0)
+      expect(harness.unlinkedSockets).toEqual([])
+      expect(readFileSync(harness.workerRegistrationPath)).toEqual(bytes)
+      expect(harness.drainQueue).toHaveBeenCalledWith(expect.objectContaining({
+        embeddingCapability: { kind: 'deferred', reason: 'worker-unavailable' },
+      }))
+
+      harness.signal('SIGTERM')
+      await expect(harness.running).resolves.toBe(0)
+      expect(harness.processSignals).toEqual([])
+      expect(readFileSync(harness.workerRegistrationPath)).toEqual(bytes)
+    },
+  )
+
   it('keeps every adopted-shutdown signal below the verified-match gate (V-03)', () => {
     // The behavioural legs prove the current predicate; this pins the SHAPE that makes it hold.
     // TERM-then-KILL escalation is two calls by construction, so "one call site" is not the
@@ -1147,7 +1213,7 @@ describe('daemon embedder-worker lifecycle', () => {
         acquireFromRegistration: true,
         waitForEmbedderWorkerReady: (agentQaRoot, pid, instanceId) => new Promise((resolve) => {
           const registration: EmbedderWorkerRegistration = {
-            schemaVersion: 3,
+            schemaVersion: EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION,
             instanceId,
             pid: pid!,
             socketPath: join(agentQaRoot, `embedder-worker-${instanceId}.sock`),

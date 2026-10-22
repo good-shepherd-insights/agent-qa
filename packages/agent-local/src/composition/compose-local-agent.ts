@@ -151,7 +151,7 @@ import {
   sweepEntityIndex,
   RUN_OUTCOMES_PROJECTION_VERSION,
   ENTITY_INDEX_SWEEP_INTERVAL_MS,
-  type OwnedEmbedderWorkerRegistration,
+  type EmbedderWorkerRegistration,
   type EntityIndexSweepReport,
   type ResolveEntityRefDeps,
   applyExplicitReview,
@@ -418,7 +418,7 @@ export interface LocalDaemonCapabilities {
   readonly resolveProcessIncarnation: typeof resolveProcessIncarnation
   readonly removeEmbedderWorkerRegistration: (
     agentQaRoot: string,
-    expected: OwnedEmbedderWorkerRegistration,
+    expected: EmbedderWorkerRegistration,
   ) => ReturnType<typeof removeEmbedderWorkerRegistration>
   readonly resetEmbedderCapability: () => void
   readonly pinLocalHeadlessExecutionContext: () => void
