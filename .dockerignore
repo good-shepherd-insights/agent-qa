@@ -13,3 +13,4 @@ coverage
 agent-qa.local.yaml
 *.tgz
 test-fixtures
+.release
