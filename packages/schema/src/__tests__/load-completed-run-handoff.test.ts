@@ -15,6 +15,7 @@ import {
   guardCompletedRunHandoff,
   HandoffVersionError,
   HANDOFF_MIGRATIONS,
+  HANDOFF_STAMPS_READ_AS_CURRENT,
 } from '../handoff/load-completed-run-handoff'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -50,10 +51,8 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(guarded.aggregateVerdict).toBe('passed')
   })
 
-  it('loads a stored schemaVersion 2 document through the registered identity migration', () => {
-    // RCC-01 / RESEARCH Pitfall 5: rootCause is optional-additive, so every
-    // pre-Phase-373 .agent-qa/runs/<slug>/handoff.json (written at v2) must keep
-    // loading — the HANDOFF_MIGRATIONS[2] identity entry carries it to v3 semantics.
+  it('loads a stored schemaVersion 2 document as the current shape', () => {
+    // 2026-10-22, 449.1: 2 is the current stamp, so a pre-373 handoff written at 2 reads with no walk.
     const doc = { ...makeValidHandoff(), schemaVersion: 2 }
     const guarded = guardCompletedRunHandoff(doc)
     expect(guarded.runId).toBe('run-abc')
@@ -78,7 +77,7 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
   })
 
   it('rejects a newer-than-known schemaVersion with a typed HandoffVersionError', () => {
-    const newer = CURRENT_HANDOFF_SCHEMA_VERSION + 1
+    const newer = 8
     const doc = { ...makeValidHandoff(), schemaVersion: newer }
     let thrown: unknown
     try {
@@ -88,8 +87,19 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     }
     expect(thrown).toBeInstanceOf(HandoffVersionError)
     const err = thrown as HandoffVersionError
-    expect(err.foundVersion).toBe(newer)
+    expect(err.foundVersion).toBe(8)
     expect(err.supportedVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
+  })
+
+  it.each([2, 3, 4, 5, 6, 7])('a handoff stamped %i reads as the current shape, unchanged', (stamp) => {
+    const doc = { ...makeValidHandoff(), schemaVersion: stamp }
+    expect(guardCompletedRunHandoff(doc)).toBe(doc)
+  })
+
+  it.each([1, 8])('a handoff stamped %i is refused', (stamp) => {
+    expect(() =>
+      guardCompletedRunHandoff({ ...makeValidHandoff(), schemaVersion: stamp }),
+    ).toThrowError(HandoffVersionError)
   })
 
   it('throws for a non-numeric schemaVersion', () => {
@@ -103,9 +113,10 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(() => guardCompletedRunHandoff(withoutVersion as CompletedRunHandoff)).toThrow()
   })
 
-  it('registers exactly the v2..v6 identity migrations so schemaVersion 1 stays unreadable', () => {
+  it('registers no migration and reads stamps 3 to 7 as current, so schemaVersion 1 stays unreadable', () => {
     expect(HANDOFF_MIGRATIONS).toBeDefined()
-    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4', '5', '6'])
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual([])
+    expect(HANDOFF_STAMPS_READ_AS_CURRENT).toEqual([3, 4, 5, 6, 7])
   })
 })
 
@@ -193,8 +204,8 @@ describe('member-grain rerun markers at the load boundary (418 D-09, approved OQ
 })
 
 describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', () => {
-  it('bumps the current handoff schemaVersion to 7', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+  it('the current handoff schemaVersion is 2', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
 
   it('loads a stored schemaVersion 6 document whose steps carry no rung, unchanged', () => {

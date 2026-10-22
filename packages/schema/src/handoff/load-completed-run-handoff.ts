@@ -27,8 +27,8 @@ import {
 
 /**
  * Thrown when a stored handoff declares a `schemaVersion` this build cannot consume:
- * either newer than {@link CURRENT_HANDOFF_SCHEMA_VERSION} (forward-incompatible) or an
- * older version with no registered migration (D-19, §A8 version discipline).
+ * newer than {@link CURRENT_HANDOFF_SCHEMA_VERSION} and not in
+ * {@link HANDOFF_STAMPS_READ_AS_CURRENT}, or older with no registered migration (D-19).
  */
 export class HandoffVersionError extends VersionGuardError {
   constructor(found: number, supported: number) {
@@ -37,52 +37,10 @@ export class HandoffVersionError extends VersionGuardError {
   }
 }
 
-/**
- * The older-version migration seam (D-19). Maps a source `schemaVersion` to a function
- * that upgrades a document of that version to the next. The seam exists so every future
- * consumer imports the ONE guard instead of re-implementing the version rule.
- */
-export const HANDOFF_MIGRATIONS: MigrationRegistry = {
-  /** v2 → v3 (D-01): rootCause is optional-additive; v2 handoffs load unchanged. */
-  2: (doc) => doc,
-  /** v3 → v4 (D-10, 2026-07-28): gateRun is optional-additive; v3 handoffs load unchanged. */
-  3: (doc) => doc,
-  /**
-   * v4 → v5 (387 D-13, 2026-08-02): `StepEvidence.retrievalTrace` is optional-additive, so
-   * every already-written v4 handoff loads unchanged and simply carries no trace.
-   *
-   * The bump is belt-and-suspenders rather than strictly required — the optional-additive
-   * law would have admitted the field with no version change at all, exactly as
-   * `workingMemory` was admitted. It is registered anyway because a stamped document that
-   * says which contract it was written under is the only way a reader can tell a run that
-   * predates trace capture apart from a run that captured nothing — and the why-verb's
-   * honest no-trace answer (D-15) is built entirely on that distinction.
-   *
-   * (Phrased without the `... <word> '<word>'` shape on purpose: the arch import-firewall
-   * extractor scans comments too, and read a package name out of the earlier wording.)
-   */
-  4: (doc) => doc,
-  /**
-   * v5 → v6 (390 D-14/D-16, 2026-08-05): both new fields are optional-additive — the per-member
-   * `quarantined` disposition marker and the run-level `quarantineApplied` record — so every
-   * already-written v5 handoff loads unchanged and simply carries no disposition.
-   *
-   * Registered rather than skipped for the same reason the trace bump was: a stamped document is
-   * the only way a reader can tell a run that predates quarantine from a run that quarantined
-   * nothing, and every later consumer reads the disposition out of this contract.
-   */
-  5: (doc) => doc,
-  /**
-   * v6 → v7 (407 D-13, 2026-08-29): `StepEvidence.retrievalRung` is optional-additive, so every
-   * already-written v6 handoff loads unchanged and simply carries no rung.
-   *
-   * Registered rather than skipped for exactly the reason the trace bump was registered: a
-   * stamped document is the only way a reader can tell a run that PREDATES rung capture from a
-   * run that captured no rung because it bound no knowledge reader (D-16). The banner and
-   * `doctor` both read that distinction, and neither can recover it from an absent field alone.
-   */
-  6: (doc) => doc,
-}
+export const HANDOFF_MIGRATIONS: MigrationRegistry = {}
+
+// 2026-10-22, 449.1: stamps 3 to 7 were written by earlier builds whose every step was the identity; a later handoff bump drops these aliases or does not reuse 3 to 7.
+export const HANDOFF_STAMPS_READ_AS_CURRENT = [3, 4, 5, 6, 7] as const
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -472,7 +430,7 @@ function hasCompleteConditionRecordShape(value: unknown): boolean {
  * Present-implies-valid, and absence stays legal: a pre-439 run has no block, and neither does a
  * step that ended before any verifier judgment. Presence is admitted only in consumer-traversable
  * form, with every verdict, guard, need, citation source and dialog account one of its declared
- * literals, so no reader meets a value it has no reading for. The handoff version stays 7.
+ * literals, so no reader meets a value it has no reading for. The handoff version stays 2.
  */
 function hasCompleteConditionVerdictsShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
@@ -774,15 +732,16 @@ function hasCompleteHandoffShape(value: unknown): boolean {
 }
 
 /**
- * The read side of the handoff version discipline (D-19): parse → version check →
- * reject-newer-than-known with a typed {@link HandoffVersionError} → migrate-older through
- * {@link HANDOFF_MIGRATIONS}. Pure — no fs (the runner-local fs leg lands in Plan 07 and
+ * The read side of the handoff version discipline (D-19): parse → version check → read
+ * {@link HANDOFF_STAMPS_READ_AS_CURRENT} unchanged → reject-newer-than-known with a typed
+ * {@link HandoffVersionError} → migrate-older through {@link HANDOFF_MIGRATIONS}. Pure — no fs (the runner-local fs leg lands in Plan 07 and
  * delegates here). Every future handoff consumer routes through this one guard.
  */
 export const guardCompletedRunHandoff = createVersionGuard<CompletedRunHandoff>({
   name: 'CompletedRunHandoff',
   current: CURRENT_HANDOFF_SCHEMA_VERSION,
   migrations: HANDOFF_MIGRATIONS,
+  readAsCurrent: HANDOFF_STAMPS_READ_AS_CURRENT,
   error: HandoffVersionError,
   shape: hasCompleteHandoffShape,
 })

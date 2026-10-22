@@ -6,7 +6,7 @@ import type { PlannerLimitsRecord } from '../config/planner-limits'
 import type { MisdirectionRecordResult } from '../verdict/misdirection-evidence'
 import type { PerTestOutcome } from './per-test-outcome'
 
-export const CURRENT_HANDOFF_SCHEMA_VERSION = 7
+export const CURRENT_HANDOFF_SCHEMA_VERSION = 2
 
 export interface CompletedRunHandoff {
   schemaVersion: number
@@ -56,7 +56,7 @@ export interface CompletedRunHandoff {
   /**
    * 436 D-06: the planner limits this run's steps ran under, copied verbatim from the resolved
    * RunConfig, with the members whose own limits differ. Absent on runs whose producer recorded
-   * none and on every handoff written before 436. Optional-additive: the version stays 7.
+   * none and on every handoff written before 436. Optional-additive: the version stays 2.
    */
   plannerLimits?: PlannerLimitsRecord
   /**
@@ -74,7 +74,7 @@ export interface CompletedRunHandoff {
    * document's own digest — which now covers the sidecar, so digesting it here would hash a
    * value containing its own hash.
    *
-   * Optional-additive: {@link CURRENT_HANDOFF_SCHEMA_VERSION} stays 7 and no migration is owed.
+   * Optional-additive: {@link CURRENT_HANDOFF_SCHEMA_VERSION} stays 2 and no migration is owed.
    */
   misdirectionEvidence?: readonly MisdirectionRecordResult[]
 }
