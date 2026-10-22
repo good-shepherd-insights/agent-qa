@@ -1,42 +1,22 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { derivePublishOrder, publicPackageNames } from '../release/packages.mjs'
+import { derivePublishOrder, getPublicPackages, publicPackageNames } from '../release/packages.mjs'
 
-test('derives dependency-first individual package publish order', () => {
-  const shuffled = [...publicPackageNames].reverse().map(name => ({ name, pkg: { name, private: false } }))
-  const ordered = derivePublishOrder(shuffled).map(record => record.pkg.name)
-
-  // 2026-08-17 (Phase 398 plan 11): re-pinned to 22. This pin had already drifted before this
-  // phase — it was missing `-safety` and `-safety-local`, and nothing noticed because
-  // scripts/__tests__ sits outside the turbo `test` task set. Plan 11 adds `-analytics`,
-  // `-eval`, `-eval-local` and `-runner-local`, all four of which are `workspace:*` deps of
-  // packages/cli that the publish order omitted. Each of the six restored names sits after
-  // every internal dependency it declares. The 4 known order violations among
-  // `agent-local`/`knowledge-local` predate this phase and are deliberately left alone.
-  assert.deepEqual(ordered, [
-    '@vostride/agent-qa-ids',
-    '@vostride/agent-qa-schema',
-    '@vostride/agent-qa-safety',
-    '@vostride/agent-qa-runner',
-    '@vostride/agent-qa-runner-local',
-    '@vostride/agent-qa-eval',
-    '@vostride/agent-qa-agent',
-    '@vostride/agent-qa-model',
-    '@vostride/agent-qa-agent-local',
-    '@vostride/agent-qa-knowledge-local',
-    '@vostride/agent-qa-tools-local',
-    '@vostride/agent-qa-safety-local',
-    '@vostride/agent-qa-eval-local',
-    '@vostride/agent-qa-core',
-    '@vostride/agent-qa-web',
-    '@vostride/agent-qa-android',
-    '@vostride/agent-qa-ios',
-    '@vostride/agent-qa-mcp',
-    '@vostride/agent-qa-analytics',
-    '@vostride/agent-qa-dashboard-ui',
-    '@vostride/agent-qa-dashboard',
-    'agent-qa',
-  ])
+test('publish order equals the real public manifests and puts every internal dependency first', () => {
+  const records = getPublicPackages()
+  assert.deepEqual(records.map(record => record.pkg.name), publicPackageNames)
+  const position = new Map(publicPackageNames.map((name, index) => [name, index]))
+  for (const record of records) {
+    for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
+      for (const dep of Object.keys(record.pkg[field] ?? {})) {
+        if (!position.has(dep)) continue
+        assert.ok(
+          position.get(dep) < position.get(record.pkg.name),
+          `${record.pkg.name} publishes before ${dep}`,
+        )
+      }
+    }
+  }
 })
 
 test('rejects missing, duplicate, private, or extra public package records', () => {
