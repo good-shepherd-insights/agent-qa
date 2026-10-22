@@ -404,7 +404,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     await act(async () => {
       onReadOf()(statusRead("complete", "complete", { disposition: "drained" }, {
         notification: {
-          schemaVersion: 3,
+          schemaVersion: 2,
           runId: RUN_ID,
           outcome: "complete",
           verdictSummary: { total: 0, byClass: {} },

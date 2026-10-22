@@ -70,31 +70,8 @@ import { JobStoreSchemaVersionError, UnknownJobRowError } from './store-errors.j
  * database written by another build is a development artifact rather than a user's history,
  * and migration machinery for it would be code with no user that everything afterwards has
  * to keep working.
- *
- * 2 (385 plan 05): the jobs table gained `cancel_requested_at`. This is the mechanism doing
- * exactly what D-04 designed it for — a v1 database has no such column, so rather than being
- * silently widened on open it is refused by name with the remedy in the message.
- *
- * 3 (388 plan 01): the notifications table and its unique index arrived beside the jobs. The
- * bump is what stops a v2 database from being opened by this build and then answering "this
- * run was never notified" from a table that would have been created empty underneath it —
- * which is indistinguishable from a chain that really never terminated, and is exactly the
- * silent widening the gate exists to refuse.
- *
- * 4 (425 gap closure): the jobs table gained `started_at`, the instant a row was first claimed,
- * kept after the lease is released. Unlike 3, a widened v3 database would NOT print a wrong
- * fact: the column is nullable, an old row reads `started_at IS NULL`, the reader omits the key
- * and the timing line drops both duration clauses. The refusal is D-04 applied without an
- * exception. `CREATE TABLE IF NOT EXISTS` leaves a v3 jobs table without the column, so an
- * ungated open fails at the first statement naming `started_at` with a bare SQLite error; the
- * only way to open it cleanly is an `ALTER TABLE` on open, which is the migration machinery
- * D-04 excludes. So a v3 database is refused by name, with the remedy in the message, before
- * any of that runs. What clearing it costs is written down in docs/queues.md.
- *
- * 5 (444.1 D-23): the jobs table gained `not_before`, so a retrying row stays out of every claim
- * until its backoff has passed. A v4 database is refused by name for the same reason as a v3 one.
  */
-export const AGENT_JOB_STORE_USER_VERSION = 5
+export const AGENT_JOB_STORE_USER_VERSION = 2
 
 /**
  * Busy timeout for every connection to the job database.

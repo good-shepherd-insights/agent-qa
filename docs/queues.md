@@ -63,15 +63,11 @@ two-writers-under-one-fence case the fence exists to exclude. The row keeps its 
 existing slot through the unique index instead of doubling it. The verb does not pump: the operator
 runs `agent-qa agent-jobs pump --only <kind>` next, so the forget and the re-run stay two steps.
 
-The store stamps its schema version into `agent-jobs.db` and refuses a database stamped at any other
-version. It never migrates one. Version 4 (Phase 425) added the jobs table's `started_at` column, so
-an `agent-jobs.db` written at version 3 is refused by name (`JobStoreSchemaVersionError`), and the
-message gives the remedy: clear agent job queue state, meaning delete `.agent-qa/agent-jobs.db`
-(with its `-wal` and `-shm` files) and its checkpoint directory `.agent-qa/agent-jobs/checkpoints/`,
-then re-enqueue. Version 5 (Phase 444.1) added the jobs table's `not_before` column, the instant
-before which a retrying job is not claimed, so an `agent-jobs.db` written at version 4 is refused
-by name the same way, with the same remedy. Until someone clears it, everything that opens or reads
-the store refuses too. That
+The store stamps its schema version (2) into `agent-jobs.db` and refuses a database stamped at any
+other version by name (`JobStoreSchemaVersionError`). It never migrates one. The message gives the
+remedy: clear agent job queue state, meaning delete `.agent-qa/agent-jobs.db` (with its `-wal` and
+`-shm` files) and its checkpoint directory `.agent-qa/agent-jobs/checkpoints/`, then re-enqueue.
+Until someone clears it, everything that opens or reads the store refuses too. That
 covers `agent-qa daemon` and the other hosts that open the agent job queue. It also covers the
 post-processing read behind the dashboard's stage indicators, which answers a
 `job_store_schema_version` refusal instead of chip words. And it covers `agent-qa digest`, because

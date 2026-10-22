@@ -8,9 +8,9 @@
 //
 // What it deliberately does NOT carry (D-11; 385 D-01): no record content, no rationale
 // prose, no artifact bytes, no `agentqa://` refs. Counts, verdict classes and identifiers
-// only. Version 4 adds fixed curation event identities, which may contain unconstrained
-// strings. Public reads mask that snapshot through the same strict projection as the
-// early checkpoint snapshot; durable bytes remain the exact committed facts.
+// only. The curation stage carries fixed curation event identities, which may contain
+// unconstrained strings. Public reads mask that snapshot through the same strict projection
+// as the early checkpoint snapshot; durable bytes remain the exact committed facts.
 //
 // `outcome` is a fact about the CHAIN, not about the run: a failed run whose analysis and
 // curation both succeeded notifies `done`. The run's own verdict is the exit code, frozen
@@ -28,7 +28,7 @@ import type { CurationSnapshot } from './curation-snapshot'
  * last version's shape then fails to typecheck at its construction site, which is where the
  * mistake is, instead of at the reader that could only report it as corrupt bytes.
  */
-export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 4
+export const CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION = 2
 
 /** Whether the chain as a whole finished clean. Every stage done ⇒ `done` (D-12). */
 export type RunNotificationOutcome = 'done' | 'failed'
@@ -54,10 +54,9 @@ export type RunNotificationStageStatus = 'done' | 'failed'
  *
  * TWO WORDS, AND THE THIRD ONE IS AN ABSENCE RATHER THAN A WORD. A stage that was not recorded is
  * expressed by the member being MISSING (see `RunNotificationStages`), never by a `not-recorded`
- * status — because a status is a claim about a stage that ran, and every row written before v3
- * belongs to a chain whose third stage did not exist. Widening this enum to carry the historical
- * case would let a migration stamp an invented stage onto every row ever written, and no reader
- * can tell an invented stage from a recorded one.
+ * status — because a status is a claim about a stage that ran. Widening this enum to carry a stage
+ * that never ran would let a writer stamp an invented stage onto a row, and no reader can tell an
+ * invented stage from a recorded one.
  */
 export const RUN_NOTIFICATION_STAGE_STATUSES = [
   'done',
@@ -238,75 +237,25 @@ function isMember<T extends string>(members: readonly T[], value: unknown): valu
 }
 
 /**
- * The older-version migration seam, in the handoff loader's `HANDOFF_MIGRATIONS` idiom.
- *
- * Keyed by SOURCE version, one version-step per entry, so the next bump has a home instead of
- * an `if` somewhere in the guard. Migration is READ-SIDE and in-memory: rows already in a
- * user's `agent-jobs.db` are never rewritten in place, and the table's own PRAGMA
- * `user_version` is unchanged by this bump — the column's bytes are what moved, not the
- * schema of the table holding them. Both store readers call the guard below, so a reader
- * racing a writer that still stamps the older shape sees the current shape either way.
+ * The migration seam, keyed by source version with one version step per entry, so a later bump
+ * has a home instead of an `if` in the guard. It is empty, so every stamp but the current one is
+ * refused.
  */
-export const RUN_NOTIFICATION_MIGRATIONS: Record<number, (doc: unknown) => unknown> = {
-  /**
-   * v1 → v2 (Phase 404, D-01, 2026-08-26): the chain's stage set narrows to the two stages that
-   * actually run. Written as an ALLOW-LIST over the members this build reads rather than as a
-   * deletion of the member that left: a v1 row that was missing a stage migrates to a stage set
-   * that is missing it too, and is then refused BY NAME by the shape guard, instead of being
-   * quietly admitted because the one key we thought to delete was absent.
-   */
-  1: (doc) => {
-    const record = isRecord(doc) ? doc : {}
-    const stages = isRecord(record.stages) ? record.stages : {}
-    return {
-      ...record,
-      schemaVersion: 2,
-      stages: {
-        ...('analysis' in stages ? { analysis: stages.analysis } : {}),
-        ...('curation' in stages ? { curation: stages.curation } : {}),
-      },
-    }
-  },
-  /**
-   * v2 → v3 (Phase 422, D-13, 2026-09-11): the chain grows a third stage and the record grows an
-   * OPTIONAL member for it. The step is a version bump and NOTHING ELSE, which is the whole of
-   * its correctness: a v2 row was written by a chain that had no proposal stage, so the only
-   * honest thing this build can say about that run's proposals is nothing at all.
-   *
-   * Written as the same ALLOW-LIST the v1 step uses rather than as a passthrough, for the same
-   * reason: a v2 row that somehow carries a member neither version declares migrates to a stage
-   * set that is still missing it and is then refused BY NAME by the shape guard, instead of
-   * riding the spread through into a record several surfaces render.
-   */
-  2: (doc) => {
-    const record = isRecord(doc) ? doc : {}
-    const stages = isRecord(record.stages) ? record.stages : {}
-    return {
-      ...record,
-      schemaVersion: 3,
-      stages: {
-        ...('analysis' in stages ? { analysis: stages.analysis } : {}),
-        ...('curation' in stages ? { curation: stages.curation } : {}),
-      },
-    }
-  },
-  /** v3 → v4 (423 D-15): preserve the old record without inventing a snapshot. */
-  3: (doc) => ({ ...(isRecord(doc) ? doc : {}), schemaVersion: 4 }),
-}
+export const RUN_NOTIFICATION_MIGRATIONS: Record<number, (doc: unknown) => unknown> = {}
 
 /**
- * The full-shape guard, checked by EXACT key set rather than by presence, with a
- * migrate-older/reject-newer version walk in front of it (385 D-04; Phase 404 D-01).
+ * The full-shape guard, checked by EXACT key set rather than by presence, behind a forward walk
+ * over the migration seam above.
  *
  * Presence checks admit a record carrying an extra field, and an extra field on a row several
  * surfaces render is exactly how a payload grows a member nobody declared. The sorted-key
  * comparison is the `CurationTailReceipt` idiom for the same reason.
  *
- * The version walk runs FIRST and only forwards: a record stamped older than this build walks
- * the registry above one step at a time and is then checked against the CURRENT shape in full,
- * so a migration that produced something malformed is refused here rather than travelling. A
- * record stamped NEWER is refused by name — this build cannot know what a later contract means,
- * and guessing is how a reader renders a field it does not understand.
+ * The walk runs FIRST and only forwards, and the record is then checked against the CURRENT shape
+ * in full, so a step that produced something malformed is refused here rather than travelling. A
+ * record whose stamp is not the current one after the walk is refused by name — this build cannot
+ * know what another contract means, and guessing is how a reader renders a field it does not
+ * understand.
  */
 export function guardRunNotification(value: unknown): RunNotification {
   if (!isRecord(value)) {

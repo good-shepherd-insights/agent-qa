@@ -10,7 +10,7 @@
 // throws" by a store that refuses every open; the paired success is the only thing that
 // separates the two.
 
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -173,17 +173,7 @@ describe('agent job store: schema version (D-04)', () => {
   it('opens a database it created itself', () => {
     const store = openStore(root)
     try {
-      // 3 since 388 plan 01 added the notifications table beside the jobs; 2 was 385 plan 05's
-      // cancel-request column. The number moving is the point: a database written before the
-      // table existed is refused by name rather than silently widened — and for THIS addition
-      // the silent widening would be worse than a missing column, because an empty
-      // notifications table answers "this run was never notified" indistinguishably from a
-      // chain that really never terminated. 4 is 425's durable start instant. Widening would not
-      // print a wrong duration here (a null start drops both duration clauses); the database is
-      // refused because D-04 admits no ALTER-on-open path, and without the gate the first
-      // statement naming the missing column would fail with a bare SQLite error instead. 5 is
-      // 444.1's retry not-before time, refused for the same reason.
-      expect(AGENT_JOB_STORE_USER_VERSION).toBe(5)
+      expect(AGENT_JOB_STORE_USER_VERSION).toBe(2)
     } finally {
       store.close()
     }
@@ -204,56 +194,36 @@ describe('agent job store: schema version (D-04)', () => {
     }
   })
 
-  it('refuses a database stamped at a version this build does not read, naming the remedy', async () => {
-    const first = openStore(root)
-    await first.enqueue(insert('job_a', 'key-a'))
-    first.close()
+  it.each([1, 3, 4, 5, 7])(
+    'refuses a database stamped %i by name before any DDL and leaves it as found',
+    async (stamp) => {
+      const first = openStore(root)
+      await first.enqueue(insert('job_a', 'key-a'))
+      first.close()
 
-    const raw = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
-    raw.exec('PRAGMA user_version=7')
-    raw.close()
+      const path = join(root, AGENT_JOB_STORE_DB_FILE)
+      const raw = new DatabaseSync(path)
+      raw.exec(`PRAGMA user_version=${stamp}`)
+      raw.close()
+      const before = readFileSync(path)
 
-    let thrown: unknown
-    try {
-      openStore(root)
-    } catch (error) {
-      thrown = error
-    }
+      let thrown: unknown
+      try {
+        openStore(root)
+      } catch (error) {
+        thrown = error
+      }
 
-    expect(thrown).toBeInstanceOf(JobStoreSchemaVersionError)
-    expect((thrown as JobStoreSchemaVersionError).observedVersion).toBe(7)
-    expect((thrown as JobStoreSchemaVersionError).expectedVersion).toBe(
-      AGENT_JOB_STORE_USER_VERSION,
-    )
-    // Pinned WITH the qualifier (D-21/JOBQ-07): three queues coexist, so a remedy that says
-    // "clear queue state" tells an operator to clear something without saying which.
-    expect((thrown as Error).message).toContain('clear agent job queue state')
-  })
-
-  it('leaves a database it refused to open exactly as it found it', () => {
-    const first = openStore(root)
-    first.close()
-
-    const before = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
-    before.exec('PRAGMA user_version=7')
-    before.exec(
-      'INSERT INTO jobs (id, kind, idempotency_key, status, summary, payload, attempts, ' +
-        "created_at, updated_at) VALUES ('job_x','analyze-run','k','queued','s','{}',0,'t','t')",
-    )
-    before.close()
-
-    expect(() => openStore(root)).toThrow(JobStoreSchemaVersionError)
-
-    const after = new DatabaseSync(join(root, AGENT_JOB_STORE_DB_FILE))
-    try {
-      // The refused open neither re-stamped the header nor touched a row: a "hard fail" that
-      // repaired the version on the way out would be a migration with no author.
-      expect(Number(after.prepare('PRAGMA user_version').get()?.user_version)).toBe(7)
-      expect(after.prepare('SELECT count(*) AS n FROM jobs').get()?.n).toBe(1)
-    } finally {
-      after.close()
-    }
-  })
+      expect(thrown).toBeInstanceOf(JobStoreSchemaVersionError)
+      expect((thrown as JobStoreSchemaVersionError).observedVersion).toBe(stamp)
+      expect((thrown as JobStoreSchemaVersionError).expectedVersion).toBe(
+        AGENT_JOB_STORE_USER_VERSION,
+      )
+      // Three queues coexist, so a remedy that only says "clear queue state" would not say which.
+      expect((thrown as Error).message).toContain('clear agent job queue state')
+      expect(readFileSync(path).equals(before)).toBe(true)
+    },
+  )
 })
 
 describe('agent job store: dedupe (D-08)', () => {
@@ -1632,7 +1602,9 @@ describe('C444.1-RETRY-BACKOFF', () => {
 
       expect(thrown).toBeInstanceOf(JobStoreSchemaVersionError)
       expect((thrown as JobStoreSchemaVersionError).observedVersion).toBe(4)
-      expect((thrown as JobStoreSchemaVersionError).expectedVersion).toBe(5)
+      expect((thrown as JobStoreSchemaVersionError).expectedVersion).toBe(
+        AGENT_JOB_STORE_USER_VERSION,
+      )
       expect((thrown as Error).message).toContain('clear agent job queue state')
 
       const after = new DatabaseSync(join(versionFour, AGENT_JOB_STORE_DB_FILE))

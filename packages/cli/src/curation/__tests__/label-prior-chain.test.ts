@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
-import { sha256hex, type PostProcessingStatus, type RunNotificationView } from '@vostride/agent-qa-schema'
+import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, sha256hex, type PostProcessingStatus, type RunNotificationView } from '@vostride/agent-qa-schema'
 import { createKnowledgeReader, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import { markFixture } from '../../gates/__tests__/feedback-fixture.js'
 import { renderChainTerminalLine, renderPostProcessingSummaryLine, type PostRunTailOperations } from '../post-run-tail.js'
@@ -20,7 +20,7 @@ afterEach(() => { vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync
 const disclosure: TrustPriorDisclosure = { status: 'calibrated', digest: 'a'.repeat(64), nByOrigin: { 'agent-verified': 20, 'agent-observed': 25 } }
 const priorText = (digest: string, observed = 25) => `trust priors: calibrated@${digest} (agent-verified n=20, agent-observed n=${observed})`
 function notification(outcome: 'complete' | 'failed' = 'complete'): RunNotificationView {
-  return { schemaVersion: 4, runId: 'fixture-run', outcome, verdictSummary: { total: 3, byClass: { app_bug: 3 } },
+  return { schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, runId: 'fixture-run', outcome, verdictSummary: { total: 3, byClass: { app_bug: 3 } },
     stages: { analysis: { status: 'complete' }, curation: { status: outcome, curated: 2, deprecated: 1 } } } as RunNotificationView
 }
 it.each(['complete', 'failed'] as const)('renders exact cached priors on %s terminal without changing counts', outcome => {

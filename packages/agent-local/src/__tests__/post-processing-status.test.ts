@@ -747,19 +747,18 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
 })
 
 // ------------------------------------------------------------------------------------------
-// The STORED-ROW cell (Phase 404, D-01 / D-04; RESEARCH Pitfall 7).
+// The STORED-ROW cell.
 //
 // Every cell above writes its notification with THIS build's writer, so together they measure
-// this build talking to itself. The row is durable — it is sitting in users' `agent-jobs.db`
-// right now, stamped by the build that shipped before the narrowing — and the only thing
-// standing between those bytes and a surface is `guardRunNotification`, reached through the op.
-// Pinning the migration at the guard alone would leave the WIRING free: a reader that stopped
-// calling the guard, or an op that read the column some other way, passes every guard-level
-// cell in `schema` and hands a three-stage record straight to a renderer.
+// this build talking to itself. The only thing standing between bytes another build wrote and a
+// surface is `guardRunNotification`, reached through the op. Pinning the refusal at the guard
+// alone would leave the WIRING free: a reader that stopped calling the guard, or an op that read
+// the column some other way, passes every guard-level cell in `schema` and hands a three-stage
+// record straight to a renderer.
 // ------------------------------------------------------------------------------------------
 
-describe('a row another build wrote still reads, through the op (D-01, Pitfall 7)', () => {
-  it('reads a stored schemaVersion-1 notification as a two-stage schemaVersion-2 record',
+describe('a row another build wrote is refused, through the op', () => {
+  it('refuses a stored schemaVersion-1 notification by name',
     async () => {
       const harness = createHarness()
       const jobs = await harness.host.jobs()
@@ -774,8 +773,8 @@ describe('a row another build wrote still reads, through the op (D-01, Pitfall 7
       await harness.host.close()
       hosts.splice(hosts.indexOf(harness.host), 1)
 
-      // The PREVIOUS contract, written by hand because no build in this tree can still produce
-      // it — three stages, the third the structural placeholder, stamped schemaVersion: 1.
+      // Written by hand because no build in this tree produces it: three stages, the third a
+      // structural placeholder, stamped schemaVersion: 1.
       const legacyPayload = {
         schemaVersion: 1,
         runId: RUN_ID,
@@ -791,7 +790,7 @@ describe('a row another build wrote still reads, through the op (D-01, Pitfall 7
       const db = new DatabaseSync(dbPath)
       try {
         // Asserted rather than assumed: an UPDATE that matched no row would leave this build's
-        // own v2 record in place and make every claim below vacuous.
+        // own record in place and make every claim below vacuous.
         const updated = db
           .prepare('UPDATE notifications SET payload = ? WHERE run_id = ?')
           .run(JSON.stringify(legacyPayload), RUN_ID)
@@ -815,29 +814,8 @@ describe('a row another build wrote still reads, through the op (D-01, Pitfall 7
         },
       })
       hosts.push(cold)
-      const status = await invokeFunction(
-        cold.registry,
-        RUNS_POST_PROCESSING_FUNCTION_ID,
-        { runId: RUN_ID },
-        CALLER,
-      ) as PostProcessingStatus
-
-      const notification = status.notification
-      expect(notification).toBeDefined()
-      // 2026-09-11 (422 D-13): the walk is two steps long now, and the row this cell stores was
-      // written by a build three versions back. The end of the walk moved; the claim did not.
-      expect(notification!.schemaVersion).toBe(4)
-      // Set-equality on the keys: the placeholder must be GONE from what a surface receives, not
-      // merely unrendered by the surfaces that happen to exist today.
-      //
-      // It is also, since D-13, the pin that the walk did not INVENT the third stage on the way
-      // past. A historical row belongs to a chain that had no proposal stage, and `proposals`
-      // absent is the only honest thing this build can say about it.
-      expect(Object.keys(notification!.stages).sort()).toEqual(['analysis', 'curation'])
-      // The counts survived the walk — a migration that rebuilt the stage record instead of
-      // narrowing it would drop them and still pass the key-set claim above.
-      expect(notification!.stages.curation).toEqual({ status: 'complete', curated: 2, deprecated: 1 })
-      // And the chips the same read projects are the two, by key set.
-      expect(Object.keys(status.chips).sort()).toEqual(['analysis', 'curation'])
+      await expect(
+        invokeFunction(cold.registry, RUNS_POST_PROCESSING_FUNCTION_ID, { runId: RUN_ID }, CALLER),
+      ).rejects.toThrow(/declares schemaVersion 1, and this build reads 2\./u)
     })
 })

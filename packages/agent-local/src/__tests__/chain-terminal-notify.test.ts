@@ -46,6 +46,7 @@ import {
   asRunId,
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   sha256hex,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -350,7 +351,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     expect(notifications).toHaveLength(1)
     expect(notifications[0]?.runId).toBe(RUN_ID)
     expect(notifications[0]?.payload).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
       runId: RUN_ID,
       outcome: 'done',
       verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },

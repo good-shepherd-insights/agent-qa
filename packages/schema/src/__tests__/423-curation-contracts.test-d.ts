@@ -44,8 +44,8 @@ test('SNAPSHOT-COUNTS-EXACT: version and exact five numeric count keys', () => {
   expectTypeOf<z.infer<typeof CurationSnapshotSchema>>().toEqualTypeOf<CurationSnapshot>()
 })
 
-test('NOTIFICATION-V4-ROUNDTRIP: exact current version and optional snapshot carrier', () => {
-  expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<4>()
+test('NOTIFICATION-ROUNDTRIP: exact current version and optional snapshot carrier', () => {
+  expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<2>()
   type Curation = RunNotification['stages']['curation']
   expectTypeOf<keyof Curation>().toEqualTypeOf<'status' | 'curated' | 'deprecated' | 'curationSnapshot'>()
   // Conditional access keeps the preimplementation RED inside this counted assertion.

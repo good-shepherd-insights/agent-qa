@@ -24,6 +24,7 @@ import type {
   PostProcessingStatus,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
+import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { DashboardDatabase } from '../db/database.js'
@@ -385,7 +386,7 @@ describe('isPostProcessingTerminal', () => {
     const withRow: PostProcessingStatus = {
       ...chips('pending', 'pending'),
       notification: {
-        schemaVersion: 4,
+        schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
         runId: RUN_ID,
         outcome: 'complete',
         verdictSummary: { total: 0, byClass: {} },

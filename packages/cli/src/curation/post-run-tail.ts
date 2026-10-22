@@ -1453,9 +1453,9 @@ export function renderChainTerminalLine(
  *
  * FOUR SENTENCES AND THEY ARE NOT INTERCHANGEABLE:
  *
- *   `proposals: not recorded`            the row carries no proposal stage. Every v2 notification
- *                                        migrated forward, and every chain that halted at a
- *                                        permanently failed fold. NOT a stage that staged nothing.
+ *   `proposals: not recorded`            the row carries no proposal stage, as for every chain
+ *                                        that halted at a permanently failed fold. NOT a stage
+ *                                        that staged nothing.
  *   `proposals: complete (staged not recorded…)`  the stage RAN and no staging port was bound, so the
  *                                        counts were omitted by the handler on purpose.
  *   `proposals: complete (staged 0, skipped 0…)`  a MEASURED zero — the port answered and staged

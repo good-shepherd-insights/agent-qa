@@ -496,7 +496,7 @@ The date is the decision date (`422-CONTEXT.md`); the notes were written during 
 | 3 | Additive `mutator` / `tableVersion` / `tableHash` / `authoringModel` / `promptVersion` and the `derivedFrom` label marker — no corpus or label schema bump | D-05, D-06, D-11 | Immutable generations; LLM probes |
 | 4 | `GENERATOR_KINDS` (6) and `LabelSourceChannel` (4) NOT widened; `AdversarialMutator` is the new closed set, and `PROBE_RESERVATION_STATUSES` shipped as `unattempted \| interrupted \| completed` | D-05, D-06 | Immutable generations; LLM probes |
 | 5 | "Capable" is 421 D-14's preflight verbatim; the `no-probe-model` gap set is closed and costs zero calls | D-09 | LLM probes |
-| 6 | The third chain id, notification schema v3's additive `proposals` stage, absent-is-not-zero, and the chip-less choice | D-13 | The chain, inline Gate 1 |
+| 6 | The third chain id, the notification's additive `proposals` stage, absent-is-not-zero, and the chip-less choice | D-13 | The chain, inline Gate 1 |
 | 7 | Four recorded defaults — 8 / 4 / 4 / 4 — each with a rationale and a disclosed source | D-04, D-11, D-14, D-18 | Caps, and where each came from |
 | 8 | `memoryOnPath` / `misdirectionRuledOut` are additive-optional evidence; `memoryMisdirectionRuledOut` keeps its name and meaning; eight verdict classes | D-17, D-20 | The circularity guard |
 | 9 | BYOM `declared-only`: the validator exemption is delivered by 422-27 on both production hosts; broken or unrecorded roots stay fail-closed | D-19 | BYOM: the declared claim stands, disclosed |

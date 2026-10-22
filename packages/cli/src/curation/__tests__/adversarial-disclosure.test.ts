@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 
 import {
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   CurationSnapshotSchema,
   guardRunNotification,
   toRunNotificationView,
@@ -66,7 +67,7 @@ function notification(
   outcome: RunNotification['outcome'] = 'done',
 ): RunNotification {
   return {
-    schemaVersion: 4,
+    schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
     runId: 'fixture-run',
     outcome,
     verdictSummary: { total: 1, byClass: { app_bug: 1 } },
@@ -97,17 +98,17 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
     const line = renderStoredLine(notification())
     expect(line).toContain('proposals: not recorded')
     expect(line).not.toContain('staged 0')
-    // The historical population: a v2 row migrated forward names no proposal stage at all, and
-    // the migration deliberately synthesises none. The rendered sentence must match that silence.
-    const migrated = guardRunNotification({
-      schemaVersion: 2,
+    // A stored row without a proposal stage reads through the guard without one, and the rendered
+    // sentence must match that silence.
+    const read = guardRunNotification({
+      schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
       runId: 'fixture-run',
       outcome: 'done',
       verdictSummary: { total: 1, byClass: { app_bug: 1 } },
       stages: { analysis: { status: 'done' }, curation: { status: 'done', curated: 2, deprecated: 1 } },
     })
-    expect(migrated.stages.proposals).toBeUndefined()
-    expect(renderStoredLine(migrated)).toContain('proposals: not recorded')
+    expect(read.stages.proposals).toBeUndefined()
+    expect(renderStoredLine(read)).toContain('proposals: not recorded')
   })
 
   it('renders a MEASURED zero as zero, and keeps curation counts untouched beside it', () => {
@@ -255,9 +256,9 @@ describe('the read projection over a real stored notification (422-17-T2)', () =
   /** The bytes as a store holds them, walked through the ONE guard every reader calls. */
   const stored = (doc: Record<string, unknown>): RunNotification => guardRunNotification(doc)
 
-  it('reports a HISTORICAL v2 row as not recorded, never as a proposal stage that did nothing', () => {
+  it('reports a row without a proposal stage as not recorded, not as a stage that did nothing', () => {
     const row = stored({
-      schemaVersion: 2,
+      schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
       runId: 'historical-run',
       outcome: 'done',
       verdictSummary: { total: 2, byClass: { app_bug: 2 } },
@@ -275,7 +276,7 @@ describe('the read projection over a real stored notification (422-17-T2)', () =
 
   it('reports a CURRENT zero-work stage as a measured zero, from the stored counts', () => {
     const row = stored({
-      schemaVersion: 3,
+      schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
       runId: 'zero-work-run',
       outcome: 'done',
       verdictSummary: { total: 0, byClass: {} },
@@ -295,7 +296,7 @@ describe('the read projection over a real stored notification (422-17-T2)', () =
 
   it('reports a CURRENT failed stage as failed, and invents no counts for it', () => {
     const row = stored({
-      schemaVersion: 3,
+      schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
       runId: 'failed-stage-run',
       outcome: 'failed',
       verdictSummary: { total: 1, byClass: { app_bug: 1 } },

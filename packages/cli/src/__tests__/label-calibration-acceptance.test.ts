@@ -5,7 +5,7 @@ import { Command } from 'commander'
 import { PassThrough, Writable } from 'node:stream'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
-import { asRef, ORIGIN_PRIORS, GateReceiptSchema, receiptDigestOf, screenStateHash, sha256hex, type Verdict, type PostProcessingStatus, type RunNotificationView } from '@vostride/agent-qa-schema'
+import { asRef, CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, ORIGIN_PRIORS, GateReceiptSchema, receiptDigestOf, screenStateHash, sha256hex, type Verdict, type PostProcessingStatus, type RunNotificationView } from '@vostride/agent-qa-schema'
 import { readCommittedCorpus, readLabelCalibration, FsReplayRecordStore, FsScoreStore, FsReportStore,
   committedLabelPath, runReplayGate, serializeReplayGateReceipt, FsRunArtifactSource, seedCommittedCorpus } from '@vostride/agent-qa-eval-local'
 import { projectSilverLabelRecord, extractRunCassettes, buildSeedingPlan, projectCorpusEntry, canonicalJson, type LeafCassette } from '@vostride/agent-qa-eval'
@@ -187,7 +187,7 @@ it('adopts a real prior generation in new bundle/index hosts and matches report,
   expect(fresh.disclosure.digest).toBe(publication.artifact.generationId)
   for (const mode of ['complete', 'failed', 'partial', 'handed-off'] as const) {
     const info = vi.fn()
-    const notification = { schemaVersion: 4, runId: f.handoff.runId, outcome: mode === 'failed' ? 'failed' : 'complete',
+    const notification = { schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, runId: f.handoff.runId, outcome: mode === 'failed' ? 'failed' : 'complete',
       verdictSummary: { total: 1, byClass: { app_bug: 1 } },
       stages: { analysis: { status: 'complete' }, curation: { status: mode === 'failed' ? 'failed' : 'complete', curated: 2, deprecated: 1 } } } as RunNotificationView
     const operations = {

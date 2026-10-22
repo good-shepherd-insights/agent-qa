@@ -16,6 +16,7 @@
 import {
   asJobId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   POST_PROCESSING_CHIP_STATUSES,
   toRunNotificationView,
 } from '@vostride/agent-qa-schema'
@@ -73,7 +74,7 @@ function row(status: JobStatus, claimed = false): PostProcessingJobRow {
 }
 
 const NOTIFICATION: RunNotification = {
-  schemaVersion: 4,
+  schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   runId: RUN_ID,
   outcome: 'done',
   verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },

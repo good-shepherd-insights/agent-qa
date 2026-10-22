@@ -47,9 +47,9 @@ describe('the notification record shape', () => {
     expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<
       typeof CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION
     >()
-    expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<4>()
+    expectTypeOf<RunNotification['schemaVersion']>().toEqualTypeOf<2>()
     expectTypeOf<RunNotification['schemaVersion']>().not.toEqualTypeOf<number>()
-    expectTypeOf<RunNotification['schemaVersion']>().not.toEqualTypeOf<2>()
+    expectTypeOf<RunNotification['schemaVersion']>().not.toEqualTypeOf<1>()
   })
 
   test('keeps its class counts PARTIAL, so an absent class is not a zero', () => {
@@ -103,10 +103,9 @@ describe('the stage status vocabulary', () => {
   })
 
   test('has NO word for a stage that was not recorded', () => {
-    // THE ONE BAR THIS WHOLE FILE IS FOR. A status is a claim about a stage that RAN. Every row
-    // written before v3 belongs to a chain whose third stage did not exist, so the historical
-    // case is expressed by the member being MISSING and never by a word — a widened enum would
-    // let a migration stamp an invented stage onto every row ever written.
+    // THE ONE BAR THIS WHOLE FILE IS FOR. A status is a claim about a stage that RAN, so a stage
+    // that did not run is expressed by the member being MISSING and never by a word — a widened
+    // enum would let a writer stamp an invented stage onto a row.
     expectTypeOf<Extract<RunNotificationStageStatus, 'not-recorded'>>().toEqualTypeOf<never>()
     expectTypeOf<Extract<RunNotificationStageStatus, 'skipped'>>().toEqualTypeOf<never>()
     expectTypeOf<Extract<RunNotificationStageStatus, 'absent'>>().toEqualTypeOf<never>()
