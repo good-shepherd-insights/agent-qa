@@ -33,7 +33,11 @@ import type {
   PublishBundleOutcome,
   WriterLeaseAuthority,
 } from '../index.js'
-import { enqueueCanaryOutcome, canaryOutcomeContentAddress } from '../canary-emit.js'
+import {
+  canaryOutcomePayloadSchema,
+  enqueueCanaryOutcome,
+  readQueuedCanaryPayload,
+} from '../canary-emit.js'
 import { LEASE_FILE, LEASE_HEARTBEAT_TTL_MS } from '../lease/writer-lease.js'
 import * as purgeModule from '../purge.js'
 import { writeJobStateWithinCurrentAuthority } from '../queue/job-state.js'
@@ -1121,7 +1125,7 @@ describe('DCAY-05 sovereign purge', () => {
     expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, survivorId))).toBe(true)
   })
 
-  it.each([2, 3] as const)('deletes a matching v%s canary outcome by lineage and preserves unrelated legacy queue bytes', version => {
+  it('deletes a matching canary outcome by lineage and preserves unrelated queue bytes', () => {
     const target = publish('queue-canary-target', [
       { t: 'el', role: 'button', name: 'Canary purge target' },
       { t: 'page', route: '/purge/queue/canary-target' },
@@ -1132,19 +1136,8 @@ describe('DCAY-05 sovereign purge', () => {
       { t: 'page', route: '/purge/queue/canary-unrelated' },
       { t: 'platform', platform: 'web' },
     ])
-    function queueVersion(id: string): string {
-      if (version === 3) return id
-      const dir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, id)
-      const { benefit: _benefit, stateValidity: _validity, ...legacy } = JSON.parse(readFileSync(join(dir, 'payload.json'), 'utf8'))
-      legacy.schemaVersion = 2
-      const legacyId = canaryOutcomeContentAddress(legacy)
-      writeFileSync(join(dir, 'payload.json'), JSON.stringify(legacy))
-      renameSync(dir, knowledgeLocal.queuedCandidateDir(knowledgeRoot, legacyId))
-      renameSync(knowledgeLocal.jobStatePath(knowledgeRoot, id), knowledgeLocal.jobStatePath(knowledgeRoot, legacyId))
-      return legacyId
-    }
-    const matchedEntryId = queueVersion(enqueueCanary(target.id, 'matching'))
-    const survivorEntryId = queueVersion(enqueueCanary(unrelated.id, 'survivor'))
+    const matchedEntryId = enqueueCanary(target.id, 'matching')
+    const survivorEntryId = enqueueCanary(unrelated.id, 'survivor')
     const matchedDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, matchedEntryId)
     const survivorDir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, survivorEntryId)
     const survivorPayloadBytes = readFileSync(join(survivorDir, 'payload.json'))
@@ -1192,6 +1185,27 @@ describe('DCAY-05 sovereign purge', () => {
     expect(existsSync(survivorDir)).toBe(true)
     expect(readFileSync(join(survivorDir, 'payload.json'))).toEqual(survivorPayloadBytes)
     expect(readFileSync(survivorStatePath)).toEqual(survivorStateBytes)
+  })
+
+  it('a canary payload stamped 3 is not parsed as current and is swept loosely with the purge', () => {
+    const target = publish('queue-canary-stamped-target', [
+      { t: 'el', role: 'button', name: 'Stamped canary purge target' },
+      { t: 'page', route: '/purge/queue/canary-stamped-target' },
+      { t: 'platform', platform: 'web' },
+    ])
+    const entryId = enqueueCanary(target.id, 'stamped')
+    const dir = knowledgeLocal.queuedCandidateDir(knowledgeRoot, entryId)
+    const stamped = { ...JSON.parse(readFileSync(join(dir, 'payload.json'), 'utf8')), schemaVersion: 3 }
+    writeFileSync(join(dir, 'payload.json'), JSON.stringify(stamped))
+
+    expect(canaryOutcomePayloadSchema.safeParse(stamped).success).toBe(false)
+    expect(readQueuedCanaryPayload(stamped).kind).toBe('refused')
+
+    const outcome = purgeApi().purgeRecord({ knowledgeRoot, recordId: target.id, initiator: 'user' })
+
+    expect(outcome.kind).toBe('purged')
+    expect(existsSync(dir)).toBe(false)
+    expect(existsSync(knowledgeLocal.jobStatePath(knowledgeRoot, entryId))).toBe(false)
   })
 
   it('resumes the persisted canary deletion set without rescanning changed payload bytes', () => {

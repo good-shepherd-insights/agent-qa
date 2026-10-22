@@ -25,7 +25,7 @@ import {
   removeEmptyDir,
 } from './queue-transport.js'
 
-export const CANARY_QUEUE_SCHEMA_VERSION = 3
+export const CANARY_QUEUE_SCHEMA_VERSION = 2
 
 // 2026-09-07, 418 SC1: pin persisted payload.json vocabulary in edited local source.
 // satisfies bounds membership; the test-d never-bars enforce completeness.
@@ -47,12 +47,6 @@ const canaryOutcomePayloadBaseShape = {
   attribution: z.string(),
   briefDigest: z.string().min(1),
 } as const
-
-/** 2026-09-07, 418: frozen pre-418 shape; legacy queued documents are read-only. */
-export const canaryOutcomePayloadV2Schema = z.object({
-  ...canaryOutcomePayloadBaseShape,
-  schemaVersion: z.literal(2),
-}).strict()
 
 const count = z.number().int().nonnegative()
 const digest = z.string().regex(/^[0-9a-f]{64}$/)
@@ -77,41 +71,22 @@ export const canaryOutcomePayloadSchema = z
   })
   .strict()
 
-export const queuedCanaryPayloadSchema = z.union([
-  canaryOutcomePayloadSchema, canaryOutcomePayloadV2Schema,
-])
-
 // Diagnostic wall-clock metadata never participates in durable identity.
 const diagnosticShape = { emittedAt: z.string().optional() }
-const canaryOutcomeAddressFieldsSchema = z.discriminatedUnion('schemaVersion', [
-  canaryOutcomePayloadSchema.extend(diagnosticShape),
-  canaryOutcomePayloadV2Schema.extend(diagnosticShape),
-])
+const canaryOutcomeAddressFieldsSchema = canaryOutcomePayloadSchema.extend(diagnosticShape)
 
 export type CanaryOutcomePayload = z.infer<typeof canaryOutcomePayloadSchema>
-export type CanaryOutcomePayloadV2 = z.infer<typeof canaryOutcomePayloadV2Schema>
 export type QueuedCanaryPayloadRead =
-  | { kind: 'v3'; payload: CanaryOutcomePayload }
-  | { kind: 'v2-filled'; original: CanaryOutcomePayloadV2; payload: CanaryOutcomePayload }
+  | { kind: 'current'; payload: CanaryOutcomePayload }
   | { kind: 'refused'; issues: string[] }
 
 export function readQueuedCanaryPayload(value: unknown): QueuedCanaryPayloadRead {
-  const parsed = queuedCanaryPayloadSchema.safeParse(value)
+  const parsed = canaryOutcomePayloadSchema.safeParse(value)
   if (!parsed.success) {
     // Queued bytes are untrusted: never echo their values or unknown keys in diagnostics.
     return { kind: 'refused', issues: ['Invalid queued canary payload'] }
   }
-  if (parsed.data.schemaVersion === 3) return { kind: 'v3', payload: parsed.data }
-  return {
-    kind: 'v2-filled',
-    original: parsed.data,
-    payload: {
-      ...parsed.data,
-      schemaVersion: CANARY_QUEUE_SCHEMA_VERSION,
-      benefit: 'rode-along',
-      stateValidity: 'unknown',
-    },
-  }
+  return { kind: 'current', payload: parsed.data }
 }
 export type CanaryOutcomeAddressFields = z.infer<
   typeof canaryOutcomeAddressFieldsSchema

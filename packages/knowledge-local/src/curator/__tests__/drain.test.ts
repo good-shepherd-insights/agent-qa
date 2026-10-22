@@ -49,7 +49,11 @@ import { parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CurationJobView, CuratorAuthor, NeighborRecord } from '../author-contract.js'
 import { commitCurationDelta, type CommitCurationOutcome } from '../commit.js'
 import * as knowledgeStore from '../knowledge-store.js'
-import { canaryOutcomeContentAddress, type CanaryOutcomePayloadV2 } from '../../canary-emit.js'
+import {
+  CANARY_QUEUE_SCHEMA_VERSION,
+  canaryOutcomeContentAddress,
+  type CanaryOutcomePayload,
+} from '../../canary-emit.js'
 import { queuedCandidateDir } from '../../queue/queue-layout.js'
 import {
   DRAIN_BUDGET_MS,
@@ -189,7 +193,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     }
   }
 
-  it.each([2, 3] as const)('drains a literal v%s payload.json under its original address and sourceJobId, refusing tampering', async version => {
+  it('drains a current payload.json under its original address and sourceJobId, refusing tampering', async () => {
     scaffoldKnowledgeRoot(knowledgeRoot)
     const draft = makeBundleDraftFixture()
     const published = publishBundle({
@@ -200,12 +204,6 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       provenance: { mode: 'run-linked', runId: 'legacy-canary-seed', testId: 'checkout', stepIndex: 0 },
     })
     if (published.kind !== 'published') throw new Error(`unexpected ${published.kind}`)
-    const legacy: CanaryOutcomePayloadV2 = {
-      schemaVersion: 2, jobKind: 'canary-outcome', candidateId: published.id,
-      runId: 'legacy-canary-drain', testId: 'checkout', testIndex: 0,
-      buildOrdinal: 43, stepIndex: 0, outcome: 'positive',
-      exercisedAnchor: draft.anchors[0]!, attribution: 'Legacy canary observation', briefDigest: 'legacy-brief',
-    }
     const evidence = {
       benefit: 'exercised-benefited' as const, stateValidity: 'valid' as const,
       corpusDigest: 'a'.repeat(64), observedStateDigest: 'b'.repeat(64),
@@ -214,8 +212,14 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
         spend: { modelCalls: 5, screens: 1, promptTokens: 20, completionTokens: 10 },
       },
     }
-    const payload = version === 2 ? legacy : { ...legacy, schemaVersion: 3 as const, ...evidence }
-    // Compute from the literal queued document, independently of the version-aware helper.
+    const payload: CanaryOutcomePayload = {
+      schemaVersion: CANARY_QUEUE_SCHEMA_VERSION, jobKind: 'canary-outcome', candidateId: published.id,
+      runId: 'queued-canary-drain', testId: 'checkout', testIndex: 0,
+      buildOrdinal: 43, stepIndex: 0, outcome: 'positive',
+      exercisedAnchor: draft.anchors[0]!, attribution: 'Queued canary observation', briefDigest: 'queued-brief',
+      ...evidence,
+    }
+    // Compute from the literal queued document, independently of the helper.
     const entryId = sha256hex(canonicalJson(payload))
     expect(canaryOutcomeContentAddress(payload)).toBe(entryId)
     const queuedDir = queuedCandidateDir(knowledgeRoot, entryId)
@@ -243,9 +247,8 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       expect(author).not.toHaveBeenCalled()
       expect(received).toHaveBeenCalledWith(expect.objectContaining({
         candidateId: published.id,
-        ...(version === 2 ? { benefit: 'rode-along', stateValidity: 'unknown' } : evidence),
+        ...evidence,
       }))
-      if (version === 2) expect(received.mock.calls[0]![0]).not.toHaveProperty('ablation')
       expect(create).toHaveBeenCalledWith(expect.objectContaining({
         sourceJobId: entryId, sourceRunId: payload.runId, sourceBuildOrdinal: 43,
       }))
@@ -264,6 +267,52 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
         { candidateId: entryId, stage: 'job-state', message: 'claimed candidate payload is malformed' },
       ])
       expect(received).toHaveBeenCalledTimes(1)
+    } finally {
+      create.mockRestore()
+    }
+  })
+
+  it('a queued payload without benefit or stateValidity is not drained', async () => {
+    scaffoldKnowledgeRoot(knowledgeRoot)
+    const draft = makeBundleDraftFixture()
+    const published = publishBundle({
+      knowledgeRoot, productKey: 'storefront', commitArtifacts: 'none',
+    }, {
+      draft, discriminant: makeDiscriminantFixture(), originClass: 'agent-verified',
+      createdAtOrdinal: 42, screenStates: [], initialEvents: [], relations: [], artifacts: [],
+      provenance: { mode: 'run-linked', runId: 'older-canary-seed', testId: 'checkout', stepIndex: 0 },
+    })
+    if (published.kind !== 'published') throw new Error(`unexpected ${published.kind}`)
+    const payload = {
+      schemaVersion: 2, jobKind: 'canary-outcome', candidateId: published.id,
+      runId: 'older-canary-drain', testId: 'checkout', testIndex: 0,
+      buildOrdinal: 43, stepIndex: 0, outcome: 'positive',
+      exercisedAnchor: draft.anchors[0]!, attribution: 'Older canary observation', briefDigest: 'older-brief',
+    }
+    const entryId = sha256hex(canonicalJson(payload))
+    const queuedDir = queuedCandidateDir(knowledgeRoot, entryId)
+    mkdirSync(queuedDir, { recursive: true })
+    writeFileSync(join(queuedDir, 'payload.json'), `${canonicalJson(payload)}\n`)
+    const realCreate = knowledgeStore.createLocalKnowledgeStore
+    const received = vi.fn()
+    const create = vi.spyOn(knowledgeStore, 'createLocalKnowledgeStore').mockImplementation(config => {
+      const store = realCreate(config)
+      return { ...store, recordCanaryOutcome: async outcome => {
+        received(outcome)
+        return store.recordCanaryOutcome(outcome)
+      } }
+    })
+    const author = vi.fn<CuratorAuthor>()
+    try {
+      const report = await drainQueue({
+        knowledgeRoot, author, executionContext: 'local-interactive', maintenance: 'skip',
+      })
+      expect(report).toMatchObject({ committed: 0, quarantined: 1, failures: 1 })
+      expect(report.failureDetails).toEqual([
+        { candidateId: entryId, stage: 'job-state', message: 'claimed candidate payload is malformed' },
+      ])
+      expect(received).not.toHaveBeenCalled()
+      expect(author).not.toHaveBeenCalled()
     } finally {
       create.mockRestore()
     }

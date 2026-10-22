@@ -5,8 +5,6 @@ export { foldCurationSnapshot, readCurationEffects } from './curator/curation-sn
 export type { ReadCurationEffectsOptions } from './curator/curation-snapshot.js'
 
 export {
-  canaryOutcomePayloadV2Schema,
-  queuedCanaryPayloadSchema,
   readQueuedCanaryPayload,
   PAYLOAD_BENEFITS,
   PAYLOAD_STATE_VALIDITIES,

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asRecordId, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import { asRecordId, canonicalJson } from '@vostride/agent-qa-schema'
 import { enqueueCanaryOutcome } from '../canary-queue.js'
 import { queuedRoot } from '../queue-layout.js'
 
@@ -18,7 +18,6 @@ import {
   readQueuedCanaryPayload,
   PAYLOAD_BENEFITS,
   PAYLOAD_STATE_VALIDITIES,
-  type CanaryOutcomePayloadV2,
   type CanaryOutcomeAddressFields,
   type CanaryOutcomePayload,
 } from '../canary-payload.js'
@@ -42,26 +41,14 @@ function validPayload(): CanaryOutcomePayload {
   }
 }
 
-function validV2Payload(): CanaryOutcomePayloadV2 {
-  return {
-    schemaVersion: 2,
-    jobKind: 'canary-outcome',
-    candidateId: 'fact-checkout-button-0123456789abcdef',
-    runId: 'run-canary-transport',
-    testId: 'checkout::happy-path',
-    testIndex: 1,
-    buildOrdinal: 42,
-    stepIndex: 3,
-    outcome: 'positive',
-    exercisedAnchor: { t: 'el', role: 'button', name: 'Checkout' },
-    attribution: 'The served checkout hypothesis was exercised by the passing step.',
-    briefDigest: 'brief-digest-42',
-  }
+function payloadWithoutBenefitOrStateValidity(stamp: number): Record<string, unknown> {
+  const { benefit: _benefit, stateValidity: _stateValidity, ...rest } = validPayload()
+  return { ...rest, schemaVersion: stamp }
 }
 
 describe('Pin 3 canary outcome payload', () => {
-  it('enqueueCanaryOutcome writes v3 payload.json with attribution authority', () => {
-    const root = mkdtempSync(join(tmpdir(), 'canary-v3-payload-'))
+  it('enqueueCanaryOutcome writes the current payload.json with attribution authority', () => {
+    const root = mkdtempSync(join(tmpdir(), 'canary-payload-'))
     try {
       const { schemaVersion: _version, jobKind: _kind, outcome, candidateId, ...fields } = validPayload()
       const result = enqueueCanaryOutcome(root, {
@@ -84,7 +71,7 @@ describe('Pin 3 canary outcome payload', () => {
     const payload = {
       ...validPayload(), corpusDigest: 'a'.repeat(64), observedStateDigest: 'b'.repeat(64), ablation,
     }
-    expect(readQueuedCanaryPayload(payload)).toEqual({ kind: 'v3', payload })
+    expect(readQueuedCanaryPayload(payload)).toEqual({ kind: 'current', payload })
     for (const changed of [
       { benefit: 'exercised-benefited' as const }, { stateValidity: 'valid' as const },
       { corpusDigest: 'c'.repeat(64) }, { observedStateDigest: 'd'.repeat(64) },
@@ -105,36 +92,37 @@ describe('Pin 3 canary outcome payload', () => {
     expect(canaryOutcomePayloadSchema.shape.outcome.options).toEqual(['positive', 'negative'])
   })
 
-  it('reads a literal v2 payload through the load guard as rode-along / unknown', () => {
-    expect(readQueuedCanaryPayload(validV2Payload())).toEqual({
-      kind: 'v2-filled', original: validV2Payload(), payload: validPayload(),
+  it('reads a current payload as current', () => {
+    expect(readQueuedCanaryPayload(validPayload())).toEqual({
+      kind: 'current', payload: validPayload(),
     })
-    expect(readQueuedCanaryPayload(validPayload())).toEqual({ kind: 'v3', payload: validPayload() })
-    expect(readQueuedCanaryPayload({ ...validV2Payload(), schemaVersion: 1 }).kind).toBe('refused')
-    expect(readQueuedCanaryPayload({ ...validV2Payload(), benefit: 'exercised-benefited' }).kind).toBe('refused')
   })
 
-  it('a v2 payload keeps its v2 content address after the fill', () => {
-    const read = readQueuedCanaryPayload(validV2Payload())
-    expect(read.kind).toBe('v2-filled')
-    if (read.kind !== 'v2-filled') throw new Error('Expected legacy payload')
-    expect(canaryOutcomeContentAddress(read.original)).toBe(canaryOutcomeContentAddress(validV2Payload()))
-    expect(canaryOutcomeContentAddress(read.original)).toBe(sha256hex(canonicalJson(validV2Payload())))
-    expect(canaryOutcomeContentAddress(read.payload)).not.toBe(canaryOutcomeContentAddress(read.original))
+  it.each([
+    { title: 'refuses a payload stamped 3 with every current field', planted: () => ({ ...validPayload(), schemaVersion: 3 }) },
+    { title: 'refuses a payload stamped 2 without benefit or stateValidity', planted: () => payloadWithoutBenefitOrStateValidity(2) },
+    { title: 'refuses a payload stamped 1 with every current field', planted: () => ({ ...validPayload(), schemaVersion: 1 }) },
+  ])('$title', ({ planted }) => {
+    expect(readQueuedCanaryPayload(planted())).toEqual({
+      kind: 'refused', issues: ['Invalid queued canary payload'],
+    })
+    expect(canaryOutcomePayloadSchema.safeParse(planted()).success).toBe(false)
   })
 
-  it('refuses a v3 payload missing benefit or carrying an unknown key', () => {
+  it('refuses a current payload missing benefit or carrying an unknown key', () => {
     const { benefit: _benefit, ...missing } = validPayload()
     expect(readQueuedCanaryPayload(missing).kind).toBe('refused')
     expect(readQueuedCanaryPayload({ ...validPayload(), unknown: true }).kind).toBe('refused')
     expect(readQueuedCanaryPayload({ ...validPayload(), stateValidity: undefined }).kind).toBe('refused')
   })
 
-  it('accepts only schema version 3 and the canary-outcome job kind', () => {
+  it('accepts only the current schema version and the canary-outcome job kind', () => {
     const payload = validPayload()
 
     expect(canaryOutcomePayloadSchema.parse(payload)).toEqual(payload)
-    expect(canaryOutcomePayloadSchema.safeParse(validV2Payload()).success).toBe(false)
+    expect(
+      canaryOutcomePayloadSchema.safeParse(payloadWithoutBenefitOrStateValidity(2)).success,
+    ).toBe(false)
     expect(
       canaryOutcomePayloadSchema.safeParse({ ...payload, schemaVersion: 1 }).success,
     ).toBe(false)

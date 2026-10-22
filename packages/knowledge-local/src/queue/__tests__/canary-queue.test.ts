@@ -6,7 +6,11 @@ import { asRecordId, type CanaryOutcome } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { enqueueCanaryOutcome } from '../canary-queue.js'
-import { canaryOutcomeContentAddress, canaryOutcomePayloadSchema } from '../canary-payload.js'
+import {
+  CANARY_QUEUE_SCHEMA_VERSION,
+  canaryOutcomeContentAddress,
+  canaryOutcomePayloadSchema,
+} from '../canary-payload.js'
 import { queuedRoot } from '../queue-layout.js'
 
 function outcome(): CanaryOutcome {
@@ -56,7 +60,7 @@ describe('enqueueCanaryOutcome', () => {
       testIndex: outcome().testIndex,
       outcome: outcome().runOutcome,
       jobKind: 'canary-outcome',
-      schemaVersion: 3,
+      schemaVersion: CANARY_QUEUE_SCHEMA_VERSION,
       benefit: 'rode-along',
       stateValidity: 'unknown',
     })

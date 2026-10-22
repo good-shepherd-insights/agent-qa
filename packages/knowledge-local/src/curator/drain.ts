@@ -338,9 +338,7 @@ function readClaimedCanaryOutcome(
       JSON.parse(readFileSync(claimed.payloadPath, 'utf8')),
     )
     if (read.kind === 'refused') return undefined
-    // 2026-09-07, 418: legacy identity is checked BEFORE projecting the v3 fill.
-    const original = read.kind === 'v2-filled' ? read.original : read.payload
-    if (canaryOutcomeContentAddress(original) !== claimed.candidateId) {
+    if (canaryOutcomeContentAddress(read.payload) !== claimed.candidateId) {
       return undefined
     }
     return {
