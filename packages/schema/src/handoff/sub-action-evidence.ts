@@ -46,7 +46,7 @@ export interface SubActionEvidence {
    */
   operationEvidence?: OperationEvidence
   // 2026-10-19 (444.1-08, D-14): plannedAction/stateBefore stay the planner's own; a heal that
-  // re-dispatched records what it sent here. The handoff schema version stays 7 (optional-additive).
+  // re-dispatched records what it sent here (optional-additive).
   healedDispatch?: { action: Action; stateBefore: ScreenState }
 }
 

@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { isReadableStamp, PRE_V2_STAMP, readableStamp, type ReadableStamp } from '../readable-stamp'
 
-describe('readableStamp (449.1 D-04)', () => {
+describe('readableStamp', () => {
   it('parses the pre-V2 stamp and the current stamp', () => {
     expect(readableStamp(2).parse(1)).toBe(1)
     expect(readableStamp(2).parse(2)).toBe(2)
@@ -19,7 +19,7 @@ describe('readableStamp (449.1 D-04)', () => {
   })
 })
 
-describe('isReadableStamp (449.1 D-04)', () => {
+describe('isReadableStamp', () => {
   it('admits the pre-V2 stamp and the current stamp', () => {
     expect(isReadableStamp(1, 2)).toBe(true)
     expect(isReadableStamp(2, 2)).toBe(true)
@@ -30,7 +30,7 @@ describe('isReadableStamp (449.1 D-04)', () => {
   })
 })
 
-describe('ReadableStamp types (449.1 D-04)', () => {
+describe('ReadableStamp types', () => {
   it('infers 1 | 2 for a schema that reads readableStamp(2)', () => {
     const Doc = z.object({ schemaVersion: readableStamp(2) })
     expectTypeOf<z.infer<typeof Doc>['schemaVersion']>().toEqualTypeOf<1 | 2>()

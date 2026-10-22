@@ -1,6 +1,5 @@
 import { z } from 'zod'
 
-// 2026-10-22, 449.1: the one stamp a durable format wrote before V2 renumbered it to 2 (D-04).
 export const PRE_V2_STAMP = 1 as const
 
 export type ReadableStamp<C extends number> = typeof PRE_V2_STAMP | C

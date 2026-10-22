@@ -52,7 +52,6 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
   })
 
   it('loads a stored schemaVersion 2 document as the current shape', () => {
-    // 2026-10-22, 449.1: 2 is the current stamp, so a pre-373 handoff written at 2 reads with no walk.
     const doc = { ...makeValidHandoff(), schemaVersion: 2 }
     const guarded = guardCompletedRunHandoff(doc)
     expect(guarded.runId).toBe('run-abc')

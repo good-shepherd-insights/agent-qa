@@ -28,7 +28,7 @@ import {
 /**
  * Thrown when a stored handoff declares a `schemaVersion` this build cannot consume:
  * newer than {@link CURRENT_HANDOFF_SCHEMA_VERSION} and not in
- * {@link HANDOFF_STAMPS_READ_AS_CURRENT}, or older with no registered migration (D-19).
+ * {@link HANDOFF_STAMPS_READ_AS_CURRENT}, or older with no registered migration.
  */
 export class HandoffVersionError extends VersionGuardError {
   constructor(found: number, supported: number) {
@@ -39,7 +39,7 @@ export class HandoffVersionError extends VersionGuardError {
 
 export const HANDOFF_MIGRATIONS: MigrationRegistry = {}
 
-// 2026-10-22, 449.1: stamps 3 to 7 were written by earlier builds whose every step was the identity; a later handoff bump drops these aliases or does not reuse 3 to 7.
+// Stamps 3 to 7 carry the current shape, so a later version bump must not reuse them.
 export const HANDOFF_STAMPS_READ_AS_CURRENT = [3, 4, 5, 6, 7] as const
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
@@ -430,7 +430,7 @@ function hasCompleteConditionRecordShape(value: unknown): boolean {
  * Present-implies-valid, and absence stays legal: a pre-439 run has no block, and neither does a
  * step that ended before any verifier judgment. Presence is admitted only in consumer-traversable
  * form, with every verdict, guard, need, citation source and dialog account one of its declared
- * literals, so no reader meets a value it has no reading for. The handoff version stays 2.
+ * literals, so no reader meets a value it has no reading for.
  */
 function hasCompleteConditionVerdictsShape(value: unknown): boolean {
   if (!isNonArrayObject(value)) return false
@@ -732,10 +732,10 @@ function hasCompleteHandoffShape(value: unknown): boolean {
 }
 
 /**
- * The read side of the handoff version discipline (D-19): parse → version check → read
+ * The read side of the handoff version discipline: parse → version check → read
  * {@link HANDOFF_STAMPS_READ_AS_CURRENT} unchanged → reject-newer-than-known with a typed
- * {@link HandoffVersionError} → migrate-older through {@link HANDOFF_MIGRATIONS}. Pure — no fs (the runner-local fs leg lands in Plan 07 and
- * delegates here). Every future handoff consumer routes through this one guard.
+ * {@link HandoffVersionError} → migrate-older through {@link HANDOFF_MIGRATIONS}. Pure — no fs;
+ * the runner-local fs leg delegates here. Every handoff consumer routes through this one guard.
  */
 export const guardCompletedRunHandoff = createVersionGuard<CompletedRunHandoff>({
   name: 'CompletedRunHandoff',

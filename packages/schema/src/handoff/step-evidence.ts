@@ -138,7 +138,7 @@ export interface StepEvidence {
   /**
    * The first cache key hit in this step whose stored target was not the only strict match, or
    * could not replay (438 D-11). Present only when `cacheStatus` is 'miss'; `cacheStatus` stays
-   * the three-value union and the handoff schema version stays 7 (optional-additive).
+   * the three-value union (optional-additive).
    */
   cacheMiss?: { reason: CacheMissReason }
   servedBrief: ServedBrief
