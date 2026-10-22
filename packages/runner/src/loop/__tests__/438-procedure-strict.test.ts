@@ -4,6 +4,7 @@
 // The real loop (executeStep) runs over makeScreenState screens with a stub knowledge reader.
 import { describe, expect, it } from 'vitest'
 import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
   asRecordId,
   asRef,
   parseProcedureBody,
@@ -67,7 +68,7 @@ function addressRows(): ScreenState {
 
 function clickBody(target: ProcedureGuardTarget): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [],
     steps: [{
       instruction: 'Click the stored target',

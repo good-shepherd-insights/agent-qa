@@ -102,6 +102,7 @@ export type {
 export { verifyManifestIdentity } from './manifest-identity'
 export { emitRecordMarkdown, parseRecordMarkdown } from './record-frontmatter'
 export type { RecordFrontmatter } from './record-frontmatter'
+export { PROCEDURE_BODY_SCHEMA_VERSION } from './procedure-steps'
 export { renderEmbeddingInput, screenStateSnapshotRelPath } from './embedding-input'
 export { deriveEvidenceToken } from './evidence-token'
 export {

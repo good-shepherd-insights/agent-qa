@@ -9,7 +9,7 @@ import { createVersionGuard } from '../versioning/create-version-guard'
 import type { OriginClass } from './outcome-event'
 
 /** D-16: one version governs every committed JSON artifact in a bundle directory. */
-export const BUNDLE_SCHEMA_VERSION = 1
+export const BUNDLE_SCHEMA_VERSION = 2
 
 const bundleKindSchema = z.enum(['fact', 'procedure', 'caution', 'unknown', 'policy'])
 const factSubtypeSchema = z.enum([
@@ -219,7 +219,7 @@ const skippedArtifactIndexEntrySchema = z.object({
 export const ArtifactsIndexSchema = z.object({
   schemaVersion: z.number().int().positive(),
   artifacts: z.array(artifactIndexEntrySchema),
-  /** Additive v1 inventory: bytes are intentionally absent and the refusal reason is durable. */
+  /** Skipped artifacts: bytes are intentionally absent and the refusal reason is durable. */
   skipped: z.array(skippedArtifactIndexEntrySchema).optional(),
 }).strict()
 

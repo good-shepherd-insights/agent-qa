@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
   asRecordId,
   asRef,
   parseProcedureBody,
@@ -64,7 +65,7 @@ function makeMatch(overrides: Partial<ProcedureMatch> = {}): ProcedureMatch {
 /** Two-action login payload matched against the default makeScreenState fixture. */
 function loginPayload(): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [{ name: 'userEmail', type: 'string', required: true }],
     steps: [
       {
@@ -271,7 +272,7 @@ function singleActionPayload(input: {
 }): ProcedureBodyPayload {
   const target = input.target ?? { role: 'button', nameNormalized: 'log in', name: 'Log in' }
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: input.parameters ?? [],
     steps: [{
       instruction: input.instruction ?? `Replay ${input.type}`,
@@ -416,7 +417,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       '3a157aa7bfc864af87771c5747fde2ab4bd096ea7cb2e4f473aea43b7f5e4288',
     )
     expect(createHash('sha256').update(recordBytes).digest('hex')).toBe(
-      '4841538eb07c0f8ce674bf9c1d90553b1d011e9799ead03090641acd102c5207',
+      'e4a660e14e87763afdb1ac51675b3839820e15811cdc07290812d1bc296e6e3e',
     )
 
     const handoff = JSON.parse(handoffBytes.toString('utf8')) as CompletedRunHandoff
@@ -1120,7 +1121,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
   it('projects zero candidates only for the failed lane of a multi-lane action', async () => {
     const payload: ProcedureBodyPayload = {
-      schemaVersion: 1,
+      schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
       parameters: [],
       steps: [{
         instruction: 'Drag using authored prose that recovery must omit',
@@ -1168,7 +1169,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
   it('keeps raw variable, memory, secret, and literal values behind the recovery firewall', async () => {
     const payload: ProcedureBodyPayload = {
-      schemaVersion: 1,
+      schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
       parameters: [
         { name: 'VAR_NAME', type: 'string', required: true },
         { name: 'MEM_NAME', type: 'number', required: false },
@@ -1525,7 +1526,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
   it('Test 6: parameter values bind loop-side by NAME and never cross the reader port', async () => {
     const payload: ProcedureBodyPayload = {
-      schemaVersion: 1,
+      schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
       parameters: [
         { name: 'userEmail', type: 'string', required: true },
         { name: 'otpCode', type: 'string', required: true },

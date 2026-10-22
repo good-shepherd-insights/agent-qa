@@ -11,7 +11,12 @@
 // boundary — and each FAILS on the shipped build, which dispatches BOTH stored actions
 // inside test step 0 (loop/index.ts §2b to exhaustion, isFinal at body end) and navigates.
 import { describe, expect, it } from 'vitest'
-import { asRecordId, asRef, serializeProcedureBody } from '@vostride/agent-qa-schema'
+import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
+  asRecordId,
+  asRef,
+  serializeProcedureBody,
+} from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   BriefBlock,
@@ -198,7 +203,7 @@ function navigatingAdapter(options?: {
 /** The committed 2-step flow body: fill the username, then click submit (form-anchored). */
 function flowPayload(): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [{ name: 'PROBE_USER', type: 'string', required: true }],
     steps: [
       {
@@ -668,7 +673,7 @@ function okayScreen(): ScreenState {
 
 async function recoveryBlockFor(target: ProcedureBodyPayload['steps'][number]['guard']['target']) {
   const payload: ProcedureBodyPayload = {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [],
     steps: [{
       instruction: 'Confirm the dialog',

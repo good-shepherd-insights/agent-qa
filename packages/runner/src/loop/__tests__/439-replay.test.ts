@@ -3,7 +3,12 @@
 // cached outcome never decides the verdict, and the cache is written only after a computed pass.
 
 import { describe, expect, it } from 'vitest'
-import { asRecordId, asRef, serializeProcedureBody } from '@vostride/agent-qa-schema'
+import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
+  asRecordId,
+  asRef,
+  serializeProcedureBody,
+} from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   CacheKey,
@@ -209,7 +214,7 @@ function navigatingAdapter(): PlatformAdapter & { executed: Action[] } {
 }
 
 const payload: ProcedureBodyPayload = {
-  schemaVersion: 1,
+  schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
   parameters: [{ name: 'PROBE_USER', type: 'string', required: true }],
   steps: [
     {

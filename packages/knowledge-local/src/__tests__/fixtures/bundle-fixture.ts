@@ -1,7 +1,11 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { asRef, serializeProcedureBody } from '@vostride/agent-qa-schema'
+import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
+  asRef,
+  serializeProcedureBody,
+} from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
   BundleDiscriminant,
@@ -161,7 +165,7 @@ export function makeProcedureBodyPayloadFixture(
   overrides: Partial<ProcedureBodyPayload> = {},
 ): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [
       { name: 'email', type: 'string', required: true },
       { name: 'password', type: 'secret', required: true },

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   EMPTY_PROCEDURE_BINDING_AVAILABILITY,
+  PROCEDURE_BODY_SCHEMA_VERSION,
   procedureParameterFillability,
   procedureSourceBinding,
   type ProcedureBindingAvailability,
@@ -15,7 +16,7 @@ function procedurePayload(
   referencedParameters: string[],
 ): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters,
     steps: [
       {

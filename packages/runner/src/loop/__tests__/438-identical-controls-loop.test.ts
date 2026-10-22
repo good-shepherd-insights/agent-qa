@@ -3,7 +3,12 @@
 // 'descriptor-ambiguous' miss and nothing is dispatched from the body. The real loop
 // (executeStep) runs over a makeScreenState screen with a stub knowledge reader.
 import { describe, expect, it } from 'vitest'
-import { asRecordId, asRef, serializeProcedureBody } from '@vostride/agent-qa-schema'
+import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
+  asRecordId,
+  asRef,
+  serializeProcedureBody,
+} from '@vostride/agent-qa-schema'
 import type {
   ElementInfo,
   ProcedureBodyPayload,
@@ -46,7 +51,7 @@ function twoOkays(): ScreenState {
 }
 
 const body: ProcedureBodyPayload = {
-  schemaVersion: 1,
+  schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
   parameters: [],
   steps: [{
     instruction: 'Click the okay button',

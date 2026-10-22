@@ -6,6 +6,7 @@ import {
   isReplayableActionShape,
 } from '../../action/replayability'
 import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
   parseProcedureBody,
   procedureStepKeys,
   serializeProcedureBody,
@@ -14,7 +15,7 @@ import {
 
 function threeStepPayload(): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [
       { name: 'username', type: 'string', required: true },
       { name: 'password', type: 'secret', required: true },
@@ -56,7 +57,7 @@ function threeStepPayload(): ProcedureBodyPayload {
 
 function scalarValuePayload(): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [{ name: 'user_email', type: 'string', required: true }],
     steps: [
       {
@@ -102,7 +103,7 @@ function scalarValuePayload(): ProcedureBodyPayload {
 
 function compositeValuePayload(): ProcedureBodyPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [],
     steps: [
       {

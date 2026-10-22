@@ -1043,6 +1043,7 @@ export type { CuratorTier, ProcedureParamType } from './knowledge/curator-tier'
 export { plannerCapabilityTier } from './knowledge/planner-tier'
 export type { PlannerCapability, PlannerCapabilityEvidence } from './knowledge/planner-tier'
 export {
+  PROCEDURE_BODY_SCHEMA_VERSION,
   parseProcedureBody,
   procedureJsonValueSchema,
   procedureStepKeys,

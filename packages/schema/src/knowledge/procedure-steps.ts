@@ -88,9 +88,11 @@ export interface ProcedureStepSpec {
   guard: ProcedureGuardDescriptor
 }
 
-/** The one committed procedure body payload (schemaVersion pinned at 1). */
+export const PROCEDURE_BODY_SCHEMA_VERSION = 2
+
+/** The one committed procedure body payload (stamped PROCEDURE_BODY_SCHEMA_VERSION). */
 export interface ProcedureBodyPayload {
-  schemaVersion: 1
+  schemaVersion: typeof PROCEDURE_BODY_SCHEMA_VERSION
   parameters: ProcedureParameterSpec[]
   steps: ProcedureStepSpec[]
   successAssertion: string
@@ -138,7 +140,7 @@ const stepSpecSchema = z
 
 const bodyPayloadSchema: z.ZodType<ProcedureBodyPayload> = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(PROCEDURE_BODY_SCHEMA_VERSION),
     parameters: z.array(
       z
         .object({

@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { asRecordId, asRef, sha256hexBytes } from '@vostride/agent-qa-schema'
+import {
+  PROCEDURE_BODY_SCHEMA_VERSION, asRecordId, asRef, sha256hexBytes,
+} from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
 import { executeStep } from '../index.js'
 import type { LoopPorts } from '../ports.js'
@@ -41,7 +43,8 @@ function fixture(path: 'live' | 'cache' | 'procedure' = 'live', zeroMs?: number)
   if (path === 'procedure') ports.procedureFlow = { carry: {
     match: { id: asRecordId('procedure-recording-offset'), flowAnchor: { t: 'flow', name: 'login' },
       confidence: 0.9, authoringModelTier: 'full', parameterSchema: [], replayRecommendation: 'replay' },
-    payload: { schemaVersion: 1, parameters: [], steps: [{ instruction: 'Click Log in',
+    payload: { schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION, parameters: [], steps: [{
+      instruction: 'Click Log in',
       action: { type: 'click', targets: { ref: logIn }, values: {} },
       guard: { target: logIn, pageAnchor: { t: 'page', route: 'https://example.test/login' } },
     }], successAssertion: 'Logged in' }, nextIndex: 0,

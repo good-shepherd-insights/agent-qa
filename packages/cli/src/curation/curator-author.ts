@@ -18,6 +18,7 @@ import type {
   ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
 import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
   deriveEvidenceToken,
   isReplayableActionShape,
   serializeProcedureBody,
@@ -1032,7 +1033,7 @@ function buildCandidatePayload(
     ok: true,
     built: {
       payload: {
-        schemaVersion: 1,
+        schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
         parameters,
         steps,
         successAssertion: candidate.successAssertion,

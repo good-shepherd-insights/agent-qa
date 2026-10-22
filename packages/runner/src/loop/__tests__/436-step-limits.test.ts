@@ -2,6 +2,7 @@
 // stops honestly, with a typed limit block, when the limit refuses the next dispatch.
 import { describe, expect, it } from 'vitest'
 import {
+  PROCEDURE_BODY_SCHEMA_VERSION,
   asRecordId,
   DEFAULT_PLANNER_LIMITS,
   formatLimitStopReason,
@@ -265,7 +266,7 @@ function procedureReader(): KnowledgeHintReader {
   const flowAnchor = { t: 'flow', name: 'login' } as const
   const logIn = { role: 'button', nameNormalized: 'log in', name: 'Log in' }
   const payload: ProcedureBodyPayload = {
-    schemaVersion: 1,
+    schemaVersion: PROCEDURE_BODY_SCHEMA_VERSION,
     parameters: [],
     steps: [{
       instruction: 'Click the Log in button',
