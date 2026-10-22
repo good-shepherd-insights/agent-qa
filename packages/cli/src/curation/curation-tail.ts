@@ -57,12 +57,8 @@ import { resolveRunCurationContext } from './run-curation-context.js'
 import { ciResumeClause } from './resume-limit.js'
 
 export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
-/**
- * v4 (418-03): the receipt gained the canary credit counters. v3 receipts fail validation,
- * so already-drained runs refold once — safe
- * because every tail fold is idempotent per runId. Never a second marker file (PATTERNS mandate).
- */
-export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 4
+/** The receipt's key set and stamp must match exactly; anything else refolds the run once. */
+export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 2
 
 export interface CurationTailReceipt {
   /** Fixed successful membership; absent on historical and handed-off receipts. */

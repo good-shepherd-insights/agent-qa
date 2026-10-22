@@ -19,7 +19,11 @@ import {
 import { parseProcedureBody } from '@vostride/agent-qa-schema'
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { CURATION_TAIL_RECEIPT_FILE, runCurationTail } from '../curation-tail.js'
+import {
+  CURATION_TAIL_RECEIPT_FILE,
+  CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
+  runCurationTail,
+} from '../curation-tail.js'
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
 import { buildCuratorAuthor, CURATOR_RETRY_CAP } from '../curator-author.js'
 import {
@@ -282,7 +286,7 @@ describe('F-381-48-1 live-artifact staged reproduction (Plan 381-49)', () => {
       expect(warns.filter((line) => line.includes('incomplete'))).toEqual([])
       expect(existsSync(join(roots.runDir, CURATION_TAIL_RECEIPT_FILE))).toBe(true)
       expect(JSON.parse(readFileSync(join(roots.runDir, CURATION_TAIL_RECEIPT_FILE), 'utf8'))).toMatchObject({
-        schemaVersion: 4, canary: emptyCanaryCreditCounters(),
+        schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION, canary: emptyCanaryCreditCounters(),
       })
       expect(factBundleIds(roots.knowledgeRoot)).toHaveLength(2)
       expect(procedureBundleIds(roots.knowledgeRoot)).toHaveLength(0)

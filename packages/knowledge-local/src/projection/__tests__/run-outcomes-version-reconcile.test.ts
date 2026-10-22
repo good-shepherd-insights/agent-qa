@@ -468,6 +468,24 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     expect(withIndex(knowledgeRoot, dumpProjection)).toEqual(before)
   })
 
+  it.each([1, 3, 4])('an index whose stored projection version is %i rebuilds at the current version', (stored) => {
+    const { knowledgeRoot, runsRoot } = producePreV4Project()
+    expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
+      .toBe('rebuilt')
+    withIndex(knowledgeRoot, (db) => {
+      db.prepare('UPDATE run_outcome_projection_version SET version = ?').run(stored)
+    })
+
+    const result = reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors })
+    expect(result.kind).toBe('rebuilt')
+    expect(result.kind === 'rebuilt' ? result.report : undefined)
+      .toEqual({ folded: HISTORICAL_RUNS.length, skippedHandoffs: 0, skippedArtifacts: 0 })
+    withIndex(knowledgeRoot, (db) => {
+      expect(db.prepare('SELECT * FROM run_outcome_projection_version').all())
+        .toEqual([{ id: 1, version: RUN_OUTCOMES_PROJECTION_VERSION }])
+    })
+  })
+
   it('an excludedFromOutcomes gate-run contributes zero rows through the rebuild (WTST-06)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
     expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)

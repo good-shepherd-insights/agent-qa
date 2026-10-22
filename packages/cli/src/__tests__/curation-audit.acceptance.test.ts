@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildCuratorAuthor,
   CURATION_TAIL_RECEIPT_FILE,
+  CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
   runCurationTail,
   runVerdictFirstCurationTail,
   type RunCurationTailOptions,
@@ -241,7 +242,7 @@ describe('tail-scoped Curator egress audit coverage (CUR-05)', () => {
       CURATION_TAIL_RECEIPT_FILE,
     ), 'utf8')) as Record<string, unknown>
     expect(receipt).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
       runId: 'run-curation-audit',
       handoffDigest: expect.stringMatching(/^[0-9a-f]{64}$/),
       drainKind: 'drained',

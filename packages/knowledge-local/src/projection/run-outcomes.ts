@@ -68,13 +68,6 @@ import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
 /**
  * Stamped into the curation-tail receipt's projection component. Bump when the fold
  * semantics or table shapes change so already-receipted runs refold on the next tail.
- * Version 2 partitions every row and applied-run marker, forcing existing receipts to
- * refold through the product/scope-keyed shape. Version 3 (390 D-02/D-07/D-09) reads
- * RESOLVED verdicts instead of the handoff's deterministic floor, adds the fingerprint-keyed
- * recurrence window, and deletes the provisional derived `quarantined` column — the derived
- * index is gitignored and rebuildable (L12), so this bump IS the migration.
- * Version 4 (393 D-15) makes this one fold pass ALSO populate the suite-fingerprint table gate 3
- * compares drafts against, so an already-receipted run must refold to contribute its elements.
  *
  * HOW THAT REFOLD ACTUALLY HAPPENS (393 CR-02), because the receipt alone cannot do it. The tail
  * stores this number in each run's receipt, so a bump invalidates every receipt and the sweep
@@ -85,9 +78,8 @@ import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
  * projection family from the runs root through `rebuildRunOutcomes`, which clears the family
  * (marker included) and re-reads every `handoff.json` + `analysis.json` from disk. THAT is how an
  * already-receipted run contributes its elements. The per-run receipts then rewrite at the new
- * version through the same sweep. Same L12 ground as the bumps above: the family is derived, so
- * the rebuild IS the migration — but it is a mechanism that runs, not an argument that it is
- * unnecessary.
+ * version through the same sweep. The family is derived, so the rebuild is the whole upgrade, and
+ * it is a mechanism that runs, not an argument that it is unnecessary.
  *
  * NOT the case argued at `cli/src/commands/run.ts:1949` (390-08 D-01), where a bump was
  * deliberately declined: there the rebuild would have replayed stored handoffs carrying the OLD
@@ -95,7 +87,7 @@ import type { SuiteFingerprintTestDelta } from './suite-fingerprints.js'
  * no historical rows at all, and every row it will hold is derivable from evidence the stored
  * handoffs already carry — so the refold produces the complete answer rather than a mixed one.
  */
-export const RUN_OUTCOMES_PROJECTION_VERSION = 4
+export const RUN_OUTCOMES_PROJECTION_VERSION = 2
 
 export { LAST_OUTCOMES_LIMIT } from './run-outcome-constants.js'
 

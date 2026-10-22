@@ -20,7 +20,12 @@ import {
 import type { PromotionPostureHostFacts, PromotionPostureResolution } from '../curation/promotion-posture.js'
 import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
 import { emptyCanaryCreditCounters } from '../curation/canary-credit.js'
-import { completedRunsRoot, CURATION_TAIL_RECEIPT_FILE, readCurationTailReceipt } from '../curation/curation-tail.js'
+import {
+  completedRunsRoot,
+  CURATION_TAIL_RECEIPT_FILE,
+  CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
+  readCurationTailReceipt,
+} from '../curation/curation-tail.js'
 import { promotionHostProof } from './promotion-host-proof.js'
 import { publishBundleForTest, appendPromotionReceipt } from '@vostride/agent-qa-knowledge-local'
 
@@ -63,7 +68,7 @@ function receipt(project: Project, name: string, canary = emptyCanaryCreditCount
   const dir = join(completedRunsRoot(project.agentQaRoot), name)
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'handoff.json'), '{}')
-  writeFileSync(join(dir, CURATION_TAIL_RECEIPT_FILE), JSON.stringify({ schemaVersion: 4,
+  writeFileSync(join(dir, CURATION_TAIL_RECEIPT_FILE), JSON.stringify({ schemaVersion: CURATION_TAIL_RECEIPT_SCHEMA_VERSION,
     runId: name, handoffDigest: 'a'.repeat(64), projectionVersion: 1, drainKind: 'drained',
     handoffHolderPid: null, candidateIds: [], canary, ...extra }))
   return dir
@@ -431,15 +436,15 @@ describe('createKnowledgeChecks', () => {
       buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: join(project.projectRoot, 'agent-qa-eval'), host, resolve: () => undefined }),
     }))
     expect(learning).toEqual({ status, message: (replayGateAvailable
-      ? `${message.slice(0, -1)}; since-v4 ride-along 0; cap-exceeded 0; lower-trust none; staged 0)`
+      ? `${message.slice(0, -1)}; ride-along 0; cap-exceeded 0; lower-trust none; staged 0)`
       : message) + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
   })
 
-  it('folds only validated v4 receipts into since-v4 counts and renders per-product shares', async () => {
+  it('folds only validated current receipts into ride-along counts and renders per-product shares', async () => {
     const project = makeProject()
     receipt(project, 'first', { ...emptyCanaryCreditCounters(), rideAlongUncredited: 1, ablationCapExceeded: 1 })
     receipt(project, 'second', { ...emptyCanaryCreditCounters(), rideAlongUncredited: 2, staged: 3 })
-    for (const [name, extra] of [['old', { schemaVersion: 3 }], ['extra', { unexpected: true }],
+    for (const [name, extra] of [['stamp-3', { schemaVersion: 3 }], ['stamp-4', { schemaVersion: 4 }], ['extra', { unexpected: true }],
       ['bad-count', { canary: { ...emptyCanaryCreditCounters(), staged: -1 } }]] as const) {
       const dir = receipt(project, name, { ...emptyCanaryCreditCounters(), rideAlongUncredited: 100 }, extra)
       expect(readCurationTailReceipt(dir)).toBeUndefined()
@@ -458,7 +463,7 @@ describe('createKnowledgeChecks', () => {
       buildPromotionPosture: async () => ({ kind: 'ready', committedRoot: '', host, resolve: () => undefined }),
     }))
     expect(checks).toHaveLength(4)
-    expect(learning).toEqual({ status: 'pass', message: 'gated (Gate 1 bound; judge none; canary evidence none; since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in example-web, 0/0 active in empty-product; staged 3)' + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
+    expect(learning).toEqual({ status: 'pass', message: 'gated (Gate 1 bound; judge none; canary evidence none; ride-along 3; cap-exceeded 1; lower-trust 1/4 active in example-web, 0/0 active in empty-product; staged 3)' + PRIOR_SUFFIX + ADVERSARIAL_SUFFIX })
   })
 
   it('discloses actual on-disk shares through the production doctor facts binding without replay or writes', async () => {
@@ -502,7 +507,7 @@ describe('createKnowledgeChecks', () => {
       }).sort((a, b) => a[0]!.localeCompare(b[0]!))
     const before = snapshot()
     const { learning } = await runChecks(project, baseProbes({ buildPromotionPosture }))
-    expect(learning?.message).toContain('since-v4 ride-along 3; cap-exceeded 1; lower-trust 1/4 active in storefront; staged 3')
+    expect(learning?.message).toContain('ride-along 3; cap-exceeded 1; lower-trust 1/4 active in storefront; staged 3')
     expect(learning?.status).toBe('pass')
     expect(buildPromotionPosture).toHaveBeenCalledTimes(1)
     expect(replay).not.toHaveBeenCalled()

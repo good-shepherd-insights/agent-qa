@@ -537,7 +537,6 @@ function createLearningAvailabilityCheck(context: KnowledgeCheckContext): Doctor
       const judgeLabel = judgeLabelOf(judge)
       if (replayGateAvailable) {
         const evidence = canary.kind === 'provided' ? canary.attributedRows ?? 'not reported' : 'none'
-        // 2026-09-08, 418 D-04/D-14/D-21: cumulative since-v4 counts only.
         // Reuse the tail's validated reader and completed-run census; never guess old receipts.
         const { listCompletedRunDirs, readCurationTailReceipt } = await import('../curation/curation-tail.js')
         const totals = { rideAlong: 0, capExceeded: 0, staged: 0 }
@@ -553,7 +552,7 @@ function createLearningAvailabilityCheck(context: KnowledgeCheckContext): Doctor
           .join(', ') || 'none'
         return {
           status: 'pass',
-          message: `gated (Gate 1 bound; judge ${judgeLabel}; canary evidence ${evidence}; since-v4 ride-along ${totals.rideAlong}; cap-exceeded ${totals.capExceeded}; lower-trust ${shares}; staged ${totals.staged})`,
+          message: `gated (Gate 1 bound; judge ${judgeLabel}; canary evidence ${evidence}; ride-along ${totals.rideAlong}; cap-exceeded ${totals.capExceeded}; lower-trust ${shares}; staged ${totals.staged})`,
         }
       }
       if (judge.reason === 'no-eligible-judge') {
