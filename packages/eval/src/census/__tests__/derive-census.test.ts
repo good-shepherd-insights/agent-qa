@@ -636,10 +636,10 @@ describe('deriveCensus v2 — splits, D-04 coverage, exclusions and the partitio
   it('echoes schemaVersionsSeen verbatim, answering an absent input with an empty record', () => {
     const seen = deriveCensus({
       snapshot: entriesSnapshot(fourArmEntries('p')),
-      schemaVersionsSeen: { '1': 3, '2': 152 },
+      schemaVersionsSeen: { '2': 155 },
     })
-    expect(seen.schemaVersionsSeen).toEqual({ '1': 3, '2': 152 })
-    expect(Object.keys(seen.schemaVersionsSeen)).toEqual(['1', '2'])
+    expect(seen.schemaVersionsSeen).toEqual({ '2': 155 })
+    expect(Object.keys(seen.schemaVersionsSeen)).toEqual(['2'])
 
     const absent = deriveCensus({ snapshot: entriesSnapshot(fourArmEntries('p')) })
     expect(absent.schemaVersionsSeen).toEqual({})
@@ -653,7 +653,7 @@ describe('deriveCensus v2 — splits, D-04 coverage, exclusions and the partitio
       exclusionFor('q', 'run-b', { class: 'timeout', producer: 'deterministic-classifier' }),
       exclusionFor('p', 'run-c', { class: 'environment', producer: 'analyze-run' }),
     ]
-    const schemaVersionsSeen = { '2': 8, '1': 1 }
+    const schemaVersionsSeen = { '2': 9 }
 
     const forward = deriveCensus({
       snapshot: entriesSnapshot(entries),
@@ -665,7 +665,7 @@ describe('deriveCensus v2 — splits, D-04 coverage, exclusions and the partitio
       snapshot: entriesSnapshot([...entries].reverse()),
       manifests: [...manifests].reverse(),
       exclusions: [...exclusions].reverse(),
-      schemaVersionsSeen: { '1': 1, '2': 8 },
+      schemaVersionsSeen: { '2': 9 },
     })
 
     expect(canonicalJson(forward)).toBe(canonicalJson(reversed))

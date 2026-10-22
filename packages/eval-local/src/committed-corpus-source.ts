@@ -18,6 +18,7 @@ import { join } from 'node:path'
 
 import {
   activeMarkedCorpusEntries,
+  BASELINE_POINTER_SCHEMA_VERSION,
   guardDecisionVectorsDocument,
   guardNoiseFloorArtefact,
   parseCorpusEntry,
@@ -104,11 +105,11 @@ const reportSchema = z
 
 const baselinePointerSchema = z
   .object({
-    schemaVersion: z.union([z.literal(1), z.literal(2)]),
+    schemaVersion: z.literal(BASELINE_POINTER_SCHEMA_VERSION),
     profileKey: z.string(),
     batchKey: z.string(),
-    fingerprint: z.string().optional(),
-    corpusDigest: z.string().optional(),
+    fingerprint: z.string(),
+    corpusDigest: z.string(),
   })
   .passthrough()
 
@@ -129,10 +130,8 @@ export interface CommittedCorpusRead {
   notices: string[]
   refusals: readonly CommittedReadRefusal[]
   /**
-   * 414 D-03/D-13: how many committed FILES declared each schemaVersion, keyed by the declared
-   * version as a string. `entry` is always the v2 shape in memory, so this is the only place the
-   * byte version survives — Plan 07's census prints it and Plan 09's `--check` exits non-zero
-   * while any `1` remains in a live root. An absent version key means zero files declared it.
+   * How many committed files declared each schemaVersion, keyed by the declared version as a
+   * string. An absent version key means zero files declared it.
    */
   schemaVersionsSeen: Record<string, number>
 }
@@ -159,11 +158,11 @@ export interface CommittedReportEntry {
 
 /** One committed per-profile baseline designation (D-19). */
 export interface BaselinePointerEntry {
-  schemaVersion: 1 | 2
+  schemaVersion: typeof BASELINE_POINTER_SCHEMA_VERSION
   profileKey: string
   batchKey: string
-  fingerprint?: string
-  corpusDigest?: string
+  fingerprint: string
+  corpusDigest: string
   path: string
 }
 
@@ -372,9 +371,7 @@ export function readCommittedCorpus(committedRoot: string, calibrationRead?: Lab
         refusals.push({ path, reason: read.reason })
         continue
       }
-      // 414 D-03: the ONE guard in eval core, not a second zod shape here. It admits v1 bytes
-      // and hands back the v2 shape in memory, so a v1 and a v2 entry for one cassetteId are
-      // one shape and merge rather than collide (D-13).
+      // The one guard in eval core, not a second zod shape here.
       const parsed = parseCorpusEntry(read.value)
       if (!parsed.ok) {
         refusals.push({ path, reason: `corpus entry rejected: ${parsed.issues}` })
@@ -643,8 +640,8 @@ export function listBaselinePointers(committedRoot: string): {
       schemaVersion: parsed.data.schemaVersion,
       profileKey: parsed.data.profileKey,
       batchKey: parsed.data.batchKey,
-      ...(parsed.data.fingerprint === undefined ? {} : { fingerprint: parsed.data.fingerprint }),
-      ...(parsed.data.corpusDigest === undefined ? {} : { corpusDigest: parsed.data.corpusDigest }),
+      fingerprint: parsed.data.fingerprint,
+      corpusDigest: parsed.data.corpusDigest,
       path,
     })
   }

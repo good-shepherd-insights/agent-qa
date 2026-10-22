@@ -18,14 +18,8 @@
 #   L5  valid noise-floor artefacts (415, 2026-09-05)                 -> PASS L5 / FAIL L5
 #       — canonical schema + committability, explained exact-zero floors, no noise-floor.json
 #   L6  no schemaVersion 1 entry under corpus/                        -> PASS L6 / FAIL L6
-#       — the 414 D-03 reviewed migration rewrote all 155 committed entries to schemaVersion 2
-#       (414-10). A v1 entry reappearing under `corpus/` means an unmigrated re-seed slipped in
-#       behind the one-way partition, so its `split` was never assigned by a committed manifest.
-#       The scope is `corpus/` ONLY, and deliberately so: `schemaVersion: 1` is the CURRENT and
-#       correct version of `eval-root.json`, of every `contracts/*.json` and of every
-#       `cassettes/**/cassette.json`, and the v1 guard fixture that proves the one v1|v2 guard
-#       lives in `packages/eval/src/labels/__tests__/fixtures/`. A whole-root scan would red on
-#       all of them. Only `corpus/` entries were migrated by 414 D-03, so only `corpus/` is law.
+#       — the scan covers `corpus/` only. A corpus entry is read only at schemaVersion 2, so a
+#       stamp-1 entry there is bytes no reader accepts.
 #
 # WHY A GREEN SUITE DOES NOT PROVE IT. The workspace vitest suite never reads the committed eval
 # root and never reads the demo config — `packages/eval` is pure by construction (its own

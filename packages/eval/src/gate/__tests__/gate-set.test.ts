@@ -10,8 +10,6 @@
 // D-11), Test 4 (a below-minimum gate set is a named verdict, never an `ok`),
 // and Test 6 (exclusion keys on the three provenance fields and never on a
 // path — the same entry with and without a `handoffPath` excludes identically).
-import { readFileSync } from 'node:fs'
-
 import { describe, expect, it } from 'vitest'
 
 import { canonicalJson } from '../../canonical-json'
@@ -22,7 +20,6 @@ import type {
   PrivateHeldOutCorpusEntry,
   SharedHeldOutCorpusEntry,
 } from '../../labels/corpus-entry'
-import { parseCorpusEntry } from '../../labels/corpus-entry-guard'
 import {
   EXCLUSION_REASONS,
   countGateSet,
@@ -276,22 +273,10 @@ describe('selectGateSet', () => {
   })
 
   it('never keys on a path: the same entry with and without a handoffPath excludes identically', () => {
-    const fixtureUrl = new URL(
-      '../../labels/__tests__/fixtures/v1-corpus-entry.json',
-      import.meta.url,
-    )
-    const bytes = JSON.parse(readFileSync(fixtureUrl, 'utf8')) as {
-      run_links: { handoffPath: string }
-    }
-    const handoffPath = bytes.run_links.handoffPath
-    expect(handoffPath).toContain('/')
+    const without = natural('c1')
+    const handoffPath = `.agent-qa/runs/${without.run_links.runSlug}/handoff.json`
 
-    const parsed = parseCorpusEntry(bytes)
-    if (!parsed.ok) throw new Error(`fixture did not parse: ${parsed.issues}`)
-
-    // The normalised v2 entry (no path anywhere) and a hand-built copy that
-    // smuggles the original path string back onto `run_links`.
-    const without = parsed.entry
+    // A hand-built copy that smuggles a path string back onto `run_links`.
     const withPath = {
       ...without,
       run_links: { ...without.run_links, handoffPath },

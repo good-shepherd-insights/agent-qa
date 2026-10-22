@@ -1,7 +1,6 @@
 // 2026-09-29, 432-02 D-18: a production target is a config declaration, and the environment a
 // corpus entry records is the target's declared class carried as DATA. Eval accepts all three
 // declared classes plus absence, and nothing else.
-import { readFileSync } from 'node:fs'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
@@ -125,19 +124,6 @@ describe('432 production target environment in eval (D-18)', () => {
       if (parsed.ok) continue
       expect(parsed.issues, JSON.stringify(malformed)).toContain('targetEnvironment')
     }
-  })
-
-  it('normalises committed v1 bytes without inventing an environment', () => {
-    const v1 = JSON.parse(
-      readFileSync(new URL('./fixtures/v1-corpus-entry.json', import.meta.url), 'utf8'),
-    ) as Record<string, unknown>
-    const parsed = parseCorpusEntry(v1)
-    expect(parsed.ok).toBe(true)
-    if (!parsed.ok) return
-    expect(parsed.schemaVersion).toBe(1)
-    expect(Object.keys(parsed.entry)).not.toContain('targetEnvironment')
-    // A v1 document carrying the field is refused rather than read: v1 predates D-04.
-    expect(parseCorpusEntry({ ...v1, targetEnvironment: 'production' }).ok).toBe(false)
   })
 
   it('keeps the other two declared classes and absence admitted beside production', () => {

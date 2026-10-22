@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import {
   assignSplit,
+  BASELINE_POINTER_SCHEMA_VERSION,
   JUDGE_CONFIG,
   buildEvalReport,
   canonicalJson,
@@ -3443,7 +3444,7 @@ function censusFixture(): CorpusCensus {
         partitionVersion: 1,
       },
     },
-    schemaVersionsSeen: { '1': 1, '2': 1 },
+    schemaVersionsSeen: { '2': 2 },
     campaign: {
       present: true,
       manifestDigest: 'b'.repeat(64),
@@ -3551,7 +3552,7 @@ describe('renderCensusMarkdown — byte-deterministic, counts-only projection (4
     ])
 
     // Provenance names which entry schema versions the committed BYTES still declare.
-    expect(first).toContain('- schemaVersionsSeen:\n  - v1: 1\n  - v2: 1')
+    expect(first).toContain('- schemaVersionsSeen:\n  - v2: 2')
 
     // The partition echo: the salt DIGEST and the three re-derivable parameters, nothing else.
     expect(first).toContain(
@@ -3890,7 +3891,13 @@ describe('runCensusVerb — static census over the committed root (413 D-13/D-14
     await writeFile(
       join(baselinesDir, 'fixture-profile.json'),
       `${JSON.stringify(
-        { schemaVersion: 1, profileKey: 'fixture-profile', batchKey: NO_JUDGE_BATCH_KEY },
+        {
+          schemaVersion: BASELINE_POINTER_SCHEMA_VERSION,
+          profileKey: 'fixture-profile',
+          batchKey: NO_JUDGE_BATCH_KEY,
+          fingerprint: 'fixture-fingerprint',
+          corpusDigest: 'fixture-corpus',
+        },
         null,
         2,
       )}\n`,

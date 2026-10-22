@@ -9,7 +9,6 @@ import {
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
 import {
   buildEvalReport,
@@ -84,18 +83,13 @@ const TEST_PARTITION = {
   privateFraction: 0.5,
 } as const
 
-/** Plan 01's committed v1 bytes, read rather than duplicated (414-01 decision). */
-const V1_FIXTURE_PATH = fileURLToPath(
-  new URL('../../../eval/src/labels/__tests__/fixtures/v1-corpus-entry.json', import.meta.url),
-)
-
-const V1_PRODUCT = 'google-maps'
+const FIXTURE_PRODUCT = 'google-maps'
 
 /** A v2 PRIVATE held-out entry — the arm the pre-414 local zod could not admit. */
 const V2_PRIVATE_ENTRY = {
   schemaVersion: 2,
   cassetteId: 'r_probe-run-for-the-read-leg/test-00-step-00-d00-leaf',
-  product: V1_PRODUCT,
+  product: FIXTURE_PRODUCT,
   split: 'held-out',
   heldOutVisibility: 'private',
   captured_at_ordinal: 3,
@@ -216,10 +210,6 @@ function floorFixture(profileKey: string, populated = true) {
     splitByCassetteId: new Map([['synthetic-cassette', 'natural']]),
     censusByProduct: { 'example-web': { natural: vectors.length, heldOutShared: 0, heldOutPrivate: 0 } },
   })
-}
-
-function v1FixtureBytes(): Record<string, unknown> {
-  return JSON.parse(readFileSync(V1_FIXTURE_PATH, 'utf8')) as Record<string, unknown>
 }
 
 function testManifest(overrides: Partial<PartitionManifest> = {}): PartitionManifest {
@@ -382,13 +372,14 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
     mkdirSync(censusDir, { recursive: true })
     writeFileSync(join(censusDir, 'census.json'), '{"schemaVersion":1}\n', 'utf8')
 
-    const baselinesDir = join(root, COMMITTED_REPORTS_DIR, 'baselines')
-    mkdirSync(baselinesDir, { recursive: true })
-    writeFileSync(
-      join(baselinesDir, 'p.json'),
-      `${JSON.stringify({ schemaVersion: 1, profileKey: 'p', batchKey: report.batchKey })}\n`,
-      'utf8',
-    )
+    const pointer = projectBaselinePointer({
+      plannerModelId: 'gpt-5.6-terra',
+      matcherVersion: 1,
+      fingerprint: 'fp-fixture',
+      corpusDigest: 'digest-fixture',
+      batchKey: report.batchKey,
+    })
+    const pointerPath = writeCommitted(root, 'reports/baselines/p.json', pointer)
 
     const reports = listCommittedReports(root)
     expect(reports.refusals).toEqual([])
@@ -398,37 +389,14 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
 
     const pointers = listBaselinePointers(root)
     expect(pointers.refusals).toEqual([])
-    expect(pointers.pointers).toHaveLength(1)
-    expect(pointers.pointers[0]?.profileKey).toBe('p')
-    expect(pointers.pointers[0]?.batchKey).toBe(report.batchKey)
-    expect(pointers.pointers[0]?.schemaVersion).toBe(1)
-    expect(pointers.pointers[0]).not.toHaveProperty('fingerprint')
-    expect(pointers.pointers[0]).not.toHaveProperty('corpusDigest')
-  })
-
-  it('surfaces the v2 fingerprint and corpus digest beside a v1 historical pointer', () => {
-    const pointer = projectBaselinePointer({
-      plannerModelId: 'gpt-5.6-terra',
-      matcherVersion: 1,
-      fingerprint: 'fp-fixture',
-      corpusDigest: 'digest-fixture',
-      batchKey: 'batch-fixture',
-    })
-    const path = writeCommitted(root, 'reports/baselines/v2.json', pointer)
-    writeCommitted(root, 'reports/baselines/v1.json', {
-      schemaVersion: 1, profileKey: 'historical', batchKey: 'old-batch',
-    })
-    const read = listBaselinePointers(root)
-    expect(read.refusals).toEqual([])
-    expect(read.pointers).toHaveLength(2)
-    expect(read.pointers.find(entry => entry.schemaVersion === 2)).toEqual({
+    expect(pointers.pointers).toEqual([{
       schemaVersion: 2,
       profileKey: pointer.profileKey,
-      batchKey: pointer.batchKey,
+      batchKey: report.batchKey,
       fingerprint: 'fp-fixture',
       corpusDigest: 'digest-fixture',
-      path,
-    })
+      path: pointerPath,
+    }])
   })
 
   it.each([
@@ -453,9 +421,16 @@ describe('readCommittedCorpus / listCommittedReports / listBaselinePointers (413
     expect(listCommittedReports(root)).toEqual({ reports: [{ batchKey: report.batchKey, path, report }], refusals: [] })
   })
 
-  it('reports a schemaVersion 3 baseline as a refusal row', () => {
-    const path = writeCommitted(root, 'reports/baselines/future.json', {
-      schemaVersion: 3, profileKey: 'future', batchKey: 'batch-fixture',
+  it.each([1, 3])('reports a schemaVersion %i baseline as a refusal row', stamp => {
+    const pointer = projectBaselinePointer({
+      plannerModelId: 'gpt-5.6-terra',
+      matcherVersion: 1,
+      fingerprint: 'fp-fixture',
+      corpusDigest: 'digest-fixture',
+      batchKey: 'batch-fixture',
+    })
+    const path = writeCommitted(root, `reports/baselines/stamp-${stamp}.json`, {
+      ...pointer, schemaVersion: stamp,
     })
     const read = listBaselinePointers(root)
     expect(read.pointers).toEqual([])
@@ -474,47 +449,35 @@ describe('the v2 read leg on committed bytes (414 D-03/D-13/D-02/D-05, ROOT-06)'
     await rm(root, { recursive: true, force: true })
   })
 
-  it('admits v1 bytes as natural beside a v2 private held-out entry, censusing both (D-13)', () => {
-    const v1 = v1FixtureBytes()
-    const v1CassetteId = v1.cassetteId as string
-    writeCommitted(root, committedCorpusPath(V1_PRODUCT, v1CassetteId), v1)
+  it('reports a corpus entry stamped 1 as a refusal row', () => {
     writeCommitted(
       root,
-      committedCorpusPath(V1_PRODUCT, V2_PRIVATE_ENTRY.cassetteId),
+      committedCorpusPath(FIXTURE_PRODUCT, V2_PRIVATE_ENTRY.cassetteId),
       V2_PRIVATE_ENTRY,
     )
+    const stampedPath = writeCommitted(root, committedCorpusPath(FIXTURE_PRODUCT, 'r_stamp/leaf'), {
+      ...V2_PRIVATE_ENTRY,
+      cassetteId: 'r_stamp/leaf',
+      schemaVersion: 1,
+    })
 
     const read = readCommittedCorpus(root)
 
-    expect(read.refusals).toEqual([])
-    expect(read.snapshot.entries).toHaveLength(2)
-    // The census is over the BYTES, not over the in-memory shape: both live
-    // versions are present and both are counted.
-    expect(read.schemaVersionsSeen).toEqual({ 1: 1, 2: 1 })
-
-    const normalised = read.snapshot.entries.find((entry) => entry.cassetteId === v1CassetteId)
-    expect(normalised).toBeDefined()
-    expect(normalised?.schemaVersion).toBe(2)
-    expect(normalised?.split).toBe('natural')
-    // D-13: `handoffPath` is accepted off disk and DISCARDED in memory.
-    expect(normalised?.run_links).toEqual({
-      runId: (v1.run_links as { runId: string }).runId,
-      runSlug: (v1.run_links as { runSlug: string }).runSlug,
-    })
-
-    const priv = read.snapshot.entries.find(
-      (entry) => entry.cassetteId === V2_PRIVATE_ENTRY.cassetteId,
-    )
-    expect(priv).toEqual(V2_PRIVATE_ENTRY)
+    expect(read.refusals).toEqual([{
+      path: stampedPath,
+      reason: 'corpus entry rejected: <root>: not a corpus entry (schemaVersion must be 2)',
+    }])
+    expect(read.snapshot.entries).toEqual([V2_PRIVATE_ENTRY])
+    expect(read.schemaVersionsSeen).toEqual({ 2: 1 })
   })
 
   it('refuses a v2 entry smuggling a handoff path as a typed row and completes the read', () => {
     writeCommitted(
       root,
-      committedCorpusPath(V1_PRODUCT, V2_PRIVATE_ENTRY.cassetteId),
+      committedCorpusPath(FIXTURE_PRODUCT, V2_PRIVATE_ENTRY.cassetteId),
       V2_PRIVATE_ENTRY,
     )
-    const badPath = writeCommitted(root, committedCorpusPath(V1_PRODUCT, 'r_bad/leaf'), {
+    const badPath = writeCommitted(root, committedCorpusPath(FIXTURE_PRODUCT, 'r_bad/leaf'), {
       ...V2_PRIVATE_ENTRY,
       cassetteId: 'r_bad/leaf',
       run_links: {

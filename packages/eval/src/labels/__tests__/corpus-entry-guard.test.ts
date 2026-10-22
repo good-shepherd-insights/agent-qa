@@ -1,57 +1,9 @@
-import { readFileSync } from 'node:fs'
-import { sha256hex } from '@vostride/agent-qa-schema'
-import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
-import {
-  FIXTURE_ARTIFACT_SHA,
-  FIXTURE_SCREENSHOT_SHA,
-  makeArtifactRefV2Handoff,
-} from '../../__tests__/fixtures/handoff-fixtures'
-import { canonicalJson } from '../../canonical-json'
-import type { LeafCassette } from '../../cassette/cassette'
-import { extractRunCassettes } from '../../extract/extract-run'
-import type { ArtifactSource } from '../../ports'
-import { projectCorpusEntry } from '../corpus-entry'
 import { guardCorpusEntry, parseCorpusEntry } from '../corpus-entry-guard'
-
-/**
- * The committed v1 bytes. Copied verbatim (byte-identical `cp`) from the
- * live google-maps `test-00-step-05-d03-leaf` entry BEFORE Plan 10 rewrites
- * the root, so this file is the last committed v1 corpus entry anywhere
- * once the migration lands (414 D-03).
- */
-const V1_FIXTURE_TEXT = readFileSync(
-  new URL('./fixtures/v1-corpus-entry.json', import.meta.url),
-  'utf8',
-)
-
-function v1Fixture(): Record<string, unknown> {
-  return JSON.parse(V1_FIXTURE_TEXT) as Record<string, unknown>
-}
 
 const RUN_ID = 'run / checkout suite 42'
 const RUN_SLUG = 'run---checkout-suite-42'
 const LEAF_ID = `${RUN_SLUG}/test-00-step-00-d00-leaf`
-
-function fullArtifacts(): ArtifactSource {
-  const entries = new Map<string, Uint8Array>([
-    [FIXTURE_SCREENSHOT_SHA, new Uint8Array([1, 2, 3])],
-    [FIXTURE_ARTIFACT_SHA, new Uint8Array([4, 5])],
-  ])
-  return { getBlob: (sha) => entries.get(sha) }
-}
-
-function fixtureLeaf(): LeafCassette {
-  const handoff: CompletedRunHandoff = makeArtifactRefV2Handoff()
-  const found = extractRunCassettes({ handoff, artifacts: fullArtifacts() })
-    .cassettes.map((entry) => entry.cassette)
-    .find(
-      (cassette): cassette is LeafCassette =>
-        cassette.granularity === 'leaf' && cassette.id === LEAF_ID,
-    )
-  if (found === undefined) throw new Error(`missing leaf cassette ${LEAF_ID}`)
-  return found
-}
 
 /** A minimal well-formed v2 natural document, as committed bytes would be. */
 function v2Natural(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -67,65 +19,22 @@ function v2Natural(overrides: Record<string, unknown> = {}): Record<string, unkn
   }
 }
 
-describe('parseCorpusEntry — the v1 arm (414 D-03/D-13)', () => {
-  it('admits the committed v1 fixture bytes and normalises them to a v2 natural entry', () => {
-    const parsed = parseCorpusEntry(v1Fixture())
+describe('parseCorpusEntry — the stamp', () => {
+  it.each([1, 3])('refuses a corpus entry stamped %i', (stamp) => {
+    const parsed = parseCorpusEntry(v2Natural({ schemaVersion: stamp }))
 
-    expect(parsed.ok).toBe(true)
-    if (!parsed.ok) return
-    expect(parsed.schemaVersion).toBe(1)
-
-    const fixture = v1Fixture()
-    const links = fixture.run_links as Record<string, unknown>
-    expect(parsed.entry).toEqual({
-      schemaVersion: 2,
-      cassetteId: fixture.cassetteId,
-      product: 'google-maps',
-      split: 'natural',
-      captured_at_ordinal: 1,
-      run_links: { runId: links.runId, runSlug: links.runSlug },
-      receiptDigest: fixture.receiptDigest,
-    })
-
-    // The dropped path field, and every field that must not be fabricated.
-    expect(Object.keys(parsed.entry.run_links)).toEqual(['runId', 'runSlug'])
-    expect(Object.keys(parsed.entry)).not.toContain('captured_at')
-    expect(Object.keys(parsed.entry)).not.toContain('targetEnvironment')
-    expect(Object.keys(parsed.entry)).not.toContain('heldOutVisibility')
-    expect(Object.keys(parsed.entry)).not.toContain('generator')
+    expect(parsed.ok).toBe(false)
+    if (parsed.ok) return
+    expect(parsed.issues).toBe('<root>: not a corpus entry (schemaVersion must be 2)')
+    expect(() => guardCorpusEntry(v2Natural({ schemaVersion: stamp }))).toThrow(TypeError)
   })
 
-  it('normalises a v1 entry to exactly what projectCorpusEntry emits for that cassette (adjacency, ROOT-06)', () => {
-    const cassette = fixtureLeaf()
-    const projected = projectCorpusEntry({
-      cassette,
-      product: 'demo-app',
-      runId: RUN_ID,
-      assignment: { split: 'natural' },
-    })
+  it('admits a corpus entry stamped 2', () => {
+    const parsed = parseCorpusEntry(v2Natural())
 
-    // The v1 bytes that the same cassette would have produced before 414:
-    // identical fields plus the D-13 path that v2 no longer carries.
-    const v1Bytes = {
-      schemaVersion: 1,
-      cassetteId: projected.cassetteId,
-      product: projected.product,
-      split: 'natural',
-      captured_at_ordinal: projected.captured_at_ordinal,
-      run_links: {
-        runId: projected.run_links.runId,
-        runSlug: projected.run_links.runSlug,
-        handoffPath: `.agent-qa/runs/${RUN_SLUG}/handoff.json`,
-      },
-      receiptDigest: sha256hex(canonicalJson(cassette.receipt)),
-    }
-
-    const parsed = parseCorpusEntry(v1Bytes)
     expect(parsed.ok).toBe(true)
     if (!parsed.ok) return
-
-    // One in-memory shape for one cassetteId: v1 and v2 merge, never collide.
-    expect(parsed.entry).toEqual(projected)
+    expect(parsed.schemaVersion).toBe(2)
   })
 })
 
