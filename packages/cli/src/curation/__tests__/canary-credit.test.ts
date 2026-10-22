@@ -1,4 +1,4 @@
-import { asRecordId, asRunId, distilledScreenStateDigest, type CompletedRunHandoff, type ScreenState, type StepEvidence } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, asRunId, distilledScreenStateDigest, type CompletedRunHandoff, type ScreenState, type StepEvidence } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
 import { creditCanaryAttributions, type CanaryAblation, type CanaryAblationResult, type CanaryCreditInput } from '../canary-credit.js'
 import type { ProjectedCanaryAttribution } from '../emit-canary-outcomes.js'
@@ -23,7 +23,7 @@ function liveStep(state = stateFixture()): StepEvidence {
       truncation: 'none', channel1: [], channel2: [], channel3: [], briefDigest: 'brief' },
     verifierVerdict: { pass: true, reasoning: 'Fixture checkout exercised' } }
 }
-const handoff: CompletedRunHandoff = { schemaVersion: 3, runId: asRunId('run-credit'),
+const handoff: CompletedRunHandoff = { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId: asRunId('run-credit'),
   scope: { tier: 'product', key: 'storefront' }, buildOrdinal: 43,
   executionContext: 'local-interactive', aggregateVerdict: 'passed',
   configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' }, startedAt: 1, endedAt: 2,

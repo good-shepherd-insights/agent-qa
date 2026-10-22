@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, ScopeKey } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -43,7 +44,7 @@ function oneTestHandoff(input: {
   flake?: boolean
 }): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: SHOP_SCOPE,

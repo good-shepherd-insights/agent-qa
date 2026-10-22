@@ -28,6 +28,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRecordId,
   asRef,
   asRunId,
@@ -247,7 +248,7 @@ function writeHandoff(agentQaRoot: string, runId: string): {
   handoffPath: string
 } {
   const handoff: CompletedRunHandoff = guardCompletedRunHandoff({
-    schemaVersion: 7,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: { tier: 'product', key: PRODUCT },
     buildOrdinal: 7,

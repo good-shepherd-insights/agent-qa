@@ -33,7 +33,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { asRunId, slugBranch } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRunId, slugBranch } from '@vostride/agent-qa-schema'
 import { readRunCanaryPolicy } from '../canary-run-state.js'
 
 import {
@@ -60,7 +60,7 @@ const NOW_MS = 1_700_000_000_000
 /** The durable record the enqueue mints its payload from. Two of its fields ride the payload. */
 const HANDOFF = {
   runId: RUN_ID,
-  schemaVersion: 5,
+  schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
   executionContext: 'local-headless',
 } as unknown as ReturnType<PostVerdictStepOperations['loadCompletedRunHandoff']>
 
@@ -340,7 +340,7 @@ describe('enqueueAnalyzeRun — THE one durable hand-off (404 D-05, relocated fr
     expect(key, 'idempotent BY RUN ID, which is what makes a second step run a dedupe').toBe(RUN_ID)
     expect(payload).toMatchObject({
       runId: RUN_ID,
-      handoffSchemaVersion: 5,
+      handoffSchemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       executionContext: 'local-headless',
     })
     // D-06: the digest pins the BYTES, so it must be a sha256 of the handoff and not a path.

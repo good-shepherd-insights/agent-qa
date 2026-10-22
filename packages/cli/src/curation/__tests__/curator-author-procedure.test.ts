@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRef,
   asRunId,
   canonicalJson,
@@ -1324,7 +1325,7 @@ describe('C438-PROCEDURE-WRITE', () => {
       }),
     ]
     return {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: asRunId('r-procedure-write'),
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
@@ -1535,7 +1536,7 @@ describe('C438-HEALED-BODY', () => {
     expect(step0.status).toBe('passed')
     expect(step1.status).toBe('passed')
     const run: CompletedRunHandoff = {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: asRunId('r-healed-body'),
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
@@ -1688,7 +1689,7 @@ describe('C441-CURATION', () => {
 
   function maskRun(runId: string, steps: StepEvidence[]): CompletedRunHandoff {
     return {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: asRunId(runId),
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
@@ -1821,7 +1822,7 @@ describe('C441-GAP2-CURATION', () => {
   it('a typed value that only contains a declared value is never authored as the secret parameter', async () => {
     const redactor = new SecretRedactor(new SecretStore({ PW: 'hunter2' }))
     const handoff: CompletedRunHandoff = {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: asRunId('r-c441-gap2-author'),
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,

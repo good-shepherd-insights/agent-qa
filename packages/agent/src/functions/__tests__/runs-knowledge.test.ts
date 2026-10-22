@@ -16,6 +16,7 @@
 //      unknown means the row is dropped, never guessed at.
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   NO_KNOWLEDGE_READER_TRUNCATION,
@@ -110,7 +111,7 @@ function test(
 
 function handoff(tests: PerTestOutcome[], overrides: Partial<CompletedRunHandoff> = {}) {
   return {
-    schemaVersion: 6,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(RUN_ID),
     scope: SCOPE,
     buildOrdinal: 12,

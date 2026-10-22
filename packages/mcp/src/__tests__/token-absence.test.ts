@@ -138,7 +138,7 @@ import {
   type FunctionRegistry,
   type LiveViewPort,
 } from '@vostride/agent-qa-agent'
-import { asRunId } from '@vostride/agent-qa-schema'
+import { asRunId, CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
@@ -249,7 +249,7 @@ const runStartedEnvelope = (handles: readonly number[]): RunEventEnvelope => ({
 
 function handoff(runId: string): CompletedRunHandoff {
   return {
-    schemaVersion: 5,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: { tier: 'product', key: 'token-absence' },
     buildOrdinal: 1,

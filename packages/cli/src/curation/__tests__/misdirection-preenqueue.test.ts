@@ -30,6 +30,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRecordId,
   asRef,
   asRunId,
@@ -191,7 +192,7 @@ function handoffValue(options: HandoffOptions = {}): CompletedRunHandoff {
     },
   ]
   return guardCompletedRunHandoff({
-    schemaVersion: 7,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(options.runId ?? RUN_ID),
     scope: { tier: 'product', key: PRODUCT },
     buildOrdinal: 7,

@@ -7,6 +7,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { expect } from 'vitest'
 
@@ -46,7 +47,7 @@ export async function runOneShotLeg(): Promise<void> {
   const author = createScriptedAuthor(fixture, authorOrder)
   let observedDrain: Awaited<ReturnType<typeof drainQueue>> | undefined
   const handoff = {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: FIXTURE_RUN_ID,
     executionContext: 'local-interactive',
   } as unknown as CompletedRunHandoff

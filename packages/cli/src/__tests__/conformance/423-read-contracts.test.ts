@@ -46,6 +46,7 @@ import { AGENT_QA_TOOL_PROJECTIONS, buildAgentQaMcpServer, UNPROJECTED_OPS } fro
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRunId,
   canonicalJson,
   CurationSnapshotSchema,
@@ -213,7 +214,7 @@ function knowledgeHandoff(runId: RunId, allowedPlaceholder: string): CompletedRu
   const step = (stepIndex: number, extra: Record<string, unknown>) => ({ stepIndex, stepText: allowedPlaceholder,
     cacheStatus: 'miss', servedBrief: brief(), subActions: [], verifierVerdict: { pass: true, reasoning: 'ok' }, ...extra })
   return {
-    schemaVersion: 6, runId, scope: { tier: 'product', key: 'shop' }, buildOrdinal: 12, executionContext: 'local',
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId, scope: { tier: 'product', key: 'shop' }, buildOrdinal: 12, executionContext: 'local',
     aggregateVerdict: 'passed', configDigests: { suiteConfigDigest: 'suite-423-38', testConfigDigest: 'test-423-38' },
     startedAt: 1, endedAt: 2,
     tests: [{ testId: 't_423_38', testName: 'read contracts', filePath: 'tests/read-contracts.yaml', testIndex: 0, outcome: 'passed',

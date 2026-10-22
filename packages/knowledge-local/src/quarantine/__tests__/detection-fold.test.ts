@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   QUARANTINE_UNASSIGNED_OWNER,
   canonicalJson,
@@ -245,7 +246,7 @@ function handoffFixture(input: {
 }): CompletedRunHandoff {
   const passed = input.passed === true
   return {
-    schemaVersion: 6,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: SHOP_SCOPE,
@@ -294,7 +295,7 @@ function twoClassHandoff(input: {
     rootCause: authoredVerdict(verdictClass, index),
   } as unknown as PerTestOutcome)
   return {
-    schemaVersion: 6,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: SHOP_SCOPE,
@@ -1212,7 +1213,7 @@ describe('one down dependency cannot blanket-quarantine a suite (390-16)', () =>
       rootCause: verdictFor(input.verdict, index),
     } as unknown as PerTestOutcome)
     return {
-      schemaVersion: 6,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: input.runId,
       buildOrdinal: input.buildOrdinal,
       scope: SHOP_SCOPE,
@@ -1370,7 +1371,7 @@ describe('the floor cap rate-limits a multi-member fan-out (390-28)', () => {
       ...(passed ? {} : { rootCause: verdictFor({ produced: timedOutResult() }, index) }),
     } as unknown as PerTestOutcome)
     return {
-      schemaVersion: 6,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: input.runId,
       buildOrdinal: input.buildOrdinal,
       scope: SHOP_SCOPE,

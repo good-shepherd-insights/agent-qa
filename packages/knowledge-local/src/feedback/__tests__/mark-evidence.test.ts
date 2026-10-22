@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { asEvidenceToken, asRecordId, asRunId, foldBundleTrust, stampReceiptDigest,
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asEvidenceToken, asRecordId, asRunId, foldBundleTrust, stampReceiptDigest,
   type BundleOutcomeEvent, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { publishBundle } from '../../bundle-publish.test-helper.js'
 import { appendGateReceipt, appendOutcomeEvent } from '../../bundle-append.js'
@@ -44,7 +44,7 @@ describe('mark evidence appends through the production writer', () => {
       mark: { markId: 'mark_0123456789ab', runId, kind }, servedRecordIds: ids }
   }
   function handoff(): CompletedRunHandoff {
-    return { schemaVersion: 7, runId, scope, buildOrdinal: 12, executionContext: 'local-interactive',
+    return { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId, scope, buildOrdinal: 12, executionContext: 'local-interactive',
       aggregateVerdict: 'passed', configDigests: { suiteConfigDigest: '', testConfigDigest: '' },
       startedAt: 0, endedAt: 1, tests: [{ testId: 'checkout', testIndex: 0,
         testName: 'Checkout', filePath: 'test.yaml', outcome: 'passed', steps: [{ stepIndex: 0,

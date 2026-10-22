@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { asEvidenceToken, asRecordId, asRunId, stampReceiptDigest, type BundleOutcomeEvent,
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asEvidenceToken, asRecordId, asRunId, stampReceiptDigest, type BundleOutcomeEvent,
   type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { publishBundle } from '../../bundle-publish.test-helper.js'
 import { appendGateReceipt, appendOutcomeEvent } from '../../bundle-append.js'
@@ -65,7 +65,7 @@ describe('423-17 mark evidence planning half (D-16)', () => {
     return { leaseId: acquired.leaseId, epoch: acquired.epoch }
   }
   function handoff(): CompletedRunHandoff {
-    return { schemaVersion: 7, runId, scope, buildOrdinal: 12, executionContext: 'local-interactive',
+    return { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId, scope, buildOrdinal: 12, executionContext: 'local-interactive',
       aggregateVerdict: 'passed', configDigests: { suiteConfigDigest: '', testConfigDigest: '' },
       startedAt: 0, endedAt: 1, tests: [{ testId: 'checkout', testIndex: 0,
         testName: 'Checkout', filePath: 'test.yaml', outcome: 'passed', steps: [{ stepIndex: 0,

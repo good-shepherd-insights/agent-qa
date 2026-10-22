@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { BriefLine, ServedBrief } from '../../brief/served-brief'
 import { canonicalJson } from '../../determinism/canonical-json'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '../../handoff/completed-run-handoff'
 import type { CompletedRunHandoff } from '../../handoff/completed-run-handoff'
 import type { PerTestOutcome } from '../../handoff/per-test-outcome'
 import type { StepEvidence } from '../../handoff/step-evidence'
@@ -173,7 +174,7 @@ function buildHandoff(): CompletedRunHandoff {
     },
   ]
   return {
-    schemaVersion: 5,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId('run-validate-analysis'),
     scope: { tier: 'product', key: 'validate-analysis' },
     buildOrdinal: 1,

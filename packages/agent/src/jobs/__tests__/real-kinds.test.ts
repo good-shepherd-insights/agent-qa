@@ -18,7 +18,7 @@
 // Unit-level on purpose: these are claims about what the registry RETURNS, and proving them
 // through a store and a pump would make the assertion depend on everything between.
 
-import { canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 import type {
   ChainedJobRequest,
   CompletedRunHandoff,
@@ -40,7 +40,7 @@ const RUN_ID = 'run-388-real-kinds'
 const ANALYZE_JOB_ID = 'job_analyze_fixture'
 
 const HANDOFF: CompletedRunHandoff = {
-  schemaVersion: 5,
+  schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
   runId: asRunId(RUN_ID),
   scope: { tier: 'product', key: 'real-kinds' },
   buildOrdinal: 1,

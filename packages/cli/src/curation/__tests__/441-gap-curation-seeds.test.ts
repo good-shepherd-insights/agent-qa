@@ -10,6 +10,7 @@ import {
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsHandoffStore } from '@vostride/agent-qa-runner-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRef,
   asRunId,
   type CompletedRunHandoff,
@@ -113,7 +114,7 @@ function step(input: {
 
 function run(runId: string, steps: StepEvidence[]): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: { tier: 'product', key: SCOPE_KEY },
     buildOrdinal: 42,

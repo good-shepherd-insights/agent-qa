@@ -25,6 +25,7 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   actionAnchorElement,
   ANALYSIS_FILE,
   canonicalJson,
@@ -177,7 +178,7 @@ function handoffFixture(input: {
   excludedFromOutcomes?: true
 }): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: SHOP_SCOPE,
@@ -253,7 +254,7 @@ const FLAKY_TEST = 'checkout retries the payment sheet'
 
 function unknownFailureHandoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId,
     buildOrdinal,
     scope: SHOP_SCOPE,

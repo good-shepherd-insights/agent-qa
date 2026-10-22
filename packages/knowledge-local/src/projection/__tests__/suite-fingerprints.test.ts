@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   actionAnchorElement,
   type Action,
   type CompletedRunHandoff,
@@ -134,7 +135,7 @@ function handoffFixture(input: {
   excludedFromOutcomes?: true
 }): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: SHOP_SCOPE,

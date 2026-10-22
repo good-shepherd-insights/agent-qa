@@ -461,7 +461,7 @@ function knowledgeHandoff(): CompletedRunHandoff {
     verifierVerdict: { pass: true, reasoning: 'ok' },
   })
   return {
-    schemaVersion: 6,
+    schemaVersion: schema.CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: schema.asRunId('r_whole-knowledge'),
     scope: { tier: 'product', key: 'shop' },
     buildOrdinal: 4,

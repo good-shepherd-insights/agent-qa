@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   VERDICT_CLASSES,
   asEvidenceToken,
   asRecordId,
@@ -211,7 +212,7 @@ function handoff(steps: StepEvidence[], cause?: Verdict): CompletedRunHandoff {
     ...(cause === undefined ? {} : { rootCause: cause }),
   }
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId('run-misdirection-1'),
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,

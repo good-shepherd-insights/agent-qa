@@ -413,7 +413,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       new URL('./fixtures/f-381-54-1/procedure-record.md', import.meta.url),
     )
     expect(createHash('sha256').update(handoffBytes).digest('hex')).toBe(
-      '8a9812d607c6e9e7ab2c33647f37ab1e22274b9770d21cea396eab7796f37e59',
+      '3a157aa7bfc864af87771c5747fde2ab4bd096ea7cb2e4f473aea43b7f5e4288',
     )
     expect(createHash('sha256').update(recordBytes).digest('hex')).toBe(
       '4841538eb07c0f8ce674bf9c1d90553b1d011e9799ead03090641acd102c5207',

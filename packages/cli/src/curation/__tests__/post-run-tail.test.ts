@@ -80,7 +80,7 @@ const FETCH_COMMAND = `agent-qa digest "${runId}"`
 
 const handoff = {
   runId,
-  schemaVersion: 5,
+  schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
   executionContext: 'local-headless',
 } as unknown as ReturnType<PostRunTailOperations['loadCompletedRunHandoff']>
 

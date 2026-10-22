@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asRecordId, asRunId, type PerTestOutcome, type StepEvidence,
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, asRunId, type PerTestOutcome, type StepEvidence,
   type VerdictClass } from '@vostride/agent-qa-schema'
 import { makeArtifactFixture, makeScreenStateFixture } from '../../__tests__/fixtures/bundle-fixture.js'
 import { applyFeedback, assertionDrift, procedureReadOn, selectFixKind, servedIdsOn,
@@ -32,7 +32,7 @@ function member(cls?: VerdictClass): PerTestOutcome {
 function input(): ApplyFeedbackInput {
   return { mark: { markId: 'mark_0123456789ab', runId, runSlug: 'feedback', testIndex: 0,
     testId: 'checkout-test', kind: 'false-fail' }, resolvedStepIndex: 0, served: [target],
-    handoff: { schemaVersion: 7, runId, scope, buildOrdinal: 1, executionContext: 'local-interactive',
+    handoff: { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId, scope, buildOrdinal: 1, executionContext: 'local-interactive',
       aggregateVerdict: 'passed', configDigests: { suiteConfigDigest: '', testConfigDigest: '' },
       startedAt: 0, endedAt: 1, tests: [member()] } }
 }

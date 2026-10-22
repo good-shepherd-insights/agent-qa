@@ -39,6 +39,7 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   RunKnowledgeProjectionSchema,
   asRef,
   asRunId,
@@ -239,7 +240,7 @@ function step(
  */
 function handoffFor(runId: string, buildOrdinal: number): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: SCOPE,
     buildOrdinal,

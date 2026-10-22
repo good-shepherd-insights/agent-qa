@@ -49,7 +49,7 @@ function fixture(over: Record<string, unknown> = {}) {
     foldRunOutcomes: () => ({ kind: 'folded', quarantine: { kind: 'not-evaluated' } }),
     drainQueue,
   } as unknown as Partial<tailModule.CurationTailOperations>
-  const input = { runDir: root, handoff: { runId: RUN_ID, schemaVersion: 5, buildOrdinal: 42,
+  const input = { runDir: root, handoff: { runId: RUN_ID, schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, buildOrdinal: 42,
     executionContext: 'local-headless', scope: { tier: 'product', key: 'storefront' } },
     knowledgeRoot: join(root, 'knowledge'), agentQaRoot: root,
     authority: { leaseId: 'lease', epoch: 1 }, log: { warn: vi.fn(), info }, operations,
@@ -160,7 +160,7 @@ describe('423 curation tail snapshot', () => {
     let bound: PostRunTailHostInput | undefined
     const folded = { curated: 9, deprecated: 2, complete: true, drainKind: 'drained' as const, candidateIds: [], snapshot }
     const operations = {
-      loadCompletedRunHandoff: () => ({ runId: RUN_ID, schemaVersion: 5, executionContext: 'local-headless' }),
+      loadCompletedRunHandoff: () => ({ runId: RUN_ID, schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, executionContext: 'local-headless' }),
       resolveKnowledgeRoot: () => join(root, 'knowledge'),
       composeHost: (input: PostRunTailHostInput) => { bound = input; return {
         jobs: async () => ({ queue: { runNextJob: async () => ({ ran: false, reason: 'no-job' }),
@@ -235,7 +235,7 @@ describe('423 curation tail snapshot', () => {
   it('CURATE-CAPABILITY-SNAPSHOT daemon preserves complete snapshot through its real bound capability', async () => {
     const defaultOperations = tailModule.defaultCurationTailOperations()
     vi.spyOn(tailModule, 'defaultCurationTailOperations').mockReturnValue({ ...defaultOperations,
-      loadCompletedRunHandoff: (() => ({ runId: RUN_ID, schemaVersion: 5, buildOrdinal: 42,
+      loadCompletedRunHandoff: (() => ({ runId: RUN_ID, schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, buildOrdinal: 42,
         executionContext: 'local-headless', scope: { tier: 'product', key: 'storefront' } })) as never })
     vi.spyOn(tailModule, 'curateCompletedRun').mockResolvedValue({ curated: 9, deprecated: 2,
       complete: true, drainKind: 'drained', candidateIds: [], snapshot } as never)

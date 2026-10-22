@@ -125,7 +125,7 @@ import {
 import { startRun } from '@vostride/agent-qa-runner'
 import type { MemberTestRunContext, RunConfig } from '@vostride/agent-qa-runner'
 import { HANDOFF_FILE, RUNS_SUBDIR, FsEventLog, slugBranch } from '@vostride/agent-qa-runner-local'
-import { RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, RunSession } from '@vostride/agent-qa-schema'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import { WebPlatformAdapter } from '@vostride/agent-qa-web'
@@ -381,7 +381,7 @@ function fixtureWorkspace(): string {
  */
 function recordedHandoff(runId: string): CompletedRunHandoff {
   return {
-    schemaVersion: 5,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId,
     scope: { tier: 'suite', key: 'live-view' },
     buildOrdinal: 1,

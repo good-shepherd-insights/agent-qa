@@ -16,6 +16,7 @@
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   type Anchor,
   type CompletedRunHandoff,
@@ -120,7 +121,7 @@ function handoffFixture(input: {
   testName?: string
 }): CompletedRunHandoff {
   return {
-    schemaVersion: 6,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: SHOP_SCOPE,

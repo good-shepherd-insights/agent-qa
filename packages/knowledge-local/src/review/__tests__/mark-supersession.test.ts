@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { asRecordId, asRunId, foldBundleTrust, stampReceiptDigest, type CompletedRunHandoff, type KnowledgeMarkInput } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, asRunId, foldBundleTrust, stampReceiptDigest, type CompletedRunHandoff, type KnowledgeMarkInput } from '@vostride/agent-qa-schema'
 import { makeBundleDraftFixture, makeScreenStateFixture, scaffoldKnowledgeRoot } from '../../__tests__/fixtures/bundle-fixture.js'
 import { loadBundle, readGateReceipts } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
@@ -68,7 +68,7 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
   const runId = asRunId('mark-supersession-run')
   const mark = { markId: 'mark_0123456789ab', runId, runSlug: 'mark-supersession-run',
     testIndex: 0, stepIndex: 0, kind: 'false-fail' as const }
-  const handoff: CompletedRunHandoff = { schemaVersion: 7, runId, scope: draft.scope,
+  const handoff: CompletedRunHandoff = { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId, scope: draft.scope,
     buildOrdinal: 7, executionContext: 'local-interactive', aggregateVerdict: 'failed',
     configDigests: { suiteConfigDigest: '', testConfigDigest: '' }, startedAt: 0, endedAt: 1,
     tests: [{ testId: 'products', testName: 'Products', filePath: 'products.yaml',
@@ -176,7 +176,7 @@ it('applies the same real floor replacement through the direct writer in ci, onc
   const runId = asRunId('mark-supersession-direct-run')
   const mark = { markId: 'mark_2123456789ab', runId, runSlug: 'mark-supersession-direct-run',
     testIndex: 0, stepIndex: 0, kind: 'false-fail' as const }
-  const handoff: CompletedRunHandoff = { schemaVersion: 7, runId, scope: draft.scope,
+  const handoff: CompletedRunHandoff = { schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId, scope: draft.scope,
     buildOrdinal: 7, executionContext: 'ci', aggregateVerdict: 'failed',
     configDigests: { suiteConfigDigest: '', testConfigDigest: '' }, startedAt: 0, endedAt: 1,
     tests: [{ testId: 'products', testName: 'Products', filePath: 'products.yaml',

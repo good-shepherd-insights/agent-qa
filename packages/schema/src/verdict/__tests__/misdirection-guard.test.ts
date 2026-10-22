@@ -209,7 +209,7 @@ function buildHandoff(): CompletedRunHandoff {
     },
   ]
   return {
-    schemaVersion: 7,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId('run-misdirection-guard'),
     scope: { tier: 'product', key: 'misdirection-guard' },
     buildOrdinal: 1,

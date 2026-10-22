@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { asRecordId, computeBriefDigest, guardCompletedRunHandoff, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, computeBriefDigest, guardCompletedRunHandoff, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 import type { RunSession, ServedBrief, StepEvidence } from '@vostride/agent-qa-schema'
 import { preparationPendingWarning, runInProcessCliRun } from '../../composition/in-process-run-execution.js'
 import {
@@ -173,7 +173,7 @@ function continuationFixture() {
       kind: 'fact', summary: 'checkout candidate', trust: 0.5, status: 'candidate', servedAsCanary: false, tier: 'L1' }],
     channel2: [], channel3: [], briefDigest: '' }
   writeFileSync(handoffPath, JSON.stringify(guardCompletedRunHandoff({
-    schemaVersion: 7, runId: input.runId, scope: { tier: 'product', key: fixture.targetName },
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId: input.runId, scope: { tier: 'product', key: fixture.targetName },
     buildOrdinal: 1, executionContext: 'local-headless', aggregateVerdict: 'failed',
     configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' }, startedAt: 1, endedAt: 2,
     tests: [{ testId: fixture.directTestId, testName: 'checkout', filePath: 'tests/direct.yaml',

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
   QUARANTINE_UNASSIGNED_OWNER,
   QuarantineLedgerVersionError,
@@ -69,7 +70,7 @@ function outcomeHandoff(input: {
   rootCauseClass?: string
 }): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(input.runId),
     scope: input.scope,
     buildOrdinal: input.buildOrdinal,
@@ -226,7 +227,7 @@ describe('createAuthoringReader dense retrieval', () => {
     const testId = 'checkout-guest-1'
     const testName = 'Guest checkout with promo'
     const handoff: CompletedRunHandoff = {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: asRunId('run-authoring-identity-join'),
       scope: SCOPE,
       buildOrdinal: 12,

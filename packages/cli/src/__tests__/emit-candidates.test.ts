@@ -24,6 +24,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asEvidenceToken,
   asRef,
   asRunId,
@@ -207,7 +208,7 @@ function handoff(
   overrides: Partial<CompletedRunHandoff> = {},
 ): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId('run-emit-1'),
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,

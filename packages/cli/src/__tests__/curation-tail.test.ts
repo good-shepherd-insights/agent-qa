@@ -2,7 +2,7 @@ import { emptyCanaryCreditCounters } from '../curation/canary-credit.js'
 import { creditCanaryAttributions, type CanaryAblation } from '../curation/canary-credit.js'
 import { readRunCanaryPolicy, writeRunCanaryPolicy } from '../curation/canary-run-state.js'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { asRecordId } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId } from '@vostride/agent-qa-schema'
 import {
   mkdirSync,
   mkdtempSync,
@@ -207,7 +207,7 @@ function completeHandoffForGuard(
   completedRunId: string = runId,
 ): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: completedRunId as CompletedRunHandoff['runId'],
     scope: { tier: 'product', key: 'shop-web' },
     buildOrdinal: 42,
@@ -1278,7 +1278,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
     const validRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
     const validSibling = completeHandoffForGuard()
     const malformedDocument = {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: malformedRunId,
       executionContext: 'ci',
       tests: [{}],

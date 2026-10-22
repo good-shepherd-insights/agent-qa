@@ -8,7 +8,7 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import { DRAIN_BUDGET_MS } from '@vostride/agent-qa-agent-local'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { acquireWriterLease, releaseLease } from '@vostride/agent-qa-knowledge-local'
-import { asRecordId, computeBriefDigest, guardCompletedRunHandoff, sha256hex } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, computeBriefDigest, guardCompletedRunHandoff, sha256hex } from '@vostride/agent-qa-schema'
 import type { ServedBrief } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -322,7 +322,7 @@ describe('C444-CI-EVERY-DOOR', () => {
         channel2: [], channel3: [], briefDigest: '',
       }
       writeFileSync(join(runDir, 'handoff.json'), JSON.stringify(guardCompletedRunHandoff({
-        schemaVersion: 7, runId: input.runId, scope: { tier: 'product', key: fixture.targetName },
+        schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, runId: input.runId, scope: { tier: 'product', key: fixture.targetName },
         buildOrdinal: 1, executionContext: context, aggregateVerdict: 'failed',
         configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' }, startedAt: 1, endedAt: 2,
         tests: [{ testId: fixture.directTestId, testName: 'checkout', filePath: 'tests/direct.yaml',

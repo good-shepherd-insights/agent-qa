@@ -21,6 +21,7 @@ import { promotionHostProof } from './promotion-host-proof.js'
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 import { runVerdictFirstCurationTail } from '../curation/curation-tail.js'
@@ -47,7 +48,7 @@ const OWN_CHAIN = chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE)
 
 const handoff = {
   runId,
-  schemaVersion: 5,
+  schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
   executionContext: 'local-headless',
 } as unknown as ReturnType<PostRunTailOperations['loadCompletedRunHandoff']>
 

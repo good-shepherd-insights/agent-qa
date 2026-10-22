@@ -20,6 +20,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   ANALYSIS_FILE,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   canonicalJson,
@@ -95,7 +96,7 @@ function unknownFailureHandoff(input: {
   buildOrdinal: number
 }): CompletedRunHandoff {
   return {
-    schemaVersion: 6,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: SHOP_SCOPE,

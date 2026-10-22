@@ -76,7 +76,7 @@ import {
   type FunctionRegistry,
   type LiveViewPort,
 } from '@vostride/agent-qa-agent'
-import { asRunId } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRunId } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
@@ -273,7 +273,7 @@ const runStartedEnvelope = (): RunEventEnvelope => ({
 
 function handoff(): CompletedRunHandoff {
   return {
-    schemaVersion: 5,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(FIXTURE_RUN_ID),
     scope: { tier: 'product', key: 'app-census' },
     buildOrdinal: 1,

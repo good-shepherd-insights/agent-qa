@@ -35,6 +35,7 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
@@ -99,7 +100,7 @@ function step(stepIndex: number, stepText: string): StepEvidence {
 /** One recorded run, shaped exactly as the handoff store answers with. */
 function recordedRun(stepText = 'Sign in as the demo user'): CompletedRunHandoff {
   return {
-    schemaVersion: 6,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: RUN_ID,
     scope: SCOPE,
     buildOrdinal: 4,

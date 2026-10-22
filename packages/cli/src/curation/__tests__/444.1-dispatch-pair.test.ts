@@ -1,4 +1,5 @@
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRef,
   asRunId,
   type CompletedRunHandoff,
@@ -92,7 +93,7 @@ function healedRun(): CompletedRunHandoff {
     result: { success: true },
   }
   return {
-    schemaVersion: 7,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId('r-dispatch-pair'),
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,

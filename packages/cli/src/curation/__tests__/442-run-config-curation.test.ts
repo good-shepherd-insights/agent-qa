@@ -17,6 +17,7 @@ import { join, relative } from 'node:path'
 import { DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agent-local'
 import { FsHandoffStore } from '@vostride/agent-qa-runner-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRef,
   asRunId,
   type CompletedRunHandoff,
@@ -192,7 +193,7 @@ function step(stepIndex: number, scopeKey: string, value: string): StepEvidence 
 
 function seedRun(p: Project, runId: string, scopeKey: string, values: readonly string[]): void {
   const handoff: CompletedRunHandoff = {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: { tier: 'product', key: scopeKey },
     buildOrdinal: 42,

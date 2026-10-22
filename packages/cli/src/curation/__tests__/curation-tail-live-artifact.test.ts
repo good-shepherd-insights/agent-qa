@@ -55,9 +55,9 @@ import { removeTempRoots } from '../../__tests__/temp-roots.js'
 
 const RUN_ID = 'r_corner-river-elle-deep-prompt-reduce-masked-ilia-bob-cone'
 const SCOPE_KEY = 'local-form'
-/** sha-256 of the live run's handoff.json bytes at demo/init/.agent-qa/runs/<RUN_ID>/. */
+/** sha-256 of the fixture's bytes. */
 const LIVE_HANDOFF_SHA256 =
-  '911ff8af156f51adfef571414c962a64407d86b3dccb8a52a36a76bf00e65cd5'
+  'ee23ab56aac6354bfe528ae34d3d072a5a43f2ac324392639ce3db630e9af2ab'
 
 const TAIL_TIMEOUT_MS = 180_000
 

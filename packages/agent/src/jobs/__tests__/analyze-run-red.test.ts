@@ -8,7 +8,7 @@
 //
 // Two red substrates on purpose. `buildSyntheticHandoff` is the phase-389 synthetic, cheap and
 // parameterizable; `fixtures/399-red-handoff.json` is the REAL 399 acceptance handoff with its
-// screen states trimmed out — same schemaVersion 6, same `unknown` floor member, same quotable
+// screen states trimmed out — same `unknown` floor member, same quotable
 // evidence — so the cells below answer for the document shape the 399 session actually
 // produced rather than only for the one this repo mints.
 //
@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   canonicalJson,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   guardCompletedRunHandoff,
   sha256hex,
 } from '@vostride/agent-qa-schema'
@@ -219,12 +220,10 @@ function load399RedHandoff(): CompletedRunHandoff {
 }
 
 describe('the trimmed 399 red handoff fixture still loads through the shipped guard', () => {
-  it('is a v6 capture that still loads, with one failed member whose floor is unknown', () => {
+  it('is a captured red handoff that loads, with one failed member whose floor is unknown', () => {
     const handoff = load399RedHandoff()
 
-    // A real captured handoff stamped 6; restamping it would erase the proof that a stamp-6
-    // document off disk still loads.
-    expect(handoff.schemaVersion).toBe(6)
+    expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
     expect(handoff.aggregateVerdict).toBe('failed')
     expect(handoff.tests).toHaveLength(1)
     expect(handoff.tests[0]?.outcome).toBe('failed')

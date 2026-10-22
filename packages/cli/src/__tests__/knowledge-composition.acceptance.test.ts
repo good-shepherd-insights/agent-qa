@@ -29,6 +29,7 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asEvidenceToken,
   asRunId,
   BundleOutcomeEventSchema,
@@ -123,7 +124,7 @@ function emptyServedBrief(): ServedBrief {
 
 function completedHandoff(runId: string): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: { tier: 'product', key: PRODUCT },
     buildOrdinal: BUILD_ORDINAL,

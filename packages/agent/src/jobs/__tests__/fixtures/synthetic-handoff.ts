@@ -22,7 +22,7 @@ import type {
   StepEvidence,
   Verdict,
 } from '@vostride/agent-qa-schema'
-import { asRef, asRunId } from '@vostride/agent-qa-schema'
+import { asRef, asRunId, CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 export interface SyntheticHandoffOptions {
   readonly runId?: string
@@ -250,7 +250,7 @@ export function buildSyntheticHandoff(
   }
 
   return {
-    schemaVersion: 5,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: { tier: 'product', key: 'synthetic-389' },
     buildOrdinal,

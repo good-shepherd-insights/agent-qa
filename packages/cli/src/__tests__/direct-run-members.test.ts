@@ -7,6 +7,7 @@ import {
 import { projectRunOutcomes } from '@vostride/agent-qa-knowledge-local'
 import { memberStepText } from '@vostride/agent-qa-runner'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asRunId,
   type CompletedRunHandoff,
 } from '@vostride/agent-qa-schema'
@@ -140,7 +141,7 @@ describe('buildDirectRunMembers', () => {
     const { members } = buildDirectRunMembers(fixtureBindings(), CONFIG_DIR)
     const checkoutMembers = members.filter(({ name }) => name === 'checkout succeeds')
     const handoff: CompletedRunHandoff = {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: asRunId('run-direct-bindings'),
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,

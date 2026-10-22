@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite'
 
 import { HANDOFF_FILE, loadCompletedRunHandoff } from '@vostride/agent-qa-runner-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   ANALYSIS_FILE,
   asRecordId,
   asRef,
@@ -444,7 +445,7 @@ function handoff(steps: StepEvidence[], cause?: Verdict): CompletedRunHandoff {
     ...(cause === undefined ? {} : { rootCause: cause }),
   }
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId('run-canary-1'),
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,
@@ -1046,13 +1047,9 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
   const FIXTURE_EL_FACT = asRecordId('fact-el-textbox-username-20f5876cc5299c11')
   const FIXTURE_RECEIVED_URL =
     'http://127.0.0.1:8931/received.html?username=qa.user%2B381%40example.com'
-  /**
-   * sha-256 of the failed live run's handoff.json bytes at
-   * demo/init/.agent-qa/runs/r_meng-mater-con-seit-acle-lade-gor-craft-abies-extern/,
-   * computed at authoring time (the 381-49 fixture-fidelity discipline).
-   */
+  /** sha-256 of the fixture's bytes. */
   const FIXTURE_HANDOFF_SHA256 =
-    '102c24ced726af7a561bf2474dc500a333dd562fe2ea7feba2836ae62f417c1c'
+    'cf43af997b9aa9e6763fd7444261c839d045d8af59df5f7f5b555251e9ee0814'
 
   const fixturePath = join(
     dirname(fileURLToPath(import.meta.url)),

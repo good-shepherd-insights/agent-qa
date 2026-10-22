@@ -40,7 +40,7 @@ const caller: FunctionCaller = {
 
 function handoff(runId: string, endedAt: number): CompletedRunHandoff {
   return {
-    schemaVersion: 5,
+    schemaVersion: schema.CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: schema.asRunId(runId),
     scope: { tier: 'product', key: 'wire' },
     buildOrdinal: 1,

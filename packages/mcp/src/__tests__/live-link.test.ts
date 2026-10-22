@@ -35,7 +35,7 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-import { asRunId } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRunId } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, FunctionCaller } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -61,7 +61,7 @@ const FIXTURE_BASE = 'http://localhost:4100'
 
 function handoff(runId: string): CompletedRunHandoff {
   return {
-    schemaVersion: 5,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
     scope: { tier: 'product', key: 'live-link' },
     buildOrdinal: 1,

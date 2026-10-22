@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   canonicalJson,
   normalizeAnchor,
   type Anchor,
@@ -122,7 +123,7 @@ function handoffFixture(input: {
   excludedFromOutcomes?: true
 }): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: input.runId,
     buildOrdinal: input.buildOrdinal,
     scope: input.scope,
@@ -732,11 +733,11 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     writeFileSync(join(runsRoot, '001-good', 'handoff.json'), JSON.stringify(good))
 
     const oldShape = {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: '002-old',
       buildOrdinal: 2,
       executionContext: 'ci',
-      // Pre-fix v3 handoff: filePath exists but testName is absent — skip structurally.
+      // filePath exists but testName is absent — skip structurally.
       tests: [{
         testId: 'legacy-test-1',
         filePath: 'suite/legacy.test.ts',
@@ -799,7 +800,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       }],
     })
     const malformed = {
-      schemaVersion: 3,
+      schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       runId: '002-malformed',
       buildOrdinal: 2,
       executionContext: 'ci',

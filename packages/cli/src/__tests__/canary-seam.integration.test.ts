@@ -18,6 +18,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   asRef,
@@ -137,7 +138,7 @@ function completedHandoff(
     verifierVerdict: { pass: true, reasoning: 'Checkout was exercised successfully.' },
   }
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId('run-canary-seam-live-shape'),
     scope: { tier: 'product', key: PRODUCT },
     buildOrdinal: BUILD_ORDINAL,

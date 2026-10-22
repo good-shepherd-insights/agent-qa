@@ -34,7 +34,7 @@ import type {
   JobModelCapability,
   ProposeGate1Report,
 } from '@vostride/agent-qa-agent'
-import { stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import type {
   GateReceipt,
   GateVerdict,
@@ -350,7 +350,7 @@ describe('the post-run tail hands its own host the lease it takes (422 D-14)', (
       candidateIds: ['rec-a', 'rec-b'] as readonly string[],
     }
     const operations = {
-      loadCompletedRunHandoff: () => ({ runId: RUN_ID, schemaVersion: 5, executionContext: 'local-headless' }),
+      loadCompletedRunHandoff: () => ({ runId: RUN_ID, schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, executionContext: 'local-headless' }),
       resolveKnowledgeRoot: () => join(root, 'knowledge'),
       composeHost: (hostInput: PostRunTailHostInput) => {
         handed.push(hostInput)
@@ -712,7 +712,7 @@ describe('the fold forwards the ids its COMMITTED receipt names (422 D-13)', () 
     const { operations, written } = foldOperations(over)
     const report = await curateCompletedRun({
       runDir: join(root, 'runs', RUN_ID),
-      handoff: { runId: RUN_ID, schemaVersion: 5, scope: { tier: 'product', key: PRODUCT } } as never,
+      handoff: { runId: RUN_ID, schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION, scope: { tier: 'product', key: PRODUCT } } as never,
       knowledgeRoot: join(root, 'knowledge'),
       agentQaRoot: join(root, '.agent-qa'),
       authority: { leaseId: 'l', epoch: 1 },

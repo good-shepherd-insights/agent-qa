@@ -98,7 +98,7 @@ import {
   liveLinkLine,
   liveRunLinkOf,
 } from '@vostride/agent-qa-mcp'
-import { asRunId } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRunId } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   RunEventEnvelope,
@@ -126,7 +126,7 @@ const TOKEN_VALUE = 'cohost-token-408-03-not-a-real-credential'
 
 function handoff(): CompletedRunHandoff {
   return {
-    schemaVersion: 5,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(RUN_ID),
     scope: { tier: 'product', key: 'cohost' },
     buildOrdinal: 1,

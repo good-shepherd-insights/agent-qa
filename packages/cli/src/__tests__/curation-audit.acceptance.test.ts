@@ -13,6 +13,7 @@ import {
   type ModelProfile,
   type ResolvedModelAuth,
 } from '@vostride/agent-qa-model'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -90,7 +91,7 @@ function profile(): ModelProfile {
 
 function completeAuditHandoff(): CompletedRunHandoff {
   return {
-    schemaVersion: 3,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: 'run-curation-audit' as CompletedRunHandoff['runId'],
     scope: { tier: 'product', key: 'storefront' },
     buildOrdinal: 42,

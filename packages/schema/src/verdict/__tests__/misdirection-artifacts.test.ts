@@ -25,6 +25,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { BriefLine, ServedBrief } from '../../brief/served-brief'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '../../handoff/completed-run-handoff'
 import type { CompletedRunHandoff } from '../../handoff/completed-run-handoff'
 import type { PerTestOutcome } from '../../handoff/per-test-outcome'
 import type { StepEvidence } from '../../handoff/step-evidence'
@@ -123,7 +124,7 @@ function member(testIndex: number, rootCause?: Verdict): PerTestOutcome {
 
 function handoffWith(tests: PerTestOutcome[]): CompletedRunHandoff {
   return {
-    schemaVersion: 7,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(RUN_ID),
     scope: { tier: 'product', key: 'misdirection-artifact' },
     buildOrdinal: 3,
