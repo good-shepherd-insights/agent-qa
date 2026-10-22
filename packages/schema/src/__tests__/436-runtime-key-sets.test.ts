@@ -78,7 +78,7 @@ describe('C436-KEY-SETS', () => {
   })
 
   it('the handoff schema version did not move for the new optional members', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
 
   it('projectSubActionRecorded still drops localEffect, a reader-only member (D-17)', () => {

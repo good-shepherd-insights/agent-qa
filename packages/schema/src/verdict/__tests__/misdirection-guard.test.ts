@@ -461,10 +461,10 @@ describe('422-22 the analysis DTO thins the ledger to a closed vocabulary', () =
 })
 
 describe('422-22 the persisted versions this evidence did NOT move', () => {
-  it('leaves the handoff at 7 and the analysis artifact at 1', () => {
+  it('leaves the handoff at 2 and the analysis artifact at 1', () => {
     // Circularity evidence crosses four persisted boundaries as optional-additive members inside
     // a block no historical document carries, so no version is owed a migration.
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
     expect(CURRENT_ANALYSIS_SCHEMA_VERSION).toBe(1)
   })
 })

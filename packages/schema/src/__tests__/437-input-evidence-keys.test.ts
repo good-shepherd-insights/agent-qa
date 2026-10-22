@@ -1,9 +1,20 @@
 // 2026-10-08 (437-02, D-05): the input evidence key set beside OperationEvidence. The expected
 // set is spelled by hand, never derived from the module under test.
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { CURRENT_HANDOFF_SCHEMA_VERSION, INPUT_EVIDENCE_KEYS } from '../index'
-import type { InputEvidence, OperationEvidence } from '../index'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  guardCompletedRunHandoff,
+  INPUT_EVIDENCE_KEYS,
+} from '../index'
+import type { CompletedRunHandoff, InputEvidence, OperationEvidence } from '../index'
+
+const preChangeHandoff = new URL(
+  '../../../../test-fixtures/legacy-handoff/handoff.json',
+  import.meta.url,
+)
 
 describe('C437-KEY-SETS', () => {
   it('the input evidence carries exactly its nine members', () => {
@@ -25,7 +36,10 @@ describe('C437-KEY-SETS', () => {
     expectTypeOf<OperationEvidence['input']>().toEqualTypeOf<InputEvidence[] | undefined>()
   })
 
-  it('the handoff schema version is still 7', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+  it('the handoff schema version is 2 and a handoff stamped 7 still reads', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
+    const handoff = JSON.parse(readFileSync(preChangeHandoff, 'utf8')) as CompletedRunHandoff
+    expect(handoff.schemaVersion).toBe(7)
+    expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
   })
 })

@@ -28,6 +28,7 @@ import {
 import {
   guardCompletedRunHandoff,
   HANDOFF_MIGRATIONS,
+  HANDOFF_STAMPS_READ_AS_CURRENT,
 } from '../handoff/load-completed-run-handoff'
 import type { StepEvidence } from '../handoff/step-evidence'
 import type { BriefLine, ServedBrief } from '../brief/served-brief'
@@ -285,9 +286,10 @@ describe('CompletedRunHandoff.misdirectionEvidence (422 D-17/D-18 durable sideca
     ).toThrow()
   })
 
-  it('keeps CURRENT_HANDOFF_SCHEMA_VERSION at 7 with its migration ladder unchanged', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
-    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4', '5', '6'])
+  it('keeps CURRENT_HANDOFF_SCHEMA_VERSION at 2 with no migration and stamps 3 to 7 read as current', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual([])
+    expect(HANDOFF_STAMPS_READ_AS_CURRENT).toEqual([3, 4, 5, 6, 7])
   })
 
   it('moves the FINAL handoff digest when the evidence moves, and never the row base digest', () => {

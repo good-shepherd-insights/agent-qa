@@ -68,8 +68,11 @@ describe('C438-KEY-SETS', () => {
     expectTypeOf<keyof TargetIdentity>().toEqualTypeOf<(typeof TARGET_IDENTITY_KEYS)[number]>()
   })
 
-  it('the handoff schema version is still 7', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+  it('the handoff schema version is 2 and a handoff stamped 7 still reads', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
+    const handoff = JSON.parse(readFileSync(preChangeHandoff, 'utf8')) as CompletedRunHandoff
+    expect(handoff.schemaVersion).toBe(7)
+    expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
   })
 
   it('reads a well-formed refusal block back', () => {

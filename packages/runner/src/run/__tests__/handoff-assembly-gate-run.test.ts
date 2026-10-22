@@ -107,9 +107,7 @@ describe('gateRun threading run config -> handoff (D-10)', () => {
 
   it('stamps a version the load-boundary guard accepts, whatever the current version is', () => {
     // The failure this actually guards: the runner writing a version the guard refuses.
-    // Asserted by refusing the two neighbours rather than by naming a number — a document
-    // one above current is forward-incompatible, and one below loads only through a
-    // registered migration, so neither may be what the runner stamps.
+    // Stamps 3 to 7 read as current, so 8 is the first stamp above current the guard refuses.
     const handoff = assembleHandoff(baseConfig, [], 'passed', { startedAt: 1, endedAt: 2 })
     const persisted = JSON.parse(JSON.stringify(handoff)) as Record<string, unknown>
 
@@ -117,7 +115,7 @@ describe('gateRun threading run config -> handoff (D-10)', () => {
     expect(() =>
       guardCompletedRunHandoff({
         ...persisted,
-        schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION + 1,
+        schemaVersion: 8,
       }),
     ).toThrow()
   })

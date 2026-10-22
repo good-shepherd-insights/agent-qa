@@ -4198,7 +4198,7 @@
     {
       "runner": "vitest",
       "file": "packages/schema/src/__tests__/437-input-evidence-keys.test.ts",
-      "fullName": "C437-KEY-SETS the handoff schema version is still 7",
+      "fullName": "C437-KEY-SETS the handoff schema version is 2 and a handoff stamped 7 still reads",
       "origin": "437 D-17"
     },
     {
@@ -4576,7 +4576,7 @@
     {
       "runner": "vitest",
       "file": "packages/schema/src/__tests__/438-key-sets.test.ts",
-      "fullName": "C438-KEY-SETS the handoff schema version is still 7",
+      "fullName": "C438-KEY-SETS the handoff schema version is 2 and a handoff stamped 7 still reads",
       "origin": "438 D-05"
     },
     {
@@ -6490,7 +6490,7 @@
     {
       "runner": "vitest",
       "file": "packages/schema/src/__tests__/439-key-sets.test.ts",
-      "fullName": "C439-KEY-SETS the handoff schema version is still 7",
+      "fullName": "C439-KEY-SETS the handoff schema version is 2 and a handoff stamped 7 still reads",
       "origin": "439 D-07"
     },
     {

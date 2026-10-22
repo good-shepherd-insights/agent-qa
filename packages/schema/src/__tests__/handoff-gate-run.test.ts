@@ -1,14 +1,9 @@
 // Phase 384 plan 02, D-10: the `gateRun` carrier, minted on CompletedRunHandoff v4.
 //
 // Pins the three load-boundary facts the carrier introduces: the version bump itself,
-// backward-compatible loading of every already-written v3 handoff document through an
-// identity migration, and the present-implies-valid shape clause that admits only the
-// literal marker. RESEARCH Pitfall 5 is pinned explicitly: `gateRun` is a SECOND,
+// backward-compatible loading of every already-written v3 handoff document, and the
+// present-implies-valid shape clause that admits only the literal marker. RESEARCH Pitfall 5 is pinned explicitly: `gateRun` is a SECOND,
 // distinct axis beside `excludedFromOutcomes` — neither implies the other.
-//
-// 387-02 repin: the current version and the migration-key set moved to 5 / ['2','3','4']
-// when `retrievalTrace` joined StepEvidence. The gateRun semantics below are untouched —
-// a version was added ABOVE them, not in place of them.
 //
 // Schema module-discipline law: extension-less relative import specifiers, no node builtins.
 import { describe, expect, it } from 'vitest'
@@ -16,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   guardCompletedRunHandoff,
   HANDOFF_MIGRATIONS,
+  HANDOFF_STAMPS_READ_AS_CURRENT,
 } from '../handoff/load-completed-run-handoff'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -42,19 +38,13 @@ function makeHandoff(): CompletedRunHandoff {
 }
 
 describe('CompletedRunHandoff gateRun carrier, minted at v4 (D-10)', () => {
-  // The carrier's own semantics are unchanged by later version bumps; what moves is the
-  // CURRENT version the guard accepts and the migration chain that carries a v4 document
-  // forward. Both are repinned here rather than loosened, because the exact-equality
-  // assertion below is what makes "exactly one new migration entry" machine-checked.
-  // 2026-08-29 (407-03, D-13): repinned at 7 for the `StepEvidence.retrievalRung`
-  // optional-additive bump. Repinned BY NAME rather than relaxed — the exact-equality
-  // assertion below is the whole point of this cell.
-  it('pins the current handoff schema version at 7 (407-03 retrievalRung bump)', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
+  it('pins the current handoff schema version at 2', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
 
-  it('registers the 6 -> 7 identity migration beside the shipped v2..v5 entries', () => {
-    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual(['2', '3', '4', '5', '6'])
+  it('registers no migration and reads stamps 3 to 7 as current', () => {
+    expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual([])
+    expect(HANDOFF_STAMPS_READ_AS_CURRENT).toEqual([3, 4, 5, 6, 7])
   })
 
   it('loads an already-written schemaVersion 3 document unchanged, with gateRun absent', () => {

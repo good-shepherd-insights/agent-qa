@@ -28,7 +28,7 @@ import type {
 } from '../quarantine/quarantine-ledger'
 import { CURRENT_HANDOFF_SCHEMA_VERSION } from '../handoff/completed-run-handoff'
 import type { CompletedRunHandoff } from '../handoff/completed-run-handoff'
-import { HANDOFF_MIGRATIONS, guardCompletedRunHandoff } from '../handoff/load-completed-run-handoff'
+import { guardCompletedRunHandoff } from '../handoff/load-completed-run-handoff'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
 import { VERDICT_CLASSES, isVerdictClass } from '../verdict/verdict'
 import type { Verdict, VerdictClass } from '../verdict/verdict'
@@ -357,14 +357,10 @@ describe('handoff quarantine disposition', () => {
     }
   }
 
-  it('bumps the handoff contract past 5 with a registered identity migration from 5', () => {
-    // 2026-08-29 (407-03, D-13): the CURRENT pin moves to 7 for the `retrievalRung` bump.
-    // The cell's SUBJECT — that v5 documents still walk forward through a registered identity
-    // migration — is unchanged and still asserted below.
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
-    expect(typeof HANDOFF_MIGRATIONS[5]).toBe('function')
-    const stored = { schemaVersion: 5, marker: true }
-    expect(HANDOFF_MIGRATIONS[5](stored)).toBe(stored)
+  it('reads a stamp-5 handoff as current, unchanged', () => {
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
+    const stored = { ...(handoffFixture([memberFixture()]) as Record<string, unknown>), schemaVersion: 5 }
+    expect(guardCompletedRunHandoff(stored)).toBe(stored)
   })
 
   it('carries the disposition BESIDE a truthful failed outcome', () => {

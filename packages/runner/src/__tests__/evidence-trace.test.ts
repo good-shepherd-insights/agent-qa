@@ -378,16 +378,8 @@ describe('the assembled handoff carries a trace-bearing step at schemaVersion 5 
       { startedAt: 1, endedAt: 2 },
     )
 
-    // 387-02 bumped the constant to 5 and `assembleHandoff` stamps the constant, so this was
-    // already true before 387-04 wrote a line of runner code. It is pinned here anyway, with the
-    // literal named: a handoff carrying a retrievalTrace and stamping anything BELOW 5 would be
-    // claiming to predate the field it carries, which is exactly the distinction D-15's honest
-    // no-trace answer is built on. 390-01 bumped the contract to 6 (the quarantine disposition);
-    // 407-03 bumped it to 7 (StepEvidence.retrievalRung, 2026-08-29). The floor the trace field
-    // needs is unchanged either time, so the pin moves with the constant.
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(7)
-    expect(handoff.schemaVersion).toBe(7)
-    expect(handoff.schemaVersion).toBeGreaterThanOrEqual(5)
+    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
+    expect(handoff.schemaVersion).toBe(2)
   })
 
   it('round-trips the persisted trace through the one load-boundary guard', () => {
