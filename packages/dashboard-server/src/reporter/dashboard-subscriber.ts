@@ -49,8 +49,8 @@ import { runRowIdentity, type RunIdentityMember } from './run-row-identity.js'
  * (D-18: a thin member whose stream begins with a terminal event still gets a row), `run_steps`
  * carrying the WHOLE `stepFinalized` payload with `status` stored as the payload's own word, and
  * `run_sub_actions` carrying the whole `subActionRecorded` payload with its nested objects
- * stringified verbatim (D-01: no field is re-interpreted on the way in). Since runs.db v6 (444-04,
- * D-03) the run row stores the verdict's own word too.
+ * stringified verbatim (no field is re-interpreted on the way in). The run row stores the verdict's
+ * own word too.
  *
  * `testRetryScheduled` now drops only THAT HANDLE's rows (D-17). It used to call the v1
  * whole-run step delete, which wiped every step of the RUN — so in a suite, one member's

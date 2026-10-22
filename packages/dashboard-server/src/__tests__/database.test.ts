@@ -76,12 +76,11 @@ describe('DashboardDatabase', () => {
   })
 
   describe('schema creation', () => {
-    // 2026-08-27 (405-01, D-02): the version moved to 2 as a HARD CUT. `MIGRATIONS` is no longer
-    // a chain — it is the ONE terminal entry stamped at `SCHEMA_VERSION`, because no database is
-    // ever migrated from an older shape (an older one is refused by name), so a chain of
-    // intermediate versions would be sql nothing can ever walk.
-    it('SCHEMA_VERSION is 6', () => {
-      expect(SCHEMA_VERSION).toBe(6)
+    // `MIGRATIONS` is the ONE terminal entry stamped at `SCHEMA_VERSION`: no database is migrated
+    // from another shape (any other stamp is refused by name), so a chain of intermediate versions
+    // would be sql nothing can ever walk.
+    it('SCHEMA_VERSION is 2', () => {
+      expect(SCHEMA_VERSION).toBe(2)
     })
 
     it('MIGRATIONS is exactly one entry, stamped at the current schema version', () => {
@@ -1080,7 +1079,7 @@ const inertProbe = { isAlive: () => true, incarnationOf: () => undefined }
 
 describe('C442-SCHEMA-V5', () => {
   it('a fresh runs database opens at the current version with the owner columns', () => {
-    expect(db['db'].pragma('user_version', { simple: true })).toBe(6)
+    expect(db['db'].pragma('user_version', { simple: true })).toBe(2)
     const columns = columnNames('runs')
     for (const name of ['owner_pid', 'owner_incarnation', 'owner_host']) expect(columns).toContain(name)
   })

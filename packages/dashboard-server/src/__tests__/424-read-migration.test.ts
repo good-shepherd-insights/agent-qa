@@ -195,7 +195,7 @@ function nullableColumns(db: DashboardSqliteDatabase): void {
 it('MIGRATION-FRESH: creates the current version directly on an empty SQLite file', () => {
   const db = open('fresh.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
-  expect(db.pragma('user_version', { simple: true })).toBe(6)
+  expect(db.pragma('user_version', { simple: true })).toBe(2)
   nullableColumns(db)
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
 })
@@ -223,17 +223,11 @@ it('MIGRATION-REOPEN: a published current-version file reopens without DDL or da
 })
 
 for (const [name, version] of [
-  ['V1-REFUSE', 1], ['FUTURE-REFUSE', 7], ['FUTURE-REFUSE', 17], ['V2-DISPOSITION', 2],
+  ['V1-REFUSE', 1], ['NEWER-REFUSE', 5], ['NEWER-REFUSE', 6], ['FUTURE-REFUSE', 7], ['FUTURE-REFUSE', 17],
 ] as const) {
   it(`MIGRATION-${name}: names unsupported version ${version} without changing schema or data`, () => {
     const db = open(`refuse-${version}.db`)
     seedV3(db)
-    if (version === 2) {
-      for (const column of ['evidence_json', 'variable_snapshot_json', 'model_usage_json']) {
-        db.exec(`ALTER TABLE run_steps DROP COLUMN ${column}`)
-      }
-      db.exec('ALTER TABLE run_sub_actions DROP COLUMN evidence_state_json')
-    }
     db.exec(`PRAGMA user_version = ${version}`)
     const before = { data: data(db), schema: schema(db) }
     expect(() => runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)).toThrow(`user_version ${version}`)
@@ -272,8 +266,8 @@ describe('C442-SCHEMA-V5', () => {
       expect(refusal).toBeInstanceOf(RunsDatabaseVersionRefusedError)
       const message = (refusal as Error).message
       expect(message).toContain(path)
-      expect(message).toContain(`version ${version}`)
-      expect(message).toContain('Delete it and run again')
+      expect(message).toContain(`user_version ${version} is not compatible with schema version 2`)
+      expect(message).toContain('Remove the dashboard database')
       expect(sha256(path)).toBe(before)
       expect(existsSync(`${path}-wal`)).toBe(false)
       const reader = open(`old-v${version}.db`)

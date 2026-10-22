@@ -50,8 +50,8 @@ describe('C444-SCHEMA-V6', () => {
     expect(refusal, 'the record opened a version 5 runs.db').toBeInstanceOf(RunRecordUnavailableError)
     const message = (refusal as Error).message
     expect(message).toBe(
-      `${dbPath} was written by an older agent-qa (runs database version 5). `
-        + 'Delete it and run again; agent-qa creates a new one. The run was not started.',
+      `${dbPath}: SQLite database user_version 5 is not compatible with schema version 2. `
+        + 'Remove the dashboard database or use a compatible agent-qa version. The run was not started.',
     )
     expect(message.endsWith('The run was not started.')).toBe(true)
     expect(record.db).toBeUndefined()

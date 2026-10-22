@@ -167,7 +167,6 @@ describe('createDashboardRunIngest', () => {
     expect(db.getRun(runId)?.status).toBe('running')
     ingest.handler(ev('run-bus', 'verdict', { verdict: 'healed' }))
 
-    // 2026-10-17 (444-04, D-03): runs.db v6 stores the verdict's own word.
     expect(db.getRun(runId)?.status).toBe('healed')
     expect(db.readRunDetailRows(runId)?.steps[0].status).toBe('healed')
     expect(db.readRunDetailRows(runId)?.members[0].outcome).toBe('healed')

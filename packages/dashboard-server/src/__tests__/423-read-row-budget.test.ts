@@ -272,12 +272,12 @@ function insertHistoricalRows(raw: { exec(sql: string): void; prepare(sql: strin
 }
 
 function historicalFixture(root: string) {
-  const path = join(root, 'historical-v2.db')
+  const path = join(root, 'historical-6.db')
   const raw = createDashboardSqliteDatabase(path)
   try {
     for (const sql of V2_SQL) raw.exec(sql)
     insertHistoricalRows(raw)
-    raw.exec('PRAGMA user_version = 2')
+    raw.exec('PRAGMA user_version = 6')
   } finally { raw.close() }
   const refused = snapshot(path)
   const history = () => {
@@ -290,7 +290,7 @@ function historicalFixture(root: string) {
     } finally { reader.close() }
   }
   const before = history()
-  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('runs database version 2')
+  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('user_version 6 is not compatible with schema version 2')
   expect(snapshot(path)).toEqual(refused)
   expect(history()).toEqual(before)
   const historical = createDashboardSqliteDatabase(path)
@@ -303,7 +303,7 @@ function historicalFixture(root: string) {
   } finally { historical.close() }
   const v3 = snapshot(path)
   // 2026-10-16 (442-01, D-03): a v3 file is refused too, so the historical rows are read from the current version.
-  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('runs database version 3')
+  expect(() => new DashboardDatabase({ dbPath: path })).toThrow('user_version 3 is not compatible with schema version 2')
   const v3Refused = snapshot(path)
   const seededPath = join(root, 'historical-current.db')
   new DashboardDatabase({ dbPath: seededPath }).close()
@@ -343,7 +343,7 @@ it('ROW-BUDGET-LOGICAL: finalized current-version rows report UTF-8 logical valu
   const { before, after, categories, eventBytes, coldSteps } = measured.fresh
   report('ROW-BUDGET-LOGICAL', { categories, eventBytes, coldSteps, before: before.logical, after: after.logical,
     historicalV3: measured.historical.v3.logical, historicalCurrent: measured.historical.current.logical })
-  expect(after.userVersion).toBe(6)
+  expect(after.userVersion).toBe(2)
   expect(coldSteps).toBe(6)
   for (const table of TABLES) {
     expect(before.logical[table].rows).toBe(0)
@@ -364,7 +364,7 @@ it('ROW-BUDGET-LOGICAL: finalized current-version rows report UTF-8 logical valu
   }
 })
 
-it('ROW-BUDGET-PAGES: PRAGMA page_size and page_count before and after insertion, fresh current version with populated v2 and v3 refused', () => {
+it('ROW-BUDGET-PAGES: PRAGMA page_size and page_count before and after insertion, fresh current version with populated stamp-6 and stamp-3 files refused', () => {
   const { fresh, historical } = measured
   report('ROW-BUDGET-PAGES', {
     fresh: { before: fresh.before.pages, after: fresh.after.pages,
@@ -378,7 +378,7 @@ it('ROW-BUDGET-PAGES: PRAGMA page_size and page_count before and after insertion
   expect(fresh.after.pages.bytes).toBe(fresh.after.pages.pageSize * fresh.after.pages.pageCount)
   expect(historical.v3.userVersion).toBe(3)
   expect(historical.v3Refused).toEqual(historical.v3)
-  expect(historical.current.userVersion).toBe(6)
+  expect(historical.current.userVersion).toBe(2)
   expect(historical.v3.pages.pageCount).toBeGreaterThan(0)
   expect(historical.absentFields).toEqual(['evidence', 'variableSnapshot', 'modelUsage', 'ariaEvidence'])
 })

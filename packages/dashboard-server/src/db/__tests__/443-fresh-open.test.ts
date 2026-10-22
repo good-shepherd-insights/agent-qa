@@ -253,7 +253,7 @@ describe('C443-FRESH-OPEN', () => {
       }
       okOpens += outcomes.filter((outcome) => outcome.ok).length
       const file = readFile(dbPath)
-      expect(file.version, `trial ${trial} user_version`).toBe(6)
+      expect(file.version, `trial ${trial} user_version`).toBe(2)
       const inserted = outcomes
         .flatMap((outcome) => (outcome.id === undefined ? [] : [outcome.id]))
         .sort()
@@ -273,7 +273,7 @@ describe('C443-FRESH-OPEN', () => {
     const [first, second] = outcomes.map((outcome) => outcome.id!)
     expect(first).not.toBe(second)
     const file = readFile(dbPath)
-    expect(file.version).toBe(6)
+    expect(file.version).toBe(2)
     expect(file.ids).toEqual([first, second].sort())
     expect(file.owners.get(first)).toBe(7101)
     expect(file.owners.get(second)).toBe(7102)
@@ -286,7 +286,7 @@ describe('C443-FRESH-OPEN', () => {
     try {
       raw.exec('CREATE TABLE runs (id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL)')
       raw.exec("INSERT INTO runs (id, name, status) VALUES ('r_old', 'old run', 'passed')")
-      raw.exec('PRAGMA user_version = 4')
+      raw.exec('PRAGMA user_version = 1')
     } finally {
       raw.close()
     }
@@ -301,7 +301,7 @@ describe('C443-FRESH-OPEN', () => {
       expect(outcome.ok, outcome.line).toBe(false)
       expect(outcome.error?.name, outcome.line).toBe('RunsDatabaseVersionRefusedError')
       expect(outcome.error?.message).toBe(
-        `${dbPath} was written by an older agent-qa (runs database version 4). ` +
+        `${dbPath} was written by an older agent-qa (runs database version 1). ` +
           'Delete it and run again; agent-qa creates a new one.',
       )
     }
@@ -320,7 +320,7 @@ describe('C443-FRESH-OPEN', () => {
     second.close()
     first.close()
 
-    expect(readFile(dbPath).version).toBe(6)
+    expect(readFile(dbPath).version).toBe(2)
     const schema = schemaOf(dbPath)
     expect(JSON.parse(schema).length).toBeGreaterThan(0)
     expect(schema).toBe(schemaOf(referencePath))

@@ -158,5 +158,5 @@ workaround for the post-run work, which its 60-second budget bounds.
 
 ## After upgrading
 
-A long-lived host, such as a dashboard or `agent-qa daemon`, that was started by a build using
-runs.db v5 must be restarted after you upgrade agent-qa.
+A long-lived host, such as a dashboard or `agent-qa daemon`, that was started by an earlier build
+must be restarted after you upgrade agent-qa.

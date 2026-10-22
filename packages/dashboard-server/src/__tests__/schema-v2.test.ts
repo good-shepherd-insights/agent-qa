@@ -66,12 +66,12 @@ function writeV1Database(dbPath: string): void {
 }
 
 describe('a fresh dashboard database opens at the current version (444 D-03)', () => {
-  it('stamps user_version 6 and creates the three bus-shaped projection tables', () => {
+  it('stamps user_version 2 and creates the three bus-shaped projection tables', () => {
     const db = new DashboardDatabase({ dbPath: join(workDir, 'fresh.db') })
     try {
       const raw = db as unknown as { db: { pragma(q: string, o?: { simple?: boolean }): unknown; prepare(sql: string): { all(): unknown[] } } }
-      expect(raw.db.pragma('user_version', { simple: true })).toBe(6)
-      expect(SCHEMA_VERSION).toBe(6)
+      expect(raw.db.pragma('user_version', { simple: true })).toBe(2)
+      expect(SCHEMA_VERSION).toBe(2)
 
       const tables = (raw.db
         .prepare("SELECT name FROM sqlite_master WHERE type='table'")
@@ -141,7 +141,7 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
     }
   })
 
-  it('refuses a v5 database by name with the remove-the-database message', () => {
+  it('refuses a database stamped 5 by name with the remove-the-database message', () => {
     const dbPath = join(workDir, 'older-v5.db')
     const seed = createDashboardSqliteDatabase(dbPath)
     try {
@@ -153,8 +153,8 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
 
     expect(() => new DashboardDatabase({ dbPath })).toThrow(RunsDatabaseVersionRefusedError)
     expect(() => new DashboardDatabase({ dbPath })).toThrow(
-      `${dbPath} was written by an older agent-qa (runs database version 5). `
-        + 'Delete it and run again; agent-qa creates a new one.',
+      `${dbPath}: SQLite database user_version 5 is not compatible with schema version 2. `
+        + 'Remove the dashboard database or use a compatible agent-qa version.',
     )
   })
 
@@ -168,7 +168,7 @@ describe('an older or newer database is refused BY NAME, never migrated (D-02)',
     }
 
     expect(() => new DashboardDatabase({ dbPath }))
-      .toThrow(/user_version 7 is not compatible with schema version 6/)
+      .toThrow(/user_version 7 is not compatible with schema version 2/)
     expect(() => new DashboardDatabase({ dbPath })).toThrow(`${dbPath}: `)
   })
 })

@@ -1,12 +1,6 @@
 // The dashboard's durable schema (Phase 405 plans 01 and 07, D-01/D-02).
 //
-// 2026-08-27 — SCHEMA VERSION 2, AS A HARD CUT AND NOT A MIGRATION. The v1 DDL below was
-// REWRITTEN IN PLACE as the single version-2 entry: the three bus-shaped projection tables land,
-// `execution_logs` gains the two handle columns, and there is no version-1 entry left to run. A
-// database stamped `user_version = 1` is REFUSED BY NAME on open (`runSqliteMigrations`), never
-// migrated — running `CREATE TABLE IF NOT EXISTS` over the old wide shape is a no-op that leaves
-// the app talking to a half-old schema, which is RESEARCH Pitfall 4 and the reason the refusal is
-// explicit rather than implied by the version comparison.
+// Every `user_version` other than `SCHEMA_VERSION` is refused on open, never upgraded.
 //
 // 2026-08-27 (405-07, D-02) — THE CENSUS RAN AND THE V1 DEBRIS IS GONE. Plan 01 left the dormant
 // v1 projection tables and the unfed `runs` columns spelled here on purpose, so that the deletion
@@ -28,9 +22,7 @@
 // subscriber's `hookFinished` arm → the hook panel), `token_events` (the live-editor ws handler →
 // the insights page — D-20's verdict, measured, not assumed), and the construction-data columns on
 // `runs` that the queue and the settle path write.
-// 2026-10-16 (442-01, D-03): v5 adds the run owner; v3 and v4 files are refused, never upgraded.
-// 2026-10-17 (444-04, D-03): v6 stores the verdict's own word; v5 files are refused by name.
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 2
 
 export interface DashboardMigration {
   version: number
@@ -39,7 +31,7 @@ export interface DashboardMigration {
 
 export const MIGRATIONS: DashboardMigration[] = [
   {
-    version: 6,
+    version: 2,
     sql: [
       `CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,

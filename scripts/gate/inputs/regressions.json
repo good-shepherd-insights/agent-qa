@@ -12148,7 +12148,7 @@
     {
       "runner": "vitest",
       "file": "packages/dashboard-server/src/db/__tests__/444-schema-v6.test.ts",
-      "fullName": "C444-SCHEMA-V6 a fresh runs database opens at version 6",
+      "fullName": "C444-SCHEMA-V6 a fresh runs database opens at version 2",
       "origin": "444 D-03"
     },
     {

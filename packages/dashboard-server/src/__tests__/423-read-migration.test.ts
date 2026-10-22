@@ -370,10 +370,10 @@ const HISTORICAL_ROWS = `
     INSERT INTO token_events (id,model_name,source,prompt_tokens) VALUES ('token','model','live-editor',9);
     INSERT INTO run_artifacts (run_id,kind,schema_version,payload) VALUES ('old','test',1,'{"kept":true}');
 `
-function seedV2(db: DashboardSqliteDatabase): void {
+function seedRefused(db: DashboardSqliteDatabase, stamp = 6): void {
   for (const sql of V2_SQL) db.exec(sql)
   db.exec(`${HISTORICAL_ROWS}
-    PRAGMA user_version = 2;
+    PRAGMA user_version = ${stamp};
     PRAGMA foreign_keys = ON;
   `)
 }
@@ -402,7 +402,7 @@ function nullableColumns(db: DashboardSqliteDatabase): void {
 it('MIGRATION-FRESH: creates the complete nullable current version directly on a SQLite file', () => {
   const db = open('fresh.db')
   runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)
-  expect(db.pragma('user_version', { simple: true })).toBe(6)
+  expect(db.pragma('user_version', { simple: true })).toBe(2)
   nullableColumns(db)
   expect(Object.keys(MIGRATIONS[0]!).sort()).toEqual(['sql', 'version'])
   expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
@@ -449,13 +449,14 @@ function recorded() {
   return { step, child }
 }
 
-it('EVID-V2-HISTORY: refuses v2 untouched; historical NULLs and new subscriber facts survive restart', async () => {
-  const raw = open('refused-v2.db')
-  seedV2(raw)
+it('EVID-OTHER-STAMP: refuses a database stamped 6 untouched; historical NULLs and new subscriber facts survive restart', async () => {
+  const raw = open('refused-6.db')
+  seedRefused(raw)
   const before = { data: data(raw), schema: schema(raw) }
-  expect(() => new DashboardDatabase({ dbPath: join(dir, 'refused-v2.db') })).toThrow('runs database version 2')
+  expect(() => new DashboardDatabase({ dbPath: join(dir, 'refused-6.db') }))
+    .toThrow('user_version 6 is not compatible with schema version 2')
   expect({ data: data(raw), schema: schema(raw) }).toEqual(before)
-  expect(raw.pragma('user_version', { simple: true })).toBe(2)
+  expect(raw.pragma('user_version', { simple: true })).toBe(6)
   // A valid historical action, independent of new producer payloads.
   seedHistoricalRowsIntoCurrent(join(dir, 'evidence.db'),
     `UPDATE run_sub_actions SET planned_action = '{"type":"navigate","to":"url","url":"https://example.invalid"}';`)
@@ -566,13 +567,14 @@ it('ARIA-COLD-READBACK: subscriber preserves ordered child ownership and empty e
     expect(output.steps.find(item => item.stepIndex === 2)).not.toHaveProperty('ariaEvidence')
   } finally { cold.close() }
 })
-it('MIGRATION-V2-HISTORY: refuses v2 by name without changing schema, data or version', () => {
-  const db = open('history.db')
-  seedV2(db)
+it.each([3, 4, 5, 6])('MIGRATION-NEWER-STAMP: refuses a database stamped %i by name without changing schema, data or version', stamp => {
+  const db = open(`history-${stamp}.db`)
+  seedRefused(db, stamp)
   const before = { data: data(db), schema: schema(db) }
-  expect(() => runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)).toThrow('user_version 2')
+  expect(() => runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION))
+    .toThrow(`user_version ${stamp} is not compatible with schema version 2`)
   expect({ data: data(db), schema: schema(db) }).toEqual(before)
-  expect(db.pragma('user_version', { simple: true })).toBe(2)
+  expect(db.pragma('user_version', { simple: true })).toBe(stamp)
 })
 it('MIGRATION-REOPEN: a published current-version file reopens without executing DDL', () => {
   const db = open('reopen.db')
@@ -590,8 +592,7 @@ it('MIGRATION-REOPEN: a published current-version file reopens without executing
 for (const [name, version] of [['V1', 1], ['FUTURE', 7], ['FUTURE', 17]] as const) {
   it(`MIGRATION-${name}-REFUSE: names unsupported version ${version} and leaves schema/data untouched`, () => {
     const db = open(`refuse-${version}.db`)
-    seedV2(db)
-    db.exec(`PRAGMA user_version = ${version}`)
+    seedRefused(db, version)
     const before = { data: data(db), schema: schema(db) }
     expect(() => runSqliteMigrations(db, MIGRATIONS, SCHEMA_VERSION)).toThrow(`user_version ${version}`)
     expect({ data: data(db), schema: schema(db) }).toEqual(before)

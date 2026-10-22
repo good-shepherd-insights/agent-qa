@@ -30,10 +30,10 @@ function freshFile(name: string): string {
 }
 
 describe('C444-SCHEMA-V6', () => {
-  it('a fresh runs database opens at version 6', () => {
+  it('a fresh runs database opens at version 2', () => {
     const raw = createDashboardSqliteDatabase(freshFile('fresh'))
     try {
-      expect(raw.pragma('user_version', { simple: true })).toBe(6)
+      expect(raw.pragma('user_version', { simple: true })).toBe(2)
     } finally {
       raw.close()
     }
@@ -80,8 +80,8 @@ describe('C444-SCHEMA-V6', () => {
 
     expect((refusal as Error | undefined)?.name).toBe('RunsDatabaseVersionRefusedError')
     expect((refusal as Error).message).toBe(
-      `${dbPath} was written by an older agent-qa (runs database version 5). `
-        + 'Delete it and run again; agent-qa creates a new one.',
+      `${dbPath}: SQLite database user_version 5 is not compatible with schema version 2. `
+        + 'Remove the dashboard database or use a compatible agent-qa version.',
     )
     expect(sha256(dbPath)).toBe(before)
     expect(existsSync(`${dbPath}-wal`)).toBe(false)

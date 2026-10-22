@@ -243,7 +243,7 @@ describe('the current DDL is a closed shape (D-02, DETL-06)', () => {
   it('is one migration, at the declared version', () => {
     expect(MIGRATIONS).toHaveLength(1)
     expect(MIGRATIONS[0]?.version).toBe(SCHEMA_VERSION)
-    expect(SCHEMA_VERSION).toBe(6)
+    expect(SCHEMA_VERSION).toBe(2)
   })
 
   for (const { label, needle } of RETIRED_DDL_TOKENS) {
