@@ -55,10 +55,11 @@ test('release workflow gates build, staging, commit, tag, push, and publish in o
     'pnpm install --frozen-lockfile',
     'pnpm exec node scripts/release/verify.mjs --bump "${{ inputs.bump }}" --stage preflight',
     'pnpm exec node scripts/release/version.mjs --bump "${{ inputs.bump }}" --write',
-    'pnpm exec node scripts/release/posthog.mjs --write',
     'pnpm typecheck',
-    'pnpm test',
-    'pnpm build',
+    'sudo apt-get update && sudo apt-get install -y --no-install-recommends expect',
+    "pnpm exec turbo test --filter='!embedding-bench'",
+    'pnpm exec node scripts/release/posthog.mjs --write',
+    'pnpm exec turbo build --force',
     'pnpm run validate:skills',
     'pnpm run validate:agents',
     'pnpm run validate:publish',
@@ -75,11 +76,13 @@ test('release workflow gates build, staging, commit, tag, push, and publish in o
   }
 })
 
-test('release workflow injects PostHog key before build and validates staged packages before publish', () => {
+test('release workflow writes the PostHog key after the tests and before a forced build, and validates staged packages before publish', () => {
   const workflow = readWorkflow()
 
   assert.match(workflow, /POSTHOG_PROJECT_KEY:\s*\$\{\{ secrets\.POSTHOG_PROJECT_KEY \}\}/)
-  assertBefore(workflow, 'pnpm exec node scripts/release/posthog.mjs --write', 'pnpm build')
+  assertBefore(workflow, "pnpm exec turbo test --filter='!embedding-bench'", 'pnpm exec node scripts/release/posthog.mjs --write')
+  assertBefore(workflow, 'pnpm exec node scripts/release/posthog.mjs --write', 'pnpm exec turbo build --force')
+  assert.equal(workflow.split('scripts/release/posthog.mjs --write').length - 1, 1)
   assertBefore(
     workflow,
     'pnpm exec node scripts/release/stage-packages.mjs --target-version "${{ steps.version.outputs.version }}" --out .release/staged-packages',

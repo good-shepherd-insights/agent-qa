@@ -66,19 +66,24 @@ jobs:
         id: version
         run: pnpm exec node scripts/release/version.mjs --bump "${{ inputs.bump }}" --write
 
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Install expect
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends expect
+
+      # embedding-bench is a manual benchmark, not a release check (WINDOWS #53, 448 D-02).
+      - name: Test
+        run: pnpm exec turbo test --filter='!embedding-bench'
+
       - name: Write PostHog project key
         env:
           POSTHOG_PROJECT_KEY: ${{ secrets.POSTHOG_PROJECT_KEY }}
         run: pnpm exec node scripts/release/posthog.mjs --write
 
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        run: pnpm test
-
+      # The key file is gitignored, so turbo does not hash it and would restore a keyless cached dist.
       - name: Build
-        run: pnpm build
+        run: pnpm exec turbo build --force
 
       - name: Validate skills
         run: pnpm run validate:skills
