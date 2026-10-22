@@ -13,6 +13,7 @@ import {
   loadBundle,
   openKnowledgeReader,
   readCanonicalBundleAnchors,
+  readQueuedCanaryPayload,
   rebuildIndex,
   type BundleStoreConfig,
   type CuratorAuthor,
@@ -311,7 +312,8 @@ describe('418 credited canary Gate-2 seam', () => {
       }
       const entry = listQueuedCandidates(knowledgeRoot)[0]!
       const payload = JSON.parse(readFileSync(join(knowledgeRoot, 'memory/queue/queued', entry, 'payload.json'), 'utf8'))
-      expect(payload).toMatchObject({ schemaVersion: 3, outcome: 'negative',
+      expect(readQueuedCanaryPayload(payload).kind).toBe('current')
+      expect(payload).toMatchObject({ outcome: 'negative',
         benefit: mode === 'no-credit' ? 'rode-along' : 'exercised-harmed',
         stateValidity: mode === 'eval-bound' ? 'valid' : mode === 'no-root-stale' ? 'stale' : 'unknown' })
       if (mode === 'eval-bound') expect(payload.corpusDigest).toBe(DIGEST)
@@ -331,7 +333,7 @@ describe('418 credited canary Gate-2 seam', () => {
         producedAtOrdinal: handoff.buildOrdinal, producedBy: { opId: 'canary.record', jobId: entry },
       })] : [])
     })
-  it.each([true, false])('ordered=%s: credit → v3 queue → drain → receipt → gate1+gate2 or hold', async ordered => {
+  it.each([true, false])('ordered=%s: credit → queue → drain → receipt → gate1+gate2 or hold', async ordered => {
     const root = mkdtempSync(join(tmpdir(), 'agent-qa-gate2-seam-'))
     roots.push(root)
     const knowledgeRoot = join(root, 'knowledge')
@@ -370,7 +372,8 @@ describe('418 credited canary Gate-2 seam', () => {
     expect(queued).toHaveLength(1)
     const entry = queued[0]!
     const payload = JSON.parse(readFileSync(join(knowledgeRoot, 'memory/queue/queued', entry, 'payload.json'), 'utf8'))
-    expect(payload).toMatchObject({ schemaVersion: 3, benefit: 'exercised-benefited', corpusDigest: DIGEST })
+    expect(readQueuedCanaryPayload(payload).kind).toBe('current')
+    expect(payload).toMatchObject({ benefit: 'exercised-benefited', corpusDigest: DIGEST })
     const author = vi.fn<CuratorAuthor>(async () => { throw new Error('no author for canaries') })
     const drain = () => drainQueue({ knowledgeRoot, author, executionContext: 'local-interactive',
       resolvePromotionPosture: bound, maintenance: 'skip' })

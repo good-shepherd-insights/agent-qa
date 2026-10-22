@@ -124,7 +124,7 @@ const PurgeAffectedSetSchema = z.object({
   receiptPath: receiptRelativePathSchema,
 }).strict()
 
-export const PURGE_INTENT_SCHEMA_VERSION = 3
+export const PURGE_INTENT_SCHEMA_VERSION = 2
 
 /**
  * D-14/CR-04: the durable, content-free purge intent published before the first irreversible
@@ -134,10 +134,7 @@ export const PURGE_INTENT_SCHEMA_VERSION = 3
  * not-found over half-destroyed state. Every list is deterministically sorted at construction;
  * purged prose, anchors, observations, and vectors have no representable field.
  *
- * v2 adds receiptCycle: the cycle number the intent's receipt publishes at, derived once from
- * the durable series on disk and persisted so a crash-interrupted revival purge resumes to the
- * SAME cycle's byte-identical receipt and never re-derives a different cycle (DCAY-05 ordering).
- * v3 embeds the canonical affected set so partial destruction cannot change the resumable plan.
+ * The intent also embeds its receipt cycle and the canonical affected set.
  */
 export const PurgeIntentSchema = z.object({
   schemaVersion: z.literal(PURGE_INTENT_SCHEMA_VERSION),
@@ -147,8 +144,7 @@ export const PurgeIntentSchema = z.object({
   bundleDirs: z.array(receiptRelativePathSchema).min(1),
   queueCandidateIds: z.array(z.string().regex(QUEUE_CANDIDATE_ID)),
   queuePayloadDirs: z.array(receiptRelativePathSchema),
-  /** Null only for a migrated pre-v3 intent; new intents always persist their affected set. */
-  affectedSet: PurgeAffectedSetSchema.nullable(),
+  affectedSet: PurgeAffectedSetSchema,
 }).strict()
 
 /** Lower-camel schema alias follows the existing knowledge-local committed-file convention. */
@@ -158,20 +154,7 @@ export type PurgeIntent = z.infer<typeof PurgeIntentSchema>
 const guardPurgeIntentVersion = createVersionGuard<PurgeIntent>({
   name: 'PurgeIntent',
   current: PURGE_INTENT_SCHEMA_VERSION,
-  migrations: {
-    // v1 intents predate the receipt series and always addressed the base (cycle-1) receipt.
-    1: (doc) => ({
-      ...(doc as Record<string, unknown>),
-      schemaVersion: 2,
-      receiptCycle: 1,
-    }),
-    // Legacy intent paths remain authoritative, but they predate canonical preview metadata.
-    2: (doc) => ({
-      ...(doc as Record<string, unknown>),
-      schemaVersion: 3,
-      affectedSet: null,
-    }),
-  },
+  migrations: {},
 })
 
 export function guardPurgeIntent(value: unknown): PurgeIntent {
@@ -948,62 +931,60 @@ function guardPurgeIntentForRequest(
     }
   }
 
-  if (intent.affectedSet !== null) {
-    const affected = intent.affectedSet
-    if (affected.recordId !== requestedRecordId || affected.state !== 'resume') {
-      throw new TypeError('purge affected set does not identify the resumable requested record')
+  const affected = intent.affectedSet
+  if (affected.recordId !== requestedRecordId || affected.state !== 'resume') {
+    throw new TypeError('purge affected set does not identify the resumable requested record')
+  }
+  if (
+    affected.intentPath !== `memory/receipts/purge-${requestedRecordId}.intent.json`
+    || affected.receiptPath
+      !== receiptCycleRelativePath(requestedRecordId, intent.receiptCycle)
+  ) {
+    throw new TypeError('purge affected-set audit paths do not match the requested receipt slot')
+  }
+  assertSameIdentities(
+    affected.bundles.map(({ bundleDir }) => bundleDir),
+    intent.bundleDirs,
+    'purge affected-set bundles',
+  )
+  for (const bundle of affected.bundles) {
+    const authority = bundleAuthority(bundle.bundleDir, requestedRecordId)
+    if (bundle.product !== authority.product) {
+      throw new TypeError('purge affected-set product does not match its bundle path')
     }
-    if (
-      affected.intentPath !== `memory/receipts/purge-${requestedRecordId}.intent.json`
-      || affected.receiptPath
-        !== receiptCycleRelativePath(requestedRecordId, intent.receiptCycle)
-    ) {
-      throw new TypeError('purge affected-set audit paths do not match the requested receipt slot')
-    }
-    assertSameIdentities(
-      affected.bundles.map(({ bundleDir }) => bundleDir),
-      intent.bundleDirs,
-      'purge affected-set bundles',
-    )
-    for (const bundle of affected.bundles) {
-      const authority = bundleAuthority(bundle.bundleDir, requestedRecordId)
-      if (bundle.product !== authority.product) {
-        throw new TypeError('purge affected-set product does not match its bundle path')
-      }
-      assertBundleAffectedPaths(
-        bundle.bundleDir,
-        bundle.affectedPaths,
-        'purge affected-set bundle paths',
-      )
-    }
-    assertSameIdentities(
-      affected.bundles.flatMap(({ affectedPaths }) => affectedPaths),
-      intent.receipt.affectedPaths,
-      'purge affected-set bundle contents',
-    )
-    assertSameIdentities(
-      affected.receiptAffectedPaths,
-      intent.receipt.affectedPaths,
-      'purge affected-set receipt paths',
-    )
-    const expectedQueueTargets = queueTargets.map(({ candidateId, candidateDir }) =>
-      canonicalJson({
-        candidateId,
-        candidateDir,
-        jobStatePath: `memory/queue/jobs/${candidateId}.state.json`,
-      }),
-    )
-    assertSameIdentities(
-      affected.queueTargets.map((target) => canonicalJson(target)),
-      expectedQueueTargets,
-      'purge affected-set queue targets',
-    )
-    assertSameIdentities(
-      affected.projectionTargets,
-      PURGE_PROJECTION_TARGETS,
-      'purge affected-set projections',
+    assertBundleAffectedPaths(
+      bundle.bundleDir,
+      bundle.affectedPaths,
+      'purge affected-set bundle paths',
     )
   }
+  assertSameIdentities(
+    affected.bundles.flatMap(({ affectedPaths }) => affectedPaths),
+    intent.receipt.affectedPaths,
+    'purge affected-set bundle contents',
+  )
+  assertSameIdentities(
+    affected.receiptAffectedPaths,
+    intent.receipt.affectedPaths,
+    'purge affected-set receipt paths',
+  )
+  const expectedQueueTargets = queueTargets.map(({ candidateId, candidateDir }) =>
+    canonicalJson({
+      candidateId,
+      candidateDir,
+      jobStatePath: `memory/queue/jobs/${candidateId}.state.json`,
+    }),
+  )
+  assertSameIdentities(
+    affected.queueTargets.map((target) => canonicalJson(target)),
+    expectedQueueTargets,
+    'purge affected-set queue targets',
+  )
+  assertSameIdentities(
+    affected.projectionTargets,
+    PURGE_PROJECTION_TARGETS,
+    'purge affected-set projections',
+  )
   return intent
 }
 
@@ -1019,44 +1000,6 @@ function readExistingIntent(knowledgeRoot: string, recordId: RecordId): PurgeInt
     recordId,
     JSON.parse(readFileSync(file, 'utf8')),
   )
-}
-
-function recoveryAffectedSet(
-  recordId: RecordId,
-  intent: PurgeIntent,
-): PurgeAffectedSet {
-  const bundles = intent.bundleDirs.map((bundleDir) => {
-    const { product } = bundleAuthority(bundleDir, recordId)
-    const bundlePaths = intent.receipt.affectedPaths.filter((path) => (
-      path === bundleDir || path.startsWith(`${bundleDir}/`)
-    ))
-    assertBundleAffectedPaths(bundleDir, bundlePaths, 'legacy purge receipt bundle paths')
-    return {
-      product,
-      bundleDir,
-      kind: 'unknown' as const,
-      affectedPaths: bundlePaths,
-    }
-  })
-  const queueTargets = intent.queuePayloadDirs.map((candidateDir) => {
-    const { candidateId } = queueAuthority(candidateDir)
-    return {
-      candidateId,
-      candidateDir,
-      jobStatePath: `memory/queue/jobs/${candidateId}.state.json`,
-    }
-  })
-  return PurgeAffectedSetSchema.parse({
-    recordId,
-    state: 'resume',
-    bundles,
-    receiptAffectedPaths: [...intent.receipt.affectedPaths],
-    projectionTargets: [...PURGE_PROJECTION_TARGETS],
-    embedCacheAction: 'clear-all',
-    queueTargets,
-    intentPath: `memory/receipts/purge-${recordId}.intent.json`,
-    receiptPath: receiptCycleRelativePath(recordId, intent.receiptCycle),
-  }) as PurgeAffectedSet
 }
 
 function toReceiptPath(knowledgeRoot: string, absolutePath: string): string {
@@ -1079,8 +1022,7 @@ function affectedPaths(knowledgeRoot: string, matches: readonly ResolvedBundle[]
 const PURGE_PROJECTION_TARGETS = ['records', 'anchors', 'fts', 'vec', 'graph'] as const
 
 interface ResolvedPurgeTargets {
-  /** Absent only for a migrated pre-v3 intent whose destructive identities remain authoritative. */
-  affectedSet: PurgeAffectedSet | undefined
+  affectedSet: PurgeAffectedSet
   intent: PurgeIntent | undefined
   matches: ResolvedBundle[]
   queueSweepTargets: QueueSweepTarget[]
@@ -1119,9 +1061,7 @@ function resolvePurgeTargets(
   const persistedIntent = readExistingIntent(knowledgeRoot, recordId)
   if (persistedIntent !== undefined) {
     return {
-      affectedSet:
-        persistedIntent.affectedSet
-        ?? recoveryAffectedSet(recordId, persistedIntent),
+      affectedSet: persistedIntent.affectedSet,
       intent: persistedIntent,
       matches: [],
       queueSweepTargets: [],
@@ -1188,7 +1128,7 @@ export function resolvePurgeAffectedSet(input: {
     throw new TypeError('recordId must be a safe path segment')
   }
   const resolved = resolvePurgeTargets(input.knowledgeRoot, input.recordId)
-  return resolved.affectedSet!
+  return resolved.affectedSet
 }
 
 export function purgeAffectedSetFingerprint(affectedSet: PurgeAffectedSet): string {
@@ -1197,12 +1137,10 @@ export function purgeAffectedSetFingerprint(affectedSet: PurgeAffectedSet): stri
 
 function assertExpectedAffectedSet(
   expectedFingerprint: string | undefined,
-  affectedSet: PurgeAffectedSet | undefined,
+  affectedSet: PurgeAffectedSet,
 ): void {
   if (expectedFingerprint === undefined) return
-  const actualFingerprint = affectedSet === undefined
-    ? 'legacy-intent-without-affected-set'
-    : purgeAffectedSetFingerprint(affectedSet)
+  const actualFingerprint = purgeAffectedSetFingerprint(affectedSet)
   if (actualFingerprint !== expectedFingerprint) {
     throw new PurgeTargetChangedError(expectedFingerprint, actualFingerprint)
   }
@@ -1453,7 +1391,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
     receiptCycle,
     matches,
     queueSweepTargets,
-    resolved.affectedSet!,
+    resolved.affectedSet,
   )
   assertWithinKnowledgeRoot(input.knowledgeRoot, dirname(intentPath(input.knowledgeRoot, input.recordId)))
   const intentOutcome = writeDurableExclusive(
@@ -1469,7 +1407,7 @@ export function purgeRecord(input: PurgeRecordInput): PurgeRecordOutcome {
     }
     assertExpectedAffectedSet(
       input.expectedAffectedSetFingerprint,
-      publishedIntent.affectedSet ?? undefined,
+      publishedIntent.affectedSet,
     )
     return resumeFromIntent(input, publishedIntent)
   }

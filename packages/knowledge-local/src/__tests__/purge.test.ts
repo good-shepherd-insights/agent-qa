@@ -139,7 +139,7 @@ interface PurgeIntent {
   bundleDirs: string[]
   queueCandidateIds: string[]
   queuePayloadDirs: string[]
-  affectedSet: PurgeAffectedSet | null
+  affectedSet: PurgeAffectedSet
 }
 
 interface PurgeIntentSchemaApi {
@@ -2025,6 +2025,31 @@ describe('DCAY-05 sovereign purge', () => {
       )
     }
 
+    it('a refused intent blocks purging its own record while another record purges normally', () => {
+      const blocked = publish('refused-intent-blocked', [
+        { t: 'el', role: 'button', name: 'Refused intent blocked' },
+        { t: 'page', route: '/purge/refused-intent/blocked' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const other = publish('refused-intent-other', [
+        { t: 'el', role: 'button', name: 'Refused intent other' },
+        { t: 'page', route: '/purge/refused-intent/other' },
+        { t: 'platform', platform: 'web' },
+      ])
+      const intentFile = leaveIntent(blocked)
+      const intent = JSON.parse(readFileSync(intentFile, 'utf8')) as Record<string, unknown>
+      writeFileSync(intentFile, `${JSON.stringify({ ...intent, schemaVersion: 1 })}\n`, 'utf8')
+      const plantedBytes = readFileSync(intentFile)
+
+      expect(() => purge(blocked.id)).toThrow(/schemaVersion 1 is not supported/u)
+      expect(existsSync(blocked.dir)).toBe(true)
+      expect(readFileSync(intentFile)).toEqual(plantedBytes)
+
+      expect(purge(other.id).kind).toBe('purged')
+      expect(existsSync(other.dir)).toBe(false)
+      expect(existsSync(blocked.dir)).toBe(true)
+    })
+
     it('rejects an intent copied under another record id before deleting either record', () => {
       const first = publish('semantic-copy-first', [
         { t: 'el', role: 'button', name: 'Semantic copy first' },
@@ -2337,24 +2362,12 @@ describe('DCAY-05 sovereign purge', () => {
 
       const schemaApi = purgeIntentSchemaApi()
       const intent = JSON.parse(intentText) as Record<string, unknown>
-      expect(schemaApi.PURGE_INTENT_SCHEMA_VERSION).toBe(3)
+      expect(schemaApi.PURGE_INTENT_SCHEMA_VERSION).toBe(2)
       expect(schemaApi.purgeIntentSchema.safeParse(intent).success).toBe(true)
       expect(
         schemaApi.purgeIntentSchema.safeParse({ ...intent, unexpected: 'field' }).success,
       ).toBe(false)
-      expect(() => schemaApi.guardPurgeIntent({ ...intent, schemaVersion: 4 })).toThrow(
-        /schemaVersion 4 is not supported/u,
-      )
-      const { affectedSet: _affectedSet, receiptCycle: _dropped, ...v1Shape } = intent
-      const migrated = schemaApi.guardPurgeIntent({ ...v1Shape, schemaVersion: 1 })
-      expect(migrated.schemaVersion).toBe(3)
-      expect(migrated.receiptCycle).toBe(1)
-      expect(migrated.affectedSet).toBeNull()
-      const { affectedSet: _v2AffectedSet, ...v2Shape } = intent
-      expect(schemaApi.guardPurgeIntent({ ...v2Shape, schemaVersion: 2 })).toMatchObject({
-        schemaVersion: 3,
-        affectedSet: null,
-      })
+      expect(schemaApi.guardPurgeIntent(intent)).toEqual(intent)
 
       const retry = purge(fixture.targetId)
       expect(retry.kind).toBe('purged')
@@ -2362,6 +2375,35 @@ describe('DCAY-05 sovereign purge', () => {
       expect(receiptText).not.toContain(fixture.sentinels.summary)
       expect(receiptText).not.toContain(fixture.sentinels.body)
       expect(receiptText).not.toContain(fixture.sentinels.anchorName)
+    })
+
+    it.each([
+      {
+        shape: 'stamped 1',
+        plant: (intent: Record<string, unknown>) => ({ ...intent, schemaVersion: 1 }),
+        refusal: /schemaVersion 1 is not supported/u,
+      },
+      {
+        shape: 'stamped 3',
+        plant: (intent: Record<string, unknown>) => ({ ...intent, schemaVersion: 3 }),
+        refusal: /schemaVersion 3 is not supported/u,
+      },
+      {
+        shape: 'stamped 2 without an affected set',
+        plant: ({ affectedSet: _affectedSet, ...intent }: Record<string, unknown>) => intent,
+        refusal: /affectedSet/u,
+      },
+    ])('refuses an intent $shape', async ({ shape, plant, refusal }) => {
+      const fixture = await publishCrashFixture(`intent-refused-${shape.replaceAll(' ', '-')}`)
+
+      expect(crashingPurge(fixture.targetId, 'afterIntentWritten')).toThrow(
+        'injected crash at afterIntentWritten',
+      )
+      const intent = JSON.parse(
+        readFileSync(intentFilePath(fixture.targetId), 'utf8'),
+      ) as Record<string, unknown>
+
+      expect(() => purgeIntentSchemaApi().guardPurgeIntent(plant(intent))).toThrow(refusal)
     })
   })
 

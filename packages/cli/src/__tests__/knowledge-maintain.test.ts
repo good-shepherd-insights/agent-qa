@@ -1573,63 +1573,58 @@ describe('knowledge maintenance commands', () => {
     ))).toEqual({ [PRODUCT]: BUILD_ORDINAL + 1 })
   })
 
-  for (const legacyVersion of [1, 2] as const) {
-    it(`previews and completes a partially applied v${legacyVersion} purge intent`, async () => {
-      const workspace = fixtureWorkspace(roots)
-      const bundle = seedBundle(workspace)
-      expect(() => purgeRecord({
-        knowledgeRoot: workspace.knowledgeRoot,
-        recordId: asRecordId(bundle.id),
-        initiator: 'legacy-intent-fixture',
-        purgedAtOrdinal: BUILD_ORDINAL + 1,
-        hooks: {
-          afterIntentWritten: () => {
-            throw new Error('leave legacy purge intent')
-          },
+  it.each([
+    {
+      shape: 'stamped 1',
+      plant: (intent: Record<string, unknown>) => ({ ...intent, schemaVersion: 1 }),
+      refusal: 'PurgeIntent schemaVersion 1 is not supported',
+    },
+    {
+      shape: 'stamped 2 without an affected set',
+      plant: ({ affectedSet: _affectedSet, ...intent }: Record<string, unknown>) => intent,
+      refusal: '"affectedSet"',
+    },
+  ])('refuses to resume a purge intent $shape and leaves it in place', async ({ plant, refusal }) => {
+    const workspace = fixtureWorkspace(roots)
+    const bundle = seedBundle(workspace)
+    expect(() => purgeRecord({
+      knowledgeRoot: workspace.knowledgeRoot,
+      recordId: asRecordId(bundle.id),
+      initiator: 'refused-intent-fixture',
+      purgedAtOrdinal: BUILD_ORDINAL + 1,
+      hooks: {
+        afterIntentWritten: () => {
+          throw new Error('leave purge intent')
         },
-      })).toThrow('leave legacy purge intent')
-      const intentPath = join(
-        workspace.knowledgeRoot,
-        'memory',
-        'receipts',
-        `purge-${bundle.id}.intent.json`,
-      )
-      const intent = JSON.parse(readFileSync(intentPath, 'utf8')) as Record<string, unknown>
-      intent.schemaVersion = legacyVersion
-      delete intent.affectedSet
-      if (legacyVersion === 1) delete intent.receiptCycle
-      writeFileSync(intentPath, `${JSON.stringify(intent)}\n`, 'utf8')
-      rmSync(bundle.dir, { recursive: true, force: true })
-      const countersBeforeResume = readFileSync(
-        join(workspace.runtimeRoot, 'build-ordinals.json'),
-      )
-      commandHarness.purgeRecordCalls = 0
-      commandHarness.purgeRecordInputs = []
+      },
+    })).toThrow('leave purge intent')
+    const intentPath = join(
+      workspace.knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${bundle.id}.intent.json`,
+    )
+    const intent = JSON.parse(readFileSync(intentPath, 'utf8')) as Record<string, unknown>
+    writeFileSync(intentPath, `${JSON.stringify(plant(intent))}\n`, 'utf8')
+    const plantedBytes = readFileSync(intentPath)
 
-      const result = await invoke(workspace, [
-        'purge',
-        bundle.id,
-        '--json',
-      ])
+    const result = await invoke(workspace, [
+      'purge',
+      bundle.id,
+      '--json',
+    ])
 
-      expect(result.exitCode).toBeUndefined()
-      expect(guardPurgeReceipt(JSON.parse(result.stdout))).toMatchObject({
-        purgedRecordId: bundle.id,
-      })
-      expect(commandHarness.purgeRecordCalls).toBe(1)
-      expect(commandHarness.purgeRecordInputs[0]?.purgedAtOrdinal).toBeUndefined()
-      expect(readFileSync(join(workspace.runtimeRoot, 'build-ordinals.json'))).toEqual(
-        countersBeforeResume,
-      )
-      expect(existsSync(intentPath)).toBe(false)
-      expect(existsSync(join(
-        workspace.knowledgeRoot,
-        'memory',
-        'receipts',
-        `purge-${bundle.id}.json`,
-      ))).toBe(true)
-    })
-  }
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toContain(refusal)
+    expect(readFileSync(intentPath)).toEqual(plantedBytes)
+    expect(existsSync(bundle.dir)).toBe(true)
+    expect(existsSync(join(
+      workspace.knowledgeRoot,
+      'memory',
+      'receipts',
+      `purge-${bundle.id}.json`,
+    ))).toBe(false)
+  })
 
   it('reserves one purge ordinal across every affected product counter', async () => {
     const secondProduct = 'maintenance-purge-secondary'
