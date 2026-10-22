@@ -35,7 +35,6 @@ type IndexHealth =
 interface IndexOpenApi {
   INDEX_DB_FILE: string
   INDEX_SCHEMA_VERSION: number
-  MIN_READABLE_INDEX_SCHEMA_VERSION: number
   INDEX_RENDERING_SCHEMA_VERSION: number
   WRITER_BUSY_TIMEOUT_MS: number
   READER_BUSY_TIMEOUT_MS: number
@@ -253,6 +252,44 @@ describe('index-open', () => {
         ok: false,
         probe: 'schema-version',
       })
+    } finally {
+      writer.close()
+    }
+  })
+
+  it.each([1, 3, 4, 5])('the writer resets an index stamped %i and stamps it at the current version', (stamp) => {
+    const api = indexApi()
+    const setup = api.openIndexWriter(knowledgeRoot)
+    try {
+      setup.db.prepare("UPDATE meta SET v = ? WHERE k = 'index_schema_version'").run(String(stamp))
+      setup.db.prepare("INSERT INTO meta (k, v) VALUES ('planted', 'row')").run()
+    } finally {
+      setup.close()
+    }
+
+    const writer = api.openIndexWriter(knowledgeRoot)
+    try {
+      expect(firstValue(writer.db, "SELECT v FROM meta WHERE k = 'index_schema_version'"))
+        .toBe(String(api.INDEX_SCHEMA_VERSION))
+      expect(firstValue(writer.db, "SELECT v FROM meta WHERE k = 'planted'")).toBeUndefined()
+      expect(api.probeIndexHealth(writer.db)).toEqual({ ok: true })
+    } finally {
+      writer.close()
+    }
+  })
+
+  it('the writer keeps an index stamped at the current version', () => {
+    const api = indexApi()
+    const setup = api.openIndexWriter(knowledgeRoot)
+    try {
+      setup.db.prepare("INSERT INTO meta (k, v) VALUES ('planted', 'row')").run()
+    } finally {
+      setup.close()
+    }
+
+    const writer = api.openIndexWriter(knowledgeRoot)
+    try {
+      expect(firstValue(writer.db, "SELECT v FROM meta WHERE k = 'planted'")).toBe('row')
     } finally {
       writer.close()
     }

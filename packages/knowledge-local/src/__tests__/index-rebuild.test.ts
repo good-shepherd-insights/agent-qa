@@ -47,7 +47,6 @@ import {
   INDEX_DB_FILE,
   INDEX_RENDERING_SCHEMA_VERSION,
   INDEX_SCHEMA_VERSION,
-  MIN_READABLE_INDEX_SCHEMA_VERSION,
   readIndexMaintenanceState,
 } from '../index-open.js'
 import {
@@ -439,9 +438,8 @@ describe('IDX-01 derived-index rebuild projection', () => {
     }
   })
 
-  it('marks a v2 index for schema reset and fully re-projects confirmation ordinals', async () => {
-    expect(INDEX_SCHEMA_VERSION).toBe(5)
-    expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(5)
+  it('marks an index stamped 1 for schema reset and fully re-projects confirmation ordinals', async () => {
+    expect(INDEX_SCHEMA_VERSION).toBe(2)
 
     const published = publish('Schema Reset Confirmation Product', {
       createdAtOrdinal: 1,
@@ -475,7 +473,7 @@ describe('IDX-01 derived-index rebuild projection', () => {
         previousSchema.exec('ALTER TABLE records DROP COLUMN last_confirmed_ordinal')
       }
       previousSchema
-        .prepare("UPDATE meta SET v = '2' WHERE k = 'index_schema_version'")
+        .prepare("UPDATE meta SET v = '1' WHERE k = 'index_schema_version'")
         .run()
       previousSchema.exec('PRAGMA wal_checkpoint(TRUNCATE)')
     } finally {

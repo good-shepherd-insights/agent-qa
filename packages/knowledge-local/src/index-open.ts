@@ -24,11 +24,8 @@ import { getLoadablePath } from './sqlite-vec-loadable.js'
 
 export const INDEX_DB_FILE = 'knowledge.db'
 
-/** Phase 420: disposable trust projections now carry their effective-prior identity. */
-export const INDEX_SCHEMA_VERSION = 5
-
-/** Pre-v5 projections cannot prove which host prior table produced their numbers. */
-export const MIN_READABLE_INDEX_SCHEMA_VERSION = 5
+/** Any other stamp resets the index. */
+export const INDEX_SCHEMA_VERSION = 2
 
 /**
  * Phase 377 D-04 rendering epoch.
@@ -737,7 +734,7 @@ export function openIndexWriter(
       projectionTablesPresent
       && (previousSchemaVersionStamp === undefined
         || !Number.isFinite(previousSchemaVersion)
-        || previousSchemaVersion < INDEX_SCHEMA_VERSION)
+        || previousSchemaVersion !== INDEX_SCHEMA_VERSION)
     const previousRenderingVersionStamp = readRenderingSchemaVersionStamp(db)
     const previousRenderingVersion = Number(previousRenderingVersionStamp)
     let renderingEpochStale =
@@ -900,7 +897,7 @@ export function probeIndexHealth(db: DatabaseSync): IndexHealth {
     if (
       row === undefined
       || !Number.isFinite(version)
-      || version < MIN_READABLE_INDEX_SCHEMA_VERSION
+      || version !== INDEX_SCHEMA_VERSION
     ) {
       return {
         ok: false,

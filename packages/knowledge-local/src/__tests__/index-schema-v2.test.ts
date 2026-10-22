@@ -148,14 +148,13 @@ describe('disposable index schema reset', () => {
   it('bootstraps fresh writers with the complete current projection shape', () => {
     const writer = knowledgeLocal.openIndexWriter(knowledgeRoot)
     try {
-      expect(knowledgeLocal.INDEX_SCHEMA_VERSION).toBe(5)
-      expect(knowledgeLocal.MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(5)
+      expect(knowledgeLocal.INDEX_SCHEMA_VERSION).toBe(2)
       expect(knowledgeLocal.INDEX_RENDERING_SCHEMA_VERSION).toBe(2)
       expect(
         writer.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get()?.v,
-      ).toBe('5')
+      ).toBe('2')
       expect(
         writer.db
           .prepare("SELECT v FROM meta WHERE k = 'rendering_schema_version'")
@@ -216,7 +215,7 @@ describe('disposable index schema reset', () => {
         reset.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get()?.v,
-      ).toBe('5')
+      ).toBe('2')
       expect(columnNames(reset.db, 'records')).toContain('contextual_rendering')
       expect(columnNames(reset.db, 'records')).toContain('last_confirmed_ordinal')
       expect(columnNames(reset.db, 'fts_records')).toEqual([
@@ -270,7 +269,7 @@ describe('disposable index schema reset', () => {
         brute.db
           .prepare("SELECT v FROM meta WHERE k = 'index_schema_version'")
           .get()?.v,
-      ).toBe('5')
+      ).toBe('2')
       expect(
         brute.db
           .prepare("SELECT v FROM meta WHERE k = 'embedding_vec_cleanup_epoch'")

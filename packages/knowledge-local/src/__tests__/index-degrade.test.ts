@@ -13,7 +13,6 @@ import type { Anchor, BundleRelation } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
-  MIN_READABLE_INDEX_SCHEMA_VERSION,
   REBUILD_MARKER_FILE,
   appendOutcomeEvent,
   appendRelation,
@@ -168,14 +167,12 @@ describe('IDX-02 authoritative degradation ladder', () => {
     }
   })
 
-  it('degrades a below-minimum schema version and reports the precise marker reason', async () => {
+  it.each([1, 3, 4, 5])('an index stamped %i is refused by the read probe', async (stamp) => {
     const published = publish()
     await rebuildIndex({ knowledgeRoot })
     const db = new DatabaseSync(indexDbPath(knowledgeRoot))
     try {
-      db.prepare("UPDATE meta SET v = ? WHERE k = 'index_schema_version'").run(
-        String(MIN_READABLE_INDEX_SCHEMA_VERSION - 1),
-      )
+      db.prepare("UPDATE meta SET v = ? WHERE k = 'index_schema_version'").run(String(stamp))
     } finally {
       db.close()
     }

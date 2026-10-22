@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ORIGIN_PRIORS, type TrustPriorTable } from '@vostride/agent-qa-schema'
 import { publishBundle, type PublishBundleInput } from '../bundle-publish.test-helper.js'
-import { indexDbPath, INDEX_SCHEMA_VERSION, MIN_READABLE_INDEX_SCHEMA_VERSION, INDEX_RENDERING_SCHEMA_VERSION } from '../index-open.js'
+import { indexDbPath, INDEX_SCHEMA_VERSION, INDEX_RENDERING_SCHEMA_VERSION } from '../index-open.js'
 import { rebuildIndex, projectBundleIndexRow } from '../index-rebuild.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
 import { effectivePriorDigest } from '../trust-prior-context.js'
@@ -38,8 +38,7 @@ describe('420 prior-aware index refresh', () => {
     expect(() => effectivePriorDigest({ user: { alpha: NaN, beta: 1 } })).toThrow()
   })
   it('invalidates old trust schema without changing rendering schema', () => {
-    expect(INDEX_SCHEMA_VERSION).toBe(5)
-    expect(MIN_READABLE_INDEX_SCHEMA_VERSION).toBe(5)
+    expect(INDEX_SCHEMA_VERSION).toBe(2)
     expect(INDEX_RENDERING_SCHEMA_VERSION).toBe(2)
   })
   it('replaces and removes priors with unchanged bundle and rendering bytes', async () => {

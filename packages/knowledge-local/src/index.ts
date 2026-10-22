@@ -197,7 +197,6 @@ export {
   INDEX_RENDERING_SCHEMA_VERSION,
   INDEX_SCHEMA_VERSION,
   indexDbPath,
-  MIN_READABLE_INDEX_SCHEMA_VERSION,
   openIndexReaderConnection,
   openIndexWriter,
   probeIndexHealth,
