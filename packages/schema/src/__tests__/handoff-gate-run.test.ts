@@ -1,18 +1,13 @@
 // Phase 384 plan 02, D-10: the `gateRun` carrier, minted on CompletedRunHandoff v4.
 //
-// Pins the three load-boundary facts the carrier introduces: the version bump itself,
-// backward-compatible loading of every already-written v3 handoff document, and the
-// present-implies-valid shape clause that admits only the literal marker. RESEARCH Pitfall 5 is pinned explicitly: `gateRun` is a SECOND,
+// Pins the load-boundary facts the carrier introduces: the current version, and the
+// present-implies-valid shape clause that admits only the literal marker. `gateRun` is a SECOND,
 // distinct axis beside `excludedFromOutcomes` — neither implies the other.
 //
 // Schema module-discipline law: extension-less relative import specifiers, no node builtins.
 import { describe, expect, it } from 'vitest'
 
-import {
-  guardCompletedRunHandoff,
-  HANDOFF_MIGRATIONS,
-  HANDOFF_STAMPS_READ_AS_CURRENT,
-} from '../handoff/load-completed-run-handoff'
+import { guardCompletedRunHandoff, HANDOFF_MIGRATIONS } from '../handoff/load-completed-run-handoff'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
@@ -42,20 +37,8 @@ describe('CompletedRunHandoff gateRun carrier, minted at v4 (D-10)', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
 
-  it('registers no migration and reads stamps 3 to 7 as current', () => {
+  it('registers no migration', () => {
     expect(Object.keys(HANDOFF_MIGRATIONS)).toEqual([])
-    expect(HANDOFF_STAMPS_READ_AS_CURRENT).toEqual([3, 4, 5, 6, 7])
-  })
-
-  it('loads an already-written schemaVersion 3 document unchanged, with gateRun absent', () => {
-    const stored = { ...makeHandoff(), schemaVersion: 3 }
-
-    const guarded = guardCompletedRunHandoff(stored)
-
-    expect(guarded.runId).toBe('run-gate-1')
-    expect(guarded.aggregateVerdict).toBe('passed')
-    expect(guarded.tests).toEqual([])
-    expect('gateRun' in guarded).toBe(false)
   })
 
   it('admits a current-version document carrying the literal gateRun marker', () => {

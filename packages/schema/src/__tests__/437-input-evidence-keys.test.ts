@@ -36,10 +36,10 @@ describe('C437-KEY-SETS', () => {
     expectTypeOf<OperationEvidence['input']>().toEqualTypeOf<InputEvidence[] | undefined>()
   })
 
-  it('the handoff schema version is 2 and a handoff stamped 7 still reads', () => {
+  it('the handoff schema version is 2', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
     const handoff = JSON.parse(readFileSync(preChangeHandoff, 'utf8')) as CompletedRunHandoff
-    expect(handoff.schemaVersion).toBe(7)
+    expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
     expect(guardCompletedRunHandoff(handoff)).toBe(handoff)
   })
 })

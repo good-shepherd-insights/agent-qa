@@ -284,74 +284,6 @@ describe('createVersionGuard (D-13)', () => {
     expect(error.supportedVersion).toBe(2)
   })
 
-  it('returns an aliased stamp above current as the same reference', () => {
-    const guard = createVersionGuard<TestDocument>({
-      name: 'Doc',
-      current: 2,
-      migrations: {},
-      readAsCurrent: [3, 4],
-    })
-    const doc = { schemaVersion: 3, value: 'aliased' }
-
-    expect(guard(doc)).toBe(doc)
-  })
-
-  it('still runs shape on an aliased stamp', () => {
-    const guard = createVersionGuard<TestDocument>({
-      name: 'Doc',
-      current: 2,
-      migrations: {},
-      readAsCurrent: [3, 4],
-      shape: (doc) => typeof (doc as { value?: unknown }).value === 'string',
-    })
-
-    expect(() => guard({ schemaVersion: 4 })).toThrowError(TypeError)
-    expect(() => guard({ schemaVersion: 4 })).toThrow('Doc failed structural validation')
-  })
-
-  it('refuses a stamp above current that is not aliased', () => {
-    const guard = createVersionGuard<TestDocument>({
-      name: 'Doc',
-      current: 2,
-      migrations: {},
-      readAsCurrent: [3, 4],
-    })
-
-    let thrown: unknown
-    try {
-      guard({ schemaVersion: 5, value: 'future' })
-    } catch (error) {
-      thrown = error
-    }
-
-    expect(thrown).toBeInstanceOf(VersionGuardError)
-    expect((thrown as VersionGuardError).foundVersion).toBe(5)
-  })
-
-  it('never walks a migration for an aliased stamp', () => {
-    const migration = vi.fn((doc: unknown) => doc)
-    const guard = createVersionGuard<TestDocument>({
-      name: 'Doc',
-      current: 2,
-      migrations: { 3: migration },
-      readAsCurrent: [3, 4],
-    })
-    const doc = { schemaVersion: 3, value: 'aliased' }
-
-    expect(guard(doc)).toBe(doc)
-    expect(migration).not.toHaveBeenCalled()
-  })
-
-  it('refuses a stamp above current when no alias list is given', () => {
-    const guard = createVersionGuard<TestDocument>({
-      name: 'Doc',
-      current: 2,
-      migrations: {},
-    })
-
-    expect(() => guard({ schemaVersion: 3, value: 'future' })).toThrowError(VersionGuardError)
-  })
-
   it('walks a registered migration and passes it the original document', () => {
     const original = { schemaVersion: 1, value: 'before' }
     const migrated: TestDocument = { schemaVersion: 2, value: 'after' }
@@ -463,7 +395,7 @@ describe('createVersionGuard (D-13)', () => {
 
 describe('guardCompletedRunHandoff factory instance compatibility', () => {
   it('preserves the HandoffVersionError name, message, and version fields', () => {
-    const newer = 8
+    const newer = CURRENT_HANDOFF_SCHEMA_VERSION + 1
     let thrown: unknown
     try {
       guardCompletedRunHandoff({ schemaVersion: newer })

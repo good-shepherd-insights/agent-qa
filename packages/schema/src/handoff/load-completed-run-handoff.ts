@@ -25,11 +25,7 @@ import {
   CONDITION_VERDICTS,
 } from './condition-evidence'
 
-/**
- * Thrown when a stored handoff declares a `schemaVersion` this build cannot consume:
- * newer than {@link CURRENT_HANDOFF_SCHEMA_VERSION} and not in
- * {@link HANDOFF_STAMPS_READ_AS_CURRENT}, or older with no registered migration.
- */
+/** Thrown when a stored handoff's `schemaVersion` is not {@link CURRENT_HANDOFF_SCHEMA_VERSION}. */
 export class HandoffVersionError extends VersionGuardError {
   constructor(found: number, supported: number) {
     super('CompletedRunHandoff', found, supported)
@@ -38,9 +34,6 @@ export class HandoffVersionError extends VersionGuardError {
 }
 
 export const HANDOFF_MIGRATIONS: MigrationRegistry = {}
-
-// Stamps 3 to 7 carry the current shape, so a later version bump must not reuse them.
-export const HANDOFF_STAMPS_READ_AS_CURRENT = [3, 4, 5, 6, 7] as const
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -732,16 +725,15 @@ function hasCompleteHandoffShape(value: unknown): boolean {
 }
 
 /**
- * The read side of the handoff version discipline: parse → version check → read
- * {@link HANDOFF_STAMPS_READ_AS_CURRENT} unchanged → reject-newer-than-known with a typed
- * {@link HandoffVersionError} → migrate-older through {@link HANDOFF_MIGRATIONS}. Pure — no fs;
- * the runner-local fs leg delegates here. Every handoff consumer routes through this one guard.
+ * The read side of the handoff version discipline: parse → version check → refuse any stamp
+ * other than {@link CURRENT_HANDOFF_SCHEMA_VERSION} with a typed {@link HandoffVersionError}.
+ * Pure — no fs; the runner-local fs leg delegates here. Every handoff consumer routes through
+ * this one guard.
  */
 export const guardCompletedRunHandoff = createVersionGuard<CompletedRunHandoff>({
   name: 'CompletedRunHandoff',
   current: CURRENT_HANDOFF_SCHEMA_VERSION,
   migrations: HANDOFF_MIGRATIONS,
-  readAsCurrent: HANDOFF_STAMPS_READ_AS_CURRENT,
   error: HandoffVersionError,
   shape: hasCompleteHandoffShape,
 })

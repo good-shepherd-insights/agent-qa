@@ -188,8 +188,6 @@ export type {
   MigrationRegistry,
   VersionGuardConfig,
 } from './versioning/create-version-guard'
-export { isReadableStamp, PRE_V2_STAMP, readableStamp } from './versioning/readable-stamp'
-export type { ReadableStamp } from './versioning/readable-stamp'
 
 // 314 async-seam
 export { asRunId } from './run/index'
@@ -317,12 +315,7 @@ export {
 } from './brief/index'
 export { CURRENT_HANDOFF_SCHEMA_VERSION } from './handoff/index'
 // 361 D-19: the one handoff version guard (SESSION-05 read-side discipline).
-export {
-  guardCompletedRunHandoff,
-  HandoffVersionError,
-  HANDOFF_MIGRATIONS,
-  HANDOFF_STAMPS_READ_AS_CURRENT,
-} from './handoff/index'
+export { guardCompletedRunHandoff, HandoffVersionError, HANDOFF_MIGRATIONS } from './handoff/index'
 // 388 D-09/D-11/D-14/D-15: the chain-terminal notification record and THE one chip-status
 // vocabulary. Both are minted here rather than beside a consumer because each has several —
 // the notification row is read by chat and by the dashboard, and the chip words are spoken by

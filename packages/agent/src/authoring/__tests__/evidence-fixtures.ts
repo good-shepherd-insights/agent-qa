@@ -9,7 +9,11 @@
 //
 // Not a `.test.ts` file, so vitest's `src/**/__tests__/**/*.test.ts` include never collects it.
 
-import { actionAnchorElement, formatLimitStopReason } from '@vostride/agent-qa-schema'
+import {
+  actionAnchorElement,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  formatLimitStopReason,
+} from '@vostride/agent-qa-schema'
 import type {
   Action,
   CompletedRunHandoff,
@@ -269,7 +273,7 @@ function deriveAggregateVerdict(members: readonly MemberFixture[]): RunStatus {
 
 export function runDocument(runId: string, members: readonly MemberFixture[]): CompletedRunHandoff {
   return {
-    schemaVersion: 6,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId,
     scope: { tier: 'product', key: 'local-form' },
     buildOrdinal: 1,

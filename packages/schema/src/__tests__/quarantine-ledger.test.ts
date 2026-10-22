@@ -357,12 +357,6 @@ describe('handoff quarantine disposition', () => {
     }
   }
 
-  it('reads a stamp-5 handoff as current, unchanged', () => {
-    expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
-    const stored = { ...(handoffFixture([memberFixture()]) as Record<string, unknown>), schemaVersion: 5 }
-    expect(guardCompletedRunHandoff(stored)).toBe(stored)
-  })
-
   it('carries the disposition BESIDE a truthful failed outcome', () => {
     const member = memberFixture({ quarantined: true })
     expect(member.outcome).toBe('failed')
@@ -408,12 +402,5 @@ describe('handoff quarantine disposition', () => {
     expect(() =>
       guardCompletedRunHandoff(handoffFixture([memberFixture()], {} as never)),
     ).toThrow(TypeError)
-  })
-
-  it('loads a stored v5 handoff unchanged through the registered migration', () => {
-    const stored = { ...(handoffFixture([memberFixture()]) as Record<string, unknown>), schemaVersion: 5 }
-    const loaded = guardCompletedRunHandoff(stored) as CompletedRunHandoff
-    expect(loaded.tests[0].quarantined).toBeUndefined()
-    expect(loaded.quarantineApplied).toBeUndefined()
   })
 })

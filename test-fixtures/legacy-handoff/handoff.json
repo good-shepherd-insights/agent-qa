@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 7,
+  "schemaVersion": 2,
   "runId": "run_436_pre_change_fixture",
   "scope": {
     "tier": "test",

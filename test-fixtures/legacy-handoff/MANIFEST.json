@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "frozen": true,
   "source": {
     "agentQaSha": "5e3e932a2d586f89c805a385483da1800b941fff",
@@ -9,7 +9,7 @@
   "files": [
     {
       "path": "handoff.json",
-      "sha256": "9f027d40ba4f3815754aab7dbd5811217d8535d7e24fdf5ef087d4ca98461e85",
+      "sha256": "345a1dfa1d1e38d605802fe1c401783f75631b7b992dbc74ce9308656c46ab46",
       "bytes": 71522
     }
   ],

@@ -231,17 +231,6 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
 
-  it('loads an already-written schemaVersion 4 document unchanged (identity migration)', () => {
-    const stored = { ...makeHandoff(), schemaVersion: 4 }
-
-    const guarded = guardCompletedRunHandoff(stored)
-
-    expect(guarded.runId).toBe('run-trace-1')
-    expect(guarded.aggregateVerdict).toBe('passed')
-    expect(guarded.tests[0].steps[0].stepText).toBe('buy something')
-    expect('retrievalTrace' in guarded.tests[0].steps[0]).toBe(false)
-  })
-
   it('refuses a NEWER-than-current document BY NAME rather than by shape', () => {
     let thrown: unknown
     try {

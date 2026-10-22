@@ -12,7 +12,6 @@ export interface VersionGuardConfig<T> {
    * document structurally honors the current contract before consumers traverse it.
    */
   shape?: (migrated: unknown) => boolean
-  readAsCurrent?: readonly number[]
 }
 
 /** Typed rejection shared by every schema-versioned document guard (D-13). */
@@ -49,13 +48,6 @@ export function createVersionGuard<T>(config: VersionGuardConfig<T>): (value: un
     const version = (value as { schemaVersion?: unknown }).schemaVersion
     if (typeof version !== 'number' || !Number.isFinite(version)) {
       throw new TypeError(`${config.name} requires a numeric schemaVersion`)
-    }
-
-    if (config.readAsCurrent?.includes(version) === true) {
-      if (config.shape !== undefined && !config.shape(value)) {
-        throw new TypeError(`${config.name} failed structural validation`)
-      }
-      return value as T
     }
 
     if (version > config.current) {
