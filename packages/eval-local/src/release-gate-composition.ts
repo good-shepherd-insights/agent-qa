@@ -113,15 +113,15 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
   const refusals = [...corpus.refusals, ...pointers.refusals, ...floors.refusals, ...reports.refusals]
   const corpusDigest = computeCorpusDigest(corpus.snapshot.entries)
 
-  // D-11: the filename IS the designation. In particular, a v1 body here must reach the
-  // no-fingerprint arm; a body naming this profile at some other filename is not its pointer.
+  // The filename is the designation: a body naming this profile at some other filename is not
+  // its pointer.
   const pointerFile = join(input.committedRoot, committedBaselinePointerPath(expectedProfileKey))
   const pointer = readPointer(pointerFile, pointers.pointers.filter(entry =>
     entry.profileKey.startsWith(`planner=${input.profileKeyInputs.plannerModelId}|`)), refusals)
   const floorFile = join(input.committedRoot, committedNoiseFloorPath(expectedProfileKey))
   const floor = floors.artefacts.find(entry => entry.path === floorFile)?.artefact
   let baseline: ComputeGateVerdictInput['baseline']
-  if (pointer.kind === 'v1' || pointer.kind === 'v2') {
+  if (pointer.kind === 'current') {
     const reportFile = join(input.committedRoot, committedReportPath(pointer.pointer.batchKey, 'report.json'))
     const report = reports.reports.find(entry => entry.path === reportFile)
     const decisions = readCommittedDecisionVectors(input.committedRoot, pointer.pointer.batchKey)
@@ -133,9 +133,9 @@ export async function runReleaseGate(input: RunReleaseGateInput): Promise<RunRel
     }
   }
 
-  // Only proven foreign profile evidence stops before replay. Historical v1/absent pointers,
+  // Only proven foreign profile evidence stops before replay. Absent or rejected pointers,
   // stale corpora, floors and ordinary pairing failures still reach the existing pure gate.
-  if (pointer.kind === 'v2') {
+  if (pointer.kind === 'current') {
     const designated = pointer.pointer
     if (designated.profileKey !== expectedProfileKey
       || composeBaselineProfileKey(designated) !== expectedProfileKey) {

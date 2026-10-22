@@ -21,12 +21,14 @@ const pointerInput = {
   corpusDigest: 'digest-fixture',
 }
 
-const legacyPointer = {
-  schemaVersion: 1,
-  profileKey: 'planner=gpt-5.6-terra|matcher=1|judge=none|judgeVersion=none',
-  batchKey: 'batch-fixture',
-  plannerModelId: 'gpt-5.6-terra',
-  matcherVersion: 1,
+function currentPointer(): Record<string, unknown> {
+  return { ...projectBaselinePointer(pointerInput) }
+}
+
+function withoutField(field: string): Record<string, unknown> {
+  const pointer = currentPointer()
+  delete pointer[field]
+  return pointer
 }
 
 describe('baseline pointer v2 (415 D-11)', () => {
@@ -47,27 +49,20 @@ describe('baseline pointer v2 (415 D-11)', () => {
     expect(committedFileText(pointer)).toBe(
       committedFileText(projectBaselinePointer(pointerInput)),
     )
-    expect(guardBaselinePointer(pointer)).toEqual({ kind: 'v2', pointer })
+    expect(guardBaselinePointer(pointer)).toEqual({ kind: 'current', pointer })
   })
 
-  it('admits the v1 history shape without inventing a fingerprint', () => {
-    const { schemaVersion: _schemaVersion, ...pointer } = legacyPointer
-    expect(guardBaselinePointer(legacyPointer)).toEqual({ kind: 'v1', pointer })
+  it.each([1, 3])('a pointer stamped %i loads as rejected', stamp => {
     expect(
-      guardBaselinePointer({ ...legacyPointer, judgeModelId: 'judge-fixture', judgeVersion: 1 }),
-    ).toEqual({
-      kind: 'v1',
-      pointer: { ...pointer, judgeModelId: 'judge-fixture', judgeVersion: 1 },
-    })
+      guardBaselinePointer({ ...projectBaselinePointer(pointerInput), schemaVersion: stamp }),
+    ).toEqual({ kind: 'rejected', reason: expect.stringContaining('schemaVersion') })
   })
 
   it.each([
-    ['unknown version', { ...legacyPointer, schemaVersion: 3 }],
-    ['missing batch key', { ...legacyPointer, batchKey: undefined }],
-    ['v1 unknown field', { ...legacyPointer, fingerprint: 'undeclared' }],
-    ['v2 unknown field', { ...pointerInput, schemaVersion: 2, profileKey: 'p', extra: true }],
-    ['v2 missing fingerprint', { ...legacyPointer, schemaVersion: 2, corpusDigest: 'digest' }],
-    ['v2 missing corpus digest', { ...legacyPointer, schemaVersion: 2, fingerprint: 'abc' }],
+    ['missing batch key', { ...currentPointer(), batchKey: undefined }],
+    ['an unknown field', { ...currentPointer(), extra: true }],
+    ['missing fingerprint', withoutField('fingerprint')],
+    ['missing corpus digest', withoutField('corpusDigest')],
     ['null body', null],
   ])('rejects %s with a typed reason', (_name, value) => {
     expect(guardBaselinePointer(value)).toEqual({

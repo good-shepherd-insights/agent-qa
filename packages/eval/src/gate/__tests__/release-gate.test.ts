@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { projectBaselinePointer } from '../../baseline/profile-key'
+import { guardBaselinePointer, projectBaselinePointer } from '../../baseline/profile-key'
 import { assertBaselineComparator, renderBaselineComparatorRefusal } from '../../baseline/comparator'
 import { projectDecisionVectorsDocument } from '../../match/decision-vectors'
 import { buildEvalReport } from '../../match/metrics'
@@ -63,7 +63,7 @@ function fixture() {
   })
   return {
     expectedProfileKey: pointer.profileKey,
-    pointer: { kind: 'v2' as const, pointer },
+    pointer: { kind: 'current' as const, pointer },
     floor,
     baseline: {
       report: baselineReport,
@@ -121,10 +121,12 @@ describe('release gate inconclusive evidence', () => {
       .toContain('schemaVersion: invalid')
   })
 
-  it('refuses a v1 pointer as no-fingerprint with a re-designation fix', () => {
+  it('reports a pointer stamped 1 as pointer rejected with a re-designation fix', () => {
     const input = fixture()
-    const detail = reason({ ...input, pointer: { kind: 'v1', pointer: input.pointer.pointer } }, 'incomparable-baseline')
-    expect(detail).toContain('no-fingerprint')
+    const loaded = guardBaselinePointer({ ...input.pointer.pointer, schemaVersion: 1 })
+    expect(loaded.kind).toBe('rejected')
+    const detail = reason({ ...input, pointer: loaded }, 'incomparable-baseline')
+    expect(detail).toContain('pointer rejected: schemaVersion')
     expect(detail).toContain('eval report --baseline --from-committed')
   })
 

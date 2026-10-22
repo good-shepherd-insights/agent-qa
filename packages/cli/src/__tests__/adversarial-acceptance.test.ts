@@ -258,7 +258,7 @@ function gateFixture(): GateFixture {
   })
   return {
     expectedProfileKey: pointer.profileKey,
-    pointer: { kind: 'v2' as const, pointer },
+    pointer: { kind: 'current' as const, pointer },
     floor,
     baseline: {
       report: baselineReport,

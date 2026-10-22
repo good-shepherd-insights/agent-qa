@@ -57,7 +57,7 @@ function fixture(exit: 0 | 1 | 2 = 0) {
   if (exit === 2) floor.corpusDigest = 'stale'
   measured(baseline, 4, 0.5)
   measured(current, 8, 0.25)
-  return { expectedProfileKey: pointer.profileKey, pointer: { kind: 'v2' as const, pointer }, floor,
+  return { expectedProfileKey: pointer.profileKey, pointer: { kind: 'current' as const, pointer }, floor,
     baseline: { report: baseline, vectors: projectDecisionVectorsDocument({ batchKey: baseline.batchKey,
       matcherVersion: baseline.matcherVersion, vectors }) },
     current: { report: current, vectors: currentVectors, fingerprint: 'fp', corpusDigest: 'corpus' } }

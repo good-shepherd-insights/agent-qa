@@ -109,42 +109,23 @@ export function projectBaselinePointer(
 }
 
 export type BaselinePointerLoad =
-  | { kind: 'v2'; pointer: BaselinePointer }
-  | {
-      kind: 'v1'
-      pointer: {
-        profileKey: string
-        batchKey: string
-        plannerModelId: string
-        matcherVersion: number
-        judgeModelId?: string
-        judgeVersion?: number
-      }
-    }
+  | { kind: 'current'; pointer: BaselinePointer }
   | { kind: 'rejected'; reason: string }
 
-const pointerFields = {
-  profileKey: z.string(),
-  batchKey: z.string(),
-  plannerModelId: z.string(),
-  matcherVersion: z.number(),
-  judgeModelId: z.string().optional(),
-  judgeVersion: z.number().optional(),
-}
+const pointerSchema = z
+  .object({
+    schemaVersion: z.literal(BASELINE_POINTER_SCHEMA_VERSION),
+    profileKey: z.string(),
+    batchKey: z.string(),
+    fingerprint: z.string(),
+    corpusDigest: z.string(),
+    plannerModelId: z.string(),
+    matcherVersion: z.number(),
+    judgeModelId: z.string().optional(),
+    judgeVersion: z.number().optional(),
+  })
+  .strict()
 
-const pointerSchema = z.discriminatedUnion('schemaVersion', [
-  z.object({ ...pointerFields, schemaVersion: z.literal(1) }).strict(),
-  z
-    .object({
-      ...pointerFields,
-      schemaVersion: z.literal(BASELINE_POINTER_SCHEMA_VERSION),
-      fingerprint: z.string(),
-      corpusDigest: z.string(),
-    })
-    .strict(),
-])
-
-/** Strict per version: v1 is historical evidence, never a resolved-profile comparator. */
 export function guardBaselinePointer(value: unknown): BaselinePointerLoad {
   const parsed = pointerSchema.safeParse(value)
   if (!parsed.success) {
@@ -155,9 +136,5 @@ export function guardBaselinePointer(value: unknown): BaselinePointerLoad {
         .join('; '),
     }
   }
-  if (parsed.data.schemaVersion === 1) {
-    const { schemaVersion: _schemaVersion, ...pointer } = parsed.data
-    return { kind: 'v1', pointer }
-  }
-  return { kind: 'v2', pointer: parsed.data }
+  return { kind: 'current', pointer: parsed.data }
 }

@@ -198,7 +198,7 @@ function metricIdentityIssues(input: ComputeGateVerdictInput): MetricIssue[] {
   const issues: MetricIssue[] = []
   const { pointer, expectedProfileKey, baseline, current } = input
   if (baseline === undefined) issues.push({ side: 'baseline', reason: 'missing-baseline', field: 'report' })
-  if (pointer.kind !== 'v2') return [...issues, { side: 'baseline', reason: 'missing-profile', field: 'pointer' }]
+  if (pointer.kind !== 'current') return [...issues, { side: 'baseline', reason: 'missing-profile', field: 'pointer' }]
   const p = pointer.pointer
   if (p.profileKey !== expectedProfileKey || composeBaselineProfileKey(p) !== expectedProfileKey) {
     issues.push({ side: 'baseline', reason: 'profile-mismatch', field: 'pointer.profileKey' })
@@ -317,10 +317,8 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
     )
   } else if (loaded.kind === 'rejected') {
     add('incomparable-baseline', `pointer rejected: ${loaded.reason}; ${designate}`)
-  } else if (loaded.kind === 'v1') {
-    add('incomparable-baseline', `no-fingerprint: historical pointer ${loaded.pointer.profileKey}; ${designate}`)
   }
-  const pointer = loaded.kind === 'v1' || loaded.kind === 'v2' ? loaded.pointer : undefined
+  const pointer = loaded.kind === 'current' ? loaded.pointer : undefined
   if (baseline === undefined) {
     add('missing-baseline', `baseline report for batch ${pointer?.batchKey ?? 'absent'} is absent; ${designate}`)
   } else {
@@ -337,7 +335,7 @@ export function computeGateVerdict(input: ComputeGateVerdictInput): GateVerdict 
     mismatch('judgeVersion', 'pointer', pointer.judgeVersion, 'current report', current.report.judge?.judgeVersion)
     if (baseline !== undefined) mismatch('batchKey', 'pointer', pointer.batchKey, 'baseline report', baseline.report.batchKey)
   }
-  if (loaded.kind === 'v2') {
+  if (loaded.kind === 'current') {
     mismatch('fingerprint', 'pointer', loaded.pointer.fingerprint, 'current', current.fingerprint)
     mismatch('profileKey from pointer fields', 'pointer', composeBaselineProfileKey(loaded.pointer), 'expected', expectedProfileKey)
     if (loaded.pointer.corpusDigest !== current.corpusDigest) {
