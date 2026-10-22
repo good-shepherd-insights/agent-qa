@@ -161,19 +161,14 @@ describe('runReleaseGate', () => {
     expect(changed.captured).toHaveLength(3)
   })
 
-  it.each(['old', 'expected'] as const)('distinguishes a v1 body at its %s pointer filename', async placement => {
+  it('refuses a pointer stamped 1 at its expected filename as pointer rejected', async () => {
     const f = await fixture()
-    const oldKey = `planner=${f.pointer.plannerModelId}|matcher=${f.pointer.matcherVersion}|judge=none|judgeVersion=none`
-    const { fingerprint: _fingerprint, corpusDigest: _corpusDigest, ...rest } = f.pointer
-    const legacy = { ...rest, schemaVersion: 1, profileKey: oldKey }
-    const oldFile = join(f.input.committedRoot, evalLocal.committedBaselinePointerPath(oldKey))
-    if (placement === 'old') renameSync(f.pointerFile, oldFile)
-    writeFileSync(placement === 'old' ? oldFile : f.pointerFile, JSON.stringify(legacy))
+    writeFileSync(f.pointerFile, JSON.stringify({ ...f.pointer, schemaVersion: 1 }))
     const result = requireVerdict(await evalLocal.runReleaseGate(f.input))
     expect(result.verdict.exit).toBe(2)
     expect(result.verdict.inconclusive).toContainEqual({
-      reason: placement === 'old' ? 'missing-baseline' : 'incomparable-baseline',
-      detail: expect.stringContaining(placement === 'old' ? oldKey : 'no-fingerprint'),
+      reason: 'incomparable-baseline',
+      detail: expect.stringContaining('pointer rejected: schemaVersion'),
     })
   })
 

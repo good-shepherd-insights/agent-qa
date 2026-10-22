@@ -340,7 +340,7 @@ describe('runNoiseFloorMeasurement', () => {
     expect(existsSync(input.agentQaRoot)).toBe(false)
   })
 
-  it.each([1, 2] as const)('uses a designated v%i baseline for the same planner across profile keys', async schemaVersion => {
+  it('uses a designated baseline for the same planner across profile keys', async () => {
     expect(evalLocal.runNoiseFloorMeasurement).toBeTypeOf('function')
     const { root, input, corpus } = await measurementFixture()
     const baseline = await evalLocal.replayCorpusOnce({ ...input,
@@ -348,16 +348,29 @@ describe('runNoiseFloorMeasurement', () => {
       source: 'committed' })
     const pointer = projectBaselinePointer({ ...input.profileKeyInputs,
       fingerprint: 'historical-other-profile', corpusDigest: 'historical-corpus', batchKey: baseline.report.batchKey })
-    const { fingerprint: _fingerprint, corpusDigest: _corpusDigest, ...legacy } = pointer
     const store = new evalLocal.FsCommittedRootStore({ committedRoot: input.committedRoot })
-    store.writeText(evalLocal.committedBaselinePointerPath(pointer.profileKey),
-      committedFileText(schemaVersion === 1 ? { ...legacy, schemaVersion: 1 } : pointer))
+    store.writeText(evalLocal.committedBaselinePointerPath(pointer.profileKey), committedFileText(pointer))
     store.writeText(evalLocal.committedReportPath(baseline.report.batchKey, 'report.json'),
       committedFileText(baseline.report))
     const result = await evalLocal.runNoiseFloorMeasurement({ ...input, clock: incrementingClock() })
     expect(result.artefact.minimumGateSet).toMatchObject({
       baselineRateSource: 'designated-baseline', baselineBatchKey: baseline.report.batchKey,
       baselineRate: { correct: 3, n: 3 },
+    })
+  })
+
+  it('refuses a designated pointer stamped 1 and uses the reference rate', async () => {
+    const { input } = await measurementFixture()
+    const pointer = projectBaselinePointer({ ...input.profileKeyInputs,
+      fingerprint: 'other-profile', corpusDigest: 'other-corpus', batchKey: 'designated-directory' })
+    const pointerPath = evalLocal.committedBaselinePointerPath(pointer.profileKey)
+    const store = new evalLocal.FsCommittedRootStore({ committedRoot: input.committedRoot })
+    store.writeText(pointerPath, committedFileText({ ...pointer, schemaVersion: 1 }))
+    const result = await evalLocal.runNoiseFloorMeasurement(input)
+    expect(result.artefact.minimumGateSet.baselineRateSource).toBe('reference-run')
+    expect(result.refusals).toContainEqual({
+      path: join(input.committedRoot, pointerPath),
+      reason: expect.stringContaining('baseline pointer rejected'),
     })
   })
 
