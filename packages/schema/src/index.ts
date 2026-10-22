@@ -188,6 +188,8 @@ export type {
   MigrationRegistry,
   VersionGuardConfig,
 } from './versioning/create-version-guard'
+export { isReadableStamp, PRE_V2_STAMP, readableStamp } from './versioning/readable-stamp'
+export type { ReadableStamp } from './versioning/readable-stamp'
 
 // 314 async-seam
 export { asRunId } from './run/index'
