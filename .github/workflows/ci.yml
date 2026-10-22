@@ -68,7 +68,8 @@ jobs:
       # hardcoded fixture, so the divergence is unexplained and is almost certainly an
       # FTS5/`node:sqlite` build difference rather than anything about the product. It is a
       # benchmark tool with its own `embedding-bench.yml` dispatch workflow, not a correctness
-      # gate. Tracked as WINDOWS #53; re-include it once that entry is closed.
+      # gate. Tracked as WINDOWS #53, closed 2026-10-22 as a scope decision (448 D-02): the release
+      # and CI never run it.
       - name: Test
         run: pnpm exec turbo test --filter='!embedding-bench'
 
