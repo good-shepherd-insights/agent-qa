@@ -21,18 +21,8 @@ import type { CacheKey } from '@vostride/agent-qa-schema'
 import { slugBranch } from './branch-resolver.js'
 import { shouldWrite, type CachePolicy } from './write-policy.js'
 
-/**
- * Bumped above the retired v1 core cache (CACHE_SCHEMA_VERSION 9, D-03). A v1
- * on-disk entry can never satisfy this gate, so it is never read as valid.
- *
- * Phase 360 (D-08/T-360-07): bumped 10 -> 11 for the catalog flip (D-15 platform.ts
- * action-shape re-key). No migration — a legacy-shaped entry serialized under version 10
- * fails the version gate and reads as a MISS, closing the stale-replay hazard from the flip.
- *
- * 2026-10-09 (438 D-11): bumped 11 -> 12 for strict locators `{ role, name, row? }`. A version-11
- * entry (normalized name plus ordinal) reads as a miss; no migration.
- */
-export const CACHE_SCHEMA_VERSION = 12
+/** Envelopes live under <root>/<branchSlug>/<key>.json; any other stamp reads as a miss. */
+export const CACHE_SCHEMA_VERSION = 2
 
 interface CacheEnvelope {
   schemaVersion: number
@@ -115,7 +105,6 @@ export class FsActionCache implements ActionPlanCache {
       return null // corrupt/partial entry is a miss, never a crash
     }
 
-    // Version gate — v1 (version 9) and any mismatch return null (D-03).
     if (envelope?.schemaVersion !== CACHE_SCHEMA_VERSION) return null
     return envelope.value ?? null
   }

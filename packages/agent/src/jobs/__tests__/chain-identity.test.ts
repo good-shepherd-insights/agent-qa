@@ -16,7 +16,7 @@
 // on the third job's payload. A builder that read only what the finishing job published would
 // report a completed curation as a failure and lose its counts — the exact trap 422-PATTERNS names.
 
-import { asJobId } from '@vostride/agent-qa-schema'
+import { asJobId, CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, Job, JobKind } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -131,7 +131,7 @@ describe('the chain terminal notification carries upstream truth forward (422 D-
       publishedValues: new Map([['proposals-authored', { runId: RUN_ID, proposed: 3, skipped: 1 }]]),
     })
 
-    expect(record.schemaVersion).toBe(4)
+    expect(record.schemaVersion).toBe(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION)
     expect(record.outcome).toBe('done')
     expect(record.verdictSummary).toEqual({ total: 2, byClass: { timeout: 1, unknown: 1 } })
     // Whole-record equality on the stages rather than field spot-checks: a builder that kept the

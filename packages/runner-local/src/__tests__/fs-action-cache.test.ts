@@ -95,12 +95,13 @@ describe('FsActionCache', () => {
     expect(await mainCache.get(KEY)).toBeNull()
   })
 
-  it('returns null for a schema-version mismatch (v1 version 9 never read, D-03)', async () => {
+  it.each([1, 9, 10, 11, 12])('stamps 2 and reads any other stamp as a miss (%i)', async (stamp) => {
+    expect(CACHE_SCHEMA_VERSION).toBe(2)
     const dir = join(root, 'main')
     await mkdir(dir, { recursive: true })
     await writeFile(
       join(dir, `${KEY}.json`),
-      JSON.stringify({ schemaVersion: 9, value: makeValue() }),
+      JSON.stringify({ schemaVersion: stamp, value: makeValue() }),
       'utf-8',
     )
 
@@ -108,32 +109,14 @@ describe('FsActionCache', () => {
     expect(await cache.get(KEY)).toBeNull()
   })
 
-  it('uses a schema version bumped above the retired v1 (9)', () => {
-    expect(CACHE_SCHEMA_VERSION).toBeGreaterThan(9)
-    expect(CACHE_SCHEMA_VERSION).toBe(12)
-  })
-
-  it('reads a version-11 entry as a miss (438 D-11, no migration)', async () => {
-    const dir = join(root, 'main')
-    await mkdir(dir, { recursive: true })
-    await writeFile(
-      join(dir, `${KEY}.json`),
-      JSON.stringify({ schemaVersion: 11, value: makeValue() }),
-      'utf-8',
-    )
-
-    const cache = new FsActionCache({ root, policy: makePolicy() })
-    expect(await cache.get(KEY)).toBeNull()
-  })
-
-  it('round-trips a version-12 envelope', async () => {
+  it('round-trips a current envelope', async () => {
     const dir = join(root, 'main')
     await mkdir(dir, { recursive: true })
     const value = makeValue()
     value.groundedLocator = [{ role: 'button', name: 'Edit label', row: '7 Elm Street' }]
     await writeFile(
       join(dir, `${KEY}.json`),
-      JSON.stringify({ schemaVersion: 12, value }),
+      JSON.stringify({ schemaVersion: CACHE_SCHEMA_VERSION, value }),
       'utf-8',
     )
 
