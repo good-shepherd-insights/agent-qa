@@ -22,6 +22,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   CURATION_QUEUE_SCHEMA_VERSION,
   applyIndexDeltaForBundle,
   appendOutcomeEvent,
@@ -204,7 +205,7 @@ function job(generation: number, buildOrdinal: number): CommitCurationJob {
 
 function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
   return {
-    schemaVersion: 1,
+    schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
     delta,
     neighborIds: [...delta.citedIds],
     preconditions: [],

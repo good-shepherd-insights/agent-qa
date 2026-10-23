@@ -17,6 +17,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   CURATION_QUEUE_SCHEMA_VERSION,
   appendOutcomeEvent,
   candidateContentAddress,
@@ -202,7 +203,7 @@ function claimedJob(generation: number, buildOrdinal: number, label: string): Co
 
 function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
   return {
-    schemaVersion: 1,
+    schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
     delta,
     neighborIds: [...delta.citedIds],
     preconditions: [],

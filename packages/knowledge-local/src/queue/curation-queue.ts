@@ -159,7 +159,7 @@ export interface CurationRemainingWork {
   readonly quarantined: number
 }
 
-export const CURATION_QUARANTINE_SCHEMA_VERSION = 1
+export const CURATION_QUARANTINE_SCHEMA_VERSION = 2
 export const CURATION_QUARANTINE_FILE = 'quarantine.json'
 
 export type CurationQuarantineReason =

@@ -66,7 +66,7 @@ function commitFixture(executionContext: 'ci' | 'local-interactive' = 'ci') {
     return claimed
   }
   function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
-    return { schemaVersion: 1, delta, neighborIds: [...delta.citedIds], preconditions: [...(delta.precondition ?? [])],
+    return { schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION, delta, neighborIds: [...delta.citedIds], preconditions: [...(delta.precondition ?? [])],
       authorship: { path: 'llm', model: { id: 'synthetic-curator' }, executionContext: 'ci' } }
   }
   const victimJob = job('Checkout', 42)
@@ -84,6 +84,7 @@ function commitFixture(executionContext: 'ci' | 'local-interactive' = 'ci') {
 import * as curationSnapshotModule from '../curator/curation-snapshot.js'
 import { foldCurationSnapshot, readCurationEffects } from '../curator/curation-snapshot.js'
 import { drainQueue } from '../curator/drain.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION } from '../curator/author-contract.js'
 
 function snapshot(f: ReturnType<typeof commitFixture>, run = 'synthetic-run-43') {
   return foldCurationSnapshot(readCurationEffects({ knowledgeRoot: f.root, sourceRunId: run }))

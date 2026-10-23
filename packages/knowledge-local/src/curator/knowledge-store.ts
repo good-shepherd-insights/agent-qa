@@ -57,7 +57,7 @@ import type {
   CurationCandidateAddressFields,
   CurationCandidatePayload,
 } from '../queue/queue-payload.js'
-import { resolveDispositionProfile } from './author-contract.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION, resolveDispositionProfile } from './author-contract.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
   applyIndexDeltaForBundleWithinCurrentAuthority,
@@ -389,7 +389,7 @@ function bridgeDelta(
       ...(config.screenStates === undefined ? {} : { screenStates: config.screenStates }),
     },
     checkpoint: {
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       delta,
       neighborIds: neighbors.map(({ id }) => id),
       preconditions: neighbors.map(({ id, observedStatus, observedOrdinal }) => ({

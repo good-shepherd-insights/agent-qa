@@ -683,7 +683,7 @@ describe('C441-COMMITTED', () => {
       evidenceToken: BODY,
     }
     const observation: CurationObservation = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       sourceRunId: 'c441-committed-run',
       observationId: 'c441-committed-observation',
       originalDeltaKind: 'Supersede',

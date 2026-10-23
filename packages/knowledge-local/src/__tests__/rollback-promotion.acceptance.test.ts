@@ -12,6 +12,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   CURATION_QUEUE_SCHEMA_VERSION,
   candidateContentAddress,
   commitCurationDelta,
@@ -155,7 +156,7 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
 
   function conversionCheckpoint(delta: Delta): AuthoredDeltaCheckpoint {
     return {
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       delta,
       neighborIds: [],
       preconditions: [],

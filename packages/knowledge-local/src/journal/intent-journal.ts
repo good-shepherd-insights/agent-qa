@@ -25,7 +25,7 @@ import { curationObservationSchema } from './curation-effect-receipt.js'
 import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 
 export const JOURNAL_SUBDIR = 'memory/queue/journal'
-export const COMMIT_INTENT_SCHEMA_VERSION = 1
+export const COMMIT_INTENT_SCHEMA_VERSION = 2
 
 /**
  * Highest writer epoch whose reconciliation has completed, relative to knowledgeRoot. Pinned
@@ -45,7 +45,6 @@ export const commitIntentSchema = z
     deltaKind: z.enum(['Add', 'Confirm', 'Supersede', 'Deprecate', 'MintUnknown', 'Noop']),
     targetRecordId: z.string().min(1).optional(),
     epoch: z.number().int().positive(),
-    /** Optional versioned observation; historical v1 intents retain their exact shape. */
     observation: curationObservationSchema.optional(),
   })
   .strict()

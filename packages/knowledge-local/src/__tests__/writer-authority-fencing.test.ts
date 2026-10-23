@@ -67,6 +67,7 @@ import {
   type WriterAuthorityLostReason,
 } from '../lease/writer-lease.js'
 import {
+  COMMIT_INTENT_SCHEMA_VERSION,
   JOURNAL_SUBDIR,
   listCommitIntents,
   writeCommitIntent,
@@ -79,6 +80,7 @@ import {
 import {
   makeBundleDraftFixture,
 } from './fixtures/bundle-fixture.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION } from '../curator/author-contract.js'
 
 interface ExpectedAuthoritySurface {
   withCurrentWriterAuthority<T>(
@@ -355,7 +357,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
 
   function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
     return {
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       delta,
       neighborIds: [...delta.citedIds],
       preconditions: [...(delta.precondition ?? [])],
@@ -1587,7 +1589,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     // A writer from the superseded generation publishes an intent for a candidate the
     // successor has already completed.
     const stale: CommitIntent = {
-      schemaVersion: 1,
+      schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
       candidateId: seeded.candidateId,
       bundleId: seeded.bundleId,
       deltaKind: 'Add',
@@ -1631,7 +1633,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const seeded = seedCompletedCandidate(authority, '100')
     // A predecessor crashed after publishing its intent and before its index apply.
     const crashed: CommitIntent = {
-      schemaVersion: 1,
+      schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
       candidateId: 'b'.repeat(64),
       bundleId: seeded.bundleId,
       deltaKind: 'Confirm',
@@ -1654,7 +1656,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     const authority = acquireAuthority()
     const seeded = seedCompletedCandidate(authority, '100')
     writeCommitIntent(knowledgeRoot, {
-      schemaVersion: 1,
+      schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
       candidateId: 'c'.repeat(64),
       bundleId: seeded.bundleId,
       deltaKind: 'Confirm',

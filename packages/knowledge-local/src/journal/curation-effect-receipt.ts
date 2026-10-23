@@ -40,7 +40,7 @@ const classificationFields = {
 }
 
 export const curationObservationSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   ...classificationFields,
   effects: z.array(curationEffectSchema),
 }).strict()
@@ -54,7 +54,7 @@ export function effectIdentity(candidateId: string, effect: CurationEffect): str
 }
 
 export const curationEffectReceiptSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   candidateId: digest,
   effectId: digest,
   ...curationEffectSchema.shape,

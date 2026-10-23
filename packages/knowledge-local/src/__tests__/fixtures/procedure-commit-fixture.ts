@@ -6,6 +6,7 @@ import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { BundleDraft, Delta } from '@vostride/agent-qa-schema'
 
 import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   CURATION_QUEUE_SCHEMA_VERSION,
   acquireWriterLease,
   candidateContentAddress,
@@ -155,7 +156,7 @@ export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
     bundle: draft,
   }
   const checkpoint: AuthoredDeltaCheckpoint = {
-    schemaVersion: 1,
+    schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
     delta,
     neighborIds: [],
     preconditions: [],

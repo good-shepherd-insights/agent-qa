@@ -69,6 +69,7 @@ import {
   makeProcedureBodyPayloadFixture,
   makeScreenStateFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION } from '../author-contract.js'
 
 const checkoutAnchors: Anchor[] = [
   { t: 'el', role: 'button', name: 'Checkout' },
@@ -340,7 +341,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     neighborIds = delta.citedIds,
   ): AuthoredDeltaCheckpoint {
     return {
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       delta,
       neighborIds: [...neighborIds],
       preconditions: [...(delta.precondition ?? [])],

@@ -28,7 +28,7 @@ import {
   jobsRoot,
 } from './queue-layout.js'
 
-export const CURATION_JOB_STATE_SCHEMA_VERSION = 1
+export const CURATION_JOB_STATE_SCHEMA_VERSION = 2
 
 export type CurationJobLifecycle =
   | 'queued'

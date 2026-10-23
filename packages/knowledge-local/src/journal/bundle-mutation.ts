@@ -17,7 +17,7 @@ import { z } from 'zod'
 import { durableRename, fsyncDirectory, fsyncFile, fsyncTree } from '../durable-fs.js'
 import { assertWithinKnowledgeRoot } from '../knowledge-containment.js'
 
-export const BUNDLE_MUTATION_JOURNAL_VERSION = 1
+export const BUNDLE_MUTATION_JOURNAL_VERSION = 2
 
 const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 const SHA256 = /^[0-9a-f]{64}$/

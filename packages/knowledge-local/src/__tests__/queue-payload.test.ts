@@ -210,10 +210,10 @@ describe('curation candidate projection and payload contracts (SAFE-02)', () => 
 })
 
 describe('format-local durability versions and strict public surface', () => {
-  it('keeps job-state and commit-intent bytes on independent version-1 constants', () => {
+  it('keeps job-state and commit-intent bytes on their own constants, independent of the queue', () => {
     expect(CURATION_QUEUE_SCHEMA_VERSION).toBe(2)
-    expect(CURATION_JOB_STATE_SCHEMA_VERSION).toBe(1)
-    expect(COMMIT_INTENT_SCHEMA_VERSION).toBe(1)
+    expect(CURATION_JOB_STATE_SCHEMA_VERSION).toBe(2)
+    expect(COMMIT_INTENT_SCHEMA_VERSION).toBe(2)
     expect(
       curationJobStateSchema.parse({
         schemaVersion: CURATION_JOB_STATE_SCHEMA_VERSION,
@@ -223,7 +223,7 @@ describe('format-local durability versions and strict public surface', () => {
         updatedAt: '2026-07-15T10:00:00.000Z',
       }),
     ).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       candidateId: 'd'.repeat(64),
       lifecycle: 'queued',
     })
@@ -236,7 +236,7 @@ describe('format-local durability versions and strict public surface', () => {
         epoch: 7,
       }),
     ).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       candidateId: 'e'.repeat(64),
       bundleId: 'fact-checkout-button-0123456789abcdef',
       deltaKind: 'Add',
@@ -263,7 +263,7 @@ describe('format-local durability versions and strict public surface', () => {
     expect(intentSource).toContain('COMMIT_INTENT_SCHEMA_VERSION')
   })
 
-  it('round-trips queue v2 and independent job-state/commit-intent v1 bytes', () => {
+  it('round-trips queue, job-state and commit-intent bytes at their own constants', () => {
     const root = mkdtempSync(join(tmpdir(), 'curation-version-roundtrip-'))
     const candidateId = 'd'.repeat(64)
     try {
@@ -281,7 +281,7 @@ describe('format-local durability versions and strict public surface', () => {
       })
       expect(readJobState(root, candidateId)).toMatchObject({
         kind: 'parsed',
-        state: { schemaVersion: 1, candidateId, lifecycle: 'queued' },
+        state: { schemaVersion: 2, candidateId, lifecycle: 'queued' },
       })
 
       writeCommitIntent(root, {
@@ -294,7 +294,7 @@ describe('format-local durability versions and strict public surface', () => {
       expect(listCommitIntents(root)).toEqual([
         {
           parsed: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             candidateId,
             bundleId: 'fact-checkout-button-0123456789abcdef',
             deltaKind: 'Add',
@@ -318,8 +318,8 @@ describe('format-local durability versions and strict public surface', () => {
     ]) {
       expect(surface[symbol], symbol).toBeTypeOf('object')
     }
-    expect(surface.CURATION_JOB_STATE_SCHEMA_VERSION).toBe(1)
-    expect(surface.COMMIT_INTENT_SCHEMA_VERSION).toBe(1)
+    expect(surface.CURATION_JOB_STATE_SCHEMA_VERSION).toBe(2)
+    expect(surface.COMMIT_INTENT_SCHEMA_VERSION).toBe(2)
 
     expectTypeOf<CurationArtifactDescriptor>().toHaveProperty('originalName')
   })

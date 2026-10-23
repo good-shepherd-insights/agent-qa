@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  COMMIT_INTENT_SCHEMA_VERSION,
   clearCommitIntent,
   commitIntentSchema,
   JOURNAL_SUBDIR,
@@ -38,7 +39,7 @@ describe('per-candidate commit intent journal (CUR-04)', () => {
     overrides: Partial<CommitIntent> = {},
   ): CommitIntent {
     return {
-      schemaVersion: 1,
+      schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
       candidateId,
       bundleId: 'fact-submit-button-0123456789abcdef',
       deltaKind: 'Add',

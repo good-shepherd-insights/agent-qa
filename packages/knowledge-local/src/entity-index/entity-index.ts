@@ -71,7 +71,7 @@ export const ENTITY_INDEX_DB_FILE = 'entity-index.db'
  * spent on a file whose contents can be regenerated in full from the ledger; a refusal that
  * says which version it found is more useful than a migration nobody would maintain.
  */
-export const ENTITY_INDEX_USER_VERSION = 1
+export const ENTITY_INDEX_USER_VERSION = 2
 
 /** Busy timeout in milliseconds; the projection is written at a human-paced grain. */
 export const ENTITY_INDEX_BUSY_TIMEOUT_MS = 2000

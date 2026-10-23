@@ -20,7 +20,7 @@ import { z } from 'zod'
 
 import type { CurationCandidatePayload } from '../queue/queue-payload.js'
 
-export const AUTHORED_CHECKPOINT_SCHEMA_VERSION = 1
+export const AUTHORED_CHECKPOINT_SCHEMA_VERSION = 2
 
 /** The deterministic author-facing projection of one durable queue payload. */
 export type CurationJobView = Pick<

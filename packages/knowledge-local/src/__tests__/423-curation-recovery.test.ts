@@ -7,11 +7,17 @@ import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, asRecordId, type
 import * as bundleAppend from '../bundle-append.js'
 import { loadBundle } from '../bundle-read.js'
 import { commitCurationDelta, type CommitCurationDependencies, type CommitCurationJob } from '../curator/commit.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION } from '../curator/author-contract.js'
 import type { AuthoredDeltaCheckpoint } from '../curator/author-contract.js'
 import { claimNextJob } from '../queue/curation-queue.js'
 import { enqueueArtifactFreeCandidateProjection } from './fixtures/curation-candidate-fixture.js'
 
-import { commitIntentSchema, listCommitIntents, writeCommitIntent } from '../journal/intent-journal.js'
+import {
+  COMMIT_INTENT_SCHEMA_VERSION,
+  commitIntentSchema,
+  listCommitIntents,
+  writeCommitIntent,
+} from '../journal/intent-journal.js'
 import { clearCommitIntent } from '../journal/intent-journal.js'
 import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
 import { readJobState, writeJobState } from '../queue/job-state.js'
@@ -65,7 +71,7 @@ function commitFixture() {
     return claimed
   }
   function checkpoint(delta: Delta): AuthoredDeltaCheckpoint {
-    return { schemaVersion: 1, delta, neighborIds: [...delta.citedIds], preconditions: [...(delta.precondition ?? [])],
+    return { schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION, delta, neighborIds: [...delta.citedIds], preconditions: [...(delta.precondition ?? [])],
       authorship: { path: 'llm', model: { id: 'synthetic-curator' }, executionContext: 'ci' } }
   }
   const victimJob = job('Checkout', 42)
@@ -215,7 +221,7 @@ describe('423 curation effect recovery', () => {
   function receipt() {
     const effect = { recordId: 'fact-fixture', change: 'added' as const, atOrdinal: 42, evidenceToken: 'synthetic-token', product: 'storefront' }
     const candidateId = 'a'.repeat(64)
-    return { schemaVersion: 1 as const, candidateId, effectId: effectIdentity(candidateId, effect), ...effect,
+    return { schemaVersion: 2 as const, candidateId, effectId: effectIdentity(candidateId, effect), ...effect,
       sourceRunId: 'synthetic-run', observationId: 'synthetic-observation', originalDeltaKind: 'Supersede' as const,
       appliedDeltaKind: 'Add' as const, disposition: 'downgraded' as const, downgradeReason: 'propose-only' }
   }
@@ -234,7 +240,7 @@ describe('423 curation effect recovery', () => {
     const authority = writer(root)
     const row = receipt()
     writeCurationEffectReceipt({ knowledgeRoot: root, authority, receipt: row })
-    writeCommitIntent(root, { schemaVersion: 1, candidateId: row.candidateId, bundleId: row.recordId, deltaKind: 'Add', epoch: authority.epoch })
+    writeCommitIntent(root, { schemaVersion: COMMIT_INTENT_SCHEMA_VERSION, candidateId: row.candidateId, bundleId: row.recordId, deltaKind: 'Add', epoch: authority.epoch })
     clearCommitIntent(root, row.candidateId)
     writeJobState({ knowledgeRoot: root, authority, candidateId: row.candidateId, lifecycle: 'done' })
     expect(listCurationEffectReceipts(root)).toEqual([row])
@@ -273,16 +279,16 @@ describe('423 curation effect recovery', () => {
     writeFileSync(canonical, '{"torn":')
     expect(() => listCurationEffectReceipts(root)).toThrow('invalid curation effect receipt')
   })
-  it('INTENT-HISTORICAL preserves old intents and versioned original disposition', () => {
+  it('INTENT-OBSERVATION-OPTIONAL reads an intent without an observation and one carrying the original disposition', () => {
     const root = temporaryRoot()
-    const legacy = { schemaVersion: 1 as const, candidateId: 'a'.repeat(64), bundleId: 'fixture', deltaKind: 'Add' as const, epoch: 1 }
-    writeCommitIntent(root, legacy)
-    expect(listCommitIntents(root)).toEqual([{ parsed: legacy }])
-    expect(commitIntentSchema.safeParse({ ...legacy, schemaVersion: 99 }).success).toBe(false)
-    expect(commitIntentSchema.safeParse({ ...legacy, observation: { schemaVersion: 99 } }).success).toBe(false)
-    const observation = { schemaVersion: 1, effects: [], originalDeltaKind: 'Supersede', appliedDeltaKind: 'Add', disposition: 'downgraded', downgradeReason: 'propose-only', sourceRunId: 'synthetic-run', observationId: 'synthetic-observation' }
-    const parsed = commitIntentSchema.safeParse({ ...legacy, observation })
+    const bare = { schemaVersion: COMMIT_INTENT_SCHEMA_VERSION as typeof COMMIT_INTENT_SCHEMA_VERSION, candidateId: 'a'.repeat(64), bundleId: 'fixture', deltaKind: 'Add' as const, epoch: 1 }
+    writeCommitIntent(root, bare)
+    expect(listCommitIntents(root)).toEqual([{ parsed: bare }])
+    expect(commitIntentSchema.safeParse({ ...bare, schemaVersion: 99 }).success).toBe(false)
+    expect(commitIntentSchema.safeParse({ ...bare, observation: { schemaVersion: 99 } }).success).toBe(false)
+    const observation = { schemaVersion: 2, effects: [], originalDeltaKind: 'Supersede', appliedDeltaKind: 'Add', disposition: 'downgraded', downgradeReason: 'propose-only', sourceRunId: 'synthetic-run', observationId: 'synthetic-observation' }
+    const parsed = commitIntentSchema.safeParse({ ...bare, observation })
     expect(parsed.success).toBe(true)
-    if (parsed.success) expect(parsed.data).toEqual({ ...legacy, observation })
+    if (parsed.success) expect(parsed.data).toEqual({ ...bare, observation })
   })
 })

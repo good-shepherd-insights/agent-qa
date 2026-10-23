@@ -17,6 +17,7 @@ import {
   type SubActionEvidence,
 } from '@vostride/agent-qa-schema'
 import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   curationCandidatePayloadSchema,
   parseAuthoredCheckpoint,
   queuedCandidateDir,
@@ -1230,7 +1231,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     const procedureOutcome = await author([wholeFlowPlusSubFlow])(procedureJob(), [])
     if (procedureOutcome.kind !== 'authored') throw new Error('expected authored outcome')
     const checkpoint = parseAuthoredCheckpoint({
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       deltas: procedureOutcome.deltas,
       neighborIds: [],
       preconditions: [],

@@ -44,7 +44,7 @@ import {
   listQueuedCandidates,
   type ClaimedCurationJob,
 } from '../../queue/curation-queue.js'
-import { readJobState } from '../../queue/job-state.js'
+import { CURATION_JOB_STATE_SCHEMA_VERSION, readJobState } from '../../queue/job-state.js'
 import {
   claimedCandidateDir,
   claimedLeaseDir,
@@ -721,7 +721,7 @@ describe('drainQueue daemon substrate', () => {
         ),
       ),
     ).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: curationQueue.CURATION_QUARANTINE_SCHEMA_VERSION,
       candidateId: current.candidateId,
       leaseId: authority.leaseId,
       reason: 'malformed-payload',
@@ -747,7 +747,7 @@ describe('drainQueue daemon substrate', () => {
         kind: 'parsed',
         present: true,
         state: {
-          schemaVersion: 1,
+          schemaVersion: CURATION_JOB_STATE_SCHEMA_VERSION,
           candidateId,
           lifecycle: 'authored',
           embedCrashCount: 0,

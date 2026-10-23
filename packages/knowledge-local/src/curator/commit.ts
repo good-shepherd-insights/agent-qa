@@ -61,7 +61,11 @@ import {
   projectBundleIndexRow,
   projectBundleIndexRowWithinCurrentAuthority,
 } from '../index-rebuild.js'
-import { clearCommitIntent, writeCommitIntent } from '../journal/intent-journal.js'
+import {
+  COMMIT_INTENT_SCHEMA_VERSION,
+  clearCommitIntent,
+  writeCommitIntent,
+} from '../journal/intent-journal.js'
 import {
   isCurationEffectCommitted, receiptForEffect, writeCurationEffectReceiptWithinCurrentAuthority,
   type CurationEffect, type CurationObservation,
@@ -1108,14 +1112,14 @@ export function commitCurationDelta(
             ))
           }
           const curationObservation: CurationObservation = {
-            schemaVersion: 1, sourceRunId: job.payload.sourceRunId,
+            schemaVersion: 2, sourceRunId: job.payload.sourceRunId,
             observationId: job.payload.attributingObservationId,
             originalDeltaKind: originalDispositionDelta(disposed).kind,
             appliedDeltaKind: delta.kind, disposition: disposed.kind,
             ...(disposed.kind === 'downgraded' ? { downgradeReason: disposed.reason } : {}), effects,
           }
           writeCommitIntent(deps.knowledgeRoot, {
-            schemaVersion: 1,
+            schemaVersion: COMMIT_INTENT_SCHEMA_VERSION,
             candidateId: job.candidateId,
             bundleId,
             deltaKind: delta.kind,

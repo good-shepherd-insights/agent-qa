@@ -34,7 +34,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appendOutcomeEvent } from '../bundle-append.js'
 import { publishBundle, type BundleStoreConfig } from '../bundle-publish.test-helper.js'
 import { openIndexWriter } from '../index-open.js'
-import { writeCommitIntent, writeReconciledEpochWithinCurrentAuthority } from '../journal/intent-journal.js'
+import { COMMIT_INTENT_SCHEMA_VERSION, writeCommitIntent, writeReconciledEpochWithinCurrentAuthority } from '../journal/intent-journal.js'
 import { acquireWriterLease } from '../lease/writer-lease.js'
 import { materializePolicy } from '../policy/materialize.js'
 import { writeJobState } from '../queue/job-state.js'
@@ -142,7 +142,7 @@ const freshWriters: ReadonlyArray<readonly [string, readonly string[], () => unk
   ['queue: write a job state', ['memory', 'memory/queue'], () =>
     writeJobState({ knowledgeRoot, candidateId: CANDIDATE, lifecycle: 'queued', authority: authority() })],
   ['journal: write a commit intent', ['memory', 'memory/queue'], () =>
-    writeCommitIntent(knowledgeRoot, { schemaVersion: 1, candidateId: CANDIDATE, bundleId: 'bundle-x',
+    writeCommitIntent(knowledgeRoot, { schemaVersion: COMMIT_INTENT_SCHEMA_VERSION, candidateId: CANDIDATE, bundleId: 'bundle-x',
       deltaKind: 'Add', epoch: 1 })],
   ['journal: write the reconciled epoch', ['memory', 'memory/queue'], () =>
     writeReconciledEpochWithinCurrentAuthority(knowledgeRoot, 1)],
@@ -193,7 +193,7 @@ describe('every knowledge writer refuses a link out of the knowledge root (26100
   it('a link that stays inside the knowledge root is still followed', () => {
     mkdirSync(join(knowledgeRoot, 'real-memory'))
     plant('memory', join(knowledgeRoot, 'real-memory'))
-    writeCommitIntent(knowledgeRoot, { schemaVersion: 1, candidateId: CANDIDATE, bundleId: 'bundle-x',
+    writeCommitIntent(knowledgeRoot, { schemaVersion: COMMIT_INTENT_SCHEMA_VERSION, candidateId: CANDIDATE, bundleId: 'bundle-x',
       deltaKind: 'Add', epoch: 1 })
     requestRebuild({ knowledgeRoot, reason: 'absent', detail: 'inside' })
     expect(readdirSync(join(knowledgeRoot, 'real-memory')).sort()).toEqual(['index', 'queue'])

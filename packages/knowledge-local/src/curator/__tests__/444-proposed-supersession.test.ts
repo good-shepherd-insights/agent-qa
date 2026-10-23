@@ -28,6 +28,7 @@ import {
   type CommitCurationJob,
 } from '../commit.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from '../author-contract.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION } from '../author-contract.js'
 
 // D-58: a correction keeps its victim's anchors and subtype, so the downgraded candidate must
 // keep the Supersede's own identity instead of landing on the victim's.
@@ -125,7 +126,7 @@ function job(
 
 function checkpoint(delta: Delta, neighborIds: readonly RecordId[]): AuthoredDeltaCheckpoint {
   return {
-    schemaVersion: 1,
+    schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
     delta,
     neighborIds: [...neighborIds],
     preconditions: [...(delta.precondition ?? [])],

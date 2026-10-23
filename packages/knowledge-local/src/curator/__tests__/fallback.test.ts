@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vites
 
 import { publishBundle } from '../../bundle-publish.test-helper.js'
 import type { PublishBundleInput } from '../../index.js'
-import { parseAuthoredCheckpoint } from '../author-contract.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION, parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CurationJobView, NeighborRecord } from '../author-contract.js'
 import {
   RESTRICTED_FALLBACK_DELTA_KINDS,
@@ -223,7 +223,7 @@ describe('constructFallbackDeltas restricted BYOM projection (CUR-02)', () => {
     )
 
     const parsed = parseAuthoredCheckpoint({
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       deltas: [delta],
       neighborIds: [],
       preconditions: [],

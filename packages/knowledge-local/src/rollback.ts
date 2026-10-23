@@ -27,6 +27,7 @@ import type { LoadedBundle } from './bundle-read.js'
 import type { BundleStoreConfig } from './bundle-publish.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
 import { applyIndexDeltaForBundle } from './curator/commit.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION } from './curator/author-contract.js'
 import type { AuthoredDeltaCheckpoint } from './curator/author-contract.js'
 import { disposeDelta } from './curator/disposition.js'
 import { refreshWriterLeaseAuthority } from './lease/writer-lease.js'
@@ -749,7 +750,7 @@ function maintenanceCheckpoint(delta: Delta, targetRecordId: RecordId): Authored
     executionContext: 'local-interactive' as const,
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
     delta,
     neighborIds: [targetRecordId],
     preconditions: [],

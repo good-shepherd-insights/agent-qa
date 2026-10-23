@@ -46,7 +46,7 @@ import {
   type ClaimedCurationJob,
 } from '../../queue/curation-queue.js'
 import { readJobState, writeJobState } from '../../queue/job-state.js'
-import { parseAuthoredCheckpoint } from '../author-contract.js'
+import { AUTHORED_CHECKPOINT_SCHEMA_VERSION, parseAuthoredCheckpoint } from '../author-contract.js'
 import type { CurationJobView, CuratorAuthor, NeighborRecord } from '../author-contract.js'
 import { commitCurationDelta, type CommitCurationOutcome } from '../commit.js'
 import * as knowledgeStore from '../knowledge-store.js'
@@ -555,7 +555,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       const state = readJobState(knowledgeRoot, job.candidateId)
       expect(state.kind).toBe('parsed')
       if (state.kind !== 'parsed') throw new Error('expected checkpointed state')
-      expect(state.state.authored).toMatchObject({ schemaVersion: 1 })
+      expect(state.state.authored).toMatchObject({ schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION })
       if (commits === 1) {
         expect(state.state.lifecycle).toBe('authored')
         throw new Error('simulated crash after checkpoint')
@@ -659,7 +659,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(retryable.state).toMatchObject({
       lifecycle: 'queued',
       authored: {
-        schemaVersion: 1,
+        schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
         deltas: [expect.any(Object), expect.any(Object)],
       },
     })
@@ -745,7 +745,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     expect(retryable.state).toMatchObject({
       lifecycle: 'queued',
       authored: {
-        schemaVersion: 1,
+        schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
         deltas: [expect.any(Object), expect.any(Object)],
       },
     })
@@ -982,7 +982,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
 
   it('parses a checkpoint whose fallback authorship names its reason (381-47 additive-optional)', () => {
     const checkpoint = parseAuthoredCheckpoint({
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       deltas: [
         {
           kind: 'Noop',
@@ -1045,7 +1045,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       if (state.kind !== 'parsed') throw new Error('expected requeued crash state')
       expect(state.state.lifecycle).toBe('queued')
       expect(state.state.embedCrashCount).toBe(crashCount)
-      expect(state.state.authored).toMatchObject({ schemaVersion: 1 })
+      expect(state.state.authored).toMatchObject({ schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION })
     }
 
     const recovered = await drainQueue(options)

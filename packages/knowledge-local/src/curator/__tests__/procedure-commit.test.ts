@@ -7,6 +7,7 @@ import { DISTILLED_OBSERVATION_SCHEMA_VERSION, serializeProcedureBody, type Bund
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   CURATION_QUEUE_SCHEMA_VERSION,
   acquireWriterLease,
   candidateContentAddress,
@@ -159,7 +160,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
       bundle: draft,
     }
     const checkpoint: AuthoredDeltaCheckpoint = {
-      schemaVersion: 1,
+      schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
       delta,
       neighborIds: [],
       preconditions: [],

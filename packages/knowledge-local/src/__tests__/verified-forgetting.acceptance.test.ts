@@ -64,6 +64,7 @@ vi.mock('../embedder-acquire.js', async (importOriginal) => {
 })
 
 import {
+  AUTHORED_CHECKPOINT_SCHEMA_VERSION,
   CURATION_QUEUE_SCHEMA_VERSION,
   INDEX_SCHEMA_VERSION,
   acquireWriterLease,
@@ -306,7 +307,7 @@ function deprecationCheckpoint(
     reason: 'user withdrew a verified poisoned checkout fallback',
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: AUTHORED_CHECKPOINT_SCHEMA_VERSION,
     delta,
     neighborIds: [triggerId],
     preconditions: [precondition],
