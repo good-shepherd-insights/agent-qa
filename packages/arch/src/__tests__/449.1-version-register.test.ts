@@ -218,7 +218,13 @@ const INLINE_NEEDLES: readonly Halves[] = [
 
 /** A reader that admits a second version, each with what it is. */
 const SECOND_VERSION_NEEDLES: readonly (readonly [string, Halves])[] = [
-  ['a migration step', ['(?:MigrationRegis', 'try\\b|_MIGRATIONS\\b)[^=;\\n]*=\\s*\\{\\s*[^}\\s]']],
+  // Lazy up to the first `=` that is neither `=>` nor a comparison, so a function type in the
+  // annotation does not hide the initializer.
+  ['a migration step', [
+    '\\b(?:MigrationRegis',
+    'try|\\w*_MIGRATIONS)\\b[^;\\n]*?(?<![=!<>])=(?![=>])\\s*\\{\\s*[^}\\s]',
+  ]],
+  ['a step assigned into a registry', ['\\b\\w*_MIGRA', 'TIONS\\s*\\[[^\\]\\n]+\\]\\s*=(?![=>])']],
   ['a migrations object with a step', ['\\bmigra', 'tions\\s*:\\s*\\{\\s*[^}\\s]']],
   ['a stamp read as current', ['(?:readAsCur', 'rent|_READ_AS_' + 'CURRENT)\\b']],
   ['a dual-stamp helper', ['(?:[rR]eadableSt', 'amp|PRE_V2_' + 'STAMP)\\b']],
@@ -584,6 +590,19 @@ describe('schema version census instruments', () => {
       expect(secondVersionOffenders('planted.ts', codeOf(`/* ${planted} */`)), planted).toEqual([])
     }
     expect(secondVersionOffenders('planted.ts', codeOf(cat('createVersionGuard({ migra', 'tions: {} })\n')))).toEqual([])
+
+    const notification = 'packages/schema/src/notification/run-notification.ts'
+    const declared = /(\bconst\s+\w+_MIGRA(?:TIONS)\s*:[^\n]*=\s*)\{\}/
+    const source = code(notification)
+    expect(source, 'the run notification registry is no longer declared empty').toMatch(declared)
+    expect(secondVersionOffenders(notification, source)).toEqual([])
+    const filled = source.replace(declared, '$1{ 1: (doc) => doc }')
+    expect(secondVersionOffenders(notification, filled)).toHaveLength(1)
+    const commented = source.replace(declared, '// $1{ 1: (doc) => doc }')
+    expect(secondVersionOffenders(notification, codeOf(commented))).toEqual([])
+    const assigned = cat('RUN_NOTIFICATION_MIGRA', 'TIONS[1] = (doc) => doc\n')
+    expect(secondVersionOffenders('planted.ts', codeOf(assigned))).toHaveLength(1)
+    expect(secondVersionOffenders('planted.ts', codeOf(`// ${assigned}`))).toEqual([])
   })
 
   it('this file spells none of its needles, lies outside every region it scans, and is named in validate:arch', () => {
