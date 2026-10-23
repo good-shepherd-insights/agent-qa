@@ -7,7 +7,10 @@ import {
   type BundleStoreConfig,
   type PublishBundleInput,
 } from '@vostride/agent-qa-knowledge-local'
-import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
+import {
+  PURGE_RECEIPT_SCHEMA_VERSION,
+  publishBundleForTest as publishBundle,
+} from '@vostride/agent-qa-knowledge-local'
 import { recordBuildTag } from '@vostride/agent-qa-runner-local'
 import {
   BundleOutcomeEventSchema,
@@ -341,7 +344,7 @@ describe('knowledge read commands', () => {
     writeFileSync(
       join(receiptsDir, 'purge-record-b.json'),
       `${JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: PURGE_RECEIPT_SCHEMA_VERSION,
         purgedRecordId: 'record-a',
         purgedAtOrdinal: 14,
         initiator: 'test-operator',

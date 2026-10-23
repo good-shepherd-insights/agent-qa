@@ -75,7 +75,7 @@ describe('Phase 377 graph edge ontology', () => {
     }).success).toBe(false)
   })
 
-  it('keeps the committed bundle schema version unchanged', () => {
-    expect(BUNDLE_SCHEMA_VERSION).toBe(1)
+  it('keeps the committed bundle schema version at 2', () => {
+    expect(BUNDLE_SCHEMA_VERSION).toBe(2)
   })
 })

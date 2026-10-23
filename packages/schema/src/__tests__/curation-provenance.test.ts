@@ -122,7 +122,7 @@ describe('curation provenance contracts (D-04/SAFE-01)', () => {
       withheld: true,
     } as const
 
-    expect(BUNDLE_SCHEMA_VERSION).toBe(1)
+    expect(BUNDLE_SCHEMA_VERSION).toBe(2)
     expect(BundleProvenanceSchema.parse(runLinkedProvenance)).toEqual(runLinkedProvenance)
     expect(BundleProvenanceSchema.parse(curationProvenance)).toEqual(curationProvenance)
     expect(

@@ -109,7 +109,7 @@ describe('423 one maintenance record join', () => {
     const f = fixture()
     const before = tree(f.root)
     const original = showRecord({ knowledgeRoot: f.knowledgeRoot, recordId: f.id })
-    expect(JSON.stringify(original)).toMatchInlineSnapshot(`"{"kind":"found","schemaVersion":1,"record":{"schemaVersion":1,"recordId":"fact-el-button-97ff2af3f56ffb17","product":"join-fixture","scope":"join-fixture","kind":"fact","status":"candidate","confirmations":0,"contradictions":0,"evidenceTokens":[],"lastEventOrdinal":7,"openedAtOrdinal":7,"anchors":["{\\"name\\":\\"購入\\",\\"role\\":\\"button\\",\\"t\\":\\"el\\"}"]},"provenance":{"schemaVersion":1,"mode":"standalone","originClass":"agent-verified","sourceDescription":"Synthetic joined record"},"summary":"購入 Café é 🧪","body":"Click 購入; preserve é and é exactly."}"`)
+    expect(JSON.stringify(original)).toMatchInlineSnapshot(`"{"kind":"found","schemaVersion":1,"record":{"schemaVersion":1,"recordId":"fact-el-button-97ff2af3f56ffb17","product":"join-fixture","scope":"join-fixture","kind":"fact","status":"candidate","confirmations":0,"contradictions":0,"evidenceTokens":[],"lastEventOrdinal":7,"openedAtOrdinal":7,"anchors":["{\\"name\\":\\"購入\\",\\"role\\":\\"button\\",\\"t\\":\\"el\\"}"]},"provenance":{"schemaVersion":2,"mode":"standalone","originClass":"agent-verified","sourceDescription":"Synthetic joined record"},"summary":"購入 Café é 🧪","body":"Click 購入; preserve é and é exactly."}"`)
     expect(original).toMatchObject({ kind: 'found', schemaVersion: 1,
       summary: input.draft.summary, body: input.draft.body,
       record: { recordId: f.id, kind: 'fact', product: 'join-fixture', status: 'candidate',

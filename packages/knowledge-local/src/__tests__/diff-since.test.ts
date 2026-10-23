@@ -26,6 +26,7 @@ import { createLocalKnowledgeStore } from '../curator/knowledge-store.js'
 import { acquireWriterLease, releaseLease } from '../lease/writer-lease.js'
 import { readGateReceipts } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
+import { PURGE_RECEIPT_SCHEMA_VERSION } from '../purge-receipt.js'
 import {
   makeBundleDraftFixture,
   makeScreenStateFixture,
@@ -366,7 +367,7 @@ describe('diffSince deterministic maintenance history', () => {
     writeFileSync(
       join(receiptsDir, 'purge-purged-record.json'),
       `${JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: PURGE_RECEIPT_SCHEMA_VERSION,
         purgedRecordId: 'purged-record',
         purgedAtOrdinal: 14,
         initiator: 'test-operator',
@@ -390,7 +391,7 @@ describe('diffSince deterministic maintenance history', () => {
     const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
     mkdirSync(receiptsDir, { recursive: true })
     const receipt = {
-      schemaVersion: 1,
+      schemaVersion: PURGE_RECEIPT_SCHEMA_VERSION,
       purgedRecordId: 'record-a',
       purgedAtOrdinal: 14,
       initiator: 'test-operator',
@@ -698,7 +699,7 @@ describe('diffSince deterministic maintenance history', () => {
       writeFileSync(
         join(receiptsDir, 'purge-purged-record.json'),
         `${JSON.stringify({
-          schemaVersion: 1,
+          schemaVersion: PURGE_RECEIPT_SCHEMA_VERSION,
           purgedRecordId: 'purged-record',
           purgedAtOrdinal: 14,
           initiator: 'test-operator',
