@@ -11901,6 +11901,12 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/arch/src/__tests__/449.1-version-register.test.ts",
+      "fullName": "schema version census instruments this file spells none of its needles, lies outside every region it scans, and is named in validate:arch",
+      "origin": "449.1 D-11"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/cli/src/composition/__tests__/443-run-record-option.test-d.ts",
       "fullName": "src/composition/__tests__/443-run-record-option.test-d.ts C443-ONE-RECORD the drive's runRecord option is required and never undefined",
       "origin": "443 D-16"

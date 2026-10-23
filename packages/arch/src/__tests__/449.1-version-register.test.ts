@@ -585,4 +585,36 @@ describe('schema version census instruments', () => {
     }
     expect(secondVersionOffenders('planted.ts', codeOf(cat('createVersionGuard({ migra', 'tions: {} })\n')))).toEqual([])
   })
+
+  it('this file spells none of its needles, lies outside every region it scans, and is named in validate:arch', () => {
+    const own = readFileSync(THIS_FILE).toString('utf8')
+    expect(existsSync(join(REPO_ROOT, OWN)), 'the self path is wrong').toBe(true)
+    expect(existsSync(join(REPO_ROOT, REGISTER_FILE)), 'the register path is wrong').toBe(true)
+
+    const needles = [
+      CONSTANT_DECLARATION,
+      ...INLINE_NEEDLES,
+      ...SECOND_VERSION_NEEDLES.map(([, needle]) => needle),
+      EMPTY_MIGRATIONS,
+      FRONTMATTER_STAMP,
+      INLINE_JSON_STAMP,
+    ].map(joined)
+    const spelled = needles.filter((needle) => own.includes(needle))
+    expect(spelled, `this file spells what it reads: ${spelled.join(', ')}`).toEqual([])
+
+    const ownCode = codeOf(own)
+    expect(versionConstants(OWN, ownCode), 'this file declares a version constant').toEqual([])
+    expect([...inlineCounts(ownCode)], 'this file carries an inline stamp').toEqual([])
+    expect(secondVersionOffenders(OWN, ownCode), 'this file carries a second-version shape').toEqual([])
+
+    const files = productionFiles()
+    expect(files, 'this census file is inside a region it scans').not.toContain(OWN)
+    expect(files, 'the register is inside a region it scans').not.toContain(REGISTER_FILE)
+    expect(files.filter((file) => file.startsWith(ARCH_SOURCE)), 'the arch sources were scanned').toEqual([])
+    expect(files.filter((file) => file.includes('/__tests__/')), 'a test file was scanned').toEqual([])
+
+    const archRoot = fileURLToPath(new URL('../../', import.meta.url))
+    const { scripts } = JSON.parse(bytesOf('package.json')) as { scripts: Record<string, string> }
+    expect(scripts['validate:arch']!.split(/\s+/)).toContain(posix(relative(archRoot, THIS_FILE)))
+  })
 })
