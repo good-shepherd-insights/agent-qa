@@ -33,7 +33,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
 import { maskedToolError } from '../masked-result.js'
-import { FORGET_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { FORGET_RECEIPT_SCHEMA_VERSION, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 // RE-SPELLED 2026-10-01 (432-21, D-12). The mark tool's handler-level credential refusal (419 D-20)
 // left with the MCP bearer credential, and `createMarkToolHandler` with it: the mark tool goes
@@ -115,14 +115,14 @@ function directDeps(answer: (request: { verb: string, input: Record<string, unkn
       listBundles: () => Promise.resolve([]), inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }: { recordId: string }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
       get: () => Promise.resolve(undefined),
     },
     config: {
-      getMasked: () => Promise.resolve({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }),
+      getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }),
     },
     knowledgeReview: {
       propose: () => Promise.reject(new Error('a direct change never proposes')),

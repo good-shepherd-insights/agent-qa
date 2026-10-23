@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { calibrateLabels, canonicalJson } from '@vostride/agent-qa-eval'
-import { sha256hex } from '@vostride/agent-qa-schema'
+import { sha256hex, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import {
@@ -81,7 +81,7 @@ async function start(f: ReturnType<typeof project>, legacy = false) {
   } as unknown as Partial<DaemonHostOperations>
   const running = runDaemonHost({ agentQaRoot: f.agentQaRoot, knowledgeRoot: join(f.project, 'knowledge'),
     ...(legacy ? {} : { configPath: f.configPath }),
-    config: { getMasked: async () => ({ schemaVersion: 1, configPath: f.configPath, entries: [] }) },
+    config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: f.configPath, entries: [] }) },
     model: () => model, author: authorFactory, operations,
     logger: { info: vi.fn(), error: message => errors.push(message) } })
   await vi.waitFor(() => expect(server).toBeDefined())
@@ -135,7 +135,7 @@ it('refuses malformed calibration before acquiring the daemon writer lease', asy
   writeFileSync(join(f.project, 'agent-qa-eval/labels/calibration.json'), '{"private":"bad"}')
   const acquire = vi.fn(() => { throw new Error('authority acquisition reached') })
   await expect(runDaemonHost({ agentQaRoot: f.agentQaRoot, knowledgeRoot: join(f.project, 'knowledge'), configPath: f.configPath,
-    config: { getMasked: async () => ({ schemaVersion: 1, configPath: f.configPath, entries: [] }) },
+    config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: f.configPath, entries: [] }) },
     model: async () => { throw new Error('unexpected model') }, operations: { acquireWriterLease: acquire } })).rejects.toThrow('Trust prior calibration is invalid or unavailable')
   expect(acquire).not.toHaveBeenCalled()
 })

@@ -400,7 +400,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 run reads serve every caller', () =
         inspectRecords: () => Promise.resolve([]),
         diffSince: () => Promise.resolve([]),
         showRecord: ({ recordId }) =>
-          Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId }),
+          Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId }),
       },
       entities: {
         resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),

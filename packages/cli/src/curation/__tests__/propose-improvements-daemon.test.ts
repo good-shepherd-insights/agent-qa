@@ -23,7 +23,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
-import { GATE_RECEIPT_SCHEMA_VERSION, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, stampReceiptDigest, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   GateReceipt,
   GateVerdict,
@@ -84,7 +84,7 @@ const TEST_MODEL: JobModelCapability = {
   },
 }
 const TEST_CONFIG: ConfigReaderPort = {
-  getMasked: async () => ({ schemaVersion: 1, configPath: '/tmp/422-09d.config.yaml', entries: [] }),
+  getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: '/tmp/422-09d.config.yaml', entries: [] }),
 }
 
 const AXIS = { baseline: 0, candidate: 0, delta: 0, floor: 0, n: 1 }

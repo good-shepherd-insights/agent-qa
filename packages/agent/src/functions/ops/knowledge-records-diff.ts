@@ -63,7 +63,7 @@ export const knowledgeRecordsDiffSpec: FunctionSpec<
   async invoke(input, deps) {
     const changes = await deps.knowledge.diffSince(input)
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       // Echoed, not remembered: a change list with no baseline means nothing to a reader who
       // has the answer and not the question, and these answers get pasted into issues and CI
       // logs where the question is gone.

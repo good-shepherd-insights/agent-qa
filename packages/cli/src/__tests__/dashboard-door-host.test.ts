@@ -15,7 +15,7 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig, PublishBundleInput } from '@vostride/agent-qa-knowledge-local'
-import { EntityCardSchema } from '@vostride/agent-qa-schema'
+import { EntityCardSchema, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import {
@@ -147,7 +147,7 @@ describe('the dashboard door host supplies the card url base it bound (D-16)', (
     const overlaid = overlayDashboardBaseUrl(
       {
         getMasked: async () => Promise.resolve({
-          schemaVersion: 1,
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
           configPath: 'agent-qa.config.yaml',
           entries: [{
             key: 'services.dashboard.baseUrl',
@@ -400,7 +400,7 @@ describe('a card the co-hosted door\'s registry produces carries a url (D-16)', 
     const overlaid = overlayDashboardBaseUrl(
       {
         getMasked: async () => Promise.resolve({
-          schemaVersion: 1,
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
           configPath: 'agent-qa.config.yaml',
           entries: [],
         }),
@@ -436,7 +436,7 @@ describe('a card the co-hosted door\'s registry produces carries a url (D-16)', 
     const overlaid = overlayDashboardBaseUrl(
       {
         getMasked: async () => Promise.resolve({
-          schemaVersion: 1,
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
           configPath: 'agent-qa.config.yaml',
           entries: [{
             key: 'services.dashboard.workspace',
@@ -468,7 +468,7 @@ describe('a card the co-hosted door\'s registry produces carries a url (D-16)', 
     const overlaid = overlayDashboardBaseUrl(
       {
         getMasked: async () => Promise.resolve({
-          schemaVersion: 1,
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
           configPath: 'agent-qa.config.yaml',
           entries: [],
         }),

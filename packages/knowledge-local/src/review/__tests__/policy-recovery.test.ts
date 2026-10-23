@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { asEvidenceToken, asRecordId, asRunId, type ImprovementPlan } from '@vostride/agent-qa-schema'
+import { asEvidenceToken, asRecordId, asRunId, type ImprovementPlan, IMPROVEMENT_PLAN_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { loadBundle, readGateReceipts } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
 import * as stores from '../../curator/knowledge-store.js'
@@ -119,7 +119,7 @@ it('keeps the isolated interrupted mark-apply control resumable through actual p
     const mark = { markId: 'mark_0123456789ab', runId: asRunId('review-retry-run'),
       testIndex: 0, stepIndex: 0, kind: 'false-fail' as const, fix: 'fact' as const }
     const target = { grain: 'record' as const, recordId: f.recordId }
-    const plan: ImprovementPlan = { schemaVersion: 1, markId: mark.markId,
+    const plan: ImprovementPlan = { schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId: mark.markId,
       feedbackSource: { runId: mark.runId, testIndex: 0, stepIndex: 0, kind: mark.kind },
       runTraceRef: { runId: mark.runId, runSlug: mark.runId }, kind: 'knowledge', fix: 'fact', target,
       deltas: [{ kind: 'Supersede', origin: 'user', scope: f.scope, citedIds: [asRecordId(f.recordId)],

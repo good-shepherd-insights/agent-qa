@@ -16,7 +16,7 @@
 //     receipts. A second computation anywhere would be a second answer to the question the
 //     one-read-op law exists to make singular.
 
-import { computeAuthoringFunnel } from '@vostride/agent-qa-schema'
+import { computeAuthoringFunnel, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   AuthoringFunnel,
   DraftReceipt,
@@ -93,7 +93,7 @@ function deps(authoringFunnel?: AuthoringFunnelPortLike): FunctionDeps {
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
@@ -101,7 +101,7 @@ function deps(authoringFunnel?: AuthoringFunnelPortLike): FunctionDeps {
     },
     config: {
       getMasked: () => Promise.resolve({
-        schemaVersion: 1,
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
         configPath: 'agent-qa.config.yaml',
         entries: [],
       }),

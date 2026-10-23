@@ -35,7 +35,7 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
@@ -133,7 +133,7 @@ function depsOver(document: CompletedRunHandoff | undefined): FunctionDeps {
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: (input: { recordId: string }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId: input.recordId } as const),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId: input.recordId } as const),
     },
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
@@ -141,7 +141,7 @@ function depsOver(document: CompletedRunHandoff | undefined): FunctionDeps {
     },
     config: {
       getMasked: () => Promise.resolve({
-        schemaVersion: 1,
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
         configPath: 'agent-qa.config.yaml',
         entries: [],
       }),

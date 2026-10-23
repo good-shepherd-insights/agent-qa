@@ -21,10 +21,11 @@ import { DAEMON_REGISTRATION_FILE } from '../../daemon/registration.js'
 import { createScriptedAuthor, readFixture } from '../dual-host/fixtures.js'
 import { canonicalBundleTree, orderedLogicalDump } from '../dual-host/logical-dump.js'
 import { FENCING_ENV, writeDurableJson } from './spawn-helpers.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/sigstop-fencing.config.yaml',
     entries: [],
   }),

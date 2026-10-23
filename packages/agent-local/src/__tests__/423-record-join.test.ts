@@ -52,7 +52,7 @@ it('JOIN-COMPOSED-PORT: actual composition returns maintenance data and per-ID m
   const readSingle = vi.spyOn(port, 'showRecord')
   const result = await boundBatch(port)({ recordIds: [f.id, 'gone', f.id, 'é', 'e\u0301'] })
   expect(result).toEqual([showRecord({ knowledgeRoot: f.knowledgeRoot, recordId: f.id }),
-    ...['gone', 'é', 'e\u0301'].map(recordId => ({ kind: 'not-found', schemaVersion: 1, recordId }))])
+    ...['gone', 'é', 'e\u0301'].map(recordId => ({ kind: 'not-found', schemaVersion: 2, recordId }))])
   expect(result[0]).toMatchObject({ kind: 'found', summary: '購入 e\u0301 🧪',
     record: { recordId: f.id, kind: 'fact', scope: 'port-join', status: 'candidate' } })
   expect(resolveRoot).toHaveBeenCalledTimes(1)
@@ -81,7 +81,7 @@ it('JOIN-READ-NOTHING: missing root stays absent through the real composed bindi
   const before = tree(f.root)
   const port = createKnowledgeReaderPort({ resolveKnowledgeRoot: () => missing })
   expect(await boundBatch(port)({ recordIds: ['gone', 'gone'] }))
-    .toEqual([{ kind: 'not-found', schemaVersion: 1, recordId: 'gone' }])
+    .toEqual([{ kind: 'not-found', schemaVersion: 2, recordId: 'gone' }])
   expect(existsSync(missing)).toBe(false)
   expect(tree(f.root)).toEqual(before)
 })

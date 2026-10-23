@@ -62,6 +62,9 @@ import {
   type RecordChange,
   type RunId,
   RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+  INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -183,9 +186,9 @@ const RECORD_LEARNED = 'record-423-38-learned'
 
 function currentRecord(recordId: string) {
   return KnowledgeRecordShowResultSchema.parse({
-    kind: 'found', schemaVersion: 1, summary: `Current summary ${recordId}`, body: `Current body ${recordId}`,
+    kind: 'found', schemaVersion: 2, summary: `Current summary ${recordId}`, body: `Current body ${recordId}`,
     provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed', sourceDescription: 'synthetic 423-38' },
-    record: { schemaVersion: 1, recordId, product: 'shop', scope: 'checkout', kind: 'fact', status: 'superseded',
+    record: { schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION, recordId, product: 'shop', scope: 'checkout', kind: 'fact', status: 'superseded',
       confirmations: 3, contradictions: 1, evidenceTokens: ['evidence-423-38'], openedAtOrdinal: 4, closedAtOrdinal: 40,
       lastEventOrdinal: 40, anchors: ['page:/checkout'], trustNarrative: 'Current synthetic evidence' },
   })
@@ -193,7 +196,7 @@ function currentRecord(recordId: string) {
 
 function curationSnapshot(runId: string) {
   const classified = (recordId: string, change: RecordChange['change'], atOrdinal: number): RecordChange => ({
-    schemaVersion: 1, recordId, change, atOrdinal, sourceRunId: runId,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal, sourceRunId: runId,
     evidenceToken: `receipt-${recordId}`, observationId: `observation-${recordId}` })
   return CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [
     { recordId: RECORD_LEARNED, bucket: 'added', changes: [{ bucket: 'added', change: classified(RECORD_LEARNED, 'added', 20) }] },
@@ -291,11 +294,11 @@ async function openDurableScene() {
     knowledge: {
       listBundles: async () => [], inspectRecords: async () => [],
       diffSince: async () => snapshot.rows.flatMap(row => row.changes.map(entry => entry.change)),
-      showRecord: async ({ recordId }: { recordId: string }) => ({ kind: 'not-found' as const, schemaVersion: 1 as const, recordId }),
+      showRecord: async ({ recordId }: { recordId: string }) => ({ kind: 'not-found' as const, schemaVersion: 2 as const, recordId }),
       showRecords: async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(currentRecord),
     },
     entities: { resolve: async () => ({ kind: 'none' as const, reason: 'no-match' as const }), get: async () => undefined },
-    config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
+    config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }) },
     postProcessing: {
       idSource: { jobIdFor: (kind: string, key: string) => `${kind}:${key}` },
       readChain: async (_ids: unknown, id: string) => id === excludedRunId ? undefined : ({

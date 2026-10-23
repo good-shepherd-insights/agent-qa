@@ -34,7 +34,7 @@ import type {
   JobModelCapability,
   ProposeGate1Report,
 } from '@vostride/agent-qa-agent'
-import { GATE_RECEIPT_SCHEMA_VERSION, CURRENT_HANDOFF_SCHEMA_VERSION, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, CURRENT_HANDOFF_SCHEMA_VERSION, stampReceiptDigest, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   GateReceipt,
   GateVerdict,
@@ -103,7 +103,7 @@ const TEST_MODEL: JobModelCapability = {
   generate: async () => ({ text: 'not an author payload' }),
 }
 const TEST_CONFIG: ConfigReaderPort = {
-  getMasked: async () => ({ schemaVersion: 1, configPath: '/tmp/422-09.config.yaml', entries: [] }),
+  getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: '/tmp/422-09.config.yaml', entries: [] }),
 }
 
 const AXIS = { baseline: 0, candidate: 0, delta: 0, floor: 0, n: 1 }

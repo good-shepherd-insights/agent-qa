@@ -35,6 +35,7 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   type CompletedRunHandoff,
   type Verdict,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -66,7 +67,7 @@ const TEST_MODEL: JobModelCapability = {
 
 const TEST_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/post-run-enqueue-idempotency.config.yaml',
     entries: [],
   }),

@@ -3,6 +3,7 @@ import {
   CURATION_BREAKDOWN_BUCKETS, CURATION_BUCKET_PRECEDENCE, CURATION_SNAPSHOT_SCHEMA_VERSION,
   CurationBucketSchema, CurationSnapshotSchema, CurationSnapshotRowSchema,
   CurationSnapshotChangeSchema, CurationBreakdownSchema, CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
   guardRunNotification, RunNotificationSchemaError, RunNotificationViewSchema, toRunNotificationView,
 } from '../index'
 import type {
@@ -13,37 +14,37 @@ import type {
 const zero = { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 }
 const added: CurationSnapshotRow = {
   recordId: 'record-added', bucket: 'added', changes: [{ bucket: 'added', change: {
-    schemaVersion: 1, recordId: 'record-added', change: 'added', atOrdinal: 2,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-added', change: 'added', atOrdinal: 2,
     evidenceToken: 'synthetic-add', sourceRunId: 'synthetic-source',
   } }],
 }
 const confirmed: CurationSnapshotRow = {
   recordId: 'record-confirmed', bucket: 'confirmed', changes: [
-    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'record-confirmed',
+    { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-confirmed',
       change: 'confirmed', atOrdinal: 3, evidenceToken: 'synthetic-confirm' } },
-    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'record-confirmed',
+    { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-confirmed',
       change: 'confirmed', atOrdinal: 3, evidenceToken: 'synthetic-canary',
       observationId: 'synthetic-observation' } },
-    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'record-confirmed',
+    { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-confirmed',
       change: 'promoted', atOrdinal: 4, promotionPath: 'user-sovereign' } },
   ],
 }
 const superseded: CurationSnapshotRow = {
   recordId: 'record-victim', bucket: 'superseded', byRecordId: 'record-replacement', changes: [
-    { bucket: 'superseded', change: { schemaVersion: 1, recordId: 'record-victim',
+    { bucket: 'superseded', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-victim',
       change: 'superseded', atOrdinal: 5, byRecordId: 'record-replacement' } },
-    { bucket: 'added', change: { schemaVersion: 1, recordId: 'record-replacement',
+    { bucket: 'added', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-replacement',
       change: 'added', atOrdinal: 5 } },
   ],
 }
 const deprecated: CurationSnapshotRow = {
   recordId: 'record-deprecated', bucket: 'deprecated', changes: [{ bucket: 'deprecated', change: {
-    schemaVersion: 1, recordId: 'record-deprecated', change: 'deprecated', atOrdinal: 6,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-deprecated', change: 'deprecated', atOrdinal: 6,
   } }],
 }
 const proposed: CurationSnapshotRow = {
   recordId: 'record-held', bucket: 'proposed', changes: [{ bucket: 'proposed', change: {
-    schemaVersion: 1, recordId: 'record-held', change: 'added', atOrdinal: 7,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-held', change: 'added', atOrdinal: 7,
   } }],
 }
 const five: CurationSnapshot = {
@@ -130,18 +131,18 @@ test('STRONGEST-ONCE: duplicate affected records reject even with matching infla
     breakdown: { ...five.breakdown, added: 2 } }).success).toBe(false)
   expect(CurationSnapshotSchema.safeParse({ ...five, rows: [...five.rows,
     { ...added, bucket: 'confirmed', changes: [{ bucket: 'confirmed', change: {
-      schemaVersion: 1, recordId: added.recordId, change: 'confirmed', atOrdinal: 20,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: added.recordId, change: 'confirmed', atOrdinal: 20,
     } }] }], breakdown: { ...five.breakdown, confirmed: 2 } }).success).toBe(false)
 })
 
 test('STRONGEST-ONCE: every stronger historical bucket wins regardless of ordering', () => {
   const histories: CurationSnapshotChange[] = [
-    { bucket: 'superseded', change: { schemaVersion: 1, recordId: 'subject',
+    { bucket: 'superseded', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'subject',
       change: 'superseded', atOrdinal: 1, byRecordId: 'replacement' } },
-    { bucket: 'deprecated', change: { schemaVersion: 1, recordId: 'subject', change: 'deprecated', atOrdinal: 2 } },
-    { bucket: 'proposed', change: { schemaVersion: 1, recordId: 'subject', change: 'added', atOrdinal: 3 } },
-    { bucket: 'added', change: { schemaVersion: 1, recordId: 'subject', change: 'added', atOrdinal: 4 } },
-    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'subject', change: 'confirmed', atOrdinal: 5 } },
+    { bucket: 'deprecated', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'subject', change: 'deprecated', atOrdinal: 2 } },
+    { bucket: 'proposed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'subject', change: 'added', atOrdinal: 3 } },
+    { bucket: 'added', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'subject', change: 'added', atOrdinal: 4 } },
+    { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'subject', change: 'confirmed', atOrdinal: 5 } },
   ]
   for (let stronger = 0; stronger < histories.length; stronger++) {
     for (let weaker = stronger + 1; weaker < histories.length; weaker++) {
@@ -202,13 +203,13 @@ test('SNAPSHOT-HISTORY: conflicting, foreign, duplicate and empty identities rej
 })
 
 test('SNAPSHOT-DISCRIMINANTS: downgrade classifications and unlinked purge stay distinct', () => {
-  const heldExisting = { bucket: 'proposed', change: { schemaVersion: 1,
+  const heldExisting = { bucket: 'proposed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
     recordId: 'held-existing', change: 'confirmed', atOrdinal: 8 } }
   expect(CurationSnapshotChangeSchema.safeParse(heldExisting).success).toBe(true)
   for (const invalid of [
     { ...heldExisting, change: { ...heldExisting.change, change: 'deprecated' } },
     { bucket: 'added', change: confirmed.changes[2]!.change },
-    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'purged', change: 'purged', atOrdinal: 9 } },
+    { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'purged', change: 'purged', atOrdinal: 9 } },
     { bucket: 'confirmed', change: { ...confirmed.changes[0]!.change, promotionPath: 'user-sovereign' } },
   ]) expect(CurationSnapshotChangeSchema.safeParse(invalid).success).toBe(false)
 })
@@ -228,7 +229,7 @@ test('REPLACEMENT-NOT-ADDED: historical replacements remain suppressed after a l
   const row: CurationSnapshotRow = {
     ...superseded, byRecordId: 'later-replacement', changes: [
       ...superseded.changes,
-      { bucket: 'superseded', change: { schemaVersion: 1, recordId: 'record-victim',
+      { bucket: 'superseded', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-victim',
         change: 'superseded', atOrdinal: 10, byRecordId: 'later-replacement' } },
     ],
   }

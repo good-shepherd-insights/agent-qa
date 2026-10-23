@@ -36,6 +36,7 @@ import {
   guardCompletedRunHandoff,
   sha256hex,
   slugBranch,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -118,7 +119,7 @@ const TEST_MODEL: JobModelCapability = {
   },
 }
 const TEST_CONFIG: ConfigReaderPort = {
-  getMasked: async () => ({ schemaVersion: 1, configPath: '/tmp/422-14h.yaml', entries: [] }),
+  getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: '/tmp/422-14h.yaml', entries: [] }),
 }
 
 const projects: string[] = []

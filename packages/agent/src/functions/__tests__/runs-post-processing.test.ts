@@ -7,6 +7,8 @@ import {
   CurationSnapshotSchema,
   CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
   toRunNotificationView,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, MaskFn, PostProcessingStageDetail, RunNotification } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -34,14 +36,14 @@ function read(state: PostProcessingChainState | undefined, secretMask?: MaskFn) 
       listBundles: async () => [],
       inspectRecords: async () => [],
       diffSince: async () => [],
-      showRecord: async ({ recordId }) => ({ kind: 'not-found', schemaVersion: 1, recordId }),
+      showRecord: async ({ recordId }) => ({ kind: 'not-found', schemaVersion: 2, recordId }),
     },
     entities: {
       resolve: async () => ({ kind: 'none', reason: 'no-match' }),
       get: async () => undefined,
     },
     config: {
-      getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }),
+      getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }),
     },
     postProcessing: {
       idSource: { jobIdFor: (kind, key) => asJobId(`${kind}:${key}`) },
@@ -58,7 +60,7 @@ function snapshot(): CurationSnapshot {
     rows: [{ recordId: 'record-synthetic-snapshot-secret', bucket: 'superseded',
       byRecordId: 'replacement-synthetic-snapshot-secret',
       changes: [{ bucket: 'superseded', change: {
-        schemaVersion: 1, recordId: 'record-synthetic-snapshot-secret',
+        schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-synthetic-snapshot-secret',
         change: 'superseded', byRecordId: 'replacement-synthetic-snapshot-secret',
         atOrdinal: 12, evidenceToken: 'token-synthetic-snapshot-secret',
         sourceRunId: 'run-synthetic-snapshot-secret', observationId: 'observation-synthetic-snapshot-secret',
@@ -91,9 +93,9 @@ describe('423 checkpoint-backed snapshot projection', () => {
   it('NOTIFICATION-MASK-COLLISION: nested identity collisions withhold generically without deleting history', async () => {
     const recorded: CurationSnapshot = { schemaVersion: 1,
       rows: [{ recordId: 'synthetic-record', bucket: 'confirmed', changes: [
-        { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'synthetic-record',
+        { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'synthetic-record',
           change: 'confirmed', atOrdinal: 1, evidenceToken: 'synthetic-secret-one' } },
-        { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'synthetic-record',
+        { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'synthetic-record',
           change: 'confirmed', atOrdinal: 1, evidenceToken: 'synthetic-secret-two' } },
       ] }], breakdown: { added: 0, confirmed: 1, superseded: 0, deprecated: 0, proposed: 0 } }
     const notification = { schemaVersion: CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
@@ -175,7 +177,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
   it('POSTPROCESSING-SNAPSHOT-WITHHELD degrades the snapshot, never the read', async () => {
     const recorded = CurationSnapshotSchema.parse({ schemaVersion: 1,
       rows: ['first-record', 'second-record'].map(recordId => ({ recordId, bucket: 'added',
-        changes: [{ bucket: 'added', change: { schemaVersion: 1, recordId, change: 'added', atOrdinal: 1 } }],
+        changes: [{ bucket: 'added', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change: 'added', atOrdinal: 1 } }],
       })),
       breakdown: { added: 2, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })

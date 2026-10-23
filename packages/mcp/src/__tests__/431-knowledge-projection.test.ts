@@ -491,7 +491,7 @@ function knowledgeDeps(): Record<string, unknown> {
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }: { recordId: string }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId }),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId }),
     },
   }
 }

@@ -4,6 +4,7 @@ import { ACTION_WIRE_SCHEMAS_BY_TYPE, actionWireSchema } from '../../action/wire
 import { asRunId, runIdSchema } from '../../run/run-id'
 import {
   COMMIT_RECEIPT_SCHEMA_VERSION,
+  IMPROVEMENT_PLAN_SCHEMA_VERSION,
   MARK_RECEIPT_SCHEMA_VERSION,
   MARK_DISPOSITIONS, MARK_FIX_KINDS, MARK_QUARANTINE_CLASSES,
   CommitReceiptSchema, ImprovementPlanSchema, ImprovementPlanKnowledgeSchema,
@@ -21,7 +22,7 @@ const receipt = {
   gold: [], evidence: { confirmed: 0, overturned: 0 },
 }
 const planBase = {
-  schemaVersion: 1, markId,
+  schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId,
   feedbackSource: { runId, testIndex: 0, kind: 'false-fail' },
   runTraceRef: { runId, runSlug: 'run-feedback' },
 }

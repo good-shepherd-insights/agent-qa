@@ -53,6 +53,7 @@ import { CountingTarget } from './in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
 import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
 import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 let pinnedTmpdir: PinnedTmpdir | undefined
 beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
@@ -654,7 +655,7 @@ describe('C432-PRODUCTION-PRODUCERS — the host runs.start door and the daemon 
         generate: () => Promise.resolve({ text: 'unused' }),
       }
       const config: ConfigReaderPort = {
-        getMasked: () => Promise.resolve({ schemaVersion: 1, configPath: fixture.configPath, entries: [] }),
+        getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: fixture.configPath, entries: [] }),
       }
       let started = false
       const running = runDaemonHost({

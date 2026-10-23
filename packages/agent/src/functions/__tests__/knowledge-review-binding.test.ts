@@ -98,7 +98,7 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }) => Promise.resolve({
         kind: 'not-found',
-        schemaVersion: 1,
+        schemaVersion: 2,
         recordId,
       } as const),
     },

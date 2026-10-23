@@ -24,7 +24,7 @@ import {
   readEmbedderWorkerRegistration,
   resolveProcessIncarnation,
 } from '@vostride/agent-qa-knowledge-local'
-import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
+import { DEFAULT_EMBEDDING_PROFILE, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CURATION_QUEUE_POLL_MS, MAINTENANCE_CADENCE_MS } from '../daemon/host.js'
@@ -45,7 +45,7 @@ const MODEL: JobModelCapability = {
 
 const CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/agent-qa.config.yaml',
     entries: [],
   }),

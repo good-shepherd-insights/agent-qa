@@ -15,7 +15,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { expect } from 'vitest'
 
@@ -41,7 +41,7 @@ import { DUAL_HOST_ENV, type LegReport } from './spawn-helpers.js'
 
 const CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/dual-host.config.yaml',
     entries: [],
   }),

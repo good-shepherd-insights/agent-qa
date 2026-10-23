@@ -8,6 +8,7 @@ import {
   asRunId,
   type RunsMarkInput,
   type RunsMarkOutcome,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -31,9 +32,9 @@ function fixture() {
   const mark = vi.fn(async (_input: RunsMarkInput) => outcome)
   const deps: FunctionDeps = {
     runs: { list: async () => [], get: async () => undefined, readEvents: async () => [], readStepEvidence: async () => ({ kind: 'run-not-recorded' }) },
-    knowledge: { listBundles: async () => [], inspectRecords: async () => [], diffSince: async () => [], showRecord: async ({ recordId }) => ({ kind: 'not-found', schemaVersion: 1, recordId }) },
+    knowledge: { listBundles: async () => [], inspectRecords: async () => [], diffSince: async () => [], showRecord: async ({ recordId }) => ({ kind: 'not-found', schemaVersion: 2, recordId }) },
     entities: { resolve: async () => ({ kind: 'none', reason: 'no-match' }), get: async () => undefined },
-    config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
+    config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }) },
     feedback: { mark, marksFor: async () => [] },
   }
   // 432-13 (D-14): no confirm port — `invokeFunction` asks nobody. 432-14: no frame is entered

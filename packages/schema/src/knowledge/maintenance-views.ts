@@ -3,8 +3,8 @@ import { z } from 'zod'
 import { createVersionGuard } from '../versioning/create-version-guard'
 import { PROMOTION_PATHS } from './promotion-path'
 
-export const RECORD_CHANGE_SCHEMA_VERSION = 1
-export const INSPECT_RECORD_VIEW_SCHEMA_VERSION = 1
+export const RECORD_CHANGE_SCHEMA_VERSION = 2
+export const INSPECT_RECORD_VIEW_SCHEMA_VERSION = 2
 
 const knowledgeRecordKindSchema = z.enum([
   'fact',

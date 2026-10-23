@@ -1,3 +1,4 @@
+import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 //
 // THE KNOWLEDGE TAB ON THE PAGE (407-06 · LERN-01, D-03 / D-05 / D-06, closing WINDOWS #310).
@@ -448,7 +449,7 @@ describe("427 D-02 / D-04 / D-05: a record given in three steps reads as one con
  * both, so a future `RecordChangeSchema` member either lands in both fixtures or in neither.
  */
 const SERVED_CHANGE = {
-  schemaVersion: 1 as const,
+  schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION,
   recordId: "fact-el-textbox-password-9a05ce",
   change: "confirmed" as const,
   atOrdinal: 2,

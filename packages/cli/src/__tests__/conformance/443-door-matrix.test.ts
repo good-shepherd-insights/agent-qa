@@ -56,6 +56,7 @@ import {
   type SpawnedDashboard,
 } from './spawned-chat.js'
 import { driveChatLines, genericFnClause } from './surface-dispatch.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const MATRIX_BUDGET_MS = 900_000
 const RUN_FINISH_BUDGET_MS = 180_000
@@ -430,7 +431,7 @@ const DRIVERS: Readonly<Record<string, Driver>> = {
     }
     const jobModel: JobModelCapability = { modelId: 'test:443-01-doors', generate: () => Promise.resolve({ text: 'unused' }) }
     const config: ConfigReaderPort = {
-      getMasked: () => Promise.resolve({ schemaVersion: 1, configPath: project.configPath, entries: [] }),
+      getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: project.configPath, entries: [] }),
     }
     const knowledgeRoot = join(project.root, 'agent-qa-knowledge')
     await inProcess(async () => {

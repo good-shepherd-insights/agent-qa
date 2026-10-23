@@ -63,6 +63,7 @@ import type { DaemonHostOperations } from '../host.js'
 import { closeTestRunRecords, testRunRecord } from '../../composition/__tests__/in-process-run-fixture.js'
 import { pinProcessTmpdir, removeTempRoots } from '../../__tests__/temp-roots.js'
 import type { PinnedTmpdir } from '../../__tests__/temp-roots.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 let pinnedTmpdir: PinnedTmpdir | undefined
 beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
@@ -89,7 +90,7 @@ const TEST_MODEL: JobModelCapability = {
 
 function testConfig(configPath: string): ConfigReaderPort {
   return {
-    getMasked: () => Promise.resolve({ schemaVersion: 1, configPath, entries: [] }),
+    getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath, entries: [] }),
   }
 }
 

@@ -15,6 +15,7 @@
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -91,7 +92,7 @@ async function digestOver(scene: {
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }: { recordId: string }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
@@ -99,7 +100,7 @@ async function digestOver(scene: {
     },
     config: {
       getMasked: () => Promise.resolve({
-        schemaVersion: 1,
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
         configPath: 'agent-qa.config.yaml',
         entries: [],
       }),

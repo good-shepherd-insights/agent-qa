@@ -41,6 +41,7 @@ import {
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -94,7 +95,7 @@ const { runDaemonHost } = await import(hostUrl)
 const exitCode = await runDaemonHost({
   agentQaRoot: root + '/.agent-qa',
   knowledgeRoot: root + '/agent-qa-knowledge',
-  config: { getMasked: async () => ({ schemaVersion: 1, configPath: root + '/agent-qa.config.yaml', entries: [] }) },
+  config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: root + '/agent-qa.config.yaml', entries: [] }) },
   model: () => ({ modelId: 'test:daemon-child', generate: async () => ({ text: 'unused' }) }),
 })
 process.exitCode = exitCode
@@ -147,7 +148,7 @@ function makePaths(label: string): {
 
 const TEST_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/agent-qa.config.yaml',
     entries: [],
   }),

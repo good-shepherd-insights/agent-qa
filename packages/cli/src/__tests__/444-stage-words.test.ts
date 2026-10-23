@@ -27,6 +27,7 @@ import {
   PostProcessingStatusSchema,
   RunDigestSchema,
   CURRENT_BUS_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -156,14 +157,14 @@ function depsWith(state: PostProcessingChainState | undefined, handoff?: Complet
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
       get: () => Promise.resolve(undefined),
     },
     config: {
-      getMasked: () => Promise.resolve({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }),
+      getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }),
     },
     postProcessing: {
       idSource: { jobIdFor: (kind, key) => asJobId(`stage_words_${kind}_${key}`) },

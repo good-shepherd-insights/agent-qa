@@ -14,6 +14,7 @@ import {
   computeBriefDigest,
   guardCompletedRunHandoff,
   slugBranch,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import type {
@@ -90,7 +91,7 @@ const TEST_MODEL: JobModelCapability = {
   }] }) }),
 }
 const TEST_CONFIG: ConfigReaderPort = {
-  getMasked: async () => ({ schemaVersion: 1, configPath: '/tmp/422-14h.yaml', entries: [] }),
+  getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: '/tmp/422-14h.yaml', entries: [] }),
 }
 
 const projects: string[] = []

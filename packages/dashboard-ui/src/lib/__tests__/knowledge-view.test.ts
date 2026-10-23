@@ -21,6 +21,7 @@ import {
   TRACE_TRUNCATION_TOP_K,
   formatEntityUri,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CurationBreakdown,
@@ -906,7 +907,7 @@ function change(
   recordId = 'fact-cart-page-4ccac',
   overrides: Partial<RecordChange> = {},
 ): RecordChange {
-  return { schemaVersion: 1, recordId, change: kind, atOrdinal: 7, ...overrides }
+  return { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change: kind, atOrdinal: 7, ...overrides }
 }
 
 /**

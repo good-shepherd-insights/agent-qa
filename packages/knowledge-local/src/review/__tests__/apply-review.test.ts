@@ -38,6 +38,7 @@ import {
   asEvidenceToken,
   strongestPromotionPath,
   stampReceiptDigest,
+  IMPROVEMENT_PLAN_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { Anchor, CommitReceipt, ForgetReceiptV1, KnowledgeReviewVerb, RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -315,7 +316,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     const shared = { origin: 'user' as const, scope, citedIds: [asRecordId(recordId)],
       evidenceToken: asEvidenceToken(`mark:${mark.markId}`) }
     return stage({ verb: 'mark', input: {
-      target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge', fix: kind,
+      target, mark, plan: { schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId: mark.markId, kind: 'knowledge', fix: kind,
         target, wording: 'floor', feedbackSource: { runId, testIndex: 2, stepIndex: 3, kind: mark.kind },
         runTraceRef: { runId, runSlug: runId }, deltas: [confirm
           ? { ...shared, kind: 'Confirm', targetId: asRecordId(recordId) }
@@ -1130,7 +1131,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
           kind: 'false-fail' as const, fix: 'fact' as const }
         const scope = { tier: 'product' as const, key: 'apply-storefront' }
         return stage({ verb: 'mark', input: {
-          target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge', fix: 'fact',
+          target, mark, plan: { schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId: mark.markId, kind: 'knowledge', fix: 'fact',
             target, wording: 'floor', feedbackSource: { runId, testIndex: 0, kind: mark.kind },
             runTraceRef: { runId, runSlug: runId }, deltas: [{ kind: 'Supersede', origin: 'user', scope,
               citedIds: [asRecordId(recordId)], victimId: asRecordId(recordId),

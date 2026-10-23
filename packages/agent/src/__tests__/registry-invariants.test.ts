@@ -388,7 +388,7 @@ function fakeDeps(): FunctionDeps {
       listBundles: () => Promise.resolve([]),
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
-      showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+      showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
     entities: {
       // Free text against an empty directory: the none arm, which is what the sample above asks for

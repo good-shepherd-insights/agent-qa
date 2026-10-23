@@ -30,6 +30,7 @@ import {
   type Delta,
   type ExecutionContext,
   type RecordId,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -49,7 +50,7 @@ const MODEL: JobModelCapability = {
 
 const CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/agent-qa.config.yaml',
     entries: [],
   }),

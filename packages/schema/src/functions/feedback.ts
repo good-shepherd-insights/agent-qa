@@ -171,7 +171,7 @@ export const RunsMarkOutcomeSchema = z.discriminatedUnion('kind', [
 ])
 export type RunsMarkOutcome = z.infer<typeof RunsMarkOutcomeSchema>
 
-export const IMPROVEMENT_PLAN_SCHEMA_VERSION = 1
+export const IMPROVEMENT_PLAN_SCHEMA_VERSION = 2
 const improvementPlanShape = {
   schemaVersion: z.literal(IMPROVEMENT_PLAN_SCHEMA_VERSION),
   markId: markIdSchema,

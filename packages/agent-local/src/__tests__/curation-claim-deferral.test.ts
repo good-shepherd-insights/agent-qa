@@ -26,6 +26,7 @@ import {
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   sha256hex,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 // `JobKind` is a schema type; the agent barrel never re-exported it (TS2459 under the
 // project-wide tsc, which vitest's per-file typecheck did not surface — the standing hazard).
@@ -57,7 +58,7 @@ const TEST_MODEL: JobModelCapability = {
 
 const TEST_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/curation-claim-deferral.config.yaml',
     entries: [],
   }),

@@ -1,5 +1,6 @@
 // 2026-09-08, 419 D-02/D-07/D-12: mechanical drafting over recorded data only.
 import {
+  IMPROVEMENT_PLAN_SCHEMA_VERSION,
   ImprovementPlanSchema,
   MARK_QUARANTINE_CLASSES,
   actionDidNotFail,
@@ -130,7 +131,7 @@ export function applyFeedback(input: ApplyFeedbackInput): ImprovementPlan {
   const selection = selectFixKind({ ...input, kind: mark.kind, member, step,
     stepIndex: input.resolvedStepIndex })
   const base = {
-    schemaVersion: 1, markId: mark.markId,
+    schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId: mark.markId,
     feedbackSource: { runId: mark.runId, testIndex: mark.testIndex, kind: mark.kind,
       ...(mark.testId === undefined ? {} : { testId: mark.testId }),
       ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }) },

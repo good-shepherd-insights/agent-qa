@@ -15,6 +15,7 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   RunOverviewProjectionSchema,
   RunsListOutputSchema,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -99,7 +100,7 @@ function host(mask: MaskFn) {
     mask,
     agentQaRoot: join(root, '.agent-qa'),
     mintQuarantineIdentityPath: (path) => path,
-    config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
+    config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }) },
     knowledgeRoot: () => join(root, 'knowledge'),
     model: () => { throw new Error('an overview read must not resolve a model') },
     resolveExecutionContext: () => 'local-headless',

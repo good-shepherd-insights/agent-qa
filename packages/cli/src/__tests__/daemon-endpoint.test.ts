@@ -48,6 +48,7 @@ import {
   writeDaemonRegistration,
 } from '../daemon/registration.js'
 import { removeTempRoots } from './temp-roots.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -67,7 +68,7 @@ const ENDPOINT_IDENTITY = {
 }
 
 const MASKED_CONFIG = {
-  schemaVersion: 1 as const,
+  schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION as typeof MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   configPath: '/fixture/agent-qa.config.yaml',
   entries: [{ key: 'use.llm', value: 'default', source: 'config-file' as const, masked: false }],
 }
@@ -198,7 +199,7 @@ async function registryFixture(
         diffSince: () => Promise.resolve([]),
         showRecord: ({ recordId }: { recordId: string }) => Promise.resolve({
           kind: 'not-found',
-          schemaVersion: 1,
+          schemaVersion: 2,
           recordId,
         } as const),
       },

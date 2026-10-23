@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { MARK_RECEIPT_SCHEMA_VERSION, asRef, asRunId } from '@vostride/agent-qa-schema'
+import { MARK_RECEIPT_SCHEMA_VERSION, asRef, asRunId, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   ChatSessionEvent,
@@ -48,7 +48,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     mask,
     agentQaRoot: root,
     mintQuarantineIdentityPath: path => path,
-    config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
+    config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }) },
     knowledgeRoot: () => join(root, 'knowledge'),
     model,
     feedback: { mark, marksFor: async () => [] },

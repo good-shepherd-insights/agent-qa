@@ -1,3 +1,4 @@
+import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // 427 · SC2 / SC4 / D-10 / D-19 — the default view carries no id and no retrieval machinery.
@@ -91,7 +92,7 @@ function content(summary: string, kind = "fact") {
 
 function recorded(recordId: string, change: string, atOrdinal: number, extra: Record<string, unknown> = {}) {
   return {
-    schemaVersion: 1, recordId, change, atOrdinal, sourceRunId: RUN,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal, sourceRunId: RUN,
     evidenceToken: `receipt-${String(atOrdinal)}`, ...extra,
   }
 }

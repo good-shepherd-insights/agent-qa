@@ -1,3 +1,4 @@
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import {
   appendFileSync,
   existsSync,
@@ -77,7 +78,7 @@ function holdUntilReleased(minHoldMs: number, release: string): { heldMs: number
 
 const daemonConfig: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/agent-qa-heartbeat-fixture.yaml',
     entries: [],
   }),

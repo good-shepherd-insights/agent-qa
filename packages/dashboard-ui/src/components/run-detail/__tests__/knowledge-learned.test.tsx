@@ -1,3 +1,4 @@
+import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // THE LEARNED HALF A PERSON ACTUALLY SEES (407-09 · LERN-02, D-09..D-12, T-407-21/T-407-22).
@@ -104,7 +105,7 @@ function render(view: LearnedView): HTMLElement {
 type LedgerChange = Extract<RunKnowledgeProjection, { kind: "ready" }>["learned"]["changes"][number]
 
 function ledgerChange(recordId: string, change: LedgerChange["change"], atOrdinal: number, extra: Partial<LedgerChange> = {}): LedgerChange {
-  return { schemaVersion: 1, recordId, change, atOrdinal, ...extra }
+  return { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal, ...extra }
 }
 
 // 427 D-19 part 2: the ledger a page actually paints — a schema-valid read folded by the real
@@ -872,7 +873,7 @@ function joinedContent(recordId: string): NonNullable<LearnedChange["recordConte
 
 function recorded(recordId: string, change: LearnedChange["change"], atOrdinal: number, extra: Partial<LearnedChange> = {}) {
   return {
-    schemaVersion: 1 as const, recordId, change, atOrdinal, sourceRunId: RUN_423,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal, sourceRunId: RUN_423,
     evidenceToken: `receipt-${recordId}-${String(atOrdinal)}`, ...extra,
   }
 }

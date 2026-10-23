@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const MASKED_RESOLVED_CONFIG_SCHEMA_VERSION = 1
+export const MASKED_RESOLVED_CONFIG_SCHEMA_VERSION = 2
 
 /**
  * Which layer supplied the winning value for a resolved configuration key.
@@ -46,7 +46,7 @@ export interface MaskedConfigEntry {
  * the shape both a table renderer and a JSON-Schema projection want.
  */
 export interface MaskedResolvedConfig {
-  schemaVersion: number
+  schemaVersion: typeof MASKED_RESOLVED_CONFIG_SCHEMA_VERSION
   /** The configuration file the read resolved against, as the caller addressed it. */
   configPath: string
   entries: MaskedConfigEntry[]
@@ -68,7 +68,7 @@ export const MaskedConfigEntrySchema = z.object({
 }).strict() satisfies z.ZodType<MaskedConfigEntry>
 
 export const MaskedResolvedConfigSchema = z.object({
-  schemaVersion: z.number().int().positive(),
+  schemaVersion: z.literal(MASKED_RESOLVED_CONFIG_SCHEMA_VERSION),
   configPath: z.string(),
   entries: z.array(MaskedConfigEntrySchema),
 }).strict() satisfies z.ZodType<MaskedResolvedConfig>

@@ -1,6 +1,6 @@
 import {
   canonicalJson, CURATION_BUCKET_PRECEDENCE, CurationSnapshotSchema,
-  CurationSnapshotChangeSchema, survivingOutcomeEvents,
+  CurationSnapshotChangeSchema, RECORD_CHANGE_SCHEMA_VERSION, survivingOutcomeEvents,
   type CurationSnapshot, type CurationSnapshotChange, type CurationSnapshotRow,
 } from '@vostride/agent-qa-schema'
 import { enumerateMaintenanceBundleDirs, loadMaintenanceBundle } from '../maintenance-scan.js'
@@ -47,7 +47,7 @@ export function readCurationEffectsForRun(
     if (!surviving) continue
     const bucket = receipt.disposition === 'downgraded' ? 'proposed' : receipt.change
     effects.push(CurationSnapshotChangeSchema.parse({ bucket, change: {
-      schemaVersion: 1, recordId: receipt.recordId, change: receipt.change,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: receipt.recordId, change: receipt.change,
       atOrdinal: receipt.atOrdinal, evidenceToken: receipt.evidenceToken,
       sourceRunId: receipt.sourceRunId, observationId: receipt.observationId,
       ...(receipt.byRecordId === undefined ? {} : { byRecordId: receipt.byRecordId }),

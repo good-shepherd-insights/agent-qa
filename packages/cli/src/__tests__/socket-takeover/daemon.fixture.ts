@@ -15,10 +15,11 @@ import { runDaemonHost, type DaemonHostOperations } from '../../daemon/host.js'
 import { readDaemonRegistration } from '../../daemon/registration.js'
 import { writeDurableJson } from '../fencing/spawn-helpers.js'
 import { TAKEOVER_ENV } from './spawn-helpers.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/socket-takeover.config.yaml',
     entries: [],
   }),

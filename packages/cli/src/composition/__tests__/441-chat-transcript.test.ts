@@ -13,6 +13,7 @@ import {
 import {
   CHAT_SESSION_EVENT_KINDS, CHAT_TURN_STATUSES, CLAUSE_RECEIPT_STATUSES,
   type AgentAskResult, type MaskFn,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -156,7 +157,7 @@ async function daemonMask(withConfigPath: boolean): Promise<MaskFn | undefined> 
     knowledgeRoot: join(root, 'agent-qa-knowledge'),
     ...(withConfigPath ? { configPath } : {}),
     config: {
-      getMasked: () => Promise.resolve({ schemaVersion: 1, configPath, entries: [] }),
+      getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath, entries: [] }),
     },
     model: () => DAEMON_MODEL,
     operations,

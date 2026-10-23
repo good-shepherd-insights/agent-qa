@@ -4,6 +4,7 @@ import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import type { createModel } from '@vostride/agent-qa-model'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { ImprovementPlan } from '@vostride/agent-qa-schema'
+import { IMPROVEMENT_PLAN_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { generateText } from 'ai'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveEvalSession } from '../../eval-session-composition.js'
@@ -122,7 +123,7 @@ describe('419 bounded feedback wording', () => {
 
   it('words only test-edit intent and returns no-draftable-fix untouched', async () => {
     const { plan } = input
-    const base = { schemaVersion: 1 as const, markId: plan.markId, feedbackSource: plan.feedbackSource, runTraceRef: plan.runTraceRef }
+    const base = { schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION as typeof IMPROVEMENT_PLAN_SCHEMA_VERSION, markId: plan.markId, feedbackSource: plan.feedbackSource, runTraceRef: plan.runTraceRef }
     const edit: ImprovementPlan = { ...base, kind: 'test-edit', fix: 'test-edit', testRef: 'test.yaml::Checkout', intent: 'Fix expectation', wording: 'floor' }
     vi.mocked(generateText).mockResolvedValue({ text: '{"intent":"Correct the recorded expectation"}' } as Awaited<ReturnType<typeof generateText>>)
     const result = await wordImprovementPlan({ ...input, plan: edit })

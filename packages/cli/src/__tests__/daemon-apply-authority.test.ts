@@ -32,6 +32,7 @@ import { join } from 'node:path'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { readWriterLease } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeChangeOutput } from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
@@ -46,7 +47,7 @@ const temporaryRoots: string[] = []
 
 const TEST_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/agent-qa.config.yaml',
     entries: [],
   }),

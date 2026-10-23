@@ -23,6 +23,8 @@ import {
   RunKnowledgeProjectionSchema,
   asRunId,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
+  INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -205,7 +207,7 @@ const EMPTY_KNOWLEDGE: KnowledgeReaderPort = {
   listBundles: () => Promise.resolve([]),
   inspectRecords: () => Promise.resolve([]),
   diffSince: () => Promise.resolve([]),
-  showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId }),
+  showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId }),
 }
 
 interface DepsOptions {
@@ -266,7 +268,7 @@ function deps(options: DepsOptions = {}): FunctionDeps {
 
 function change(overrides: Partial<RecordChange> = {}): RecordChange {
   return {
-    schemaVersion: 1,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
     recordId: 'rec-1',
     change: 'confirmed',
     atOrdinal: 12,
@@ -276,10 +278,10 @@ function change(overrides: Partial<RecordChange> = {}): RecordChange {
 
 function currentRecord(recordId: string) {
   return KnowledgeRecordShowResultSchema.parse({
-    kind: 'found', schemaVersion: 1, summary: `購入 é e\u0301 ${recordId}`,
+    kind: 'found', schemaVersion: 2, summary: `購入 é e\u0301 ${recordId}`,
     body: `Current body 🧪 ${recordId}`,
     provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed', sourceDescription: 'synthetic inspection' },
-    record: { schemaVersion: 1, recordId, product: 'shop', scope: 'checkout', kind: 'fact',
+    record: { schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION, recordId, product: 'shop', scope: 'checkout', kind: 'fact',
       status: 'superseded', confirmations: 7, contradictions: 2, evidenceTokens: ['evidence-current'],
       openedAtOrdinal: 8, closedAtOrdinal: 90, lastEventOrdinal: 90,
       anchors: ['page:/checkout', 'el:購入'], trustNarrative: 'Current supporting evidence' },
@@ -361,7 +363,7 @@ describe('423 current content and fixed historical sections', () => {
 
   it('NOT-FOUND-RETAINED: missing exact Unicode identities remain learned and used rows', async () => {
     const ids = ['é', 'e\u0301', '__proto__']
-    const showRecords = vi.fn(async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(recordId => ({ kind: 'not-found' as const, schemaVersion: 1 as const, recordId })))
+    const showRecords = vi.fn(async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(recordId => ({ kind: 'not-found' as const, schemaVersion: 2 as const, recordId })))
     const result = await ready({ knowledge: { showRecords,
       diffSince: async () => ids.map(recordId => change({ recordId, sourceRunId: RUN_ID })) } })
     expect(result.learned.changes.map(row => row.recordId)).toEqual(['__proto__', 'e\u0301', 'é'])
@@ -506,9 +508,9 @@ describe('423 current content and fixed historical sections', () => {
     const secret = 'synthetic-secret-9f2c'
     const local = declaredMask({ SECRET_441: secret })
     const secretRecord = (recordId: string) => KnowledgeRecordShowResultSchema.parse({
-      kind: 'found', schemaVersion: 1, summary: `summary ${secret}`, body: `body ${secret}`,
+      kind: 'found', schemaVersion: 2, summary: `summary ${secret}`, body: `body ${secret}`,
       provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed', sourceDescription: 'synthetic inspection' },
-      record: { schemaVersion: 1, recordId, product: `shop ${secret}`, scope: 'checkout', kind: 'fact',
+      record: { schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION, recordId, product: `shop ${secret}`, scope: 'checkout', kind: 'fact',
         status: 'active', confirmations: 1, contradictions: 0, evidenceTokens: [`token ${secret}`],
         openedAtOrdinal: 3, lastEventOrdinal: 3, anchors: [`el:${secret}`], trustNarrative: `narrative ${secret}` },
     })

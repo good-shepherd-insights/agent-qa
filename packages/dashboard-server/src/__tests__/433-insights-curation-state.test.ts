@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AgentHost, AgentRegistryHandle } from '../chat/host.js'
 import { DashboardDatabase } from '../db/database.js'
 import { createRouter } from '../server/routes.js'
+import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const KNOWLEDGE_ID = 'test:planted-run-knowledge-op'
 const POST_PROCESSING_ID = 'test:planted-post-processing-op'
@@ -95,7 +96,7 @@ function plantHost(
         curation: { status: answer.curation },
         learned: {
           changes: (answer.changes ?? []).map((change, index) => ({
-            schemaVersion: 1,
+            schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
             recordId: `rec_${runId}_${index}`,
             change,
             atOrdinal: 3,

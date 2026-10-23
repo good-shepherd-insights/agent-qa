@@ -36,7 +36,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   CurationAuthorship,
@@ -68,7 +68,7 @@ const MODEL: JobModelCapability = {
 
 const CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/agent-qa.config.yaml',
     entries: [],
   }),
@@ -86,7 +86,7 @@ const { runDaemonHost } = await import(hostUrl)
 process.exitCode = await runDaemonHost({
   agentQaRoot: root + '/.agent-qa',
   knowledgeRoot: root + '/agent-qa-knowledge',
-  config: { getMasked: async () => ({ schemaVersion: 1, configPath: root + '/agent-qa.config.yaml', entries: [] }) },
+  config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: root + '/agent-qa.config.yaml', entries: [] }) },
   model: () => ({ modelId: 'test:stopped-daemon', generate: async () => ({ text: 'unused' }) }),
 })
 `

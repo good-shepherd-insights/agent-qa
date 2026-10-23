@@ -29,7 +29,7 @@ export function showRecords(options: ShowRecordsOptions): readonly KnowledgeReco
     if (!pending.has(bundle.manifest.id)) continue
     found.set(bundle.manifest.id, KnowledgeRecordShowResultSchema.parse({
       kind: 'found',
-      schemaVersion: 1,
+      schemaVersion: 2,
       record: toInspectRecordView(entry, bundle, deriveBundleTrust(bundle)),
       provenance: bundle.provenance,
       summary: bundle.summary,
@@ -42,7 +42,7 @@ export function showRecords(options: ShowRecordsOptions): readonly KnowledgeReco
 
   return recordIds.map(recordId => found.get(recordId) ?? KnowledgeRecordShowResultSchema.parse({
     kind: 'not-found',
-    schemaVersion: 1,
+    schemaVersion: 2,
     recordId,
   }))
 }

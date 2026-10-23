@@ -1,3 +1,4 @@
+import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // 427 · D-19 — Retrieval details, the one place technical facts live. These cells pin what a reader
@@ -135,7 +136,7 @@ describe("every record id copies, and the result is announced (E8)", () => {
   }
 
   function detailsWithAChange(): HTMLElement {
-    return openDetails(readyView([step(0)], [{ schemaVersion: 1, recordId: CHANGED, change: "confirmed", atOrdinal: 12 }]))
+    return openDetails(readyView([step(0)], [{ schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: CHANGED, change: "confirmed", atOrdinal: 12 }]))
   }
 
   it("ID-COPY-ANNOUNCES-FAILURE: with no clipboard the button reads failed, the polite status spells the id, and no check shows", async () => {
@@ -192,8 +193,8 @@ describe("every record id copies, and the result is announced (E8)", () => {
 
   it("gives both ids of a supersession their own copy button, and keeps each id line's text the id alone", () => {
     const host = openDetails(readyView([], [
-      { schemaVersion: 1, recordId: "fact-old", change: "superseded", atOrdinal: 13, byRecordId: "fact-new" },
-      { schemaVersion: 1, recordId: "fact-new", change: "added", atOrdinal: 13 },
+      { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: "fact-old", change: "superseded", atOrdinal: 13, byRecordId: "fact-new" },
+      { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: "fact-new", change: "added", atOrdinal: 13 },
     ]))
 
     const record = host.querySelector('dl[data-ledger-changes] dd[data-ledger-row="record"]')

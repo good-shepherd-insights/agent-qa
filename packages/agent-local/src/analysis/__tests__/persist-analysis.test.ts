@@ -23,6 +23,7 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   guardRunAnalysisArtifact,
   sha256hex,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, RunAnalysisArtifact, Verdict } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -120,7 +121,7 @@ const CALLER_MODEL: JobModelCapability = {
 
 const TEST_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/persist-analysis.config.yaml',
     entries: [],
   }),

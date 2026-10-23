@@ -21,6 +21,7 @@ import {
   type DaemonHostOperations,
 } from '../daemon/host.js'
 import type { NudgeEnvelope, StartInvokeServerOptions } from '../daemon/server.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const DISPATCH_POLL_MS = 5_000
 const RETRY_DELAY_MS = 1_000
@@ -196,7 +197,7 @@ async function startHost(kinds: JobKindRegistry): Promise<RunningHost> {
     knowledgeRoot,
     config: {
       getMasked: () => Promise.resolve({
-        schemaVersion: 1,
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
         configPath: join(root, 'agent-qa.config.yaml'),
         entries: [],
       }),

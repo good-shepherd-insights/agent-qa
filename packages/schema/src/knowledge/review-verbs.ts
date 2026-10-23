@@ -144,7 +144,7 @@ export const KnowledgeRecordsInspectInputSchema = z.object({
 export type KnowledgeRecordsInspectInput = z.infer<typeof KnowledgeRecordsInspectInputSchema>
 
 export const KnowledgeRecordsInspectOutputSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   records: z.array(InspectRecordViewSchema),
 }).strict()
 
@@ -162,7 +162,7 @@ export type KnowledgeRecordsDiffInput = z.infer<typeof KnowledgeRecordsDiffInput
  * issues and CI logs where that context is gone.
  */
 export const KnowledgeRecordsDiffOutputSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   sinceOrdinal: z.number().int().nonnegative(),
   changes: z.array(RecordChangeSchema),
 }).strict()
@@ -180,7 +180,7 @@ export type KnowledgeRecordShowInput = z.infer<typeof KnowledgeRecordShowInputSc
  * shown without its provenance is an assertion; shown with it, it is evidence.
  */
 export const KnowledgeRecordShowOutputSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   record: InspectRecordViewSchema,
   provenance: BundleProvenanceSchema,
   summary: z.string(),
@@ -209,7 +209,7 @@ export const KnowledgeRecordShowResultSchema = z.discriminatedUnion('kind', [
   }).strict(),
   z.object({
     kind: z.literal('not-found'),
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     /** Echoed so an answer pasted into an issue still says what was asked about. */
     recordId: z.string().min(1),
   }).strict(),

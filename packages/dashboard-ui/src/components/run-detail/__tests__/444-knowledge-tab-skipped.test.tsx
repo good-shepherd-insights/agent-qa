@@ -1,3 +1,4 @@
+import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // A GATE RUN'S KNOWLEDGE TAB READS ITS CURATION AS SKIPPED, NEVER PENDING (444 D-61, D-39, D-13).
@@ -119,7 +120,7 @@ function view(projection: ReadyProjection): KnowledgeView {
 
 function change(recordId: string, kind: LearnedChange["change"], atOrdinal: number): LearnedChange {
   return {
-    schemaVersion: 1, recordId, change: kind, atOrdinal, sourceRunId: RUN,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change: kind, atOrdinal, sourceRunId: RUN,
     evidenceToken: `receipt-${recordId}-${String(atOrdinal)}`,
   }
 }

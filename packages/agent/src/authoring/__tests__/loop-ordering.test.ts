@@ -485,7 +485,7 @@ function minimalDeps(): FunctionDeps {
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }) => Promise.resolve(
-        { kind: 'not-found', schemaVersion: 1, recordId } as const,
+        { kind: 'not-found', schemaVersion: 2, recordId } as const,
       ),
     },
     entities: {

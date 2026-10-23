@@ -14,6 +14,7 @@ import {
   LocalAgentClosedError,
 } from '../composition/compose-local-agent.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../store/sqlite-job-store.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 /**
  * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
@@ -31,7 +32,7 @@ const TEST_MODEL: JobModelCapability = {
 
 const TEST_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/compose-close.config.yaml',
     entries: [],
   }),

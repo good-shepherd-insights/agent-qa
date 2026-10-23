@@ -70,7 +70,7 @@ function fakeDeps(): FunctionDeps {
       listBundles: () => Promise.resolve([]),
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
-      showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+      showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
     // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
     // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases

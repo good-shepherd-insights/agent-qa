@@ -19,6 +19,7 @@ import {
   type ExecutionContext,
   type KnowledgeMarkInput,
   type ScopeKey,
+  IMPROVEMENT_PLAN_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -160,7 +161,7 @@ describe('432 direct explicit knowledge writer (D-04, D-05, D-08, D-09, D-11)', 
     const newBundle = makeBundleDraftFixture({ kind: 'fact', subtype: 'navigational', scope: SCOPE,
       anchors: [ANCHOR], summary: 'Navigational fact: open the checkout panel first',
       ...(options.body === undefined ? {} : { body: options.body }) })
-    return { target, mark, plan: { schemaVersion: 1, markId, kind: 'knowledge', fix: 'fact', target,
+    return { target, mark, plan: { schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId, kind: 'knowledge', fix: 'fact', target,
       wording: 'floor', feedbackSource: { runId, testIndex: 1, stepIndex: 2, kind: mark.kind },
       runTraceRef: { runId, runSlug: runId }, deltas: [{ kind: 'Supersede', origin: 'user', scope: SCOPE,
         citedIds: [asRecordId(recordId)], victimId: asRecordId(recordId),

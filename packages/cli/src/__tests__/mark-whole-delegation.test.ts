@@ -37,7 +37,7 @@ import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-ag
 import { invokeFunction, RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { readWriterLease } from '@vostride/agent-qa-knowledge-local'
-import { RunsMarkOutcomeSchema, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { RunsMarkOutcomeSchema, type RunsMarkInput, type RunsMarkOutcome, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -131,7 +131,7 @@ async function startDaemon(f: Fixture): Promise<LiveDaemon> {
     appendDrainSessionReceipt: () => undefined,
   } as unknown as Partial<DaemonHostOperations>
   const config: ConfigReaderPort = {
-    getMasked: () => Promise.resolve({ schemaVersion: 1, configPath: f.configPath, entries: [] }),
+    getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: f.configPath, entries: [] }),
   }
   const running = runDaemonHost({
     agentQaRoot: f.agentQaRoot,

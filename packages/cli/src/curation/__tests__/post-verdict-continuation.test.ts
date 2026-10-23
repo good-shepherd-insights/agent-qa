@@ -2,7 +2,7 @@ import { afterAll, afterEach, expect, it, vi } from 'vitest'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, computeBriefDigest, guardCompletedRunHandoff, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, computeBriefDigest, guardCompletedRunHandoff, canonicalJson, sha256hex, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunSession, ServedBrief, StepEvidence } from '@vostride/agent-qa-schema'
 import { preparationPendingWarning, runInProcessCliRun } from '../../composition/in-process-run-execution.js'
 import {
@@ -341,7 +341,7 @@ async function startRecoveryDaemon(f: ReturnType<typeof continuationFixture>, ca
     startInvokeServer: async (input: { socketPath: string }) => { started = true; return { socketPath: input.socketPath, close: async () => undefined } },
   } as unknown as Partial<DaemonHostOperations>
   const running = runDaemonHost({ agentQaRoot: f.input.agentQaRoot, knowledgeRoot: f.input.knowledgeRoot,
-    configPath: f.input.configPath, config: { getMasked: async () => ({ schemaVersion: 1, configPath: f.input.configPath, entries: [] }) },
+    configPath: f.input.configPath, config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: f.input.configPath, entries: [] }) },
     model: () => ({ modelId: 'fixture', generate: async () => { throw new Error('provider forbidden') } }),
     operations, logger: { info: () => undefined, error: () => undefined },
   })

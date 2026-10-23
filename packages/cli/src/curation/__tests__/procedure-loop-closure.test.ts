@@ -59,6 +59,7 @@ import {
   type ServedBrief,
   type StepEvidence,
   type SubActionEvidence,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -877,7 +878,7 @@ describe('procedure loop closure (PROC-01/PROC-02/ABRF-01/ABRF-02, D-01..D-12)',
       },
       config: {
         getMasked: () => Promise.resolve({
-          schemaVersion: 1,
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
           configPath: 'agent-qa.config.yaml',
           entries: [],
         }),

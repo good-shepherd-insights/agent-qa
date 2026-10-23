@@ -10,7 +10,7 @@
 // order, equal sort keys, values no derivation could produce — because a projection test fed
 // already-correct data cannot distinguish a projection from a coincidence.
 
-import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, INSPECT_RECORD_VIEW_SCHEMA_VERSION, RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   BundleProvenance,
   FunctionCaller,
@@ -41,7 +41,7 @@ import type {
 
 function view(overrides: Partial<InspectRecordView> = {}): InspectRecordView {
   return {
-    schemaVersion: 1,
+    schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION,
     recordId: 'rec-1',
     product: 'shop',
     scope: 'product:shop',
@@ -59,7 +59,7 @@ function view(overrides: Partial<InspectRecordView> = {}): InspectRecordView {
 
 function change(overrides: Partial<RecordChange> = {}): RecordChange {
   return {
-    schemaVersion: 1,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
     recordId: 'rec-1',
     change: 'confirmed',
     atOrdinal: 7,
@@ -83,7 +83,7 @@ const EMPTY_KNOWLEDGE: KnowledgeReaderPort = {
   diffSince: () => Promise.resolve([]),
   showRecord: ({ recordId }) => Promise.resolve({
     kind: 'not-found',
-    schemaVersion: 1,
+    schemaVersion: 2,
     recordId,
   }),
 }
@@ -158,7 +158,7 @@ describe('Test 1 — wiring parity: the ops project, they never recompute', () =
       deps({ inspectRecords: () => Promise.resolve(rows) }),
     )
 
-    expect(result.schemaVersion).toBe(1)
+    expect(result.schemaVersion).toBe(2)
     expect([...result.records].sort((a, b) => a.recordId.localeCompare(b.recordId)))
       .toEqual([...rows].sort((a, b) => a.recordId.localeCompare(b.recordId)))
   })
@@ -190,7 +190,7 @@ describe('Test 1 — wiring parity: the ops project, they never recompute', () =
         deps({ diffSince: () => Promise.resolve(rows) }),
       )
 
-      expect(result.schemaVersion).toBe(1)
+      expect(result.schemaVersion).toBe(2)
       expect(result.changes).toEqual(rows)
       // The echo is not decoration: a change list with no baseline is a list whose meaning
       // depends on remembering the question, and these answers get pasted into issues.
@@ -225,7 +225,7 @@ describe('Test 2 — show returns the record with its provenance, and types its 
       deps({
         showRecord: () => Promise.resolve({
           kind: 'found',
-          schemaVersion: 1,
+          schemaVersion: 2,
           record,
           provenance: PROVENANCE,
           summary: 'the cart badge lags one tick behind',
@@ -251,7 +251,7 @@ describe('Test 2 — show returns the record with its provenance, and types its 
 
     expect(result).toEqual({
       kind: 'not-found',
-      schemaVersion: 1,
+      schemaVersion: 2,
       recordId: 'rec-nobody-committed',
     })
   })
@@ -264,7 +264,7 @@ describe('Test 2 — show returns the record with its provenance, and types its 
       deps({
         showRecord: ({ recordId }) => {
           seen.push(recordId)
-          return Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId })
+          return Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId })
         },
       }),
     )
@@ -279,12 +279,12 @@ describe('Test 2 — show returns the record with its provenance, and types its 
 describe('Test 3 — the empty store answers, it never throws (FUNC-04 empty edge)', () => {
   it('inspect returns an empty record list', async () => {
     expect(await knowledgeRecordsInspectSpec.invoke({ filter: {} }, deps()))
-      .toEqual({ schemaVersion: 1, records: [] })
+      .toEqual({ schemaVersion: 2, records: [] })
   })
 
   it('diff returns an empty change list that still echoes its baseline', async () => {
     expect(await knowledgeRecordsDiffSpec.invoke({ sinceOrdinal: 5 }, deps()))
-      .toEqual({ schemaVersion: 1, sinceOrdinal: 5, changes: [] })
+      .toEqual({ schemaVersion: 2, sinceOrdinal: 5, changes: [] })
   })
 
   it('show returns the typed miss', async () => {
@@ -469,7 +469,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-26 knowledge verbs serve every caller'
           },
           showRecord: ({ recordId }) => {
             shown.push(recordId)
-            return Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId })
+            return Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId })
           },
         }),
         knowledgeReview,

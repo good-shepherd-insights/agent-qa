@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import * as knowledge from '../index.js'
-import { RecordChangeSchema } from '../maintenance-views'
+import {
+  INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
+  RecordChangeSchema,
+} from '../maintenance-views'
 
 type Schema<T> = {
   parse(value: unknown): T
@@ -25,7 +29,7 @@ function maintenanceViews(): MaintenanceViewsModule {
 
 describe('maintenance view contracts', () => {
   it('419 D-19 preserves the pre-419 promoted fixture and optionally carries its receipt', () => {
-    const legacy = { schemaVersion: 1, recordId: 'record-1', change: 'promoted', atOrdinal: 42 }
+    const legacy = { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-1', change: 'promoted', atOrdinal: 42 }
     expect(RecordChangeSchema.parse(legacy)).toEqual(legacy)
     const attributed = {
       ...legacy, promotionPath: 'user-sovereign', promotionReceiptDigest: 'a'.repeat(64),
@@ -39,7 +43,7 @@ describe('maintenance view contracts', () => {
     '419 D-19 refuses both promotion fields on %s at their own paths', (change) => {
       for (const field of ['promotionPath', 'promotionReceiptDigest'] as const) {
         const result = RecordChangeSchema.safeParse({
-          schemaVersion: 1, recordId: 'record-1', change, atOrdinal: 42,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-1', change, atOrdinal: 42,
           [field]: field === 'promotionPath' ? 'user-sovereign' : 'a'.repeat(64),
         })
         expect(result.success).toBe(false)
@@ -58,7 +62,7 @@ describe('maintenance view contracts', () => {
     const { RecordChangeSchema } = maintenanceViews()
 
     expect(RecordChangeSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
       recordId: 'record-1',
       change,
       atOrdinal: 42,
@@ -70,7 +74,7 @@ describe('maintenance view contracts', () => {
     const { RecordChangeSchema } = maintenanceViews()
 
     expect(() => RecordChangeSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
       recordId: 'record-1',
       change: 'mutated',
       atOrdinal: 42,
@@ -91,7 +95,7 @@ describe('maintenance view contracts', () => {
   it('round-trips a valid inspect view and rejects a wrong schema version', () => {
     const { guardInspectRecordView } = maintenanceViews()
     const view = {
-      schemaVersion: 1,
+      schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION,
       recordId: 'record-1',
       product: 'shop',
       scope: 'product:shop',
@@ -108,6 +112,8 @@ describe('maintenance view contracts', () => {
     }
 
     expect(guardInspectRecordView(view)).toEqual(view)
-    expect(() => guardInspectRecordView({ ...view, schemaVersion: 2 })).toThrow()
+    for (const schemaVersion of [1, 3]) {
+      expect(() => guardInspectRecordView({ ...view, schemaVersion })).toThrow()
+    }
   })
 })

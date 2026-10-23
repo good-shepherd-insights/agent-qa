@@ -265,7 +265,7 @@ describe('RUN-TARGET-HISTORY: runs.list filters on recorded targets, not current
           inspectRecords: () => Promise.resolve([]),
           diffSince: () => Promise.resolve([]),
           showRecord: ({ recordId }: { recordId: string }) =>
-            Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+            Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
         },
         config: { getMasked: () => Promise.resolve(maskedConfig()) },
         entities: {

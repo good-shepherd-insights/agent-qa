@@ -44,6 +44,8 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CurationSnapshotSchema,
   CURRENT_BUS_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
@@ -107,7 +109,7 @@ const CHAIN_MODEL: JobModelCapability = {
 
 const CHAIN_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/425-07.config.yaml',
     entries: [],
   }),
@@ -849,7 +851,7 @@ const COMMITTED_SNAPSHOT = CurationSnapshotSchema.parse({
     changes: [{
       bucket: 'added',
       change: {
-        schemaVersion: 1,
+        schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
         recordId: 'record-added',
         change: 'added',
         atOrdinal: 7,

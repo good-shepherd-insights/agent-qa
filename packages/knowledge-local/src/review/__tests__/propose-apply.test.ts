@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 import type { Anchor, BundleDraft } from '@vostride/agent-qa-schema'
-import { asRunId, asRecordId, asEvidenceToken, type KnowledgeMarkInput } from '@vostride/agent-qa-schema'
+import { asRunId, asRecordId, asEvidenceToken, type KnowledgeMarkInput, IMPROVEMENT_PLAN_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { publishBundle, type BundleStoreConfig } from '../../bundle-publish.test-helper.js'
@@ -142,7 +142,7 @@ describe('a change computes its target and deltas, and a refused change writes n
     const mark = { markId: 'mark_0123456789ab', runId, testIndex: 0,
       kind: 'false-fail' as const, fix: 'fact' as const }
     const scope = { tier: 'product' as const, key: 'review-storefront' }
-    return { target, mark, plan: { schemaVersion: 1, markId: mark.markId, kind: 'knowledge',
+    return { target, mark, plan: { schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId: mark.markId, kind: 'knowledge',
       fix: 'fact', target, wording: 'floor', feedbackSource: { runId, testIndex: 0, kind: mark.kind },
       runTraceRef: { runId, runSlug: runId }, deltas: [{ kind: 'Supersede', origin: 'user', scope,
         citedIds: [asRecordId(recordId)], victimId: asRecordId(recordId),

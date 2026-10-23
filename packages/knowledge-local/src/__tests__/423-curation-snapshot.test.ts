@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange, RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { diffSince } from '../diff-since.js'
 import * as bundleAppend from '../bundle-append.js'
 import { loadBundle } from '../bundle-read.js'
@@ -273,7 +273,7 @@ describe('423 curation snapshot', () => {
 
   it('STRONGEST-ONCE retains older supersessions and collapses repeated identities', () => {
     const change = (recordId: string, kind: 'added' | 'confirmed' | 'superseded' | 'deprecated', atOrdinal: number, byRecordId?: string) => ({
-      schemaVersion: 1 as const, recordId, change: kind, atOrdinal, sourceRunId: 'synthetic-run',
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION, recordId, change: kind, atOrdinal, sourceRunId: 'synthetic-run',
       ...(byRecordId === undefined ? {} : { byRecordId }),
     })
     const effects = [

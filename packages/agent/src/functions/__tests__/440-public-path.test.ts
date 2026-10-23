@@ -6,6 +6,7 @@ import {
   DRAFT_STABILITY_RUNS_N,
   DraftReceiptSchema,
   NO_RUNS_FAN_OUT_BOUND,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { DraftReceipt, FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -238,7 +239,7 @@ function publicPathHost(options: {
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }: { readonly recordId: string }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId } as const),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
@@ -246,7 +247,7 @@ function publicPathHost(options: {
     },
     config: {
       getMasked: () => Promise.resolve({
-        schemaVersion: 1,
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
         configPath: 'agent-qa.config.yaml',
         entries: [],
       }),

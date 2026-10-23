@@ -37,7 +37,13 @@ import {
 import { DELTA_KINDS } from '../delta/delta'
 import { DELTA_ORIGINS } from '../delta/envelope'
 import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '../brief/retrieval-trace'
-import { COMMIT_RECEIPT_SCHEMA_VERSION, FORGET_RECEIPT_SCHEMA_VERSION } from '../index'
+import {
+  COMMIT_RECEIPT_SCHEMA_VERSION,
+  FORGET_RECEIPT_SCHEMA_VERSION,
+  IMPROVEMENT_PLAN_SCHEMA_VERSION,
+  INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
+} from '../index'
 
 const scope = { tier: 'suite', key: 'checkout' } as const
 
@@ -86,7 +92,7 @@ const changeDeltas = z.array(DeltaSchema)
 
 describe('the mark change stamp and the mark review input (419 D-01)', () => {
   const plan = {
-    schemaVersion: 1, kind: 'knowledge', markId: markStamp.markId,
+    schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, kind: 'knowledge', markId: markStamp.markId,
     feedbackSource: { runId: 'run-1', testIndex: 0, kind: 'false-fail' },
     runTraceRef: { runId: 'run-1', runSlug: 'run-1' },
     fix: 'fact', target: { grain: 'record', recordId: 'rec-checkout-1' },
@@ -448,7 +454,7 @@ describe('review-verb input and output DTOs (KREV-01 wiring contracts)', () => {
 
   it('projects the reader return shapes faithfully rather than re-minting them', () => {
     const record = {
-      schemaVersion: 1,
+      schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION,
       recordId: 'rec-checkout-1',
       product: 'shop',
       scope: 'suite:checkout',
@@ -463,20 +469,20 @@ describe('review-verb input and output DTOs (KREV-01 wiring contracts)', () => {
     }
 
     expect(
-      KnowledgeRecordsInspectOutputSchema.parse({ schemaVersion: 1, records: [record] }).records,
+      KnowledgeRecordsInspectOutputSchema.parse({ schemaVersion: 2, records: [record] }).records,
     ).toHaveLength(1)
     expect(
       KnowledgeRecordsDiffOutputSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         sinceOrdinal: 3,
         changes: [
-          { schemaVersion: 1, recordId: 'rec-checkout-1', change: 'confirmed', atOrdinal: 9 },
+          { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'rec-checkout-1', change: 'confirmed', atOrdinal: 9 },
         ],
       }).changes[0].change,
     ).toBe('confirmed')
     expect(
       KnowledgeRecordShowOutputSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         record,
         provenance,
         summary: 'checkout button lives in the header',
@@ -488,16 +494,16 @@ describe('review-verb input and output DTOs (KREV-01 wiring contracts)', () => {
     // could never emit is refused here too rather than being waved through as `unknown`.
     expect(() =>
       KnowledgeRecordsInspectOutputSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         records: [{ ...record, status: 'forgotten' }],
       }),
     ).toThrow()
     expect(() =>
       KnowledgeRecordsDiffOutputSchema.parse({
-        schemaVersion: 1,
+        schemaVersion: 2,
         sinceOrdinal: 3,
         changes: [
-          { schemaVersion: 1, recordId: 'r', change: 'forgotten', atOrdinal: 9 },
+          { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'r', change: 'forgotten', atOrdinal: 9 },
         ],
       }),
     ).toThrow()

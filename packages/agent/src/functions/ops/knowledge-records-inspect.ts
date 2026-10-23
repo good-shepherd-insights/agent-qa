@@ -61,7 +61,7 @@ export const knowledgeRecordsInspectSpec: FunctionSpec<
     // the first time either changed.
     const records = await deps.knowledge.inspectRecords(input)
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       records: [...records].sort(byRecordThenProduct),
     }
   },

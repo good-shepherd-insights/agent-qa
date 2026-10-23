@@ -7,7 +7,7 @@ import type { ReplayGatePort, KnowledgeReaderPort } from '@vostride/agent-qa-age
 import * as local from '@vostride/agent-qa-agent-local'
 import type { ComposeLocalAgentInput, LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { createPanelIdentity } from '@vostride/agent-qa-eval'
-import { asRecordId, asRef, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { asRecordId, asRef, stampReceiptDigest, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import * as evalLocal from '@vostride/agent-qa-eval-local'
 import * as model from '@vostride/agent-qa-model'
 import type { GateReceipt } from '@vostride/agent-qa-schema'
@@ -290,7 +290,7 @@ describe('421 production panel host paths', () => {
     let markReady!: () => void
     const ready = new Promise<void>(resolve => { markReady = resolve })
     const running = runDaemonHost({ configPath, agentQaRoot, knowledgeRoot,
-      config: { getMasked: async () => ({ schemaVersion: 1, configPath, entries: [] }) },
+      config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath, entries: [] }) },
       model: () => ({ modelId: 'fixture', generate: async () => { throw new Error('unexpected model') } }),
       runExecution: {} as NonNullable<Parameters<typeof runDaemonHost>[0]['runExecution']>,
       logger: { info: vi.fn(), error: vi.fn() },

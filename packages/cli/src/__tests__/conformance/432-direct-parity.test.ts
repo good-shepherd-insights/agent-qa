@@ -84,6 +84,7 @@ import type { DaemonHostOperations } from '../../daemon/host.js'
 import { driveChatLines, genericFnClause } from './surface-dispatch.js'
 import { pinProcessTmpdir, removeTempRoots } from '../temp-roots.js'
 import type { PinnedTmpdir } from '../temp-roots.js'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 let pinnedTmpdir: PinnedTmpdir | undefined
 beforeAll(() => { pinnedTmpdir = pinProcessTmpdir() })
@@ -466,7 +467,7 @@ const DOORS: ReadonlyArray<readonly [string, Door]> = [
     }
     const model: JobModelCapability = { modelId: 'test:432-42-doors', generate: () => Promise.resolve({ text: 'unused' }) }
     const config: ConfigReaderPort = {
-      getMasked: () => Promise.resolve({ schemaVersion: 1, configPath: project.configPath, entries: [] }),
+      getMasked: () => Promise.resolve({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: project.configPath, entries: [] }),
     }
     let started = false
     const running = runDaemonHost({

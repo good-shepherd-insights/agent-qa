@@ -27,6 +27,7 @@ import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-ag
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import type { FunctionCaller, KnowledgeChangeOutput } from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { delegateKnowledgeChangeViaDaemon } from '../composition/local-agent-host.js'
@@ -49,7 +50,7 @@ const servers: InvokeServerHandle[] = []
 const INSTANCE_ID = '44444444-4444-4444-8444-444444444444'
 
 const MASKED_CONFIG = {
-  schemaVersion: 1 as const,
+  schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION as typeof MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   configPath: '/fixture/agent-qa.config.yaml',
   entries: [],
 }

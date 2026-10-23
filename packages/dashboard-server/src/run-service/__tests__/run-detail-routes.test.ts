@@ -74,6 +74,7 @@ import {
   type ScreenState,
   type SubActionEvidence,
   RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -168,7 +169,7 @@ function depsWith(
       inspectRecords: () => Promise.resolve([]),
       diffSince: () => Promise.resolve([]),
       showRecord: (input: { recordId: string }) =>
-        Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId: input.recordId } as const),
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId: input.recordId } as const),
     },
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
@@ -176,7 +177,7 @@ function depsWith(
     },
     config: {
       getMasked: () => Promise.resolve({
-        schemaVersion: 1,
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
         configPath: 'agent-qa.config.yaml',
         entries: [],
       }),

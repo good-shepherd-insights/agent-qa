@@ -91,7 +91,7 @@ describe('423 one maintenance record join', () => {
     const result = batch()({ knowledgeRoot: f.knowledgeRoot, recordIds: ids })
     expect(result[0]).toMatchObject({ kind: 'found', summary: input.draft.summary, body: input.draft.body,
       record: { recordId: f.id, scope: input.draft.scope.key } })
-    expect(result.slice(1)).toEqual(ids.slice(1).map(recordId => ({ kind: 'not-found', schemaVersion: 1, recordId })))
+    expect(result.slice(1)).toEqual(ids.slice(1).map(recordId => ({ kind: 'not-found', schemaVersion: 2, recordId })))
   })
 
   it('JOIN-NOT-FOUND: absent roots and empty requests never materialize storage', () => {
@@ -99,7 +99,7 @@ describe('423 one maintenance record join', () => {
     const missing = join(f.root, 'never', 'knowledge')
     const before = tree(f.root)
     expect(batch()({ knowledgeRoot: missing, recordIds: ['gone', 'gone'] }))
-      .toEqual([{ kind: 'not-found', schemaVersion: 1, recordId: 'gone' }])
+      .toEqual([{ kind: 'not-found', schemaVersion: 2, recordId: 'gone' }])
     expect(batch()({ knowledgeRoot: missing, recordIds: [] })).toEqual([])
     expect(existsSync(missing)).toBe(false)
     expect(tree(f.root)).toEqual(before)
@@ -109,15 +109,15 @@ describe('423 one maintenance record join', () => {
     const f = fixture()
     const before = tree(f.root)
     const original = showRecord({ knowledgeRoot: f.knowledgeRoot, recordId: f.id })
-    expect(JSON.stringify(original)).toMatchInlineSnapshot(`"{"kind":"found","schemaVersion":1,"record":{"schemaVersion":1,"recordId":"fact-el-button-97ff2af3f56ffb17","product":"join-fixture","scope":"join-fixture","kind":"fact","status":"candidate","confirmations":0,"contradictions":0,"evidenceTokens":[],"lastEventOrdinal":7,"openedAtOrdinal":7,"anchors":["{\\"name\\":\\"購入\\",\\"role\\":\\"button\\",\\"t\\":\\"el\\"}"]},"provenance":{"schemaVersion":2,"mode":"standalone","originClass":"agent-verified","sourceDescription":"Synthetic joined record"},"summary":"購入 Café é 🧪","body":"Click 購入; preserve é and é exactly."}"`)
-    expect(original).toMatchObject({ kind: 'found', schemaVersion: 1,
+    expect(JSON.stringify(original)).toMatchInlineSnapshot(`"{"kind":"found","schemaVersion":2,"record":{"schemaVersion":2,"recordId":"fact-el-button-97ff2af3f56ffb17","product":"join-fixture","scope":"join-fixture","kind":"fact","status":"candidate","confirmations":0,"contradictions":0,"evidenceTokens":[],"lastEventOrdinal":7,"openedAtOrdinal":7,"anchors":["{\\"name\\":\\"購入\\",\\"role\\":\\"button\\",\\"t\\":\\"el\\"}"]},"provenance":{"schemaVersion":2,"mode":"standalone","originClass":"agent-verified","sourceDescription":"Synthetic joined record"},"summary":"購入 Café é 🧪","body":"Click 購入; preserve é and é exactly."}"`)
+    expect(original).toMatchObject({ kind: 'found', schemaVersion: 2,
       summary: input.draft.summary, body: input.draft.body,
       record: { recordId: f.id, kind: 'fact', product: 'join-fixture', status: 'candidate',
         confirmations: 0, contradictions: 0, openedAtOrdinal: 7 },
     })
     const result = batch()({ knowledgeRoot: f.knowledgeRoot, recordIds: [f.id, 'gone'] })
     expect(JSON.stringify(result)).toBe(JSON.stringify([original,
-      { kind: 'not-found', schemaVersion: 1, recordId: 'gone' }]))
+      { kind: 'not-found', schemaVersion: 2, recordId: 'gone' }]))
     expect(JSON.stringify(batch()({ knowledgeRoot: f.knowledgeRoot, recordIds: [f.id, 'gone'] })))
       .toBe(JSON.stringify(result))
     expect(tree(f.root)).toEqual(before)

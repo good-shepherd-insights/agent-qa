@@ -24,6 +24,7 @@ import {
   toRunNotificationView,
   type RecordChange,
   type RunNotification,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { ProposeGate1Report } from '@vostride/agent-qa-agent'
 import {
@@ -208,7 +209,7 @@ describe('the chain terminal line and the third stage (D-13/D-14/D-19)', () => {
 })
 
 function snapshotChange(recordId: string, change: RecordChange['change'], atOrdinal: number): RecordChange {
-  return { schemaVersion: 1, recordId, change, atOrdinal }
+  return { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal }
 }
 
 describe('the chain terminal line and the five-bucket curation breakdown (423 D-15)', () => {

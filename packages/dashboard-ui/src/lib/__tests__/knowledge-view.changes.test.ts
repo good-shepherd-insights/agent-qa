@@ -7,6 +7,7 @@ import {
   CurationSnapshotSchema,
   RunKnowledgeProjectionSchema,
   type RunKnowledgeProjection,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 
 import { BREAKDOWN_NOT_RECORDED_TEXT, NO_MEMORY_CHANGES_TEXT, curationBreakdownLine } from '@/lib/post-processing-view'
@@ -53,7 +54,7 @@ function content(recordId: string, overrides: Partial<Content> = {}): Content {
 
 function recorded(recordId: string, change: LearnedChange['change'], atOrdinal: number, extra: Partial<LearnedChange> = {}) {
   return {
-    schemaVersion: 1 as const, recordId, change, atOrdinal, sourceRunId: RUN,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal, sourceRunId: RUN,
     evidenceToken: `receipt-${recordId}-${String(atOrdinal)}`, ...extra,
   }
 }

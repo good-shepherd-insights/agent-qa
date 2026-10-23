@@ -27,6 +27,8 @@ import {
   CurationSnapshotSchema,
   sha256hex,
   toRunNotificationView,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -68,7 +70,7 @@ const TEST_MODEL: JobModelCapability = {
 
 const TEST_CONFIG: ConfigReaderPort = {
   getMasked: () => Promise.resolve({
-    schemaVersion: 1,
+    schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
     configPath: '/tmp/post-processing-status.config.yaml',
     entries: [],
   }),
@@ -226,7 +228,7 @@ function readQueue(root: string) {
 const CURATION_SNAPSHOT = CurationSnapshotSchema.parse({
   schemaVersion: 1,
   rows: [{ recordId: 'affected-record', bucket: 'added', changes: [{ bucket: 'added',
-    change: { schemaVersion: 1, recordId: 'affected-record', change: 'added', atOrdinal: 9 },
+    change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'affected-record', change: 'added', atOrdinal: 9 },
   }] }],
   breakdown: { added: 1, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
 })

@@ -16,6 +16,8 @@ import {
   asRunId,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
   RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+  INSPECT_RECORD_VIEW_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -133,7 +135,7 @@ const EMPTY_KNOWLEDGE: KnowledgeReaderPort = {
   listBundles: () => Promise.resolve([]),
   inspectRecords: () => Promise.resolve([]),
   diffSince: () => Promise.resolve([]),
-  showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 1, recordId }),
+  showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId }),
 }
 
 interface Scene {
@@ -412,18 +414,18 @@ function multiScene(): Multi {
 
 function currentRecord(recordId: string) {
   return KnowledgeRecordShowResultSchema.parse({
-    kind: 'found', schemaVersion: 1, summary: `current summary of ${recordId}`,
+    kind: 'found', schemaVersion: 2, summary: `current summary of ${recordId}`,
     body: `Current body of ${recordId}`,
     provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed',
       sourceDescription: 'synthetic inspection' },
-    record: { schemaVersion: 1, recordId, product: 'shop', scope: 'checkout', kind: 'procedure',
+    record: { schemaVersion: INSPECT_RECORD_VIEW_SCHEMA_VERSION, recordId, product: 'shop', scope: 'checkout', kind: 'procedure',
       status: 'active', confirmations: 2, contradictions: 0, evidenceTokens: ['evidence-current'],
       openedAtOrdinal: 1, lastEventOrdinal: 5, anchors: ['page:/checkout'] },
   })
 }
 
 function learnedChange(overrides: Partial<RecordChange>): RecordChange {
-  return { schemaVersion: 1, recordId: 'rec-learned', change: 'added', atOrdinal: 5, ...overrides }
+  return { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'rec-learned', change: 'added', atOrdinal: 5, ...overrides }
 }
 
 function snapshot() {
@@ -470,7 +472,7 @@ function multiHarness(scene: Multi, options: MultiOptions = {}) {
   }
   const show = (recordId: string) => FOUND.has(recordId)
     ? currentRecord(recordId)
-    : { kind: 'not-found' as const, schemaVersion: 1 as const, recordId }
+    : { kind: 'not-found' as const, schemaVersion: 2 as const, recordId }
   const rows = 'rows' in options ? options.rows : scene.rows
   const deps: FunctionDeps = {
     runs: {

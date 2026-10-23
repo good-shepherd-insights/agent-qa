@@ -8,6 +8,7 @@ import {
   asRecordId,
   guardRecordChange,
   stampReceiptDigest,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   BundleOutcomeEvent,
@@ -196,14 +197,14 @@ describe('diffSince deterministic maintenance history', () => {
 
     expect(changes.map(guardRecordChange)).toEqual(changes)
     expect(changes).toContainEqual({
-      schemaVersion: 1,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
       recordId: confirmedId,
       change: 'confirmed',
       atOrdinal: 11,
       evidenceToken: 'confirmed-at-11',
     })
     expect(changes).toContainEqual({
-      schemaVersion: 1,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
       recordId: supersededId,
       change: 'superseded',
       atOrdinal: 12,
@@ -215,7 +216,7 @@ describe('diffSince deterministic maintenance history', () => {
     // do not, because this fixture's provenance names no `curationJobId` for their events to
     // match — which is the point of the rule and not an omission in the fixture.
     expect(changes).toContainEqual({
-      schemaVersion: 1,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
       recordId: addedId,
       change: 'added',
       atOrdinal: 13,
@@ -250,14 +251,14 @@ describe('diffSince deterministic maintenance history', () => {
 
     expect(first.filter((change) => change.recordId === addedId)).toEqual([
       {
-        schemaVersion: 1,
+        schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
         recordId: addedId,
         change: 'added',
         atOrdinal: 11,
         sourceRunId: 'diff-added-transition',
       },
       {
-        schemaVersion: 1,
+        schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
         recordId: addedId,
         change: 'deprecated',
         atOrdinal: 14,
@@ -298,7 +299,7 @@ describe('diffSince deterministic maintenance history', () => {
     expect(purged.receipt.purgedAtOrdinal).toBe(21)
     expect(diffSince(knowledgeRoot, 20)).toEqual([
       {
-        schemaVersion: 1,
+        schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
         recordId: purgedId,
         change: 'purged',
         atOrdinal: 21,
@@ -350,7 +351,7 @@ describe('diffSince deterministic maintenance history', () => {
     const secondDiff = diffSince(knowledgeRoot, 101).map(guardRecordChange)
     expect(firstDiff).toEqual([
       {
-        schemaVersion: 1,
+        schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
         recordId: recordB,
         change: 'purged',
         atOrdinal: secondPurge.receipt.purgedAtOrdinal,
@@ -378,7 +379,7 @@ describe('diffSince deterministic maintenance history', () => {
     )
 
     expect(diffSince(knowledgeRoot, 10)).toContainEqual({
-      schemaVersion: 1,
+      schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
       recordId: 'purged-record',
       change: 'purged',
       atOrdinal: 14,
@@ -462,7 +463,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(changes).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'added',
           atOrdinal: 3,
@@ -490,7 +491,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'confirmed',
           atOrdinal: 5,
@@ -518,7 +519,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'promoted',
           atOrdinal: 6,
@@ -549,7 +550,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(changes).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'confirmed',
           atOrdinal: 5,
@@ -579,7 +580,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'confirmed',
           atOrdinal: 5,
@@ -608,13 +609,13 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(JSON.stringify(changes)).toBe(JSON.stringify([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'added',
           atOrdinal: 3,
         },
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'confirmed',
           atOrdinal: 5,
@@ -642,7 +643,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'deprecated',
           atOrdinal: 5,
@@ -675,7 +676,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(diffSince(knowledgeRoot, 4).map(guardRecordChange)).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId,
           change: 'superseded',
           atOrdinal: 5,
@@ -713,7 +714,7 @@ describe('diffSince deterministic maintenance history', () => {
 
       expect(purged).toEqual([
         {
-          schemaVersion: 1,
+          schemaVersion: RECORD_CHANGE_SCHEMA_VERSION,
           recordId: 'purged-record',
           change: 'purged',
           atOrdinal: 14,

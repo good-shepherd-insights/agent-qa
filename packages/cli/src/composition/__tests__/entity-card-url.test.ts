@@ -91,7 +91,7 @@ function depsFor(configPath: string): FunctionDeps {
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }) => Promise.resolve({
         kind: 'not-found' as const,
-        schemaVersion: 1 as const,
+        schemaVersion: 2 as const,
         recordId,
       }),
     },

@@ -2,6 +2,7 @@ import {
   MARK_RECEIPT_SCHEMA_VERSION,
   asRunId,
   RunDetailProjectionSchema,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   FeedbackPort,
@@ -58,10 +59,10 @@ function deps(feedback?: FeedbackPort): FunctionDeps {
     },
     knowledge: {
       listBundles: async () => [], inspectRecords: async () => [], diffSince: async () => [],
-      showRecord: async ({ recordId }) => ({ kind: 'not-found', schemaVersion: 1, recordId }),
+      showRecord: async ({ recordId }) => ({ kind: 'not-found', schemaVersion: 2, recordId }),
     },
     entities: { resolve: async () => ({ kind: 'none', reason: 'no-match' }), get: async () => undefined },
-    config: { getMasked: async () => ({ schemaVersion: 1, configPath: 'agent-qa.config.yaml', entries: [] }) },
+    config: { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: 'agent-qa.config.yaml', entries: [] }) },
     ...(feedback === undefined ? {} : { feedback }),
   }
 }

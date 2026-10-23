@@ -16,7 +16,7 @@
 // on the third job's payload. A builder that read only what the finishing job published would
 // report a completed curation as a failure and lose its counts — the exact trap 422-PATTERNS names.
 
-import { asJobId, CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { asJobId, CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, Job, JobKind } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -234,9 +234,9 @@ describe('the chain terminal notification carries upstream truth forward (422 D-
 // independently of the fold. Two events for one row must remain two events and one unit.
 function committedSnapshot(): CurationSnapshot {
   return { schemaVersion: 1, rows: [{ recordId: 'record-fixed', bucket: 'confirmed', changes: [
-    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'record-fixed', change: 'confirmed',
+    { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-fixed', change: 'confirmed',
       atOrdinal: 7, evidenceToken: 'synthetic-first' } },
-    { bucket: 'confirmed', change: { schemaVersion: 1, recordId: 'record-fixed', change: 'confirmed',
+    { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'record-fixed', change: 'confirmed',
       atOrdinal: 8, evidenceToken: 'synthetic-second' } },
   ] }], breakdown: { added: 0, confirmed: 1, superseded: 0, deprecated: 0, proposed: 0 } }
 }

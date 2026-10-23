@@ -13,6 +13,8 @@ import {
   CurationSnapshotSchema,
   type CompletedRunHandoff,
   CURRENT_BUS_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import * as tailModule from '../curation-tail.js'
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
@@ -29,7 +31,7 @@ const RUN_ID = asRunId('synthetic-423-run')
 const snapshot = CurationSnapshotSchema.parse({ schemaVersion: 1,
   rows: ['added', 'confirmed', 'superseded', 'deprecated', 'proposed'].map((bucket, i) => ({
     recordId: `record-${i}`, bucket, ...(bucket === 'superseded' ? { byRecordId: 'replacement' } : {}),
-    changes: [{ bucket, change: { schemaVersion: 1, recordId: `record-${i}`,
+    changes: [{ bucket, change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: `record-${i}`,
       change: bucket === 'proposed' ? 'added' : bucket, atOrdinal: 42,
       sourceRunId: RUN_ID, observationId: `observation-${i}`,
       ...(bucket === 'superseded' ? { byRecordId: 'replacement' } : {}) } }],
@@ -272,7 +274,7 @@ function zeroEffectEvents(runId: string) {
 }
 
 const DAEMON_LEASE = { leaseId: 'lease-daemon', epoch: 41 }
-const TEST_CONFIG = { getMasked: async () => ({ schemaVersion: 1, configPath: '/tmp/423.config.yaml', entries: [] }) }
+const TEST_CONFIG = { getMasked: async () => ({ schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, configPath: '/tmp/423.config.yaml', entries: [] }) }
 const TEST_MODEL = { modelId: 'synthetic:test', generate: async () => { throw new Error('no provider work') } }
 async function startDaemon() {
   const fixture = createInProcessFixture({ origin: 'http://127.0.0.1:1', environment: 'local' })

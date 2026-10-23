@@ -7,6 +7,7 @@ import {
   RunKnowledgeProjectionSchema,
   type RunKnowledgeProjection,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
+  RECORD_CHANGE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { chromium, type BrowserContext, type CDPSession, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -77,7 +78,7 @@ function content(summary: string, kind: 'fact' | 'caution' = 'fact', narrative?:
 }
 
 function recorded(runId: string, recordId: string, change: string, atOrdinal: number, extra: Record<string, unknown> = {}) {
-  return { schemaVersion: 1, recordId, change, atOrdinal, sourceRunId: runId, evidenceToken: `receipt-${String(atOrdinal)}`, ...extra }
+  return { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal, sourceRunId: runId, evidenceToken: `receipt-${String(atOrdinal)}`, ...extra }
 }
 
 const SUMMARIES: Record<string, string> = {

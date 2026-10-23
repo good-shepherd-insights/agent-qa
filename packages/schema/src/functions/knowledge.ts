@@ -7,7 +7,7 @@ import { GateLineSchema, GateReceiptSchema } from '../knowledge/gate-receipt'
 import { PROMOTION_PATHS } from '../knowledge/promotion-path'
 import { PROMOTION_GATE_HOLD_REASONS, type PromotionGateVerdict } from '../knowledge/promotion-gate'
 
-export const KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION = 1
+export const KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION = 2
 
 /**
  * One committed knowledge bundle as `knowledge.bundles.list` projects it

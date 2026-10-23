@@ -1,7 +1,7 @@
 // 427 · D-02, D-04, D-05, D-07 — the section set, the grouped used rows and the step-reference text.
 
 import { describe, expect, it } from 'vitest'
-import { RunKnowledgeProjectionSchema, type RunKnowledgeProjection } from '@vostride/agent-qa-schema'
+import { RunKnowledgeProjectionSchema, type RunKnowledgeProjection, RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 import {
   ANCHOR_PHRASE_TYPES,
@@ -84,7 +84,7 @@ function step(stepIndex: number, channel1: ReturnType<typeof line>[], testIndex 
 }
 
 function change(recordId: string, join: Join) {
-  return { schemaVersion: 1, recordId, change: 'added', atOrdinal: 2, ...join }
+  return { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change: 'added', atOrdinal: 2, ...join }
 }
 
 function projection(

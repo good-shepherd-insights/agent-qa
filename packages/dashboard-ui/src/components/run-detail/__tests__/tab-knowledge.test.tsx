@@ -1,3 +1,4 @@
+import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // THE KNOWLEDGE TAB A PERSON ACTUALLY SEES (407-02 · LERN-01, D-01/D-03/D-06/D-16, T-407-06).
@@ -375,7 +376,7 @@ type LearnedChange = ReadyProjection["learned"]["changes"][number]
 
 function change(recordId: string, kind: LearnedChange["change"], atOrdinal: number, extra: Partial<LearnedChange> = {}) {
   return {
-    schemaVersion: 1 as const, recordId, change: kind, atOrdinal, sourceRunId: RUN_423,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION, recordId, change: kind, atOrdinal, sourceRunId: RUN_423,
     evidenceToken: `receipt-${recordId}-${String(atOrdinal)}`, ...extra,
   }
 }
