@@ -6,7 +6,7 @@ import type { FunctionCaller, LiveStreamDeclaration, LiveUrlSigner } from '@vost
 import { describe, expect, it } from 'vitest'
 
 import { invokeFunction } from '../invoke.js'
-import { LIVE_URL_TTL_MS, validateLiveUrlToken } from '../live-url.js'
+import { LIVE_URL_TOKEN_VERSION, LIVE_URL_TTL_MS, validateLiveUrlToken } from '../live-url.js'
 import { EDITOR_LIVE_URL_FUNCTION_ID, editorLiveUrlSpec } from '../ops/editor-live-url.js'
 import { createRegistryFromSpecs } from '../registry.js'
 import type { FunctionDeps, FunctionSpec, LiveViewPort } from '../spec.js'
@@ -134,11 +134,11 @@ describe('editor.liveurl mints the editor subject (428 D-07)', () => {
     const live = recordingLiveView()
     const result = EditorLiveUrlResultSchema.parse(await mint(live.port))
     const token = result.liveUrl.split('#')[1] ?? ''
-    expect(token.startsWith('v1.'), 'the result carries a live credential to leak').toBe(true)
+    expect(token.startsWith(`${LIVE_URL_TOKEN_VERSION}.`), 'the result carries a live credential to leak').toBe(true)
     const outcome = editorLiveUrlSpec.classify?.(result).outcome ?? ''
     expect(outcome).toBe('liveUrl minted for a live editor session')
     expect(outcome).not.toContain(result.liveUrl)
     expect(outcome).not.toContain(token)
-    expect(outcome).not.toContain('v1.')
+    expect(outcome).not.toContain(`${LIVE_URL_TOKEN_VERSION}.`)
   })
 })

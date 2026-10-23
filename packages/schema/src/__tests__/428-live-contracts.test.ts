@@ -36,7 +36,7 @@ test('EDITOR-LIVE-URL-DTOS-STRICT', () => {
   expect(input.safeParse({ sessionId: '' }).success).toBe(false)
   expect(input.safeParse({ sessionId: 's1', runId: 'r' }).success).toBe(false)
   const result = {
-    liveUrl: 'http://127.0.0.1:1/live/s1#v1.a.b',
+    liveUrl: 'http://127.0.0.1:1/live/s1#v2.a.b',
     expiresAt: 1,
     stream: { kind: 'snapshot' },
   }

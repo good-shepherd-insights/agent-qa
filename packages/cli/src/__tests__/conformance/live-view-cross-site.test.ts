@@ -507,7 +507,7 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
     const context = `status=${String(answer.status)} body=${answer.body.slice(0, 200)} `
       + `note=${answer.note ?? 'none'}. ${childContext(f.dashboard)}`
     expect(answer.status, `${context} — the dashboard's own UI is the caller this door exists for`).toBe(200)
-    expect(liveUrlIn(answer), `${context} — and it receives a real token`).toMatch(/^http.*#v1\./u)
+    expect(liveUrlIn(answer), `${context} — and it receives a real token`).toMatch(/^http.*#v2\./u)
   }, 60_000)
 
   it('(4) REGRESSION PIN: the non-browser client, which sends NO Origin at all, still mints', async () => {
@@ -527,7 +527,7 @@ describe('the live-url mint door refuses a cross-site browser request (SC-2, LIV
     expect(
       (JSON.parse(raw) as { liveUrl?: string }).liveUrl,
       `${context} — and it receives a real token`,
-    ).toMatch(/^http.*#v1\./u)
+    ).toMatch(/^http.*#v2\./u)
 
     // The SECOND spelling of the same fact, because a header a client library did not send and a
     // header the server did not write fail differently: the answer carries no wildcard CORS grant
@@ -1199,7 +1199,7 @@ describe('the live-editor surface refuses a cross-site caller (428 D-08, WINDOWS
       expect(reading.hostileAcao, `${context} — ${String(reading.door)}: no read grant on the refusal`)
         .toBeNull()
       expect(String(reading.hostileBody), `${context} — ${String(reading.door)}: no token leaves`)
-        .not.toContain('v1.')
+        .not.toContain('v2.')
     }
   }, 60_000)
 
@@ -1220,7 +1220,7 @@ describe('the live-editor surface refuses a cross-site caller (428 D-08, WINDOWS
       + `note=${sameOrigin.note ?? 'none'}. ${childContext(f.dashboard)}`
     expect(sameOrigin.status, `${sameOriginContext} — the dashboard's own page mints`).toBe(200)
     const result = EditorLiveUrlResultSchema.parse(JSON.parse(sameOrigin.body))
-    expect(result.liveUrl, `${sameOriginContext} — a real token, in the fragment`).toMatch(/^http.*#v1\./u)
+    expect(result.liveUrl, `${sameOriginContext} — a real token, in the fragment`).toMatch(/^http.*#v2\./u)
     expect(
       sameOrigin.headers['access-control-allow-origin'] ?? null,
       `${sameOriginContext} — the admitted answer stamps no cross-origin read grant`,

@@ -50,7 +50,7 @@ import { RunDetailMemberMarkSchema, type RunDetailMemberMark } from './feedback'
 import { wireOutputContract } from './output-contract'
 import { oneJoinArm, recordJoinShape } from './record-join'
 
-export const RUN_SUMMARY_SCHEMA_VERSION = 1
+export const RUN_SUMMARY_SCHEMA_VERSION = 2
 
 /**
  * Surface-facing projection of one completed run (Phase 384, D-16).
@@ -187,7 +187,7 @@ export type RunsListOutput = z.infer<typeof RunsListOutputSchema>
  */
 export const RunsListOutputContract = wireOutputContract(RunsListOutputSchema)
 
-export const RUN_DETAIL_SCHEMA_VERSION = 1
+export const RUN_DETAIL_SCHEMA_VERSION = 2
 
 /**
  * One member test as `runs.get` projects it (Phase 384, D-06/D-16).
@@ -428,7 +428,7 @@ export const RunsStartInputSchema = z.object({
 
 export type RunsStartInput = z.infer<typeof RunsStartInputSchema>
 
-export const RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION = 1
+export const RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION = 2
 
 const plannerLimitSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
 
@@ -542,7 +542,7 @@ export const EditorLiveUrlResultSchema = z.object({
 
 export type EditorLiveUrlResult = z.infer<typeof EditorLiveUrlResultSchema>
 
-export const RUN_EVENT_ENVELOPE_SCHEMA_VERSION = 1
+export const RUN_EVENT_ENVELOPE_SCHEMA_VERSION = 2
 
 /**
  * The `runs.events` stream ELEMENT contract (Phase 384, D-08).

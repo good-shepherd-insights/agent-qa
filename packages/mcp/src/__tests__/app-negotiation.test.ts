@@ -475,7 +475,7 @@ describe('the refusal arm runs before anything is invoked (acceptance: zero mint
         return opId === RUNS_LIVE_URL_FUNCTION_ID
           ? {
               handle: 0,
-              liveUrl: `${FIXTURE_ORIGIN}/live/${FIXTURE_RUN_ID}#v1.body.sig`,
+              liveUrl: `${FIXTURE_ORIGIN}/live/${FIXTURE_RUN_ID}#v2.body.sig`,
               expiresAt: 1_800_000_300_000,
               stream: { kind: 'cdp-screencast' },
             }

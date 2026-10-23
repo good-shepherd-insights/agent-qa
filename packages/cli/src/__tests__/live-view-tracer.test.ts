@@ -292,7 +292,7 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
     const result = await mint(0)
     expect(result.stream.kind, 'a live Chromium member declares the screencast capability')
       .toBe('cdp-screencast')
-    expect(result.liveUrl.startsWith(`${held.origin}${LIVE_EMBED_PATH_PREFIX}${held.runId}#v1.`)).toBe(true)
+    expect(result.liveUrl.startsWith(`${held.origin}${LIVE_EMBED_PATH_PREFIX}${held.runId}#v2.`)).toBe(true)
     // The two packages spell the embed prefix separately (dashboard-server may not import agent).
     // Pin them EQUAL rather than assume it.
     expect(SERVER_EMBED_PATH_PREFIX).toBe(LIVE_EMBED_PATH_PREFIX)
@@ -358,7 +358,7 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
     const body = await response.text()
     // The token lives in a fragment the server never receives — so a document it served cannot
     // contain one, and this is the cheapest place to notice if that ever stopped being true.
-    expect(body).not.toContain('v1.')
+    expect(body).not.toContain('v2.')
   }, 60_000)
 
   it('(iv-b) PITFALL 10: the /live/ arm is registered ABOVE the static/SPA arm, in source', () => {
@@ -416,7 +416,7 @@ describe('the tracer: one real CDP frame behind a function-layer-minted liveUrl'
   }, 120_000)
 })
 
-// ---- The editor token's absence (428 D-07; RESEARCH P7: the 'v1.' needle stays) ----------------
+// ---- The editor token's absence; the version prefix is one of its needles ---------------------
 //
 // The same credential rules as a run token, measured on the shipped composition the live-view
 // harness composes: the editor mint door, the dispatcher under the dashboard caller, and the frame
@@ -510,14 +510,14 @@ describe('an editor token obeys every credential rule a run token does (428 D-07
       expect(log, 'the capture saw stderr').toContain('428-12 capture control: stderr')
       // THE NEEDLES' POSITIVE CONTROL: the mint's own body carries the token and its needle.
       expect(result.mintBody, 'the mint body is the one place the token is handed out').toContain(result.token)
-      expect(result.mintBody).toContain('v1.')
+      expect(result.mintBody).toContain('v2.')
       expect(result.socketTexts.map((text) => (JSON.parse(text) as { type?: string }).type), 'the socket was watched to its end')
         .toEqual(expect.arrayContaining(['ready', 'frame', 'ended']))
 
       const [, claimsPart, signaturePart] = result.token.split('.')
       expect((claimsPart ?? '').length, 'a substantial needle').toBeGreaterThan(20)
       const needles: [string, string][] = [
-        ['v1.', 'the token version prefix'],
+        ['v2.', 'the token version prefix'],
         [result.token, 'the whole editor token'],
         [claimsPart as string, 'the token\'s claims body'],
         [signaturePart as string, 'the token\'s signature'],
@@ -530,7 +530,7 @@ describe('an editor token obeys every credential rule a run token does (428 D-07
       }
       // A URL carries the token only after its '#': the path the server sees has none of it.
       const [beforeFragment] = result.liveUrl.split('#')
-      expect(beforeFragment, 'the served path and query carry no token').not.toContain('v1.')
+      expect(beforeFragment, 'the served path and query carry no token').not.toContain('v2.')
       expect(beforeFragment).not.toContain(claimsPart as string)
     } finally {
       await editor.close()

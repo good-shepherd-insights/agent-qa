@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   LIVE_EMBED_PATH_PREFIX,
+  LIVE_URL_TOKEN_VERSION,
   LIVE_URL_TTL_MS,
   decodeBase64Url,
   encodeBase64Url,
@@ -128,10 +129,15 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
       .toEqual({ kind: 'refused', reason: 'bad_signature' })
   })
 
-  it('refuses a two-part token, a non-v1 prefix and an empty part as malformed', () => {
+  it('refuses a two-part token, a v1 prefix and an empty part as malformed', () => {
     const token = mintLiveUrlToken(fakeSigner, claims())
     const [, body, signature] = token.split('.') as [string, string, string]
-    for (const bad of [`${body}.${signature}`, `v2.${body}.${signature}`, `v1..${signature}`, `v1.${body}.`]) {
+    for (const bad of [
+      `${body}.${signature}`,
+      `v1.${body}.${signature}`,
+      `${LIVE_URL_TOKEN_VERSION}..${signature}`,
+      `${LIVE_URL_TOKEN_VERSION}.${body}.`,
+    ]) {
       expect(validateLiveUrlToken(fakeSigner, bad, AT_RUN_ALPHA).kind)
         .toBe('refused')
       expect(
@@ -143,7 +149,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
 
   it('refuses a well-signed non-JSON body as malformed', () => {
     const body = encodeBase64Url('not json at all')
-    const token = `v1.${body}.${fakeSigner.sign(body)}`
+    const token = `${LIVE_URL_TOKEN_VERSION}.${body}.${fakeSigner.sign(body)}`
     expect(validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA))
       .toEqual({ kind: 'refused', reason: 'malformed' })
   })
@@ -153,7 +159,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
     // `malformed` here and `bad_signature` only for a well-formed forgery — a free oracle telling
     // an attacker whether their claims body parsed.
     const body = encodeBase64Url('not json at all')
-    const token = `v1.${body}.sig:WRONG`
+    const token = `${LIVE_URL_TOKEN_VERSION}.${body}.sig:WRONG`
     expect(validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA))
       .toEqual({ kind: 'refused', reason: 'bad_signature' })
   })
@@ -182,10 +188,10 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   })
 
   it('puts the token in the FRAGMENT and nowhere else (D-04)', () => {
-    const url = liveUrlOf('http://localhost:4321', 'run-alpha', 'v1.body.sig')
-    expect(url).toBe('http://localhost:4321/live/run-alpha#v1.body.sig')
+    const url = liveUrlOf('http://localhost:4321', 'run-alpha', 'v2.body.sig')
+    expect(url).toBe('http://localhost:4321/live/run-alpha#v2.body.sig')
     expect(url.split('#')[0], 'no query, no path segment — the fragment is the only carriage')
-      .not.toContain('v1.body.sig')
+      .not.toContain('v2.body.sig')
     expect(LIVE_EMBED_PATH_PREFIX).toBe('/live/')
   })
 })
@@ -202,7 +208,7 @@ describe('the token names its subject; one kind never opens the other (428 D-07)
 
   function signedBodyToken(body: unknown): string {
     const encoded = encodeBase64Url(JSON.stringify(body))
-    return `v1.${encoded}.${fakeSigner.sign(encoded)}`
+    return `${LIVE_URL_TOKEN_VERSION}.${encoded}.${fakeSigner.sign(encoded)}`
   }
 
   it('RUN-TOKEN-REFUSED-FOR-EDITOR-SUBJECT', () => {
@@ -256,7 +262,7 @@ describe('the token names its subject; one kind never opens the other (428 D-07)
     for (const body of [unknownKind, runWithoutHandle]) {
       expect(validateLiveUrlToken(fakeSigner, signedBodyToken(body), AS_RUN))
         .toEqual({ kind: 'refused', reason: 'malformed' })
-      const unsigned = `v1.${encodeBase64Url(JSON.stringify(body))}.sig:WRONG`
+      const unsigned = `${LIVE_URL_TOKEN_VERSION}.${encodeBase64Url(JSON.stringify(body))}.sig:WRONG`
       expect(
         validateLiveUrlToken(fakeSigner, unsigned, AS_RUN),
         'the signature is still checked before the body is parsed',
@@ -271,7 +277,7 @@ describe('runs.liveurl through invokeFunction (403 D-03)', () => {
     const result = RunsLiveUrlResultSchema.parse(
       await invokeFunction(registryWith(live.port), RUNS_LIVE_URL_FUNCTION_ID, { runId: 'run-alpha', handle: 0 }, CALLER),
     )
-    expect(result.liveUrl.startsWith('http://localhost:4321/live/run-alpha#v1.')).toBe(true)
+    expect(result.liveUrl.startsWith(`http://localhost:4321/live/run-alpha#${LIVE_URL_TOKEN_VERSION}.`)).toBe(true)
     expect(result.expiresAt - NOW).toBe(LIVE_URL_TTL_MS)
     expect(result.handle).toBe(0)
     expect(result.stream, 'the result ECHOES the declared capability, it does not guess')

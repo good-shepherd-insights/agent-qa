@@ -23,7 +23,7 @@ import type {
 } from '@vostride/agent-qa-schema'
 
 /** The token's format marker. A FIXED prefix, deliberately — there is no algorithm negotiation. */
-export const LIVE_URL_TOKEN_VERSION = 'v1'
+export const LIVE_URL_TOKEN_VERSION = 'v2'
 
 /** How long a minted `liveUrl` stays valid (D-02). Short by design; the socket renews in place. */
 export const LIVE_URL_TTL_MS = 5 * 60 * 1000

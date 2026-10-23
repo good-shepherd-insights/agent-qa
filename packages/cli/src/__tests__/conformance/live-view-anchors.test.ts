@@ -283,7 +283,7 @@ describe('the shipped zero-token dashboard serves a live view (403 D-14, LIVE-02
     expect(result.liveUrl).toBe(
       `http://localhost:${String(f.dashboard.port)}/live/${f.runId}#${result.liveUrl.split('#')[1] ?? ''}`,
     )
-    expect(result.liveUrl.split('#')[1]?.startsWith('v1.')).toBe(true)
+    expect(result.liveUrl.split('#')[1]?.startsWith('v2.')).toBe(true)
     expect(
       result.stream.kind,
       'this run had no browser, so the declaration is `none` — not an error, and not a guess',
@@ -379,7 +379,7 @@ describe('the shipped zero-token dashboard serves a live view (403 D-14, LIVE-02
     // the CSP forbids and which an embedding host has no way to audit.
     expect(body, 'the embed page is self-contained').not.toContain('<script src=')
     expect(body, 'the fragment never reaches the server, so a served document cannot carry it')
-      .not.toContain('v1.')
+      .not.toContain('v2.')
     // And it is the LIVE VIEW, not the SPA fallback wearing its URL (Pitfall 10).
     expect(body).toContain('data-embed-state')
 
@@ -394,7 +394,7 @@ describe('the shipped zero-token dashboard serves a live view (403 D-14, LIVE-02
       const mintBody = await mint.text()
       expect(mint.status, 'the editor mint door answers the no-Origin caller').toBe(200)
       // THE NEEDLE'S POSITIVE CONTROL: the mint's own body is the one place the token appears.
-      expect(mintBody, 'the mint hands out a v1 token').toContain('v1.')
+      expect(mintBody, 'the mint hands out a v2 token').toContain('v2.')
       const token = EditorLiveUrlResultSchema.parse(JSON.parse(mintBody)).liveUrl.split('#')[1] as string
 
       const surroundings: [string, Response][] = [
@@ -404,7 +404,7 @@ describe('the shipped zero-token dashboard serves a live view (403 D-14, LIVE-02
       ]
       for (const [name, response] of surroundings) {
         const text = await response.text()
-        expect(text, `${name} (${String(response.status)}) carries a token`).not.toContain('v1.')
+        expect(text, `${name} (${String(response.status)}) carries a token`).not.toContain('v2.')
         expect(text, `${name} carries the editor token`).not.toContain(token)
       }
       const embed = await fetch(`${harness.origin}/live/ed-anchor`)

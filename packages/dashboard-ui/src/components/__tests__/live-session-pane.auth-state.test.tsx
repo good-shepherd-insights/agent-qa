@@ -151,7 +151,7 @@ async function postFrame(): Promise<void> {
 beforeEach(() => {
   fetchEditorLiveUrlMock.mockReset()
   fetchEditorLiveUrlMock.mockImplementation(async (sessionId: string) => ({
-    liveUrl: `http://x/live/${sessionId}#v1.e.b`,
+    liveUrl: `http://x/live/${sessionId}#v2.e.b`,
     expiresAt: Date.now() + 300_000,
     stream: { kind: 'cdp-screencast' },
   }))

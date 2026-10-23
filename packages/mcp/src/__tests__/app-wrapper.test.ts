@@ -48,7 +48,7 @@ const NOW = 1_800_000_000_000
 
 const mint = (handle: number, expiresAt: number): AppWrapperMint => ({
   handle,
-  liveUrl: `${ORIGIN}/live/${RUN_ID}#v1.body${handle}.sig${handle}`,
+  liveUrl: `${ORIGIN}/live/${RUN_ID}#v2.body${handle}.sig${handle}`,
   expiresAt,
   streamKind: 'cdp-screencast',
 })
@@ -181,7 +181,7 @@ describe('expiry is an honest STATE, decided at render time (D-10)', () => {
     // never sent) and asks for nothing but "did anything answer".
     expect(html.match(/fetch\(/g) ?? [], 'exactly one fetch call site').toHaveLength(1)
     expect(html).toContain("mode: 'no-cors'")
-    expect(html.includes('#v1.body0.sig0\', {'), 'the probe never carries a minted url').toBe(false)
+    expect(html.includes('#v2.body0.sig0\', {'), 'the probe never carries a minted url').toBe(false)
   })
 })
 
@@ -212,7 +212,7 @@ describe('a run this host holds no live session for (D-07)', () => {
     })
 
     expect(stateOf(html)).toBe('run-ended')
-    expect(html.includes('#v1.body0.sig0'), 'no token bytes in a not-live document').toBe(false)
+    expect(html.includes('#v2.body0.sig0'), 'no token bytes in a not-live document').toBe(false)
   })
 })
 
@@ -226,8 +226,8 @@ describe('the frame, the picker and the link (D-06/D-08)', () => {
 
   it('carries one pre-minted url per handle and the picker that swaps among them', () => {
     const html = render({ mints: [mint(0, NOW + 300_000), mint(1, NOW + 300_000)] })
-    expect(html).toContain('#v1.body0.sig0')
-    expect(html).toContain('#v1.body1.sig1')
+    expect(html).toContain('#v2.body0.sig0')
+    expect(html).toContain('#v2.body1.sig1')
     expect(html).toContain('data-app-handle-picker')
   })
 

@@ -240,7 +240,7 @@ describe('the editor subject on the shipped composition (428 D-07)', () => {
       expect(minted.status, `a no-Origin caller mints: ${minted.raw.slice(0, 200)}`).toBe(200)
       const result = EditorLiveUrlResultSchema.parse(JSON.parse(minted.raw))
       expect(
-        result.liveUrl.startsWith(`${h.origin}/live/ed-1#v1.`),
+        result.liveUrl.startsWith(`${h.origin}/live/ed-1#v2.`),
         `the embed path for the session, with the token in the fragment only: ${result.liveUrl.split('#')[0] ?? ''}`,
       ).toBe(true)
       expect(result.stream, 'the declared stream of the session').toEqual({ kind: 'cdp-screencast' })

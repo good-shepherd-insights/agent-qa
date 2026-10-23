@@ -149,13 +149,13 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(BASE_TIME)
   fetchLiveUrlMock.mockImplementation(async (runId: string, handle = 0) => ({
-    liveUrl: `http://x/live/${runId}#v1.a.b.${String(Date.now())}`,
+    liveUrl: `http://x/live/${runId}#v2.a.b.${String(Date.now())}`,
     expiresAt: Date.now() + TTL_MS,
     handle,
     stream: { kind: 'cdp-screencast' },
   }))
   fetchEditorLiveUrlMock.mockImplementation(async (sessionId: string) => ({
-    liveUrl: `http://x/live/${sessionId}#v1.e.b.${String(Date.now())}`,
+    liveUrl: `http://x/live/${sessionId}#v2.e.b.${String(Date.now())}`,
     expiresAt: Date.now() + TTL_MS,
     stream: { kind: 'cdp-screencast' },
   }))
@@ -196,7 +196,7 @@ describe('the preview listens only to its own embed (Q-BRIDGE, T-428-15-01)', ()
 describe('the iframe is the one sandboxed embed with the host hint (T-428-15-02, T-428-15-03)', () => {
   it('HOST-HINT-IN-SRC: the src is the minted liveUrl with the host query before the fragment', async () => {
     await mount(runSubject())
-    expect(embed()?.getAttribute('src')).toBe(`http://x/live/${RUN_ID}?host=dashboard#v1.a.b.${String(BASE_TIME)}`)
+    expect(embed()?.getAttribute('src')).toBe(`http://x/live/${RUN_ID}?host=dashboard#v2.a.b.${String(BASE_TIME)}`)
   })
 
   it('SANDBOX-SCRIPTS-ONLY: the sandbox is exactly allow-scripts', async () => {
@@ -217,7 +217,7 @@ describe('renew in place, reconnect by remount (RESEARCH P8)', () => {
     expect(fetchLiveUrlMock).toHaveBeenCalledTimes(2)
     expect(embed()).toBe(first)
     expect(embed()?.getAttribute('src')).toBe(
-      `http://x/live/${RUN_ID}?host=dashboard#v1.a.b.${String(BASE_TIME + TTL_MS / 2)}`,
+      `http://x/live/${RUN_ID}?host=dashboard#v2.a.b.${String(BASE_TIME + TTL_MS / 2)}`,
     )
 
     // 428 WR-04: a failed renew with time left on the token keeps the picture and asks again.
@@ -492,7 +492,7 @@ describe('the editor subject (D-14 · SC2)', () => {
     expect(fetchEditorLiveUrlMock).toHaveBeenCalledWith(SESSION_ID)
     expect(fetchLiveUrlMock).not.toHaveBeenCalled()
     expect(q('[data-preview-subject]')?.getAttribute('data-preview-subject')).toBe('editor')
-    expect(embed()?.getAttribute('src')).toBe(`http://x/live/${SESSION_ID}?host=dashboard#v1.e.b.${String(BASE_TIME)}`)
+    expect(embed()?.getAttribute('src')).toBe(`http://x/live/${SESSION_ID}?host=dashboard#v2.e.b.${String(BASE_TIME)}`)
 
     await rerender(editorSubject({ onStartFresh, sessionGone: true }))
     const action = q('[data-preview-action]') as HTMLButtonElement | null

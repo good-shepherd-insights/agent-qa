@@ -357,7 +357,7 @@ beforeEach(() => {
     tests: [],
   })
   fetchLiveUrlMock.mockImplementation(async (_runId: string, handle = 0) => ({
-    liveUrl: `http://x/live/${RUN_ID}?h=${String(handle)}#v1.a.b.${String(Date.now())}`,
+    liveUrl: `http://x/live/${RUN_ID}?h=${String(handle)}#v2.a.b.${String(Date.now())}`,
     expiresAt: Date.now() + TTL_MS,
     handle,
     stream: { kind: 'cdp-screencast' },
@@ -1029,7 +1029,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
   // discriminator is the watched member's own lifecycle, and both halves are cells.
   it('a member that FINISHES WITHOUT EVER STARTING A STEP gets the D-08 sentence, not motion for the rest of the run', async () => {
     fetchLiveUrlMock.mockResolvedValue({
-      liveUrl: 'http://x/live/r1#v1.a.b',
+      liveUrl: 'http://x/live/r1#v2.a.b',
       expiresAt: BASE_TIME + TTL_MS,
       handle: 0,
       stream: { kind: 'none' },
@@ -1068,7 +1068,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
 
   it('a handle with no member row at all is bounded, and says it gave up rather than that there is nothing', async () => {
     fetchLiveUrlMock.mockResolvedValue({
-      liveUrl: 'http://x/live/r1#v1.a.b',
+      liveUrl: 'http://x/live/r1#v2.a.b',
       expiresAt: BASE_TIME + TTL_MS,
       handle: 0,
       stream: { kind: 'none' },
@@ -1128,7 +1128,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
   // preview watches from mount, so each cell counts the same calls on the same handle as before, and
   // (C)'s late outcome is the watched member's own.
   const noneAnswer = () => ({
-    liveUrl: 'http://x/live/r1#v1.a.b',
+    liveUrl: 'http://x/live/r1#v2.a.b',
     expiresAt: Date.now() + TTL_MS,
     handle: 0,
     stream: { kind: 'none' as const },
@@ -1235,7 +1235,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
       if (ordinal === 2) {
         await new Promise((resolve) => { setTimeout(resolve, NO_STREAM_RETRY_MS + 1) })
         return {
-          liveUrl: 'http://x/live/r1#v1.a.b',
+          liveUrl: 'http://x/live/r1#v2.a.b',
           expiresAt: Date.now() + TTL_MS,
           handle: 0,
           stream: { kind: 'cdp-screencast' as const },
@@ -1262,7 +1262,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
 
   it('a `none` from a member whose browser is not up yet is a NOT-YET, and the pane keeps asking', async () => {
     fetchLiveUrlMock.mockResolvedValue({
-      liveUrl: 'http://x/live/r1#v1.a.b',
+      liveUrl: 'http://x/live/r1#v2.a.b',
       expiresAt: BASE_TIME + TTL_MS,
       handle: 0,
       stream: { kind: 'none' },
@@ -1288,7 +1288,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
 
   it('a declared `none` — the member started and still has no stream — renders the sentence and no iframe', async () => {
     fetchLiveUrlMock.mockResolvedValue({
-      liveUrl: 'http://x/live/r1#v1.a.b',
+      liveUrl: 'http://x/live/r1#v2.a.b',
       expiresAt: BASE_TIME + TTL_MS,
       handle: 0,
       stream: { kind: 'none' },
@@ -1320,7 +1320,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
 
   it('any non-none kind embeds identically — `mjpeg` is not a special case', async () => {
     fetchLiveUrlMock.mockResolvedValue({
-      liveUrl: 'http://x/live/r1#v1.mjpeg',
+      liveUrl: 'http://x/live/r1#v2.mjpeg',
       expiresAt: BASE_TIME + TTL_MS,
       handle: 0,
       stream: { kind: 'mjpeg' },
@@ -1330,7 +1330,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
 
     expect(previewState()).toBe('loading')
     const frame = q('[data-live-embed]')
-    expect(frame?.getAttribute('src')).toBe('http://x/live/r1?host=dashboard#v1.mjpeg')
+    expect(frame?.getAttribute('src')).toBe('http://x/live/r1?host=dashboard#v2.mjpeg')
     expect(frame?.getAttribute('sandbox')).toBe('allow-scripts')
   })
 
@@ -1371,7 +1371,7 @@ describe('the preview is one embed or an honest sentence (LIVE-04, D-02, D-08)',
     expect(fetchLiveUrlMock).toHaveBeenCalledTimes(2)
     const second = q('[data-live-embed]')?.getAttribute('src')
     expect(second).not.toBe(first)
-    expect(second).toBe(`http://x/live/${RUN_ID}?h=0&host=dashboard#v1.a.b.${String(BASE_TIME + TTL_MS / 2)}`)
+    expect(second).toBe(`http://x/live/${RUN_ID}?h=0&host=dashboard#v2.a.b.${String(BASE_TIME + TTL_MS / 2)}`)
     // Silent: nothing about the swap reaches the person watching.
     expect(previewState()).toBe('loading')
   })

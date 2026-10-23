@@ -158,7 +158,7 @@ function upgradeControlSocket(
 }
 
 const MINTED: EditorLiveUrlResult = {
-  liveUrl: 'http://127.0.0.1:3470/live/session-1#t=v1.token',
+  liveUrl: 'http://127.0.0.1:3470/live/session-1#t=v2.token',
   expiresAt: 1_900_000_000_000,
   stream: { kind: 'cdp-screencast' },
 }

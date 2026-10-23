@@ -172,13 +172,13 @@ interface Leak {
 /**
  * The strings whose appearance anywhere in the corpus is a disclosure of `token`.
  *
- * NOT JUST THE WHOLE TOKEN. A minted `liveUrl` token is `v1.<body>.<signature>`, and a channel
+ * NOT JUST THE WHOLE TOKEN. A minted `liveUrl` token is `v2.<body>.<signature>`, and a channel
  * carrying only the signature has disclosed the part an attacker cannot compute — so a cell that
  * asked only for the whole string would be satisfied by a leak that dropped the version prefix.
  * Each dot-separated segment of eight characters or more is therefore its own needle, on the
  * windowing rule `masked-serialization.test.ts` established for the same reason: absence has to be
  * asserted at a width narrower than the value, or the assertion sets a disclosure budget nobody
- * agreed to. The `v1` prefix is below the width and is deliberately not a needle — it is a public
+ * agreed to. The `v2` prefix is below the width and is deliberately not a needle — it is a public
  * format marker that occurs in this file's own prose.
  */
 function needlesOf(token: string): readonly string[] {

@@ -141,7 +141,7 @@ async function deadOrigin(): Promise<string> {
 
 const mint = (handle: number, origin: string, expiresAt: number): AppWrapperMint => ({
   handle,
-  liveUrl: `${origin}/live/${RUN_ID}#v1.body${handle}.sig${handle}`,
+  liveUrl: `${origin}/live/${RUN_ID}#v2.body${handle}.sig${handle}`,
   expiresAt,
   streamKind: 'cdp-screencast',
 })

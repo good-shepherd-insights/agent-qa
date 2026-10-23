@@ -446,7 +446,7 @@ describe('the embed reports to its host, and the host hint (428 D-10/D-15, Q-BRI
         const json = JSON.stringify(report.data)
         expect(json.includes(token), 'a report carries the live token').toBe(false)
         expect(json.includes(tampered), 'a report carries the presented token').toBe(false)
-        expect(json.includes('v1.'), 'a report carries a token version prefix').toBe(false)
+        expect(json.includes('v2.'), 'a report carries a token version prefix').toBe(false)
         expect(json.includes(runId), 'a report carries the run id').toBe(false)
         for (const key of Object.keys(report.data)) {
           expect(REPORT_KEYS.has(key), `report key ${key} is outside the closed set`).toBe(true)

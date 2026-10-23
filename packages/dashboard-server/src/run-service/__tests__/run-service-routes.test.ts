@@ -1000,7 +1000,7 @@ describe('the refusal-CODE census is a complete set over RUN_SERVICE_ERROR_CODES
 // `adapters.ts` against the shipped route table.
 
 const MINTED: RunsLiveUrlResult = Object.freeze({
-  liveUrl: 'http://localhost:1234/live/r_planted#v1.zz-403-03-planted-token',
+  liveUrl: 'http://localhost:1234/live/r_planted#v2.zz-403-03-planted-token',
   expiresAt: 1_700_000_000_000,
   handle: 0,
   stream: { kind: 'none' as const },

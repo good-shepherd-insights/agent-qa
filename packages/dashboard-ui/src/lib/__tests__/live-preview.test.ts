@@ -139,10 +139,10 @@ describe('the preview vocabulary (428-14 Task 1)', () => {
     })
     expect(stringTs).not.toHaveProperty('ts')
 
-    const withToken = parseEmbedReport({ event: 'frame', token: 'v1.x', ts: 1, width: 2, height: 3 })
+    const withToken = parseEmbedReport({ event: 'frame', token: 'v2.x', ts: 1, width: 2, height: 3 })
     expect(withToken).toEqual({ event: 'frame', ts: 1, width: 2, height: 3 })
     expect(withToken, 'an extra field is never carried').not.toHaveProperty('token')
-    expect(JSON.stringify(withToken)).not.toContain('v1.')
+    expect(JSON.stringify(withToken)).not.toContain('v2.')
 
     const input = { event: 'ended', reason: 'sessionEnded' }
     const ended = parseEmbedReport(input)

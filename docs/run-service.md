@@ -112,7 +112,7 @@ curl -sS 'http://127.0.0.1:3470/run/<runId>/live-url?handle=0'
 
 ```json
 {
-  "liveUrl": "http://localhost:3470/live/<runId>#v1.<token>",
+  "liveUrl": "http://localhost:3470/live/<runId>#v2.<token>",
   "expiresAt": 1735689600000,
   "handle": 0,
   "stream": { "kind": "cdp-screencast" }

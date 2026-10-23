@@ -205,7 +205,7 @@ function freshMint(seed: string): (runId: string, handle: number) => Promise<Run
       throw Object.assign(new Error(`unknown_run: ${runId}`), { name: 'UnknownRunError' })
     }
     return {
-      liveUrl: `http://127.0.0.1:0/live/${runId}#v1.${seed}${'x'.repeat(minted)}`,
+      liveUrl: `http://127.0.0.1:0/live/${runId}#v2.${seed}${'x'.repeat(minted)}`,
       expiresAt: 1_700_000_000_000 + minted,
       handle,
       stream: { kind: 'none' as const },
