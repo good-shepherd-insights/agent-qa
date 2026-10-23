@@ -7315,3 +7315,329 @@ appended: 2553 in all.
 The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
 verdict are recorded in `.planning/phases/447.1-remove-demo-project/447.1-RECORD.md` § Gate, and
 the SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
+
+## 2026-10-23 — Phase 449.1: V2 schema versions
+
+This section appends to the register and rewrites no earlier section. The owner asked that every
+schema version agent-qa owns read 2 at the V2 release ("For any schema version out there I would
+like to make them to v2 / 2"), and then ruled that agent-qa has no users to carry forward ("FYI
+there are no users of agent-qa since a long time consider it as 0"), so every format reads only its
+current version, 2, with no fallback, migration step, alias or older-version arm, whether this phase
+added it or it existed before (`.planning/REQUIREMENTS.md` reconciliation 30; CONTEXT D-22). The
+decisions are in `.planning/phases/449.1-v2-schema-versions/449.1-CONTEXT.md` (D-01 to D-24).
+Content and algorithm versions, hash and RNG domain tags, external specs, package versions, the
+bundled floor model asset and the private embedding bench keep their numbers (D-02); the register
+in `packages/arch/src/version-register.ts` spells each with its reason. Written by 449.1-16 on
+2026-10-23.
+
+### How this inventory is measured
+
+Baseline `28f7c163f` (`28f7c163f05bda34c7a2667176fd39b24eb705b5`, where the phase began). Closing
+SHA `cc87d5eaf` (the parent of the commit that adds this section). `git -C agent-qa diff -M
+--shortstat 28f7c163f cc87d5eaf`: 667 files changed, 7878 insertions, 6222 deletions.
+`--diff-filter=D -M`: five files, the four fixtures and the one script named below.
+`--diff-filter=A`: twelve files, the version register and its census, nine refusal tables named
+`449.1-*.test.ts`, and one vendored report in `test-fixtures/eval-workspace`. `--diff-filter=R`:
+none. Fifty commits up to the closing SHA and this section's commit, fifty-one in all, every one
+signed (`%G?` = `G`) and none with an attribution line. Two of them carry no plan number: the
+orchestrator's `f226c51c6` (after 449.1-08: the arch census cells and the unmask roll-call builders
+follow the notification, runs-database and handoff resets) and `a51e8c92c` (after 449.1-15: the
+run-service readiness reads only contract version 2). Names and lines below are at `28f7c163f`
+unless a row says otherwise; each member is read from the deleting commit's diff and the plan
+SUMMARYs under `.planning/phases/449.1-v2-schema-versions/`.
+
+### What was deleted
+
+Plan 01 added two mechanisms that the owner's later ruling removed. They exist only inside this
+phase's history, and they are listed first so that a reader of `4a0b489cc` or `feabc9298` is not
+misled into thinking either shipped:
+
+| Member | What it did | Added in | Removed in | The cell that notices its return |
+|---|---|---|---|---|
+| `VersionGuardConfig.readAsCurrent` and its branch (`packages/schema/src/versioning/create-version-guard.ts`), with five alias cells in `create-version-guard.test.ts` | returned a listed stamp above the current one as the same object, with no migration walk | `4a0b489cc` (449.1-01) | `2ab72e094` (449.1-03), which restored both files to their `28f7c163f` bytes | the census cell `schema version census no format reads a second version: no migration step, alias, stamp union or stamp-keyed union`; the handoff refusal table below |
+| `HANDOFF_STAMPS_READ_AS_CURRENT = [3, 4, 5, 6, 7]` (`packages/schema/src/handoff/load-completed-run-handoff.ts`), its guard option and its exports from `handoff/index.ts` and `src/index.ts` | read handoffs stamped 3 to 7 as the current shape | `4a0b489cc` | `2ab72e094` | `load-completed-run-handoff.test.ts` `a handoff stamped %i is refused` (1, 3, 4, 5, 6, 7, 8) |
+| `packages/schema/src/versioning/readable-stamp.ts` (`PRE_V2_STAMP`, `ReadableStamp`, `readableStamp`, `isReadableStamp`), its two export lines and `versioning/__tests__/readable-stamp.test.ts` | admitted stamp 1 beside the current stamp, in zod and in hand checks | `feabc9298` (449.1-01) | `2ab72e094` | typecheck (no such export); the census's second-version cell, whose needles name these helpers |
+| `packages/agent/src/jobs/__tests__/449.1-handoff-stamps.test.ts` (7 cells) | ran analyze-run over stored handoffs stamped 2 to 7 | `7e8f99930` (449.1-01) | `8c44442a6` (449.1-03) | the handoff refusal table |
+
+The arms, steps, exports, scripts, fixtures and old-data tests that existed at `28f7c163f`:
+
+| Member (file at `28f7c163f`) | What it did | Deleting commit | The cell that notices its return |
+|---|---|---|---|
+| `HANDOFF_MIGRATIONS` steps `2` to `6`, each `(doc) => doc` (`packages/schema/src/handoff/load-completed-run-handoff.ts`) | walked a handoff stamped 2 to 6 up to 7 | `4a0b489cc` | `load-completed-run-handoff.test.ts` `registers no migration, so schemaVersion 1 stays unreadable`; `handoff-gate-run.test.ts` `registers no migration`; the refusal table |
+| handoff old-data cells: `loads a stored schemaVersion 6 document whose steps carry no rung, unchanged` (`load-completed-run-handoff.test.ts`), `loads an already-written schemaVersion 3 document unchanged, with gateRun absent` (`handoff-gate-run.test.ts`), `loads a stored v5 handoff unchanged through the registered migration` (`quarantine-ledger.test.ts`), `loads an already-written schemaVersion 4 document unchanged (identity migration)` (`retrieval-trace.test.ts`) | proved older handoffs read | `2ab72e094` | the refusal table |
+| `v1EmbedderWorkerRegistrationSchema` and `v2EmbedderWorkerRegistrationSchema` with their comment block, `LegacyEmbedderWorkerRegistration`, `OwnedEmbedderWorkerRegistration` and their exports, the `stale-recoverable` outcome and the v2/v1 fallbacks in `readEmbedderWorkerRegistrationFile`, the version branches in `sameRegistration` and the removal owner discriminator `legacy-<pid>-<startedAtMs>` (`packages/knowledge-local/src/embedder-worker/worker-registration.ts`) | read pre-instance and pre-incarnation registrations, quarantined them as stale and spawned a fresh worker | `c89918492` (449.1-02) | `embedder-worker.test.ts` `reads a registration with $shape as malformed` (stamped 1, 2 without an incarnation, 3) |
+| the host's `OwnedEmbedderWorkerRegistration` alias, its `stale-recoverable` branch, the `'stale-recovered'` outcome and the `schemaVersion === 3` socket guard (`packages/cli/src/daemon/host.ts`) | recovered an old registration and unlinked its socket conditionally | `c89918492` | `daemon-embedder-lifecycle.test.ts` `an older registration file is refused, left in place, and no pid is signalled: $shape` |
+| embedder cells `round-trips v3 identity and atomically recovers stale v2 and v1 registrations` (replaced) and `refuses to delete a v3 successor while removing a superseded v2 predecessor` | tested the deleted arms | `c89918492` | the two cells above |
+| `canaryOutcomePayloadV2Schema`, `queuedCanaryPayloadSchema`, the discriminated address union, `CanaryOutcomePayloadV2`, the `v2-filled` read and their exports (`packages/knowledge-local/src/canary-emit.ts`, `queue/canary-payload.ts`, `index.ts`); the drain's `v2-filled` original-address branch (`curator/drain.ts`) | read a pre-418 canary payload and filled `rode-along` and `unknown` into it | `309e27f98` (449.1-02) | `canary-payload.test.ts` `refuses a payload stamped 2 without benefit or stateValidity`; `drain.test.ts` `a queued payload without benefit or stateValidity is not drained` |
+| canary cells `reads a literal v2 payload through the load guard …` and `a v2 payload keeps its v2 content address after the fill`, and the stamp-2 rows of the drain and purge `it.each([2, 3])` | tested the deleted arm | `309e27f98` | the cells above |
+| purge-intent migration steps `1` and `2` with their hard-coded builders, `PurgeAffectedSetSchema.nullable()`, `recoveryAffectedSet`, the `?? recoveryAffectedSet(…)` and `?? undefined` fallbacks, the `!== null` guard and the `'legacy-intent-without-affected-set'` fingerprint (`packages/knowledge-local/src/purge.ts`) | walked an intent from 1 to 3 and resumed it without a canonical affected set | `f9f3c7313` (449.1-02) | `purge.test.ts` `refuses an intent $shape`; `knowledge-maintain.test.ts` `refuses to resume a purge intent $shape and leaves it in place` |
+| cli cells `previews and completes a partially applied v1/v2 purge intent` | tested the deleted steps end to end | `f9f3c7313` | the knowledge-maintain refusal cell |
+| `MIN_READABLE_INDEX_SCHEMA_VERSION` and its re-export (`packages/knowledge-local/src/index-open.ts`, `index.ts`), the writer ordinal `previousSchemaVersion < INDEX_SCHEMA_VERSION` and the probe ordinal `version < MIN_READABLE_INDEX_SCHEMA_VERSION` | admitted an index stamped at or above a minimum | `3d4e6aa12` (449.1-04) | `index-open.test.ts` `the writer resets an index stamped %i and stamps it at the current version`; `index-degrade.test.ts` `an index stamped %i is refused by the read probe` |
+| the doctor's `since-v4` receipt label and its dated comment (`packages/cli/src/commands/doctor-knowledge-checks.ts`) | named a receipt version | `e1794396a` (449.1-04) | `doctor-knowledge-checks.test.ts` (three message assertions) |
+| `RUN_NOTIFICATION_MIGRATIONS[1]`, `[2]` and `[3]` with their builders (`packages/schema/src/notification/run-notification.ts`) | walked a notification row from 1 to 4 in memory | `95770a125` (449.1-05) | `run-notification-migration.test.ts` `stamps 2 and registers no migration step`; `422-notification-closed-sets.test.ts` `declares no migration step` |
+| notification walk cells: the v1, v2, v3 and v4 cells of `run-notification-migration.test.ts`; `walks a v1 row to v4 …`, `walks a v2 row to v4 …` and `lets the v2 step itself be read directly …` (`422-notification-closed-sets.test.ts`); `NOTIFICATION-V1/V2/V3-MIGRATE` (`423-curation-contracts.test.ts`) | proved older rows read | `95770a125` | the refusal table `it.each([0, 1, 3, 4, 5])`; `NOTIFICATION-OTHER-REFUSE` |
+| `corpusEntryV1Schema`, the v1/v2 union, `normaliseV1`, the `version === 1` branch and `schemaVersion: 1 \| 2` (`packages/eval/src/labels/corpus-entry-guard.ts`) | read a stamp-1 corpus entry and rebuilt it in memory as a v2 natural entry | `273c1f335` (449.1-06) | `corpus-entry-guard.test.ts` `refuses a corpus entry stamped %i`; `committed-corpus-source.test.ts` `reports a corpus entry stamped 1 as a refusal row` |
+| the committed-corpus `z.union([z.literal(1), z.literal(2)])` pointer, `schemaVersion: 1 \| 2`, and the optional `fingerprint` and `corpusDigest` (`packages/eval-local/src/committed-corpus-source.ts`) | listed stamp-1 baseline pointers beside stamp-2 ones | `273c1f335` | `committed-corpus-source.test.ts` `reports a schemaVersion %i baseline as a refusal row` |
+| `scripts/414-migrate-corpus-entries-v2.mjs` | the one-shot migration that rewrote committed corpus entries from 1 to 2 | `273c1f335` | the tip sweep (`test ! -e`); the register's historical-script exclusions name only `401-11`, `413-migrate-handoff-paths` and `415` |
+| `packages/eval/src/labels/__tests__/fixtures/v1-corpus-entry.json` | the last committed v1 corpus entry, read only by the v1-arm cells | `273c1f335` | the fixture census cell |
+| `migrateCassetteV1`, `1: migrateCassetteV1`, `migrateLeafV1`, `migrateProcedureV1`, `withScreenshotFacts`, `screenshotFact`, `isFullCapture` and `isRecord` (`packages/eval/src/cassette/guard.ts`) | re-stamped a stamp-1 cassette to 2 | `711b685a0` (449.1-06) | `cassette/__tests__/guard.test.ts` `rejects an older version when the migration registry has no path` |
+| the baseline pointer's `discriminatedUnion('schemaVersion')`, the `kind: 'v1'` load member and the `schemaVersion === 1` branch (`packages/eval/src/baseline/profile-key.ts`); the release gate's `no-fingerprint: historical pointer` branch (`packages/eval/src/gate/release-gate.ts`) | loaded a stamp-1 pointer as historical evidence | `711b685a0` | `profile-key.test.ts` `a pointer stamped %i loads as rejected`; `release-gate.test.ts` `reports a pointer stamped 1 as pointer rejected with a re-designation fix` |
+| eval old-data cells: the `parseCorpusEntry — the v1 arm …` describe (2 cells), `normalises committed v1 bytes without inventing an environment`, `admits v1 bytes as natural beside a v2 private held-out entry, censusing both`, `surfaces the v2 fingerprint and corpus digest beside a v1 historical pointer`, the `guardCassette version-1 to version-2 migration` describe (9 cells), `admits the v1 history shape without inventing a fingerprint`, `refuses a v1 pointer as no-fingerprint with a re-designation fix`, `distinguishes a v1 body at its %s pointer filename`, and the stamp-1 row of `uses a designated v%i baseline …` | proved older eval data read | `273c1f335`, `711b685a0`, `a93b044a1` (449.1-06) | the refusal cells above |
+| `HISTORICAL_RETRIEVAL_RUNG_REASONS`, `RecordedRetrievalRungV1Schema` and the `z.discriminatedUnion('schemaVersion', …)` (`packages/schema/src/brief/retrieval-rung.ts`); `RECORDED_RETRIEVAL_RUNG_REASONS` and `RecordedRetrievalRungReason`, collapsed into `RETRIEVAL_RUNG_REASONS` and `RetrievalRungReason`; the reason `low-ram-deferral` with its cli and dashboard-ui label entries; knowledge-local `CurrentRecordedRetrievalRung`; dashboard-ui `rungView`'s `case 1:` arm | read a stamp-1 rung under its own eight-reason arm | `031c23945` (449.1-08) | `423-rung-contracts.test.ts` `a recorded rung stamped %i is refused` and `the recorded rung admits exactly the ten reasons and no invented word`; the label maps are keyed by `RetrievalRungReason`, so an extra key fails typecheck |
+| rung old-data cells: `the historical v1 arm admits exactly the eight pre-423 reasons`, the `RUNG-V1` describe (4 cells), `LEGACY-HISTORICAL`, the type cell `pins the historical v1 arm to exactly the eight pre-423 reasons`, and agent `runs-knowledge.test.ts`'s `RUNG-HISTORICAL-READ` (2 cells) | proved stamp-1 rungs read | `031c23945` | the refusal cell above; `runs-knowledge.test.ts` `RUNG-INVALID-VERSION` |
+| eval-local `committed-brief-rendering.test.ts` `reconstructs all 79 populated briefs as proof/exact with matching policyDigest`, and the regeneration recipe comment in `eval/src/replay/__tests__/reconstruct.test.ts` | swept and regenerated from the super-repo `demo/init` cassettes, which carry stamps this build refuses | `031c23945`; `71935fad9` for the recipe | the registered layout cell, which states why the sweep does not run; `reconstruct.test.ts` over the converted `proof-briefs.json` |
+| `packages/agent-local/src/session/__tests__/fixtures/chat-20260820-120000-i000.jsonl`, with the cell `opens a pre-400 session file — written by the shipped writer before the field existed` | a stamp-1 chat session from before the surface tag | `7532d95b8` (449.1-09) | `session-surface-tag.test.ts` `a session whose header is stamped 1 throws ChatSessionHeaderError` |
+| `packages/cli/src/__tests__/fixtures/chat-dashboard-era.jsonl`, with `seedDashboardEraSessions` and its `DASHBOARD_ERA_*` and `PRE_400_*` constants | a stamp-1 dashboard-tagged session | `7532d95b8` | the same cell; the two `chat-command.test.ts` cells now seed current sessions |
+| `packages/knowledge-local/src/authoring/__tests__/fixtures/pre-394-07-receipt.json`, with the cell `reads a receipt written BEFORE \`sessionRef\` existed, unchanged and without a bump` | a stamp-1 draft receipt read as current | `1dcb6e9a0` (449.1-11) | `draft-receipts-store.test.ts` `refuses a receipt stamped 1 by name` |
+| `legacyDaemonRegistrationSchema`, `LegacyDaemonRegistration`, `StaleDaemonRegistration`, the `{ kind: 'obsolete' }` outcomes, the fallback parse and the `obsolete`-to-`stale` mapping (`packages/cli/src/daemon/registration.ts`); `removeObsoleteDaemonRegistrationIfExpected` with its host binding and the `obsolete` arms in `host.ts`, `commands/daemon.ts`, `commands/knowledge-maintain.ts`; `'obsolete'` in `DaemonNotRunningReason` (`client.ts`) | read a pre-nonce `daemon.json` (stamp 1, no `instanceId`) and removed it under containment | `b090f69c6` (449.1-12) | `449.1-runtime-stamps.test.ts` (cli) `refuses a daemon registration stamped 1, leaves it byte-identical, and unlinks no socket`; daemon-host `requires an instance nonce and reads a registration stamped 1 as malformed` |
+| daemon cells `removes an obsolete registration only when its quarantined bytes still match`, `leaves a recovered registration's foreign socket in place (V-01)`, the obsolete half of the W-03 cell, knowledge-maintain's `byte-compares an obsolete-schema registration before removing it` with its harness counter, the drain-recovery override, and the absence pin `not.toContain('recoverStaleDaemonRegistration')` | tested the deleted helper | `b090f69c6`; `95ecaabe3` for the pin | the cells above |
+
+None of the deleted cells was a registered gate row's subject; each plan checked
+`scripts/gate/inputs/regressions.json` before deleting.
+
+### Changed with no member deleted
+
+The renumber table covers every row of the register (`VERSION_REGISTER`, 102 rows) and the
+constants the phase created. Old numbers are read from `28f7c163f`; every value is now 2.
+"Reading rule" is the register's rule for any other stamp: `refuse` (an error naming the format,
+or a parse failure), `rebuild` (the derived state is rebuilt or refolded once), `miss` (read as
+absent) or `no-reader` (nothing reads the stamp; only the writer changed).
+
+Formats that were above 2 (each reset to 2):
+
+| Format | Site | Old → new | Reading rule |
+|---|---|---|---|
+| completed-run handoff | `CURRENT_HANDOFF_SCHEMA_VERSION`, `schema/src/handoff/completed-run-handoff.ts` | 7 → 2 | refuse (`HandoffVersionError`; 1 has no step, 3 and above are newer) |
+| dashboard runs database | `SCHEMA_VERSION` and its one `MIGRATIONS` entry, `dashboard-server/src/db/schema.ts` | 6 → 2 | refuse by name before any DDL; the DDL is unchanged |
+| agent job store | `AGENT_JOB_STORE_USER_VERSION`, `agent-local/src/store/sqlite-job-store.ts` | 5 → 2 | refuse (`JobStoreSchemaVersionError`) before any DDL |
+| knowledge index | `INDEX_SCHEMA_VERSION`, `knowledge-local/src/index-open.ts` | 5 → 2 | rebuild; the writer and the probe compare exactly |
+| action cache | `CACHE_SCHEMA_VERSION`, `runner-local/src/fs-action-cache.ts` | 12 → 2 | miss (the step is re-planned) |
+| run notification | `CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION`, `schema/src/notification/run-notification.ts` | 4 → 2 | refuse (`RunNotificationSchemaError`) |
+| curation-tail receipt | `CURATION_TAIL_RECEIPT_SCHEMA_VERSION`, `cli/src/curation/curation-tail.ts` | 4 → 2 | rebuild (the run refolds once) |
+| run-outcomes projection | `RUN_OUTCOMES_PROJECTION_VERSION`, `knowledge-local/src/projection/run-outcomes.ts` | 4 → 2 | rebuild |
+| canary queue payload | `CANARY_QUEUE_SCHEMA_VERSION`, `knowledge-local/src/canary-emit.ts` | 3 → 2 | refuse (never drained; purge sweeps it loosely) |
+| embedder-worker registration | `EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION`, `knowledge-local/src/embedder-worker/worker-registration.ts` | 3 → 2 | refuse (`malformed`; no pid is signalled) |
+| purge intent | `PURGE_INTENT_SCHEMA_VERSION`, `knowledge-local/src/purge.ts` | 3 → 2 | refuse (`VersionGuardError`; only that record's purge is blocked) |
+
+Formats that were at 1 (each moved to 2):
+
+| Format | Site | Old → new | Reading rule |
+|---|---|---|---|
+| embedder worker protocol | `EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION`, `worker-registration.ts` | 1 → 2 | refuse |
+| auth-state metadata | `AUTH_STATE_SCHEMA_VERSION`, `core/src/auth-state/schema.ts`; its copy `AUTH_STATE_METADATA_VERSION`, `dashboard-ui/src/lib/api.ts` (was literal 1 at three sites) | 1 → 2 | refuse (the UI drops the entry and refuses it on save) |
+| product-tour cookie | `PRODUCT_TOUR_SCHEMA_VERSION`, `dashboard-ui/src/lib/product-tour-state.ts` | 1 → 2 | miss (the tour shows again) |
+| run artifact | `RUN_ARTIFACT_SCHEMA_VERSION`, `schema/src/run/run-artifact.ts` | 1 → 2 | no-reader |
+| knowledge bundle files and record frontmatter | `BUNDLE_SCHEMA_VERSION`, `schema/src/knowledge/bundle-files.ts` | 1 → 2 | refuse |
+| distilled observation | `DISTILLED_OBSERVATION_SCHEMA_VERSION` | 1 → 2 | refuse (one stamp-1 line fails an index rebuild) |
+| gate and promotion receipts | `GATE_RECEIPT_SCHEMA_VERSION`; `receiptCoreShape` now reads it instead of a duplicate `z.literal(1)` | 1 → 2 | refuse |
+| procedure body | new `PROCEDURE_BODY_SCHEMA_VERSION`, `schema/src/knowledge/procedure-steps.ts` (was inline `z.literal(1)`) | 1 → 2 | refuse (`parseProcedureBody` returns undefined) |
+| purge receipt | `PURGE_RECEIPT_SCHEMA_VERSION`, `knowledge-local/src/purge-receipt.ts` | 1 → 2 | refuse, naming the receipt file |
+| addressing ledger | `ADDRESSING_LEDGER_USER_VERSION`, `knowledge-local/src/addressing/ledger.ts` | 1 → 2 | refuse (`AddressingLedgerSchemaVersionError`) |
+| eval-root marker | `COMMITTED_ROOT_SCHEMA_VERSION`, `eval-local/src/committed-root-store.ts` | 1 → 2 | refuse (`corpus-unreadable`) |
+| contract projection | `CONTRACT_PROJECTION_SCHEMA_VERSION`, `eval/src/contracts/projection.ts` | 1 → 2 | refuse (a write-once conflict on re-seeding; `constitutionDigest` follows the constant) |
+| partition manifest | `PARTITION_MANIFEST_SCHEMA_VERSION` | 1 → 2 | refuse |
+| run exclusion | `RUN_EXCLUSION_SCHEMA_VERSION` | 1 → 2 | refuse |
+| label record | `LABEL_RECORD_SCHEMA_VERSION`; `effective-labels.ts` reads it instead of an inline `z.literal(1)` | 1 → 2 | refuse |
+| label calibration | new `LABEL_CALIBRATION_SCHEMA_VERSION`, `eval-local/src/calibration-source.ts` (was inline) | 1 → 2 | refuse |
+| noise floor | `NOISE_FLOOR_SCHEMA_VERSION` | 1 → 2 | refuse (hygiene L5 fails) |
+| classifier repeatability | `CLASSIFIER_REPEATABILITY_SCHEMA_VERSION` | 1 → 2 | refuse |
+| decision vectors | `DECISION_VECTORS_SCHEMA_VERSION` | 1 → 2 | refuse |
+| campaign manifest | `CAMPAIGN_MANIFEST_SCHEMA_VERSION` | 1 → 2 | refuse |
+| judge calibration | `JUDGE_CALIBRATION_SCHEMA_VERSION` | 1 → 2 | refuse |
+| run analysis | `CURRENT_ANALYSIS_SCHEMA_VERSION`, `schema/src/verdict/analysis-artifact.ts` | 1 → 2 | refuse (`AnalysisVersionError`) |
+| run evidence documents (console, network, a11y, aria, variables) | new `RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION`, `schema/src/run/evidence.ts` (was five inline literals) | 1 → 2 | refuse |
+| served-brief lossless proof | new `SERVED_BRIEF_PROOF_SCHEMA_VERSION`, `schema/src/brief/guard-lossless-served-brief.ts` | 1 → 2 | refuse (`LosslessServedBriefError`) |
+| retrieval trace | new `RETRIEVAL_TRACE_SCHEMA_VERSION`, `schema/src/brief/retrieval-trace.ts` | 1 → 2 | refuse |
+| bus schema version | `CURRENT_BUS_SCHEMA_VERSION`, `schema/src/run/bus-events.ts` | 1 → 2 | no-reader |
+| mark receipt | `MARK_RECEIPT_SCHEMA_VERSION`, `schema/src/functions/feedback.ts` | 1 → 2 | refuse (`MarkLedgerCorruptError` for the line) |
+| improvement plan | `IMPROVEMENT_PLAN_SCHEMA_VERSION` | 1 → 2 | refuse |
+| commit receipt | `COMMIT_RECEIPT_SCHEMA_VERSION`, `schema/src/knowledge/change.ts` | 1 → 2 | refuse |
+| forget receipt | new `FORGET_RECEIPT_SCHEMA_VERSION`, `change.ts` (was inline) | 1 → 2 | refuse |
+| chat session header and events | `CURRENT_CHAT_SESSION_SCHEMA_VERSION`, `schema/src/chat/session-events.ts` | 1 → 2 | refuse (`ChatSessionHeaderError`, `ChatSessionEventSchemaError`) |
+| run-config record | new module-local `RUN_CONFIG_RECORD_SCHEMA_VERSION`, `cli/src/curation/run-curation-context.ts` | 1 → 2 | miss (reads as absent) |
+| daemon identity | `DAEMON_IDENTITY_SCHEMA_VERSION`, `cli/src/daemon/server.ts` | 1 → 2 | refuse |
+| daemon invoke envelope | `INVOKE_ENVELOPE_SCHEMA_VERSION`, `server.ts` | 1 → 2 | refuse (HTTP 400) |
+| live-URL token | `LIVE_URL_TOKEN_VERSION`, `agent/src/functions/live-url.ts` | `'v1'` → `'v2'` | refuse (`malformed`, before the signature check) |
+| run summary, run detail, run start acknowledgement, run event envelope | `RUN_SUMMARY_SCHEMA_VERSION`, `RUN_DETAIL_SCHEMA_VERSION`, `RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION`, `RUN_EVENT_ENVELOPE_SCHEMA_VERSION`, `schema/src/functions/runs.ts` | 1 → 2 | no-reader (no wire field carries them; the strict schemas refuse an added `schemaVersion` key) |
+| masked resolved config | `MASKED_RESOLVED_CONFIG_SCHEMA_VERSION`, `schema/src/functions/config.ts`; the field was `z.number().int().positive()` and is now the literal | 1 → 2 | refuse |
+| knowledge bundle summary | `KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION` | 1 → 2 | no-reader |
+| inspect record view, record change | `INSPECT_RECORD_VIEW_SCHEMA_VERSION`, `RECORD_CHANGE_SCHEMA_VERSION`, `schema/src/knowledge/maintenance-views.ts` | 1 → 2 | refuse |
+| records inspect, records diff, record show and not-found outputs | inline literals, `schema/src/knowledge/review-verbs.ts` | 1 → 2 | refuse |
+| curation snapshot | `CURATION_SNAPSHOT_SCHEMA_VERSION`, `schema/src/notification/curation-snapshot.ts` | 1 → 2 | refuse |
+| job checkpoint | `JOB_CHECKPOINT_SCHEMA_VERSION`, `schema/src/job/job-checkpoint.ts` | 1 → 2 | refuse (`JobCheckpointSchemaVersionError`) |
+| draft receipt | `CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION`, `schema/src/authoring/draft-receipt.ts` | 1 → 2 | refuse (`DraftReceiptSchemaVersionError`) |
+| entity index | `ENTITY_INDEX_USER_VERSION`, `knowledge-local/src/entity-index/entity-index.ts` | 1 → 2 | refuse (`EntityIndexSchemaVersionError`) |
+| authored checkpoint | `AUTHORED_CHECKPOINT_SCHEMA_VERSION`, `knowledge-local/src/curator/author-contract.ts` | 1 → 2 | refuse |
+| bundle mutation journal | `BUNDLE_MUTATION_JOURNAL_VERSION` (field `version`), `knowledge-local/src/journal/bundle-mutation.ts` | 1 → 2 | refuse (the journal is left in place) |
+| commit intent | `COMMIT_INTENT_SCHEMA_VERSION`, `journal/intent-journal.ts` | 1 → 2 | refuse (lists as malformed) |
+| curation observation, curation effect receipt | inline literals, `journal/curation-effect-receipt.ts` | 1 → 2 | refuse |
+| curation job state | `CURATION_JOB_STATE_SCHEMA_VERSION`, `queue/job-state.ts` | 1 → 2 | refuse (`malformed`) |
+| curation quarantine reason | `CURATION_QUARANTINE_SCHEMA_VERSION`, `queue/curation-queue.ts` | 1 → 2 | no-reader |
+| canary run policy and canary completion | inline, `cli/src/curation/canary-run-state.ts` | 1 → 2 | refuse |
+| misdirection run policy, check reservation and root posture | inline, `cli/src/curation/misdirection-run-state.ts` | 1 → 2 | refuse |
+| mark-edit record | inline, `cli/src/gates/mark-edit-record.ts` | 1 → 2 | refuse (`MarkEditRecordUnreadableError`) |
+| adversarial refresh record | `ADVERSARIAL_STATE_SCHEMA_VERSION`, `eval-local/src/adversarial-state.ts` | 1 → 2 | miss (the record is dropped) |
+| adversarial probe reservation and completion | `ADVERSARIAL_PROBE_SCHEMA_VERSION` | 1 → 2 | refuse |
+| adversarial batch manifest, retirement record and lifecycle owner | inline, `eval-local/src/adversarial-composition.ts` | 1 → 2 | refuse (a stamp-1 owner keeps the lock busy) |
+| gate-2 feedback | inline, `eval-local/src/gate2-composition.ts` | 1 → 2 | refuse |
+| mark intent and mark lock owner | inline, `eval-local/src/mark-ledger.ts`, `mark-lock.ts` | 1 → 2 | refuse (`MarkIntentUnusableError`; a stamp-1 owner keeps the lock busy) |
+| report publication | inline, `eval-local/src/report-store.ts` | 1 → 2 | miss (the profile proof reads as missing) |
+| scoring context in `score.json` | inline, `eval/src/match/scoring-context.ts` | 1 → 2 | refuse (the score reads `stale-replay`) |
+| gate inputs `register.json` and `regressions.json`, and the reader in `scripts/gate/evaluate.mjs` | line 2 of each input; `screenList` | 1 → 2 | refuse (`register-entry-invalid`, `regression-entry-invalid`) |
+| gate pins `node-tests.json` and `packages.json` | line 2 | 1 → 2 | no-reader |
+| gate summary, repeat summary and node:test report | `scripts/gate/run.mjs` (two writers), `scripts/gate/node-test-json.mjs` | 1 → 2 | no-reader |
+| skills contracts document | `"version"` of both `agent-qa-contracts.json` copies (`skills/agent-qa-authoring/references/`, `packages/cli/skills/agent-qa-authoring/references/`) | 1 → 2 | no-reader (`validate:publish` keeps the copies identical) |
+
+Formats already at 2 at `28f7c163f`, whose numbers did not change: `INDEX_RENDERING_SCHEMA_VERSION`,
+`DAEMON_REGISTRATION_SCHEMA_VERSION` (its v1 arm is deleted above), `RUN_SERVICE_CONTRACT_VERSION`
+(the readiness field was `z.number().int().positive()` and is now the literal, in `a51e8c92c`),
+`CURATION_QUEUE_SCHEMA_VERSION`, `CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION`,
+`BASELINE_POINTER_SCHEMA_VERSION` (its v1 arm is deleted and its load kind `'v2'` is now
+`'current'`), `CASSETTE_SCHEMA_VERSION` (its migration is deleted), `CENSUS_SCHEMA_VERSION`,
+`CORPUS_ENTRY_SCHEMA_VERSION` (its v1 guard is deleted), the recorded retrieval rung's current arm
+and the post-verdict continuation record.
+
+Other changes with no member deleted:
+
+| Change | Commit | The cell that pins it |
+|---|---|---|
+| `guardPurgeReceiptForFile` re-raises a version refusal with the receipt file in its name | `17039c638` (449.1-07) | `purge.test.ts` `a purge whose receipt history holds a receipt stamped 1 is refused before anything is deleted` |
+| `scripts/413-eval-root-hygiene.sh` defaults `EVAL_ROOT` and `DEMO_CONFIG` to `test-fixtures/eval-workspace`, and an explicit override still works; its L6 comment states only that a corpus entry is read at schemaVersion 2 | `e11b75aa2` (449.1-10); `273c1f335` for the comment | `bash scripts/413-eval-root-hygiene.sh` and its `--selftest` |
+| `scripts/401-11-capture-parity.mjs` line 398 expects each run's `canary-policy.json` at `schemaVersion: 2`, the one literal changed in that script, because `run-parity.e2e.test.ts` imports it | `da9c66a4a` (449.1-12) | the three `run-parity.e2e.test.ts` cells |
+| the arch cells `412-issue-slot-deleted.test.ts` and `442-run-ownership-census.test.ts`, and two handoff builders in `unmask-boundary-rollcall.test.ts`, follow the resets | `f226c51c6` | themselves |
+| comments that named an older number of a renumbered format, or a deleted arm, state the current fact or are deleted (16 production files) | `cc87d5eaf` (449.1-16) | none (comments); `capture/449.1-16-comment-sweep.txt` lists each |
+| `docs/queues.md`, `docs/ci.md`, `docs/run-service.md` and `docs/adversarial-split.md` lose a stated old number; no other doc changed and no user doc gained a pre-release note | `95770a125`, `e00f4e902` (449.1-05); `5c1567202` (449.1-11) | none (docs) |
+| goldens that record a printed version were regenerated by their own writers: `cli/src/__tests__/conformance/golden-registry.json` (`scripts/397-regen-golden.sh --write`, after a dry run, in 449.1-05, -07, -08, -09 and -11), the two stderr fields of `run-parity-golden.json`, the `compute-brief-digest` known vector, `sequential-baseline.ts`'s `busSchemaVersion` and two inline snapshots | `1557ca761`, `4d188eae2`, `71935fad9`, `fbff232e9`, `031c23945`, `5cdc4bebb`, `1dcb6e9a0`, `1e3354f4d` | the conformance parity cells and each golden's own test |
+
+### Converted fixtures
+
+Every fixture at an older stamp was converted to 2 once, by the code's own writers and guards, and
+every digest over a changed stamp was recomputed by the code, never edited by hand (D-22). The
+converters live in the super-repo phase directory `.planning/phases/449.1-v2-schema-versions/convert/`
+and each is idempotent. Both fixture `MANIFEST.json` files keep `frozen` and `source` and carry no
+conversion note; their own stamp is now 2.
+
+| Fixture | Converter | Pin, old → new |
+|---|---|---|
+| `test-fixtures/legacy-handoff/handoff.json` (top-level 7 → 2, then three proof stamps 1 → 2 with recomputed brief digests) | `handoff-set.mjs` (449.1-03), `run-evidence-set.mjs` (449.1-08) | `9f027d40ba4f3815754aab7dbd5811217d8535d7e24fdf5ef087d4ca98461e85` → `345a1dfa1d1e38d605802fe1c401783f75631b7b992dbc74ce9308656c46ab46` → `d39bf8757289c935b6812491f74ccabe5ca36fde217ccf27499dea25123d6777` |
+| `test-fixtures/legacy-handoff/MANIFEST.json` (stamp 1 → 2, file sha, then the 13 `evidenceDigest` decision pins) | the same | `9a6ff123c99b10bee8486891be4d5a793bb2a246a8451f1d27382ef1c07b5150` → `fd13fe80794c5a8403ff453efc855e0778916b4c0e4ab156c352fc8a68338838` → `ad36bd9b575a6aea34479f4380f76ba7394f2cada9a955dea31ccc817bdb529c` |
+| `packages/agent/src/jobs/__tests__/fixtures/399-red-handoff.json` (6 → 2, then proofs and traces 1 → 2) | the same | `0f68c113…` → `bfa256c6…` → `d688e501cb9c75f5dcd79297a3cd8f7c517ae7a869b89c651059ea6774a06299` |
+| `packages/cli/src/curation/__tests__/fixtures/f-381-48-1-run/handoff.json`, `f-381-51-1-run/handoff.json`, `packages/runner/src/loop/__tests__/fixtures/f-381-54-1/handoff.json` (3 → 2) | `handoff-set.mjs` | `911ff8af…` → `ee23ab56aac6354bfe528ae34d3d072a5a43f2ac324392639ce3db630e9af2ab`; `102c24ce…` → `cf43af997b9aa9e6763fd7444261c839d045d8af59df5f7f5b555251e9ee0814`; `8a9812d6…` → `3a157aa7bfc864af87771c5747fde2ab4bd096ea7cb2e4f473aea43b7f5e4288` |
+| `packages/cli/src/curation/__tests__/fixtures/f-381-48-1-run/artifact.json` (run artifact 1 → 2) | `run-evidence-set.mjs` | `6c63b696…` → `4a33561a05b5aad8310284de98cc8780ae37a71635903a0f52b6a509acb8325a` |
+| `packages/eval/src/replay/__tests__/fixtures/proof-briefs.json` (four proofs 1 → 2) | `run-evidence-set.mjs` | `6baa6bd0…` → `282c71e08beb11f58f8b266e5a827587f3db1b5afed75baf375a87eb8b78d2ea` |
+| `packages/runner/src/loop/__tests__/fixtures/f-381-54-1/procedure-record.md` (frontmatter and body 1 → 2) | `knowledge-set.mjs` (449.1-07) | `4841538e…` → `e4a660e14e87763afdb1ac51675b3839820e15811cdc07290812d1bc296e6e3e` |
+| `packages/knowledge-local/src/__tests__/fixtures/420-prior-baseline.json` (240 stamps, its content hashes and state hash) | its own capture path (449.1-07) | `74076a49…` → `c35a584bb98727e0f0ee8fea17c2b4159df77c32ac3001179e2dc0e3931debe4` |
+| `packages/knowledge-local/src/curator/__tests__/fixtures/416-v51-reference.json` (two `curationJobId` values, whose content address covers the observation stamp) | its own write path (449.1-07) | the two door-3 job ids only |
+| `test-fixtures/eval-workspace`: `contracts/judge-config.v2.json`, `matcher-config.v1.json`, `judge-config.v1.json`, the four `partition-*.json`, and the noise floor under `reports/noise-floor/` (eighteen stamps 1 → 2, re-projected through the built projectors and guards) | `eval-workspace-set.mjs` (449.1-10) | judge-config.v2 `7fc8f16e4210333638a7dd51f36cd9cc291c7a3a72809d96cc623de578b272ec` → `92f43fe73d90b253985cb8d12bd66b6324f35639ffc160fe502046c7571520a1`; judge-config.v1 `8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea` → `106807bef1934ad439eda53929c06a783ae7cab45dde0bebc8d09a528ad60024`; matcher-config `9f339980…` → `0ac383eb…`; noise floor `71d4fe0e…` → `98cbffb9…` |
+| `test-fixtures/eval-workspace/agent-qa-eval/reports/358327d2…/report.json` (vendored, the L4 refusal report, from the super-repo commit its manifest's `source.sha` names) | `eval-workspace-set.mjs` | absent → `1b1de69f1e8f5e62950a93f8d790191d98f94770c03191daadce1ed62e63f199` |
+| `test-fixtures/eval-workspace/MANIFEST.json` (stamp 1 → 2, files recomputed, 180 then 181 files) | `eval-workspace-set.mjs` | `3f44b887…` → `84072c5d…` → `6af1e3e5ff41f17d862d1d560f758dbaa53ba1980cd653ebab9f63ea97192cb2` |
+| `packages/cli/src/__tests__/fixtures/pre-420-report/decisions.json` (1 → 2), with its README reduced to plain facts | `eval-workspace-set.mjs` | `5076bf87…` → `1d0082fdf47ec3f0b6fe281eee0e618f91d6cc63907810502d141bb29faed093` |
+| the three test-corpus `expectations.json` files (`agent/src/authoring/__tests__/fixtures/corpus/`, `router-corpus/`, `core/src/parser/__tests__/fixtures/cst-edit-corpus/`), one line each, 1 → 2 | `test-corpus-set.mjs` (449.1-11) | `22d6f316…` → `d88797fe…`; `c80119be…` → `1abefd87…`; `f623875d…` → `72c76569…` |
+
+The deleted fixtures are listed under What was deleted. One fixture stays as written and is a
+spelled exclusion of the census: the retired `packages/cli/src/__tests__/fixtures/legacy-config-proposal.json`
+(two stamps at 1), which no reader parses (D-24 OQ-D).
+
+**The 447.1 frozen-fixture rows are superseded by this conversion.** Phase 447.1 moved
+`test-fixtures/demo-init` and `test-fixtures/436-pre-change` byte for byte (447.1 D-06 and D-07),
+and its section above records that no fixture byte, `MANIFEST.json` or pinned hash changed and
+names the tree objects `1b92835b0` and `43590181e`. Those statements describe 447.1's state; from
+this phase on, both fixtures are data converted to 2 with the new pins above.
+
+### Registered gate rows
+
+The 2553 rows listed at `28f7c163f` are still listed, in order, except four re-titled in place with
+their cells (same file, runner and `origin`):
+
+- `C437-KEY-SETS the handoff schema version is still 7` became `C437-KEY-SETS the handoff schema version is 2`
+- `C438-KEY-SETS the handoff schema version is still 7` became `C438-KEY-SETS the handoff schema version is 2`
+- `C439-KEY-SETS the handoff schema version is still 7` became `C439-KEY-SETS the handoff schema version is 2`
+- `C444-SCHEMA-V6 a fresh runs database opens at version 6` became `C444-SCHEMA-V6 a fresh runs database opens at version 2`
+
+The first three moved in `7e8f99930` (449.1-01) and took their final wording in `2ab72e094`
+(449.1-03); the fourth moved in `e00f4e902` (449.1-05). Twelve rows were appended, all for
+`packages/arch/src/__tests__/449.1-version-register.test.ts` with origin `449.1 D-11`
+(`139168574`, `ca713cc6b`, `32fbecb93`; 449.1-15): the census cells `every registered version is
+2, every exclusion has a reason, and every register site exists`; `every production version
+constant is registered at its value or excluded, and every registered constant is found`; `every
+inline stamp, literal and exact check matches the register by file, literal and count`; `no format
+reads a second version: no migration step, alias, stamp union or stamp-keyed union`; `every
+registered copy spells the value of its source`; `the gate inputs and both skills contracts read 2,
+and the two contracts copies are identical`; `every schemaVersion stamp in the repository's
+fixtures is 2, apart from the spelled exclusions`; `every excluded category is spelled with a
+reason, and nothing excluded is also registered`; and the instruments `a planted constant at 3 is
+found as code and not as a comment`, `a planted unregistered schemaVersion literal at 1 is found as
+code and not as a comment`, `a planted migration step and a planted stamp union are found as code
+and not as a comment` and `this file spells none of its needles, lies outside every region it
+scans, and is named in validate:arch` (each prefixed `schema version census`). No row was delisted.
+The list holds 2565 rows, and its own stamp is 2.
+
+### The reading rule
+
+Every format agent-qa owns reads only its current version, 2. Any other stamp is refused, rebuilt
+or read as a miss by the path the format already had: an error that names the format or the file,
+a rebuild of derived state, or an absent read. There is no fallback, migration step, alias or
+older-version arm, and no read arm was retained; the census's second-version cell fails on any
+migration step, alias, stamp union or stamp-keyed union in production. Writers stamp 2. Field-level
+members that a reader still accepts only so that older documents parse (436's `localEffect`,
+`stagnation` and `cycle`; 432's `approval_decision` chat reader; 438's evidence `ordinal`; 439's
+`'assert-value'`; 402's `suite-parent` members) are not version arms; they are deferred for the
+owner (D-24 OQ-B) and left as they were.
+
+### What degrades, stated plainly
+
+- **State written by earlier builds under `.agent-qa/` is refused or rebuilt, and clearing it is
+  the remedy.** That covers `runs.db`, `agent-jobs.db` with its checkpoints, the action cache,
+  `daemon.json`, `embedder-worker.json`, chat sessions, auth-state metadata, draft receipts, run
+  directories and eval scratch. The gitignored knowledge-root state (`memory/index/`,
+  `memory/queue/`, `memory/*/bundles/.staging/`) is refused or rebuilt the same way.
+- **A committed knowledge root or eval root written by an earlier build is refused.** One stamp-1
+  purge receipt in `memory/receipts/` blocks every purge, and the error names the file; one stamp-1
+  line in a bundle's `observations.jsonl` fails an index rebuild.
+- **An older `daemon.json` or `embedder-worker.json` is refused and left in place until it is
+  removed once.** For `daemon.json` (449.1-12 observed): the host logs `agent-qa daemon
+  registration is malformed; refusing to overwrite it` and exits 1, removes nothing, unlinks no
+  socket and signals no pid; `agent-qa daemon status` reports it as malformed. Remove
+  `.agent-qa/daemon.json` once, and restart a long-lived daemon from an earlier build. For
+  `embedder-worker.json` (449.1-02 observed): the preflight refuses to overwrite it, the drain logs
+  `Embedder worker start failed`, the embedder is deferred (`worker-unavailable`) and the drain
+  runs lexical-only while the daemon keeps running; nothing is signalled or unlinked. Remove
+  `.agent-qa/embedder-worker.json` once.
+- **A stale `memory/receipts/purge-<id>.intent.json` blocks purging that record until it is
+  removed.** Other records purge normally.
+- **Stamp-2 residuals.** Three earlier stores used the number 2 under their old numbering and are
+  admitted at 2: a pre-release `runs.db` written 2026-08-27 to 09-14 (admitted with its older DDL;
+  delete the file), a job store written 2026-07-29 to 08-03 (admitted, then fails at the first
+  statement that names `started_at` or `not_before`; clear the agent job queue state) and a
+  knowledge index written 2026-07-15 to 07-16 (admitted; a missing table is still refused by the
+  projection-schema probe, a missing column is not). A pre-release four-key curation-tail receipt
+  stamped 2 is refused by its key set and refolds once.
+- **Every receipted run refolds once** and the derived run-outcomes projection rebuilds once.
+- **Stored replay scores read `stale-replay`** and need a re-replay, which costs model spend.
+- **Data outside agent-qa is left at its stamps and no longer loads**, the super-repo's demo root
+  included (D-23).
+- No public user ran a pre-release build, so no user doc carries a note.
+
+### The instruments that notice a return
+
+- **The version census** (`packages/arch/src/__tests__/449.1-version-register.test.ts`, in
+  `validate:arch`): its eight census cells check every registered value, constant, inline stamp,
+  copy, JSON stamp and fixture stamp against the register and refuse a second readable version, and
+  its four instrument twins prove the scanners fire on a planted constant at 3, a planted
+  unregistered literal at 1, a planted migration step and stamp union, and on the census file
+  itself.
+- **The per-format refusal cells** named in the tables above, most of them in the refusal tables
+  `449.1-wire-stamps.test.ts`, `449.1-run-evidence-stamps.test.ts`, `449.1-user-records-stamps.test.ts`
+  (schema), `449.1-committed-knowledge-stamps.test.ts` (schema knowledge), `449.1-runtime-stamps.test.ts`
+  (cli and knowledge-local), `449.1-committed-eval-stamps.test.ts` (eval),
+  `449.1-committed-eval.test.ts` and `449.1-eval-runtime-stamps.test.ts` (eval-local).
+- **The converted-fixture cells:** the three `EVAL-WORKSPACE-FIXTURE` cells, the five
+  `C436-PRE-CHANGE-HANDOFF` cells and the C437, C438 and C439 key-set cells against the new pins.
+- **The hygiene script and its selftest** (`bash scripts/413-eval-root-hygiene.sh`, `--selftest`).
+- **The 434 gate**, which must execute and pass all 2565 listed rows.
+
+### Gate at the time of writing
+
+The phase's record gate measures agent-qa HEAD after this section lands. Its legs, counts and
+verdict are recorded in `.planning/phases/449.1-v2-schema-versions/449.1-RECORD.md` § Gate, and the
+SHA in its § Final SHA, rather than quoted here, so no agent-qa commit follows it.
