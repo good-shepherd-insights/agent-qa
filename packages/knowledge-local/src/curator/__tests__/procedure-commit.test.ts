@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { serializeProcedureBody, type BundleDraft, type Delta } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, serializeProcedureBody, type BundleDraft, type Delta } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
@@ -90,7 +90,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
       summarySeed: draft.summary,
       bodySeed: draft.body,
       distilledObservations: screenStates.map((_, stepIndex) => ({
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: ['enter-email', 'enter-password', 'submit'][stepIndex]!, ordinal: stepIndex },
         platform: 'web',
         test: { id: 'sign-in-test' },

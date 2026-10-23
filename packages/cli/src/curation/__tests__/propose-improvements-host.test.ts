@@ -34,7 +34,7 @@ import type {
   JobModelCapability,
   ProposeGate1Report,
 } from '@vostride/agent-qa-agent'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, CURRENT_HANDOFF_SCHEMA_VERSION, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import type {
   GateReceipt,
   GateVerdict,
@@ -118,7 +118,7 @@ const PER_AXIS = {
 
 function gate1Receipt(candidateId: string, verdict: GateVerdict): GateReceipt {
   return stampReceiptDigest({
-    schemaVersion: 1 as const,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
     gate: 1 as const,
     candidateId,
     verdict,

@@ -64,6 +64,7 @@ import {
 // agreement over an empty set, which is the failure the non-vacuity block below exists to catch.
 import { canaryOutcomeObservationId } from '@vostride/agent-qa-knowledge-local/reader'
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   CURATION_BREAKDOWN_BUCKETS,
   CURATION_BUCKET_PRECEDENCE,
@@ -367,7 +368,7 @@ function seededBundleInput(): PublishBundleInput {
     elementRef: { role: 'button', name: 'Acknowledge' },
   }
   const observation: DistilledObservation = {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'acknowledge-click', ordinal: 0 },
     platform: 'web',
     element: { naturalKey: 'button:acknowledge:0' },
@@ -493,7 +494,7 @@ function afterRunBundleInput(
     elementRef: { role: 'button', name: 'Dismiss' },
   }
   const observation: DistilledObservation = {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'dismiss-click', ordinal: 0 },
     platform: 'web',
     element: { naturalKey: 'button:dismiss:0' },

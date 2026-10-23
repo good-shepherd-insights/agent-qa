@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   asEvidenceToken,
   type Anchor,
   type BundleDraft,
@@ -91,7 +92,7 @@ function job(
     bodySeed: 'The acknowledge button was resolved.',
     distilledObservations: [
       {
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'acknowledge-click', ordinal: 0 },
         platform: 'web',
         element: { naturalKey: 'button:acknowledge' },

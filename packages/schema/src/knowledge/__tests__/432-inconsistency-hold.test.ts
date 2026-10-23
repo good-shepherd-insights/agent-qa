@@ -5,7 +5,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { asEvidenceToken } from '../../ids/record-id'
-import { stampReceiptDigest, type GateReceipt, type GateVerdict } from '../gate-receipt'
+import {
+  GATE_RECEIPT_SCHEMA_VERSION,
+  stampReceiptDigest,
+  type GateReceipt,
+  type GateVerdict,
+} from '../gate-receipt'
 import {
   detectGateInconsistency,
   evaluatePromotionGate,
@@ -30,7 +35,8 @@ function resolvedPosture(
 
 function receipt(gate: 1 | 2 | 3, verdict: GateVerdict, producedAtOrdinal = 5): GateReceipt {
   const core = {
-    schemaVersion: 1 as const, candidateId: 'candidate', verdict, producedAtOrdinal,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION as typeof GATE_RECEIPT_SCHEMA_VERSION,
+    candidateId: 'candidate', verdict, producedAtOrdinal,
     producedBy: { opId: 'gate-test' },
   }
   const corpusDigest = 'c'.repeat(64)

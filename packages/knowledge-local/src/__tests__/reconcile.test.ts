@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   canonicalJson,
   guardBundleManifest,
@@ -180,7 +181,7 @@ describe('drain-start crash reconciliation (CUR-04)', () => {
       bodySeed: `${seed} was verified`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: seed, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `button:${seed}` },

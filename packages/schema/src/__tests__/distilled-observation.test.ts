@@ -8,7 +8,7 @@ import {
 import { VersionGuardError } from '../versioning/create-version-guard'
 
 const fullObservation = {
-  schemaVersion: 1,
+  schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
   step: { naturalKey: 'submit checkout', ordinal: 3 },
   platform: 'web' as const,
   test: { id: 'checkout-happy-path' },

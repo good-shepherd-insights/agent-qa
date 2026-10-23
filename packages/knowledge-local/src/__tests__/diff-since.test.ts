@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   asRecordId,
   guardRecordChange,
@@ -78,7 +79,7 @@ describe('diffSince deterministic maintenance history', () => {
       const store = createLocalKnowledgeStore({ knowledgeRoot,
         executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch,
         sourceBuildOrdinal: ordinal })
-      await store.promote(recordId, [stampReceiptDigest({ schemaVersion: 1, gate: 3,
+      await store.promote(recordId, [stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3,
         candidateId: recordId, verdict: 'pass', producedAtOrdinal: ordinal,
         producedBy: { opId: 'knowledge.proposal.apply' }, runId: 'diff-mark-run', mark: 'false-fail' })])
       const rows = diffSince(knowledgeRoot, 0)

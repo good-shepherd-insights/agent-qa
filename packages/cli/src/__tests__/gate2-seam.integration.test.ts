@@ -21,6 +21,8 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
+  GATE_RECEIPT_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
@@ -190,7 +192,7 @@ function candidateInput(): PublishBundleInput {
     elementRef: { role: 'button', name: 'Checkout' },
   }
   const observation: DistilledObservation = {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'checkout-click', ordinal: 0 },
     platform: 'web',
     element: { naturalKey: 'button:checkout:0' },
@@ -271,7 +273,7 @@ describe('418 credited canary Gate-2 seam', () => {
       if (published.kind !== 'published') throw new Error(published.kind)
       const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
       if (mode === 'eval-bound') expect(appendGateReceipt(config, published.id, stampReceiptDigest({
-        schemaVersion: 1, gate: 1, candidateId: published.id, verdict: 'pass',
+        schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1, candidateId: published.id, verdict: 'pass',
         producedAtOrdinal: BUILD_ORDINAL - 1, producedBy: { opId: 'fixture' },
         perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score, sideEffect: score, loop: score },
         corpusVersion: { corpusDigest: DIGEST, partitionVersion: 2, gateSetSize: 10, excludedCount: 0, minimumGateSet: 1 },
@@ -346,7 +348,7 @@ describe('418 credited canary Gate-2 seam', () => {
     if (published.kind !== 'published') throw new Error(published.kind)
     const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
     const gate1 = stampReceiptDigest({
-      schemaVersion: 1 as const, gate: 1 as const, candidateId: published.id, verdict: 'pass' as const,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1 as const, candidateId: published.id, verdict: 'pass' as const,
       producedAtOrdinal: ordered ? BUILD_ORDINAL - 1 : BUILD_ORDINAL + 4, producedBy: { opId: 'fixture' },
       perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score, sideEffect: score, loop: score },
       corpusVersion: { corpusDigest: DIGEST, partitionVersion: 2, gateSetSize: 10, excludedCount: 0, minimumGateSet: 1 },

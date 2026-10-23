@@ -29,6 +29,7 @@ import {
   slugBranch,
 } from '@vostride/agent-qa-runner-local'
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   asEvidenceToken,
   asRunId,
@@ -73,7 +74,7 @@ function committedFixtureInput(): PublishBundleInput {
     elementRef: { role: 'button', name: 'Place order' },
   }
   const observation: DistilledObservation = {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'place-order-click', ordinal: 0 },
     platform: 'web',
     element: { naturalKey: 'button:place-order:0' },
@@ -169,7 +170,7 @@ function queueProjection(runId: string): CurationCandidateProjection {
     summarySeed: 'Review order selector',
     bodySeed: 'The Review order button was resolved and verified.',
     distilledObservations: [{
-      schemaVersion: 1,
+      schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
       step: { naturalKey: 'review-order', ordinal: 0 },
       platform: 'web',
       element: { naturalKey: 'button:review-order:0' },

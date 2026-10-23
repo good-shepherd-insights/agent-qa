@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CurationAuthorship, Delta } from '@vostride/agent-qa-schema'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -81,7 +82,7 @@ function projectionInput(seed: string): ArtifactFreeCandidateProjectionInput {
     bodySeed: `The Checkout ${seed} button was resolved and verified.`,
     distilledObservations: [
       {
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: `checkout-${seed}`, ordinal: 0 },
         platform: 'web',
         element: { naturalKey: `button:checkout-${seed}` },
@@ -109,7 +110,7 @@ function mutableProjectionInput(
     bodySeed: 'Complete checkout using the observed sequence.',
     distilledObservations: [
       {
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'checkout-submit', ordinal: 0 },
         flow: { name: 'Checkout flow' },
         observedAtOrdinal: buildOrdinal,

@@ -21,7 +21,7 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 
-import { asEvidenceToken, ForgetReceiptV1Schema, type Anchor, type ScopeKey } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, ForgetReceiptV1Schema, type Anchor, type ScopeKey } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { appendOutcomeEvent } from '../bundle-append.js'
@@ -128,7 +128,7 @@ const freshWriters: ReadonlyArray<readonly [string, readonly string[], () => unk
       executionContext: 'local-interactive', kind: 'fact',
       subtype: 'selector', anchors: [{ t: 'el', role: 'button', name: 'containment' }],
       summarySeed: 'containment selector', bodySeed: 'containment was resolved and verified.',
-      distilledObservations: [{ schemaVersion: 1, step: { naturalKey: 'containment-step', ordinal: 0 },
+      distilledObservations: [{ schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION, step: { naturalKey: 'containment-step', ordinal: 0 },
         platform: 'web', element: { naturalKey: 'button:containment' }, observedAtOrdinal: 42 }],
       evidenceToken: 'evidence-containment', attributingObservationId: 'observation-containment',
       emittedAt: '2026-07-15T10:00:00.000Z' } as never })],

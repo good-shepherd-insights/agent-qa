@@ -12,7 +12,7 @@ import {
   type CurationJobView,
   type CuratorAuthor,
 } from '@vostride/agent-qa-knowledge-local'
-import { canonicalJson, CurationSnapshotSchema } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, canonicalJson, CurationSnapshotSchema } from '@vostride/agent-qa-schema'
 import type { ExecutionContext } from '@vostride/agent-qa-schema'
 
 export const FIXTURE_RUN_ID = 'run-dual-host-byte-proof'
@@ -114,7 +114,7 @@ function candidate(
     summarySeed: 'Use the deterministic dual-host shared control.',
     bodySeed: `The ${suffix} control was observed in the dual-host fixture.`,
     distilledObservations: [{
-      schemaVersion: 1,
+      schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
       step: { naturalKey: `dual-host-${suffix}`, ordinal: 0 },
       platform: 'web',
       element: {

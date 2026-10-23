@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { canonicalJson, type Delta } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, canonicalJson, type Delta } from '@vostride/agent-qa-schema'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
@@ -88,7 +88,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       bodySeed: 'The checkout button was resolved and verified.',
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-click', ordinal: 0 },
           platform: 'web',
           element: { naturalKey: 'button:checkout' },

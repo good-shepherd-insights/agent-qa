@@ -11,7 +11,7 @@ import type {
   GraphEdgeType,
   GraphNodeType,
 } from '@vostride/agent-qa-schema'
-import { graphNodeId } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, graphNodeId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as knowledgeLocal from '../index.js'
@@ -49,7 +49,7 @@ function observation(
   overrides: Partial<DistilledObservation> = {},
 ): DistilledObservation {
   return {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'submit checkout', ordinal: 3 },
     platform: 'web',
     test: { id: 'checkout-happy-path' },
@@ -349,7 +349,7 @@ describe('observation graph rebuild integration', () => {
   it('reports and skips a malformed observation line while retaining valid lines', async () => {
     const published = publishObservationFixture(config(), input(), [
       observation({ observedAtOrdinal: 45 }),
-      '{"schemaVersion":1,"step":',
+      '{"schemaVersion":2,"step":',
       observation({
         step: { naturalKey: 'confirm checkout', ordinal: 4 },
         element: { naturalKey: 'button:confirm order' },

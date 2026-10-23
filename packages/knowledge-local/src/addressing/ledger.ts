@@ -48,7 +48,7 @@ import type { EntityKind } from '@vostride/agent-qa-schema'
  * keep working. Note what this does NOT license: the ROWS are permanent regardless. A version
  * refusal tells an operator to move a stale development file aside; it never rewrites one.
  */
-export const ADDRESSING_LEDGER_USER_VERSION = 1
+export const ADDRESSING_LEDGER_USER_VERSION = 2
 
 /**
  * Busy timeout for every connection.

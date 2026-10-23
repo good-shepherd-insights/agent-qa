@@ -67,7 +67,7 @@ import {
   enqueueArtifactFreeCandidateProjection,
   type ArtifactFreeCandidateProjectionInput,
 } from './fixtures/curation-candidate-fixture.js'
-import { asEvidenceToken, type RecordId } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, type RecordId } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 interface FencedClaimNextJobOptions extends ClaimNextJobOptions {
@@ -173,7 +173,7 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
       bodySeed: `${seed} was resolved and verified.`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: seed, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `button:${seed}` },

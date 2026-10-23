@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   deriveEvidenceToken,
@@ -129,7 +130,7 @@ describe('416 promotion doors share receipt authority', () => {
     await port.recordCanaryOutcome(positive(seeded))
     expect(reports).toHaveBeenLastCalledWith({ candidateId: seeded.published.id, promotionHoldReason: 'gate2-receipt-required' })
     expect(deriveBundleTrust(fixture.onlyBundle().bundle).status).toBe('candidate')
-    const gate2 = stampReceiptDigest({ schemaVersion: 1, gate: 2, candidateId: seeded.published.id,
+    const gate2 = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2, candidateId: seeded.published.id,
       verdict: 'pass', producedAtOrdinal: gate1.producedAtOrdinal, producedBy: { opId: 'test' },
       corpusVersion: { corpusDigest: 'c'.repeat(64) }, attributedObservationId: 'door-canary',
       benefit: 'exercised-benefited', stateValidity: 'valid' })

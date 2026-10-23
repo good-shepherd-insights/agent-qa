@@ -15,6 +15,7 @@ import type {
   RunId,
 } from '@vostride/agent-qa-schema'
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   stampReceiptDigest,
@@ -351,7 +352,7 @@ describe('knowledge.gates.list', () => {
     const result: KnowledgeGatesListResult = {
       kind: 'found', recordId: 'rec-1', product: 'shop', recordKind: 'fact', status: 'candidate',
       strongestPromotionPath: 'deterministic-verdict-floor',
-      lines: [stampReceiptDigest({ schemaVersion: 1, kind: 'promotion',
+      lines: [stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion',
         candidateId: 'rec-1', promotionPath: 'deterministic-verdict-floor',
         citedReceiptDigests: [], producedAtOrdinal: 43, producedBy: { opId: 'promote' } })],
       standing: [], live: { verdict: 'promote', promotionPath: 'deterministic-verdict-floor',
@@ -632,7 +633,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
     const found: KnowledgeGatesListResult = {
       kind: 'found', recordId: 'rec-1', product: 'shop', recordKind: 'fact', status: 'candidate',
       strongestPromotionPath: 'deterministic-verdict-floor',
-      lines: [stampReceiptDigest({ schemaVersion: 1, kind: 'promotion',
+      lines: [stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion',
         candidateId: 'rec-1', promotionPath: 'deterministic-verdict-floor',
         citedReceiptDigests: [], producedAtOrdinal: 43, producedBy: { opId: 'promote' } })],
       standing: [], live: { verdict: 'promote', promotionPath: 'deterministic-verdict-floor',

@@ -1,3 +1,4 @@
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -61,7 +62,7 @@ export function enqueueRealCandidate(knowledgeRoot: string, seed: string): strin
       summarySeed: `${seed} selector`,
       bodySeed: `${seed} was resolved and verified.`,
       distilledObservations: [{
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: `${seed}-click`, ordinal: 0 },
         platform: 'web',
         element: { naturalKey: `button:${seed}:0` },

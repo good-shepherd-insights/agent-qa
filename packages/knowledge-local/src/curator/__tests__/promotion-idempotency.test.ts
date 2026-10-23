@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asEvidenceToken, asRecordId, stampReceiptDigest, survivingOutcomeEvents, type GateReceipt, type ResolvePromotionPosture, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, asRecordId, stampReceiptDigest, survivingOutcomeEvents, type GateReceipt, type ResolvePromotionPosture, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deriveBundleTrust, readGateReceipts } from '../../bundle-read.js'
 import { acquireWriterLease } from '../../lease/writer-lease.js'
@@ -42,7 +42,7 @@ describe('416 promotion receipt writer contract', () => {
     return { ...seeded, store }
   }
   function gate2(candidateId: string, ordinal = 45, corpusDigest = 'c'.repeat(64)) {
-    return stampReceiptDigest({ schemaVersion: 1, gate: 2, candidateId, verdict: 'pass',
+    return stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2, candidateId, verdict: 'pass',
       producedAtOrdinal: ordinal, producedBy: { opId: 'test' },
       corpusVersion: { corpusDigest },
       attributedObservationId: 'receipt-writer-canary', benefit: 'exercised-benefited', stateValidity: 'valid' })

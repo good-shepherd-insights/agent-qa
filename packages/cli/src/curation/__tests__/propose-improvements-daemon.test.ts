@@ -23,7 +23,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
-import { stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import type {
   GateReceipt,
   GateVerdict,
@@ -99,7 +99,7 @@ const PER_AXIS = {
 
 function gate1Receipt(candidateId: string, verdict: GateVerdict): GateReceipt {
   return stampReceiptDigest({
-    schemaVersion: 1 as const,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
     gate: 1 as const,
     candidateId,
     verdict,

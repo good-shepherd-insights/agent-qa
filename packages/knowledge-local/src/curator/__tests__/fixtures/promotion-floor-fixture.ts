@@ -1,5 +1,5 @@
 // 2026-09-06, 416 D-06: shared pristine v51 acceptance builders.
-import { stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ExecutionContext, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, GATE_RECEIPT_SCHEMA_VERSION, stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ExecutionContext, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
 import { expect, vi } from 'vitest'
 import { createLocalKnowledgeStore, drainQueue, enumerateBundleDirs, loadBundle, type BundleStoreConfig, type CuratorAuthor, type DrainOptions, type LoadedBundle } from '../../../index.js'
 import { publishBundle } from '../../../bundle-publish.test-helper.js'
@@ -26,7 +26,7 @@ export function completeGate1Receipt(
 ): Gate1Receipt {
   const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
   return stampReceiptDigest({
-    schemaVersion: 1, gate: 1, candidateId, verdict: overrides?.verdict ?? 'pass',
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1, candidateId, verdict: overrides?.verdict ?? 'pass',
     producedAtOrdinal: overrides?.producedAtOrdinal ?? 44, producedBy: { opId: 'test' },
     perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score,
       sideEffect: score, loop: score },
@@ -56,7 +56,7 @@ export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: 
       bodySeed: `The Checkout ${seed} button was resolved and verified.`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: `checkout-${seed}`, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `button:${normalizedName}:0` },
@@ -83,7 +83,7 @@ export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: 
       bodySeed: 'Retry after the deterministic timeout attribution.',
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-confirmation', ordinal: 0 },
           error: {
             naturalKey: 'checkout confirmation timed out',
@@ -164,7 +164,7 @@ export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: 
       { t: 'selector', literal: `[data-testid="held-checkout-${seed}"]` },
     ]
     const observation: DistilledObservation = {
-      schemaVersion: 1,
+      schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
       step: { naturalKey: `held-checkout-${seed}`, ordinal: 0 },
       platform: 'web',
       element: { naturalKey: `button:${normalizedName}:0` },

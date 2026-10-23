@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import type { ReplayGatePort } from '@vostride/agent-qa-agent'
 import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
 import type { PromotionPostureCandidate, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
-import { asEvidenceToken, evaluatePromotionGate, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, evaluatePromotionGate, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import { latestBuildOrdinal, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { acquireWriterLease, appendGateReceipt, createLocalKnowledgeStore, deriveBundleTrust, loadBundle,
   publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
@@ -127,7 +127,7 @@ describe('buildPromotionPostureResolver', () => {
     if (result.kind !== 'ready') throw new Error(`expected ready: ${JSON.stringify(result)}`)
     const gate = (posture = result.resolve(candidate)) => {
       const score = { baseline: 0, candidate: 1, delta: 1, floor: 0.1, n: 3 }
-      const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 1, candidateId: candidate.id,
+      const receipt = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1, candidateId: candidate.id,
         verdict: 'pass', producedAtOrdinal: facts.gate1PassOrdinal, producedBy: { opId: 'fixture' },
         perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score, sideEffect: score, loop: score },
         corpusVersion: { corpusDigest: result.host.corpusDigest, partitionVersion: 1, gateSetSize: 40, excludedCount: 0, minimumGateSet: 13 },
@@ -178,13 +178,13 @@ describe('buildPromotionPostureResolver', () => {
         curationJobId: 'confirm-checkout', buildOrdinal: 1 }],
       provenance: { mode: 'run-linked', runId: 'seed-checkout', testId: 'seed-checkout', stepIndex: 0,
         curationJobId: 'seed-checkout', sourceBuildOrdinal: 1 }, evidenceMarkdown: 'Verified selector.\n',
-      distilledObservations: [{ schemaVersion: 1, step: { naturalKey: 'checkout', ordinal: 0 }, platform: 'web',
+      distilledObservations: [{ schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION, step: { naturalKey: 'checkout', ordinal: 0 }, platform: 'web',
         element: { naturalKey: 'button:checkout:0' }, observedAtOrdinal: 1 }],
     })
     if (seeded.kind !== 'published') throw new Error(seeded.kind)
     const { receiptDigest: _digest, ...body } = f.gate().receipt
     const g1 = stampReceiptDigest({ ...body, candidateId: seeded.id })
-    const g2 = stampReceiptDigest({ schemaVersion: 1, gate: 2, candidateId: seeded.id,
+    const g2 = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2, candidateId: seeded.id,
       verdict: 'fail', producedAtOrdinal: 11, producedBy: { opId: 'fixture' },
       corpusVersion: { corpusDigest: f.result.host.corpusDigest }, attributedObservationId: 'first-harm',
       benefit: 'exercised-harmed', stateValidity: 'valid' })

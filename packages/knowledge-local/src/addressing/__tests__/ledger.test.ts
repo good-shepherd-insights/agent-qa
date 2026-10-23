@@ -35,6 +35,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   ADDRESSING_LEDGER_USER_VERSION,
+  AddressingLedgerSchemaVersionError,
   openAddressingLedger,
 } from '../ledger.js'
 import type { AddressingLedger } from '../ledger.js'
@@ -268,6 +269,33 @@ describe('the addressing ledger', () => {
 
     expect(() => openAddressingLedger({ path }))
       .toThrow(/AddressingLedgerSchemaVersionError|schema version/)
+  })
+
+  it('stamps a new ledger 2', () => {
+    const stamped = new DatabaseSync(path, { readOnly: true })
+    try {
+      expect(Number(stamped.prepare('PRAGMA user_version').get()?.user_version)).toBe(2)
+    } finally {
+      stamped.close()
+    }
+  })
+
+  it.each([1, 3])('refuses a ledger stamped %i and leaves it as found', (stamp) => {
+    ledger.mint('MEM', 'bundle-a')
+    const planted = new DatabaseSync(path)
+    planted.exec(`PRAGMA user_version=${String(stamp)}`)
+    planted.close()
+    const rowsBefore = rawRows(path)
+
+    expect(() => openAddressingLedger({ path })).toThrowError(AddressingLedgerSchemaVersionError)
+
+    const after = new DatabaseSync(path, { readOnly: true })
+    try {
+      expect(Number(after.prepare('PRAGMA user_version').get()?.user_version)).toBe(stamp)
+    } finally {
+      after.close()
+    }
+    expect(rawRows(path)).toEqual(rowsBefore)
   })
 })
 

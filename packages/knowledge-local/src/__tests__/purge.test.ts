@@ -40,6 +40,7 @@ import {
 } from '../canary-emit.js'
 import { LEASE_FILE, LEASE_HEARTBEAT_TTL_MS } from '../lease/writer-lease.js'
 import * as purgeModule from '../purge.js'
+import { PURGE_RECEIPT_SCHEMA_VERSION } from '../purge-receipt.js'
 import { writeJobStateWithinCurrentAuthority } from '../queue/job-state.js'
 import { quarantinedCandidateDir } from '../queue/queue-layout.js'
 import {
@@ -464,7 +465,7 @@ describe('DCAY-05 sovereign purge', () => {
     writeFileSync(
       join(receiptsDir, input.fileName),
       `${JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: PURGE_RECEIPT_SCHEMA_VERSION,
         purgedRecordId: input.recordId,
         purgedAtOrdinal: input.purgedAtOrdinal,
         initiator: 'fixture-operator',
@@ -1510,7 +1511,7 @@ describe('DCAY-05 sovereign purge', () => {
     const receipt = JSON.parse(receiptText) as PurgeReceipt
     const bundleRelPath = relative(knowledgeRoot, target.dir)
     expect(receipt).toEqual({
-      schemaVersion: 1,
+      schemaVersion: PURGE_RECEIPT_SCHEMA_VERSION,
       purgedRecordId: target.id,
       purgedAtOrdinal: 48,
       initiator: 'user',
@@ -1528,14 +1529,14 @@ describe('DCAY-05 sovereign purge', () => {
     expect(receiptText).not.toContain('Receipt summary must stay out of receipt bytes')
 
     const schemaApi = purgeReceiptSchemaApi()
-    expect(schemaApi.PURGE_RECEIPT_SCHEMA_VERSION).toBe(1)
+    expect(schemaApi.PURGE_RECEIPT_SCHEMA_VERSION).toBe(2)
     expect(schemaApi.purgeReceiptSchema.safeParse(receipt).success).toBe(true)
     expect(
       schemaApi.purgeReceiptSchema.safeParse({ ...receipt, unexpected: plantedMarker })
         .success,
     ).toBe(false)
-    expect(() => schemaApi.guardPurgeReceipt({ ...receipt, schemaVersion: 2 })).toThrow(
-      /schemaVersion 2 is not supported/u,
+    expect(() => schemaApi.guardPurgeReceipt({ ...receipt, schemaVersion: 3 })).toThrow(
+      /schemaVersion 3 is not supported/u,
     )
   })
 
@@ -1792,7 +1793,7 @@ describe('DCAY-05 sovereign purge', () => {
     })
     writeFileSync(
       join(knowledgeRoot, 'memory', 'receipts', 'purge-malformed.json'),
-      '{"schemaVersion":1,"purgedAtOrdinal":900}\n',
+      `{"schemaVersion":${PURGE_RECEIPT_SCHEMA_VERSION},"purgedAtOrdinal":900}\n`,
       'utf8',
     )
 
@@ -1804,6 +1805,54 @@ describe('DCAY-05 sovereign purge', () => {
       'receipts',
       `purge-${target.id}.intent.json`,
     ))).toBe(false)
+  })
+
+  it('a purge whose receipt history holds a receipt stamped 1 is refused before anything is deleted', () => {
+    const product = 'purge-stale-receipt-product'
+    const target = publishForProduct(
+      product,
+      'stale-receipt-target',
+      [
+        { t: 'el', role: 'button', name: 'Stale receipt target' },
+        { t: 'page', route: '/purge/stale-receipt' },
+        { t: 'platform', platform: 'web' },
+      ],
+      {
+        createdAtOrdinal: 5,
+        provenance: {
+          mode: 'run-linked',
+          runId: 'stale-receipt-target-run',
+          testId: 'stale-receipt-target-test',
+          stepIndex: 0,
+          sourceBuildOrdinal: 5,
+        },
+      },
+    )
+    writeReceiptFixture({
+      fileName: 'purge-earlier-record.json',
+      recordId: 'earlier-record',
+      purgedAtOrdinal: 4,
+      affectedPaths: [`memory/${product}/bundles/earlier-record`],
+    })
+    const receiptsDir = join(knowledgeRoot, 'memory', 'receipts')
+    const staleFile = join(receiptsDir, 'purge-earlier-record.json')
+    const stale = { ...JSON.parse(readFileSync(staleFile, 'utf8')), schemaVersion: 1 }
+    writeFileSync(staleFile, `${JSON.stringify(stale)}\n`, 'utf8')
+
+    const tree = (dir: string) => readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const file = join(entry.parentPath, entry.name)
+        return [relative(dir, file), readFileSync(file, 'utf8')] as const
+      })
+      .sort(([a], [b]) => a.localeCompare(b))
+    const bundleBefore = tree(target.dir)
+    const receiptsBefore = tree(receiptsDir)
+
+    expect(() => purge(target.id, 61)).toThrow(/purge-earlier-record\.json/u)
+    expect(() => purge(target.id, 61)).toThrow(/schemaVersion 1 is not supported/u)
+    expect(tree(target.dir)).toEqual(bundleBefore)
+    expect(tree(receiptsDir)).toEqual(receiptsBefore)
   })
 
   it('uses the runtime reservation rather than deriving from valid receipt maxima', () => {

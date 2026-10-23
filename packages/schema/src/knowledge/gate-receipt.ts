@@ -5,7 +5,7 @@ import { PROMOTION_PATHS, strongerPromotionPath, type PromotionPath } from './pr
 
 // 2026-09-07, 417 D-19/D-20: additive optional fields; no persisted Gate-1 lines predate this widening.
 // 2026-09-07, 418: Gate-2 evidence widens additively; zero persisted Gate-2 lines predate this widening — reconciliation 2.
-export const GATE_RECEIPT_SCHEMA_VERSION = 1
+export const GATE_RECEIPT_SCHEMA_VERSION = 2
 export type GateNumber = 1 | 2 | 3
 export type GateVerdict = 'pass' | 'fail' | 'abstain'
 // prettier-ignore
@@ -96,7 +96,7 @@ export const noiseFloorRefSchema = z.object({
   profileKey: z.string().min(1), corpusDigest: sha256,
 }).strict()
 const receiptCoreShape = {
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(GATE_RECEIPT_SCHEMA_VERSION),
   candidateId: z.string().min(1),
   verdict: z.enum(GATE_VERDICTS),
   producedAtOrdinal: z.number().int().nonnegative(),

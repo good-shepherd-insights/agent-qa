@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
-import { graphNodeId } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, graphNodeId } from '@vostride/agent-qa-schema'
 import type {
   BundleRelation,
   DistilledObservation,
@@ -60,7 +60,7 @@ function observation(
   observedAtOrdinal: number,
 ): DistilledObservation {
   return {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'submit checkout', ordinal: 3 },
     platform,
     test: { id: 'checkout-happy-path' },

@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import { asEvidenceToken } from '../../ids/record-id'
-import { distilledObservationSchema } from '../distilled-observation'
-import { stampReceiptDigest, type GateReceipt, type GateVerdict } from '../gate-receipt'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, distilledObservationSchema } from '../distilled-observation'
+import { GATE_RECEIPT_SCHEMA_VERSION, stampReceiptDigest, type GateReceipt, type GateVerdict } from '../gate-receipt'
 import {
   detectGateInconsistency,
   evaluatePromotionGate,
@@ -32,7 +32,8 @@ function receipt(
   overrides: { corpusDigest?: string } = {},
 ): GateReceipt {
   const core = {
-    schemaVersion: 1 as const, candidateId: 'candidate', verdict, producedAtOrdinal,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION as typeof GATE_RECEIPT_SCHEMA_VERSION,
+    candidateId: 'candidate', verdict, producedAtOrdinal,
     producedBy: { opId: 'gate-test' },
   }
   const corpusDigest = overrides.corpusDigest ?? 'c'.repeat(64)
@@ -81,7 +82,7 @@ function factInput(overrides: Partial<PromotionGateInput> = {}): PromotionGateIn
 }
 
 it('419 policy acceptance receipts remain excluded from promotion of learned policy records', () => {
-  const approval = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: 'candidate',
+  const approval = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId: 'candidate',
     verdict: 'pass', producedAtOrdinal: 5, producedBy: { opId: 'knowledge.proposal.apply' },
     policyApproval: { proposalId: 'kp_policy', recordId: 'candidate' } } as const)
   expect(evaluatePromotionGate({ ...factInput(), kind: 'policy', gateReceipts: [approval] }))
@@ -171,7 +172,7 @@ describe('evaluatePromotionGate caution evidence (T-379-07)', () => {
 
   it('round-trips rootCauseClass as additive identity-bearing observation evidence', () => {
     const observation = {
-      schemaVersion: 1,
+      schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
       step: { naturalKey: 'checkout', ordinal: 0 },
       error: {
         naturalKey: 'checkout timed out',
@@ -687,7 +688,7 @@ describe('414 D-14 — gatePosture and the empty-gate-set hold (ROOT-09 SC4)', (
 
 describe('419 D-04 sovereign confirmation with harmful canary evidence', () => {
   const g3 = stampReceiptDigest({
-    schemaVersion: 1, gate: 3, candidateId: 'candidate', verdict: 'pass',
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId: 'candidate', verdict: 'pass',
     producedAtOrdinal: 7, producedBy: { opId: 'knowledge.proposal.apply' },
     runId: 'r_x', stepId: '0:2', mark: 'false-fail',
   })

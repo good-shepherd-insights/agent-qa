@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   BIMODAL_MIN_MODE_N,
   CUSUM_DECISION_H,
   CUSUM_SLACK_K,
@@ -141,7 +142,7 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
       evidenceMarkdown: `Stable ${metric} baseline.\n`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: `${metric}-baseline`, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `status:${metric} reading:0` },
@@ -180,7 +181,7 @@ describe('queue-to-commit measurement drift acceptance (DCAY-02)', () => {
       bodySeed: `Verified ${fixture.metric} value: ${value}.`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: `${fixture.metric}-${buildOrdinal}`, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `status:${fixture.metric} reading:0` },

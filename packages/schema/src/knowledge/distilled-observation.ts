@@ -7,7 +7,7 @@ import { z } from 'zod'
 
 import { createVersionGuard } from '../versioning/create-version-guard'
 
-export const DISTILLED_OBSERVATION_SCHEMA_VERSION = 1
+export const DISTILLED_OBSERVATION_SCHEMA_VERSION = 2
 
 const stepSchema = z.object({
   naturalKey: z.string(),

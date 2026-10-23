@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
+  GATE_RECEIPT_SCHEMA_VERSION,
   asEvidenceToken,
   canonicalJson,
   stampReceiptDigest,
@@ -77,7 +79,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       bodySeed: `The Checkout ${seed} button was resolved and verified.`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: `checkout-${seed}`, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `button:${normalizedName}:0` },
@@ -104,7 +106,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       bodySeed: 'Retry after the deterministic timeout attribution.',
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-confirmation', ordinal: 0 },
           error: {
             naturalKey: 'checkout confirmation timed out',
@@ -194,7 +196,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       { t: 'selector', literal: `[data-testid="held-checkout-${seed}"]` },
     ]
     const observation: DistilledObservation = {
-      schemaVersion: 1,
+      schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
       step: { naturalKey: `held-checkout-${seed}`, ordinal: 0 },
       platform: 'web',
       element: { naturalKey: `button:${normalizedName}:0` },
@@ -287,7 +289,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       const reference = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/416-v51-reference.json', import.meta.url)), 'utf8'))
       expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8'))
         .toBe(reference['fact/door2-canary'].outcomes)
-      const promotion = stampReceiptDigest({ schemaVersion: 1, kind: 'promotion', candidateId: published.id,
+      const promotion = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: published.id,
         promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [], producedAtOrdinal: 43,
         producedBy: { opId: 'promote' } })
       expect(readGateReceipts(published.dir, published.id)).toEqual([promotion])
@@ -346,7 +348,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       bodySeed: 'Open checkout and verify confirmation.',
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-procedure', ordinal: 0 },
           flow: { name: 'Checkout procedure' },
           observedAtOrdinal: 42,

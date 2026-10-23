@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, asEvidenceToken, asRecordId, asRunId, foldBundleTrust, stampReceiptDigest,
+import {
+  GATE_RECEIPT_SCHEMA_VERSION, CURRENT_HANDOFF_SCHEMA_VERSION, asEvidenceToken, asRecordId, asRunId, foldBundleTrust, stampReceiptDigest,
   type BundleOutcomeEvent, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { publishBundle } from '../../bundle-publish.test-helper.js'
 import { appendGateReceipt, appendOutcomeEvent } from '../../bundle-append.js'
@@ -212,7 +213,7 @@ describe('mark evidence appends through the production writer', () => {
       append(a.id, value, helpful(a.id, { evidenceToken: asEvidenceToken(observationId!), observationId }))
       expect(appendGateReceipt({ knowledgeRoot, productKey: 'storefront',
         commitArtifacts: 'none', writerLeaseId: value.lease.leaseId, writerEpoch: value.lease.epoch },
-      a.id, stampReceiptDigest({ schemaVersion: 1, gate: 2, candidateId: a.id, verdict: 'pass',
+      a.id, stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2, candidateId: a.id, verdict: 'pass',
         benefit: 'exercised-benefited', stateValidity: 'valid', producedAtOrdinal: 12,
         producedBy: { opId: 'canary.record' }, corpusVersion: { corpusDigest: 'c'.repeat(64) },
         attributedObservationId: observationId!, runId: receiptRun! })).kind).toBe('appended')

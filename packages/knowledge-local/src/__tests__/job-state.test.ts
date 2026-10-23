@@ -1,3 +1,4 @@
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import {
   existsSync,
   mkdtempSync,
@@ -62,7 +63,7 @@ describe('curation queue claim and durable lifecycle (CUR-04)', () => {
       bodySeed: `${seed} was resolved and verified.`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: seed, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `button:${seed}` },

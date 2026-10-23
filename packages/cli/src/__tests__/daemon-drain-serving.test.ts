@@ -36,6 +36,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import type { KnowledgeHintReader } from '@vostride/agent-qa-runner'
 import { RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   CurationAuthorship,
@@ -138,7 +139,7 @@ function enqueueRealCandidate(
       summarySeed: `${seed} selector`,
       bodySeed: `${seed} was resolved and verified.`,
       distilledObservations: [{
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: `${seed}-click`, ordinal: 0 },
         platform: 'web',
         element: { naturalKey: `button:${seed}:0` },

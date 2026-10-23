@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   BundleOutcomeEventSchema,
@@ -46,7 +47,7 @@ const FACT_ANCHORS = [
 ] as const
 
 const ELEMENT_OBSERVATION: DistilledObservation = {
-  schemaVersion: 1,
+  schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
   step: { naturalKey: 'checkout-click', ordinal: 0 },
   platform: 'web',
   element: { naturalKey: 'button:checkout:0' },

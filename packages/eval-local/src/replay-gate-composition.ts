@@ -53,6 +53,7 @@ import {
   computeBriefDigest,
   deriveMemoryOnPathSites,
   failingStepOf,
+  GATE_RECEIPT_SCHEMA_VERSION,
   GateReceiptSchema,
   slugBranch,
   stampReceiptDigest,
@@ -710,7 +711,7 @@ async function compose(input: RunReplayGateInput, notices: string[]): Promise<Ru
     eligibility.reason === 'no-eligible-judge'
   const emptyFold = foldPerAxisScore([], floor.axes)
   const receipt: Omit<Gate1Receipt, 'receiptDigest'> = {
-    schemaVersion: 1,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
     gate: 1,
     candidateId: injection.candidateId,
     producedAtOrdinal: injection.latestOrdinal,

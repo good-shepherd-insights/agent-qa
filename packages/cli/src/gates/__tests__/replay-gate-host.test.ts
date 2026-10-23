@@ -7,6 +7,7 @@ import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import { createKnowledgeReader, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { renderGate1Line } from '@vostride/agent-qa-eval'
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   asRef,
@@ -353,7 +354,7 @@ describe('417 DATA replay gate bridge', () => {
     expect(calls).toEqual([])
   })
   it('421 refuses another gate even when candidate and digest are valid', async () => {
-    const receipt = stampReceiptDigest({ schemaVersion: 1 as const, gate: 3 as const,
+    const receipt = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3 as const,
       candidateId, verdict: 'pass' as const, producedAtOrdinal: 44, producedBy: {},
       runId: 'fixture-run', mark: 'confirmed-bug' as const })
     deps.runReplayGate = vi.fn(async () => ({ kind: 'receipt', receipt,

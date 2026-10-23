@@ -5,7 +5,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asEvidenceToken, stampReceiptDigest, type CanaryOutcome, type GateReceipt } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, stampReceiptDigest, type CanaryOutcome, type GateReceipt } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appendOutcomeEvent } from '../../bundle-append.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
@@ -18,7 +18,7 @@ const DIGEST = 'c'.repeat(64)
 
 function gate2(candidateId: string, verdict: 'pass' | 'fail', producedAtOrdinal: number): GateReceipt {
   return stampReceiptDigest({
-    schemaVersion: 1, gate: 2, candidateId, verdict, producedAtOrdinal,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2, candidateId, verdict, producedAtOrdinal,
     producedBy: { opId: 'test' }, attributedObservationId: `observation-${producedAtOrdinal}`,
     corpusVersion: { corpusDigest: DIGEST },
     benefit: verdict === 'fail' ? 'exercised-harmed' : 'exercised-benefited', stateValidity: 'valid',
@@ -153,7 +153,7 @@ describe('432 evidence-based gate inconsistency hold (D-05, D-22)', () => {
   it('keeps a sovereign Gate-3 pass above the contradiction', async () => {
     const candidate = await confirmedCandidate('sovereign')
     await candidate.port.recordGateReceipt(gate2(candidate.id, 'fail', 11))
-    const g3 = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: candidate.id, verdict: 'pass',
+    const g3 = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId: candidate.id, verdict: 'pass',
       producedAtOrdinal: 12, producedBy: { opId: 'test' }, runId: 'run-mark', mark: 'confirmed-bug' })
     await candidate.port.recordGateReceipt(g3)
     await expect(candidate.port.promote(candidate.id)).resolves.toMatchObject({ kind: 'promoted',

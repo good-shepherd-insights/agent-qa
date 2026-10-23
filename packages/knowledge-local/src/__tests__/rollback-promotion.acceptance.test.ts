@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   Anchor,
   BundleDraft,
@@ -37,7 +38,7 @@ const ANCHORS: Anchor[] = [
   { t: 'selector', literal: '[data-testid="rollback-promotion-checkout"]' },
 ]
 const OBSERVATION: DistilledObservation = {
-  schemaVersion: 1,
+  schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
   step: { naturalKey: 'rollback-promotion-checkout', ordinal: 0 },
   platform: 'web',
   element: { naturalKey: `button:${DISPLAY_NAME.toLowerCase()}:0` },

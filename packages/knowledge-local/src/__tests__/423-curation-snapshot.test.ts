@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange } from '@vostride/agent-qa-schema'
 import { diffSince } from '../diff-since.js'
 import * as bundleAppend from '../bundle-append.js'
 import { loadBundle } from '../bundle-read.js'
@@ -57,7 +57,7 @@ function commitFixture(executionContext: 'ci' | 'local-interactive' = 'ci') {
     const enqueued = enqueueArtifactFreeCandidateProjection({ knowledgeRoot: root, projectionInput: {
       sourceRunId: `synthetic-run-${ordinal}`, scope: bundle.scope, buildOrdinal: ordinal, executionContext,
       kind: 'fact', subtype: 'selector', anchors: bundle.anchors, summarySeed: bundle.summary, bodySeed: bundle.body,
-      distilledObservations: [{ schemaVersion: 1, step: { naturalKey: 'checkout', ordinal: 0 }, platform: 'web', element: { naturalKey: `button:${name}` }, observedAtOrdinal: ordinal }],
+      distilledObservations: [{ schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION, step: { naturalKey: 'checkout', ordinal: 0 }, platform: 'web', element: { naturalKey: `button:${name}` }, observedAtOrdinal: ordinal }],
       evidenceToken: `synthetic-evidence-${ordinal}`, attributingObservationId: `synthetic-observation-${ordinal}`, emittedAt: '2026-09-14T00:00:00.000Z',
     } })
     if (enqueued.kind !== 'enqueued') throw new Error('expected enqueued candidate')

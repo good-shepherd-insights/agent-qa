@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { CandidateInjectionSchema, KnowledgeCandidateInjectionResultSchema } from '../knowledge/candidate-injection'
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   GateReceiptSchema, PromotionReceiptSchema, receiptDigestOf, stampReceiptDigest,
   standingReceiptsByGate, strongestPromotionPath,
 } from '../knowledge/gate-receipt'
 
 function core() {
-  return { schemaVersion: 1 as const, candidateId: 'candidate', verdict: 'pass' as const,
+  return { schemaVersion: GATE_RECEIPT_SCHEMA_VERSION as typeof GATE_RECEIPT_SCHEMA_VERSION,
+    candidateId: 'candidate', verdict: 'pass' as const,
     producedAtOrdinal: 5, producedBy: { jobId: 'replay' } }
 }
 
@@ -173,7 +175,7 @@ function gate3() {
     mark: 'confirmed-bug' as const })
 }
 function promotion(promotionPath: 'deterministic-verdict-floor' | 'gate1-lower-trust' | 'gate1+gate2' | 'user-sovereign') {
-  return stampReceiptDigest({ schemaVersion: 1 as const, kind: 'promotion' as const,
+  return stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion' as const,
     candidateId: 'candidate', producedAtOrdinal: 5, producedBy: {}, promotionPath,
     citedReceiptDigests: [] })
 }

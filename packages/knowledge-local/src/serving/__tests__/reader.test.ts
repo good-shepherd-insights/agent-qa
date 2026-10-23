@@ -8,6 +8,8 @@ import {
   APP_OBSERVED_DATA_OPEN,
 } from '@vostride/agent-qa-safety'
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
+  GATE_RECEIPT_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   BundleOutcomeEventSchema,
@@ -181,7 +183,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const primary = anchors[0]
     const observations: DistilledObservation[] = primary?.t === 'el'
       ? [{
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: `reader-${options.key}`, ordinal: 0 },
           platform: 'web',
           element: {
@@ -392,7 +394,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     const candidates = [seeded.candidateFact, seedRecord({ key: 'cold-two', status: 'candidate' }),
       seedRecord({ key: 'cold-three', status: 'candidate' })]
     const append = (id: RecordId, promotionPath: 'gate1-lower-trust' | 'gate1+gate2' | 'deterministic-verdict-floor') => {
-      expect(appendPromotionReceipt(storeConfig(), id, { schemaVersion: 1, kind: 'promotion',
+      expect(appendPromotionReceipt(storeConfig(), id, { schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion',
         candidateId: id, promotionPath, citedReceiptDigests: [], producedAtOrdinal: 10,
         producedBy: { opId: 'reader-test' } })).toEqual({ kind: 'appended' })
     }

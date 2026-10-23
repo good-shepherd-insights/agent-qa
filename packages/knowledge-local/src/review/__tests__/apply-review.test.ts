@@ -29,6 +29,7 @@ import { join, relative } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   DEFAULT_EMBEDDING_PROFILE,
   KNOWLEDGE_REVIEW_VERBS,
@@ -390,7 +391,7 @@ describe('apply — one commit path, receipts at the boundary, race-safe consump
     try {
       const store = knowledgeStore.createLocalKnowledgeStore({ knowledgeRoot,
         executionContext: 'local-interactive', writerLeaseId: lease.leaseId, epoch: lease.epoch })
-      await store.recordGateReceipt(stampReceiptDigest({ schemaVersion: 1, gate: 3,
+      await store.recordGateReceipt(stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3,
         candidateId: recordId, verdict: 'fail', producedAtOrdinal: 100,
         producedBy: { opId: 'prior-confirmation' }, runId: 'prior-run', mark: 'false-pass' }))
     } finally { releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }

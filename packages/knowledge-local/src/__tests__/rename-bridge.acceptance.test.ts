@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   asEvidenceToken,
   type Anchor,
@@ -177,7 +178,7 @@ function replacementJob(): CommitCurationJob {
     bodySeed: 'The Complete purchase button submits the current checkout form.',
     distilledObservations: [
       {
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'complete-purchase-click', ordinal: 0 },
         platform: 'web',
         element: { naturalKey: 'button:complete purchase:0' },

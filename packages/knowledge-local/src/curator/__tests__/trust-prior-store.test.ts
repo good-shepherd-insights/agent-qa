@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { asEvidenceToken, asRecordId, canonicalJson, stampReceiptDigest, type Delta, type TrustPriorTable } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, asRecordId, canonicalJson, stampReceiptDigest, type Delta, type TrustPriorTable } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeBundleDraftFixture } from '../../__tests__/fixtures/bundle-fixture.js'
 import { deriveBundleTrust, loadBundle } from '../../bundle-read.js'
@@ -87,7 +87,7 @@ describe('420 store prior snapshot', () => {
     await store.commit([f.delta])
     const { bundle } = persisted(f.config.knowledgeRoot)
     mutable['agent-verified']!.alpha = 0
-    await expect(store.promote(asRecordId(bundle.manifest.id), [stampReceiptDigest({ schemaVersion: 1,
+    await expect(store.promote(asRecordId(bundle.manifest.id), [stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
       gate: 3, candidateId: asRecordId(bundle.manifest.id), verdict: 'pass', producedAtOrdinal: 43,
       producedBy: { opId: 'prior-promotion' }, runId: 'prior-run', mark: 'confirmed-bug' })]))
       .resolves.toMatchObject({ kind: 'promoted' })

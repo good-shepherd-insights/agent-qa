@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { BundleDraft, Delta } from '@vostride/agent-qa-schema'
 
 import {
@@ -92,7 +93,7 @@ export function commitFixtureProcedure(options: CommitFixtureProcedureOptions) {
     summarySeed: draft.summary,
     bodySeed: draft.body,
     distilledObservations: screenStates.map((_, stepIndex) => ({
-      schemaVersion: 1,
+      schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
       step: {
         naturalKey: ['enter-email', 'enter-password', 'submit'][stepIndex]!,
         ordinal: stepIndex,

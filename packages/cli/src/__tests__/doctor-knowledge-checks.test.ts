@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   DEFAULT_EMBEDDING_PROFILE,
   asEvidenceToken,
   RECORDED_RETRIEVAL_RUNG_REASONS,
@@ -485,7 +486,7 @@ describe('createKnowledgeChecks', () => {
       })
       if (published.kind !== 'published') throw new Error(published.kind)
       if (index === 0) expect(appendPromotionReceipt(appendConfig, published.id, {
-        schemaVersion: 1, kind: 'promotion', candidateId: published.id, promotionPath: 'gate1-lower-trust',
+        schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: published.id, promotionPath: 'gate1-lower-trust',
         citedReceiptDigests: [], producedAtOrdinal: 45, producedBy: { opId: 'doctor-fixture' },
       })).toEqual({ kind: 'appended' })
     }

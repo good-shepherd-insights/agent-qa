@@ -9,6 +9,7 @@ import {
   evaluatePromotionGate,
   eventDedupKey,
   foldBundleTrust,
+  GATE_RECEIPT_SCHEMA_VERSION,
   GateReceiptSchema,
   GATE2_DEFAULT_STALE_CONFIRMATIONS,
   isPromotionReceipt,
@@ -560,7 +561,7 @@ function buildLocalKnowledgeStore(
         if (onDisk === undefined || (revalidated.promotionPath !== onDisk
           && strongerPromotionPath(revalidated.promotionPath, onDisk) === revalidated.promotionPath)) {
           checkedAppend(candidateId, appendPromotionReceipt(appendConfig, candidateId, {
-            schemaVersion: 1, kind: 'promotion', candidateId,
+            schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId,
             promotionPath: revalidated.promotionPath,
             citedReceiptDigests: revalidated.citedReceiptDigests,
             producedAtOrdinal: promotionBuildOrdinal(config, resolved.bundle),
@@ -646,7 +647,7 @@ function buildLocalKnowledgeStore(
       throw new KnowledgePromotionError(candidateId, appended.kind)
     }
     const receipt = appendPromotionReceipt(appendConfig, candidateId, {
-      schemaVersion: 1,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
       kind: 'promotion',
       candidateId,
       promotionPath: gate.promotionPath,
@@ -705,7 +706,7 @@ function buildLocalKnowledgeStore(
   function gate2ReceiptFor(outcome: CanaryOutcome, verdict: 'pass' | 'fail' | 'abstain') {
     if (outcome.corpusDigest === undefined) throw new TypeError('Gate-2 receipt requires a corpus digest')
     return stampReceiptDigest({
-      schemaVersion: 1 as const, gate: 2 as const, candidateId: outcome.candidateId,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2 as const, candidateId: outcome.candidateId,
       verdict, producedAtOrdinal: outcome.buildOrdinal,
       producedBy: { ...(config.sourceJobId === undefined ? {} : { jobId: config.sourceJobId }),
         opId: 'canary.record' },

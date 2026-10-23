@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   DEFAULT_EMBEDDING_PROFILE,
   asRecordId,
   canonicalJson,
@@ -108,7 +109,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
       bodySeed: `${seed} was resolved and verified.`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: `${seed}-step`, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `button:${seed}` },
@@ -470,7 +471,7 @@ describe('drainQueue one-shot serialized engine (CUR-03/CUR-04)', () => {
     enqueue('search', {
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-step', ordinal: 0 },
           flow: { name: 'Checkout flow' },
           error: { naturalKey: 'payment declined' },

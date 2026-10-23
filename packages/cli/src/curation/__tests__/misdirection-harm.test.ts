@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   VERDICT_CLASSES,
   asEvidenceToken,
@@ -824,7 +825,7 @@ describe('422-16 — the harmed outcome through the ACTUAL writer', () => {
         evidenceMarkdown: 'Verified selector evidence.\n',
         distilledObservations: [
           {
-            schemaVersion: 1,
+            schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
             step: { naturalKey: name, ordinal: 0 },
             platform: 'web',
             element: { naturalKey: `button:${name}:0` },

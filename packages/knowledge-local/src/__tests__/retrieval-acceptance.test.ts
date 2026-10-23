@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   type Anchor,
   type BundleOutcomeEvent,
@@ -716,7 +717,7 @@ function observation(
   observedAtOrdinal: number,
 ): DistilledObservation {
   return {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'acceptance shared checkout step', ordinal: 3 },
     platform,
     test: { id: 'retrieval-acceptance-test' },

@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   asRecordId,
   canonicalJson,
   type CanaryOutcome,
@@ -101,7 +102,7 @@ describe('drainQueue daemon substrate', () => {
       bodySeed: `${seed} was resolved and verified.`,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: `${seed}-click`, ordinal: 0 },
           platform: 'web',
           element: { naturalKey: `button:${seed}:0` },

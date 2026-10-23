@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest'
 
 import { VersionGuardError } from '../../versioning/create-version-guard'
+import { canonicalJson } from '../../determinism/canonical-json'
+import { sha256hex } from '../../determinism/sha256'
 import {
   guardArtifactsIndex,
   guardBundleManifest,
   guardBundleProvenance,
   guardBundleRelations,
 } from '../bundle-files'
+import { guardDistilledObservation } from '../distilled-observation'
+import {
+  GATE_RECEIPT_SCHEMA_VERSION,
+  GateLineSchema,
+  receiptDigestOf,
+  stampReceiptDigest,
+} from '../gate-receipt'
 import {
   parseProcedureBody,
   serializeProcedureBody,
@@ -112,6 +121,38 @@ function procedureBodyStamped(stamp: number): string {
   return serializeProcedureBody(planted as unknown as ProcedureBodyPayload)
 }
 
+const observation = {
+  schemaVersion: 2,
+  step: { naturalKey: 'sign-in', ordinal: 0 },
+  platform: 'web' as const,
+  element: { naturalKey: 'button:sign in:0' },
+  observedAtOrdinal: 1,
+}
+
+const gateLine = {
+  gate: 3 as const,
+  candidateId: 'fact-el-sign-in-button-0123456789abcdef',
+  verdict: 'pass' as const,
+  producedAtOrdinal: 1,
+  producedBy: { opId: 'mark' },
+  runId: 'run-a',
+  mark: 'false-fail' as const,
+}
+
+const promotionLine = {
+  kind: 'promotion' as const,
+  candidateId: 'fact-el-sign-in-button-0123456789abcdef',
+  promotionPath: 'user-sovereign' as const,
+  citedReceiptDigests: [DIGEST_A],
+  producedAtOrdinal: 2,
+  producedBy: { opId: 'promote' },
+}
+
+function digested(line: Record<string, unknown>, stamp: number): Record<string, unknown> {
+  const body = { ...line, schemaVersion: stamp }
+  return { ...body, receiptDigest: sha256hex(canonicalJson(body)) }
+}
+
 describe('committed knowledge stamps', () => {
   it.each(bundleFiles)('reads a %s stamped 2', (_name, guard, document) => {
     expect(guard(document)).toEqual(document)
@@ -142,5 +183,38 @@ describe('committed knowledge stamps', () => {
     const body = procedureBodyStamped(stamp)
     expect(body).toContain(`"schemaVersion":${stamp}`)
     expect(parseProcedureBody(body)).toBeUndefined()
+  })
+
+  it('reads a distilled observation stamped 2', () => {
+    expect(guardDistilledObservation(observation)).toEqual(observation)
+  })
+
+  it.each([1, 3])('refuses a distilled observation stamped %i', (stamp) => {
+    expect(() => guardDistilledObservation({ ...observation, schemaVersion: stamp }))
+      .toThrowError(VersionGuardError)
+  })
+
+  it.each([
+    ['gate', gateLine],
+    ['promotion', promotionLine],
+  ] as const)('reads a %s line stamped 2', (_name, line) => {
+    const stamped = digested(line, 2)
+    expect(GateLineSchema.parse(stamped)).toEqual(stamped)
+    expect(receiptDigestOf(GateLineSchema.parse(stamped))).toBe(stamped.receiptDigest)
+  })
+
+  it.each([
+    ['gate', gateLine, 1],
+    ['gate', gateLine, 3],
+    ['promotion', promotionLine, 1],
+    ['promotion', promotionLine, 3],
+  ] as const)('refuses a %s line stamped %i', (_name, line, stamp) => {
+    expect(GateLineSchema.safeParse(digested(line, stamp)).success).toBe(false)
+  })
+
+  it('stamps a new gate line with the current receipt version', () => {
+    const line = stampReceiptDigest({ ...gateLine, schemaVersion: GATE_RECEIPT_SCHEMA_VERSION })
+    expect(line.schemaVersion).toBe(2)
+    expect(GateLineSchema.parse(line)).toEqual(line)
   })
 })

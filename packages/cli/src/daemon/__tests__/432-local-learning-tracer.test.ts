@@ -22,6 +22,7 @@ import {
   type LoadedBundle,
 } from '@vostride/agent-qa-knowledge-local'
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   asEvidenceToken,
   BundleOutcomeEventSchema,
   type Anchor,
@@ -141,7 +142,7 @@ function enqueueRunCandidate(project: Project, executionContext: ExecutionContex
       summarySeed: 'Place order button moved into the checkout footer',
       bodySeed: 'The Place order button now renders inside the checkout footer.',
       distilledObservations: [{
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'place-order-click', ordinal: 0 },
         platform: 'web',
         element: { naturalKey: 'button:place-order:0' },

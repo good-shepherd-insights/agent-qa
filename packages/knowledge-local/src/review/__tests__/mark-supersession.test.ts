@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, asRunId, foldBundleTrust, stampReceiptDigest, type CompletedRunHandoff, type KnowledgeMarkInput } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId, asRunId, foldBundleTrust, stampReceiptDigest, type CompletedRunHandoff, type KnowledgeMarkInput } from '@vostride/agent-qa-schema'
 import { makeBundleDraftFixture, makeScreenStateFixture, scaffoldKnowledgeRoot } from '../../__tests__/fixtures/bundle-fixture.js'
 import { loadBundle, readGateReceipts } from '../../bundle-read.js'
 import { enumerateBundleDirs } from '../../bundle-scan.js'
@@ -49,7 +49,7 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
     const loaded = loadBundle(enumerateBundleDirs(knowledgeRoot)[0]!.dir)
     if (loaded.kind !== 'loaded') throw new Error('fixture must load')
     await store.promote(asRecordId(loaded.bundle.manifest.id), [stampReceiptDigest({
-      schemaVersion: 1, gate: 3, candidateId: loaded.bundle.manifest.id, verdict: 'pass',
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId: loaded.bundle.manifest.id, verdict: 'pass',
       producedAtOrdinal: 6, producedBy: { opId: 'knowledge.proposal.apply' },
       runId: 'prior-approved-run', mark: 'false-fail',
     })])

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asEvidenceToken, canonicalJson, type ResolvePromotionPosture, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, canonicalJson, type ResolvePromotionPosture, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appendGateReceipt, appendOutcomeEvent, appendPromotionReceipt } from '../bundle-append.js'
 import { loadBundle, readGateReceipts } from '../bundle-read.js'
@@ -45,7 +45,7 @@ describe('416 D-09 D-11 shared promotion input', () => {
     const config = fixture.outcomeAppendConfig()
     const g1 = completeGate1Receipt(published.id)
     expect(appendGateReceipt(config, published.id, g1)).toEqual({ kind: 'appended' })
-    expect(appendPromotionReceipt(config, published.id, { schemaVersion: 1, kind: 'promotion',
+    expect(appendPromotionReceipt(config, published.id, { schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion',
       candidateId: published.id, promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
       producedAtOrdinal: 50, producedBy: { opId: 'test' } })).toEqual({ kind: 'appended' })
     for (const [token, ordinal] of [['later', 45], ['same', 42], ['earlier', 40], ['retracted', 99]] as const) {

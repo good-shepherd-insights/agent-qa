@@ -24,6 +24,7 @@
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   KnowledgeAcceptInputSchema,
   KnowledgeForgetInputSchema,
   KnowledgeMarkInputSchema,
@@ -390,7 +391,7 @@ function mintGate3Receipt(
 ): Gate3Receipt {
   if (change.mark === undefined) throw new TypeError('mark change has no mark stamp')
   return stampReceiptDigest({
-    schemaVersion: 1, gate: 3, candidateId, verdict: 'pass', producedAtOrdinal,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId, verdict: 'pass', producedAtOrdinal,
     producedBy: { opId: writer.opId }, runId: change.mark.runId,
     ...(change.mark.stepIndex === undefined ? {} : {
       stepId: deriveMarkStepId(change.mark.testIndex, change.mark.stepIndex),
@@ -513,7 +514,8 @@ async function applyPolicyArm(
     throw new ReviewTargetVanishedError(change.id)
   }
   const committedAtOrdinal = currentOrdinal(writer.knowledgeRoot)
-  const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: recordId,
+  const receipt = stampReceiptDigest({
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId: recordId,
     verdict: 'pass', producedAtOrdinal: committedAtOrdinal,
     producedBy: { opId: writer.opId },
     policyApproval: { proposalId: change.id, recordId },
@@ -554,7 +556,8 @@ async function recoverPolicyArm(
       || !change.deltas.every(delta => delta.kind === 'Confirm' && delta.targetId === recordId
         && victim.bundle.events.some(row => row.type === 'confirmed' && row.evidenceToken === delta.evidenceToken
           && row.buildOrdinal === event.buildOrdinal))) throw new ReviewTargetVanishedError(change.id)
-    const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 3, candidateId: recordId,
+    const receipt = stampReceiptDigest({
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId: recordId,
       verdict: 'pass', producedAtOrdinal: event.buildOrdinal,
       producedBy: { opId: writer.opId },
       policyApproval: { proposalId: change.id, recordId },

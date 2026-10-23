@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asEvidenceToken, canonicalJson, computeMutableStateHash, receiptDigestOf } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, canonicalJson, computeMutableStateHash, receiptDigestOf } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { appendGateReceipt, appendPromotionReceipt } from '../bundle-append.js'
 import { GATES_REL_PATH, loadBundle, readGateReceipts, verifyBundleIntegrity } from '../bundle-read.js'
@@ -57,7 +57,7 @@ describe('416 lazy journaled gate part', () => {
       citedReceiptDigests: [], producedBy: { opId: 'promote' } })
     expect(lines[0]!.receiptDigest).toBe(receiptDigestOf(lines[0]!))
     expect(appendPromotionReceipt(fixture.outcomeAppendConfig(), published.id, {
-      schemaVersion: 1, kind: 'promotion', candidateId: published.id,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: published.id,
       promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
       producedAtOrdinal: 45, producedBy: { opId: 'repeat' },
     })).toEqual({ kind: 'duplicate' })

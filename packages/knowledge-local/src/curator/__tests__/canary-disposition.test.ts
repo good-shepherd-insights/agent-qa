@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
+  GATE_RECEIPT_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   canonicalJson,
@@ -55,7 +57,7 @@ const FACT_ANCHORS = [
   { t: 'selector', literal: '[data-testid="checkout"]' },
 ] as const
 const ELEMENT_OBSERVATION: DistilledObservation = {
-  schemaVersion: 1,
+  schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
   step: { naturalKey: 'checkout-click', ordinal: 0 },
   platform: 'web',
   element: { naturalKey: 'button:checkout:0' },
@@ -458,7 +460,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
           evidenceToken: asEvidenceToken('close-stale-window'), curationJobId: 'close-stale-window',
           buildOrdinal: 44, closedAtOrdinal: 44 }).kind).toBe('appended')
       }
-      await port.recordGateReceipt(stampReceiptDigest({ schemaVersion: 1, gate: 2,
+      await port.recordGateReceipt(stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2,
         candidateId: published.id, verdict: 'abstain', benefit: 'exercised-harmed', stateValidity: 'stale',
         producedAtOrdinal: mode === 'below-open' ? openedAtOrdinal - 1 : mode === 'above-close' ? 45 : 43,
         producedBy: { opId: 'canary.record' }, corpusVersion: { corpusDigest: 'c'.repeat(64) },
@@ -560,7 +562,7 @@ describe('canary outcome deterministic disposition (PROM-02/D-22)', () => {
         bodySeed: 'The Pay now button was observed during checkout.',
         distilledObservations: [
           {
-            schemaVersion: 1,
+            schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
             step: { naturalKey: 'pay-now-click', ordinal: 0 },
             platform: 'web',
             element: { naturalKey: 'button:Pay now:0' },

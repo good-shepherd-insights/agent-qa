@@ -7,6 +7,7 @@ import {
   canonicalJson,
   computeStepSequenceSignature,
   evaluatePromotionGate,
+  GATE_RECEIPT_SCHEMA_VERSION,
   parseProcedureBody,
   procedureStepKeys,
   sha256hex,
@@ -1256,7 +1257,7 @@ export function commitCurationDelta(
                 }
                 tailMutationAppended ||= promoted.kind === 'appended'
                 const receipt = appendPromotionReceipt(config, published.id, {
-                  schemaVersion: 1,
+                  schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
                   kind: 'promotion',
                   candidateId: published.id,
                   promotionPath: gate.promotionPath,

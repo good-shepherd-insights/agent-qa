@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   canonicalJson,
@@ -124,7 +125,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       bodySeed: 'The checkout button was resolved and verified.',
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-click', ordinal: 0 },
           platform: 'web',
           element: { naturalKey: 'button:checkout' },
@@ -199,7 +200,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       anchors: verifiedFactDraft().anchors,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-click', ordinal: 0 },
           platform: 'web',
           element: { naturalKey: 'button:checkout:0' },
@@ -619,7 +620,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       bodySeed: cautionDraft.body,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout', ordinal: 0 },
           error: { naturalKey: 'checkout timed out', rootCauseClass: 'timeout' },
           observedAtOrdinal: 42,
@@ -646,7 +647,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       bodySeed: cautionDraft.body,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout', ordinal: 0 },
           error: { naturalKey: 'timeout: checkout stalled without classification' },
           observedAtOrdinal: 43,
@@ -688,7 +689,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     const incompleteJob = verifiedFactJob({
       anchors: incompleteAnchors,
       distilledObservations: [{
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'incomplete-checkout', ordinal: 0 },
         platform: 'web',
         element: { naturalKey: 'button:incomplete checkout:0' },
@@ -722,14 +723,14 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       anchors: ambiguousAnchors,
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-click', ordinal: 0 },
           platform: 'web',
           element: { naturalKey: 'button:ambiguous checkout:0' },
           observedAtOrdinal: 42,
         },
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-cancel', ordinal: 1 },
           platform: 'web',
           element: { naturalKey: 'button:cancel:1' },
@@ -770,7 +771,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
       bodySeed: procedureDraft.body,
       distilledObservations: ['enter-email', 'enter-password', 'submit'].map(
         (naturalKey, index) => ({
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey, ordinal: index },
           platform: 'web',
           flow: { name: 'checkout' },
@@ -807,7 +808,7 @@ describe('commitCurationDelta serialized mutation boundary (CUR-01/SAFE-01/SAFE-
     const enrichmentJob = verifiedFactJob({
       anchors: enrichmentAnchors,
       distilledObservations: [{
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'fallback-checkout', ordinal: 0 },
         platform: 'web',
         element: { naturalKey: 'button:fallback checkout:0' },

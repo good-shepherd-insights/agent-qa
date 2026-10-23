@@ -1,3 +1,4 @@
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -46,7 +47,7 @@ function candidateAddressInput(): BuildCurationCandidateAddressFieldsInput {
     bodySeed: 'The checkout button was resolved and verified.',
     distilledObservations: [
       {
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'checkout-click', ordinal: 0 },
         platform: 'web',
         element: { naturalKey: 'button:checkout' },

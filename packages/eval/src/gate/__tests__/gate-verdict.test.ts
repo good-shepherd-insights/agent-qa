@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { GATE_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { Gate1Receipt } from '@vostride/agent-qa-schema'
 import * as api from '../../index'
 import { diffArms, foldPerAxisScore } from '../decision-diff'
@@ -269,7 +270,7 @@ describe('Gate-1 verdict', () => {
   })
   it('renders exact pass and abstention lines with cost and key-only judge identity', () => {
     const receipt: Gate1Receipt = {
-      schemaVersion: 1,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
       gate: 1,
       candidateId: 'synthetic',
       verdict: 'pass',

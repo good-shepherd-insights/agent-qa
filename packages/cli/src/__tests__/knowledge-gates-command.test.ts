@@ -13,7 +13,7 @@ import {
   type BundleStoreConfig,
 } from '@vostride/agent-qa-knowledge-local'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { canonicalJson, KnowledgeGatesListResultSchema, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, canonicalJson, KnowledgeGatesListResultSchema, stampReceiptDigest } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createKnowledgeCommand } from '../commands/knowledge.js'
@@ -107,7 +107,7 @@ describe('agent-qa knowledge gates', () => {
   ])('does not expose $defect parser input through function or CLI errors', async ({ raw, defect }) => {
     const { agentQaRoot, configPath, id, dir } = fixture()
     const receipt = stampReceiptDigest({
-      schemaVersion: 1, kind: 'promotion', candidateId: id,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: id,
       promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
       producedAtOrdinal: 6, producedBy: { opId: 'test' },
     })
@@ -134,12 +134,12 @@ describe('agent-qa knowledge gates', () => {
     const maskedProducer = mask(`review ${rawSecret} by ${rawEmail}`)
     expect(maskedProducer).toBe('review [secret:AWS_441] by [secret:EMAIL_441]')
     const promotion = stampReceiptDigest({
-      schemaVersion: 1, kind: 'promotion', candidateId: id,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: id,
       promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [],
       producedAtOrdinal: 6, producedBy: { opId: maskedProducer },
     })
     const gate = stampReceiptDigest({
-      schemaVersion: 1, gate: 3, verdict: 'pass', candidateId: id,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, verdict: 'pass', candidateId: id,
       producedAtOrdinal: 7, producedBy: { jobId: maskedProducer },
       runId: mask(rawSecret), stepId: mask(rawEmail), mark: 'confirmed-bug',
     })
@@ -162,11 +162,11 @@ describe('agent-qa knowledge gates', () => {
   it('renders schema-valid history, standing and the live verdict over real bundles', async () => {
     const { config, configPath, id } = fixture()
     expect(appendPromotionReceipt(config, id, {
-      schemaVersion: 1, kind: 'promotion', candidateId: id, promotionPath: 'deterministic-verdict-floor',
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: id, promotionPath: 'deterministic-verdict-floor',
       citedReceiptDigests: [], producedAtOrdinal: 6, producedBy: { opId: 'promote' },
     })).toEqual({ kind: 'appended' })
     const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
-    const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 1, verdict: 'pass',
+    const receipt = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1, verdict: 'pass',
       candidateId: id, producedAtOrdinal: 7, producedBy: { jobId: 'replay-check' },
       perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score,
         sideEffect: score, loop: score },
@@ -194,14 +194,14 @@ describe('agent-qa knowledge gates', () => {
   it('shows Gate-2 corpus freshness and promotion receipt identity in human history', async () => {
     const { config, configPath, id } = fixture()
     const gate = stampReceiptDigest({
-      schemaVersion: 1, gate: 2, verdict: 'pass', candidateId: id,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2, verdict: 'pass', candidateId: id,
       producedAtOrdinal: 6, producedBy: { jobId: 'canary-review' },
       attributedObservationId: 'synthetic-observation', corpusVersion: { corpusDigest: 'd'.repeat(64) },
       benefit: 'exercised-benefited', stateValidity: 'valid',
     })
     expect(appendGateReceipt(config, id, gate)).toEqual({ kind: 'appended' })
     expect(appendPromotionReceipt(config, id, {
-      schemaVersion: 1, kind: 'promotion', candidateId: id,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: id,
       promotionPath: 'gate1+gate2', citedReceiptDigests: [gate.receiptDigest],
       producedAtOrdinal: 7, producedBy: { opId: 'promote' },
     })).toEqual({ kind: 'appended' })

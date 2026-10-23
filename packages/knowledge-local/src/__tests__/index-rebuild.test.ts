@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   canonicalJson,
   DEFAULT_EMBEDDING_PROFILE,
@@ -1003,7 +1004,7 @@ describe('IDX-01 derived-index rebuild projection', () => {
         ],
         distilledObservations: [
           {
-            schemaVersion: 1,
+            schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
             step: { naturalKey: `${deadStatus} poisoned step`, ordinal: 0 },
             platform: 'web',
             test: { id: `${deadStatus}-poisoned-test` },

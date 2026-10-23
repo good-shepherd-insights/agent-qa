@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import type { SQLInputValue } from 'node:sqlite'
 
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   BundleOutcomeEventSchema,
   asEvidenceToken,
   recordGraphNode,
@@ -249,7 +250,7 @@ function deprecationJob(identity: string): CommitCurationJob {
     bodySeed: 'The user withdrew the deprecated checkout fallback.',
     distilledObservations: [
       {
-        schemaVersion: 1,
+        schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
         step: { naturalKey: 'withdraw deprecated checkout fallback', ordinal: 0 },
         platform: 'web',
         error: { naturalKey: denseHarness.triggerToken },

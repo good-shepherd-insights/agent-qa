@@ -4,7 +4,12 @@ import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'nod
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { expect, vi } from 'vitest'
-import { asEvidenceToken, evaluatePromotionGate, stampReceiptDigest } from '@vostride/agent-qa-schema'
+import {
+  GATE_RECEIPT_SCHEMA_VERSION,
+  asEvidenceToken,
+  evaluatePromotionGate,
+  stampReceiptDigest,
+} from '@vostride/agent-qa-schema'
 import type { PromotionPostureCandidate, ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
 const realBuild = buildPromotionPostureResolver
@@ -44,7 +49,8 @@ export function promotionHostProof(configPath: string) {
     if (prepared?.kind !== 'ready') throw new Error(`host identity refused: ${JSON.stringify(prepared)}`)
     const posture = resolvePosture(candidate)
     const score = { baseline: 0, candidate: 1, delta: 1, floor: 0.1, n: 3 }
-    const receipt = stampReceiptDigest({ schemaVersion: 1, gate: 1, candidateId: candidate.id,
+    const receipt = stampReceiptDigest({
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1, candidateId: candidate.id,
       verdict: 'pass', producedAtOrdinal: 10, producedBy: { opId: 'fixture' },
       perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score, sideEffect: score, loop: score },
       corpusVersion: { corpusDigest: prepared.host.corpusDigest, partitionVersion: 1, gateSetSize: 40, excludedCount: 0, minimumGateSet: 13 },

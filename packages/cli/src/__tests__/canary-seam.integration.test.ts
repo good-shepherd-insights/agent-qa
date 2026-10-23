@@ -18,6 +18,7 @@ import {
 } from '@vostride/agent-qa-knowledge-local'
 import { publishBundleForTest as publishBundle } from '@vostride/agent-qa-knowledge-local'
 import {
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
@@ -182,7 +183,7 @@ function candidateInput(): PublishBundleInput {
     elementRef: { role: 'button', name: 'Checkout' },
   }
   const observation: DistilledObservation = {
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey: 'checkout-click', ordinal: 0 },
     platform: 'web',
     element: { naturalKey: 'button:checkout:0' },

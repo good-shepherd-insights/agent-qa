@@ -24,6 +24,7 @@
 // agent-local; a second copy of those proofs here would only prove this file.
 
 import {
+  GATE_RECEIPT_SCHEMA_VERSION,
   stampReceiptDigest,
   type GateReceipt,
   type GateVerdict,
@@ -72,7 +73,7 @@ function gate1Receipt(
   corpusDigest: string,
 ): GateReceipt {
   return stampReceiptDigest({
-    schemaVersion: 1 as const,
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
     gate: 1 as const,
     candidateId,
     verdict,

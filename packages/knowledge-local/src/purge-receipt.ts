@@ -1,7 +1,7 @@
-import { createVersionGuard } from '@vostride/agent-qa-schema'
+import { VersionGuardError, createVersionGuard } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
-export const PURGE_RECEIPT_SCHEMA_VERSION = 1
+export const PURGE_RECEIPT_SCHEMA_VERSION = 2
 
 /**
  * Receipt ids are used in a suffix-addressed series, so dots cannot be admitted without making
@@ -87,7 +87,17 @@ export function guardPurgeReceiptForFile(
       + `expected ${expected.recordId} cycle ${expected.cycle}`,
     )
   }
-  const receipt = guardPurgeReceipt(value)
+  let receipt: PurgeReceipt
+  try {
+    receipt = guardPurgeReceipt(value)
+  } catch (error) {
+    if (!(error instanceof VersionGuardError)) throw error
+    throw new VersionGuardError(
+      `${error.documentName} ${fileName}`,
+      error.foundVersion,
+      error.supportedVersion,
+    )
+  }
   if (receipt.purgedRecordId !== identity.recordId) {
     throw new TypeError(
       `purge receipt filename identifies ${identity.recordId}, payload identifies ${receipt.purgedRecordId}`,

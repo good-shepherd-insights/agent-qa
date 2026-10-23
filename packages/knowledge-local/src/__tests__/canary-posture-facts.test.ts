@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { asEvidenceToken, stampReceiptDigest, type CanaryOutcome } from '@vostride/agent-qa-schema'
+import { GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, stampReceiptDigest, type CanaryOutcome } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appendGateReceipt, appendOutcomeEvent, appendPromotionReceipt } from '../bundle-append.js'
 import { deriveBundleTrust, loadBundle } from '../bundle-read.js'
@@ -84,7 +84,7 @@ describe('418 bundle-local canary posture facts', () => {
   it('reads all Gate-2 ordinals, including abstains, and never revives a superseded pass', () => {
     const planted = seed()
     appendGateReceipt(fixture.outcomeAppendConfig(), planted.id, stampReceiptDigest({
-      schemaVersion: 1, gate: 2, candidateId: planted.id, verdict: 'abstain', producedAtOrdinal: 11,
+      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2, candidateId: planted.id, verdict: 'abstain', producedAtOrdinal: 11,
       producedBy: { opId: 'fixture' }, attributedObservationId: 'observation',
       corpusVersion: { corpusDigest: 'c'.repeat(64) }, benefit: 'rode-along', stateValidity: 'unknown',
     }))
@@ -101,14 +101,14 @@ describe('418 bundle-local canary posture facts', () => {
       appendOutcomeEvent(fixture.outcomeAppendConfig(), planted.id, { type: 'promoted',
         evidenceToken: asEvidenceToken(`promoted-${planted.id}`), curationJobId: 'promote', buildOrdinal: 45 })
     }
-    appendPromotionReceipt(fixture.outcomeAppendConfig(), first.id, { schemaVersion: 1,
+    appendPromotionReceipt(fixture.outcomeAppendConfig(), first.id, { schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
       kind: 'promotion', candidateId: first.id, promotionPath: 'gate1-lower-trust',
       citedReceiptDigests: [first.pass.receiptDigest], producedAtOrdinal: 15, producedBy: { opId: 'fixture' } })
     expect(read(second.id)).toMatchObject({ activeInScope: 2, lowerTrustActiveInScope: 1 })
     expect(read(first.id)).toMatchObject({ lowerTrustActiveGate1Digest: first.pass.receiptDigest })
     expect(read(second.id)).not.toHaveProperty('lowerTrustActiveGate1Digest')
     expect(lowerTrustSharesFor({ knowledgeRoot })).toEqual([{ product: 'storefront', active: 2, lowerTrust: 1 }])
-    appendPromotionReceipt(fixture.outcomeAppendConfig(), first.id, { schemaVersion: 1,
+    appendPromotionReceipt(fixture.outcomeAppendConfig(), first.id, { schemaVersion: GATE_RECEIPT_SCHEMA_VERSION,
       kind: 'promotion', candidateId: first.id, promotionPath: 'gate1+gate2',
       citedReceiptDigests: [first.pass.receiptDigest], producedAtOrdinal: 16, producedBy: { opId: 'fixture' } })
     expect(read(second.id)).toMatchObject({ activeInScope: 2, lowerTrustActiveInScope: 0 })
@@ -117,7 +117,7 @@ describe('418 bundle-local canary posture facts', () => {
   it('never derives continued authority from a historical promotion after retraction or a changed Gate-1', () => {
     const planted = seed()
     const config = fixture.outcomeAppendConfig()
-    appendPromotionReceipt(config, planted.id, { schemaVersion: 1, kind: 'promotion',
+    appendPromotionReceipt(config, planted.id, { schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion',
       candidateId: planted.id, promotionPath: 'gate1-lower-trust',
       citedReceiptDigests: [planted.pass.receiptDigest], producedAtOrdinal: 45, producedBy: { opId: 'fixture' } })
     expect(read(planted.id)).not.toHaveProperty('lowerTrustActiveGate1Digest')

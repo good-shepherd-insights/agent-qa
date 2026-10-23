@@ -7,7 +7,7 @@ import {
   acquireWriterLease, appendOutcomeEvent, createLocalKnowledgeStore, deriveBundleTrust,
   loadBundle, openKnowledgeReader, publishBundleForTest, readGateReceipts,
 } from '@vostride/agent-qa-knowledge-local'
-import { asEvidenceToken, stampReceiptDigest, survivingOutcomeEvents, type CanaryOutcome } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, GATE_RECEIPT_SCHEMA_VERSION, asEvidenceToken, stampReceiptDigest, survivingOutcomeEvents, type CanaryOutcome } from '@vostride/agent-qa-schema'
 import { buildPromotionPostureResolver } from '../curation/promotion-posture.js'
 import { promotionHostProof } from './promotion-host-proof.js'
 
@@ -40,7 +40,7 @@ async function setup() {
       provenance: { mode: 'run-linked', runId: `seed-${name}`, testId: `seed-${name}`, stepIndex: 0,
         curationJobId: `seed-${name}`, sourceBuildOrdinal: 1 },
       evidenceMarkdown: 'Verified selector evidence.\n',
-      distilledObservations: [{ schemaVersion: 1, step: { naturalKey: name, ordinal: 0 }, platform: 'web',
+      distilledObservations: [{ schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION, step: { naturalKey: name, ordinal: 0 }, platform: 'web',
         element: { naturalKey: `button:${name}:0` }, observedAtOrdinal: 1 }],
     })
     if (published.kind !== 'published') throw new Error(published.kind)
@@ -64,7 +64,7 @@ async function setup() {
   const store = () => createLocalKnowledgeStore({ ...storeConfig, sourceBuildOrdinal: ordinal })
   function gate1(id = seeded.id, producedAtOrdinal = 10) {
     const score = { baseline: 0, candidate: 1, delta: 1, floor: 0.1, n: 3 }
-    return stampReceiptDigest({ schemaVersion: 1, gate: 1, candidateId: id, verdict: 'pass',
+    return stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1, candidateId: id, verdict: 'pass',
       producedAtOrdinal, producedBy: { opId: 'fixture' },
       perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score, sideEffect: score, loop: score },
       corpusVersion: { corpusDigest, partitionVersion: 1, gateSetSize: 40, excludedCount: 0, minimumGateSet: 13 },

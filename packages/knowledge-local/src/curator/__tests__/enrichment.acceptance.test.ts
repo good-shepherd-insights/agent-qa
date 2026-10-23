@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CurationAuthorship, Delta } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -49,7 +50,7 @@ describe('fallback to capable-model enrichment in place (CUR-02)', () => {
       bodySeed: 'Complete checkout using the observed sequence.',
       distilledObservations: [
         {
-          schemaVersion: 1,
+          schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
           step: { naturalKey: 'checkout-submit', ordinal: 0 },
           flow: { name: flowAnchor.name },
           observedAtOrdinal: buildOrdinal,

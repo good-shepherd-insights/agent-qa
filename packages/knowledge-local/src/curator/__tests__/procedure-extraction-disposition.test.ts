@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { serializeProcedureBody } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, serializeProcedureBody } from '@vostride/agent-qa-schema'
 import type { Anchor, Delta, DistilledObservation } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
@@ -60,7 +60,7 @@ afterEach(() => {
 
 function makeObservations(): DistilledObservation[] {
   return OBSERVATION_STEP_KEYS.map((naturalKey, index) => ({
-    schemaVersion: 1,
+    schemaVersion: DISTILLED_OBSERVATION_SCHEMA_VERSION,
     step: { naturalKey, ordinal: index },
     platform: 'web' as const,
     test: { id: 'sign-in-test' },
