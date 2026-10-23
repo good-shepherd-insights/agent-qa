@@ -37,6 +37,7 @@ import {
 import { DELTA_KINDS } from '../delta/delta'
 import { DELTA_ORIGINS } from '../delta/envelope'
 import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '../brief/retrieval-trace'
+import { COMMIT_RECEIPT_SCHEMA_VERSION, FORGET_RECEIPT_SCHEMA_VERSION } from '../index'
 
 const scope = { tier: 'suite', key: 'checkout' } as const
 
@@ -65,7 +66,7 @@ const provenance = {
 
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    schemaVersion: 1,
+    schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION,
     proposalId: 'prop_alpha-bravo-charlie',
     tombstonedRecords: [{ recordId: 'rec-checkout-1', provenance }],
     projectionsScrubbed: ['fts', 'vec', 'graph', 'exemplar'],
@@ -120,7 +121,7 @@ describe('the mark change stamp and the mark review input (419 D-01)', () => {
     const outcome = {
       outcome: 'applied', verb: 'accept', operationId: 'alpha-bravo-charlie', recordIds: ['rec-checkout-1'],
       commitReceipt: {
-        schemaVersion: 1, proposalId: 'prop_alpha-bravo-charlie', markId: markStamp.markId,
+        schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION, proposalId: 'prop_alpha-bravo-charlie', markId: markStamp.markId,
         committedAtOrdinal: 1, recordIds: ['rec-checkout-1'], gate3: [], promoted: [], held: [],
       },
     }
@@ -137,7 +138,7 @@ describe('the review vocabulary and the change id (D-17)', () => {
   it('admits every change verb and refuses one outside the union', () => {
     // RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a forget carries its forget receipt by rule.
     const forgetReceipt = {
-      schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [], projectionsScrubbed: ['fts'],
+      schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION, proposalId: 'prop_alpha-bravo', tombstonedRecords: [], projectionsScrubbed: ['fts'],
       resultingBundleStatus: 'forgotten', forgottenAt: 1,
     }
     for (const verb of ['accept', 'reject', 'forget'] as const) {
@@ -160,9 +161,9 @@ describe('the review vocabulary and the change id (D-17)', () => {
     expect(KnowledgeChangeIdSchema.parse('prop_alpha-bravo-charlie')).toBe('prop_alpha-bravo-charlie')
   })
 
-  it('refuses an unknown key and a schemaVersion other than the literal 1', () => {
+  it('refuses an unknown key and any schemaVersion but its own', () => {
     expect(() => ForgetReceiptV1Schema.parse(receipt({ inbox: 'default' }))).toThrow()
-    expect(() => ForgetReceiptV1Schema.parse(receipt({ schemaVersion: 2 }))).toThrow()
+    expect(() => ForgetReceiptV1Schema.parse(receipt({ schemaVersion: 1 }))).toThrow()
   })
 })
 

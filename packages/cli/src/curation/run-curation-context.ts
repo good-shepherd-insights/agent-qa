@@ -23,9 +23,11 @@ import { completedRunDir } from './curation-tail.js'
 
 export const RUN_CONFIG_RECORD_FILE = 'run-config.json'
 
+const RUN_CONFIG_RECORD_SCHEMA_VERSION = 2
+
 const runConfigRecordSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(RUN_CONFIG_RECORD_SCHEMA_VERSION),
     runId: z.string().min(1),
     configPath: z.string().min(1),
   })
@@ -73,11 +75,15 @@ function syncDirectory(dir: string): void {
   }
 }
 
-// 2026-10-16 (442-10, D-17): post-verdict-continuation.ts's temp-and-link write, so a reader never
-// sees a partial record and an existing record is never replaced.
+// The same temp-and-link write as post-verdict-continuation.ts, so a reader never sees a partial
+// record and an existing record is never replaced.
 export function writeRunConfigRecord(agentQaRoot: string, runId: string, configPath: string): void {
   const path = runConfigRecordPath(agentQaRoot, runId)
-  const record: RunConfigRecord = { schemaVersion: 1, runId, configPath: resolve(configPath) }
+  const record: RunConfigRecord = {
+    schemaVersion: RUN_CONFIG_RECORD_SCHEMA_VERSION,
+    runId,
+    configPath: resolve(configPath),
+  }
   const tmp = `${path}.${randomUUID()}.tmp`
   try {
     const fd = openSync(tmp, 'wx', 0o600)

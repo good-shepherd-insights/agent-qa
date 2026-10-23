@@ -29,6 +29,7 @@ import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
 import * as schema from '../index'
+import { COMMIT_RECEIPT_SCHEMA_VERSION, FORGET_RECEIPT_SCHEMA_VERSION } from '../index'
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -47,6 +48,7 @@ const CHANGE_RUNTIME_KEYS = [
   'COMMIT_RECEIPT_SCHEMA_VERSION',
   'CommitReceiptSchema',
   'DeltaSchema',
+  'FORGET_RECEIPT_SCHEMA_VERSION',
   'ForgetReceiptV1Schema',
   'ForgetTargetRefSchema',
   'KNOWLEDGE_CHANGE_REFUSAL_REASONS',
@@ -237,7 +239,7 @@ describe('C432-DIRECT-CONTRACTS: the direct change contracts live in knowledge/c
 
   it('C432-DIRECT-CONTRACTS: the forget receipt and the commit receipt are the change receipts', () => {
     const forget = {
-      schemaVersion: 1, proposalId: `prop_${OPERATION}`, tombstonedRecords: [], projectionsScrubbed: ['fts'],
+      schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION, proposalId: `prop_${OPERATION}`, tombstonedRecords: [], projectionsScrubbed: ['fts'],
       resultingBundleStatus: 'forgotten', forgottenAt: 1,
     }
     expect(schema.ForgetReceiptV1Schema.safeParse(forget).success).toBe(true)
@@ -245,7 +247,7 @@ describe('C432-DIRECT-CONTRACTS: the direct change contracts live in knowledge/c
       outcome: 'applied', verb: 'forget', operationId: OPERATION, recordIds: ['rec-1'], forgetReceipt: forget,
     }).success).toBe(true)
     expect(schema.CommitReceiptSchema.safeParse({
-      schemaVersion: 1, proposalId: `prop_${OPERATION}`, committedAtOrdinal: 3, recordIds: ['rec-1'],
+      schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION, proposalId: `prop_${OPERATION}`, committedAtOrdinal: 3, recordIds: ['rec-1'],
       gate3: [], promoted: [], held: [],
     }).success).toBe(true)
   })

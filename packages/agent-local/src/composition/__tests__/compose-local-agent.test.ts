@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { createJobKindRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { JobKindRegistry, JobModelCapability } from '@vostride/agent-qa-agent'
 import {
+  COMMIT_RECEIPT_SCHEMA_VERSION,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CURRENT_QUARANTINE_LEDGER_SCHEMA_VERSION,
@@ -195,7 +196,7 @@ describe('composeLocalAgent (D-15)', () => {
   // direct change, and the planted file is left exactly as it was.
   it.each([true, false])('419 review apply forwards persisted commitReceipt with strict absence (%s)', async present => {
     const proposalId = `prop_${randomUUID()}`
-    const commitReceipt = { schemaVersion: 1 as const, proposalId, committedAtOrdinal: 12,
+    const commitReceipt = { schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION as typeof COMMIT_RECEIPT_SCHEMA_VERSION, proposalId, committedAtOrdinal: 12,
       recordIds: ['fact-confirmed'], gate3: [{ candidateId: 'fact-confirmed', receiptDigest: 'a'.repeat(64) }],
       promoted: [{ candidateId: 'fact-confirmed', promotionPath: 'user-sovereign' as const }], held: [] }
     mkdirSync(join(agentQaRoot, 'proposals'), { recursive: true })

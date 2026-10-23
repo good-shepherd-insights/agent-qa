@@ -305,7 +305,7 @@
       "classifies": true,
       "id": "knowledge.accept",
       "inputSchemaDigest": "ece244ec807fe3ea186fe1326ec14fe4dc93d54c719cbd1fb35244e43caada32",
-      "outputSchemaDigest": "dd3c72c3e15d892a3cd5780dc2f77d05ac59856b801d128b94d1d3e5ba5f52f4",
+      "outputSchemaDigest": "07c5fff4b1cd92b97e1073dbc7b01bbb25de150a7b877d63ffef59603fdafade",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_knowledge"
@@ -356,7 +356,7 @@
       "classifies": true,
       "id": "knowledge.forget",
       "inputSchemaDigest": "ece244ec807fe3ea186fe1326ec14fe4dc93d54c719cbd1fb35244e43caada32",
-      "outputSchemaDigest": "dd3c72c3e15d892a3cd5780dc2f77d05ac59856b801d128b94d1d3e5ba5f52f4",
+      "outputSchemaDigest": "07c5fff4b1cd92b97e1073dbc7b01bbb25de150a7b877d63ffef59603fdafade",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_knowledge"
@@ -441,7 +441,7 @@
       "classifies": true,
       "id": "knowledge.reject",
       "inputSchemaDigest": "d374a11362776bc2d78a55dd618c4e60ed64bbaf0f8913ebee51716daaabf35b",
-      "outputSchemaDigest": "dd3c72c3e15d892a3cd5780dc2f77d05ac59856b801d128b94d1d3e5ba5f52f4",
+      "outputSchemaDigest": "07c5fff4b1cd92b97e1073dbc7b01bbb25de150a7b877d63ffef59603fdafade",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_change_knowledge"
@@ -662,7 +662,7 @@
       "classifies": true,
       "id": "runs.mark",
       "inputSchemaDigest": "3fa17032140c1c9aafa71645f8d29436b18698e1039d5696327e04763f382e1e",
-      "outputSchemaDigest": "f072335d2732572192058a7339512c6b580caa585938104183596d8dea9f37b4",
+      "outputSchemaDigest": "0dbad17573762c583ee387f7dc5a7ad3d24edd8a02446e7ee274a66e6bc630c4",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_mark_run"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { asRunId, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { MARK_RECEIPT_SCHEMA_VERSION, asRunId, type MarkReceipt } from '@vostride/agent-qa-schema'
 import * as core from '../../index'
 import { makeArtifactRefV2Handoff } from '../../__tests__/fixtures/handoff-fixtures'
 
@@ -18,7 +18,7 @@ function fixture(n = 1, correct = n, channel: 'recorded-verdict' | 'self-heal-pa
     snapshot.entries.push(core.projectCorpusEntry({ cassette, product, runId: handoff.runId, assignment: { split: 'natural' } }))
     snapshot.labelsById.set(cassette.id, record)
     snapshot.cassettesById.set(cassette.id, cassette)
-    const mark: MarkReceipt = { schemaVersion: 1, markId: `mark_${i.toString(16).padStart(12, '0')}`, runId: asRunId(handoff.runId), runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0,
+    const mark: MarkReceipt = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: `mark_${i.toString(16).padStart(12, '0')}`, runId: asRunId(handoff.runId), runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0,
       kind: i < correct ? 'confirmed-bug' : 'false-fail', origin: 'user', ordinal: 1, markedAt: 0,
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
     const plan = core.buildGoldenTrajectoryPlan({ handoff, cassettes: [{ cassette, blobs: [] }], mark, product })

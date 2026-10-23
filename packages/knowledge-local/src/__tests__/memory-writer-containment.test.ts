@@ -21,7 +21,14 @@ import {
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 
-import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, ForgetReceiptV1Schema, type Anchor, type ScopeKey } from '@vostride/agent-qa-schema'
+import {
+  FORGET_RECEIPT_SCHEMA_VERSION,
+  DISTILLED_OBSERVATION_SCHEMA_VERSION,
+  asEvidenceToken,
+  ForgetReceiptV1Schema,
+  type Anchor,
+  type ScopeKey,
+} from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { appendOutcomeEvent } from '../bundle-append.js'
@@ -140,7 +147,7 @@ const freshWriters: ReadonlyArray<readonly [string, readonly string[], () => unk
   ['journal: write the reconciled epoch', ['memory', 'memory/queue'], () =>
     writeReconciledEpochWithinCurrentAuthority(knowledgeRoot, 1)],
   ['journal: record a forget receipt', ['memory', 'memory/queue'], () =>
-    recordForgetReceipt(knowledgeRoot, authority(), ForgetReceiptV1Schema.parse({ schemaVersion: 1,
+    recordForgetReceipt(knowledgeRoot, authority(), ForgetReceiptV1Schema.parse({ schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION,
       proposalId: `prop_${randomUUID()}`, tombstonedRecords: [], projectionsScrubbed: [],
       resultingBundleStatus: 'forgotten', forgottenAt: 1 }))],
   ['index: request a rebuild', ['memory', 'memory/index'], () =>

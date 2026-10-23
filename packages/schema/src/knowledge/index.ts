@@ -124,6 +124,7 @@ export type {
 // output. The proposal payload and its apply contracts are deleted with the inbox.
 export {
   DeltaSchema,
+  FORGET_RECEIPT_SCHEMA_VERSION,
   ForgetReceiptV1Schema,
   ForgetTargetRefSchema,
   KNOWLEDGE_CHANGE_REFUSAL_REASONS,

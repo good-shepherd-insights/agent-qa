@@ -10,7 +10,10 @@
 // `mcp-apply-differential.test.ts`.
 
 import * as schema from '@vostride/agent-qa-schema'
-import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  FORGET_RECEIPT_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { ExecutionContext, FunctionCaller } from '@vostride/agent-qa-schema'
 import { getActiveExecutionContext, setActiveExecutionContextResolver } from '@vostride/agent-qa-safety'
 import { describe, expect, it } from 'vitest'
@@ -31,7 +34,7 @@ const RECORD = { grain: 'record', recordId: 'rec-direct-1' } as const
 
 // 2026-10-03 (quick 261003-cpv, IN-21): an applied forget carries its forget receipt by rule.
 const FORGET_RECEIPT = {
-  schemaVersion: 1,
+  schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION,
   proposalId: 'prop_alpha-bravo',
   tombstonedRecords: [],
   projectionsScrubbed: ['fts'],

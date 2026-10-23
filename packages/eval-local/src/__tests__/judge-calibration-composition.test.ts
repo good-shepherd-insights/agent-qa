@@ -5,7 +5,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as core from '@vostride/agent-qa-eval'
 import * as local from '../index.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { asRunId, asRef, sha256hex, slugBranch, type MarkReceipt } from '@vostride/agent-qa-schema'
+import {
+  MARK_RECEIPT_SCHEMA_VERSION,
+  asRunId,
+  asRef,
+  sha256hex,
+  slugBranch,
+  type MarkReceipt,
+} from '@vostride/agent-qa-schema'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { runJudgePanelCalibration, runJudgeCalibration } from '../judge-calibration-composition.js'
 import * as publication from '../judge-calibration-source.js'
@@ -373,7 +380,7 @@ function addEvidence(project: string, index: number, model: core.CassetteModelRe
   const plan = core.buildSeedingPlan({ handoff, cassettes, partition: { saltHex: 'a'.repeat(64), heldOutFraction: 0.000001, privateFraction: 0.5 } })
   const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot, mask: NO_DECLARED_SECRETS })
   if (seeded.refusals.length) throw new Error('Fixture seed refused')
-  const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_abcdef012345', runId: handoff.runId,
+  const mark: MarkReceipt = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_abcdef012345', runId: handoff.runId,
     runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, kind: excluded ? 'false-pass' : 'confirmed-bug', origin: 'user', ordinal: 1,
     markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
   const frozen = core.buildGoldenTrajectoryPlan({ handoff, cassettes, mark, product: 'shop' })

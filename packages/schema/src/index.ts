@@ -983,6 +983,7 @@ export {
   BriefWhyInputSchema,
   BriefWhyResultSchema,
   DeltaSchema,
+  FORGET_RECEIPT_SCHEMA_VERSION,
   ForgetReceiptV1Schema,
   ForgetTargetRefSchema,
   KNOWLEDGE_CHANGE_VERBS,

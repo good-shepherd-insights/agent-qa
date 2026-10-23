@@ -3,7 +3,12 @@ import type { AddressInfo } from 'node:net'
 
 import { createFunctionRegistry, invokeFunction, RUNS_MARK_FUNCTION_ID, type FunctionDeps, type FunctionRegistry } from '@vostride/agent-qa-agent'
 import * as schema from '@vostride/agent-qa-schema'
-import { asRunId, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import {
+  MARK_RECEIPT_SCHEMA_VERSION,
+  asRunId,
+  type RunsMarkInput,
+  type RunsMarkOutcome,
+} from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentHost } from '../../chat/host.js'
@@ -14,7 +19,7 @@ import { markRun, registerRunMarkRoute } from '../run-mark-routes.js'
 const RUN_ID = asRunId('run-mark-route')
 const NOTE = 'private note with "quotes"'
 const outcome: RunsMarkOutcome = { kind: 'marked', receipt: {
-  schemaVersion: 1, markId: 'mark_0123456789ab', runId: RUN_ID, runSlug: 'run-mark-route',
+  schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', runId: RUN_ID, runSlug: 'run-mark-route',
   testIndex: 0, kind: 'false-fail', origin: 'user', ordinal: 1, markedAt: 0,
   note: '<SECRET_0>', disposition: { kind: 'quarantined', class: 'flake' },
   gold: [], evidence: { confirmed: 0, overturned: 0 },

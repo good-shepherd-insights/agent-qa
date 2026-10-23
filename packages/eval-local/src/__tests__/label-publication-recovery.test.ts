@@ -2,7 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { asRunId, type CompletedRunHandoff, type MarkReceipt } from '@vostride/agent-qa-schema'
+import {
+  MARK_RECEIPT_SCHEMA_VERSION,
+  asRunId,
+  type CompletedRunHandoff,
+  type MarkReceipt,
+} from '@vostride/agent-qa-schema'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import { buildSeedingPlan, committedFileText, extractRunCassettes, computeCorpusDigest } from '@vostride/agent-qa-eval'
 import * as api from '../index.js'
@@ -121,7 +126,7 @@ it('refuses a real gold mark published after capture without mixing staged weigh
   const f = setup()
   new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId: f.handoff.runId }).persistDecisionScreenshot(LOCAL_FIXTURE_BLOB_BYTES)
   const originalLabels = api.readCommittedCorpus(f.committedRoot).snapshot.labelsById
-  const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_aaaaaaaaaaaa', runId: f.handoff.runId,
+  const mark: MarkReceipt = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_aaaaaaaaaaaa', runId: f.handoff.runId,
     runSlug: f.handoff.runId, testIndex: 0, stepIndex: 0, kind: 'confirmed-bug', origin: 'user',
     ordinal: 1, markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
     gold: [], evidence: { confirmed: 0, overturned: 0 } }

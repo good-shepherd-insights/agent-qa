@@ -57,6 +57,7 @@ import {
 import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
+  MARK_RECEIPT_SCHEMA_VERSION,
   RunsMarkPreviewResultSchema,
   RunsMarksHistoryResultSchema,
   projectSubActionRecorded,
@@ -540,7 +541,7 @@ const FIRST_MARK = 'mark_0123456789ab'
 const SECOND_MARK = 'mark_0123456789ac'
 
 function feedbackReceipts(): MarkReceipt[] {
-  const base = { schemaVersion: 1 as const, runId: RUN_ID as MarkReceipt['runId'], testIndex: 0, runSlug: slugBranch(RUN_ID),
+  const base = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION as typeof MARK_RECEIPT_SCHEMA_VERSION, runId: RUN_ID as MarkReceipt['runId'], testIndex: 0, runSlug: slugBranch(RUN_ID),
     origin: 'user' as const, gold: [], evidence: { confirmed: 0, overturned: 0 } }
   return [
     { ...base, markId: FIRST_MARK, kind: 'false-fail', ordinal: 1, markedAt: 1, note: `note ${FEEDBACK_NOTE_SECRET}`,

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import {
+  MARK_RECEIPT_SCHEMA_VERSION,
   GateReceiptSchema,
   receiptDigestOf,
   slugBranch,
@@ -122,7 +123,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
     const { f, input } = await warm({ handoffForTarget: true })
     const runId = f.injection.target!.runId
     const handoff = JSON.parse(readFileSync(join(f.agentQaRoot, 'runs', slugBranch(runId), 'handoff.json'), 'utf8')) as CompletedRunHandoff
-    const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_a123456789ab', runId: handoff.runId,
+    const mark: MarkReceipt = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_a123456789ab', runId: handoff.runId,
       runSlug: slugBranch(runId), testIndex: 0, stepIndex: 0, kind: 'false-pass', origin: 'user', ordinal: 1, markedAt: 0,
       correctedExpectation: 'Choose Cancel', correctedAction: { type: 'click', ref: asRef('e-other') },
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }

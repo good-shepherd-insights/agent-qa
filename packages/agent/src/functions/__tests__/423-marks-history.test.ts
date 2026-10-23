@@ -1,7 +1,12 @@
 // 2026-09-15, 423 D-19: ordinal mark history over a read-only feedback port.
 import { describe, expect, it, vi } from 'vitest'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { MarkReceiptSchema, RunsMarksHistoryResultSchema, asRunId } from '@vostride/agent-qa-schema'
+import {
+  MARK_RECEIPT_SCHEMA_VERSION,
+  MarkReceiptSchema,
+  RunsMarksHistoryResultSchema,
+  asRunId,
+} from '@vostride/agent-qa-schema'
 import type { FunctionCaller, MarkHistoryChangedRecord, MarkReceipt, MaskFn, RunId } from '@vostride/agent-qa-schema'
 import { invokeFunction } from '../invoke.js'
 import { runsMarksHistorySpec } from '../ops/runs-marks-history.js'
@@ -20,7 +25,7 @@ const markIdOf = (ordinal: number) => `mark_${ordinal.toString(16).padStart(12, 
 
 function receipt(ordinal: number, address: Address, overrides: Partial<MarkReceipt> = {}): MarkReceipt {
   return MarkReceiptSchema.parse({
-    schemaVersion: 1, markId: markIdOf(ordinal), runId, runSlug: 'run-423-marks-history',
+    schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: markIdOf(ordinal), runId, runSlug: 'run-423-marks-history',
     testIndex: address.testIndex,
     ...(address.testId === undefined ? {} : { testId: address.testId }),
     ...(address.stepIndex === undefined ? {} : { stepIndex: address.stepIndex }),

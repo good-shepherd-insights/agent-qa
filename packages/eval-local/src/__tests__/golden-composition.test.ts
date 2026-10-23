@@ -21,6 +21,7 @@ import { selectGateSet } from '@vostride/agent-qa-eval'
 import { committedCassettePath, committedCorpusPath, committedLabelPath, committedCensusPath } from '../committed-root-store.js'
 import { seedCommittedCorpus } from '../seeding-composition.js'
 import { LOCAL_FIXTURE_BLOB_BYTES, makeLocalV2Handoff } from './fixtures/local-handoff-fixture.js'
+import { MARK_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const NO_DECLARED_SECRETS = (text: string) => text
 
@@ -51,7 +52,7 @@ describe('freezeGoldenTrajectory', () => {
     writeFileSync(join(dir, HANDOFF_FILE), JSON.stringify(handoff))
     new FsEvidenceArtifactStore({ root, runId: handoff.runId }).persistDecisionScreenshot(LOCAL_FIXTURE_BLOB_BYTES)
     mark = {
-      schemaVersion: 1, markId: 'mark_0123456789ab', runId: handoff.runId as MarkReceipt['runId'],
+      schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', runId: handoff.runId as MarkReceipt['runId'],
       runSlug: slugBranch(handoff.runId), testIndex: 0, stepIndex: 0, kind: 'false-fail',
       origin: 'user', ordinal: 1, markedAt: 0, gold: [], evidence: { confirmed: 0, overturned: 0 },
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },

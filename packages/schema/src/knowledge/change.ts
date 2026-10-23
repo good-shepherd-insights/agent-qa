@@ -12,11 +12,9 @@
 // commit receipt moved with it from `functions/feedback.ts` (which re-exports it), because the change
 // output carries it and the feedback contracts import this module's primitives: one direction only.
 //
-// THE CHANGE ID KEEPS ITS RECEIPT SHAPE. A change is identified by `prop_<operationId>`, the shape
-// receipts already carried, and the `proposalId` field name on the forget and commit receipts is kept
-// for the same reason: those receipts are persisted in mark ledgers and returned to callers, and
-// 430 D-08 keeps persisted history readable. The schema that refines the id is named for what it
-// identifies now.
+// THE CHANGE ID KEEPS ITS RECEIPT SHAPE. A change is identified by `prop_<operationId>`, and the
+// forget and commit receipts carry it in their `proposalId` field. The schema that refines the id is
+// named for what it identifies now.
 
 import { z } from 'zod'
 
@@ -139,6 +137,8 @@ const scrubSetSchema = z
     'projectionsScrubbed is a SUBSET of the scrub set, not a log of attempts',
   )
 
+export const FORGET_RECEIPT_SCHEMA_VERSION = 2
+
 /**
  * What a forget DID: the value the change returns, and the content the forgotten entity's address
  * resolves to afterwards (D-19 + D-04). Every tombstoned record is enumerated with its provenance,
@@ -147,7 +147,7 @@ const scrubSetSchema = z
  * `proposalId` carries the change id; the field name is the persisted receipt's (see the header).
  */
 export const ForgetReceiptV1Schema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(FORGET_RECEIPT_SCHEMA_VERSION),
   proposalId: KnowledgeChangeIdSchema,
   tombstonedRecords: z.array(TombstonedRecordSchema),
   projectionsScrubbed: scrubSetSchema,
@@ -169,7 +169,7 @@ export const MarkChangeStampSchema = z.object({
 
 export type MarkChangeStamp = z.infer<typeof MarkChangeStampSchema>
 
-export const COMMIT_RECEIPT_SCHEMA_VERSION = 1
+export const COMMIT_RECEIPT_SCHEMA_VERSION = 2
 
 const ordinalSchema = z.number().int().nonnegative()
 

@@ -7,11 +7,12 @@
 import { describe, expect, it } from 'vitest'
 
 import * as schema from '../index'
+import { FORGET_RECEIPT_SCHEMA_VERSION } from '../index'
 
 const OPERATION = '0123456789abcdef0123456789abcdef'
 
 const FORGET_RECEIPT = {
-  schemaVersion: 1,
+  schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION,
   proposalId: `prop_${OPERATION}`,
   tombstonedRecords: [],
   projectionsScrubbed: ['fts'],

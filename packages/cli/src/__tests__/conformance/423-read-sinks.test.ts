@@ -23,6 +23,7 @@ import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
+  MARK_RECEIPT_SCHEMA_VERSION,
   MarkReceiptSchema,
   type CompletedRunHandoff,
   type MarkReceipt,
@@ -298,7 +299,7 @@ const STEP_RECORD = 'mem_step-423-24'
 
 function appliedReceipt(runId: string, ordinal: number, recordId: string, stepIndex?: number): MarkReceipt {
   return MarkReceiptSchema.parse({
-    schemaVersion: 1, markId: `mark_${String(ordinal).padStart(12, '0')}`, runId, testIndex: 0,
+    schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: `mark_${String(ordinal).padStart(12, '0')}`, runId, testIndex: 0,
     ...(stepIndex === undefined ? {} : { stepIndex }), runSlug: 'read-sink-review', kind: 'false-fail',
     origin: 'user', ordinal, markedAt: ordinal,
     disposition: { kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: [recordId] } },

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { asRef, asRunId } from '@vostride/agent-qa-schema'
+import { MARK_RECEIPT_SCHEMA_VERSION, asRef, asRunId } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   ChatSessionEvent,
@@ -31,7 +31,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     correctedAction: { type: 'fill', ref: asRef('e1'), text: canary, clearMode: 'replace', submit: false },
   }
   const canonical: MarkReceipt = {
-    schemaVersion: 1, markId: 'mark_0123456789ab', runId: input.runId, runSlug: 'audit-run',
+    schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', runId: input.runId, runSlug: 'audit-run',
     testIndex: 0, kind: input.kind, origin: 'user', ordinal: 1, markedAt: 0, note: canary,
     correctedExpectation: input.correctedExpectation, correctedAction: input.correctedAction,
     disposition: { kind: 'quarantined', class: 'flake' }, gold: [],

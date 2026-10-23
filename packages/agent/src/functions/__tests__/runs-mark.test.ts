@@ -1,4 +1,5 @@
 import {
+  MARK_RECEIPT_SCHEMA_VERSION,
   asRunId,
   RunDetailProjectionSchema,
 } from '@vostride/agent-qa-schema'
@@ -32,7 +33,7 @@ const TRUSTED = { ...CALLER, credential: { scope: { project: 'local-workspace' }
 
 function receipt(overrides: Partial<MarkReceipt> = {}): MarkReceipt {
   return {
-    schemaVersion: 1,
+    schemaVersion: MARK_RECEIPT_SCHEMA_VERSION,
     markId: 'mark_0123456789ab',
     runId: RUN_ID,
     runSlug: 'run-alpha',

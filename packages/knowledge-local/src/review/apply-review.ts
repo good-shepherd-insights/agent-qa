@@ -24,6 +24,8 @@
 import { existsSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import {
+  COMMIT_RECEIPT_SCHEMA_VERSION,
+  FORGET_RECEIPT_SCHEMA_VERSION,
   GATE_RECEIPT_SCHEMA_VERSION,
   KnowledgeAcceptInputSchema,
   KnowledgeForgetInputSchema,
@@ -311,7 +313,7 @@ function assembleForgetReceipt(
     resultingBundleStatus = memoryStatusForBundle(located.status)
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION,
     proposalId: change.id,
     tombstonedRecords,
     projectionsScrubbed: [...projectionsScrubbed],
@@ -412,7 +414,7 @@ async function applyMarkArm(
   const recordIds = recovered?.recordIds ?? readBackCommittedIds(writer.knowledgeRoot, preOrdinal, change)
   const committedAtOrdinal = recovered?.ordinal ?? currentOrdinal(writer.knowledgeRoot)
   const commitReceipt: CommitReceipt = {
-    schemaVersion: 1, proposalId: change.id, markId: change.mark!.markId,
+    schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION, proposalId: change.id, markId: change.mark!.markId,
     committedAtOrdinal, recordIds, gate3: [], promoted: [], held: [],
   }
   for (const candidateId of recordIds) {
@@ -521,7 +523,7 @@ async function applyPolicyArm(
     policyApproval: { proposalId: change.id, recordId },
   } as const)
   await store.recordGateReceipt(receipt)
-  const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: change.id,
+  const commitReceipt: CommitReceipt = { schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION, proposalId: change.id,
     committedAtOrdinal, recordIds: [recordId], gate3: [{ candidateId: recordId, receiptDigest: receipt.receiptDigest }],
     promoted: [], held: [], policy: { recordId, scope: scope.tier === 'global' ? 'global' : scope.key,
       relPath: materialized.relPath, outcome: materialized.kind } }
@@ -578,7 +580,7 @@ async function recoverPolicyArm(
     title: committed.victim.bundle.summary, writerAuthority: authority, existingOnly: true })
   if (materialized.kind !== 'unchanged') throw new Error('Committed policy section is unavailable')
   if (!committed.hasReceipt) await reviewStore(writer, change, authority).recordGateReceipt(committed.receipt)
-  const commitReceipt: CommitReceipt = { schemaVersion: 1, proposalId: change.id,
+  const commitReceipt: CommitReceipt = { schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION, proposalId: change.id,
     committedAtOrdinal: committed.receipt.producedAtOrdinal, recordIds: [recordId],
     gate3: [{ candidateId: recordId, receiptDigest: committed.receipt.receiptDigest }], promoted: [], held: [],
     policy: { recordId, scope: committed.shelfScope, relPath: committed.relPath, outcome: materialized.kind } }

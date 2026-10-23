@@ -2,7 +2,11 @@ import { readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { Command } from 'commander'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { asRunId, RunsMarkOutcomeSchema } from '@vostride/agent-qa-schema'
+import {
+  MARK_RECEIPT_SCHEMA_VERSION,
+  asRunId,
+  RunsMarkOutcomeSchema,
+} from '@vostride/agent-qa-schema'
 import { markFixture } from '../../gates/__tests__/feedback-fixture.js'
 import { createRunsCommand, renderMarkOutcome } from '../runs.js'
 import * as host from '../../composition/local-agent-host.js'
@@ -61,7 +65,7 @@ describe('runs mark thin client', () => {
   // 432-09 (D-04/D-22): the terminal receipt names what the fix changed; a pre-432 drafted receipt
   // read back from a ledger says it was drafted and names no proposal to act on.
   it('renders an applied receipt with the records or file it changed, and a historical draft without a proposal id', () => {
-    const base = { schemaVersion: 1 as const, markId: 'mark_0123456789ab', runId: asRunId('run-render'), runSlug: 'run-render',
+    const base = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION as typeof MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', runId: asRunId('run-render'), runSlug: 'run-render',
       testIndex: 0, kind: 'false-fail' as const, origin: 'user' as const, ordinal: 2, markedAt: 0, gold: [],
       evidence: { confirmed: 1, overturned: 0 } }
     expect(renderMarkOutcome({ kind: 'marked', receipt: { ...base, disposition: { kind: 'applied', fix: 'fact',

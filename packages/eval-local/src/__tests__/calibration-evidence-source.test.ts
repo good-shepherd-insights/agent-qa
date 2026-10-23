@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import * as core from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import {
+  MARK_RECEIPT_SCHEMA_VERSION,
   asRunId,
   type MarkReceipt,
   type Verdict,
@@ -39,7 +40,7 @@ function fixture() {
   if (seeded.refusals.length) throw new Error('Fixture seeding refused')
   const marks: MarkReceipt[] = []
   for (const step of member.steps) {
-    const mark: MarkReceipt = { schemaVersion: 1, markId: `mark_aaaaaaaaaaa${step.stepIndex}`, runId: handoff.runId,
+    const mark: MarkReceipt = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: `mark_aaaaaaaaaaa${step.stepIndex}`, runId: handoff.runId,
       runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: step.stepIndex, kind: 'confirmed-bug',
       origin: 'user', ordinal: step.stepIndex + 1, markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
       gold: [], evidence: { confirmed: 0, overturned: 0 } }

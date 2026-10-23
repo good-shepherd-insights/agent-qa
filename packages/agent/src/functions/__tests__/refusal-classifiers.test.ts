@@ -18,6 +18,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 import {
+  FORGET_RECEIPT_SCHEMA_VERSION,
   AuthoringDraftWriteOutputSchema,
   ConfigChangeOutputSchema,
   KnowledgeChangeOutputSchema,
@@ -230,7 +231,7 @@ describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes fold their own 
         ...(verb === 'forget'
           ? {
             forgetReceipt: {
-              schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
+              schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
               projectionsScrubbed: ['fts'], resultingBundleStatus: 'forgotten', forgottenAt: 1,
             },
           }

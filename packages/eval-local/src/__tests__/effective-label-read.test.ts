@@ -7,7 +7,7 @@ import {
   projectCorpusEntry, projectSilverLabelRecord, projectUserMarkLabelRecord, deriveGoldCassetteId,
 } from '@vostride/agent-qa-eval'
 import type { StandaloneLabelRecord } from '@vostride/agent-qa-eval'
-import { asRunId, sha256hex } from '@vostride/agent-qa-schema'
+import { MARK_RECEIPT_SCHEMA_VERSION, asRunId, sha256hex } from '@vostride/agent-qa-schema'
 import type { MarkReceipt } from '@vostride/agent-qa-schema'
 import { FsHandoffStore } from '@vostride/agent-qa-runner-local'
 import { FsMarkLedger } from '../mark-ledger.js'
@@ -121,7 +121,7 @@ describe('420 effective committed label reads', () => {
     new FsHandoffStore({ root: runtime, runId: f.handoff.runId }).save(f.handoff)
     const goldId = deriveGoldCassetteId({ leafCassetteId: f.cassette.id, markOrdinal: 1 })
     const mark: MarkReceipt = {
-      schemaVersion: 1, markId: 'mark_0123456789ab', ordinal: 1, runId: f.handoff.runId,
+      schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', ordinal: 1, runId: f.handoff.runId,
       runSlug: f.original.provenance.runSlug, testIndex: 0, stepIndex: 0,
       kind: 'false-fail', origin: 'user', markedAt: 0,
       gold: [{ cassetteId: goldId, sourceCassetteId: f.cassette.id, channel: 'user-mark' }],

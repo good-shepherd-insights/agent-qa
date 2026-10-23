@@ -33,6 +33,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { buildAgentQaMcpServer } from '../catalog.js'
 import { maskedToolError } from '../masked-result.js'
+import { FORGET_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 // RE-SPELLED 2026-10-01 (432-21, D-12). The mark tool's handler-level credential refusal (419 D-20)
 // left with the MCP bearer credential, and `createMarkToolHandler` with it: the mark tool goes
@@ -248,7 +249,7 @@ describe('C432-MCP-NO-ELICITATION: no confirmation input, no elicitation, no app
       outcome: 'applied', verb: request.verb, operationId: '5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d',
       recordIds: ['rec-alpha'],
       forgetReceipt: {
-        schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
+        schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
         projectionsScrubbed: ['fts'], resultingBundleStatus: 'forgotten', forgottenAt: 1,
       },
     }))

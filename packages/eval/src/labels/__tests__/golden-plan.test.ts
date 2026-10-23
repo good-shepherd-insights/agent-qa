@@ -6,13 +6,14 @@ import { deriveGoldCassetteId, deriveRunSlug } from '../../extract/ids'
 import { isProposerVisibleEntry } from '../corpus-entry'
 import { buildGoldenTrajectoryPlan, resolveMarkedDecisions } from '../golden-plan'
 import * as splitAssignment from '../split-assignment'
+import { MARK_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 function setup(kind: MarkReceipt['kind'] = 'false-fail', stepIndex?: number) {
   const handoff = makeArtifactRefV2Handoff()
   // The base fixture ends in a cached-only step. Use two live steps for gold cells.
   handoff.tests[0]!.steps = handoff.tests[0]!.steps.slice(0, 2)
   const mark: MarkReceipt = {
-    schemaVersion: 1, markId: 'mark_0123456789ab', runId: handoff.runId as MarkReceipt['runId'],
+    schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', runId: handoff.runId as MarkReceipt['runId'],
     runSlug: deriveRunSlug(handoff.runId), testIndex: 0, kind, origin: 'user', ordinal: 1,
     markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
     gold: [], evidence: { confirmed: 0, overturned: 0 },

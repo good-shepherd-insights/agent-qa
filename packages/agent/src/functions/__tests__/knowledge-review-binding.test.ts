@@ -19,7 +19,10 @@
 // The spec below is deliberately a fixture and not a draft of a real verb: it is named in a
 // domain nothing ships under, so nobody can mistake it for a capability under construction.
 
-import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  FORGET_RECEIPT_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -181,7 +184,7 @@ describe('the knowledgeReview optional dep', () => {
           ...(request.verb === 'forget'
             ? {
               forgetReceipt: {
-                schemaVersion: 1, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
+                schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION, proposalId: 'prop_alpha-bravo', tombstonedRecords: [],
                 projectionsScrubbed: ['fts'], resultingBundleStatus: 'forgotten', forgottenAt: 1,
               },
             }

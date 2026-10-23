@@ -40,6 +40,7 @@ import {
 import { composeCliPostRunTail } from '../post-run-tail-composition.js'
 import type { PostRunTailHostInput, PostRunTailOperations } from '../post-run-tail.js'
 import { createPostVerdictStep } from '../post-verdict-step.js'
+import { readRunConfigRecord } from '../run-curation-context.js'
 
 // 2026-10-16 (442-10, D-14): reconciliation 23 reads SC3's distinct secrets as distinct secretsFiles.
 const VALUE_A = 'alpha-tenant-7731'
@@ -223,7 +224,7 @@ function recordPath(p: Project, runId: string): string {
 function writeRecord(p: Project, runId: string, configPath: string): void {
   writeFileSync(
     recordPath(p, runId),
-    `${JSON.stringify({ schemaVersion: 1, runId, configPath })}\n`,
+    `${JSON.stringify({ schemaVersion: 2, runId, configPath })}\n`,
   )
 }
 
@@ -559,7 +560,7 @@ describe('C442-RUN-CONFIG-CURATION', () => {
           writeFileSync(
             recordPath(p, RUN_A),
             `${JSON.stringify({
-              schemaVersion: 1,
+              schemaVersion: 2,
               runId: RUN_A,
               configPath: p.aConfig,
               mask: 'none',
@@ -570,7 +571,7 @@ describe('C442-RUN-CONFIG-CURATION', () => {
           writeFileSync(
             elsewhere,
             `${JSON.stringify({
-              schemaVersion: 1,
+              schemaVersion: 2,
               runId: RUN_A,
               configPath: p.aConfig,
             })}\n`,
@@ -626,13 +627,26 @@ describe('C442-RUN-CONFIG-CURATION', () => {
       expect(existsSync(recordPath(p, RUN_A)), 'the step wrote no run-config record').toBe(true)
       expect(warns).toEqual([])
       expect(JSON.parse(readFileSync(recordPath(p, RUN_A), 'utf8'))).toEqual({
-        schemaVersion: 1,
+        schemaVersion: 2,
         runId: RUN_A,
         configPath: p.aConfig,
       })
       expect(statSync(recordPath(p, RUN_A)).mode & 0o777).toBe(0o600)
       expect(temporaryFiles(p, RUN_A)).toEqual([])
     }
+  })
+
+  it('a run-config record stamped 1 reads as absent', () => {
+    const p = project({ sharedKnowledge: true })
+    seedRun(p, RUN_A, SCOPE_A, [VALUE_A])
+    writeRecord(p, RUN_A, p.aConfig)
+    expect(readRunConfigRecord(p.agentQaRoot, RUN_A)?.configPath).toBe(p.aConfig)
+
+    writeFileSync(
+      recordPath(p, RUN_A),
+      `${JSON.stringify({ schemaVersion: 1, runId: RUN_A, configPath: p.aConfig })}\n`,
+    )
+    expect(readRunConfigRecord(p.agentQaRoot, RUN_A)).toBeUndefined()
   })
 
   it('writing the same record twice is success, a different one is refused', async () => {

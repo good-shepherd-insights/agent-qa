@@ -3,7 +3,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as core from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { asRunId, sha256hex, slugBranch, type MarkReceipt } from '@vostride/agent-qa-schema'
+import {
+  MARK_RECEIPT_SCHEMA_VERSION,
+  asRunId,
+  sha256hex,
+  slugBranch,
+  type MarkReceipt,
+} from '@vostride/agent-qa-schema'
 import { afterEach, expect, it } from 'vitest'
 import * as local from '../index.js'
 import * as reader from '../reader.js'
@@ -28,7 +34,7 @@ function fixture(model: core.CassetteModelReceipt = { declared: { provider: 'ope
   const plan = core.buildSeedingPlan({ handoff, cassettes, partition: { saltHex: 'a'.repeat(64), heldOutFraction: 0.000001, privateFraction: 0.5 } })
   const seeded = local.seedCommittedCorpus({ plan, cassettes, committedRoot, mask: NO_DECLARED_SECRETS })
   if (seeded.refusals.length) throw new Error('Fixture seed refused')
-  const mark: MarkReceipt = { schemaVersion: 1, markId: 'mark_abcdef012345', runId: handoff.runId,
+  const mark: MarkReceipt = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_abcdef012345', runId: handoff.runId,
     runSlug: core.deriveRunSlug(handoff.runId), testIndex: 0, stepIndex: 0, kind: 'confirmed-bug', origin: 'user', ordinal: 1,
     markedAt: 0, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, gold: [], evidence: { confirmed: 0, overturned: 0 } }
   const frozen = core.buildGoldenTrajectoryPlan({ handoff, cassettes, mark, product: 'shop' })

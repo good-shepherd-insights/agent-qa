@@ -14,6 +14,7 @@
 //     card, so it can reject a producer that started reading it.
 
 import {
+  FORGET_RECEIPT_SCHEMA_VERSION,
   ENTITY_CARD_MAX_KEY_FACTS,
   ENTITY_KINDS,
   ENTITY_STATUSES,
@@ -106,7 +107,7 @@ const PROVENANCE: BundleProvenance = {
 
 function receipt(overrides: Partial<ForgetReceiptV1> = {}): ForgetReceiptV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION,
     proposalId: 'prop-0001',
     tombstonedRecords: [
       { recordId: 'rec-b', provenance: PROVENANCE },

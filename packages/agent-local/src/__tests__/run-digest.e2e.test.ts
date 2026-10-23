@@ -32,6 +32,7 @@ import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
+  MARK_RECEIPT_SCHEMA_VERSION,
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MarkReceiptSchema,
@@ -118,7 +119,7 @@ const TEST_FIX: MarkDisposition = { kind: 'applied', fix: 'test-edit',
 /** One ledger receipt as the mark writer stores it, validated against its own schema. */
 function receipt(runId: string, ordinal: number, disposition: MarkDisposition, stepIndex?: number): MarkReceipt {
   return MarkReceiptSchema.parse({
-    schemaVersion: 1, markId: markIdOf(ordinal), runId, runSlug: slugBranch(runId), testIndex: 0,
+    schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: markIdOf(ordinal), runId, runSlug: slugBranch(runId), testIndex: 0,
     ...(stepIndex === undefined ? {} : { stepIndex }),
     kind: disposition.kind === 'confirmed-bug' ? 'confirmed-bug' : 'false-fail', origin: 'user', ordinal,
     markedAt: 1_000 + ordinal, disposition, gold: [], evidence: { confirmed: 0, overturned: 0 },

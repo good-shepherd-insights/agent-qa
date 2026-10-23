@@ -115,7 +115,7 @@ export const MarkAddressSchema = z.object({
 }).strict()
 export type MarkAddress = z.infer<typeof MarkAddressSchema>
 
-export const MARK_RECEIPT_SCHEMA_VERSION = 1
+export const MARK_RECEIPT_SCHEMA_VERSION = 2
 export const MarkReceiptSchema = z.object({
   schemaVersion: z.literal(MARK_RECEIPT_SCHEMA_VERSION),
   markId: markIdSchema,

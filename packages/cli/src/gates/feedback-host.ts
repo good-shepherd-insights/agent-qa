@@ -4,7 +4,7 @@ import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
 import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
 import { applyKnowledgeChange, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES, type ExplicitReviewDelegate, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
-import { MARK_FIX_REFUSALS, RunsMarkInputSchema, type MarkFixRefusal, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { MARK_FIX_REFUSALS, MARK_RECEIPT_SCHEMA_VERSION, RunsMarkInputSchema, type MarkFixRefusal, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
 import { resolveConfiguredKnowledgeRoot } from '../config.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import { wordImprovementPlan } from './feedback-wording.js'
@@ -158,7 +158,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           return undefined
         }
         let mark: MarkReceipt = {
-          schemaVersion: 1, ...input, ...address, runSlug: slugBranch(input.runId),
+          schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, ...input, ...address, runSlug: slugBranch(input.runId),
           markId: `mark_${deps.randomUuid().replace(/-/g, '').slice(0, 12)}`,
           origin: 'user', ordinal, markedAt: (deps.now ?? Date.now)(),
           gold: [], evidence: { confirmed: 0, overturned: 0 },

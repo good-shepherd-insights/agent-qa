@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { ACTION_WIRE_SCHEMAS_BY_TYPE, actionWireSchema } from '../../action/wire-schema'
 import { asRunId, runIdSchema } from '../../run/run-id'
 import {
+  COMMIT_RECEIPT_SCHEMA_VERSION,
+  MARK_RECEIPT_SCHEMA_VERSION,
   MARK_DISPOSITIONS, MARK_FIX_KINDS, MARK_QUARANTINE_CLASSES,
   CommitReceiptSchema, ImprovementPlanSchema, ImprovementPlanKnowledgeSchema,
   MarkAddressSchema, MarkDispositionSchema, MarkReceiptSchema, NoDraftableFixCheckedSchema,
@@ -13,7 +15,7 @@ const runId = asRunId('run-feedback')
 const markId = 'mark_0123456789ab'
 const checked = { servedRecords: 0, procedureReads: 0, assertionDrift: false }
 const receipt = {
-  schemaVersion: 1, markId, runId, testIndex: 0, runSlug: 'run-feedback',
+  schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId, runId, testIndex: 0, runSlug: 'run-feedback',
   kind: 'false-fail', origin: 'user', ordinal: 1, markedAt: 0,
   disposition: { kind: 'quarantined', class: 'flake' },
   gold: [], evidence: { confirmed: 0, overturned: 0 },
@@ -29,7 +31,7 @@ const knowledge = {
   deltas: [{ kind: 'Confirm', origin: 'user', scope: { tier: 'suite', key: 'checkout' }, citedIds: ['rec-1'], targetId: 'rec-1', evidenceToken: 'ev-1' }],
 }
 const commitReceipt = {
-  schemaVersion: 1, proposalId: 'prop_alpha-bravo', markId, committedAtOrdinal: 0,
+  schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION, proposalId: 'prop_alpha-bravo', markId, committedAtOrdinal: 0,
   recordIds: ['rec-1'], gate3: [{ candidateId: 'rec-1', receiptDigest: 'a'.repeat(64) }],
   promoted: [{ candidateId: 'rec-1', promotionPath: 'user-sovereign' }],
   held: [{ candidateId: 'rec-2', reason: 'no receipt' }],
@@ -93,7 +95,7 @@ describe('Gate-3 neutral feedback contracts (419)', () => {
 
   it('pins persisted user origin, receipt version and integer ledger positions', () => {
     expect(MarkReceiptSchema.parse(receipt)).toEqual(receipt)
-    for (const change of [{ origin: 'agent' }, { schemaVersion: 2 }, { ordinal: 0 }, { ordinal: -1 }, { ordinal: 1.5 }]) {
+    for (const change of [{ origin: 'agent' }, { schemaVersion: 1 }, { ordinal: 0 }, { ordinal: -1 }, { ordinal: 1.5 }]) {
       expect(MarkReceiptSchema.safeParse({ ...receipt, ...change }).success).toBe(false)
     }
     for (const committedAtOrdinal of [-1, 1.5]) {

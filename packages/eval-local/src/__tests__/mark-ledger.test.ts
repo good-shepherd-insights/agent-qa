@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { FsHandoffStore, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { asRunId, type MarkReceipt } from '@vostride/agent-qa-schema'
+import { asRunId, MARK_RECEIPT_SCHEMA_VERSION, type MarkReceipt } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -27,7 +27,7 @@ describe('FsMarkLedger', () => {
     new FsHandoffStore({ root, runId }).save(handoff)
     ledger = new FsMarkLedger({ root, runId })
     record = {
-      schemaVersion: 1, markId: 'mark_0123456789ab', runId, runSlug, testIndex: 0,
+      schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', runId, runSlug, testIndex: 0,
       kind: 'false-fail', origin: 'user', markedAt: 0, gold: [],
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
       evidence: { confirmed: 0, overturned: 0 },
@@ -50,7 +50,7 @@ describe('FsMarkLedger', () => {
   })
 
   it.each([
-    { origin: 'agent' }, { schemaVersion: 2 }, { ordinal: 1 }, { runId: 'other-run' },
+    { origin: 'agent' }, { schemaVersion: 3 }, { ordinal: 1 }, { runId: 'other-run' },
     { runSlug: 'other-run' }, { unexpected: true },
   ])('refuses corrupt or foreign line 2 with safe typed diagnostics: %j', async patch => {
     await ledger.append(record)
@@ -61,6 +61,12 @@ describe('FsMarkLedger', () => {
     await expect(ledger.transact(fn)).rejects.toThrow(MarkLedgerCorruptError)
     expect(fn).not.toHaveBeenCalled()
     expect(existsSync(join(dir, MARKS_LEDGER_LOCK_FILE))).toBe(false)
+  })
+
+  it('a marks.jsonl line stamped 1 is refused', () => {
+    writeFileSync(join(dir, MARKS_LEDGER_FILE), `${JSON.stringify({ ...record, schemaVersion: 1, ordinal: 1 })}\n`)
+    expect(() => ledger.read()).toThrow(MarkLedgerCorruptError)
+    expect(() => ledger.read()).toThrow('line 1')
   })
 
   it.each(['not JSON\n', '\n', '{"credential":"never-echo-this"}\n', JSON.stringify({ ordinal: 1 })])(
