@@ -143,7 +143,7 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   DEFAULT_AGENT_QA_RUNS_DB_PATH: '.agent-qa/runs.db',
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',
   DEFAULT_AGENT_QA_VIDEOS_DIR: '.agent-qa/artifacts/videos',
-  AUTH_STATE_SCHEMA_VERSION: 1,
+  AUTH_STATE_SCHEMA_VERSION: 2,
   parseAllTests: mockParseAllTests,
   parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
     const result = await mockParseAllTests(filePaths)

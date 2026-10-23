@@ -82,7 +82,7 @@ describe('fetchRuns', () => {
 
 describe('auth state API', () => {
   const metadata = {
-    version: 1,
+    version: 2 as const,
     kind: 'web' as const,
     target: 'staging-web',
     name: 'admin',
@@ -147,6 +147,17 @@ describe('auth state API', () => {
     })
     expect(result).toEqual({ authState: metadata })
     expect(Object.keys(result.authState)).toEqual(['version', 'kind', 'target', 'name', 'capturedAt'])
+  })
+
+  it.each([1, 3])('drops auth-state metadata stamped %i from the list and refuses it on save', async (version) => {
+    const stamped = { ...metadata, version }
+    mockFetch.mockReturnValue(ok({ authStates: [stamped, metadata] }))
+
+    await expect(fetchAuthStates()).resolves.toEqual({ authStates: [metadata] })
+
+    mockFetch.mockReturnValue(ok({ authState: stamped }))
+
+    await expect(saveLiveAuthState('session-1', { name: 'admin' })).rejects.toThrow('Invalid auth state response')
   })
 })
 

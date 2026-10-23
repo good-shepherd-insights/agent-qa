@@ -36,7 +36,7 @@ let container: HTMLDivElement
 let root: Root
 
 const existingAdminState: AuthStateMetadata = {
-  version: 1,
+  version: 2,
   kind: 'web',
   target: 'staging-web',
   name: 'admin',

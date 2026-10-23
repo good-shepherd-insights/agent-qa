@@ -70,7 +70,7 @@ describe('FarmWebAdapter', () => {
         },
       },
       authState: {
-        version: 1,
+        version: 2,
         kind: 'web',
         targetName: 'staging-web',
         stateName: 'admin',

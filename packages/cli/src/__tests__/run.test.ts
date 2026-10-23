@@ -267,7 +267,7 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   resolveAuthStateForRun: mockResolveAuthStateForRun,
   resolveAuthStatePaths: mockResolveAuthStatePaths,
   writeAuthStateFiles: mockWriteAuthStateFiles,
-  AUTH_STATE_SCHEMA_VERSION: 1,
+  AUTH_STATE_SCHEMA_VERSION: 2,
   normalizeAuthStateUse: vi.fn((use: { authState?: unknown } | undefined) => {
     const authState = use?.authState
     if (typeof authState === 'string' && authState.trim().length > 0) {
@@ -793,7 +793,7 @@ beforeEach(() => {
   })
   mockResolveAuthStateForRun.mockReset()
   mockResolveAuthStateForRun.mockResolvedValue({
-    version: 1,
+    version: 2,
     kind: 'web',
     targetName: 'test-app',
     stateName: 'admin',
@@ -1559,7 +1559,7 @@ describe('run command — auth state consumption', () => {
       {
         payload: { cookies: [], origins: [] },
         metadata: expect.objectContaining({
-          version: 1,
+          version: 2,
           kind: 'web',
           target: 'test-app',
           name: 'admin',

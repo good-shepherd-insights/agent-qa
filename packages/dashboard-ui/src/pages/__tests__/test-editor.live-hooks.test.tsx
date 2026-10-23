@@ -319,7 +319,7 @@ beforeEach(() => {
   fetchAuthStatesMock.mockResolvedValue({ authStates: [] })
   saveLiveAuthStateMock.mockResolvedValue({
     authState: {
-      version: 1,
+      version: 2,
       kind: 'web',
       target: 'demo-target',
       name: 'admin',
@@ -438,7 +438,7 @@ describe('TestEditorPage live hook safeguards', () => {
   it('passes draft auth-state prefill, saves via auth-state API, and leaves YAML unchanged', async () => {
     fetchAuthStatesMock.mockResolvedValue({
       authStates: [{
-        version: 1,
+        version: 2,
         kind: 'web',
         target: 'demo-target',
         name: 'admin',

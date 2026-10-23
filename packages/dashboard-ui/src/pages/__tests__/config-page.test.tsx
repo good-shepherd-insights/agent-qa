@@ -1448,7 +1448,7 @@ describe('ConfigPage task tabs shell', () => {
     vi.mocked(fetchAuthStates).mockResolvedValueOnce({
       authStates: [
         {
-          version: 1,
+          version: 2,
           kind: 'web',
           target: 'staging-web',
           name: 'admin',
@@ -1555,7 +1555,7 @@ describe('ConfigPage task tabs shell', () => {
     vi.mocked(fetchAuthStates)
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce({
-        authStates: [{ version: 1, kind: 'web', target: 'staging-web', name: 'admin', capturedAt: '2026-05-17T10:00:00.000Z' }],
+        authStates: [{ version: 2, kind: 'web', target: 'staging-web', name: 'admin', capturedAt: '2026-05-17T10:00:00.000Z' }],
       })
 
     await renderAt('/config/targets')

@@ -181,8 +181,11 @@ export interface ModelCatalogEntry {
   notes?: string
 }
 
+// Equals core's AUTH_STATE_SCHEMA_VERSION; this package does not depend on core.
+const AUTH_STATE_METADATA_VERSION = 2
+
 export interface AuthStateMetadata {
-  version: 1
+  version: typeof AUTH_STATE_METADATA_VERSION
   kind: 'web'
   target: string
   name: string
@@ -196,7 +199,7 @@ function toAuthStateMetadata(value: unknown): AuthStateMetadata | null {
 
   const candidate = value as Record<string, unknown>
   if (
-    candidate.version !== 1 ||
+    candidate.version !== AUTH_STATE_METADATA_VERSION ||
     candidate.kind !== 'web' ||
     typeof candidate.target !== 'string' ||
     typeof candidate.name !== 'string' ||
@@ -206,7 +209,7 @@ function toAuthStateMetadata(value: unknown): AuthStateMetadata | null {
   }
 
   return {
-    version: 1,
+    version: AUTH_STATE_METADATA_VERSION,
     kind: 'web',
     target: candidate.target,
     name: candidate.name,

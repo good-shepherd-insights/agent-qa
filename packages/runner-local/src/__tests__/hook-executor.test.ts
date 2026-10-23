@@ -319,7 +319,7 @@ describe('DockerHookExecutor.execute', () => {
         AGENT_QA_AUTH_STATE_STORAGE_STATE_PATH: '/tmp/overridden.json',
       },
       authState: {
-        version: 1,
+        version: 2,
         kind: 'web',
         targetName: 'staging-web',
         stateName: 'admin',
@@ -347,7 +347,7 @@ describe('DockerHookExecutor.execute', () => {
     expect(jsonEnv).toBeDefined()
     expect(JSON.stringify(eFlags)).not.toContain('/internal/auth/staging-web/admin.json')
     expect(JSON.parse(jsonEnv!.slice('AGENT_QA_AUTH_STATE_JSON='.length))).toEqual({
-      version: 1,
+      version: 2,
       kind: 'web',
       target: 'staging-web',
       name: 'admin',

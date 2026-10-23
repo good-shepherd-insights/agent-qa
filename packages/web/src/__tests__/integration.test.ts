@@ -416,7 +416,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
       platform: 'web',
       browser: { name: 'chromium' },
       authState: {
-        version: 1,
+        version: 2,
         kind: 'web',
         targetName: 'staging-web',
         stateName: 'admin',

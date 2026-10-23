@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http'
 import { basename, dirname, join, relative, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { resolveAuthStatePaths } from '@vostride/agent-qa-core'
+import { AUTH_STATE_SCHEMA_VERSION, resolveAuthStatePaths } from '@vostride/agent-qa-core'
 import { afterAll, describe, expect, it } from 'vitest'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 
@@ -727,7 +727,7 @@ function twinProject(project: RecordedDoorProject, secrets: string): void {
     }],
   })}\n`, 'utf8')
   writeFileSync(paths.metadataPath, `${JSON.stringify({
-    version: 1, kind: 'web', target: POPULATED_TARGET_NAME, name: TWIN_AUTH_STATE,
+    version: AUTH_STATE_SCHEMA_VERSION, kind: 'web', target: POPULATED_TARGET_NAME, name: TWIN_AUTH_STATE,
     capturedAt: '2026-10-14T00:00:00.000Z',
   })}\n`, 'utf8')
 }

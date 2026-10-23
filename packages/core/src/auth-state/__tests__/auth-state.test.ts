@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   AuthStateMetadataSchema,
   AUTH_STATE_HOOK_JSON_ENV,
+  AUTH_STATE_SCHEMA_VERSION,
   AUTH_STATE_HOOK_STORAGE_STATE_PATH_ENV,
   buildAuthStateHookEnv,
   listAuthStateMetadata,
@@ -33,7 +34,7 @@ const androidTarget = { platform: 'android' as const, appPackage: 'com.example.a
 const iosTarget = { platform: 'ios' as const, bundleId: 'com.example.app' }
 
 const metadata = {
-  version: 1,
+  version: AUTH_STATE_SCHEMA_VERSION,
   kind: 'web',
   target: 'staging-web',
   name: 'admin',
@@ -170,6 +171,10 @@ describe('auth-state metadata and store', () => {
         [key]: key === 'ttlSeconds' ? 3600 : '2026-05-17T00:00:00.000Z',
       }).success, key).toBe(false)
     }
+  })
+
+  it.each([1, 3])('refuses metadata stamped %i', (version) => {
+    expect(AuthStateMetadataSchema.safeParse({ ...metadata, version }).success).toBe(false)
   })
 
   it('writes raw Playwright storage-state payload and metadata sidecar files', async () => {
@@ -453,7 +458,7 @@ describe('auth-state runtime preflight', () => {
       stateName: 'admin',
       target: webTarget,
     })).resolves.toEqual({
-      version: 1,
+      version: AUTH_STATE_SCHEMA_VERSION,
       kind: 'web',
       targetName: 'staging-web',
       stateName: 'admin',
@@ -482,7 +487,7 @@ describe('auth-state runtime preflight', () => {
 
     expect(hookEnv[AUTH_STATE_HOOK_STORAGE_STATE_PATH_ENV]).toBe('/workspace/.agent-qa-auth-state/storage-state.json')
     expect(JSON.parse(hookEnv[AUTH_STATE_HOOK_JSON_ENV])).toEqual({
-      version: 1,
+      version: AUTH_STATE_SCHEMA_VERSION,
       kind: 'web',
       target: 'staging-web',
       name: 'admin',
