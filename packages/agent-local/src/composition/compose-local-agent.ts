@@ -95,6 +95,7 @@ import {
   deriveWriterLeaseFreshness,
   drainQueue,
   DRAIN_BUDGET_MS,
+  EMBEDDER_WORKER_REGISTRATION_FILE,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
@@ -372,6 +373,7 @@ export {
    * of its own would be the second knob the user explicitly refused.
    */
   DRAIN_BUDGET_MS,
+  EMBEDDER_WORKER_REGISTRATION_FILE,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,

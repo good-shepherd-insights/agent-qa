@@ -1154,7 +1154,10 @@ describe('daemon embedder-worker lifecycle', () => {
       harness.fireInterval(CURATION_QUEUE_POLL_MS)
       await waitUntil(() => harness.drainQueue.mock.calls.length === 1, 'drain did not finish')
 
-      expect(harness.errors).toContainEqual(expect.stringContaining('refusing to overwrite it'))
+      expect(harness.errors).toContainEqual(expect.stringContaining(
+        `Embedder worker registration ${harness.workerRegistrationPath} is malformed or was `
+          + 'written by an older agent-qa build; refusing to overwrite it. Remove the file once',
+      ))
       expect(harness.processSignals).toEqual([])
       expect(harness.workers).toHaveLength(0)
       expect(harness.unlinkedSockets).toEqual([])

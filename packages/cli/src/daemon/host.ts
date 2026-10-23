@@ -25,6 +25,7 @@ import {
   LOCAL_CURATION_CAPABILITIES,
   latestBuildOrdinal,
   DIGEST_JOB_ID_SOURCE,
+  EMBEDDER_WORKER_REGISTRATION_FILE,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
   EMBEDDER_WORKER_TERM_GRACE_MS,
   EmbedderWorkerTimeoutError,
@@ -1366,7 +1367,12 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     const outcome = operations.readEmbedderWorkerRegistration(input.agentQaRoot)
     if (outcome.kind === 'absent') return { kind: 'spawn', outcome: 'fresh' }
     if (outcome.kind === 'malformed') {
-      throw new Error('Embedder worker registration is malformed; refusing to overwrite it')
+      const registrationPath = join(input.agentQaRoot, EMBEDDER_WORKER_REGISTRATION_FILE)
+      throw new Error(
+        `Embedder worker registration ${registrationPath} is malformed or was written by an older `
+          + 'agent-qa build; refusing to overwrite it. Remove the file once, with no embedder '
+          + 'worker running, and the next drain starts a fresh worker.',
+      )
     }
 
     const registration = outcome.registration
