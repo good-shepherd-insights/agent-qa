@@ -206,7 +206,7 @@ export type RunServiceStartRequest = z.infer<typeof RunServiceStartRequestSchema
 export const RunServiceReadinessSchema = z.object({
   service: z.literal('up'),
   hostComposed: z.boolean(),
-  contractVersion: z.number().int().positive(),
+  contractVersion: z.literal(RUN_SERVICE_CONTRACT_VERSION),
 }).strict()
 
 export type RunServiceReadiness = z.infer<typeof RunServiceReadinessSchema>

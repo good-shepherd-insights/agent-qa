@@ -216,8 +216,8 @@ describe('C432-NO-TRUST-CONTRACT: token declarations and the trust-scope project
     const readiness = exported('RunServiceReadinessSchema')
     expect(keysOf(readiness)).toEqual(sorted(['service', 'hostComposed', 'contractVersion']))
     const parse = (value: unknown) => (readiness as { safeParse(value: unknown): { success: boolean } }).safeParse(value)
-    expect(parse({ service: 'up', hostComposed: true, contractVersion: 1 }).success).toBe(true)
-    expect(parse({ service: 'up', hostComposed: true, authConfigured: false, contractVersion: 1 }).success,
+    expect(parse({ service: 'up', hostComposed: true, contractVersion: 2 }).success).toBe(true)
+    expect(parse({ service: 'up', hostComposed: true, authConfigured: false, contractVersion: 2 }).success,
       'the retired member is refused by the strict wire contract').toBe(false)
   })
 
@@ -230,6 +230,7 @@ describe('C432-NO-TRUST-CONTRACT: token declarations and the trust-scope project
     const readiness = exported('RunServiceReadinessSchema') as { parse(value: unknown): unknown }
     expect(readiness.parse({ service: 'up', hostComposed: true, contractVersion: 2 }))
       .toEqual({ service: 'up', hostComposed: true, contractVersion: 2 })
+    expect(() => readiness.parse({ service: 'up', hostComposed: true, contractVersion: 1 })).toThrow()
   })
 
   it('C432-NO-TRUST-CONTRACT: the config write door names no token list and no safety root', () => {

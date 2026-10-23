@@ -114,7 +114,7 @@ export const VERSION_REGISTER: readonly RegisteredVersion[] = [
   { id: 'run-detail', site: 'packages/schema/src/functions/runs.ts', name: 'RUN_DETAIL_SCHEMA_VERSION', field: 'schemaVersion', value: 2, rule: 'no-reader' },
   { id: 'run-start-acknowledgement', site: 'packages/schema/src/functions/runs.ts', name: 'RUN_START_ACKNOWLEDGEMENT_SCHEMA_VERSION', field: 'schemaVersion', value: 2, rule: 'no-reader' },
   { id: 'run-event-envelope', site: 'packages/schema/src/functions/runs.ts', name: 'RUN_EVENT_ENVELOPE_SCHEMA_VERSION', field: 'schemaVersion', value: 2, rule: 'no-reader' },
-  { id: 'run-service-contract', site: 'packages/schema/src/functions/run-service.ts', name: 'RUN_SERVICE_CONTRACT_VERSION', field: 'contractVersion', value: 2, rule: 'no-reader' },
+  { id: 'run-service-contract', site: 'packages/schema/src/functions/run-service.ts', name: 'RUN_SERVICE_CONTRACT_VERSION', field: 'contractVersion', value: 2, rule: 'refuse' },
   { id: 'masked-resolved-config', site: 'packages/schema/src/functions/config.ts', name: 'MASKED_RESOLVED_CONFIG_SCHEMA_VERSION', field: 'schemaVersion', value: 2, rule: 'refuse' },
   { id: 'knowledge-bundle-summary', site: 'packages/schema/src/functions/knowledge.ts', name: 'KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION', field: 'schemaVersion', value: 2, rule: 'no-reader' },
   { id: 'inspect-record-view', site: 'packages/schema/src/knowledge/maintenance-views.ts', name: 'INSPECT_RECORD_VIEW_SCHEMA_VERSION', field: 'schemaVersion', value: 2, rule: 'refuse' },

@@ -7,6 +7,7 @@ import { join } from 'node:path'
 
 import { DashboardDatabase } from '../db/database.js'
 import { isLoopbackHost } from '@vostride/agent-qa-core'
+import { RUN_SERVICE_CONTRACT_VERSION } from '@vostride/agent-qa-schema'
 import { DashboardRemoteBindRefusedError, startServer } from '../server/server.js'
 
 /**
@@ -82,7 +83,7 @@ function stubRunServicePorts(readiness: Readiness): ServicePorts {
 const INERT_READINESS: Readiness = () => ({
   service: 'up',
   hostComposed: false,
-  contractVersion: 1,
+  contractVersion: RUN_SERVICE_CONTRACT_VERSION,
 })
 
 async function start(opts: {
@@ -245,7 +246,7 @@ describe('the local readiness door (D-15)', () => {
       fn: () => ({
         service: 'up' as const,
         hostComposed,
-        contractVersion: 7,
+        contractVersion: RUN_SERVICE_CONTRACT_VERSION,
       }),
       flip: () => { hostComposed = true },
     }
@@ -274,7 +275,7 @@ describe('the local readiness door (D-15)', () => {
     expect(before[0].body).toEqual({
       service: 'up',
       hostComposed: false,
-      contractVersion: 7,
+      contractVersion: RUN_SERVICE_CONTRACT_VERSION,
     })
 
     // THE STATE MOVES. Both doors must move with it — a door that answered from a value captured
@@ -309,13 +310,13 @@ describe('the local readiness door (D-15)', () => {
       readiness: () => ({
         service: 'up',
         hostComposed: true,
-        contractVersion: 7,
+        contractVersion: RUN_SERVICE_CONTRACT_VERSION,
       }),
     })
     const port = (server.address() as AddressInfo).port
     const local = await get(port, '/api/run-readiness')
     expect(local.status).toBe(200)
-    expect(local.body).toEqual({ service: 'up', hostComposed: true, contractVersion: 7 })
+    expect(local.body).toEqual({ service: 'up', hostComposed: true, contractVersion: RUN_SERVICE_CONTRACT_VERSION })
     // …and the authed door genuinely is not mounted on this arm.
     await expect(get(port, '/ok')).resolves.toMatchObject({ status: 404 })
   })
