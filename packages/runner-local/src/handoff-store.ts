@@ -8,9 +8,9 @@
 //   <root>/runs/<slug(runId)>/handoff.json
 //
 // The read side (`loadCompletedRunHandoff`) is deliberately thin: read → JSON.parse → delegate to
-// the schema package's ONE `guardCompletedRunHandoff` version rule (D-19). The forward-incompatible
-// rejection (newer schemaVersion ⇒ typed HandoffVersionError) is never re-implemented here — the
-// version discipline lives in exactly one place (T-361-04).
+// the schema package's ONE `guardCompletedRunHandoff` version rule. The refusal (any schemaVersion
+// other than the current one ⇒ typed HandoffVersionError) is never re-implemented here; the
+// version discipline lives in exactly one place.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

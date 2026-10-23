@@ -605,8 +605,8 @@ export function resolveQueueSweepTargets(
       continue
     }
 
-    // 2026-10-15 (441-64, CR-C01, D-20): a payload matching no current schema was written before
-    // Phase 441. It is read loosely for the purged content and otherwise left in place.
+    // A payload matching no current schema, including one stamped at another version, is read
+    // loosely for the purged content and otherwise left in place.
     if (
       !curationCandidate.success
       && !canaryOutcome.success

@@ -195,8 +195,8 @@ function isNamedPipe(path: string): boolean {
 /**
  * The instance discriminator's exact shape: `sha256(uuid)` hex, truncated to twelve characters.
  *
- * Pinned as a literal rather than derived at match time because the match has no instance to
- * derive from — that absence is the pre-nonce arm's whole premise. It is anchored to
+ * Pinned as a literal rather than derived at match time because the containment arm has no
+ * instance to derive from. It is anchored to
  * `instanceDiscriminator` by construction and by the accepting controls in `daemon-host.test.ts`,
  * which feed it a real `daemonSocketPath` output.
  */
@@ -206,10 +206,7 @@ const GENERATED_DAEMON_SOCKET_FILE = new RegExp(
 )
 const GENERATED_DAEMON_PIPE_TAIL = new RegExp(`^-${DAEMON_SOCKET_INSTANCE_PATTERN}$`)
 
-/**
- * The legacy project-local default (`registration.ts`'s `daemonRegistrationSocketPath`), which a
- * pre-nonce registration is the only thing that can still be recording.
- */
+/** The project-local default socket filename (`registration.ts`'s `daemonRegistrationSocketPath`). */
 const LEGACY_DAEMON_SOCKET_FILE = 'daemon.sock'
 
 /**
@@ -218,8 +215,8 @@ const LEGACY_DAEMON_SOCKET_FILE = 'daemon.sock'
  * WR-06: containment alone answers "is this inside a directory we own", which is a strictly weaker
  * question — the runtime root and the hashed tmpdir directory hold this project's OTHER live
  * sockets too. An embedder worker binds `embedder-worker-<instance>.sock` in the same runtime root
- * and `<instance>.sock` in the same hashed tmpdir directory, so a stale or forged pre-nonce
- * `daemon.json` naming one of them selected a live socket for deletion. A daemon only ever binds
+ * and `<instance>.sock` in the same hashed tmpdir directory, so an address checked by containment
+ * alone could name one of them and select a live socket for deletion. A daemon only ever binds
  * two filename shapes, so requiring one of them removes every other live socket in the project
  * from the blast radius without touching what a real generation records.
  */
@@ -230,8 +227,8 @@ function isBindableDaemonSocketFile(file: string): boolean {
 /**
  * Everything needed to decide whether a recorded address is one this project may delete.
  *
- * `instanceId` is present for every current-schema registration and absent only for the pre-nonce
- * arm, which records no instance at all — that absence is the whole reason the two arms differ.
+ * `instanceId` is present for every registration this build reads. Without it the check is the
+ * containment arm, which has no instance to compare against.
  */
 export interface DaemonSocketOwnership {
   readonly agentQaRoot: string
@@ -260,11 +257,11 @@ function isWithin(candidateParent: string, container: string): boolean {
  * `daemon.json` can name any path on the machine, and removing that registration byte-exactly
  * proves only what the file said — never that the address it recorded is one this host owns.
  *
- * Two arms, because the two schema shapes carry different evidence:
+ * Two arms, because an ownership with an instance and one without carry different evidence:
  * - a registration naming an `instanceId` must record the exact address that instance is required
  *   to bind, so the check is equality against `daemonSocketPath` — containment would still admit
  *   another generation's live socket, and every real generation binds the computed address;
- * - the pre-nonce arm names no instance, so it proves two independent things instead: containment
+ * - an ownership that names no instance proves two independent things instead: containment
  *   in this project's own runtime root or the hashed tmpdir directory `daemonSocketPath` falls
  *   back to, AND a filename a daemon can actually bind (WR-06 — containment alone still admitted
  *   this project's OTHER live sockets, above all the embedder worker's). The PARENT directory is
@@ -314,9 +311,9 @@ export function isOwnedDaemonSocketPath(
  * Factored because two independent reclaim paths need it — the daemon's own startup recovery and
  * the drain command's — and each deriving its own scope is how one of them ends up judging a
  * candidate against a container the other would have rejected. The project root is the runtime
- * root's parent by construction (`<project>/.agent-qa`), and `instanceId` is present exactly when
- * the registration is current-schema, which is the whole reason `isOwnedDaemonSocketPath` has two
- * arms rather than one weakened rule.
+ * root's parent by construction (`<project>/.agent-qa`), and `instanceId` is carried over whenever
+ * the registration names one, so `isOwnedDaemonSocketPath` judges it by exact address rather than
+ * by containment.
  */
 export function daemonSocketOwnershipFor(
   agentQaRoot: string,

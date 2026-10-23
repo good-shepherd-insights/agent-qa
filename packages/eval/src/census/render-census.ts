@@ -117,9 +117,9 @@ export function renderCensusMarkdown(census: CorpusCensus): string {
   lines.push(`- corpusDigest: ${census.corpusDigest}`)
   lines.push(`- entryCount: ${census.entryCount}`)
   lines.push(`- schemaVersion: ${census.schemaVersion}`)
-  // 414 D-17: which entry schema versions the committed BYTES still declare. Every entry is the
-  // v2 shape in memory, so this sub-list is the only place a reader learns a v1 file is still on
-  // disk. Sorted keys; '- none' when the read leg admitted no entry at all.
+  // The schema versions the admitted entries declare. An entry file stamped at another version is
+  // a refusal row, not an entry, so this lists only the current version. Sorted keys; '- none'
+  // when the read leg admitted no entry at all.
   lines.push('- schemaVersionsSeen:')
   const versionKeys = Object.keys(census.schemaVersionsSeen).sort()
   if (versionKeys.length === 0) {

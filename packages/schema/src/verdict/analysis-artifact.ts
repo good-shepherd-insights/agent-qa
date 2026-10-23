@@ -120,9 +120,9 @@ function hasCompleteArtifactShape(value: unknown): boolean {
 }
 
 /**
- * The read side of the artifact version discipline: parse → reject-newer with a typed
- * {@link AnalysisVersionError} → migrate-older through {@link ANALYSIS_MIGRATIONS} →
- * structural check. Every future artifact consumer routes through this one guard.
+ * The read side of the artifact version discipline: parse → refuse any stamp other than the
+ * current one with a typed {@link AnalysisVersionError} → structural check. Every future artifact
+ * consumer routes through this one guard.
  */
 export const guardRunAnalysisArtifact = createVersionGuard<RunAnalysisArtifact>({
   name: 'RunAnalysisArtifact',

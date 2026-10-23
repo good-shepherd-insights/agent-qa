@@ -1,9 +1,10 @@
-// D-04 contract projection: a point-in-time RECORD of the frozen measurement constitutions,
-// destined for the committed gate-set root's contracts/ dir (matcher-config.v<N>.json /
-// judge-config.v<N>.json — one file per version, never overwritten; version-suffixed naming
-// makes collisions structurally impossible across version bumps). The projection is one-way
-// (code object -> snapshot): runtime scoring reads the frozen code objects only, never a
-// contracts file — snapshot, not injection (370's discipline).
+// Contract projection: a point-in-time RECORD of the frozen measurement constitutions, destined
+// for the committed gate-set root's contracts/ dir (matcher-config.v<N>.json /
+// judge-config.v<N>.json, where N is the matcher or judge version; never overwritten). The name
+// carries the config version and not schemaVersion, so a schemaVersion change at the same config
+// version lands on the same file and re-seeding reports a write-once conflict. The projection is
+// one-way (code object -> snapshot): runtime scoring reads the frozen code objects only, never a
+// contracts file.
 
 import { JUDGE_CONFIG } from '../judge/config'
 import type { JudgeConfig } from '../judge/config'

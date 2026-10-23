@@ -61,9 +61,9 @@ export const CURATION_TAIL_RECEIPT_FILE = 'curation-tail-receipt.json'
 export const CURATION_TAIL_RECEIPT_SCHEMA_VERSION = 2
 
 export interface CurationTailReceipt {
-  /** Fixed successful membership; absent on historical and handed-off receipts. */
+  /** Fixed successful membership; absent on handed-off receipts and when no validated snapshot was recorded. */
   snapshot?: CurationSnapshot
-  /** Historical diagnostics, readable without manufacturing a snapshot. */
+  /** Counts recorded beside the snapshot. */
   curated?: number
   deprecated?: number
   canary: CanaryCreditCounters
