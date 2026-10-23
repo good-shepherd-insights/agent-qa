@@ -639,7 +639,7 @@ async function runRepeat(options, deps) {
     summaries.push(await runGate({ ...options, repeat: undefined, sha, runDir }, deps))
   }
   const repeatSummary = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sha,
     gate: summaries[0]?.gate ?? null,
     n: options.repeat,
@@ -878,7 +878,7 @@ export async function runGate(options, deps = {}) {
   const envMode = runSummaries.find(entry => entry.envMode)?.envMode ?? null
   const turboConcurrency = options.turboConcurrency ?? 'default'
   const summary = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     gate: { name: GATE_NAME, sha: gateSha, dirty: gateDirty },
     mode,
     record:

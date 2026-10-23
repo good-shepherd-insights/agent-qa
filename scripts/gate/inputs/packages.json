@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "members": [
     "@vostride/agent-qa-agent",
     "@vostride/agent-qa-agent-local",

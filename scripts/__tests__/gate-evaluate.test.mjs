@@ -22,7 +22,7 @@ const PACKAGE_PIN = JSON.parse(
 const PINNED = ['a.test.mjs', 'b.test.mjs']
 
 function report(tests) {
-  return { schemaVersion: 1, tests, summary: null }
+  return { schemaVersion: 2, tests, summary: null }
 }
 
 function cell(file, name, status) {
@@ -508,7 +508,7 @@ test('under strict env mode CI passes as a turbo built-in and DO_NOT_TRACK is st
 })
 
 function emptyRegister(entries = []) {
-  return { schemaVersion: 1, entries }
+  return { schemaVersion: 2, entries }
 }
 
 function vcell(fullName, status, file = 'packages/cli/src/a.test.ts') {
@@ -654,9 +654,11 @@ test('an entry with no reason or condition, or an unknown kind or runner, is inv
   )
   assert.deepEqual(validateRegister(emptyRegister([entry(base)])), [])
   assert.deepEqual(rules(validateRegister(null)), ['register-entry-invalid'])
-  assert.deepEqual(rules(validateRegister({ schemaVersion: 2, entries: [] })), [
-    'register-entry-invalid',
-  ])
+  for (const schemaVersion of [1, 3]) {
+    assert.deepEqual(rules(validateRegister({ schemaVersion, entries: [] })), [
+      'register-entry-invalid',
+    ])
+  }
 })
 
 test('a vitest entry is not judged when the turbo-test leg did not run', () => {
@@ -673,7 +675,7 @@ test('a vitest entry is not judged when the turbo-test leg did not run', () => {
 })
 
 function regressionList(cells) {
-  return { schemaVersion: 1, cells }
+  return { schemaVersion: 2, cells }
 }
 
 function named(cellLike, origin = '434 D-14 census') {
@@ -753,6 +755,11 @@ test('a duplicate regression entry, or one missing file, fullName or origin, is 
   )
   assert.deepEqual(gateRules.validateRegressions(regressionList([named(cell)])), [])
   assert.deepEqual(rules(gateRules.validateRegressions(null)), ['regression-entry-invalid'])
+  for (const schemaVersion of [1, 3]) {
+    assert.deepEqual(rules(gateRules.validateRegressions({ schemaVersion, cells: [] })), [
+      'regression-entry-invalid',
+    ])
+  }
 })
 
 test('a listed vitest regression cell is not judged when the turbo-test leg did not run', () => {

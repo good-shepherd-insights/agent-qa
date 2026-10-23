@@ -54,22 +54,22 @@ function populateRoot(root) {
   for (const file of FILES) writeFileSync(join(root, 'scripts/__tests__', file), '')
   writeFileSync(
     join(root, 'scripts/gate/inputs/node-tests.json'),
-    JSON.stringify({ schemaVersion: 1, files: FILES }),
+    JSON.stringify({ schemaVersion: 2, files: FILES }),
   )
   writeFileSync(
     join(root, 'scripts/gate/inputs/register.json'),
-    JSON.stringify({ schemaVersion: 1, entries: [] }),
+    JSON.stringify({ schemaVersion: 2, entries: [] }),
   )
   writeFileSync(
     join(root, 'scripts/gate/inputs/regressions.json'),
-    JSON.stringify({ schemaVersion: 1, cells: [] }),
+    JSON.stringify({ schemaVersion: 2, cells: [] }),
   )
 }
 
 function greenReport() {
   const file = '/r/scripts/__tests__/a.test.mjs'
   const tests = [{ file, name: 'one', nesting: 0, status: 'passed' }]
-  return JSON.stringify({ schemaVersion: 1, tests, summary: null })
+  return JSON.stringify({ schemaVersion: 2, tests, summary: null })
 }
 
 async function fixture(t) {
@@ -188,6 +188,7 @@ test('a full clone run with no leg-missing finding is a record', async t => {
   const { source, out, temp } = await fixture(t)
   const { deps } = fakeDeps({ temp, legs: everyLegAsNodeTest })
   const summary = await gate.runGate({ out, source, only: null }, deps)
+  assert.equal(summary.schemaVersion, 2)
   assert.deepEqual(summary.findings, [])
   assert.equal(summary.partial, false)
   assert.equal(summary.record, true)
@@ -424,7 +425,7 @@ function turboDeps({ temp, source }) {
 function populatePin(root) {
   writeFileSync(
     join(root, 'scripts/gate/inputs/packages.json'),
-    JSON.stringify({ schemaVersion: 1, members: MEMBERS }),
+    JSON.stringify({ schemaVersion: 2, members: MEMBERS }),
   )
 }
 
@@ -620,7 +621,7 @@ test('the register is read from the measured clone and a stale entry there is re
       }
       writeFileSync(
         join(args.at(-1), 'scripts/gate/inputs/register.json'),
-        JSON.stringify({ schemaVersion: 1, entries: [entry] }),
+        JSON.stringify({ schemaVersion: 2, entries: [entry] }),
       )
     }
     return result
@@ -661,7 +662,9 @@ test('the node:test JSON reporter gives every test its ancestors as fullName', a
     { cwd: base, encoding: 'utf8', env },
   )
   assert.equal(result.status, 0, result.stderr)
-  const tests = JSON.parse(readFileSync(destination, 'utf8')).tests
+  const written = JSON.parse(readFileSync(destination, 'utf8'))
+  assert.equal(written.schemaVersion, 2)
+  const tests = written.tests
   assert.deepEqual(
     tests.map(entry => [entry.fullName, entry.status]),
     [
@@ -701,6 +704,7 @@ test('--repeat runs back to back on one SHA into one repeat directory with a sum
   }
   const written = JSON.parse(readFileSync(join(repeatDir, 'repeat-summary.json'), 'utf8'))
   assert.deepEqual(written, summary)
+  assert.equal(summary.schemaVersion, 2)
   assert.equal(summary.sha, SHA)
   assert.equal(summary.n, 2)
   assert.equal(summary.record, false)

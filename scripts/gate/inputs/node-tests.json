@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "files": [
     "431-discovery-import-lint.test.mjs",
     "gate-evaluate.test.mjs",

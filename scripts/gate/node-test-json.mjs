@@ -31,5 +31,5 @@ export default async function* nodeTestJson(source) {
       summary = event.data.counts ?? null
     }
   }
-  yield `${JSON.stringify({ schemaVersion: 1, tests, summary }, null, 2)}\n`
+  yield `${JSON.stringify({ schemaVersion: 2, tests, summary }, null, 2)}\n`
 }

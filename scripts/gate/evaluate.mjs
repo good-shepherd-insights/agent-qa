@@ -287,7 +287,7 @@ function registerEntryProblems(entry) {
 }
 
 function screenList(list, field, problemsOf) {
-  if (list?.schemaVersion !== 1 || !Array.isArray(list?.[field])) {
+  if (list?.schemaVersion !== 2 || !Array.isArray(list?.[field])) {
     return { readable: false, valid: [], invalid: [] }
   }
   const seen = new Set()
@@ -308,7 +308,7 @@ function screenList(list, field, problemsOf) {
 
 function screenFindings(screened, { rule, leg, field }) {
   if (!screened.readable) {
-    const detail = `the ${leg} input is unreadable or not schemaVersion 1 with a ${field} array`
+    const detail = `the ${leg} input is unreadable or not schemaVersion 2 with a ${field} array`
     return [finding(rule, leg, detail)]
   }
   return screened.invalid.map(({ index, entry, problems }) => {
