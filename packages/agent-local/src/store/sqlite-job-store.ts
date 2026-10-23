@@ -267,9 +267,9 @@ function isUnreadableKindRow(row: Record<string, unknown>): boolean {
  * Derived because it is derivable: the three facts below are already on the row, which is why 422
  * declined a column for it under D-04's stamp-and-hard-fail rule. The durable record IS the three
  * facts this reads — an unreadable kind, a permanent landing, and the fixed reason above — and the
- * conclusion is their name rather than a fourth fact that could disagree with them. It is deliberately NOT "any row whose kind is unreadable": a retired-kind
- * row still sitting queued has not been quarantined yet, and saying it had would be a receipt for
- * an event that has not happened.
+ * conclusion is their name rather than a fourth fact that could disagree with them. It is
+ * deliberately NOT "any row whose kind is unreadable": a retired-kind row still sitting queued has
+ * not been quarantined yet, and saying it had would be a receipt for an event that has not happened.
  */
 function quarantineConclusionOf(row: Record<string, unknown>): JobConclusionKind | undefined {
   if (!isUnreadableKindRow(row)) return undefined
