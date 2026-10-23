@@ -19,8 +19,8 @@ import type { AnalyticsAgentProduct } from '@vostride/agent-qa-analytics'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
-export const INVOKE_ENVELOPE_SCHEMA_VERSION = 1
-export const DAEMON_IDENTITY_SCHEMA_VERSION = 1
+export const INVOKE_ENVELOPE_SCHEMA_VERSION = 2
+export const DAEMON_IDENTITY_SCHEMA_VERSION = 2
 export const DAEMON_IDENTITY_TIMEOUT_MS = 1_000
 export const STREAM_END_EVENT = 'stream-end'
 export const STREAM_ERROR_EVENT = 'stream-error'

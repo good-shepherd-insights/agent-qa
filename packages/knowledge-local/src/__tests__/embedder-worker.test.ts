@@ -29,6 +29,7 @@ import {
 } from '../embedder-worker/worker-incarnation.js'
 import { incarnationFormat } from '../lease/writer-lease.js'
 import {
+  EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION,
   EMBEDDER_WORKER_REQUEST_TIMEOUT_MS,
   EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES,
   EMBEDDER_WORKER_START_TIMEOUT_MS,
@@ -537,15 +538,19 @@ describe.sequential('embedder worker discovery', () => {
     )
 
     const batchResponse = await rawWorkerRequest(registeredWorker.socketPath, {
-      schemaVersion: 1,
+      schemaVersion: EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION,
       method: 'embedBatch',
       requests: [
-        { schemaVersion: 1, method: 'embedDocument', rendering },
-        { schemaVersion: 1, method: 'embedQuery', rendering: query },
+        { schemaVersion: EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION, method: 'embedDocument', rendering },
+        {
+          schemaVersion: EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION,
+          method: 'embedQuery',
+          rendering: query,
+        },
       ],
     })
     expect(batchResponse).toEqual({
-      schemaVersion: 1,
+      schemaVersion: EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION,
       vectors: [Array.from(expected), Array.from(expectedQuery)],
     })
 

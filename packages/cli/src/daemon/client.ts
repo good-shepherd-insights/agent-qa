@@ -60,7 +60,6 @@ interface InvokeViaDaemonOptions {
 export type DaemonNotRunningReason =
   | 'absent'
   | 'malformed'
-  | 'obsolete'
   | 'unreachable-lease-fresh'
   | 'unreachable-lease-stale'
   | 'unreachable'

@@ -31,7 +31,11 @@ import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { delegateKnowledgeChangeViaDaemon } from '../composition/local-agent-host.js'
-import { startInvokeServer, type InvokeServerHandle } from '../daemon/server.js'
+import {
+  DAEMON_IDENTITY_SCHEMA_VERSION,
+  startInvokeServer,
+  type InvokeServerHandle,
+} from '../daemon/server.js'
 import {
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   writeDaemonRegistration,
@@ -157,7 +161,7 @@ async function serveHolder(where: Fixture, registry: LocalAgentHost['registry'])
   servers.push(await startInvokeServer({
     socketPath: where.socketPath,
     registry,
-    identity: { schemaVersion: 1, instanceId: INSTANCE_ID, pid: process.pid },
+    identity: { schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION, instanceId: INSTANCE_ID, pid: process.pid },
   }))
 }
 
@@ -329,7 +333,7 @@ describe('a direct knowledge change routes by lease state (432-12)', () => {
     const server = await startInvokeServer({
       socketPath: where.socketPath,
       registry: holderHost.registry,
-      identity: { schemaVersion: 1, instanceId: INSTANCE_ID, pid: process.pid },
+      identity: { schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION, instanceId: INSTANCE_ID, pid: process.pid },
     })
     servers.push(server)
 

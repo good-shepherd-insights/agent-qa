@@ -99,12 +99,11 @@ const daemonHarness = vi.hoisted(() => ({
   // below is decided by the real five-way classifier reading real lease and registration bytes.
   identityHook: undefined as (
     | ((registration: { instanceId: string; pid: number; socketPath: string }) =>
-      Promise<{ schemaVersion: 1; instanceId: string; pid: number }>)
+      Promise<DaemonIdentity>)
     | undefined
   ),
   classifyCalls: 0,
   ownedRemovals: [] as string[],
-  obsoleteRemovals: 0,
   ownedRemovalHook: undefined as (((instanceId: string) => boolean | undefined) | undefined),
 }))
 
@@ -235,12 +234,6 @@ vi.mock('../daemon/registration.js', async (importOriginal) => {
       if (forced !== undefined) return forced
       return actual.removeRegistrationIfOwned(agentQaRoot, instanceId, options)
     }),
-    removeObsoleteDaemonRegistrationIfExpected: vi.fn((
-      ...args: Parameters<typeof actual.removeObsoleteDaemonRegistrationIfExpected>
-    ) => {
-      daemonHarness.obsoleteRemovals += 1
-      return actual.removeObsoleteDaemonRegistrationIfExpected(...args)
-    }),
   }
 })
 
@@ -260,7 +253,8 @@ import {
   daemonRegistrationPath,
   writeDaemonRegistration,
 } from '../daemon/registration.js'
-import { daemonSocketPath } from '../daemon/server.js'
+import { DAEMON_IDENTITY_SCHEMA_VERSION, daemonSocketPath } from '../daemon/server.js'
+import type { DaemonIdentity } from '../daemon/server.js'
 
 const PRODUCT = 'maintenance-storefront'
 const CURATION_JOB_ID = 'maintenance-curation-job'
@@ -565,7 +559,7 @@ async function abandonSocketFile(socketPath: string): Promise<void> {
  */
 function armLiveDaemonIdentity(): void {
   daemonHarness.identityHook = (registration) => Promise.resolve({
-    schemaVersion: 1 as const,
+    schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
     instanceId: registration.instanceId,
     pid: registration.pid,
   })
@@ -574,7 +568,7 @@ function armLiveDaemonIdentity(): void {
 /** A live pid whose socket answers with somebody else's identity: alive is not authority. */
 function armForeignDaemonIdentity(): void {
   daemonHarness.identityHook = () => Promise.resolve({
-    schemaVersion: 1 as const,
+    schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
     instanceId: '99999999-9999-4999-8999-999999999999',
     pid: 1,
   })
@@ -660,7 +654,6 @@ describe('knowledge maintenance commands', () => {
     daemonHarness.identityHook = undefined
     daemonHarness.classifyCalls = 0
     daemonHarness.ownedRemovals.splice(0)
-    daemonHarness.obsoleteRemovals = 0
     daemonHarness.ownedRemovalHook = undefined
   })
 
@@ -763,10 +756,9 @@ describe('knowledge maintenance commands', () => {
     // counter on a module mock: the counter could only ever say "not called on these schedules",
     // while the surface itself no longer exists to be called on any schedule at all.
     expect(source).not.toContain('removeDaemonRegistration')
-    // Pinned non-vacuous: the compare-delete pair this command DOES use must still be here, so a
+    // Pinned non-vacuous: the compare-delete this command DOES use must still be here, so a
     // renamed or emptied file cannot satisfy the assertion above.
     expect(source).toContain('removeRegistrationIfOwned')
-    expect(source).toContain('removeObsoleteDaemonRegistrationIfExpected')
   })
 
   it('refuses to guess a drain mode from a malformed daemon registration', async () => {
@@ -900,28 +892,6 @@ describe('knowledge maintenance commands', () => {
       }),
     )
   }, 20_000)
-
-  it('byte-compares an obsolete-schema registration before removing it', async () => {
-    const workspace = fixtureWorkspace(roots)
-    writeFileSync(
-      daemonRegistrationPath(workspace.runtimeRoot),
-      `${JSON.stringify({
-        schemaVersion: 1,
-        pid: 2_000_000_000,
-        socketPath: join(workspace.runtimeRoot, 'daemon.sock'),
-        startedAtMs: 1_700_000_000_000,
-      })}\n`,
-      'utf8',
-    )
-
-    const result = await invoke(workspace, ['drain'])
-
-    expect(result.exitCode).toBeUndefined()
-    expect(result.stdout).toContain('Knowledge curation queue drained inline')
-    expect(daemonHarness.obsoleteRemovals).toBe(1)
-    expect(existsSync(daemonRegistrationPath(workspace.runtimeRoot))).toBe(false)
-    expect(commandHarness.drainQueueCalls).toBe(1)
-  })
 
   it('reclassifies once when the registration changed under an exact removal', async () => {
     const workspace = fixtureWorkspace(roots)

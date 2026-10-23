@@ -30,15 +30,6 @@ export const DAEMON_REGISTRATION_SCHEMA_VERSION = 2
 /** Pinned identity-probe bound; retune from daemon evidence without adding config. */
 export const DAEMON_IDENTITY_HANDSHAKE_TIMEOUT_MS = 1_000
 
-const legacyDaemonRegistrationSchema = z
-  .object({
-    schemaVersion: z.literal(1),
-    pid: z.number().int().positive(),
-    socketPath: z.string().min(1),
-    startedAtMs: z.number().int().nonnegative(),
-  })
-  .strict()
-
 export const daemonRegistrationSchema = z
   .object({
     schemaVersion: z.literal(DAEMON_REGISTRATION_SCHEMA_VERSION),
@@ -50,25 +41,21 @@ export const daemonRegistrationSchema = z
   .strict()
 
 export type DaemonRegistration = z.infer<typeof daemonRegistrationSchema>
-export type LegacyDaemonRegistration = z.infer<typeof legacyDaemonRegistrationSchema>
-export type StaleDaemonRegistration = DaemonRegistration | LegacyDaemonRegistration
 
 export type ReadDaemonRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
-  | { kind: 'obsolete'; registration: LegacyDaemonRegistration }
   | { kind: 'parsed'; registration: DaemonRegistration }
 
 export type InspectDaemonRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
   | { kind: 'live'; registration: DaemonRegistration }
-  | { kind: 'stale'; registration: StaleDaemonRegistration }
+  | { kind: 'stale'; registration: DaemonRegistration }
 
 export type ClassifyDaemonRegistrationOutcome =
   | { kind: 'absent' }
   | { kind: 'malformed' }
-  | { kind: 'obsolete'; registration: LegacyDaemonRegistration }
   | { kind: 'live-confirmed'; registration: DaemonRegistration }
   | {
       kind: 'unreachable-lease-fresh'
@@ -190,10 +177,8 @@ function readDaemonRegistrationFile(file: string): ReadDaemonRegistrationOutcome
   try {
     const parsedJson = JSON.parse(raw) as unknown
     const parsed = daemonRegistrationSchema.safeParse(parsedJson)
-    if (parsed.success) return { kind: 'parsed', registration: parsed.data }
-    const legacy = legacyDaemonRegistrationSchema.safeParse(parsedJson)
-    return legacy.success
-      ? { kind: 'obsolete', registration: legacy.data }
+    return parsed.success
+      ? { kind: 'parsed', registration: parsed.data }
       : { kind: 'malformed' }
   } catch {
     return { kind: 'malformed' }
@@ -229,9 +214,6 @@ export function inspectDaemonRegistration(
   isAlive: ProcessIsAlive = processIsAlive,
 ): InspectDaemonRegistrationOutcome {
   const outcome = readDaemonRegistration(agentQaRoot)
-  if (outcome.kind === 'obsolete') {
-    return { kind: 'stale', registration: outcome.registration }
-  }
   if (outcome.kind !== 'parsed') return outcome
   return isAlive(outcome.registration.pid)
     ? { kind: 'live', registration: outcome.registration }
@@ -501,30 +483,6 @@ export function removeRegistrationIfOwned(
     agentQaRoot,
     instanceId,
     (outcome) => outcome.kind === 'parsed' && outcome.registration.instanceId === instanceId,
-    options,
-  )
-}
-
-/**
- * Remove an obsolete-schema registration only when its quarantined bytes still match.
- *
- * A pre-nonce registration carries no instance identity, so byte-equality over every field it
- * does have is the strongest ownership evidence available. Anything else — a successor that
- * republished in the window, a rewritten legacy file, a current-schema replacement — is restored.
- */
-export function removeObsoleteDaemonRegistrationIfExpected(
-  agentQaRoot: string,
-  expected: LegacyDaemonRegistration,
-  options: RemoveRegistrationIfOwnedOptions = {},
-): RemoveRegistrationOutcome {
-  return removeRegistrationIfMatching(
-    agentQaRoot,
-    `obsolete-${expected.pid}`,
-    (outcome) => outcome.kind === 'obsolete'
-      && outcome.registration.schemaVersion === expected.schemaVersion
-      && outcome.registration.pid === expected.pid
-      && outcome.registration.socketPath === expected.socketPath
-      && outcome.registration.startedAtMs === expected.startedAtMs,
     options,
   )
 }

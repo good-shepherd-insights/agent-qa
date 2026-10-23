@@ -66,6 +66,7 @@ import {
   readDaemonEventLedger,
 } from '../daemon/events.js'
 import {
+  DAEMON_IDENTITY_SCHEMA_VERSION,
   DAEMON_SOCKET_PATH_BUDGET_BYTES,
   daemonSocketPath,
   startInvokeServer,
@@ -78,7 +79,6 @@ import {
   daemonRegistrationSocketPath,
   inspectDaemonRegistration,
   readDaemonRegistration,
-  removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   writeDaemonRegistration,
 } from '../daemon/registration.js'
@@ -229,7 +229,7 @@ function daemonCommandDeps(
     readRegistration: readDaemonRegistration,
     processIsAlive: () => options.alive ?? true,
     readIdentity: (registration) => Promise.resolve({
-      schemaVersion: 1,
+      schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
       instanceId: registration.instanceId,
       pid: registration.pid,
     }),
@@ -936,7 +936,7 @@ describe('daemon status and stop operator controls', () => {
       startedAtMs: 1_700_000_000_000,
     }
     const readIdentity = vi.fn(() => Promise.resolve({
-      schemaVersion: 1 as const,
+      schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION as typeof DAEMON_IDENTITY_SCHEMA_VERSION,
       instanceId: SUCCESSOR_INSTANCE_ID,
       pid: 5432,
     }))
@@ -977,7 +977,7 @@ describe('daemon status and stop operator controls', () => {
 })
 
 describe('daemon registration instance ownership and readiness', () => {
-  it('requires an instance nonce and treats the previous schema version as stale', () => {
+  it('requires an instance nonce and reads a registration stamped 1 as malformed', () => {
     const currentPaths = makePaths('registration-current-version')
     expect(() => writeDaemonRegistration(currentPaths.agentQaRoot, {
       schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
@@ -999,7 +999,7 @@ describe('daemon registration instance ownership and readiness', () => {
       socketPath: join(legacyPaths.agentQaRoot, 'daemon.sock'),
       startedAtMs: 1_700_000_000_000,
     }), { encoding: 'utf8', flag: 'w' })
-    expect(inspectDaemonRegistration(legacyPaths.agentQaRoot, () => true).kind).toBe('stale')
+    expect(inspectDaemonRegistration(legacyPaths.agentQaRoot, () => true).kind).toBe('malformed')
   })
 
   it('preserves successor bytes when replacement wins the quarantine barrier', () => {
@@ -1089,8 +1089,7 @@ describe('daemon registration instance ownership and readiness', () => {
   })
 
   it('rejects a non-matching candidate without a single filesystem mutation (W-03)', () => {
-    // Both predicate arms, because a corpus fed only to the nonce arm is drawn from the interior
-    // of one arm's assumption. The two injected seams ARE the measurement: the quarantine rename
+    // The two injected seams ARE the measurement: the quarantine rename
     // and the directory fsync are the only writes this routine can perform, so neither firing is
     // exactly "nothing was mutated". The old code renamed first and compared afterwards, so it
     // mutated on the way to every rejection it ever made.
@@ -1127,39 +1126,6 @@ describe('daemon registration instance ownership and readiness', () => {
     expect(readdirSync(nonce.agentQaRoot).sort()).toEqual(nonceEntriesBefore)
     expect(nonceOutcome).toEqual({ kind: 'unmatched' })
 
-    const obsolete = makePaths('registration-obsolete-no-mutation')
-    const obsoleteFile = join(obsolete.agentQaRoot, DAEMON_REGISTRATION_FILE)
-    // The pre-nonce arm's rejection: a current-schema file where a legacy one was expected.
-    writeDaemonRegistration(obsolete.agentQaRoot, {
-      schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
-      instanceId: SUCCESSOR_INSTANCE_ID,
-      pid: process.pid + 1,
-      socketPath: join(obsolete.agentQaRoot, 'successor.sock'),
-      startedAtMs: 1_700_000_001_000,
-    })
-    const obsoleteBefore = readFileSync(obsoleteFile)
-    const obsoleteStatBefore = statSync(obsoleteFile, { bigint: true })
-    const obsoleteRename = vi.fn()
-    const obsoleteFsync = vi.fn()
-
-    const obsoleteOutcome = removeObsoleteDaemonRegistrationIfExpected(
-      obsolete.agentQaRoot,
-      {
-        schemaVersion: 1,
-        pid: process.pid,
-        socketPath: join(obsolete.agentQaRoot, 'daemon.sock'),
-        startedAtMs: 1_700_000_000_000,
-      },
-      { beforeQuarantineRename: obsoleteRename, fsyncDirectory: obsoleteFsync },
-    )
-    expect(obsoleteRename).not.toHaveBeenCalled()
-    expect(obsoleteFsync).not.toHaveBeenCalled()
-    expect(readFileSync(obsoleteFile)).toEqual(obsoleteBefore)
-    expect(statSync(obsoleteFile, { bigint: true }).ctimeNs).toBe(obsoleteStatBefore.ctimeNs)
-    expect(
-      readdirSync(obsolete.agentQaRoot).filter((name) => name.includes('.remove-')),
-    ).toEqual([])
-    expect(obsoleteOutcome).toEqual({ kind: 'unmatched' })
   })
 
   it.each(REMOVAL_SEAMS)(
@@ -1254,11 +1220,8 @@ describe('daemon registration instance ownership and readiness', () => {
     // could therefore be reached again by one line of a future edit.
     const registrationModule = await import('../daemon/registration.js')
     expect(Object.keys(registrationModule)).not.toContain('removeDaemonRegistration')
-    // The compare-delete pair is still exported, so an empty/renamed module cannot satisfy this.
-    expect(Object.keys(registrationModule)).toEqual(expect.arrayContaining([
-      'removeRegistrationIfOwned',
-      'removeObsoleteDaemonRegistrationIfExpected',
-    ]))
+    // The compare-delete is still exported, so an empty/renamed module cannot satisfy this.
+    expect(Object.keys(registrationModule)).toContain('removeRegistrationIfOwned')
 
     const hostSource = readFileSync(new URL('../daemon/host.ts', import.meta.url), 'utf8')
     // Markers are RESOLVED before they are used. `indexOf` answers -1 for a marker that has
@@ -1283,7 +1246,6 @@ describe('daemon registration instance ownership and readiness', () => {
     for (const [label, region] of regions) {
       expect(region, `${label} must still carry the compare-delete members`)
         .toContain('removeRegistrationIfOwned')
-      expect(region).toContain('removeObsoleteDaemonRegistrationIfExpected')
       expect(region, `${label} must not express an unconditional removal`)
         .not.toContain('removeDaemonRegistration')
     }
@@ -1578,9 +1540,9 @@ describe('daemon registration recovery at boot', () => {
    *
    * The two legs above make `.epoch` and `.lease` unreadable. This one makes the REGISTRATION file
    * unreadable, which is the remaining same-class file this boot path reads, and it is the member
-   * with the largest blast radius if it resolved the wrong way: `runDaemonHost` executes two of the
-   * four classifications as `removeClassifiedRegistration` plus socket unlink, so a read failure
-   * that collapsed toward "obsolete" or "stale" would de-register and un-address a live daemon.
+   * with the largest blast radius if it resolved the wrong way: `runDaemonHost` executes the
+   * `unreachable-lease-stale` classification as `removeClassifiedRegistration` plus socket unlink,
+   * so a read failure that collapsed toward "stale" would de-register and un-address a live daemon.
    *
    * `readDaemonRegistrationFile` already answers `malformed` for a file that exists and cannot be
    * opened (registration.ts:187), and `malformed` is a REFUSAL here rather than recovery input —
@@ -1755,7 +1717,7 @@ describe('daemon registration recovery at boot', () => {
       socketPath,
       registry: {} as never,
       identity: {
-        schemaVersion: 1,
+        schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
         instanceId: SUCCESSOR_INSTANCE_ID,
         pid: process.pid,
       },
@@ -2032,7 +1994,7 @@ describe('daemon registration recovery at boot', () => {
       socketPath: successorSocket,
       registry: {} as never,
       identity: {
-        schemaVersion: 1,
+        schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
         instanceId: SUCCESSOR_INSTANCE_ID,
         pid: process.pid,
       },
@@ -2218,8 +2180,8 @@ describe('daemon registration recovery at boot', () => {
       nonce,
     )).toBe(false)
 
-    // Obsolete arm: a pre-nonce record carries no instanceId, so its address can only be checked
-    // for containment in this project's own runtime root or its hashed tmpdir fallback.
+    // Containment arm: an ownership without an instanceId can only be checked for containment in
+    // this project's own runtime root or its hashed tmpdir fallback.
     expect(server.isOwnedDaemonSocketPath(join(agentQaRoot, 'daemon.sock'), obsolete)).toBe(true)
     expect(server.isOwnedDaemonSocketPath(owned, obsolete)).toBe(true)
     expect(server.isOwnedDaemonSocketPath(join(projectRoot, 'r.sock'), obsolete)).toBe(false)
@@ -2356,58 +2318,6 @@ describe('daemon registration recovery at boot', () => {
     )).toBe(false)
   }, 30_000)
 
-  it('leaves a recovered registration\'s foreign socket in place (V-01)', async () => {
-    const paths = makePaths('v01-foreign')
-    mkdirSync(paths.knowledgeRoot, { recursive: true })
-    mkdirSync(paths.agentQaRoot, { recursive: true })
-    // The pre-nonce arm, whose recorded address names a live socket belonging to something else
-    // entirely. `socketPath` is `z.string().min(1)`, so these bytes are attacker-shaped: before
-    // V-01 they selected an unconditional `unlink` of whatever they named.
-    const outside = mkdtempSync(join(tmpdir(), 'agent-qa-v01-victim-'))
-    temporaryRoots.push(outside)
-    const foreignSocket = join(outside, 'f.sock')
-    await abandonSocketFile(foreignSocket)
-    writeFileSync(
-      join(paths.agentQaRoot, DAEMON_REGISTRATION_FILE),
-      `${JSON.stringify({
-        schemaVersion: 1,
-        pid: 2_147_483_647,
-        socketPath: foreignSocket,
-        startedAtMs: 1_700_000_000_000,
-      })}\n`,
-      'utf8',
-    )
-    const harness = hostHarness()
-
-    const running = runDaemonHost({
-      agentQaRoot: paths.agentQaRoot,
-      knowledgeRoot: paths.knowledgeRoot,
-      config: TEST_CONFIG,
-      model: () => TEST_MODEL,
-      operations: harness.operations,
-      logger: { info: vi.fn(), error: vi.fn() },
-    })
-    await waitUntil(
-      () => harness.signals.has('SIGTERM'),
-      'obsolete registration recovery never reached readiness',
-      5_000,
-    )
-
-    // Recovery of the REGISTRATION still completes — refusing the unlink must not resurrect a file
-    // that was already compare-deleted — and the refusal is on the record, not silent.
-    expect(existsSync(foreignSocket), 'a socket this daemon cannot prove it owns must survive')
-      .toBe(true)
-    expect(readEvents(paths.agentQaRoot)).toContainEqual(expect.objectContaining({
-      kind: 'registration-recovered',
-      classification: 'obsolete',
-      socketPath: foreignSocket,
-      socketRemoved: false,
-    }))
-
-    harness.signal('SIGTERM')
-    await expect(running).resolves.toBe(0)
-  })
-
   it('refuses an in-root path that is not this generation\'s own address (V-01)', async () => {
     const paths = makePaths('v01-nonce')
     const nowMs = Date.now()
@@ -2457,80 +2367,6 @@ describe('daemon registration recovery at boot', () => {
 
     harness.signal('SIGTERM')
     await expect(running).resolves.toBe(0)
-  })
-
-  it('removes an obsolete registration only when its quarantined bytes still match', async () => {
-    const registrationModule = await import('../daemon/registration.js') as unknown as {
-      removeObsoleteDaemonRegistrationIfExpected(
-        agentQaRoot: string,
-        expected: {
-          schemaVersion: 1
-          pid: number
-          socketPath: string
-          startedAtMs: number
-        },
-        options?: { beforeQuarantineRename?: () => void },
-      ): { kind: string }
-    }
-    expect(typeof registrationModule.removeObsoleteDaemonRegistrationIfExpected).toBe('function')
-
-    const matchPaths = makePaths('obsolete-match')
-    mkdirSync(matchPaths.agentQaRoot, { recursive: true })
-    const legacy = {
-      schemaVersion: 1 as const,
-      pid: process.pid,
-      socketPath: join(matchPaths.agentQaRoot, 'daemon.sock'),
-      startedAtMs: 1_700_000_000_000,
-    }
-    writeFileSync(
-      join(matchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE),
-      `${JSON.stringify(legacy)}\n`,
-      'utf8',
-    )
-    expect(registrationModule.removeObsoleteDaemonRegistrationIfExpected(
-      matchPaths.agentQaRoot,
-      legacy,
-    )).toEqual({ kind: 'removed' })
-    expect(existsSync(join(matchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE))).toBe(false)
-
-    const mismatchPaths = makePaths('obsolete-mismatch')
-    mkdirSync(mismatchPaths.agentQaRoot, { recursive: true })
-    const predecessor = {
-      schemaVersion: 1 as const,
-      pid: process.pid,
-      socketPath: join(mismatchPaths.agentQaRoot, 'daemon.sock'),
-      startedAtMs: 1_700_000_000_000,
-    }
-    writeFileSync(
-      join(mismatchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE),
-      `${JSON.stringify(predecessor)}\n`,
-      'utf8',
-    )
-    let successorBytes: Buffer | undefined
-
-    expect(registrationModule.removeObsoleteDaemonRegistrationIfExpected(
-      mismatchPaths.agentQaRoot,
-      predecessor,
-      {
-        beforeQuarantineRename: () => {
-          writeDaemonRegistration(mismatchPaths.agentQaRoot, {
-            schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
-            instanceId: SUCCESSOR_INSTANCE_ID,
-            pid: process.pid + 1,
-            socketPath: join(mismatchPaths.agentQaRoot, 'successor.sock'),
-            startedAtMs: 1_700_000_005_000,
-          })
-          successorBytes = readFileSync(
-            join(mismatchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE),
-          )
-        },
-      },
-    )).toEqual({ kind: 'unmatched' })
-    expect(readFileSync(join(mismatchPaths.agentQaRoot, DAEMON_REGISTRATION_FILE)))
-      .toEqual(successorBytes)
-    expect(
-      readdirSync(mismatchPaths.agentQaRoot).filter((name) => name.includes('.remove-')),
-    ).toEqual([])
   })
 })
 

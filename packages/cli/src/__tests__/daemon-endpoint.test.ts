@@ -32,8 +32,10 @@ import { z } from 'zod'
 import { createFnCommand } from '../commands/fn.js'
 import { DaemonNotRunningError, invokeViaDaemon } from '../daemon/client.js'
 import {
+  DAEMON_IDENTITY_SCHEMA_VERSION,
   DAEMON_SOCKET_PATH_BUDGET_BYTES,
   DAEMON_FUNCTION_CALLER,
+  INVOKE_ENVELOPE_SCHEMA_VERSION,
   DaemonSocketInUseError,
   startInvokeServer,
   type InvokeServerHandle,
@@ -62,7 +64,7 @@ const hosts: LocalAgentHost[] = []
 const servers: InvokeServerHandle[] = []
 const ENDPOINT_INSTANCE_ID = '33333333-3333-4333-8333-333333333333'
 const ENDPOINT_IDENTITY = {
-  schemaVersion: 1 as const,
+  schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION as typeof DAEMON_IDENTITY_SCHEMA_VERSION,
   instanceId: ENDPOINT_INSTANCE_ID,
   pid: process.pid,
 }
@@ -230,7 +232,7 @@ async function rawInvoke(
   functionId: string,
   input: unknown,
 ): Promise<{ contentType: string; statusCode: number; text: string }> {
-  const body = JSON.stringify({ schemaVersion: 1, functionId, input })
+  const body = JSON.stringify({ schemaVersion: INVOKE_ENVELOPE_SCHEMA_VERSION, functionId, input })
   return new Promise((resolveInvoke, rejectInvoke) => {
     const outgoing = request(
       {
@@ -473,7 +475,7 @@ describe('daemon /invoke endpoint tracer', () => {
 
     expect(response.statusCode).toBe(200)
     expect(JSON.parse(response.text)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
       instanceId: ENDPOINT_INSTANCE_ID,
       pid: process.pid,
     })

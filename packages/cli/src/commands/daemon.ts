@@ -31,7 +31,6 @@ import {
 import type {
   DaemonRegistration,
   ReadDaemonRegistrationOutcome,
-  StaleDaemonRegistration,
 } from '../daemon/registration.js'
 import {
   resolveCliAnalysisTokenBudget,
@@ -120,12 +119,9 @@ async function inspectRegistration(
   | { kind: 'absent' }
   | { kind: 'malformed' }
   | { kind: 'live'; registration: DaemonRegistration }
-  | { kind: 'stale'; registration: StaleDaemonRegistration }
+  | { kind: 'stale'; registration: DaemonRegistration }
 > {
   const outcome = deps.readRegistration(agentQaRoot)
-  if (outcome.kind === 'obsolete') {
-    return { kind: 'stale', registration: outcome.registration }
-  }
   if (outcome.kind !== 'parsed') return outcome
   if (!deps.processIsAlive(outcome.registration.pid)) {
     return { kind: 'stale', registration: outcome.registration }

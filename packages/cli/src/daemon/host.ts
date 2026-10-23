@@ -101,14 +101,12 @@ import {
   classifyDaemonRegistration,
   DAEMON_REGISTRATION_SCHEMA_VERSION,
   readDaemonRegistration,
-  removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   writeDaemonRegistration,
 } from './registration.js'
 import type {
   ClassifyDaemonRegistrationInput,
   ClassifyDaemonRegistrationOutcome,
-  LegacyDaemonRegistration,
   RemoveRegistrationOutcome,
 } from './registration.js'
 import type { DaemonRegistration } from './registration.js'
@@ -235,10 +233,6 @@ export interface DaemonHostOperations {
   appendDaemonEvent(agentQaRoot: string, event: DaemonEvent): void
   writeDaemonRegistration(agentQaRoot: string, registration: DaemonRegistration): void
   removeRegistrationIfOwned(agentQaRoot: string, instanceId: string): RemoveRegistrationOutcome
-  removeObsoleteDaemonRegistrationIfExpected(
-    agentQaRoot: string,
-    expected: LegacyDaemonRegistration,
-  ): RemoveRegistrationOutcome
   unlinkDaemonSocket(socketPath: string, ownership: DaemonSocketOwnership): boolean
   classifyDaemonRegistration(
     input: ClassifyDaemonRegistrationInput,
@@ -416,7 +410,6 @@ function defaultOperations(): DaemonHostOperations {
     appendDaemonEvent,
     writeDaemonRegistration,
     removeRegistrationIfOwned,
-    removeObsoleteDaemonRegistrationIfExpected,
     unlinkDaemonSocket,
     classifyDaemonRegistration,
     startInvokeServer,
@@ -901,7 +894,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
 
   type RecoverableRegistration = Extract<
     ClassifyDaemonRegistrationOutcome,
-    { kind: 'obsolete' | 'unreachable-lease-stale' }
+    { kind: 'unreachable-lease-stale' }
   >
 
   const classifyRegistration = (): Promise<ClassifyDaemonRegistrationOutcome> =>
@@ -913,19 +906,14 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
   /**
    * Remove exactly the generation that was classified, and nothing else.
    *
-   * Both arms compare before they delete, so two racing successors can no longer erase each
-   * other's registrations: a file that changed underneath is restored, not obeyed.
+   * The removal compares before it deletes, so two racing successors cannot erase each other's
+   * registrations: a file that changed underneath is restored, not obeyed.
    */
   const removeClassifiedRegistration = (classified: RecoverableRegistration): boolean => {
-    const outcome = classified.kind === 'obsolete'
-      ? operations.removeObsoleteDaemonRegistrationIfExpected(
-        input.agentQaRoot,
-        classified.registration,
-      )
-      : operations.removeRegistrationIfOwned(
-        input.agentQaRoot,
-        classified.registration.instanceId,
-      )
+    const outcome = operations.removeRegistrationIfOwned(
+      input.agentQaRoot,
+      classified.registration.instanceId,
+    )
     // A registration that changed mid-removal leaves its predecessor's bytes in quarantine on
     // purpose. Saying so is the whole point of the widened outcome: a stranded file nobody names
     // is indistinguishable from a file that was never there.
@@ -944,9 +932,8 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     // record is one this host may delete. `socketPath` is `z.string().min(1)`, so a forged or
     // corrupted daemon.json can name any path on the machine, and obeying it would be a local
     // arbitrary-socket-deletion primitive driven by a file in the runtime root. So the address
-    // must also pass `unlinkDaemonSocket`'s ownership proof — the exact generation address when
-    // the record names an instance, containment in this project's runtime root or hashed tmpdir
-    // fallback for the pre-nonce arm, which names none.
+    // must also pass `unlinkDaemonSocket`'s ownership proof: the exact generation address the
+    // record names.
     //
     // A refusal is recorded as `socketRemoved: false`, never thrown: the registration file is
     // already gone, so failing here would strand a recovery that has otherwise succeeded. The
@@ -967,9 +954,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       kind: 'registration-recovered',
       classification: classified.kind,
       pid: classified.registration.pid,
-      ...('instanceId' in classified.registration
-        ? { instanceId: classified.registration.instanceId }
-        : {}),
+      instanceId: classified.registration.instanceId,
       socketPath,
       socketRemoved,
     })
@@ -1003,10 +988,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
     ? await classifyRegistration()
     : registrationSnapshot
   if (refuseRegistration(registration)) return 1
-  if (
-    registration.kind === 'obsolete'
-    || registration.kind === 'unreachable-lease-stale'
-  ) {
+  if (registration.kind === 'unreachable-lease-stale') {
     if (removeClassifiedRegistration(registration)) {
       recordRegistrationRecovered(registration)
     } else {
@@ -1014,10 +996,7 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
       // host has not seen: look once more, and fail closed rather than re-race a third writer.
       const reclassified = await classifyRegistration()
       if (refuseRegistration(reclassified)) return 1
-      if (
-        reclassified.kind === 'obsolete'
-        || reclassified.kind === 'unreachable-lease-stale'
-      ) {
+      if (reclassified.kind === 'unreachable-lease-stale') {
         if (removeClassifiedRegistration(reclassified)) {
           recordRegistrationRecovered(reclassified)
         } else {

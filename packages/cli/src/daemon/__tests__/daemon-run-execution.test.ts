@@ -56,7 +56,7 @@ import {
 import type { InProcessFixture } from '../../composition/__tests__/in-process-run-fixture.js'
 import { UNINSTALLED_AUTH_PLUGIN_PACKAGE } from '../../composition/__tests__/in-process-run-fixture.js'
 import { invokeViaDaemon } from '../client.js'
-import { invokeEnvelopeSchema } from '../server.js'
+import { INVOKE_ENVELOPE_SCHEMA_VERSION, invokeEnvelopeSchema } from '../server.js'
 import { DAEMON_EVENTS_FILE } from '../events.js'
 import { runDaemonHost } from '../host.js'
 import type { DaemonHostOperations } from '../host.js'
@@ -929,7 +929,11 @@ describe('C447-DAEMON-CONTEXT', () => {
         }
       }
 
-      const envelope = { schemaVersion: 1, functionId: 'runs.start', input: {} }
+      const envelope = {
+        schemaVersion: INVOKE_ENVELOPE_SCHEMA_VERSION,
+        functionId: 'runs.start',
+        input: {},
+      }
       const carried = invokeEnvelopeSchema.safeParse({ ...envelope, agentProduct: 'claude_code' })
       expect(carried.success, 'the envelope refused agentProduct').toBe(true)
       expect(invokeEnvelopeSchema.safeParse({ ...envelope, ciId: 'ci_x' }).success).toBe(false)

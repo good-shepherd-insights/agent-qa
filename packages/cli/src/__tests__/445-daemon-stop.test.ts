@@ -16,6 +16,7 @@ import {
   writeDaemonRegistration,
 } from '../daemon/registration.js'
 import type { DaemonRegistration } from '../daemon/registration.js'
+import { DAEMON_IDENTITY_SCHEMA_VERSION } from '../daemon/server.js'
 
 const roots: string[] = []
 
@@ -104,7 +105,7 @@ describe('C445-DAEMON-STOP', () => {
       processIsAlive: () => true,
       readIdentity: (registered: DaemonRegistration) =>
         Promise.resolve({
-          schemaVersion: 1 as const,
+          schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
           instanceId: registered.instanceId,
           pid: registered.pid,
         }),

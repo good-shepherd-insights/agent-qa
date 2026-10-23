@@ -60,7 +60,6 @@ import { appendDaemonEvent } from '../daemon/events.js'
 import { DRAIN_WAIT_TIMEOUT_MS } from '../daemon/host.js'
 import {
   classifyDaemonRegistration,
-  removeObsoleteDaemonRegistrationIfExpected,
   removeRegistrationIfOwned,
   type ClassifyDaemonRegistrationOutcome,
   type RemoveRegistrationOutcome,
@@ -594,7 +593,7 @@ export async function drainViaDaemon(
 
 type RecoverableDaemonRegistration = Extract<
   ClassifyDaemonRegistrationOutcome,
-  { kind: 'obsolete' | 'unreachable-lease-stale' }
+  { kind: 'unreachable-lease-stale' }
 >
 
 function classifyDrainHost(
@@ -606,14 +605,12 @@ function classifyDrainHost(
   })
 }
 
-/** Remove exactly the generation that was classified, through the shape-appropriate predicate. */
+/** Remove exactly the generation that was classified, and nothing else. */
 function removeClassifiedDrainRegistration(
   paths: KnowledgePaths,
   classified: RecoverableDaemonRegistration,
 ): RemoveRegistrationOutcome {
-  return classified.kind === 'obsolete'
-    ? removeObsoleteDaemonRegistrationIfExpected(paths.runtimeRoot, classified.registration)
-    : removeRegistrationIfOwned(paths.runtimeRoot, classified.registration.instanceId)
+  return removeRegistrationIfOwned(paths.runtimeRoot, classified.registration.instanceId)
 }
 
 /**
@@ -651,9 +648,7 @@ function reclaimDrainRecoveredSocket(
     kind: 'registration-recovered',
     classification: classified.kind,
     pid: classified.registration.pid,
-    ...('instanceId' in classified.registration
-      ? { instanceId: classified.registration.instanceId }
-      : {}),
+    instanceId: classified.registration.instanceId,
     socketPath,
     socketRemoved,
   })

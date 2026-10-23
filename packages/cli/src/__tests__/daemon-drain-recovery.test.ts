@@ -26,7 +26,7 @@ import {
   writeDaemonRegistration,
   type RemoveRegistrationOutcome,
 } from '../daemon/registration.js'
-import { startInvokeServer } from '../daemon/server.js'
+import { DAEMON_IDENTITY_SCHEMA_VERSION, startInvokeServer } from '../daemon/server.js'
 import {
   enqueueRealCandidate,
   invokeDrain,
@@ -49,7 +49,7 @@ import {
  * predicate must match a registration's bytes, a third writer must replace those bytes before the
  * quarantine rename, and yet another must republish the original name before the verify — so no
  * deterministic schedule reaches it and the router's evidence reporting was consequently never
- * tested on three of its four exits. The removal FUNCTIONS are therefore doubled at the module
+ * tested on three of its four exits. The removal FUNCTION is therefore doubled at the module
  * boundary while everything else in these legs stays real: the classification, the routing, the
  * emission, the inline drain and the daemon handshake are all the shipped code.
  *
@@ -69,10 +69,6 @@ vi.mock('../daemon/registration.js', async (importOriginal) => {
     removeRegistrationIfOwned: (
       ...args: Parameters<typeof actual.removeRegistrationIfOwned>
     ): RemoveRegistrationOutcome => takeOverride() ?? actual.removeRegistrationIfOwned(...args),
-    removeObsoleteDaemonRegistrationIfExpected: (
-      ...args: Parameters<typeof actual.removeObsoleteDaemonRegistrationIfExpected>
-    ): RemoveRegistrationOutcome =>
-      takeOverride() ?? actual.removeObsoleteDaemonRegistrationIfExpected(...args),
   }
 })
 
@@ -511,7 +507,7 @@ describePosix('stranded quarantine evidence on every drain exit (WR-03)', () => 
         socketPath: successorSocket,
         registry: {} as never,
         identity: {
-          schemaVersion: 1,
+          schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
           instanceId: successorInstanceId,
           pid: process.pid,
         },
