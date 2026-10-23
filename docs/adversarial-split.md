@@ -434,8 +434,8 @@ gap-closure addenda in `.planning/REQUIREMENTS.md`.
 A job row whose `kind` is not in this build's vocabulary is landed permanently with conclusion
 `unreadable_kind` and its attempt spent, instead of throwing inside the claim transaction. The
 queue drains, `attempts` advances, and the jobs behind it run. `job.ts` keeps its fail-closed
-`z.enum` parse; `AGENT_JOB_STORE_USER_VERSION` is unchanged, so a real history survives rather
-than the whole database being refused.
+`z.enum` parse. The retired-kind quarantine needed no schema change, so a queue holding a retired
+kind still opens rather than the whole database being refused.
 
 ## What an admission costs, and what it does not rewrite
 

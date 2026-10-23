@@ -265,11 +265,9 @@ function isUnreadableKindRow(row: Record<string, unknown>): boolean {
  * The conclusion a quarantined row is READ back with — derived, never a column (422 D-16).
  *
  * Derived because it is derivable: the three facts below are already on the row, which is why 422
- * declined a column for it under D-04's stamp-and-hard-fail rule. The version later moved to 4 for
- * `started_at`, a fact nothing on the row can supply — that bump is not a reason to store a fact
- * that can be named from what is already there. The durable record IS the three facts this reads — an unreadable kind, a permanent landing, and the
- * fixed reason above — and the conclusion is their name rather than a fourth fact that could
- * disagree with them. It is deliberately NOT "any row whose kind is unreadable": a retired-kind
+ * declined a column for it under D-04's stamp-and-hard-fail rule. The durable record IS the three
+ * facts this reads — an unreadable kind, a permanent landing, and the fixed reason above — and the
+ * conclusion is their name rather than a fourth fact that could disagree with them. It is deliberately NOT "any row whose kind is unreadable": a retired-kind
  * row still sitting queued has not been quarantined yet, and saying it had would be a receipt for
  * an event that has not happened.
  */
