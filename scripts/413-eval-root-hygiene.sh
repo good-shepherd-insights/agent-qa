@@ -17,25 +17,34 @@
 #       carrying its familyOverride marker (D-18 refusal fixture)
 #   L5  valid noise-floor artefacts (415, 2026-09-05)                 -> PASS L5 / FAIL L5
 #       — canonical schema + committability, explained exact-zero floors, no noise-floor.json
-#   L6  no schemaVersion 1 entry under corpus/                        -> PASS L6 / FAIL L6
-#       — the scan covers `corpus/` only. A corpus entry is read only at schemaVersion 2, so a
-#       stamp-1 entry there is bytes no reader accepts.
+#   L6  no entry under corpus/ stamped other than schemaVersion 2     -> PASS L6 / FAIL L6
+#       — the scan covers `corpus/` only. A corpus entry is read only at schemaVersion 2, so an
+#       entry stamped anything else there is bytes no reader accepts.
 #
-# WHY A GREEN SUITE DOES NOT PROVE IT. The workspace vitest suite never reads the committed eval
-# root and never reads the demo config — `packages/eval` is pure by construction (its own
-# module-discipline cell forbids runtime IO) and every gate is deliberately kept out of vitest
-# (FLOOR-05, plus the suite's known contention flake). So each of these six is a property of
-# BYTES ON DISK OUTSIDE THE SUITE'S REACH: a home-directory path re-seeded into a corpus entry, a
-# threshold constant smuggled onto a gate path, the override flipped back on, the refusal fixture
-# quietly regenerated, or an invalid floor published — none of them turn a single existing
-# test red. This script is the instrument that sees them.
+# THE DEFAULT ROOT IS THE PINNED IN-REPO FIXTURE. With no environment set, the script scans
+# test-fixtures/eval-workspace/agent-qa-eval and reads test-fixtures/eval-workspace/agent-qa.config.yaml.
+# That fixture holds only `contracts/`, `corpus/` and `reports/`, with no cassettes and no
+# adversarial entries. Its bytes are pinned by test-fixtures/eval-workspace/MANIFEST.json, and the
+# test suite reads it. So the default run checks that fixture, not a real committed eval root, and
+# it goes red only if the pinned fixture changes. To check a real root, set both paths:
+#
+#   EVAL_ROOT=<root>/agent-qa-eval DEMO_CONFIG=<root>/agent-qa.config.yaml pnpm run validate:eval-root-hygiene
+#
+# WHY A GREEN SUITE DOES NOT PROVE IT FOR A REAL ROOT. The workspace vitest suite never reads a
+# real committed eval root or its config: `packages/eval` is pure by construction (its own
+# module-discipline cell forbids runtime IO) and every gate is deliberately kept out of vitest. So
+# for a real root each of these six is a property of bytes on disk that no test reads: a
+# home-directory path re-seeded into a corpus entry, a threshold constant smuggled onto a gate
+# path, the override flipped back on, the refusal fixture quietly regenerated, or an invalid floor
+# published. None of them turns a single existing test red. This script is the instrument that
+# sees them, once it is pointed at that root.
 #
 # A GREEN SUITE UNDER ANY MUTATION IS A FAILURE OF THIS SCRIPT, NOT A PASS. `--selftest` plants a
 # home-directory path into a throwaway copy of the eval root, then a Windows drive-letter path into
 # the same copy, then a home-directory path under `exclusions/`, then one inside a
-# `contracts/partition-*.json`, then a threshold literal into a throwaway gate file, and finally a
-# `{"schemaVersion": 1}` entry under `corpus/`, and REQUIRES L1 four times, L2 once and L6 once to
-# red under those six plants. Phase 415 adds incomplete/malformed and unusable floors, an
+# `contracts/partition-*.json`, then three entries under `corpus/` stamped 1, 1 with no space after
+# the colon, and 3, and finally a threshold literal into a throwaway gate file, and REQUIRES L1 four
+# times, L6 three times and L2 once to red under those eight plants. Phase 415 adds incomplete/malformed and unusable floors, an
 # unexplained zero floor and the forbidden literal noise-floor.json path (all must FAIL L5),
 # plus complete measured and explained-zero floor fixtures (must PASS L5).
 # Every invalid plant uses a literal or a path that never appears in the
@@ -57,8 +66,9 @@
 # Phase 413 publishes none; 415 uses the built eval package schema and committability guards, and
 # forbids the literal reports/**/noise-floor.json path in favor of reports/noise-floor/<key>.json.
 #
-# ENV OVERRIDES. EVAL_ROOT and DEMO_CONFIG default to the in-repo eval workspace under
-# test-fixtures/eval-workspace and can be overridden; the self-test overrides all three:
+# ENV OVERRIDES. EVAL_ROOT and DEMO_CONFIG default to the pinned fixture above. The self-test sets
+# EVAL_ROOT to a throwaway copy of that root for its L1, L5 and L6 plants, and sets only
+# GATE_PATHS_OVERRIDE for its L2 plant:
 #   EVAL_ROOT             the committed eval root to scan
 #   DEMO_CONFIG           the demo config to read for L3
 #   GATE_PATHS_OVERRIDE   colon-separated replacement for L2's gate path list
@@ -227,16 +237,16 @@ run_legs() {
     fi
   fi
 
-  # ---- L6: no schemaVersion 1 entry remains under corpus/ (414 D-03) -----------------------
+  # ---- L6: no entry under corpus/ is stamped other than schemaVersion 2 -------------------
   # Same shape as L1: a leg that scanned nothing has not passed, so the corpus dir's existence
   # is asserted before the scan rather than inferred from grep's "no match" exit.
   if [ ! -d "$EVAL_ROOT/corpus" ]; then
     fail L6 "no committed corpus at $EVAL_ROOT/corpus — the scan would cover nothing"
   else
     status=0
-    hits=$(grep -rl '"schemaVersion": 1' "$EVAL_ROOT/corpus") || status=$?
+    hits=$(grep -rlE '"schemaVersion"[[:space:]]*:[[:space:]]*([013-9]|[0-9]{2,})([^0-9]|$)' "$EVAL_ROOT/corpus") || status=$?
     if [ "$status" -eq 0 ]; then
-      fail L6 "$(echo "$hits" | wc -l | tr -d ' ') v1 corpus entries remain (414 D-03): $(echo "$hits" | head -5 | tr '\n' ' ')"
+      fail L6 "$(echo "$hits" | wc -l | tr -d ' ') corpus entries are stamped other than schemaVersion 2: $(echo "$hits" | head -5 | tr '\n' ' ')"
     elif [ "$status" -eq 1 ]; then
       pass L6
     else
@@ -293,7 +303,7 @@ selftest_floor() {
 }
 
 selftest() {
-  local tmp_root tmp_gate status stderr_file mutation
+  local tmp_root tmp_gate status stderr_file mutation stamp
   tmp_root="$(mktemp -d)"
   tmp_gate="$(mktemp -d)"
   stderr_file="$(mktemp)"
@@ -359,18 +369,20 @@ selftest() {
   grep '^FAIL L1' "$stderr_file" >&2
   rm -f "$tmp_root/contracts/partition-selftest.json"
 
-  echo "SELFTEST plant 1e: a schemaVersion 1 entry under corpus/ (414 D-03)" >&2
   mkdir -p "$tmp_root/corpus/selftest"
-  printf '{"schemaVersion": 1}\n' > "$tmp_root/corpus/selftest/v1.json"
-  status=0
-  EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
-  if [ "$status" -eq 0 ] || ! grep -q '^FAIL L6' "$stderr_file"; then
-    echo "SELFTEST FAILED: L6 stayed green under a planted schemaVersion 1 corpus entry" >&2
-    cat "$stderr_file" >&2
-    return 1
-  fi
-  grep '^FAIL L6' "$stderr_file" >&2
-  rm -f "$tmp_root/corpus/selftest/v1.json"
+  for stamp in '{"schemaVersion": 1}' '{"schemaVersion":1}' '{"schemaVersion": 3}'; do
+    echo "SELFTEST plant 1e: a corpus entry $stamp" >&2
+    printf '%s\n' "$stamp" > "$tmp_root/corpus/selftest/stamped.json"
+    status=0
+    EVAL_ROOT="$tmp_root" DEMO_CONFIG="$DEMO_CONFIG" "$0" 2>"$stderr_file" || status=$?
+    if [ "$status" -eq 0 ] || ! grep -q '^FAIL L6' "$stderr_file"; then
+      echo "SELFTEST FAILED: L6 stayed green under a planted corpus entry $stamp" >&2
+      cat "$stderr_file" >&2
+      return 1
+    fi
+    grep '^FAIL L6' "$stderr_file" >&2
+    rm -f "$tmp_root/corpus/selftest/stamped.json"
+  done
 
   echo "SELFTEST plant 1f0: a floor missing the required groups must fail L5 (415)" >&2
   mkdir -p "$tmp_root/reports/noise-floor"

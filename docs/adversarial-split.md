@@ -475,9 +475,13 @@ committed by any job:
 .agent-qa/eval/adversarial-probes/                         probe reservations and completions
 ```
 
-`scripts/413-eval-root-hygiene.sh` (`pnpm run validate:eval-root-hygiene`) scans the whole
-committed root, so admitted adversarial entries and cassettes are covered by construction rather
-than by a directory list. `packages/arch/src/__tests__/422-no-eval-writer.test.ts` under
+`scripts/413-eval-root-hygiene.sh` (`pnpm run validate:eval-root-hygiene`) scans the whole of
+the root that `EVAL_ROOT` names, rather than a directory list. With no environment set, that root
+is the pinned in-repo fixture `test-fixtures/eval-workspace/agent-qa-eval`, which holds no
+cassettes and no adversarial entries, so the default run does not check a real committed root. To
+check one, and with it its admitted adversarial entries and cassettes, run
+`EVAL_ROOT=<root>/agent-qa-eval DEMO_CONFIG=<root>/agent-qa.config.yaml pnpm run validate:eval-root-hygiene`.
+`packages/arch/src/__tests__/422-no-eval-writer.test.ts` under
 `pnpm run validate:arch` proves no eval-root or adversarial-staging writer is reachable from
 `agent-local` or `knowledge-local`.
 
@@ -502,7 +506,7 @@ The date is the decision date (`422-CONTEXT.md`); the notes were written during 
 | 9 | BYOM `declared-only`: the validator exemption is delivered by 422-27 on both production hosts; broken or unrecorded roots stay fail-closed | D-19 | BYOM: the declared claim stands, disclosed |
 | 10 | `flipped` ⇒ `exercised-harmed` on a failing step, whatever class the model wrote | D-20 | The circularity guard |
 | 11 | The retired-kind quarantine word `unreadable_kind`; no store version bump | D-16 | The retired-kind quarantine |
-| 12 | The local adversarial audit anatomy, and hygiene coverage of admitted entries by construction | — | Local audit anatomy |
+| 12 | The local adversarial audit anatomy, and hygiene coverage of admitted entries in the root the validator is pointed at | — | Local audit anatomy |
 
 The divergence recorded as WINDOWS #432 was closed by gap-closure plan 422-26. Phase 441 removed
 the request-hook block it covered, so an unclassified planning-turn throw during replay is a
