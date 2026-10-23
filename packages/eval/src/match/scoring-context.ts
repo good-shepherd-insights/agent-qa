@@ -116,7 +116,7 @@ export const scoringJudgeRequestSchema = z.object({
 export type ScoringJudgeRequest = z.infer<typeof scoringJudgeRequestSchema> | null
 /** Additive score-file context. Absence remains readable for uncorrected legacy scores. */
 export const scoringContextSchema = z.object({
-  schemaVersion: z.literal(1), matcherVersion: z.number().int().nonnegative(),
+  schemaVersion: z.literal(2), matcherVersion: z.number().int().nonnegative(),
   inputsDigest: digest, replayDigest: digest, finalScoreDigest: digest, judgeIdentityDigest: digest,
   judgeRequest: scoringJudgeRequestSchema.nullable(),
 }).strict()
@@ -180,7 +180,7 @@ function inputsDigest(input: ScoringInputs): string {
 export function createScoringContext(input: ScoringInputs & {
   score: CassetteScore; judge?: JudgeIdentityBlock; judgeRequest: ScoringJudgeRequest
 }): ScoringContext {
-  return { schemaVersion: 1, matcherVersion: MATCHER_CONFIG.matcherVersion,
+  return { schemaVersion: 2, matcherVersion: MATCHER_CONFIG.matcherVersion,
     inputsDigest: inputsDigest(input),
     // executionSeed is the store's publication envelope; sample seeds/results are bound here.
     // Baseline admission separately validates that envelope against its run publication.
