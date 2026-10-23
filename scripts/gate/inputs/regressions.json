@@ -11835,6 +11835,24 @@
     },
     {
       "runner": "vitest",
+      "file": "packages/arch/src/__tests__/449.1-version-register.test.ts",
+      "fullName": "schema version census every registered version is 2, every exclusion has a reason, and every register site exists",
+      "origin": "449.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/449.1-version-register.test.ts",
+      "fullName": "schema version census every production version constant is registered at its value or excluded, and every registered constant is found",
+      "origin": "449.1 D-11"
+    },
+    {
+      "runner": "vitest",
+      "file": "packages/arch/src/__tests__/449.1-version-register.test.ts",
+      "fullName": "schema version census instruments a planted constant at 3 is found as code and not as a comment",
+      "origin": "449.1 D-11"
+    },
+    {
+      "runner": "vitest",
       "file": "packages/cli/src/composition/__tests__/443-run-record-option.test-d.ts",
       "fullName": "src/composition/__tests__/443-run-record-option.test-d.ts C443-ONE-RECORD the drive's runRecord option is required and never undefined",
       "origin": "443 D-16"
