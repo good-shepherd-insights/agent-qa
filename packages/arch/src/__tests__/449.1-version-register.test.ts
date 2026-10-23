@@ -4,9 +4,19 @@
  * Every format agent-qa stamps into a document, record, envelope, token, file or database reads
  * one stamp, 2, and refuses, rebuilds or misses on any other. A writer that stamps another value,
  * or a reader that admits a second one, is a regression the compiler cannot see once a literal is
- * typed loosely, so this file holds the source to the register in ../version-register.ts: every
- * production version constant is registered at its value or excluded with a reason, and every
- * registered constant is still where the register says.
+ * typed loosely, so this file holds the source to the register in ../version-register.ts:
+ *
+ *   - every production version constant is registered at its value or excluded with a reason;
+ *   - every inline stamp, literal and exact check matches the register by file, literal and count;
+ *   - no reader admits a second version: no migration step, alias, dual-stamp helper, union of two
+ *     stamp literals, union keyed on the stamp, or stamp typed as a union;
+ *   - every hand-written copy of a value spells the value of its source;
+ *   - the gate inputs and both skills contracts read 2, and the two contracts copies are identical;
+ *   - every schemaVersion stamp in the repository's fixtures is 2, apart from the spelled exclusions.
+ *
+ * Excluded, each with its reason in the register: external specifications, package and product
+ * versions, content and algorithm versions, hash and RNG domain tags, the bundled floor model asset,
+ * the private benchmarking tool, one-shot scripts kept as history, and a rebuild-reason label.
  *
  * Comments are blanked before any production file is matched, every needle is assembled from two
  * halves at run time so this file spells none of them, and the planted cells prove each scanner
@@ -197,6 +207,35 @@ const CONSTANT_DECLARATION: Halves = [
 ]
 const VERSION_NAME = /(^|_)VERSION$/
 
+/** A stamp written, typed, validated or checked as a number literal. */
+const INLINE_NEEDLES: readonly Halves[] = [
+  ['\\bschemaVer', 'sion[\'"]?\\??\\s*:\\s*(\\d+)\\b'],
+  ['\\bschemaVer', 'sion[\'"]?\\??\\s*:\\s*z\\.literal\\(\\s*(\\d+)\\s*\\)'],
+  ['\\bver', 'sion[\'"]?\\??\\s*:\\s*z\\.literal\\(\\s*(\\d+)\\s*\\)'],
+  ['\\bschemaVer', 'sion\\s*[!=]==?\\s*(\\d+)\\b'],
+  ['\\.ver', 'sion\\s*[!=]==?\\s*(\\d+)\\b'],
+]
+
+/** A reader that admits a second version, each with what it is. */
+const SECOND_VERSION_NEEDLES: readonly (readonly [string, Halves])[] = [
+  ['a migration step', ['(?:MigrationRegis', 'try\\b|_MIGRATIONS\\b)[^=;\\n]*=\\s*\\{\\s*[^}\\s]']],
+  ['a migrations object with a step', ['\\bmigra', 'tions\\s*:\\s*\\{\\s*[^}\\s]']],
+  ['a stamp read as current', ['(?:readAsCur', 'rent|_READ_AS_' + 'CURRENT)\\b']],
+  ['a dual-stamp helper', ['(?:[rR]eadableSt', 'amp|PRE_V2_' + 'STAMP)\\b']],
+  ['a union of two stamp literals', [
+    '\\b(?:schemaVer',
+    'sion|version)[\'"]?\\??\\s*:\\s*z\\.union\\(\\s*\\[\\s*z\\.literal\\([^)]*\\)\\s*,\\s*z\\.literal\\(',
+  ]],
+  ['a stamp literal joined to another', ['\\b(?:schemaVer', 'sion|version)[\'"]?\\??\\s*:\\s*z\\.literal\\([^)]*\\)\\s*\\.or\\(']],
+  ['a union keyed on the stamp', ['discriminatedUn', 'ion\\(\\s*[\'"](?:schemaVersion|version)[\'"]']],
+  ['a stamp typed as a union', ['\\b(?:schemaVer', 'sion|version)\\??\\s*:\\s*(?:\\d+|typeof\\s+[\\w$]+)\\s*\\|']],
+]
+const EMPTY_MIGRATIONS: Halves = ['\\bmigra', 'tions\\s*:\\s*\\{\\s*\\}']
+
+const STAMP_KEY = joined(['schemaVer', 'sion'])
+const FRONTMATTER_STAMP: Halves = ['^schemaVer', 'sion:\\s*(\\d+)\\s*$']
+const INLINE_JSON_STAMP: Halves = ['"schemaVer', 'sion"\\s*:\\s*(\\d+)']
+
 // ---------------------------------------------------------------------------------------------
 // The scanners
 // ---------------------------------------------------------------------------------------------
@@ -248,6 +287,118 @@ function constantOffenders(hits: readonly ConstantHit[]): string[] {
   })
 }
 
+function inlineCounts(text: string): Map<number, number> {
+  const counts = new Map<number, number>()
+  for (const needle of INLINE_NEEDLES) {
+    for (const m of text.matchAll(rx(needle, 'g'))) {
+      const literal = Number(m[1])
+      counts.set(literal, (counts.get(literal) ?? 0) + 1)
+    }
+  }
+  return counts
+}
+
+function registeredInline(): Map<string, Map<number, number>> {
+  const bySite = new Map<string, Map<number, number>>()
+  const add = (site: string, literal: number, count: number): void => {
+    const counts = bySite.get(site) ?? new Map<number, number>()
+    counts.set(literal, (counts.get(literal) ?? 0) + count)
+    bySite.set(site, counts)
+  }
+  for (const row of INLINE_STAMPS) add(row.site, row.literal, row.count)
+  for (const row of VERSION_EXCLUSIONS) if (row.inline !== undefined) add(row.site, row.inline.literal, row.inline.count)
+  return bySite
+}
+
+interface Source {
+  readonly file: string
+  readonly text: string
+}
+
+function inlineOffenders(sources: readonly Source[]): string[] {
+  const registered = registeredInline()
+  return sources.flatMap(({ file, text }) => {
+    const found = inlineCounts(text)
+    const wanted = registered.get(file) ?? new Map<number, number>()
+    return [...new Set([...found.keys(), ...wanted.keys()])]
+      .sort((a, b) => a - b)
+      .filter((literal) => (found.get(literal) ?? 0) !== (wanted.get(literal) ?? 0))
+      .map((literal) => `${file}: literal ${literal} appears ${found.get(literal) ?? 0} times, the register says ${wanted.get(literal) ?? 0}`)
+  })
+}
+
+function secondVersionOffenders(file: string, text: string): string[] {
+  return SECOND_VERSION_NEEDLES.flatMap(([what, needle]) =>
+    [...text.matchAll(rx(needle, 'g'))].map((m) => `${file}:${lineAt(text, m.index)}: ${what}: ${m[0].replace(/\s+/g, ' ').slice(0, 120)}`))
+}
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+function spelledValues(text: string, spelling: string): Literal[] {
+  const pattern = new RegExp(`(?<![\\w$])${escapeRegExp(spelling)}(\\d+|'[^'\\n]*'|"[^"\\n]*")`, 'g')
+  return [...text.matchAll(pattern)].map((m) => literalOf(m[1]!))
+}
+
+function sourceValue(row: RegisteredVersion): unknown {
+  if (row.name !== undefined) return versionConstants(row.site, code(row.site)).find((hit) => hit.name === row.name)?.value
+  if (row.site.endsWith('.json')) return (JSON.parse(bytesOf(row.site)) as Record<string, unknown>)[row.field]
+  return row.value
+}
+
+const FIXTURE_DIRECTORY = /\/(?:__fixtures__|fixtures)\//
+const isFixtureData = (file: string): boolean => /\.(?:json|jsonl|md)$/.test(file)
+
+function fixtureFiles(): string[] {
+  return [
+    ...listTree('test-fixtures/', isFixtureData),
+    ...packageSources().flatMap((root) => listTree(root, (file) => isFixtureData(file) && FIXTURE_DIRECTORY.test(file))),
+  ]
+}
+
+function stampsIn(value: unknown, out: unknown[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) stampsIn(item, out)
+  } else if (value !== null && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      if (key === STAMP_KEY) out.push(item)
+      stampsIn(item, out)
+    }
+  }
+}
+
+function fixtureStamps(file: string, text: string): unknown[] {
+  const stamps: unknown[] = []
+  const inline = (part: string): void => {
+    for (const m of part.matchAll(rx(INLINE_JSON_STAMP, 'g'))) stamps.push(Number(m[1]))
+  }
+  if (file.endsWith('.md')) {
+    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)
+    if (front !== null) for (const m of front[1]!.matchAll(rx(FRONTMATTER_STAMP, 'gm'))) stamps.push(Number(m[1]))
+    inline(text)
+    return stamps
+  }
+  const documents = file.endsWith('.jsonl') ? text.split('\n').filter((line) => line.trim() !== '') : [text]
+  for (const document of documents) {
+    try {
+      stampsIn(JSON.parse(document), stamps)
+    } catch {
+      inline(document)
+    }
+  }
+  return stamps
+}
+
+const EXCLUSION_CATEGORIES = [
+  'external-spec',
+  'package-version',
+  'content-version',
+  'domain-tag',
+  'floor-asset',
+  'private-tool',
+  'historical-script',
+  'label',
+] as const
+
 // ---------------------------------------------------------------------------------------------
 // The cells
 // ---------------------------------------------------------------------------------------------
@@ -298,6 +449,89 @@ describe('schema version census', () => {
       .map((entry) => `${entry.site}: ${entry.name} at ${JSON.stringify(entry.row.value)}`)
     expect(missing, 'a registered constant is not where the register says').toEqual([])
   })
+
+  it('every inline stamp, literal and exact check matches the register by file, literal and count', () => {
+    const files = productionFiles()
+    const sources = files.map((file) => ({ file, text: code(file) }))
+    expect(sources.reduce((total, { text }) => total + [...inlineCounts(text).values()].reduce((a, b) => a + b, 0), 0))
+      .toBeGreaterThan(50)
+    expect(inlineOffenders(sources)).toEqual([])
+    const unscanned = [...registeredInline().keys()].filter((site) => !files.includes(site))
+    expect(unscanned, 'a registered inline site is outside the scanned universe').toEqual([])
+  })
+
+  it('no format reads a second version: no migration step, alias, stamp union or stamp-keyed union', () => {
+    const files = productionFiles()
+    expect(files.flatMap((file) => secondVersionOffenders(file, code(file)))).toEqual([])
+    const guarded = files.filter((file) => rx(EMPTY_MIGRATIONS).test(code(file)))
+    expect(guarded.length, 'the empty migration seams were not seen').toBeGreaterThan(5)
+  })
+
+  it('every registered copy spells the value of its source', () => {
+    const copies = VERSION_REGISTER.flatMap((row) => (row.copies ?? []).map((copy) => ({ row, copy })))
+    expect(copies.map(({ copy }) => copy.site)).toEqual(
+      expect.arrayContaining(['packages/dashboard-ui/src/lib/api.ts', 'scripts/gate/evaluate.mjs']),
+    )
+    const wrong = copies.flatMap(({ row, copy }) => {
+      const value = sourceValue(row)
+      if (value !== row.value) return [`${row.id}: its source ${row.site} reads ${JSON.stringify(value)}`]
+      const spelled = IDENTIFIER.test(copy.spelling)
+        ? versionConstants(copy.site, code(copy.site)).filter((hit) => hit.name === copy.spelling).map((hit) => hit.value)
+        : spelledValues(copy.site.endsWith('.json') ? bytesOf(copy.site) : code(copy.site), copy.spelling)
+      return spelled.length > 0 && spelled.every((literal) => literal === value)
+        ? []
+        : [`${copy.site}: ${copy.spelling} spells ${JSON.stringify(spelled)}, its source ${row.site} reads ${JSON.stringify(value)}`]
+    })
+    expect(wrong).toEqual([])
+  })
+
+  it('the gate inputs and both skills contracts read 2, and the two contracts copies are identical', () => {
+    const inputs = readdirSync(join(REPO_ROOT, 'scripts/gate/inputs'))
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => `scripts/gate/inputs/${name}`)
+      .sort()
+    expect(JSON_STAMPS.filter((row) => row.key === STAMP_KEY).map((row) => row.file).sort()).toEqual(inputs)
+    const contracts = JSON_STAMPS.filter((row) => row.key === 'version').map((row) => row.file)
+    const copies = [...listTree('skills/', (file) => file.endsWith('/agent-qa-contracts.json')),
+      ...listTree('packages/cli/skills/', (file) => file.endsWith('/agent-qa-contracts.json'))]
+    expect(contracts.sort()).toEqual(copies.sort())
+    expect(contracts).toHaveLength(2)
+    const wrong = JSON_STAMPS
+      .filter((row) => row.value !== 2 || (JSON.parse(bytesOf(row.file)) as Record<string, unknown>)[row.key] !== 2)
+      .map((row) => `${row.file}: ${row.key}`)
+    expect(wrong).toEqual([])
+    const [first, second] = contracts as [string, string]
+    expect(readFileSync(join(REPO_ROOT, first)).equals(readFileSync(join(REPO_ROOT, second))), 'the contracts copies differ').toBe(true)
+  })
+
+  it("every schemaVersion stamp in the repository's fixtures is 2, apart from the spelled exclusions", () => {
+    const files = fixtureFiles()
+    expect(files.length).toBeGreaterThan(150)
+    const stamps = new Map(files.map((file) => [file, fixtureStamps(file, bytesOf(file))]))
+    expect([...stamps.values()].reduce((total, found) => total + found.length, 0)).toBeGreaterThan(300)
+    const excluded = new Set(FIXTURE_STAMP_EXCLUSIONS.map((row) => row.file))
+    const offenders = [...stamps]
+      .filter(([file, found]) => !excluded.has(file) && found.some((stamp) => stamp !== 2))
+      .map(([file, found]) => `${file}: ${JSON.stringify(found.filter((stamp) => stamp !== 2))}`)
+    expect(offenders).toEqual([])
+    const stale = FIXTURE_STAMP_EXCLUSIONS
+      .filter((row) => !(stamps.get(row.file) ?? []).some((stamp) => stamp !== 2))
+      .map((row) => row.file)
+    expect(stale, 'a fixture exclusion no longer holds another stamp').toEqual([])
+  })
+
+  it('every excluded category is spelled with a reason, and nothing excluded is also registered', () => {
+    const unspelled = EXCLUSION_CATEGORIES.filter((category) =>
+      !VERSION_EXCLUSIONS.some((row) => row.category === category && /^\S.*\.$/.test(row.reason)))
+    expect(unspelled).toEqual([])
+    expect(VERSION_EXCLUSIONS.filter((row) => !(EXCLUSION_CATEGORIES as readonly string[]).includes(row.category))).toEqual([])
+    const names = new Set(registeredNames().map((entry) => entry.name))
+    const inlineSites = new Set(INLINE_STAMPS.map((row) => row.site))
+    const both = VERSION_EXCLUSIONS
+      .filter((row) => names.has(row.name) || (row.inline !== undefined && inlineSites.has(row.site)))
+      .map((row) => `${row.site}: ${row.name}`)
+    expect(both, 'an exclusion is also registered').toEqual([])
+  })
 })
 
 describe('schema version census instruments', () => {
@@ -313,5 +547,42 @@ describe('schema version census instruments', () => {
       `${handoff.site}:1: ${handoff.name} = 3 is registered at 2`,
     ])
     expect(constantOffenders(versionConstants(handoff.site, codeOf(`// ${moved}`)))).toEqual([])
+  })
+
+  it('a planted unregistered schemaVersion literal at 1 is found as code and not as a comment', () => {
+    const planted = cat('const s = z.object({ schemaVer', 'sion: z.literal(1) })\n')
+    const site = 'packages/planted/src/planted.ts'
+    expect(inlineOffenders([{ file: site, text: codeOf(planted) }])).toEqual([
+      `${site}: literal 1 appears 1 times, the register says 0`,
+    ])
+    expect(inlineOffenders([{ file: site, text: codeOf(`// ${planted}`) }])).toEqual([])
+    expect(inlineOffenders([{ file: site, text: codeOf(`/* ${planted} */`) }])).toEqual([])
+
+    const writer = 'scripts/gate/run.mjs'
+    const extra = cat('const extra = { schemaVer', 'sion: 2 }\n')
+    expect(inlineOffenders([{ file: writer, text: code(writer) }])).toEqual([])
+    expect(inlineOffenders([{ file: writer, text: `${code(writer)}${codeOf(extra)}` }])).toHaveLength(1)
+    expect(inlineOffenders([{ file: writer, text: `${code(writer)}${codeOf(`// ${extra}`)}` }])).toEqual([])
+  })
+
+  it('a planted migration step and a planted stamp union are found as code and not as a comment', () => {
+    const step = cat('const HANDOFF_MIGRA', 'TIONS: MigrationRegis', 'try = { 1: (doc) => doc }\n')
+    const union = cat('const s = z.object({ schemaVer', 'sion: z.union([z.literal(1), z.literal(2)]) })\n')
+    expect(secondVersionOffenders('planted.ts', codeOf(`${step}${union}`))).toHaveLength(2)
+    expect(secondVersionOffenders('planted.ts', codeOf(`// ${step}// ${union}`))).toEqual([])
+
+    const others = [
+      cat('createVersionGuard({ migra', 'tions: { 1: (doc) => doc } })\n'),
+      cat('createVersionGuard({ readAsCur', 'rent: [3, 4] })\n'),
+      cat('const ok = readableSt', 'amp(value)\n'),
+      cat('const s = z.object({ schemaVer', 'sion: z.literal(1).or(z.literal(2)) })\n'),
+      cat("const s = z.discriminatedUn", "ion('schemaVersion', [a, b])\n"),
+      cat('interface Planted { schemaVer', 'sion: 1 | 2 }\n'),
+    ]
+    for (const planted of others) {
+      expect(secondVersionOffenders('planted.ts', codeOf(planted)), planted).toHaveLength(1)
+      expect(secondVersionOffenders('planted.ts', codeOf(`/* ${planted} */`)), planted).toEqual([])
+    }
+    expect(secondVersionOffenders('planted.ts', codeOf(cat('createVersionGuard({ migra', 'tions: {} })\n')))).toEqual([])
   })
 })
