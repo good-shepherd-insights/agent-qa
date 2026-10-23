@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { CURRENT_CHAT_SESSION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   ChatSessionEvent,
@@ -60,7 +61,7 @@ function census(options: {
   const invoked: string[] = []
   const events: ChatSessionEvent[] = []
   const header: ChatSessionHeader = {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_CHAT_SESSION_SCHEMA_VERSION,
     sessionId: 'chat-census-session',
     createdAt: '1970-01-01T00:00:00.000Z',
     model: 'unbound',

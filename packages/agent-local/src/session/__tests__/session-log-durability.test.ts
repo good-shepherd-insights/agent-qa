@@ -704,7 +704,7 @@ describe.each(FACTORIES)('SessionLogPort contract: %s', (_name, factory) => {
     expect(opened.events).toEqual([])
     expect(opened.header.sessionId).toBe(SESSION_ID)
     expect(opened.header.createdAt).toBe(NOW)
-    expect(opened.header.schemaVersion).toBe(1)
+    expect(opened.header.schemaVersion).toBe(2)
   })
 
   it('refuses an unknown session id rather than creating one', async () => {

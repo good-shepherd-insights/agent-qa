@@ -14,8 +14,6 @@
 // exactly the one a real terminal could not exercise.
 
 import {
-  copyFileSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -28,6 +26,8 @@ import { PassThrough } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 
 import { CHAT_HELP_ENTRIES } from '@vostride/agent-qa-agent'
+import { createJsonlSessionLog } from '@vostride/agent-qa-agent-local'
+import type { ChatSessionEvent } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -113,24 +113,61 @@ async function runChat(
   }
 }
 
-// 430 D-08: a session the dashboard opened before 430, byte for byte as it was written, header
-// tagged `surface: 'dashboard'`. Committed as data and only ever copied out of.
-const DASHBOARD_ERA_FIXTURE = join(__dirname, 'fixtures', 'chat-dashboard-era.jsonl')
-const DASHBOARD_ERA_SESSION_ID = 'chat-20260901-120000-d430'
-const PRE_400_SESSION_ID = 'chat-20260901-120000-p400'
+const SEEDED_TURN: readonly ChatSessionEvent[] = [
+  { kind: 'user_message', turnId: 'turn-seed-0001', at: '2026-08-20T12:00:01.000Z', text: 'list the runs' },
+  {
+    kind: 'stage_outcome',
+    turnId: 'turn-seed-0001',
+    at: '2026-08-20T12:00:02.000Z',
+    stage: 'resolver',
+    outcome: 'resolved',
+  },
+  {
+    kind: 'clause_receipt',
+    turnId: 'turn-seed-0001',
+    at: '2026-08-20T12:00:03.000Z',
+    clause: 'list the runs',
+    functionId: 'runs.list',
+    origin: 'chat-resolver',
+    status: 'executed',
+    outcome: 'listed 0 runs',
+  },
+  {
+    kind: 'clause_result',
+    turnId: 'turn-seed-0001',
+    at: '2026-08-20T12:00:04.000Z',
+    functionId: 'runs.list',
+    payload: { runs: [] },
+  },
+  { kind: 'turn_complete', turnId: 'turn-seed-0001', at: '2026-08-20T12:00:05.000Z', status: 'completed' },
+]
 
-/** Seed the sessions directory with the dashboard-era file and an untagged pre-400 copy of it. */
-function seedDashboardEraSessions(configPath: string): string {
-  const sessions = join(dirname(configPath), '.agent-qa', 'sessions')
-  mkdirSync(sessions, { recursive: true })
-  copyFileSync(DASHBOARD_ERA_FIXTURE, join(sessions, `${DASHBOARD_ERA_SESSION_ID}.jsonl`))
-  const [headerLine, ...events] = readFileSync(DASHBOARD_ERA_FIXTURE, 'utf8').split('\n')
-  const { surface: _surface, ...header } = JSON.parse(headerLine!) as Record<string, unknown>
-  writeFileSync(
-    join(sessions, `${PRE_400_SESSION_ID}.jsonl`),
-    [JSON.stringify({ ...header, sessionId: PRE_400_SESSION_ID }), ...events].join('\n'),
-  )
-  return sessions
+interface SeededSessions {
+  sessions: string
+  dashboardSessionId: string
+  untaggedSessionId: string
+}
+
+/** Write one dashboard-tagged and one untagged session through the session log, one turn each. */
+async function seedTaggedAndUntaggedSessions(configPath: string): Promise<SeededSessions> {
+  const root = join(dirname(configPath), '.agent-qa')
+  const seed = async (createdAt: string, random: number, surface?: string): Promise<string> => {
+    const log = createJsonlSessionLog({
+      root,
+      now: () => createdAt,
+      model: () => 'claude-sonnet-4-5',
+      toolsetHash: () => 'toolset-seed',
+      random: () => random,
+      ...(surface === undefined ? {} : { surface }),
+    })
+    const opened = await log.open()
+    for (const event of SEEDED_TURN) await opened.append(event)
+    await opened.close()
+    return opened.header.sessionId
+  }
+  const dashboardSessionId = await seed('2026-08-20T12:00:00.000Z', 0.25, 'dashboard')
+  const untaggedSessionId = await seed('2026-08-20T12:00:10.000Z', 0.75)
+  return { sessions: join(root, 'sessions'), dashboardSessionId, untaggedSessionId }
 }
 
 function sessionFiles(configPath: string): string[] {
@@ -307,16 +344,17 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     expect(sessionFiles(configPath)).toHaveLength(0)
   })
 
-  it('DASHBOARD-ERA-SESSION-LISTED: --list lists dashboard-era and pre-400 sessions', async () => {
+  it('--list lists a dashboard-tagged and an untagged session', async () => {
     const configPath = fixtureWorkspace(roots)
-    const sessions = seedDashboardEraSessions(configPath)
+    const { sessions, dashboardSessionId, untaggedSessionId } =
+      await seedTaggedAndUntaggedSessions(configPath)
     const before = new Map(sessionFiles(configPath).map((file) => [
       file,
       readFileSync(join(sessions, file)),
     ]))
-    expect(readFileSync(join(sessions, `${DASHBOARD_ERA_SESSION_ID}.jsonl`), 'utf8'))
+    expect(readFileSync(join(sessions, `${dashboardSessionId}.jsonl`), 'utf8'))
       .toContain('"surface":"dashboard"')
-    expect(readFileSync(join(sessions, `${PRE_400_SESSION_ID}.jsonl`), 'utf8'))
+    expect(readFileSync(join(sessions, `${untaggedSessionId}.jsonl`), 'utf8'))
       .not.toContain('"surface"')
 
     const listed = await runChat(configPath, ['--list'])
@@ -324,39 +362,40 @@ describe('agent-qa chat (the REPL over one turn engine)', () => {
     // Listed as sessions, not as refused files, which would print their names too.
     expect(listed.stdout).toContain('Chat sessions (2)')
     expect(listed.stdout).not.toContain('could not be read')
-    expect(listed.stdout).toContain(DASHBOARD_ERA_SESSION_ID)
-    expect(listed.stdout).toContain(PRE_400_SESSION_ID)
-    // The files are the user's: listing reads headers and never migrates, filters or rewrites.
+    expect(listed.stdout).toContain(dashboardSessionId)
+    expect(listed.stdout).toContain(untaggedSessionId)
+    // Listing reads headers and never filters or rewrites a file.
     expect(sessionFiles(configPath).sort()).toEqual(
-      [`${DASHBOARD_ERA_SESSION_ID}.jsonl`, `${PRE_400_SESSION_ID}.jsonl`],
+      [`${dashboardSessionId}.jsonl`, `${untaggedSessionId}.jsonl`].sort(),
     )
     for (const [file, bytes] of before) {
       expect(readFileSync(join(sessions, file)).equals(bytes), file).toBe(true)
     }
   })
 
-  it('DASHBOARD-ERA-SESSION-REOPENS: --session reopens it and creates no session', async () => {
+  it('--session reopens a dashboard-tagged session and creates no session', async () => {
     const configPath = fixtureWorkspace(roots)
-    const sessions = seedDashboardEraSessions(configPath)
+    const { sessions, dashboardSessionId, untaggedSessionId } =
+      await seedTaggedAndUntaggedSessions(configPath)
     const before = new Map(sessionFiles(configPath).map((file) => [
       file,
       readFileSync(join(sessions, file)),
     ]))
 
-    const result = await runChat(configPath, ['--session', DASHBOARD_ERA_SESSION_ID], ['/quit'])
+    const result = await runChat(configPath, ['--session', dashboardSessionId], ['/quit'])
 
     expect(result.exitCode).not.toBe(1)
-    expect(result.stderr).not.toContain(`No chat session named ${DASHBOARD_ERA_SESSION_ID}`)
+    expect(result.stderr).not.toContain(`No chat session named ${dashboardSessionId}`)
     // A resumed session announces its id before the first prompt; a fresh one has none to announce.
     const output = `${result.stdout}\n${result.stderr}`
-    expect(output).toContain(`session ${DASHBOARD_ERA_SESSION_ID}`)
-    expect(output).not.toContain(`session ${PRE_400_SESSION_ID}`)
+    expect(output).toContain(`session ${dashboardSessionId}`)
+    expect(output).not.toContain(`session ${untaggedSessionId}`)
     expect(sessionFiles(configPath).sort()).toEqual(
-      [`${DASHBOARD_ERA_SESSION_ID}.jsonl`, `${PRE_400_SESSION_ID}.jsonl`],
+      [`${dashboardSessionId}.jsonl`, `${untaggedSessionId}.jsonl`].sort(),
     )
-    // `/quit` is itself a routed turn, so it lands in the reopened log: the dashboard-era bytes
-    // must survive as an untouched prefix with that turn appended after them, and nothing else moves.
-    const reopened = `${DASHBOARD_ERA_SESSION_ID}.jsonl`
+    // `/quit` is itself a routed turn, so it lands in the reopened log: the seeded bytes must
+    // survive as an untouched prefix with that turn appended after them, and nothing else moves.
+    const reopened = `${dashboardSessionId}.jsonl`
     for (const [file, bytes] of before) {
       const after = readFileSync(join(sessions, file))
       if (file !== reopened) {

@@ -26,7 +26,7 @@
  * version's shape fails to typecheck at its construction site, which is where the mistake is,
  * rather than at a reader that could only report it as corrupt bytes.
  */
-export const CURRENT_CHAT_SESSION_SCHEMA_VERSION = 1
+export const CURRENT_CHAT_SESSION_SCHEMA_VERSION = 2
 
 /**
  * The first line of every session file, written and fsynced when the file is created.

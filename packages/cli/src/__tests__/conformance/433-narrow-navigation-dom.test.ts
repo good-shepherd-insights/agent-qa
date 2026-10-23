@@ -33,7 +33,7 @@ const TOP_LEVEL = ['Runs', 'Tests', 'Hooks', 'Suites', 'Insights', 'Config'] as 
 const CONTROL_NAME = /navigation/i
 const PRODUCT_TOUR_COOKIE = 'agent_qa_product_tour_state'
 const TOUR_SKIPPED = encodeURIComponent(JSON.stringify({
-  schemaVersion: 1, tourVersion: 'foundation-v1', skippedAt: '2026-10-04T00:00:00.000Z',
+  schemaVersion: 2, tourVersion: 'foundation-v1', skippedAt: '2026-10-04T00:00:00.000Z',
 }))
 const TESTS_READY = '[data-tour-id="tour-tests-table"]'
 

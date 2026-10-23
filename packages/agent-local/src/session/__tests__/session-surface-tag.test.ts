@@ -6,14 +6,8 @@
 // `guardChatSessionEvent` compares an EXACT key set per kind, so an extra field makes every session
 // file written before the change unreadable by the build that comes after it. The header guard, by
 // contrast, is presence-based and tolerates keys it does not know, which is why the tag goes there.
-//
-// THE PRE-400 FIXTURE WAS WRITTEN BY THE SHIPPED WRITER, NOT BY THIS FILE. `fixtures/chat-
-// 20260820-120000-i000.jsonl` was produced by running `createJsonlSessionLog` out of the built
-// `dist` at the commit BEFORE the surface field existed, and its bytes are committed verbatim. A
-// fixture typed by hand here would be this file's idea of what the old writer produced — and the
-// one property the cell needs is that it is not (the produced-not-literal law).
 
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -26,7 +20,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createJsonlSessionLog } from '../jsonl-session-log.js'
+import { ChatSessionHeaderError, createJsonlSessionLog } from '../jsonl-session-log.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -106,39 +100,28 @@ describe('the surface tag rides the session HEADER', () => {
     expect(Object.keys(header)).not.toContain('surface')
     expect(opened.header.surface).toBeUndefined()
   })
+})
 
-  it('opens a pre-400 session file — written by the shipped writer before the field existed', async () => {
+describe('the session header stamp', () => {
+  it('a session whose header is stamped 1 throws ChatSessionHeaderError', async () => {
     const root = freshRoot()
-    const sessionId = 'chat-20260820-120000-i000'
+    const sessionId = 'chat-20260821-090000-h001'
     mkdirSync(join(root, 'sessions'), { recursive: true })
-    const fixture = join(HERE, 'fixtures', `${sessionId}.jsonl`)
-    // The fixture must EXIST for this cell to mean anything; a missing file would otherwise fail
-    // later with a message about sessions rather than about a fixture nobody committed.
-    expect(readFileSync(fixture, 'utf8').length).toBeGreaterThan(0)
-    cpSync(fixture, join(root, 'sessions', `${sessionId}.jsonl`))
+    writeFileSync(
+      join(root, 'sessions', `${sessionId}.jsonl`),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        sessionId,
+        createdAt: '2026-08-21T09:00:00.000Z',
+        model: 'claude-sonnet-4-5',
+        toolsetHash: 'toolset-400-03',
+      })}\n`,
+      'utf8',
+    )
 
-    const log = logOn(root, 'dashboard')
-    const opened = await log.open(sessionId)
-    try {
-      expect(opened.header.sessionId).toBe(sessionId)
-      expect(opened.header.model).toBe('claude-sonnet-4-5')
-      // The tag is ABSENT on the old file and the reader does not invent one — a header that came
-      // back tagged `dashboard` because THIS host is a dashboard would be the log answering with
-      // the reader's identity instead of the writer's.
-      expect(opened.header.surface).toBeUndefined()
-      // Every event on the file is readable by the build that added the tag: five appended, none
-      // refused, and no `aborted` synthesized (the fixture's turn carries its boundary marker).
-      expect(opened.refusedLines).toEqual([])
-      expect(opened.events.map((event) => event.kind)).toEqual([
-        'user_message',
-        'stage_outcome',
-        'clause_receipt',
-        'clause_result',
-        'turn_complete',
-      ])
-    } finally {
-      await opened.close()
-    }
+    const opening = Promise.resolve().then(() => logOn(root).open(sessionId))
+    await expect(opening).rejects.toThrow(ChatSessionHeaderError)
+    await expect(opening).rejects.toThrow(/declares schemaVersion 1/)
   })
 })
 

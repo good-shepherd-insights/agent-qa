@@ -90,7 +90,6 @@ describe('readProductTourStateCookie', () => {
     const invalidValues = [
       '%7Bbad-json',
       JSON.stringify([]),
-      JSON.stringify(rawState({ schemaVersion: 2 })),
       JSON.stringify(rawState({ tourVersion: 'old-tour' })),
       JSON.stringify(rawState({ completedAt: 'not-a-date' })),
       JSON.stringify(rawState({ skippedAt: '2026-99-99T00:00:00.000Z' })),
@@ -106,6 +105,12 @@ describe('readProductTourStateCookie', () => {
 
       clearCookie()
     }
+  })
+
+  it.each([1, 3])('returns null for a cookie stamped %i', (schemaVersion) => {
+    writeRawCookie(rawState({ schemaVersion }))
+
+    expect(readProductTourStateCookie()).toBeNull()
   })
 
   it('returns only the compact schema fields for a valid cookie', () => {
@@ -139,6 +144,7 @@ describe('writeProductTourStateCookie and clearProductTourStateCookie', () => {
         JSON.stringify(state),
       )}; path=/; max-age=31536000; samesite=lax`,
     )
+    expect(state.schemaVersion).toBe(2)
   })
 
   it('clears the tour cookie with path and max-age=0', () => {

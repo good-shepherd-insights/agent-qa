@@ -30,6 +30,7 @@ import type {
 
 import {
   AuthoringDraftWriteOutputSchema,
+  CURRENT_CHAT_SESSION_SCHEMA_VERSION,
   FAN_OUT_PHRASES,
   QuarantineListOutputSchema,
   buildFanOutReport,
@@ -99,7 +100,7 @@ interface MemoryLog extends SessionLogPort {
 function memoryLog(): MemoryLog {
   const events: ChatSessionEvent[] = []
   const header: ChatSessionHeader = {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_CHAT_SESSION_SCHEMA_VERSION,
     sessionId: 'chat-test-session',
     createdAt: '1970-01-01T00:00:00.000Z',
     model: 'unbound',

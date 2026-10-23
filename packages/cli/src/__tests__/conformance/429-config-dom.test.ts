@@ -186,7 +186,7 @@ async function launchBrowser(dashboard: SpawnedDashboard): Promise<Browser> {
 
 const PRODUCT_TOUR_COOKIE = 'agent_qa_product_tour_state'
 const TOUR_SKIPPED = encodeURIComponent(JSON.stringify({
-  schemaVersion: 1, tourVersion: 'foundation-v1', skippedAt: '2026-09-27T00:00:00.000Z',
+  schemaVersion: 2, tourVersion: 'foundation-v1', skippedAt: '2026-09-27T00:00:00.000Z',
 }))
 
 // Every page records any dialog that ever mounts, and every uncaught error, from its first byte.

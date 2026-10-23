@@ -58,7 +58,12 @@
 import { isMap, isScalar, isSeq, parseDocument } from 'yaml'
 import { describe, expect, it } from 'vitest'
 
-import { CROSS_BOUNDARY_REASONS, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
+import {
+  CROSS_BOUNDARY_REASONS,
+  CURRENT_CHAT_SESSION_SCHEMA_VERSION,
+  utf8Decode,
+  utf8Encode,
+} from '@vostride/agent-qa-schema'
 import type {
   AgentAskInput,
   AgentAskResult,
@@ -106,7 +111,7 @@ const PLANNER_CALLER: FunctionCaller = {
 function memoryLog(): SessionLogPort & { readonly events: ChatSessionEvent[] } {
   const events: ChatSessionEvent[] = []
   const header: ChatSessionHeader = {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_CHAT_SESSION_SCHEMA_VERSION,
     sessionId: 'scaffold-route-session',
     createdAt: '1970-01-01T00:00:00.000Z',
     model: 'unbound',

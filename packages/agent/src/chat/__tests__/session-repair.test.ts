@@ -13,13 +13,15 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { CURRENT_CHAT_SESSION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+
 import {
   repairSession,
   replaySession,
 } from '../session-repair.js'
 import type { SessionLogLine } from '../session-repair.js'
 
-const VERSION = 1
+const VERSION = CURRENT_CHAT_SESSION_SCHEMA_VERSION
 const NOW = '2026-08-09T12:00:00.000Z'
 const now = (): string => NOW
 

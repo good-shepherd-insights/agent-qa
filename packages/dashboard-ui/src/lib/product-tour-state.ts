@@ -1,7 +1,7 @@
 import { getKnownProductTourStepIds } from '@/lib/product-tour-steps'
 
 export const PRODUCT_TOUR_COOKIE = 'agent_qa_product_tour_state'
-export const PRODUCT_TOUR_SCHEMA_VERSION = 1
+export const PRODUCT_TOUR_SCHEMA_VERSION = 2
 export const PRODUCT_TOUR_VERSION = 'foundation-v1'
 
 const PRODUCT_TOUR_COOKIE_MAX_AGE = 31536000
