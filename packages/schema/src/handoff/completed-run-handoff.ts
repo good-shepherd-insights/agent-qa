@@ -53,9 +53,9 @@ export interface CompletedRunHandoff {
    */
   quarantineApplied?: readonly QuarantineAppliedEntry[]
   /**
-   * 436 D-06: the planner limits this run's steps ran under, copied verbatim from the resolved
+   * The planner limits this run's steps ran under, copied verbatim from the resolved
    * RunConfig, with the members whose own limits differ. Absent on runs whose producer recorded
-   * none and on every handoff written before 436.
+   * none.
    */
   plannerLimits?: PlannerLimitsRecord
   /**
