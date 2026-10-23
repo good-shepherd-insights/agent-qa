@@ -17,7 +17,13 @@
  * Pure: no clock, no host modules, no randomness. The handoff fixture's own timestamps are
  * the only time values anywhere in this file.
  */
-import { asRecordId, asRef, asRunId, computeBriefDigest } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  asRef,
+  asRunId,
+  computeBriefDigest,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   ElementInfo,
@@ -60,7 +66,7 @@ function artifacts(): ArtifactSource {
  */
 function proof(): LosslessServedBriefProofV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
     completeness: 'lossless',
     recordCap: 8,
     combinedBudget: 2_048,

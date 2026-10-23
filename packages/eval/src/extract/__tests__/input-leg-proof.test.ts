@@ -4,7 +4,7 @@ import type {
   RecordedRetrievalRung,
   StepEvidence,
 } from '@vostride/agent-qa-schema'
-import { committedFileText } from '@vostride/agent-qa-schema'
+import { committedFileText, SERVED_BRIEF_PROOF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import {
   FIXTURE_ARTIFACT_SHA,
@@ -26,7 +26,7 @@ const RUNG: RecordedRetrievalRung = {
 
 function makeProof(): LosslessServedBriefProofV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
     completeness: 'lossless',
     recordCap: 32,
     combinedBudget: 2_048,

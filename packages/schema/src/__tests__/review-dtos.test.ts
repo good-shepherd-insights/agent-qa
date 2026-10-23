@@ -36,6 +36,7 @@ import {
 } from '../knowledge/change'
 import { DELTA_KINDS } from '../delta/delta'
 import { DELTA_ORIGINS } from '../delta/envelope'
+import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '../brief/retrieval-trace'
 
 const scope = { tier: 'suite', key: 'checkout' } as const
 
@@ -306,7 +307,7 @@ describe('ForgetTargetRef (D-19 record-or-bundle grain)', () => {
 
 describe('BriefWhyResult (D-15 typed honest absence)', () => {
   const trace = {
-    schemaVersion: 1,
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
     servedLines: [{ recordId: 'rec-1', leg: 'dense', rank: 1, score: 0.7 }],
     truncated: [],
   }

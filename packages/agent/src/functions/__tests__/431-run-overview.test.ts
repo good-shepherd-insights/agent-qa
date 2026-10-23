@@ -14,6 +14,7 @@ import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RunOverviewProjectionSchema,
   asRunId,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -371,7 +372,7 @@ function multiScene(): Multi {
   const document = completed([
     member(0, 'test-checkout', 'Checkout smoke', [
       { ...handoffStep(0, 'Open the home page'),
-        retrievalTrace: { schemaVersion: 1,
+        retrievalTrace: { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
           servedLines: [{ recordId: 'rec-a', leg: 'anchor', rank: 1, score: 0.5 }],
           truncated: [{ recordId: 'rec-cut', leg: 'lexical', rank: 9, score: 0.1 }] },
         servedBrief: briefWith({

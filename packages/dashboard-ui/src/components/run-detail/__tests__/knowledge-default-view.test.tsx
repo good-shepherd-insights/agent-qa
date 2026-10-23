@@ -13,7 +13,11 @@ import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter } from "react-router"
 import { afterEach, describe, expect, it } from "vitest"
 
-import { CurationSnapshotSchema, RunKnowledgeProjectionSchema } from "@vostride/agent-qa-schema"
+import {
+  CurationSnapshotSchema,
+  RunKnowledgeProjectionSchema,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from "@vostride/agent-qa-schema"
 
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -146,7 +150,7 @@ function richView(): Extract<KnowledgeView, { state: "ready" }> {
         trace: {
           kind: "answered",
           trace: {
-            schemaVersion: 1,
+            schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
             servedLines: [
               { recordId: SERVED_CANARY, leg: "anchor", rank: 1, score: 1.48695 },
               { recordId: SERVED_PLAIN, leg: "lexical", rank: 2, score: 0.73112 },

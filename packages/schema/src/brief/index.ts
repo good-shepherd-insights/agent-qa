@@ -2,11 +2,13 @@ export { computeBriefDigest } from './compute-brief-digest'
 export {
   LosslessServedBriefError,
   LosslessServedBriefSchema,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
   guardLosslessServedBrief,
 } from './guard-lossless-served-brief'
 export type { LosslessServedBrief } from './guard-lossless-served-brief'
 export {
   RETRIEVAL_TRACE_LEGS,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
   ServedRetrievalTraceV1Schema,
   TRACE_TRUNCATION_TOP_K,
   TraceLineSchema,

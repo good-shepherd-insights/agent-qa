@@ -8,6 +8,7 @@ import {
   type CompletedRunHandoff,
   type ServedBrief,
   type Verdict,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { LeafCassette } from '../../index'
 import {
@@ -205,7 +206,7 @@ function losslessBrief(turn: {
     channel3: [],
     briefDigest: '',
     proof: {
-      schemaVersion: 1,
+      schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
       completeness: 'lossless',
       recordCap: 0,
       combinedBudget: 0,

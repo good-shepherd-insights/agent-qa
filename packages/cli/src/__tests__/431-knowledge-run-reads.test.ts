@@ -22,7 +22,10 @@ import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { DashboardDatabase, createDashboardRunDetailReader } from '@vostride/agent-qa-dashboard'
 import { generateRunId, generateTestId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore, FsHandoffStore } from '@vostride/agent-qa-runner-local'
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, EvidenceDocument, PerTestOutcome } from '@vostride/agent-qa-schema'
 import { Command, CommanderError } from 'commander'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -113,7 +116,7 @@ function populatedProject() {
   first.testName = UNICODE_NAME
   first.steps[0]!.stepText = UNICODE_STEP
   Object.assign(first.steps[0]!, { retrievalTrace: {
-    schemaVersion: 1, servedLines: [{ recordId, leg: 'lexical', rank: 1, score: 1.5 }], truncated: [],
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId, leg: 'lexical', rank: 1, score: 1.5 }], truncated: [],
   } })
   const second = structuredClone(first)
   second.testId = generateTestId() as PerTestOutcome['testId']
@@ -121,7 +124,7 @@ function populatedProject() {
   second.testName = 'Second member'
   second.outcome = 'passed'
   Object.assign(second.steps[0]!, { retrievalTrace: {
-    schemaVersion: 1, servedLines: [{ recordId, leg: 'dense', rank: 2, score: 0.25 }], truncated: [],
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId, leg: 'dense', rank: 2, score: 0.25 }], truncated: [],
   } })
   f.handoff.tests.push(second)
   f.save()

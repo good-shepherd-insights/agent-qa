@@ -90,6 +90,7 @@ import { basename, dirname, join } from 'node:path'
 
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { chromium } from 'playwright-core'
+import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import { RUN_SERVICE_ANCHORED_BUILDS, trackTempRoot } from './spawned-chat.js'
@@ -1484,7 +1485,7 @@ export async function discoveryRunFixtureProject(): Promise<DiscoveryRunFixture>
   first.testName = DISCOVERY_FIRST_TEST_NAME
   first.steps[0]!.stepText = DISCOVERY_FIRST_STEP_TEXT
   Object.assign(first.steps[0]!, { retrievalTrace: {
-    schemaVersion: 1, servedLines: [{ recordId, leg: 'lexical', rank: 1, score: 1.5 }], truncated: [],
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId, leg: 'lexical', rank: 1, score: 1.5 }], truncated: [],
   } })
   const second = structuredClone(first)
   second.testId = generateTestId() as typeof second.testId
@@ -1492,7 +1493,7 @@ export async function discoveryRunFixtureProject(): Promise<DiscoveryRunFixture>
   second.testName = 'Second member'
   second.outcome = 'passed'
   Object.assign(second.steps[0]!, { retrievalTrace: {
-    schemaVersion: 1, servedLines: [{ recordId, leg: 'dense', rank: 2, score: 0.25 }], truncated: [],
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId, leg: 'dense', rank: 2, score: 0.25 }], truncated: [],
   } })
   f.handoff.tests.push(second)
   f.save()

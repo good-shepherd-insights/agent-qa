@@ -10,6 +10,7 @@ import {
   guardLosslessServedBrief,
   sha256hex,
   type ServedBrief,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
 import { files, markFixture } from '../gates/__tests__/feedback-fixture.js'
@@ -47,7 +48,7 @@ function losslessBrief(brief: ServedBrief): ServedBrief {
   const unstamped: ServedBrief = {
     ...brief,
     proof: {
-      schemaVersion: 1,
+      schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
       completeness: 'lossless',
       recordCap: 0,
       combinedBudget: 0,

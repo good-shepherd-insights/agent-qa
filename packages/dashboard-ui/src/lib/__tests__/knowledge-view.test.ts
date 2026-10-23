@@ -16,7 +16,12 @@
 // Collapsing them would tell a reader the store is empty when in fact nothing asked it anything.
 
 import { describe, expect, it } from 'vitest'
-import { CurationSnapshotSchema, TRACE_TRUNCATION_TOP_K, formatEntityUri } from '@vostride/agent-qa-schema'
+import {
+  CurationSnapshotSchema,
+  TRACE_TRUNCATION_TOP_K,
+  formatEntityUri,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   CurationBreakdown,
   RecordChange,
@@ -406,7 +411,7 @@ function answered(
 ): RunKnowledgeStep['trace'] {
   return {
     kind: 'answered',
-    trace: { schemaVersion: 1, servedLines: [...servedLines], truncated: [...truncated] },
+    trace: { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [...servedLines], truncated: [...truncated] },
   }
 }
 

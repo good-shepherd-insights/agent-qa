@@ -5,7 +5,7 @@ import type {
   LosslessServedBriefProofV1,
   RecordedRetrievalRung,
 } from '@vostride/agent-qa-schema'
-import { sha256hex } from '@vostride/agent-qa-schema'
+import { sha256hex, SERVED_BRIEF_PROOF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import {
   FIXTURE_ARTIFACT_SHA,
@@ -313,7 +313,7 @@ describe('deriveCensus (413 D-14/D-16, ROOT-05)', () => {
     const proven = cassetteWith('proven', (draft) => {
       draft.input.retrievalRung = { schemaVersion: 1, rung: 'lexical-only' }
       draft.input.servedBrief.proof = {
-        schemaVersion: 1,
+        schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
         completeness: 'lossless',
         recordCap: 8,
         combinedBudget: 64,

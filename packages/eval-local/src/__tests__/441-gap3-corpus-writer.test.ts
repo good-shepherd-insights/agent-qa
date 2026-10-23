@@ -21,6 +21,7 @@ import {
   slugBranch,
   type CompletedRunHandoff,
   type LosslessServedBriefProofV1,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { refreshAdversarialSplit, stageAdversarialProposal } from '../adversarial-composition.js'
 import { admitStagedFeedback, stageFeedbackEntry, type StageFeedbackEntryInput } from '../gate2-composition.js'
@@ -79,7 +80,7 @@ function planFor(handoff: CompletedRunHandoff): { plan: SeedingPlan; cassettes: 
 
 function proof(): LosslessServedBriefProofV1 {
   return {
-    schemaVersion: 1, completeness: 'lossless', recordCap: 8, combinedBudget: 2048, admissionEvents: [],
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION, completeness: 'lossless', recordCap: 8, combinedBudget: 2048, admissionEvents: [],
     promptTurns: [{ ordinal: 0, turnOrdinal: 0, runDate: '2026-09-11', policyL0: 'policy', learnedL1: 'learned one',
       learnedL2: 'learned two', contextTier: 'context', volatileTier: 'volatile', policyDigest: '1'.repeat(64),
       contextTierDigest: '2'.repeat(64), volatileTierDigest: '3'.repeat(64) }],

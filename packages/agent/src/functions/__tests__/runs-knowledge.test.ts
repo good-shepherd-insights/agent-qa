@@ -22,6 +22,7 @@ import {
   NO_KNOWLEDGE_READER_TRUNCATION,
   RunKnowledgeProjectionSchema,
   asRunId,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -157,7 +158,7 @@ function twoByTwo(): CompletedRunHandoff {
       step(0, {
         planSource: REPLAY,
         retrievalTrace: {
-          schemaVersion: 1,
+          schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
           servedLines: [{ recordId: 'rec-a', leg: 'anchor', rank: 1, score: 0.5 }],
           truncated: [{ recordId: 'rec-cut', leg: 'lexical', rank: 9, score: 0.1 }],
         },
@@ -659,7 +660,7 @@ describe('the Used half projects every step of every member test (LERN-01, D-03)
     expect(result.steps[0]?.trace).toEqual({
       kind: 'answered',
       trace: {
-        schemaVersion: 1,
+        schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: [{ recordId: 'rec-a', leg: 'anchor', rank: 1, score: 0.5 }],
         truncated: [{ recordId: 'rec-cut', leg: 'lexical', rank: 9, score: 0.1 }],
       },

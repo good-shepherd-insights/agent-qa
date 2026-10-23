@@ -2,7 +2,12 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CurationSnapshotSchema, RunKnowledgeProjectionSchema, type RunKnowledgeProjection } from '@vostride/agent-qa-schema'
+import {
+  CurationSnapshotSchema,
+  RunKnowledgeProjectionSchema,
+  type RunKnowledgeProjection,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { chromium, type BrowserContext, type CDPSession, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { recordingFixture, type RecordingFixture } from './recording-dom-fixture.js'
@@ -126,7 +131,7 @@ function buildProjection(runId: string, steps: RealStep[], world: World): Extrac
     return {
       testId: step.testId, testIndex: step.testIndex, stepIndex: step.stepIndex, stepText: step.stepText,
       served: { channel1: c1, channel2: slot?.c2 ?? [], channel3: slot?.c3 ?? [] },
-      trace: { kind: 'answered', trace: { schemaVersion: 1,
+      trace: { kind: 'answered', trace: { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: c1.map((entry, index) => ({ recordId: entry.id, leg: (['anchor', 'lexical', 'dense'] as const)[index % 3], rank: index + 1, score: 1.48695 - index * 0.4 })),
         truncated: slot?.cut === true ? [{ recordId: ID.cut, leg: 'dense', rank: 21, score: 0.11 }] : [] } },
       ...(slot?.plan === undefined ? {} : { planSource: slot.plan }),

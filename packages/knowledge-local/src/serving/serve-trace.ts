@@ -17,6 +17,7 @@
 // line to whichever term contributed most (see `dominantAuthoringLeg`).
 import {
   RETRIEVAL_TRACE_LEGS,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
   TRACE_TRUNCATION_TOP_K,
   type RetrievalTraceLeg,
   type ServedRetrievalTraceV1,
@@ -101,7 +102,7 @@ export function composeServedTrace(input: {
   truncated: readonly TraceLine[]
 }): ServedRetrievalTraceV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
     servedLines: [...input.servedLines],
     truncated: boundTruncationLedger(input.truncated),
   }

@@ -13,6 +13,7 @@
 import { expectTypeOf } from 'vitest'
 
 import type { ServedBrief } from '../brief/served-brief'
+import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '../brief/retrieval-trace'
 import type {
   RetrievalTraceLeg,
   ServedRetrievalTraceV1,
@@ -50,10 +51,10 @@ expectTypeOf<TraceLine['leg']>().toEqualTypeOf<'lexical' | 'dense' | 'anchor'>()
 
 // The stamp is a literal, so a value carrying `schemaVersion: number` cannot pass for a
 // trace — that is what makes the stamp a contract statement rather than a field.
-expectTypeOf<ServedRetrievalTraceV1['schemaVersion']>().toEqualTypeOf<1>()
+expectTypeOf<ServedRetrievalTraceV1['schemaVersion']>().toEqualTypeOf<2>()
 
 const trace: ServedRetrievalTraceV1 = {
-  schemaVersion: 1,
+  schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
   servedLines: [{ recordId: 'rec-1', leg: 'anchor', rank: 1, score: 0.9 }],
   truncated: [],
 }

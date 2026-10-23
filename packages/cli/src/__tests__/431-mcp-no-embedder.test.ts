@@ -39,6 +39,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import { resolveModelCacheDir } from '@vostride/agent-qa-knowledge-local'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
+import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -168,7 +169,7 @@ function discoveryProject(mcpPort: number) {
   const runId = f.handoff.runId
   const recordId = f.published.id as string
   Object.assign(f.handoff.tests[0]!.steps[0]!, { retrievalTrace: {
-    schemaVersion: 1, servedLines: [{ recordId, leg: 'lexical', rank: 1, score: 1.5 }], truncated: [],
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId, leg: 'lexical', rank: 1, score: 1.5 }], truncated: [],
   } })
   f.save()
   const blobs = new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId })

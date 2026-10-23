@@ -7,7 +7,12 @@ import { JUDGE_CONFIG, buildEvalReport, extractRunCassettes } from '@vostride/ag
 import type { ArtifactSource, Cassette, DecisionScore, LeafReplayResult } from '@vostride/agent-qa-eval'
 import { createModel } from '@vostride/agent-qa-model'
 import type { ModelProfile, ResolvedModelAuth } from '@vostride/agent-qa-model'
-import { asRecordId, asRef, sha256hex } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  asRef,
+  sha256hex,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff } from '@vostride/agent-qa-schema'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -197,7 +202,7 @@ describe('runCassetteReplay — sanctioned composition (RPLY-02, D-03/D-04/D-06)
         tier: 'L2',
       }],
       proof: {
-        schemaVersion: 1,
+        schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
         completeness: 'lossless',
         recordCap: 10,
         combinedBudget: 100,

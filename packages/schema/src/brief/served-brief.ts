@@ -1,6 +1,7 @@
 import type { Anchor } from '../identity/anchor'
 import type { ScopeKey } from '../identity/scope-key'
 import type { RecordId } from '../ids/record-id'
+import type { SERVED_BRIEF_PROOF_SCHEMA_VERSION } from './guard-lossless-served-brief'
 
 /**
  * The `truncation` string the runner writes when NO knowledge reader is bound (Phase 407, D-16).
@@ -75,7 +76,7 @@ export interface ServedPromptTurn {
 }
 
 export interface LosslessServedBriefProofV1 {
-  schemaVersion: 1
+  schemaVersion: typeof SERVED_BRIEF_PROOF_SCHEMA_VERSION
   completeness: 'lossless'
   recordCap: number
   combinedBudget: number

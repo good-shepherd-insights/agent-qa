@@ -2,7 +2,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { asRecordId, type ModelCapabilities, type RecordedRetrievalRung } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  type ModelCapabilities,
+  type RecordedRetrievalRung,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { LLMPlanner } from '@vostride/agent-qa-runner'
 import type { KnowledgeHintReader, NonActionToolMap } from '@vostride/agent-qa-runner'
 import { createFrozenKnowledgeReader } from '../knowledge-reader.js'
@@ -118,7 +123,7 @@ describe('run knowledge composition', () => {
           // trace would be visible. 387-04 · D-13: a repeat serve must carry the attribution
           // captured when the brief was actually assembled, not one describing the cache hit.
           trace: {
-            schemaVersion: 1,
+            schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
             servedLines: [{
               recordId: `served-${calls}`,
               leg: 'anchor',
@@ -133,7 +138,7 @@ describe('run knowledge composition', () => {
       read: () => { throw new Error('not used') },
       getCautions: () => ({
         block: { cautions: [], budgetUsed: 0, admissions: [] },
-        trace: { schemaVersion: 1, servedLines: [], truncated: [] },
+        trace: { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: [] },
       }),
       getProcedure: () => undefined,
       emitCanaryOutcome: () => {},

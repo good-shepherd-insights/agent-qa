@@ -21,6 +21,7 @@ import {
   type Anchor,
   type BundleProvenance,
   type IndexEntry,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -589,13 +590,13 @@ describe('a trace line is always persistable (387-04)', () => {
 
     expect(line).toEqual({ recordId: 'r', leg: 'anchor', rank: 1, score: 0 })
     expect(ServedRetrievalTraceV1Schema.safeParse({
-      schemaVersion: 1,
+      schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
       servedLines: [line],
       truncated: [],
     }).success).toBe(true)
     // Without normalization the schema refuses both, which is what makes the guard load-bearing.
     expect(ServedRetrievalTraceV1Schema.safeParse({
-      schemaVersion: 1,
+      schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
       servedLines: [{ recordId: 'r', leg: 'anchor', rank: 0, score: Number.NaN }],
       truncated: [],
     }).success).toBe(false)

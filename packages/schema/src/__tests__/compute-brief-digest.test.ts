@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { computeBriefDigest } from '../brief/compute-brief-digest'
+import { SERVED_BRIEF_PROOF_SCHEMA_VERSION } from '../brief/guard-lossless-served-brief'
 import type { ServedBrief } from '../brief/served-brief'
 import { asRecordId } from '../ids/record-id'
 
@@ -97,7 +98,7 @@ const losslessFixtureBrief: ServedBrief = {
   ...fixtureBrief,
   briefDigest: '',
   proof: {
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
     completeness: 'lossless',
     recordCap: 24,
     combinedBudget: 2048,
@@ -182,7 +183,7 @@ const reorderedLosslessFixtureBrief: ServedBrief = {
     combinedBudget: 2048,
     recordCap: 24,
     completeness: 'lossless',
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
   },
   briefDigest: '',
   channel3: reorderedFixtureBrief.channel3,
@@ -263,7 +264,7 @@ describe('computeBriefDigest', () => {
 
   it('matches the lossless served brief v2 known vector', () => {
     expect(computeBriefDigest(losslessFixtureBrief)).toBe(
-      '61e5a1aaf27676eaf0121622c1cfb1b4709402fc449c1a6f838ce4e764bfa42a',
+      'c1cf74d9b99e1275e14b3b73af0ffac2ca595c1ab473d055c5b8fda6c7106e43',
     )
   })
 
@@ -280,7 +281,7 @@ describe('computeBriefDigest', () => {
         'schema version',
         {
           ...losslessFixtureBrief,
-          proof: { ...proof, schemaVersion: 2 } as unknown as ServedBrief['proof'],
+          proof: { ...proof, schemaVersion: 3 } as unknown as ServedBrief['proof'],
         },
       ],
       [

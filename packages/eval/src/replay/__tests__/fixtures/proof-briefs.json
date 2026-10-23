@@ -4,7 +4,7 @@
     "decisionOrdinal": 1,
     "servedBrief": {
       "asOfBuild": 15,
-      "briefDigest": "bab4ebf8756b6e28584be147c08ea8196edd1324f1b3dbc9e7cc9cd0382f2f45",
+      "briefDigest": "5603b97c16a6222897e3ae0f3a96db800617f27dad334abb1bd865957e97c637",
       "budget": 2048,
       "channel1": [
         {
@@ -96,7 +96,7 @@
           }
         ],
         "recordCap": 24,
-        "schemaVersion": 1
+        "schemaVersion": 2
       },
       "scope": {
         "key": "Example Web growth: IANA numbers tour",
@@ -110,7 +110,7 @@
     "decisionOrdinal": 0,
     "servedBrief": {
       "asOfBuild": 5,
-      "briefDigest": "17dc352562248caedff853ab8957143ac972dafcd089237dad9cdc2659d0ddb8",
+      "briefDigest": "2f0f633d128f965833f85609f126f26c53a957192b69ab53f3c02a2db0009ea6",
       "budget": 2048,
       "channel1": [
         {
@@ -156,7 +156,7 @@
           }
         ],
         "recordCap": 24,
-        "schemaVersion": 1
+        "schemaVersion": 2
       },
       "scope": {
         "key": "Automation Exercise growth: product search and detail",
@@ -170,7 +170,7 @@
     "decisionOrdinal": 0,
     "servedBrief": {
       "asOfBuild": 11,
-      "briefDigest": "191b4c222c605f8d5e46a9c46798a8f8facb10cd3f63dddce5a41d998a952304",
+      "briefDigest": "09397a3eb516a2b72dea6b2180e0831d889dba7ac7b6a274762dabff170f21d9",
       "budget": 2048,
       "channel1": [
         {
@@ -216,7 +216,7 @@
           }
         ],
         "recordCap": 24,
-        "schemaVersion": 1
+        "schemaVersion": 2
       },
       "scope": {
         "key": "Example Web growth: IANA domains tour",
@@ -230,7 +230,7 @@
     "decisionOrdinal": 0,
     "servedBrief": {
       "asOfBuild": 7,
-      "briefDigest": "361ae00bf30aa631df74155ed4fcd56458896735490dd027474c40facd063371",
+      "briefDigest": "0db69f78f739c4a411728101fb6b55f9e3c5d1d50968f40e7b8b5464573725ac",
       "budget": 2048,
       "channel1": [
         {
@@ -314,7 +314,7 @@
           }
         ],
         "recordCap": 24,
-        "schemaVersion": 1
+        "schemaVersion": 2
       },
       "scope": {
         "key": "Automation Exercise growth: site tour",

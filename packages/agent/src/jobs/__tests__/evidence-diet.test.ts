@@ -17,7 +17,11 @@
 //              same bytes; exhausting rung 4 returns the rung-4 result with overBudget: true,
 //              never a silently dropped test or channel.
 
-import { canonicalJson, formatLimitStopReason } from '@vostride/agent-qa-schema'
+import {
+  canonicalJson,
+  formatLimitStopReason,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
   CompletedRunHandoff,
@@ -199,7 +203,7 @@ describe('buildEvidencePacks — the D-02 diet', () => {
 
     it('carries the serve-time retrieval trace verbatim when the step recorded one', () => {
       const trace: ServedRetrievalTraceV1 = {
-        schemaVersion: 1,
+        schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: [{ recordId: 'rec-1', leg: 'lexical', rank: 1, score: 0.5 }],
         truncated: [{ recordId: 'rec-2', leg: 'dense', rank: 2, score: 0.25 }],
       }
@@ -226,7 +230,7 @@ describe('compactEvidencePacks — the D-01 ladder', () => {
         { id: 'shot-2', sha: 'sha-b' },
       ],
       retrievalTrace: {
-        schemaVersion: 1,
+        schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: [{ recordId: 'rec-1', leg: 'anchor', rank: 1, score: 1.5 }],
         truncated: [],
       },

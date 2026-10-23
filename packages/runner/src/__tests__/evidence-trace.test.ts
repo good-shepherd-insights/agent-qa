@@ -25,6 +25,7 @@ import {
   type ScopeKey,
   type ServedRetrievalTraceV1,
   type TraceLine,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -44,7 +45,7 @@ function trace(
   servedLines: readonly TraceLine[],
   truncated: readonly TraceLine[] = [],
 ): ServedRetrievalTraceV1 {
-  return { schemaVersion: 1, servedLines: [...servedLines], truncated: [...truncated] }
+  return { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [...servedLines], truncated: [...truncated] }
 }
 
 function block(ids: readonly string[]): BriefBlock {
@@ -393,7 +394,7 @@ describe('the assembled handoff carries a trace-bearing step at schemaVersion 5 
 
     const step = reloaded.tests[0]!.steps[0]!
     expect(step.retrievalTrace).toEqual({
-      schemaVersion: 1,
+      schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
       servedLines: [{ recordId: 'fact-a', leg: 'anchor', rank: 1, score: 0.9 }],
       truncated: [{ recordId: 'fact-b', leg: 'anchor', rank: 2, score: 0.4 }],
     })
@@ -404,7 +405,7 @@ describe('the assembled handoff carries a trace-bearing step at schemaVersion 5 
       ...handoff,
       tests: [{
         ...handoff.tests[0]!,
-        steps: [{ ...step, retrievalTrace: { schemaVersion: 1, servedLines: [{ recordId: 'x' }] } }],
+        steps: [{ ...step, retrievalTrace: { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId: 'x' }] } }],
       }],
     })))).toThrow()
   })

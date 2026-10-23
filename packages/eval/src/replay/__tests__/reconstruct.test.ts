@@ -1,5 +1,5 @@
 import { makeScreenState } from '@vostride/agent-qa-runner'
-import { asRecordId, sha256hex } from '@vostride/agent-qa-schema'
+import { asRecordId, sha256hex, SERVED_BRIEF_PROOF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
   ServedBrief,
@@ -73,7 +73,7 @@ function proofBrief(promptTurns: ServedPromptTurn[]): ServedBrief {
     ...emptyBrief(),
     channel3: [{ id: asRecordId('proof-caution'), anchors: [], summary: 'a caution' }],
     proof: {
-      schemaVersion: 1,
+      schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
       completeness: 'lossless',
       recordCap: 10,
       combinedBudget: 100,
@@ -83,6 +83,7 @@ function proofBrief(promptTurns: ServedPromptTurn[]): ServedBrief {
   }
 }
 
+// The four served briefs below carry current lossless proofs.
 const proofFixtures = JSON.parse(
   readFileSync(new URL('./fixtures/proof-briefs.json', import.meta.url), 'utf8'),
 ) as { id: string; decisionOrdinal: number; servedBrief: ServedBrief }[]
@@ -309,21 +310,4 @@ describe('reconstructDecisionContext', () => {
     expect(reconstructed.stepContext).not.toHaveProperty('knowledgeBriefL1')
   })
 })
-/*
- * Regenerate the four proof fixtures from agent-qa/ (read-only corpus projection):
- * node -e '
- * const fs = require("node:fs"), path = require("node:path");
- * const dirs = [
- *   "example-web/r_ingle-mixed-unlink-reb-bod-gross-foot-sic-bum-virus/test-00-step-03-d01-leaf",
- *   "automation-exercise/r_loa-spy-anana-psi-swiper-punt-dao-kol-orgia-leo/test-00-step-00-d00-leaf",
- *   "example-web/r_all-urent-opera-split-cal-arrow-shield-bert-idol-oxygen/test-00-step-00-d00-leaf",
- *   "automation-exercise/r_atria-patch-ounds-soap-hay-coli-thouse-ens-abele-rust/test-00-step-00-d00-leaf"
- * ];
- * const fixtures = dirs.map(dir => {
- *   const c = JSON.parse(fs.readFileSync(path.join("../demo/init/agent-qa-eval/cassettes", dir, "cassette.json"), "utf8"));
- *   return { id: c.id, decisionOrdinal: c.input.decisionOrdinal, servedBrief: c.input.servedBrief };
- * });
- * fs.writeFileSync("packages/eval/src/replay/__tests__/fixtures/proof-briefs.json", JSON.stringify(fixtures, null, 2) + "\n");
- * '
- */
 import { readFileSync } from 'node:fs'

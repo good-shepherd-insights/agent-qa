@@ -75,7 +75,7 @@ expectTypeOf<ServedPromptTurn>().toEqualTypeOf<{
 }>()
 
 expectTypeOf<LosslessServedBriefProofV1>().toEqualTypeOf<{
-  schemaVersion: 1
+  schemaVersion: 2
   completeness: 'lossless'
   recordCap: number
   combinedBudget: number

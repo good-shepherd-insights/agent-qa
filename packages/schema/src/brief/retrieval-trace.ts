@@ -68,17 +68,16 @@ export const TraceLineSchema = z.object({
 
 export type TraceLine = z.infer<typeof TraceLineSchema>
 
+export const RETRIEVAL_TRACE_SCHEMA_VERSION = 2
+
 /**
- * The trace as persisted, stamped with its own literal `schemaVersion` in the committed-
- * artifact style `LosslessServedBriefProofV1` established: the stamp travels with the value,
- * so a trace read out of a two-year-old handoff states which contract it was written under
- * rather than being interpreted under today's.
+ * The trace as persisted, stamped with `RETRIEVAL_TRACE_SCHEMA_VERSION`.
  *
  * `servedLines` is deliberately unbounded — the serving budget already bounds how many lines
  * can be served, so a second cap here would only ever disagree with the first.
  */
 export const ServedRetrievalTraceV1Schema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(RETRIEVAL_TRACE_SCHEMA_VERSION),
   servedLines: z.array(TraceLineSchema),
   truncated: z.array(TraceLineSchema).max(TRACE_TRUNCATION_TOP_K),
 }).strict()

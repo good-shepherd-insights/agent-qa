@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   RETRIEVAL_TRACE_LEGS,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
   ServedRetrievalTraceV1Schema,
   TRACE_TRUNCATION_TOP_K,
   TraceLineSchema,
@@ -45,7 +46,7 @@ function line(overrides: Partial<TraceLine> = {}): TraceLine {
 
 function trace(overrides: Partial<ServedRetrievalTraceV1> = {}): ServedRetrievalTraceV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
     servedLines: [line()],
     truncated: [line({ recordId: 'rec-checkout-2', rank: 2, score: 0.11 })],
     ...overrides,
@@ -59,10 +60,10 @@ function ledgerOf(size: number): TraceLine[] {
 }
 
 describe('ServedRetrievalTraceV1 (D-14 grain)', () => {
-  it('accepts a full-attribution trace at schemaVersion 1', () => {
+  it('accepts a full-attribution trace at RETRIEVAL_TRACE_SCHEMA_VERSION', () => {
     const parsed = ServedRetrievalTraceV1Schema.parse(trace())
 
-    expect(parsed.schemaVersion).toBe(1)
+    expect(parsed.schemaVersion).toBe(RETRIEVAL_TRACE_SCHEMA_VERSION)
     expect(parsed.servedLines).toEqual([
       { recordId: 'rec-checkout-1', leg: 'lexical', rank: 1, score: 0.42 },
     ])
@@ -88,13 +89,13 @@ describe('ServedRetrievalTraceV1 (D-14 grain)', () => {
     ).toThrow()
   })
 
-  it('rejects a missing schemaVersion and a schemaVersion other than the literal 1', () => {
+  it('rejects a missing schemaVersion and any other schemaVersion', () => {
     const { schemaVersion: _omit, ...withoutVersion } = trace()
     void _omit
 
     expect(() => ServedRetrievalTraceV1Schema.parse(withoutVersion)).toThrow()
     expect(() =>
-      ServedRetrievalTraceV1Schema.parse({ ...trace(), schemaVersion: 2 }),
+      ServedRetrievalTraceV1Schema.parse({ ...trace(), schemaVersion: 3 }),
     ).toThrow()
   })
 
@@ -268,10 +269,10 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
     // same present-implies-valid discipline `planSource` and `interpolatedVariables` carry.
     const cases: unknown[] = [
       'not-an-object',
-      { schemaVersion: 1, servedLines: [], truncated: [] , extra: true },
-      { schemaVersion: 1, servedLines: [{ recordId: 'r', leg: 'graph', rank: 1, score: 1 }], truncated: [] },
-      { schemaVersion: 1, servedLines: [{ recordId: 'r', leg: 'dense', rank: 0, score: 1 }], truncated: [] },
-      { schemaVersion: 1, servedLines: [], truncated: ledgerOf(TRACE_TRUNCATION_TOP_K + 1) },
+      { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: [] , extra: true },
+      { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId: 'r', leg: 'graph', rank: 1, score: 1 }], truncated: [] },
+      { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [{ recordId: 'r', leg: 'dense', rank: 0, score: 1 }], truncated: [] },
+      { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: ledgerOf(TRACE_TRUNCATION_TOP_K + 1) },
       { servedLines: [], truncated: [] },
     ]
 

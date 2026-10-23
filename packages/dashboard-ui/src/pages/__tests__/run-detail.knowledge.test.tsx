@@ -24,7 +24,11 @@ import { createRoot, type Root } from "react-dom/client"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { asRef, type RunKnowledgeProjection } from "@vostride/agent-qa-schema"
+import {
+  asRef,
+  type RunKnowledgeProjection,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from "@vostride/agent-qa-schema"
 
 import RunDetailPage from "@/pages/run-detail"
 import {
@@ -187,7 +191,7 @@ const POPULATED: RunKnowledgeProjection = {
     trace: {
       kind: "answered",
       trace: {
-        schemaVersion: 1,
+        schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: [{ recordId: "rec_cart_url", leg: "anchor", rank: 1, score: 1.48695 }],
         truncated: [{ recordId: "rec_cut", leg: "lexical", rank: 21, score: 0.11 }],
       },

@@ -24,7 +24,11 @@ import * as model from '@vostride/agent-qa-model'
 import * as ai from 'ai'
 import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
+import {
+  computeBriefDigest,
+  type LosslessServedBriefProofV1,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import {
   ADVERSARIAL_PROMPT_VERSION,
   PROBE_GENERATOR_KINDS,
@@ -75,7 +79,7 @@ afterEach(() => {
 
 function proof(): LosslessServedBriefProofV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
     completeness: 'lossless',
     recordCap: 8,
     combinedBudget: 2048,

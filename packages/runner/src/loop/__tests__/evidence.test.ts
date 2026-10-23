@@ -8,6 +8,7 @@ import {
   guardLosslessServedBrief,
   NO_KNOWLEDGE_READER_TRUNCATION,
   sha256hex,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   Action,
@@ -255,7 +256,7 @@ describe('EvidenceRecorder — lossless ServedBrief proof', () => {
     const brief = recorder.finalize(passVerdict, 0, 'checkout').servedBrief
 
     expect(brief.proof).toEqual({
-      schemaVersion: 1,
+      schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
       completeness: 'lossless',
       recordCap: 8,
       combinedBudget: 576,

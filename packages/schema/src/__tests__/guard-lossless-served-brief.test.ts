@@ -3,6 +3,7 @@ import {
   LosslessServedBriefError,
   LosslessServedBriefSchema,
   guardLosslessServedBrief,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
 } from '../brief/guard-lossless-served-brief'
 import { guardLosslessServedBrief as briefBarrelGuard } from '../brief/index'
 import { computeBriefDigest } from '../brief/compute-brief-digest'
@@ -71,7 +72,7 @@ function validZeroRecordBrief(): LosslessServedBrief {
     channel3: [],
     briefDigest: '',
     proof: {
-      schemaVersion: 1,
+      schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
       completeness: 'lossless',
       recordCap: 24,
       combinedBudget: 2048,

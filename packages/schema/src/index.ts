@@ -293,12 +293,14 @@ export {
 export {
   LosslessServedBriefError,
   LosslessServedBriefSchema,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
   computeBriefDigest,
   guardLosslessServedBrief,
 } from './brief/index'
 // 387 KREV-02 D-13/D-14: the serve-time retrieval trace, persisted beside ServedBrief.
 export {
   RETRIEVAL_TRACE_LEGS,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
   ServedRetrievalTraceV1Schema,
   TRACE_TRUNCATION_TOP_K,
   TraceLineSchema,

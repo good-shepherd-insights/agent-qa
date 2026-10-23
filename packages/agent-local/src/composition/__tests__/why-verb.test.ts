@@ -36,6 +36,7 @@ import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   asEvidenceToken,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   BriefBlock,
@@ -506,7 +507,7 @@ describe('knowledge.brief.why answers from the persisted trace (387-06)', () => 
     })
     expect(stranger).toEqual({
       kind: 'answered',
-      trace: { schemaVersion: 1, servedLines: [], truncated: [] },
+      trace: { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: [] },
     })
   })
 

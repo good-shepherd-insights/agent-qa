@@ -7,6 +7,7 @@
  * cast, because an `as unknown as KnowledgeHintReader` stub is precisely the shape that stops a
  * port change from reddening anything.
  */
+import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   BriefBlock,
   CautionBlock,
@@ -16,7 +17,7 @@ import type { ServedCautions, ServedRunBrief } from '../../../knowledge-hint-rea
 
 /** A structurally valid trace with nothing in it — a stub reader served nothing to attribute. */
 export function emptyTrace(): ServedRetrievalTraceV1 {
-  return { schemaVersion: 1, servedLines: [], truncated: [] }
+  return { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: [] }
 }
 
 export function servedBrief(

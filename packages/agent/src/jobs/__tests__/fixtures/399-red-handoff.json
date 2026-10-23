@@ -47,9 +47,9 @@
             ],
             "channel2": [],
             "channel3": [],
-            "briefDigest": "913171e542e794d9833af678d35464606c1f3ce50b0300c51f3344683f1d84c7",
+            "briefDigest": "16af311e1f3a9a4c08147ab07053a9ae9bfc5a9b1b7f41d1e6a522cd4d99753e",
             "proof": {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
               "completeness": "lossless",
               "recordCap": 24,
               "combinedBudget": 6815,
@@ -184,7 +184,7 @@
             "reasoning": "The Products link existed and the recorded action clicked that target. After the click, a Google vignette advertisement overlay appeared, but there is no visible application error or clear evidence that the click itself failed. Since this is an action step and not a verification of the Products page, the click is considered accomplished."
           },
           "retrievalTrace": {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "servedLines": [
               {
                 "recordId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",
@@ -234,9 +234,9 @@
             ],
             "channel2": [],
             "channel3": [],
-            "briefDigest": "036de2f90931eb2696dea5a8b480d8eae3b3e0eff7b97582b1df0794be6c3b7c",
+            "briefDigest": "aab4bd9bd41b15cb42a9843d9ee068b3c873c272ee334a51ebd8c3b18423cb72",
             "proof": {
-              "schemaVersion": 1,
+              "schemaVersion": 2,
               "completeness": "lossless",
               "recordCap": 24,
               "combinedBudget": 6815,
@@ -886,7 +886,7 @@
             "reasoning": "Step declared infeasible: After dismissing the ad overlay and scrolling to the bottom of the Products page, the text “Kitchen Appliances” is not visible or present in the observed page content."
           },
           "retrievalTrace": {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "servedLines": [
               {
                 "recordId": "fact-page-https-automationexercise-com-products-4ccac2f8443decea",

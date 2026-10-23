@@ -12,7 +12,11 @@ import {
 } from '@vostride/agent-qa-eval'
 import type { ArtifactSource, ExtractedCassette, SeedingPlan } from '@vostride/agent-qa-eval'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { asRef, computeBriefDigest } from '@vostride/agent-qa-schema'
+import {
+  asRef,
+  computeBriefDigest,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   Decision,
@@ -340,7 +344,7 @@ function losslessProof(text: string): LosslessServedBriefProofV1 {
     volatileTierDigest: 'c'.repeat(64),
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
     completeness: 'lossless',
     recordCap: 8,
     combinedBudget: 4_096,

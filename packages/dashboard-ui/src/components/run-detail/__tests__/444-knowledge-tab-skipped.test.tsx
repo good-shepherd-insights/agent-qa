@@ -16,6 +16,7 @@ import {
   RunKnowledgeProjectionSchema,
   type PostProcessingSkipReason,
   type RunKnowledgeProjection,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
 } from "@vostride/agent-qa-schema"
 
 import { TabKnowledge } from "@/components/run-detail/tab-knowledge"
@@ -99,7 +100,7 @@ function world({ reason, changes = [], canaryAttributions = [] }: WorldOptions =
       trace: {
         kind: "answered",
         trace: {
-          schemaVersion: 1,
+          schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
           servedLines: [{ recordId: CANARY_ID, leg: "anchor", rank: 1, score: 1.48695 }],
           truncated: [],
         },

@@ -29,7 +29,12 @@ import {
   type LeafCassette,
   type SeedingPlan,
 } from '@vostride/agent-qa-eval'
-import { asRunId, computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  computeBriefDigest,
+  type LosslessServedBriefProofV1,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import {
   stageAdversarialProposal,
   type StageAdversarialProposalResult,
@@ -63,7 +68,7 @@ const SEED_COUNT = 10
 
 function proof(): LosslessServedBriefProofV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
     completeness: 'lossless',
     recordCap: 8,
     combinedBudget: 2048,

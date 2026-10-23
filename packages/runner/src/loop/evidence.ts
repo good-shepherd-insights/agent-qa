@@ -13,6 +13,8 @@ import {
   EvidenceArtifactRefSchema,
   NO_KNOWLEDGE_READER_TRUNCATION,
   readIdempotentNoopMeta,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
   toRecordedActionResult,
   TRACE_TRUNCATION_TOP_K,
 } from '@vostride/agent-qa-schema'
@@ -389,7 +391,7 @@ export class EvidenceRecorder {
     this.replaceServedBrief({
       ...this.servedBrief,
       proof: {
-        schemaVersion: 1,
+        schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
         completeness: 'lossless',
         recordCap: input.recordCap,
         combinedBudget: input.combinedBudget,
@@ -721,13 +723,13 @@ export class EvidenceRecorder {
   private foldRetrievalTrace(): ServedRetrievalTraceV1 | undefined {
     if (this.channel1Trace === undefined && this.channel3TraceLines.length === 0) {
       return this.channel3Truncated.length === 0 ? undefined : {
-        schemaVersion: 1,
+        schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: [],
         truncated: this.channel3Truncated.slice(0, TRACE_TRUNCATION_TOP_K),
       }
     }
     return {
-      schemaVersion: 1,
+      schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
       servedLines: [
         ...(this.channel1Trace?.servedLines ?? []),
         ...this.channel3TraceLines,

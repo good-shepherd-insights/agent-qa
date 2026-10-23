@@ -5,6 +5,8 @@ import { asRecordId } from '../ids/record-id'
 import { computeBriefDigest } from './compute-brief-digest'
 import type { LosslessServedBriefProofV1, ServedBrief } from './served-brief'
 
+export const SERVED_BRIEF_PROOF_SCHEMA_VERSION = 2
+
 export type LosslessServedBrief = ServedBrief & {
   proof: LosslessServedBriefProofV1
 }
@@ -117,7 +119,7 @@ const servedPromptTurnSchema = z
 
 const losslessProofSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(SERVED_BRIEF_PROOF_SCHEMA_VERSION),
     completeness: z.literal('lossless'),
     recordCap: nonnegativeIntegerSchema,
     combinedBudget: nonnegativeIntegerSchema,

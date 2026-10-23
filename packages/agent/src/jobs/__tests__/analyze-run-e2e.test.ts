@@ -19,6 +19,7 @@
 import {
   canonicalJson,
   slugBranch,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
@@ -327,7 +328,7 @@ describe('the same fixture as the D-01 compaction stressor (forced channels inta
       evidenceText: LONG_EVIDENCE,
       decisionScreenshotRefs: [{ id: 'shot-1', sha: SCREENSHOT_SHA }],
       retrievalTrace: {
-        schemaVersion: 1,
+        schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: [{ recordId: 'rec-e2e-trace', leg: 'lexical', rank: 1, score: 0.5 }],
         truncated: [],
       },

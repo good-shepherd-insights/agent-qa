@@ -1,5 +1,5 @@
 import { PlanningTurnError } from '@vostride/agent-qa-runner'
-import { asRecordId, sha256hex } from '@vostride/agent-qa-schema'
+import { asRecordId, sha256hex, SERVED_BRIEF_PROOF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import type { ArtifactSource } from '../../ports'
 import type { ArtifactRef } from '@vostride/agent-qa-schema'
@@ -270,7 +270,7 @@ describe('replayCassette — single sample', () => {
     ]
     const policyL0 = 'recorded policy'
     cassette.input.servedBrief.proof = {
-      schemaVersion: 1,
+      schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
       completeness: 'lossless',
       recordCap: 10,
       combinedBudget: 100,

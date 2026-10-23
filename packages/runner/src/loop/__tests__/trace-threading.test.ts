@@ -18,7 +18,12 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { computeBriefDigest, type BriefBlock, type TraceLine } from '@vostride/agent-qa-schema'
+import {
+  computeBriefDigest,
+  type BriefBlock,
+  type TraceLine,
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import type { KnowledgeHintReader, ServedCautions } from '../../knowledge-hint-reader.js'
@@ -56,15 +61,15 @@ describe('the loop threads the serve-time trace to the evidence seam (387-04)', 
     for (const forbidden of [
       'servedLines: []',
       'truncated: []',
-      'schemaVersion: 1',
+      'schemaVersion:',
     ]) {
       expect(occurrences(source, forbidden)).toBe(0)
     }
 
     // POSITIVE CONTROL: the fabricated-trace shape this scan exists to reject is rejected.
-    const planted = `${source}\n  recorder.recordServedBrief({ block, trace: { schemaVersion: 1, servedLines: [], truncated: [] } })\n`
+    const planted = `${source}\n  recorder.recordServedBrief({ block, trace: { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: [] } })\n`
     expect(occurrences(planted, 'servedLines: []')).toBe(1)
-    expect(occurrences(planted, 'schemaVersion: 1')).toBe(1)
+    expect(occurrences(planted, 'schemaVersion:')).toBe(1)
 
     // INVERSE CONTROL: the same shape in PROSE must not be flagged, which is the failure mode a
     // naive substring scan hits in this file — it explains the contract it implements.
@@ -170,7 +175,7 @@ describe('a turn that injected ZERO cautions still lands the reader cut ledger (
     const served = await replanAfterFailure(servedCautions(
       { cautions: [], budgetUsed: 0, admissions: [] },
       {
-        schemaVersion: 1,
+        schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
         servedLines: [],
         truncated: [cut('caution-cut-a', 4, 0.31), cut('caution-cut-b', 5, 0.22)],
       },
@@ -190,7 +195,7 @@ describe('a turn that injected ZERO cautions still lands the reader cut ledger (
     // ONLY in what the reader's caution trace carried.
     const laden = await replanAfterFailure(servedCautions(
       { cautions: [], budgetUsed: 0, admissions: [] },
-      { schemaVersion: 1, servedLines: [], truncated: [cut('caution-cut-a', 4, 0.31)] },
+      { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: [cut('caution-cut-a', 4, 0.31)] },
     ))
     const baseline = await replanAfterFailure(noCautions())
 
@@ -224,7 +229,7 @@ describe('a turn that injected ZERO cautions still lands the reader cut ledger (
 function stagedServe(served: TraceLine[], cutCandidates: TraceLine[]): ServedCautions {
   return servedCautions(
     { cautions: [], budgetUsed: 0, admissions: [] },
-    { schemaVersion: 1, servedLines: served, truncated: cutCandidates },
+    { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: served, truncated: cutCandidates },
   )
 }
 

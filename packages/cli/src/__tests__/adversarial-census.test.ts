@@ -15,7 +15,11 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as model from '@vostride/agent-qa-model'
-import { computeBriefDigest, type LosslessServedBriefProofV1 } from '@vostride/agent-qa-schema'
+import {
+  computeBriefDigest,
+  type LosslessServedBriefProofV1,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import {
   committedFileText,
   extractRunCassettes,
@@ -60,7 +64,7 @@ afterEach(() => {
 
 function proof(): LosslessServedBriefProofV1 {
   return {
-    schemaVersion: 1,
+    schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
     completeness: 'lossless',
     recordCap: 8,
     combinedBudget: 2048,
