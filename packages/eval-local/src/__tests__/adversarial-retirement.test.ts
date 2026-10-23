@@ -381,7 +381,7 @@ describe('422 adversarial retirement integrity and recovery', () => {
 
   it.each(['empty', 'malformed', 'foreign', 'live', 'symlink', 'partial', 'extra-file'])('leaves %s lifecycle ownership busy and intact', async mode => {
     const f = await stagedFixture(1)
-    const owner = { schemaVersion: 1, product: 'default', batchDigest: f.batchDigest, pid: process.pid,
+    const owner = { schemaVersion: 2, product: 'default', batchDigest: f.batchDigest, pid: process.pid,
       token: '11111111-1111-4111-8111-111111111111' }
     mkdirSync(f.lock)
     if (mode === 'symlink') {
@@ -399,7 +399,7 @@ describe('422 adversarial retirement integrity and recovery', () => {
   it.each(['EPERM', 'UNKNOWN'])('does not reap an owner whose liveness check returns %s', async code => {
     const f = await stagedFixture(1)
     mkdirSync(f.lock)
-    writeFileSync(join(f.lock, 'owner.json'), committedFileText({ schemaVersion: 1, product: f.product,
+    writeFileSync(join(f.lock, 'owner.json'), committedFileText({ schemaVersion: 2, product: f.product,
       batchDigest: f.batchDigest, pid: process.pid, token: '11111111-1111-4111-8111-111111111111' }))
     const before = tree(f.root)
     vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('uncertain'), { code }) })

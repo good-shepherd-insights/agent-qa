@@ -74,6 +74,8 @@ import { slugBranch, type MaskFn } from '@vostride/agent-qa-schema'
 import { z } from 'zod'
 
 import {
+  ADVERSARIAL_PROBE_SCHEMA_VERSION,
+  ADVERSARIAL_STATE_SCHEMA_VERSION,
   adversarialRefreshRecordDigest,
   adversarialTupleKey,
   completeProbeCall,
@@ -156,7 +158,7 @@ export interface AdversarialBatchManifestCase {
 
 /** The reviewed batch: what an operator admits with `--batch <digest>` (D-01/D-02). */
 export interface AdversarialBatchManifest {
-  schemaVersion: 1
+  schemaVersion: 2
   product: string
   /** sha256 over the pinned case list; equals the staging directory name. */
   batchDigest: string
@@ -187,7 +189,7 @@ const manifestCaseSchema = z.object({
 }).strict()
 
 const manifestSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   product: z.string().min(1),
   batchDigest: digestField,
   tableVersion: z.number().int().nonnegative(),
@@ -506,7 +508,7 @@ export interface AdversarialAdmissionResult {
 }
 
 const retirementSchema = z.object({
-  schemaVersion: z.literal(1), product: z.string().min(1), batchDigest: digestField,
+  schemaVersion: z.literal(2), product: z.string().min(1), batchDigest: digestField,
   manifestSha256: digestField, reviewedCaseIds: z.array(z.string().min(1)).min(1),
   alreadyCommittedCaseIds: z.array(z.string().min(1)),
 }).strict()
@@ -545,7 +547,7 @@ function validateBatchIdentity(product: string, digest: string): void {
   if (!LOWER_HEX_64.test(digest)) throw new TypeError('adversarial batch must be an exact lowercase SHA256 digest')
 }
 
-const lifecycleOwnerSchema = z.object({ schemaVersion: z.literal(1),
+const lifecycleOwnerSchema = z.object({ schemaVersion: z.literal(2),
   product: z.string().min(1), batchDigest: digestField,
   pid: z.number().int().positive(), token: z.uuid(),
 }).strict()
@@ -580,7 +582,7 @@ function lifecycleOwnerDead(pid: number): boolean {
 
 /** Nonblocking mark-lock protocol: keep nonempty dead-generation tombstones to fence ABA. */
 function acquireLifecycleLock(lock: string, identity: Pick<LifecycleOwner, 'product' | 'batchDigest'>): () => void {
-  const owner: LifecycleOwner = { schemaVersion: 1, product: identity.product,
+  const owner: LifecycleOwner = { schemaVersion: 2, product: identity.product,
     batchDigest: identity.batchDigest, pid: process.pid, token: randomUUID() }
   const candidate = `${lock}.candidate-${owner.token}`
   mkdirSync(candidate)
@@ -674,7 +676,7 @@ export function retireStagedAdversarialBatch(input: RetireStagedAdversarialBatch
       if (present !== 0 && present !== 3) throw new TypeError('adversarial committed case is incomplete')
       if (present === 3) alreadyCommittedCaseIds.push(row.cassette.id)
     }
-    const record: AdversarialRetirementRecord = { schemaVersion: 1, product: input.product,
+    const record: AdversarialRetirementRecord = { schemaVersion: 2, product: input.product,
       batchDigest: input.batchDigest, manifestSha256: textHash(readStagedFile(batch.dir, ADVERSARIAL_MANIFEST_FILE)),
       reviewedCaseIds: batch.manifest.cases.map(row => row.cassetteId), alreadyCommittedCaseIds }
     if (batch.retirement !== undefined) {
@@ -799,7 +801,7 @@ export function computeAdversarialBatchDigest(
   return createHash('sha256')
     .update(
       canonicalJson({
-        schemaVersion: 1,
+        schemaVersion: 2,
         product,
         tableVersion: ADVERSARIAL_TABLE_VERSION,
         tableHash: ADVERSARIAL_TABLE_HASH,
@@ -1255,7 +1257,7 @@ export async function stageAdversarialProposal(
             completeProbeCall({
               agentQaRoot: input.agentQaRoot,
               key: reservationKey,
-              completion: { schemaVersion: 1, outcome: 'error' },
+              completion: { schemaVersion: ADVERSARIAL_PROBE_SCHEMA_VERSION, outcome: 'error' },
             })
             spend.usageKnown = false
             probeSkips.push({ ...row, reason: 'tuple-already-decided' })
@@ -1282,7 +1284,7 @@ export async function stageAdversarialProposal(
         })
         if (derivation.outcome === 'refused') {
           recordProbeOutcome(input.agentQaRoot, attempt, reservationKey, {
-            schemaVersion: 1, outcome: 'invalid', detail: derivation.reason,
+            schemaVersion: ADVERSARIAL_PROBE_SCHEMA_VERSION, outcome: 'invalid', detail: derivation.reason,
           })
           probeRefusals.push({ ...row, reason: derivation.reason })
           continue
@@ -1307,7 +1309,7 @@ export async function stageAdversarialProposal(
         // problem into a permanent exclusion AND discarding an answer already paid for. The
         // deterministic half refuses to settle that same condition for the weaker reason.
         recordProbeOutcome(input.agentQaRoot, attempt, reservationKey, {
-          schemaVersion: 1,
+          schemaVersion: ADVERSARIAL_PROBE_SCHEMA_VERSION,
           outcome: 'derived',
           text: probe.text,
           cassetteId: probe.cassette.id,
@@ -1376,7 +1378,7 @@ export async function stageAdversarialProposal(
   ].sort()
 
   const record: AdversarialRefreshRecord = {
-    schemaVersion: 1,
+    schemaVersion: ADVERSARIAL_STATE_SCHEMA_VERSION,
     product: input.product,
     tableVersion: ADVERSARIAL_TABLE_VERSION,
     sourceDigest,
@@ -1441,7 +1443,7 @@ export async function stageAdversarialProposal(
   if (pathPresent(dir)) return existingBatchOutcome()
 
   const manifest: AdversarialBatchManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     product: input.product,
     batchDigest,
     tableVersion: ADVERSARIAL_TABLE_VERSION,

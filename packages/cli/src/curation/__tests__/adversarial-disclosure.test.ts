@@ -492,7 +492,7 @@ describe('the doctor Learning-mode row (D-09/D-19)', () => {
     // batch; `listStagedAdversarial` throws on it by design, and the row must surface that
     // rather than fall back to the same `not recorded` an empty root produces.
     writeFileSync(join(batchDir, ADVERSARIAL_MANIFEST_FILE), JSON.stringify({
-      schemaVersion: 1, product: 'demo', batchDigest: digest, tableVersion: 1,
+      schemaVersion: 2, product: 'demo', batchDigest: digest, tableVersion: 1,
       tableHash: 'c'.repeat(64), stagedAt: '2026-09-12T00:00:00.000Z', cases: [],
     }))
     const row = await learningRow(p)

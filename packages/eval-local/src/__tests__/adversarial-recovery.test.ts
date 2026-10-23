@@ -40,6 +40,7 @@ import {
   type StageAdversarialProposalResult,
 } from '../adversarial-composition.js'
 import {
+  ADVERSARIAL_STATE_SCHEMA_VERSION,
   ADVERSARIAL_STATE_SUBDIR,
   adversarialRefreshRecordDigest,
   derivedAdversarialCassetteIds,
@@ -280,7 +281,7 @@ describe('422 adversarial refresh bounding and recovery', () => {
 
   it('keeps every older committed id while a new table generation reopens its tuples', async () => {
     const record: AdversarialRefreshRecord = {
-      schemaVersion: 1,
+      schemaVersion: ADVERSARIAL_STATE_SCHEMA_VERSION,
       product: 'default',
       tableVersion: 1,
       sourceDigest: 'a'.repeat(64),

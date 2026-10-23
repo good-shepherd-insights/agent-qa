@@ -54,7 +54,7 @@ import { z } from 'zod'
  */
 export const ADVERSARIAL_STATE_SUBDIR = 'eval/adversarial-state'
 
-export const ADVERSARIAL_STATE_SCHEMA_VERSION = 1
+export const ADVERSARIAL_STATE_SCHEMA_VERSION = 2
 
 /**
  * The separator the settled-tuple key joins on — the `adversarialDrawKey` idiom. No cassette id
@@ -98,7 +98,7 @@ export interface AdversarialSeedCap {
 }
 
 export interface AdversarialRefreshRecord {
-  schemaVersion: 1
+  schemaVersion: typeof ADVERSARIAL_STATE_SCHEMA_VERSION
   product: string
   /** The frozen table generation these outcomes were decided under. */
   tableVersion: number
@@ -379,7 +379,7 @@ export function derivedAdversarialCassetteIds(
  */
 export const ADVERSARIAL_PROBE_SUBDIR = 'eval/adversarial-probes'
 
-export const ADVERSARIAL_PROBE_SCHEMA_VERSION = 1
+export const ADVERSARIAL_PROBE_SCHEMA_VERSION = 2
 
 /** D-11's idempotence key, as durable fields. */
 export interface ProbeReservationKey {
@@ -391,7 +391,7 @@ export interface ProbeReservationKey {
 
 /** The row written BEFORE a provider is contacted. Its existence is the charge. */
 export interface ProbeReservation extends ProbeReservationKey {
-  schemaVersion: 1
+  schemaVersion: typeof ADVERSARIAL_PROBE_SCHEMA_VERSION
   /** The frozen prompt hash the request was rendered from. */
   promptHash: string
   /** sha256 of the configured model id — never the id, which can embed a credential. */
@@ -412,7 +412,7 @@ export interface ProbeReservation extends ProbeReservationKey {
 export type ProbeCompletionOutcome = 'derived' | 'refused' | 'invalid' | 'error'
 
 export interface ProbeCompletion {
-  schemaVersion: 1
+  schemaVersion: typeof ADVERSARIAL_PROBE_SCHEMA_VERSION
   outcome: ProbeCompletionOutcome
   /** Present only on `derived`: the authored text and the id it produced. */
   text?: string

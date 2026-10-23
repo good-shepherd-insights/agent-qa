@@ -1,25 +1,42 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as core from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
 import {
   MARK_RECEIPT_SCHEMA_VERSION,
+  SERVED_BRIEF_PROOF_SCHEMA_VERSION,
   asRunId,
+  computeBriefDigest,
   sha256hex,
   slugBranch,
   type MarkReceipt,
 } from '@vostride/agent-qa-schema'
-import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as local from '../index.js'
-import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
+import { LOCAL_FIXTURE_BLOB_BYTES, LOCAL_FIXTURE_BLOB_SHA, makeLocalV2Handoff } from './fixtures/local-handoff-fixture.js'
 
 const NO_DECLARED_SECRETS = (text: string) => text
 const roots: string[] = []
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => {
+  vi.restoreAllMocks()
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 const digest = (value: unknown) => sha256hex(core.canonicalJson(value))
 const tempRoot = (prefix: string) => { const root = mkdtempSync(join(tmpdir(), prefix)); roots.push(root); return root }
 const readJson = (file: string) => JSON.parse(readFileSync(file, 'utf8'))
+const filesUnder = (dir: string, suffix: string) => readdirSync(dir, { recursive: true, withFileTypes: true })
+  .filter(entry => entry.isFile() && !entry.name.startsWith('.') && entry.name.endsWith(suffix))
+  .map(entry => join(entry.parentPath, entry.name)).sort()
+
+function restampOne(file: string): void {
+  const text = readFileSync(file, 'utf8')
+  const stamps = text.match(/"schemaVersion":\s*2\b/g) ?? []
+  expect(stamps).toHaveLength(1)
+  writeFileSync(file, text.replace(/("schemaVersion":\s*)2\b/, (_, key: string) => `${key}1`))
+  expect(readJson(file).schemaVersion).toBe(1)
+}
 
 function calibrationFixture() {
   const root = tempRoot('eval-runtime-stamps-')
@@ -68,6 +85,45 @@ function calibrationFixture() {
   return { scoreFile, saveReport, read }
 }
 
+function adversarialFixture() {
+  const root = tempRoot('eval-runtime-stamps-adversarial-')
+  const committedRoot = join(root, 'committed'), agentQaRoot = join(root, '.agent-qa')
+  mkdirSync(agentQaRoot, { recursive: true })
+  const handoff = makeLocalV2Handoff({ runId: asRunId('run / eval-runtime-stamps adversarial') })
+  const member = handoff.tests[0]!
+  member.steps = [member.steps[0]!]
+  const brief = member.steps[0]!.servedBrief
+  brief.proof = { schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION, completeness: 'lossless', recordCap: 8,
+    combinedBudget: 2048, admissionEvents: [], promptTurns: [{ ordinal: 0, turnOrdinal: 0,
+      runDate: new Date(0).toISOString().slice(0, 10), policyL0: 'policy', learnedL1: 'learned one',
+      learnedL2: 'learned two', contextTier: 'context', volatileTier: 'volatile', policyDigest: '1'.repeat(64),
+      contextTierDigest: '2'.repeat(64), volatileTierDigest: '3'.repeat(64) }] }
+  brief.channel3 = [{ id: 'eval-runtime-stamps-caution' as never, anchors: [], summary: 'served caution' }]
+  brief.briefDigest = computeBriefDigest(brief)
+  const extracted = core.extractRunCassettes({ handoff,
+    artifacts: { getBlob: sha => (sha === LOCAL_FIXTURE_BLOB_SHA ? LOCAL_FIXTURE_BLOB_BYTES : undefined) } })
+    .cassettes.find(row => row.cassette.granularity === 'leaf')!
+  const seed = extracted.cassette as core.LeafCassette
+  const plan: core.SeedingPlan = { product: 'default', runId: handoff.runId, runSlug: 'eval-runtime-stamps-adversarial',
+    cases: [{ cassetteId: seed.id, labelRecord: core.projectSilverLabelRecord({ cassette: seed, runId: handoff.runId }),
+      corpusEntry: core.projectCorpusEntry({ cassette: seed, product: 'default', runId: handoff.runId,
+        assignment: { split: 'natural' } }) }],
+    pairSkips: [], silverExclusions: [], pairCounts: { total: 0, sameState: 0, differingState: 0 }, proceduresExcludedCount: 0 }
+  if (local.seedCommittedCorpus({ plan, cassettes: [{ cassette: seed, blobs: extracted.blobs }], committedRoot,
+    mask: NO_DECLARED_SECRETS }).refusals.length) throw new Error('Fixture seed refused')
+  const scope = { agentQaRoot, committedRoot, product: 'default' }
+  const stage = async () => {
+    const staged = await local.stageAdversarialProposal({ ...scope, mutators: ['confusable'],
+      probeAuthor: { author: async () => ({ text: 'Continue to the reviewed control', usage: { promptTokens: 101, completionTokens: 11 } }) },
+      authoringModel: { id: 'eval-runtime-stamps-author', family: 'fixture-family' } })
+    expect(staged.kind).toBe('staged')
+    const [batch] = local.listStagedAdversarial(scope)
+    return { batchDigest: staged.batchDigest!, dir: batch!.dir,
+      lock: join(batch!.dir, '..', `.pending-lifecycle-${staged.batchDigest!}`) }
+  }
+  return { scope, stage }
+}
+
 describe('eval runtime stamps', () => {
   it('admits a replay score whose scoring context the current scoring path stamped 2', () => {
     const f = calibrationFixture()
@@ -86,5 +142,84 @@ describe('eval runtime stamps', () => {
     const result = f.read()
     expect(result.evidence).toEqual([])
     expect(result.skippedCounts).toEqual({ 'stale-replay': 1 })
+  })
+
+  it('writes adversarial refresh state at 2 and reads a refresh record stamped 1 as absent', async () => {
+    const f = adversarialFixture()
+    await f.stage()
+    const files = filesUnder(join(f.scope.agentQaRoot, local.ADVERSARIAL_STATE_SUBDIR), '.json')
+    expect(files).toHaveLength(1)
+    expect(readJson(files[0]!).schemaVersion).toBe(2)
+    expect(local.readAdversarialRefreshRecords(f.scope)).toHaveLength(1)
+    restampOne(files[0]!)
+    expect(local.readAdversarialRefreshRecords(f.scope)).toEqual([])
+  })
+
+  it('writes probe reservations and completions at 2 and refuses either stamped 1', async () => {
+    const f = adversarialFixture()
+    await f.stage()
+    const dir = join(f.scope.agentQaRoot, local.ADVERSARIAL_PROBE_SUBDIR)
+    const reservations = filesUnder(dir, '.reservation.json'), completions = filesUnder(dir, '.completion.json')
+    expect(reservations.length).toBeGreaterThan(0)
+    expect(completions).toHaveLength(reservations.length)
+    for (const file of [...reservations, ...completions]) expect(readJson(file).schemaVersion).toBe(2)
+    expect(local.readProbeAttempts(f.scope).map(attempt => attempt.kind)).toEqual(reservations.map(() => 'completed'))
+    const reservation = readFileSync(reservations[0]!, 'utf8')
+    restampOne(reservations[0]!)
+    expect(() => local.readProbeAttempts(f.scope)).toThrow(z.ZodError)
+    writeFileSync(reservations[0]!, reservation)
+    restampOne(completions[0]!)
+    expect(() => local.readProbeAttempts(f.scope)).toThrow(z.ZodError)
+  })
+
+  it('stages a batch manifest at 2 and refuses to list a batch whose manifest is stamped 1', async () => {
+    const f = adversarialFixture()
+    const batch = await f.stage()
+    const manifest = join(batch.dir, local.ADVERSARIAL_MANIFEST_FILE)
+    expect(readJson(manifest).schemaVersion).toBe(2)
+    restampOne(manifest)
+    expect(() => local.listStagedAdversarial(f.scope)).toThrow(z.ZodError)
+  })
+
+  it('records a retirement at 2 and refuses a retained batch whose retirement is stamped 1', async () => {
+    const f = adversarialFixture()
+    const batch = await f.stage()
+    const retired = local.retireStagedAdversarialBatch({ ...f.scope, batchDigest: batch.batchDigest })
+    expect(readJson(retired.retirementRecordPath).schemaVersion).toBe(2)
+    expect(local.listStagedAdversarial({ ...f.scope, includeRetired: true })).toHaveLength(1)
+    restampOne(retired.retirementRecordPath)
+    expect(() => local.listStagedAdversarial({ ...f.scope, includeRetired: true })).toThrow(z.ZodError)
+  })
+
+  it('takes the lifecycle lock with an owner at 2 while admitting', async () => {
+    const f = adversarialFixture()
+    const batch = await f.stage()
+    const owners: unknown[] = []
+    const admitted = local.refreshAdversarialSplit({ ...f.scope, batchDigest: batch.batchDigest, mask: NO_DECLARED_SECRETS,
+      afterCaseCommitted: () => { owners.push(readJson(join(batch.lock, 'owner.json'))) } })
+    expect(admitted.admitted.length).toBeGreaterThan(0)
+    expect(owners).toHaveLength(admitted.admitted.length)
+    for (const owner of owners) {
+      expect(owner).toMatchObject({ schemaVersion: 2, product: 'default', batchDigest: batch.batchDigest, pid: process.pid })
+    }
+    expect(existsSync(batch.lock)).toBe(false)
+  })
+
+  it('keeps a dead lifecycle owner stamped 1 busy, and reaps the same owner at 2', async () => {
+    const f = adversarialFixture()
+    const batch = await f.stage()
+    vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }) })
+    const ownerFile = join(batch.lock, 'owner.json')
+    mkdirSync(batch.lock)
+    writeFileSync(ownerFile, core.committedFileText({ schemaVersion: 2, product: 'default', batchDigest: batch.batchDigest,
+      pid: process.pid, token: '11111111-1111-4111-8111-111111111111' }))
+    restampOne(ownerFile)
+    const planted = readFileSync(ownerFile, 'utf8')
+    expect(() => local.retireStagedAdversarialBatch({ ...f.scope, batchDigest: batch.batchDigest }))
+      .toThrow(local.AdversarialLifecycleBusyError)
+    expect(readFileSync(ownerFile, 'utf8')).toBe(planted)
+    writeFileSync(ownerFile, planted.replace(/("schemaVersion":\s*)1\b/, (_, key: string) => `${key}2`))
+    expect(local.retireStagedAdversarialBatch({ ...f.scope, batchDigest: batch.batchDigest }).retired).toBe(true)
+    expect(existsSync(`${batch.lock}.dead-11111111-1111-4111-8111-111111111111`)).toBe(true)
   })
 })

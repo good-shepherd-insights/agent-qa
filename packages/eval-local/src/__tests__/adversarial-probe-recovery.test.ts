@@ -56,6 +56,7 @@ import {
 } from '../adversarial-composition.js'
 import { COMMITTED_CASSETTES_DIR } from '../committed-root-store.js'
 import {
+  ADVERSARIAL_PROBE_SCHEMA_VERSION,
   ADVERSARIAL_PROBE_SUBDIR,
   completeProbeCall,
   probeReservationOf,
@@ -515,7 +516,7 @@ describe('422 adversarial probe reservations — one call per tuple, honest inte
     expect(() => completeProbeCall({
       agentQaRoot: f.agentQaRoot,
       key: keyOf(f),
-      completion: { schemaVersion: 1, outcome: 'derived', text: 'Smuggled', cassetteId: 'x'.repeat(64), promptTokens: 0, completionTokens: 0 },
+      completion: { schemaVersion: ADVERSARIAL_PROBE_SCHEMA_VERSION, outcome: 'derived', text: 'Smuggled', cassetteId: 'x'.repeat(64), promptTokens: 0, completionTokens: 0 },
     })).toThrow(/conflict/)
   })
 
@@ -582,7 +583,7 @@ describe('422 adversarial probe reservations — one call per tuple, honest inte
     expect(() => completeProbeCall({
       agentQaRoot: f.agentQaRoot,
       key: keyOf(f),
-      completion: { schemaVersion: 1, outcome: 'error' },
+      completion: { schemaVersion: ADVERSARIAL_PROBE_SCHEMA_VERSION, outcome: 'error' },
     })).toThrow(TypeError)
     expect(probeStoreFiles(f)).toEqual([])
   })
