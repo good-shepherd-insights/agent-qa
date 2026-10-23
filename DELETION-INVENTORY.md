@@ -7599,22 +7599,33 @@ are deferred for the owner (D-24 OQ-B) and left as they were, comments included.
   `memory/queue/`, `memory/*/bundles/.staging/`) is refused or rebuilt the same way.
 - **A committed knowledge root or eval root written by an earlier build is refused.** One stamp-1
   purge receipt in `memory/receipts/` blocks every purge, and the error names the file; one stamp-1
-  line in a bundle's `observations.jsonl` fails an index rebuild.
+  line in a bundle's `observations.jsonl` fails an index rebuild. Re-seeding over an eval root from
+  an earlier build reports its marker and both contracts files as write-once conflicts and still
+  writes the new cases beside them, and only gate 2 reads the marker. The one-time remedy is to
+  remove that eval root, or re-initialize it, before seeding.
 - **An older `daemon.json` or `embedder-worker.json` is refused and left in place until it is
   removed once.** For `daemon.json` (449.1-12 observed): the host logs `agent-qa daemon
   registration is malformed; refusing to overwrite it` and exits 1, removes nothing, unlinks no
   socket and signals no pid; `agent-qa daemon status` reports it as malformed. Remove
-  `.agent-qa/daemon.json` once, and restart a long-lived daemon from an earlier build. For
-  `embedder-worker.json` (449.1-02 observed): the preflight refuses to overwrite it, the drain logs
-  `Embedder worker start failed`, the embedder is deferred (`worker-unavailable`) and the drain
-  runs lexical-only while the daemon keeps running; nothing is signalled or unlinked. Remove
-  `.agent-qa/embedder-worker.json` once.
+  `.agent-qa/daemon.json` once. For `embedder-worker.json` (449.1-02 observed): the preflight
+  refuses to overwrite it with a message that names the file and says to remove it once, the drain
+  logs `Embedder worker start failed`, the embedder is deferred (`worker-unavailable`) and the
+  drain runs lexical-only while the daemon keeps running; nothing is signalled or unlinked. The
+  one-time remedy is to remove `.agent-qa/embedder-worker.json` once no embedder worker is running.
+- **A daemon left running by the previous build is reported as stale and cannot be stopped by this
+  build.** Its registration still parses, but its identity answer is stamped 1, so `agent-qa daemon
+  status` and `agent-qa daemon stop` report a stale registration and send no signal, `--via-daemon`
+  says the daemon is not running, and a new daemon is refused because the old one still holds the
+  writer lease. The one-time remedy is to stop that process by hand (its pid is in
+  `.agent-qa/daemon.json`) and then remove `.agent-qa/daemon.json`.
 - **A stale `memory/receipts/purge-<id>.intent.json` blocks purging that record until it is
   removed.** Other records purge normally.
 - **Stamp-2 residuals.** Three earlier stores used the number 2 under their old numbering and are
-  admitted at 2: a pre-release `runs.db` written 2026-08-27 to 09-14 (admitted with its older DDL;
-  delete the file), a job store written 2026-07-29 to 08-03 (admitted, then fails at the first
-  statement that names `started_at` or `not_before`; clear the agent job queue state) and a
+  admitted at 2: a pre-release `runs.db` written 2026-08-27 to 09-14 (admitted with its older DDL,
+  then fails at the first query on a later column; the one-time remedy is to remove
+  `.agent-qa/runs.db`), a job store written 2026-07-29 to 08-03 (admitted, then fails at the first
+  statement that names `started_at` or `not_before`; the one-time remedy is to remove
+  `.agent-qa/agent-jobs.db` with its checkpoints, which clears the agent job queue state) and a
   knowledge index written 2026-07-15 to 07-16 (admitted; a missing table is still refused by the
   projection-schema probe, a missing column is not). A pre-release four-key curation-tail receipt
   stamped 2 is refused by its key set and refolds once.
