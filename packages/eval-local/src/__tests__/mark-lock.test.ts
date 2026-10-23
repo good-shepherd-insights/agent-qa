@@ -13,7 +13,7 @@ const fixture = () => { const root = mkdtempSync(join(tmpdir(), 'mark-lock-')); 
 it.each(['EPERM', 'UNKNOWN'])('keeps an uncertain %s owner busy', async code => {
   const root = fixture(), lock = join(root, 'marks.jsonl.lock')
   mkdirSync(lock)
-  const bytes = JSON.stringify({ schemaVersion: 1, kind: 'mark-ledger-lock', pid: process.pid,
+  const bytes = JSON.stringify({ schemaVersion: 2, kind: 'mark-ledger-lock', pid: process.pid,
     token: '11111111-1111-4111-8111-111111111111', runId: 'run' })
   writeFileSync(join(lock, 'owner.json'), bytes)
   vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('uncertain'), { code }) })
@@ -42,7 +42,7 @@ it.each(['legacy-file', 'empty-directory', 'malformed-owner', 'foreign-owner'])(
   else {
     mkdirSync(lock)
     if (mode !== 'empty-directory') writeFileSync(join(lock, 'owner.json'), mode === 'malformed-owner' ? '{}'
-      : JSON.stringify({ schemaVersion: 1, kind: 'mark-ledger-lock', pid: process.pid,
+      : JSON.stringify({ schemaVersion: 2, kind: 'mark-ledger-lock', pid: process.pid,
         token: '11111111-1111-4111-8111-111111111111', runId: 'foreign' }))
   }
   vi.useFakeTimers()

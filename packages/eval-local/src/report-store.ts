@@ -126,7 +126,7 @@ const replayGenerationSchema = z
 export type ReplayGeneration = z.infer<typeof replayGenerationSchema>
 
 const publicationSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   reportDigest: z.string().regex(/^[a-f0-9]{64}$/),
   decisionsDigest: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   replayGeneration: replayGenerationSchema.optional(),
@@ -257,7 +257,7 @@ export class FsReportStore {
     const publicationFile = join(this.outputRoot, `${slugBranch(report.batchKey)}.publication.json`)
     const reportText = `${JSON.stringify(report, null, 2)}\n`
     const decisionsText = decisions === undefined ? undefined : `${JSON.stringify(decisions, null, 2)}\n`
-    const publicationText = `${JSON.stringify({ schemaVersion: 1,
+    const publicationText = `${JSON.stringify({ schemaVersion: 2,
       reportDigest: sha256hex(reportText),
       decisionsDigest: decisionsText === undefined ? null : sha256hex(decisionsText),
       ...(replayGeneration === undefined ? {} : { replayGeneration }),

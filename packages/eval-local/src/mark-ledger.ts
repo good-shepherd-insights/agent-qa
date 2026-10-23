@@ -20,7 +20,7 @@ export const MARK_INTENT_FILE = 'mark-intent.json'
  */
 export const MARK_INTENT_STAGES = ['prepared', 'evidence', 'applied'] as const
 const intentSchema = z.object({
-  schemaVersion: z.literal(1), mark: MarkReceiptSchema,
+  schemaVersion: z.literal(2), mark: MarkReceiptSchema,
   stage: z.enum(MARK_INTENT_STAGES),
   operationId: z.uuid(),
   plan: ImprovementPlanSchema.optional(),
@@ -176,7 +176,7 @@ export class FsMarkLedger {
       }
       return prior
     }
-    return this.checkpointIntent({ schemaVersion: 1, mark, operationId, stage: 'prepared' })
+    return this.checkpointIntent({ schemaVersion: 2, mark, operationId, stage: 'prepared' })
   }
 
   checkpointIntent(value: MarkIntent): MarkIntent {

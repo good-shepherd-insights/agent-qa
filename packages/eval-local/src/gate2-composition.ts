@@ -50,7 +50,7 @@ export const GATE2_TARGET_SUBDIR = 'target'
 // 2026-09-08, 418 D-21: staging is local audit DATA. Only explicit admission calls the seeder.
 export const FEEDBACK_STAGING_SUBDIR = 'eval/feedback'
 const feedbackSchema = z.object({
-  schemaVersion: z.literal(1), product: z.string().min(1), stateDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  schemaVersion: z.literal(2), product: z.string().min(1), stateDigest: z.string().regex(/^[0-9a-f]{64}$/),
   attributedObservationId: z.string().min(1), benefit: z.enum(BENEFITS), candidateId: z.string().min(1),
   runId: z.string().min(1), testId: z.string().min(1), stepIndex: z.number().int().nonnegative(),
   stagedAt: z.iso.datetime(),
@@ -141,7 +141,7 @@ export async function stageFeedbackEntry(input: StageFeedbackEntryInput): Promis
     if (matches.length !== 1) return { kind: 'target-unavailable' }
     const extracted = matches[0]!
     if (distilledScreenStateDigest(extracted.cassette.input.stateBefore) !== input.stateDigest) return { kind: 'target-unavailable' }
-    const metadata = feedbackSchema.parse({ schemaVersion: 1, product: input.product, stateDigest: input.stateDigest,
+    const metadata = feedbackSchema.parse({ schemaVersion: 2, product: input.product, stateDigest: input.stateDigest,
       attributedObservationId: input.attributedObservationId, benefit: input.benefit, candidateId: input.candidateId,
       ...input.target, stagedAt: new Date().toISOString() })
     const texts = [committedFileText(extracted.cassette), committedFileText(metadata)]

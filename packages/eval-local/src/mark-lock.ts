@@ -3,7 +3,7 @@ import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, ren
 import { dirname, join } from 'node:path'
 import { z } from 'zod'
 
-const ownerSchema = z.object({ schemaVersion: z.literal(1), kind: z.literal('mark-ledger-lock'),
+const ownerSchema = z.object({ schemaVersion: z.literal(2), kind: z.literal('mark-ledger-lock'),
   pid: z.number().int().positive(), token: z.uuid(), runId: z.string().min(1) }).strict()
 type Owner = z.infer<typeof ownerSchema>
 
@@ -31,7 +31,7 @@ function positivelyDead(pid: number): boolean {
 
 /** Complete owner publication; malformed, legacy and uncertain owners are never reaped. */
 export async function acquireMarkLock(lock: string, runId: string, busy: () => Error): Promise<() => void> {
-  const owner: Owner = { schemaVersion: 1, kind: 'mark-ledger-lock', pid: process.pid, token: randomUUID(), runId }
+  const owner: Owner = { schemaVersion: 2, kind: 'mark-ledger-lock', pid: process.pid, token: randomUUID(), runId }
   const candidate = `${lock}.candidate-${owner.token}`
   mkdirSync(candidate)
   const fd = openSync(join(candidate, 'owner.json'), 'wx', 0o600)

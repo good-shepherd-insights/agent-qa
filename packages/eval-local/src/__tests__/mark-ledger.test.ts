@@ -184,7 +184,7 @@ describe('FsMarkLedger', () => {
 
   it('refuses malformed intent bytes before invoking any side effect, naming the intent file', async () => {
     const intentPath = join(dir, 'mark-intent.json')
-    writeFileSync(intentPath, JSON.stringify({ schemaVersion: 1, mark: record, extra: true }))
+    writeFileSync(intentPath, JSON.stringify({ schemaVersion: 2, mark: record, extra: true }))
     const fn = vi.fn(async () => record)
     const refusal = await ledger.transact(fn).then(() => undefined, (error: unknown) => error as Error)
     expect(refusal).toBeInstanceOf(MarkIntentUnusableError)
