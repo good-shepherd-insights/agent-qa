@@ -11,12 +11,8 @@ import type { AriaEvidenceEntry, StepEvidenceEntries, VariableSnapshot } from '.
 import type { ModelTokenUsage, ModelUsage } from './model-usage'
 import type { RecordingEntry } from './recording'
 
-/**
- * The bus schema version, declared once per run in `runStarted.payload.busSchemaVersion`
- * (spec §2.2, mirroring the {@link CompletedRunHandoff.schemaVersion} discipline: reject
- * newer-than-known, migrate older). D-05.
- */
-export const CURRENT_BUS_SCHEMA_VERSION = 1
+/** The bus schema version, declared once per run in `runStarted.payload.busSchemaVersion`. */
+export const CURRENT_BUS_SCHEMA_VERSION = 2
 
 /**
  * The complete §2.2 event vocabulary M1 ships: every group EXCEPT the reserved

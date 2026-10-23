@@ -21,6 +21,7 @@ import {
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   validateAnalysisAgainstHandoff,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -297,7 +298,7 @@ describe('citeEvidenceFrom lifts the run its own decision-screenshot sha', () =>
     const root = rootWithBlob(sha)
     const blobs = join(root, 'runs', 'r-406-07', 'blobs')
     writeFileSync(join(blobs, 'a'.repeat(64)), JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
       kind: 'network',
       records: [],
     }))
@@ -316,7 +317,7 @@ describe('citeEvidenceFrom lifts the run its own decision-screenshot sha', () =>
     const blobs = join(root, 'runs', 'r-406-07', 'blobs')
     rmSync(join(blobs, sha))
     writeFileSync(join(blobs, 'a'.repeat(64)), JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
       kind: 'network',
       records: [],
     }))

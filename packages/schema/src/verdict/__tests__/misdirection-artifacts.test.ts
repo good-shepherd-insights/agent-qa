@@ -313,8 +313,8 @@ describe('guardRunAnalysisArtifact with circularity evidence (422 D-17)', () => 
     ).toThrow()
   })
 
-  it('keeps the artifact version at 1, its empty ladder, and the eight-class union', () => {
-    expect(CURRENT_ANALYSIS_SCHEMA_VERSION).toBe(1)
+  it('keeps the artifact version at 2, its empty ladder, and the eight-class union', () => {
+    expect(CURRENT_ANALYSIS_SCHEMA_VERSION).toBe(2)
     expect(Object.keys(ANALYSIS_MIGRATIONS)).toEqual([])
     expect(VERDICT_CLASSES).toHaveLength(8)
   })

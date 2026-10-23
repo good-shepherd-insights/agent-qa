@@ -17,6 +17,7 @@ import {
   SERVED_BRIEF_PROOF_SCHEMA_VERSION,
   toRecordedActionResult,
   TRACE_TRUNCATION_TOP_K,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   Action,
@@ -81,7 +82,9 @@ export function persistAriaEvidence(
       return { kind: 'aria', state: 'absent', reason: 'failed' }
     }
     const ref = EvidenceArtifactRefSchema.parse(store.persistEvidenceDocument({
-      schemaVersion: 1, kind: 'aria', tree: redactSecretValue(evidence.stateBefore.tree, secretRedactor),
+      schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+      kind: 'aria',
+      tree: redactSecretValue(evidence.stateBefore.tree, secretRedactor),
     }))
     if (!ref.id.startsWith('aria-state:')) {
       return { kind: 'aria', state: 'absent', reason: 'failed' }

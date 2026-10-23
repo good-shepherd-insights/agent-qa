@@ -30,7 +30,10 @@ import type {
 import { POST_VERDICT_STEP_BUDGET_MS } from '../ports.js'
 import type { EvidenceArtifactStorePort } from '../../loop/ports.js'
 import { SecretRedactor, SecretStore } from '../../loop/secrets.js'
-import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  CURRENT_BUS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { RunArtifactStageInput, RunArtifactFinalizeInput } from '@vostride/agent-qa-schema'
 import type { StepResult, TestResult } from '../../result.js'
 import type {
@@ -194,7 +197,7 @@ describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
     expect(first.type).toBe('runStarted')
     expect(first.seq).toBe(1)
     const payload = first.payload as Record<string, unknown>
-    expect(payload.busSchemaVersion).toBe(1)
+    expect(payload.busSchemaVersion).toBe(CURRENT_BUS_SCHEMA_VERSION)
     expect(payload.scope).toEqual({ tier: 'suite', key: 'checkout' })
     expect(payload.executionContext).toBe('local-headless')
     expect(payload.buildOrdinal).toBe(7)

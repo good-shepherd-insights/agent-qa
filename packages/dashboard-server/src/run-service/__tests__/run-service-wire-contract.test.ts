@@ -33,6 +33,7 @@ import {
   type RunEventEnvelope,
   type RunSession,
   type RunStartAcknowledgement,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { parse as parseYaml } from 'yaml'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -50,7 +51,7 @@ const RUN_ID = 'r_wire'
  * every `id:` line below is a real discriminator rather than a coincidence of ordinals.
  */
 const FEED: readonly RunEventEnvelope[] = Object.freeze([
-  { seq: 4, ts: 40, runId: RUN_ID, type: 'runStarted', payload: { busSchemaVersion: 1, memberTestCount: 2, handles: [2, 5] } },
+  { seq: 4, ts: 40, runId: RUN_ID, type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 2, handles: [2, 5] } },
   { seq: 9, ts: 90, runId: RUN_ID, type: 'testStarted', payload: { testId: 'a', testIndex: 2, name: 'a' } },
   { seq: 10, ts: 100, runId: RUN_ID, type: 'stepStarted', payload: { testIndex: 2, stepIndex: 0, stepText: 'a0' } },
   { seq: 16, ts: 160, runId: RUN_ID, type: 'testStarted', payload: { testId: 'b', testIndex: 5, name: 'b' } },

@@ -35,6 +35,7 @@ import {
 } from './spawned-chat.js'
 import { plantLiveRun, publishTo, startLiveViewHarness } from './live-view-fixture.js'
 import type { LiveViewHarness, PlantLiveRunInput, PlantedLiveRun } from './live-view-fixture.js'
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const BROWSER_INSTALL_INSTRUCTION =
   'these cells drive the BUILT dashboard UI in a real Chromium: run '
@@ -102,7 +103,7 @@ function plantStreamingRun(input: PlantLiveRunInput): PlantedLiveRun {
   const run = plantLiveRun(input)
   plantedRuns.push(run)
   held().harness.plant(run)
-  publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+  publishTo(run, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
   publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the preview member', totalSteps: 2 })
   publishTo(run, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'open the page' })
   return run

@@ -9,6 +9,7 @@
 // masking context, so the markers read `[secret:<name>]`.
 
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { MaskFn, QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import type {
   HookFinishedPayload,
@@ -55,7 +56,7 @@ export function buildReporterFixture(): ReporterFixture {
     ({ seq: seq++, ts: 1_000 + seq, runId, type, payload }) as RunEventEnvelope
 
   const runStarted: RunStartedPayload = {
-    busSchemaVersion: 1,
+    busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
     scope: { tier: 'suite', key: 'auth-suite' },
     executionContext: 'local-headless',
     buildOrdinal: 1,

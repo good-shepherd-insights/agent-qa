@@ -1,5 +1,10 @@
 import { expect, test } from 'vitest'
-import { asRunId, EVIDENCE_ABSENCE_REASONS, RunsEvidenceResultSchema } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  EVIDENCE_ABSENCE_REASONS,
+  RunsEvidenceResultSchema,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, EvidenceEntry, RunDetailStep, RunsEvidenceResult } from '@vostride/agent-qa-schema'
 import type { RunEvidenceRead } from '../api'
 import * as view from '../evidence-state-view'
@@ -109,11 +114,11 @@ test('VIEW-EMPTY-INPUTS', () => {
     expect(view.resolveEvidenceView({ ...input, selection })).toMatchObject({ kind: 'state', state: 'no-selection', ...view.EVIDENCE_COPY.a11y['no-selection'] })
   }
   for (const document of [
-    { schemaVersion: 1, kind: 'a11y', records: [] },
-    { schemaVersion: 1, kind: 'console', records: [] },
-    { schemaVersion: 1, kind: 'network', records: [] },
-    { schemaVersion: 1, kind: 'variables', records: {} },
-    { schemaVersion: 1, kind: 'aria', tree: '' },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records: [] },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [] },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [] },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records: {} },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: '' },
   ] satisfies EvidenceDocument[]) {
     expect(view.resolveEvidenceView({ ...input, kind: document.kind, entry: entries[document.kind], selection: 'sub-action', read: ready(document) })).toMatchObject({ kind: 'state', state: 'empty', ...view.EVIDENCE_COPY[document.kind].empty })
   }
@@ -122,7 +127,7 @@ test('VIEW-EMPTY-INPUTS', () => {
   for (const read of ['idle', 'loading'] as const) {
     expect(view.resolveEvidenceView({ ...input, read })).toEqual({ kind: 'loading' })
   }
-  const document = { schemaVersion: 1, kind: 'aria', tree: 'button "Continue"' } as const
+  const document = { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: 'button "Continue"' } as const
   expect(view.resolveEvidenceView({ ...input, kind: 'aria', entry: entries.aria, selection: 'sub-action', read: ready(document) })).toEqual({ kind: 'records', document })
 })
 
@@ -132,7 +137,7 @@ test('VIEW-LOAD-FAILURE-NEVER-EMPTY', () => {
   const reads: RunEvidenceRead[] = [
     { kind: 'failed', error: 'private diagnostic' },
     ...codes.map(code => ({ kind: 'read' as const, result: { address, outcome: 'read-error' as const, code } })),
-    ready({ schemaVersion: 1, kind: 'console', records: [] }),
+    ready({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [] }),
   ]
   for (const read of reads) {
     const result = view.resolveEvidenceView({ ...input, read })

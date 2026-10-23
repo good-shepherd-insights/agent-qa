@@ -90,7 +90,10 @@ import { basename, dirname, join } from 'node:path'
 
 import { generateSuiteId, generateTestId } from '@vostride/agent-qa-ids'
 import { chromium } from 'playwright-core'
-import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, RunEventEnvelope } from '@vostride/agent-qa-schema'
 
 import { RUN_SERVICE_ANCHORED_BUILDS, trackTempRoot } from './spawned-chat.js'
@@ -1503,16 +1506,16 @@ export async function discoveryRunFixtureProject(): Promise<DiscoveryRunFixture>
   const blobs = new FsEvidenceArtifactStore({ root: f.agentQaRoot, runId: f.handoff.runId })
   const screenshot = blobs.persistDecisionScreenshot(png)
   const recording = blobs.persistDecisionScreenshot(webm)
-  const consoleRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'console', records: [
+  const consoleRef = blobs.persistEvidenceDocument({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [
     { level: 'error', text: 'TypeError: price is undefined — 価格', timestamp: 3 },
     { level: 'warning', text: 'slow response', timestamp: 4 },
   ] })
-  const networkRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'network', records: [{
+  const networkRef = blobs.persistEvidenceDocument({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{
     url: 'https://app.test/api/cart?q=ümlaut', method: 'GET', status: 500,
     requestHeaders: { accept: 'application/json' }, responseHeaders: { 'content-type': 'application/json' },
     body: 'cart unavailable ✗', startTime: 1, endTime: 2,
   }] })
-  const ariaRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'aria', tree: '- button "Payer ✓"' })
+  const ariaRef = blobs.persistEvidenceDocument({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: '- button "Payer ✓"' })
 
   const db = new DashboardDatabase({ dbPath: join(f.agentQaRoot, 'runs.db') })
   db.insertRun({ id: runId, name: 'Discovery fixture', status: 'failed', duration: 1,

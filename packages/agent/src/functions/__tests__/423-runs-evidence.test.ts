@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import {
   asRunId, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceResultSchema,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   EvidenceDocument, EvidenceEntry, EvidenceKind, FunctionCaller, MaskFn, RunDetailRows, RunDetailStep,
@@ -18,11 +19,11 @@ import { invokeFunction } from '../invoke.js'
 const runId = asRunId('run-423-evidence-read')
 const kinds = ['console', 'network', 'a11y', 'aria', 'variables'] as const
 const documents: Record<EvidenceKind, EvidenceDocument> = {
-  console: { schemaVersion: 1, kind: 'console', records: [{ level: 'error', text: 'recorded console', timestamp: 2 }] },
-  network: { schemaVersion: 1, kind: 'network', records: [{ url: 'https://example.test/api', method: 'GET', status: 403, requestHeaders: {}, responseHeaders: {}, startTime: 1, endTime: 2, body: 'recorded response' }] },
-  a11y: { schemaVersion: 1, kind: 'a11y', records: [{ ruleId: 'label', impact: 'serious', description: 'recorded violation', help: 'label input', helpUrl: 'https://example.test/rule', nodes: [{ html: '<input>', target: ['#field'] }] }] },
-  aria: { schemaVersion: 1, kind: 'aria', tree: 'button "recorded before tree"' },
-  variables: { schemaVersion: 1, kind: 'variables', records: { captured: { value: 'recorded value', source: 'capture' } } },
+  console: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [{ level: 'error', text: 'recorded console', timestamp: 2 }] },
+  network: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{ url: 'https://example.test/api', method: 'GET', status: 403, requestHeaders: {}, responseHeaders: {}, startTime: 1, endTime: 2, body: 'recorded response' }] },
+  a11y: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records: [{ ruleId: 'label', impact: 'serious', description: 'recorded violation', help: 'label input', helpUrl: 'https://example.test/rule', nodes: [{ html: '<input>', target: ['#field'] }] }] },
+  aria: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: 'button "recorded before tree"' },
+  variables: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records: { captured: { value: 'recorded value', source: 'capture' } } },
 }
 const counts = {
   console: { total: 1, errors: 1, warnings: 0 }, network: { total: 1, failed: 1, errored: 0 },
@@ -113,12 +114,12 @@ it('EVID-MISSING-BLOB returns unavailable plus evidenceIncomplete without mutati
 it.each(['kind', 'schemaVersion', 'records', 'unknown-field', 'json', 'utf8'])(
   'EVID-BAD-BLOB %s is a typed read error preserving runtime capture', async fault => {
     const bad = { ...(fault === 'kind' ? documents.network : documents.console),
-      ...(fault === 'schemaVersion' ? { schemaVersion: 2 } : {}),
+      ...(fault === 'schemaVersion' ? { schemaVersion: 3 } : {}),
       ...(fault === 'records' ? { records: 'bad' } : {}), ...(fault === 'unknown-field' ? { secret: 'synthetic' } : {}) }
     const f = fixture('console', bad)
     if (fault === 'json' || fault === 'utf8') {
       const bytes = fault === 'json' ? new TextEncoder().encode('{') : new Uint8Array([
-        ...new TextEncoder().encode('{"schemaVersion":1,"kind":"console","records":[{"level":"error","text":"'),
+        ...new TextEncoder().encode('{"schemaVersion":2,"kind":"console","records":[{"level":"error","text":"'),
         0xff,
         ...new TextEncoder().encode('","timestamp":1}]}'),
       ])
@@ -212,7 +213,7 @@ it('EVIDENCE-MASK-NO-CONTEXT refuses a valid document it cannot mask as masking-
 })
 it('EVIDENCE-MULTI-KEY keeps distinct keys, empty maps and stored order, and refuses masked key collisions', async () => {
   const mask = declaredMask({ BODY_441: 'recorded response' })
-  const network: EvidenceDocument = { schemaVersion: 1, kind: 'network', records: [
+  const network: EvidenceDocument = { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [
     { url: 'https://example.test/api', method: 'POST', status: 200,
       requestHeaders: { 'content-type': 'application/json', 'x-request-id': 'req-1' },
       responseHeaders: { 'x-trace': 'trace-1', 'content-type': 'text/plain' },
@@ -271,7 +272,7 @@ it('EVIDENCE-CONTRACT rejects crossed documents, extra fields and false ready st
 
 describe('C441-COLD-READ', () => {
   const caller = { surface: 'test', origin: 'agent' } as FunctionCaller
-  const aria: EvidenceDocument = { schemaVersion: 1, kind: 'aria',
+  const aria: EvidenceDocument = { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria',
     tree: 'textbox "Password" value="Hunter-42-zz" for qa@example.com; cookie session=undeclared-cookie-441' }
   const readThroughRegistry = (deps: FunctionDeps, address: RunsEvidenceInput) =>
     invokeFunction(createFunctionRegistry({ deps }), 'runs.evidence', address, caller)

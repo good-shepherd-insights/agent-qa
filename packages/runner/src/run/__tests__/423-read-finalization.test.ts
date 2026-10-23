@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
+import { RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, RunEventEnvelope, StepFinalizedPayload } from '@vostride/agent-qa-schema'
 import { createRunEventBus } from '../bus.js'
 import { createMemberEventSink } from '../event-sink.js'
@@ -176,7 +177,7 @@ test('EVID-A11Y-PRESENT: one live-masked document retains all violations and exa
   }
   await runMemberTest(f.member, f.config)
   expect(f.config.accessibilityCheck).toHaveBeenCalledTimes(1)
-  expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'a11y',
+  expect(f.documents).toEqual([{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y',
     records: JSON.parse(JSON.stringify(violations()).replaceAll(secret, '[secret:LIVE_423]')) }])
   expect(f.terminals()).toHaveLength(1)
   expect(f.terminals()[0].evidence?.a11y).toEqual({ kind: 'a11y', state: 'present',
@@ -357,7 +358,7 @@ test('EVID-WEB-PRESENT: live masked records/counts publish after a11y and variab
   expect(f.terminals()[0].evidence?.console).toEqual({ kind: 'console', state: 'present',
     ref: { id: `console-evidence:${'b'.repeat(64)}`, sha: 'b'.repeat(64) },
     counts: { total: 2, errors: 1, warnings: 1 } })
-  expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'console', records: [
+  expect(f.documents).toEqual([{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [
     { level: 'warn', text: '[secret:LIVE_423]', timestamp: 20, location: { url: 'https://example.test/[secret:LIVE_423]', lineNumber: 2, columnNumber: 1 } },
     { level: 'error', text: 'second', timestamp: 10 },
   ] }])

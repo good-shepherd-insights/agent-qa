@@ -13,6 +13,7 @@ import {
 } from '@vostride/agent-qa-dashboard'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
+import { RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument } from '@vostride/agent-qa-schema'
 
 import { composeDashboardAgentHost } from '../commands/dashboard.js'
@@ -37,7 +38,7 @@ function fixtureBytes(root: string): unknown {
 }
 
 const networkDocument: Extract<EvidenceDocument, { kind: 'network' }> = {
-  schemaVersion: 1, kind: 'network', records: [
+  schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [
     {
       url: 'https://app.test/api/orders', method: 'POST', status: 200,
       requestHeaders: { 'content-type': 'application/json', 'x-request-id': 'req-423' },

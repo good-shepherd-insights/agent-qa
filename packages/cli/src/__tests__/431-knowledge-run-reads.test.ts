@@ -25,6 +25,7 @@ import { FsEvidenceArtifactStore, FsHandoffStore } from '@vostride/agent-qa-runn
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, EvidenceDocument, PerTestOutcome } from '@vostride/agent-qa-schema'
 import { Command, CommanderError } from 'commander'
@@ -54,20 +55,20 @@ const WEBM = Uint8Array.from([0x1a, 0x45, 0xdf, 0xa3, ...Array.from({ length: 96
 const UNICODE_NAME = 'Café checkout — 日本語 ✓ 🧪'
 const UNICODE_STEP = 'Öffne den Warenkorb 🛒 «schnell»'
 const NETWORK: Extract<EvidenceDocument, { kind: 'network' }> = {
-  schemaVersion: 1, kind: 'network', records: [{
+  schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{
     url: 'https://app.test/api/cart?q=ümlaut', method: 'GET', status: 500,
     requestHeaders: { accept: 'application/json' }, responseHeaders: { 'content-type': 'application/json' },
     body: 'cart unavailable ✗', startTime: 1, endTime: 2,
   }],
 }
 const CONSOLE: Extract<EvidenceDocument, { kind: 'console' }> = {
-  schemaVersion: 1, kind: 'console', records: [
+  schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [
     { level: 'error', text: 'TypeError: price is undefined — 価格', timestamp: 3 },
     { level: 'warning', text: 'slow response', timestamp: 4 },
   ],
 }
 const ARIA: Extract<EvidenceDocument, { kind: 'aria' }> = {
-  schemaVersion: 1, kind: 'aria', tree: '- button "Payer ✓"',
+  schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: '- button "Payer ✓"',
 }
 const READER_TOKEN = 'zz-431-07-reader-credential-5c21aa'
 

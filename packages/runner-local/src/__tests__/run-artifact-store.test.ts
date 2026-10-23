@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FsRunArtifactStore, ARTIFACT_FILE } from '../run-artifact-store.js'
 import { slugBranch } from '../branch-resolver.js'
 import { RUNS_SUBDIR } from '../event-log.js'
+import { RUN_ARTIFACT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunArtifactStageInput, RunArtifactTerminalError } from '@vostride/agent-qa-schema'
 
 function stageDoc(): RunArtifactStageInput {
@@ -43,7 +44,7 @@ describe('FsRunArtifactStore (D-08)', () => {
     store.stage(stageDoc())
 
     const artifact = await readArtifact(root, 'run-1')
-    expect(artifact.schemaVersion).toBe(1)
+    expect(artifact.schemaVersion).toBe(RUN_ARTIFACT_SCHEMA_VERSION)
     expect((artifact.config as Record<string, unknown>).rawConfigContent).toBe('baseUrl: http://localhost')
     expect((artifact.source as Record<string, unknown>).testId).toBe('t-1')
   })
@@ -80,7 +81,7 @@ describe('FsRunArtifactStore (D-08)', () => {
     store.finalize({ finalizedAt: '2026-07-09T00:00:00.000Z' })
 
     const artifact = await readArtifact(root, 'run-1')
-    expect(artifact.schemaVersion).toBe(1)
+    expect(artifact.schemaVersion).toBe(RUN_ARTIFACT_SCHEMA_VERSION)
     expect(artifact.finalizedAt).toBe('2026-07-09T00:00:00.000Z')
   })
 
@@ -91,7 +92,7 @@ describe('FsRunArtifactStore (D-08)', () => {
 
     // The file is reachable only through the slugged segment under runs/ — never outside root.
     const artifact = await readArtifact(root, evilRunId)
-    expect(artifact.schemaVersion).toBe(1)
+    expect(artifact.schemaVersion).toBe(RUN_ARTIFACT_SCHEMA_VERSION)
     const slug = slugBranch(evilRunId)
     expect(slug).not.toContain('..')
     expect(slug).not.toContain('/')

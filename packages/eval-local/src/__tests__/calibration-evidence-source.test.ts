@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as core from '@vostride/agent-qa-eval'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { asRunId, type MarkReceipt, type Verdict } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  type MarkReceipt,
+  type Verdict,
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { afterEach, expect, it } from 'vitest'
 import * as local from '../index.js'
 import { makeLocalV2Handoff, LOCAL_FIXTURE_BLOB_BYTES } from './fixtures/local-handoff-fixture.js'
@@ -45,7 +50,7 @@ function fixture() {
   }
   const saveMarks = () => writeFileSync(join(run, 'marks.jsonl'), marks.map(mark => JSON.stringify(mark)).join('\n') + '\n')
   saveMarks()
-  const analysis = { schemaVersion: 1, runId: handoff.runId, verdicts: [verdict('analyze-run', 'test_bug')], parts: [] }
+  const analysis = { schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION, runId: handoff.runId, verdicts: [verdict('analyze-run', 'test_bug')], parts: [] }
   const saveAnalysis = () => writeFileSync(join(run, 'analysis.json'), JSON.stringify(analysis))
   saveAnalysis()
   const read = () => Reflect.get(local, 'loadCalibrationEvidence')?.({ committedRoot, agentQaRoot: root })

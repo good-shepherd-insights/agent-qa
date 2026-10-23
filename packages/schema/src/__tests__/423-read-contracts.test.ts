@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import * as api from '../index'
+import { RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from '../run/evidence'
 
 const sha = 'a'.repeat(64)
 const ref = (prefix: string) => ({ id: `${prefix}${sha}`, sha })
@@ -70,14 +71,14 @@ describe('423 evidence contracts', () => {
   })
 
   test.each([
-    { schemaVersion: 1, kind: 'console', records: [{ level: 'error', text: 'message', timestamp: 1 }] },
-    { schemaVersion: 1, kind: 'network', records: [{ url: 'https://example.test', method: 'GET', status: 200, requestHeaders: {}, responseHeaders: {}, startTime: 1, endTime: 2 }] },
-    { schemaVersion: 1, kind: 'a11y', records: [{ ruleId: 'label', impact: 'serious', description: 'label missing', help: 'add label', helpUrl: 'https://example.test', nodes: [{ html: '<input>', target: ['input'] }] }] },
-    { schemaVersion: 1, kind: 'aria', tree: 'button "Submit"' },
-    { schemaVersion: 1, kind: 'variables', records: { account: { value: 'sample', source: 'capture' } } },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [{ level: 'error', text: 'message', timestamp: 1 }] },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{ url: 'https://example.test', method: 'GET', status: 200, requestHeaders: {}, responseHeaders: {}, startTime: 1, endTime: 2 }] },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records: [{ ruleId: 'label', impact: 'serious', description: 'label missing', help: 'add label', helpUrl: 'https://example.test', nodes: [{ html: '<input>', target: ['input'] }] }] },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: 'button "Submit"' },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records: { account: { value: 'sample', source: 'capture' } } },
   ])('C423-DOCUMENTS parses $kind and rejects wrong version/shape', document => {
     expect(api.EvidenceDocumentSchema.parse(document)).toEqual(document)
-    expect(api.EvidenceDocumentSchema.safeParse({ ...document, schemaVersion: 2 }).success).toBe(false)
+    expect(api.EvidenceDocumentSchema.safeParse({ ...document, schemaVersion: 3 }).success).toBe(false)
     expect(api.EvidenceDocumentSchema.safeParse({ ...document, kind: 'video' }).success).toBe(false)
     expect(api.EvidenceDocumentSchema.safeParse({ ...document, records: 42 }).success).toBe(false)
   })

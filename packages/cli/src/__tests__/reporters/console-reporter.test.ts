@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   QuarantineAppliedEntry,
   RunEventEnvelope,
@@ -188,7 +189,7 @@ function abortSkippedStream(): RunEventEnvelope[] {
     ({ seq: seq++, ts: 1_000 + seq, runId: 'run-444.1-15', type, payload }) as RunEventEnvelope
   return [
     env('runStarted', {
-      busSchemaVersion: 1,
+      busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
       scope: { tier: 'suite', key: 'shop' },
       executionContext: 'local-headless',
       buildOrdinal: 1,
@@ -265,7 +266,7 @@ function cancelledStream(): RunEventEnvelope[] {
   })
   return [
     env('runStarted', {
-      busSchemaVersion: 1,
+      busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
       scope: { tier: 'suite', key: 'shop' },
       executionContext: 'local-headless',
       buildOrdinal: 1,

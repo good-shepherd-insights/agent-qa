@@ -71,9 +71,9 @@ const EXPECTED_EVENT_TYPES: readonly string[] = [
 const scope: ScopeKey = { tier: 'suite', key: 'checkout' }
 const executionContext: ExecutionContext = 'local-headless'
 
-describe('bus schema v1 — envelope + event vocabulary (D-05, spec §2.2)', () => {
-  it('declares bus schema version 1', () => {
-    expect(CURRENT_BUS_SCHEMA_VERSION).toBe(1)
+describe('bus schema — envelope + event vocabulary (spec §2.2)', () => {
+  it('declares bus schema version 2', () => {
+    expect(CURRENT_BUS_SCHEMA_VERSION).toBe(2)
   })
 
   it('the event-type vocabulary is exactly the §2.2 groups minus control/arbiter', () => {
@@ -144,7 +144,7 @@ describe('run-lifecycle payload headers (spec §2.2, D-04/D-05)', () => {
       'memberTestCount',
       'scope',
     ])
-    expect(runStarted.busSchemaVersion).toBe(1)
+    expect(runStarted.busSchemaVersion).toBe(CURRENT_BUS_SCHEMA_VERSION)
     expect(JSON.parse(JSON.stringify(runStarted))).toEqual(runStarted)
   })
 

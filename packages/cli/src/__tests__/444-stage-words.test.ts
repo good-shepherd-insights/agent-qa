@@ -26,6 +26,7 @@ import {
   POST_PROCESSING_SKIP_REASONS,
   PostProcessingStatusSchema,
   RunDigestSchema,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -429,7 +430,7 @@ describe('C444-STAGE-SKIPPED', () => {
 })
 
 const STARTED_ONLY = [
-  { seq: 1, ts: 1, runId: RUN_ID, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+  { seq: 1, ts: 1, runId: RUN_ID, type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION } },
 ] as unknown as readonly ReplayedRunEvent[]
 
 function noVerdictDeps(status: string): FunctionDeps {

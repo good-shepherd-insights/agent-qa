@@ -25,6 +25,7 @@ import {
   type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
@@ -113,7 +114,7 @@ export function fixtureHandoff(runId: string): CompletedRunHandoff {
 
 function fixtureEventLines(runId: string): RunEventEnvelope[] {
   return [
-    { seq: 1, ts: 10, runId, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+    { seq: 1, ts: 10, runId, type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION } },
     { seq: 2, ts: 20, runId, type: 'verdict', payload: { verdict: 'failed' } },
     {
       seq: 3,

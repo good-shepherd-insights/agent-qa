@@ -30,6 +30,7 @@ import {
   type FunctionRegistry,
   type LiveViewPort,
 } from '@vostride/agent-qa-agent'
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   FunctionCaller,
   LiveUrlSigner,
@@ -97,7 +98,7 @@ const runStartedEnvelope = (handles?: readonly number[]): RunEventEnvelope => ({
   runId: FIXTURE_RUN_ID,
   type: 'runStarted',
   payload: {
-    busSchemaVersion: 1,
+    busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
     scope: { tier: 'test', key: 'TST-408-01' },
     executionContext: 'local-headless',
     buildOrdinal: 1,

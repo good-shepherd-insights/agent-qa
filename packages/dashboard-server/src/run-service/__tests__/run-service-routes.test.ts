@@ -31,6 +31,7 @@ import {
   type RunsLiveUrlResult,
   type RunSession,
   type RunStartAcknowledgement,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -547,7 +548,7 @@ function floorSession(): RunSession {
     // fixture whose retained window can grow on a timer is a fixture whose floor moves.
     timer: { now: () => 1_700_000_000_000, schedule: () => () => undefined },
   })
-  bus.publish('runStarted', { busSchemaVersion: 1, memberTestCount: 3, handles: [...FLOOR_ROSTER] })
+  bus.publish('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 3, handles: [...FLOOR_ROSTER] })
   bus.publish('testStarted', { testId: 'a', testIndex: 3, name: 'a' })
   bus.publish('testStarted', { testId: 'b', testIndex: 7, name: 'b' })
   bus.publish('testStarted', { testId: 'c', testIndex: 11, name: 'c' })
@@ -774,7 +775,7 @@ describe('resumePointOf — the whole input table, and the header decides', () =
 describe('replayFloorOf reads the floor STRUCTURALLY, and refuses a lookalike', () => {
   it('reads a real bus ReplayIncompleteError without naming its class', () => {
     const bus = createRunEventBus({ runId: 'r_probe', windowMaxEvents: 1, heartbeatMs: 3_600_000 })
-    bus.publish('runStarted', { busSchemaVersion: 1, memberTestCount: 0 })
+    bus.publish('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 0 })
     bus.publish('runWarning', { code: 'w', message: 'w' })
     let caught: unknown
     try { bus.subscribe(1, () => undefined) } catch (error) { caught = error }

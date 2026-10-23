@@ -254,6 +254,7 @@ export {
   NETWORK_BODY_CONTENT_TYPES,
   NETWORK_BODY_MAX_BYTES,
   EVIDENCE_ABSENCE_REASONS,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
   EvidenceKindSchema,
   EvidenceAbsenceReasonSchema,
   EvidenceDocumentSchema,

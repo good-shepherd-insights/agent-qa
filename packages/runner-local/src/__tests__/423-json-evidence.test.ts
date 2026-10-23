@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { EvidenceDocument, StepFinalizedPayload } from '@vostride/agent-qa-schema'
-import { NetworkEvidenceDocumentSchema } from '@vostride/agent-qa-schema'
+import {
+  NetworkEvidenceDocumentSchema,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { createMemberEventSink, createRunEventBus, runMemberTest, SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { MemberRunConfig, PlatformAdapter } from '@vostride/agent-qa-runner'
 import { FsEvidenceArtifactStore } from '../evidence-artifact-store.js'
@@ -37,7 +40,7 @@ afterEach(() => {
 const syntheticSecret = 'synthetic-console-secret-423'
 const masked = '[secret]'
 const document: Exclude<EvidenceDocument, { kind: 'variables' }> = {
-  schemaVersion: 1, kind: 'console', records: [
+  schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [
     { level: 'warn', text: syntheticSecret.replace(syntheticSecret, masked), timestamp: 20 },
     { level: 'error', text: 'second', timestamp: 10 },
   ],
@@ -161,9 +164,9 @@ test('INTERRUPTED-BLOB: partial write failure never publishes a successful ref o
 test('JSON-KINDS: schema-owned prefixes and validation reject unsupported documents before writing', () => {
   const { store, dir } = fixture()
   for (const [value, prefix] of [
-    [{ schemaVersion: 1, kind: 'network', records: [] }, 'network-evidence:'],
-    [{ schemaVersion: 1, kind: 'a11y', records: [] }, 'a11y-evidence:'],
-    [{ schemaVersion: 1, kind: 'aria', tree: masked }, 'aria-state:'],
+    [{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [] }, 'network-evidence:'],
+    [{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records: [] }, 'a11y-evidence:'],
+    [{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: masked }, 'aria-state:'],
   ] as const) {
     const ref = store.persistEvidenceDocument(value as Exclude<EvidenceDocument, { kind: 'variables' }>)
     expect(ref.id).toBe(`${prefix}${ref.sha}`)
@@ -171,9 +174,9 @@ test('JSON-KINDS: schema-owned prefixes and validation reject unsupported docume
   }
   const before = readdirSync(dir)
   for (const invalid of [
-    { ...document, schemaVersion: 2 }, { ...document, extra: true },
+    { ...document, schemaVersion: 3 }, { ...document, extra: true },
     { ...document, records: [{ level: 'warn', text: masked }] },
-    { schemaVersion: 1, kind: 'variables', records: {} },
+    { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records: {} },
   ]) {
     expect(() => store.persistEvidenceDocument(invalid as typeof document)).toThrow()
   }

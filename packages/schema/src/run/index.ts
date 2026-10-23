@@ -2,6 +2,7 @@ export { asRunId } from './run-id'
 export type { RunId } from './run-id'
 // 363 D-08: run-artifact payload type family (relocated from core/src/artifacts).
 export { RUN_ARTIFACT_SCHEMA_VERSION } from './run-artifact'
+export { RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from './evidence'
 export type {
   ArtifactRecord,
   JsonArray,
@@ -47,7 +48,7 @@ export type {
   LiveStreamDeclaration,
   LiveStreamKind,
 } from './live-stream'
-// Bus schema v1 (D-05): envelope, event union + vocabulary, payload projections.
+// Bus schema: envelope, event union + vocabulary, payload projections.
 export { CURRENT_BUS_SCHEMA_VERSION, RUN_EVENT_TYPES } from './bus-events'
 export type {
   RunEvent,

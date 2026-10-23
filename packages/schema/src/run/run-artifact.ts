@@ -8,7 +8,7 @@
 // the lowest shared layer (schema) rather than core. `attributes` is typed structurally as
 // `Record<string, string>` (the core `RunAttributes` alias) so schema takes no core dependency.
 
-export const RUN_ARTIFACT_SCHEMA_VERSION = 1 as const
+export const RUN_ARTIFACT_SCHEMA_VERSION = 2 as const
 
 /**
  * What a finalized run artifact is ABOUT (405-11, closing 405-07's deferral).

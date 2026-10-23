@@ -8,6 +8,7 @@ import { DashboardDatabase, runSqliteMigrations } from '../db/database.js'
 import type { RunOwnership } from '../db/run-owner.js'
 import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { SCHEMA_VERSION, MIGRATIONS } from '../db/schema.js'
+import { RUN_ARTIFACT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 let db: DashboardDatabase
 const HOOK_ID = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
@@ -413,8 +414,8 @@ describe('DashboardDatabase', () => {
 
       expect(inserted.runId).toBe(runId)
       expect(inserted.kind).toBe('test')
-      expect(inserted.schemaVersion).toBe(1)
-      expect(inserted.payload.schemaVersion).toBe(1)
+      expect(inserted.schemaVersion).toBe(RUN_ARTIFACT_SCHEMA_VERSION)
+      expect(inserted.payload.schemaVersion).toBe(RUN_ARTIFACT_SCHEMA_VERSION)
       expect(inserted.payload.source).toMatchObject({ kind: 'test', testId: 't_login' })
 
       const staged = db.stageRunArtifact(runId, {

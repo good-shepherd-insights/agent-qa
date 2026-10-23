@@ -61,6 +61,7 @@ import {
   type CompletedRunHandoff,
   type RecordChange,
   type RunId,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -243,15 +244,15 @@ async function openDurableScene() {
   const excludedRunId = db.insertRun({ name: 'Excluded run fixture', status: 'passed', duration: 1,
     startedAt: new Date(0).toISOString(), endedAt: new Date(1).toISOString() })
   const blobs = new FsEvidenceArtifactStore({ root, runId })
-  const consoleRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'console', records: [
+  const consoleRef = blobs.persistEvidenceDocument({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [
     { level: 'error', text: allowedPlaceholder, timestamp: 1 }, { level: 'log', text: authPlaceholder, timestamp: 2 }] })
-  const networkRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'network', records: [
+  const networkRef = blobs.persistEvidenceDocument({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [
     { url: 'https://app.test/api/cart', method: 'GET', status: 500, requestHeaders: { accept: 'application/json' },
       responseHeaders: { 'content-type': 'application/json' }, body: allowedPlaceholder, startTime: 1, endTime: 2 }] })
-  const a11yRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'a11y', records: [
+  const a11yRef = blobs.persistEvidenceDocument({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records: [
     { ruleId: 'button-name', impact: 'serious', description: allowedPlaceholder, help: 'Buttons need names',
       helpUrl: 'https://rules.test/button-name', nodes: [{ html: '<button></button>', target: ['#buy'] }] }] })
-  const ariaRef = blobs.persistEvidenceDocument({ schemaVersion: 1, kind: 'aria', tree: `- button "${allowedPlaceholder}"` })
+  const ariaRef = blobs.persistEvidenceDocument({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: `- button "${allowedPlaceholder}"` })
 
   db.upsertRunMember({ runId, testIndex: 0, name: 'Read contract member', totalSteps: 2, outcome: 'failed' })
   const planner = (modelId: string, respondingModelIds: string[]) => ({ declared: { provider: 'provider-423-38', modelId }, respondingModelIds })

@@ -46,6 +46,7 @@ import {
 import { getRunStatusFaviconHref } from '@/hooks/use-run-status-favicon'
 import { DID_NOT_RUN_NOTE } from '@/lib/run-stream-reducer'
 
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/agent-qa-schema'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -183,7 +184,7 @@ function envelope(type: RunEventType, payload: unknown, seq?: number): RunEventE
 
 const runStarted = (handles?: readonly number[]) =>
   envelope('runStarted', {
-    busSchemaVersion: 1,
+    busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
     scope: { kind: 'suite', id: 's' },
     executionContext: 'local',
     buildOrdinal: 1,

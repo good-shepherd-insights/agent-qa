@@ -9,7 +9,13 @@ import type { EvidenceArtifactStorePort } from '@vostride/agent-qa-runner'
 import { createRunInvocationCore } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import { DashboardDatabase, createDashboardRunDetailReader, createDashboardRunIngest } from '@vostride/agent-qa-dashboard'
-import { asRunId, AriaEvidenceDocumentSchema, ConsoleEvidenceDocumentSchema, screenStateHash } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  AriaEvidenceDocumentSchema,
+  ConsoleEvidenceDocumentSchema,
+  screenStateHash,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { RunDetailProjectionSchema } from '@vostride/agent-qa-schema'
 import { createFunctionRegistry, invokeFunction, RUNS_DETAIL_FUNCTION_ID, type FunctionDeps } from '@vostride/agent-qa-agent'
 import type { RunEventEnvelope, StepFinalizedPayload } from '@vostride/agent-qa-schema'
@@ -368,7 +374,7 @@ async function ariaReadback(mode: 'two' | 'empty' | 'missing' | 'mobile' | 'chil
         expect(Buffer.from(bytes).equals(Buffer.from(publicationBytes.get(ref.sha)!))).toBe(true)
         expect(createHash('sha256').update(bytes).digest('hex')).toBe(ref.sha)
         const text = Buffer.from(bytes).toString()
-        expect(AriaEvidenceDocumentSchema.parse(JSON.parse(text))).toEqual({ schemaVersion: 1, kind: 'aria', tree: `before child ${index} [secret:ARIA_SECRET]` })
+        expect(AriaEvidenceDocumentSchema.parse(JSON.parse(text))).toEqual({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: `before child ${index} [secret:ARIA_SECRET]` })
         expect(text).not.toContain(secret)
         expect(text).not.toContain('after child')
       }

@@ -43,6 +43,7 @@ import {
   asRunId,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CurationSnapshotSchema,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
@@ -147,7 +148,7 @@ function chainHandoff(): CompletedRunHandoff {
 
 /** The run's own log as the runner left it — `runFinished` last, carrying its own `finalSeq`. */
 const CHAIN_EVENT_LINES = [
-  { seq: 1, ts: 10, runId: CHAIN_RUN_ID, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+  { seq: 1, ts: 10, runId: CHAIN_RUN_ID, type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION } },
   { seq: 2, ts: 20, runId: CHAIN_RUN_ID, type: 'verdict', payload: { verdict: 'failed' } },
   {
     seq: 3, ts: 30, runId: CHAIN_RUN_ID, type: 'runFinished',

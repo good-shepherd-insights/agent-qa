@@ -57,6 +57,7 @@ import {
   asRunId,
   computeBriefDigest,
   distilledScreenStateDigest,
+  CURRENT_ANALYSIS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   ArtifactRef,
@@ -1918,7 +1919,7 @@ function analysisArtifactFixture(
   verdict: { class: Verdict['class']; producer: Verdict['producer'] },
 ): RunAnalysisArtifact {
   return {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
     runId,
     verdicts: [
       {

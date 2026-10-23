@@ -6,7 +6,11 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { DashboardDatabase } from '../db/database.js'
 import { createDashboardSqliteDatabase } from '../db/sqlite.js'
 import { createDashboardRunIngest } from '../reporter/dashboard-subscriber.js'
-import { EvidenceArtifactRefSchema, NETWORK_BODY_MAX_BYTES } from '@vostride/agent-qa-schema'
+import {
+  EvidenceArtifactRefSchema,
+  NETWORK_BODY_MAX_BYTES,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   EvidenceDocument, RunEventEnvelope, StepFinalizedPayload, SubActionRecordedPayload,
 } from '@vostride/agent-qa-schema'
@@ -115,16 +119,16 @@ async function freshFixture(root: string) {
     a11y: { kind: 'a11y', state: 'absent', reason: 'unsupported' },
     variables: { kind: 'variables', state: 'absent', reason: 'empty' },
   }
-  const consoleRef = persist({ schemaVersion: 1, kind: 'console', records: Array.from({ length: 20 }, (_, index) => ({
+  const consoleRef = persist({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: Array.from({ length: 20 }, (_, index) => ({
     level: index % 5 === 0 ? 'error' : 'log', text: mask(`synthetic console line ${index} ${SECRET}`), timestamp: index,
   })) })
-  const a11yRef = persist({ schemaVersion: 1, kind: 'a11y', records: [{ ruleId: 'synthetic-rule', impact: 'serious',
+  const a11yRef = persist({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records: [{ ruleId: 'synthetic-rule', impact: 'serious',
     description: 'Synthetic description', help: 'Synthetic help', helpUrl: 'https://example.invalid/rule',
     nodes: [{ html: '<button>Synthetic</button>', target: ['button'] }] }] })
-  const smallNetworkRef = persist({ schemaVersion: 1, kind: 'network', records: [{ url: 'https://example.invalid/api',
+  const smallNetworkRef = persist({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{ url: 'https://example.invalid/api',
     method: 'GET', status: 200, requestHeaders: {}, responseHeaders: { 'content-type': 'application/json' }, startTime: 1, endTime: 2 }] })
   const maskedBodies = { request: mask(bodies.request), response: mask(bodies.response) }
-  const networkRef = persist({ schemaVersion: 1, kind: 'network', records: [{ url: 'https://example.invalid/api/large',
+  const networkRef = persist({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{ url: 'https://example.invalid/api/large',
     method: 'POST', status: 200, requestHeaders: { 'content-type': 'application/json', authorization: mask(SECRET) },
     responseHeaders: { 'content-type': 'application/json' }, requestBody: maskedBodies.request, body: maskedBodies.response,
     startTime: 1, endTime: 2, requestSize: utf8(bodies.request), responseSize: utf8(bodies.response) }] })
@@ -171,7 +175,7 @@ async function freshFixture(root: string) {
     for (const [stepIndex, { category, step, children }] of plan.entries()) {
       emit('stepStarted', { testIndex: 0, stepIndex, stepText: `Synthetic ${category} step` })
       for (let subActionIndex = 0; subActionIndex < children; subActionIndex++) {
-        const ariaRef = persist({ schemaVersion: 1, kind: 'aria', tree: mask(
+        const ariaRef = persist({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: mask(
           `- main:\n  - button "Synthetic ${category} ${subActionIndex}" [ref=e${subActionIndex}]\n  - text "${SECRET}"`) })
         const screenshot = { id: `decision-screenshot:${String(stepIndex + 1).repeat(64)}`, sha: String(stepIndex + 1).repeat(64) }
         const child: SubActionRecordedPayload = { testIndex: 0, stepIndex, subActionIndex, plan: `Synthetic plan ${subActionIndex}`,

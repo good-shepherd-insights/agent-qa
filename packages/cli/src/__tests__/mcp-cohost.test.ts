@@ -98,7 +98,11 @@ import {
   liveLinkLine,
   liveRunLinkOf,
 } from '@vostride/agent-qa-mcp'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, asRunId } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  asRunId,
+  CURRENT_BUS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   RunEventEnvelope,
@@ -154,7 +158,7 @@ const RUN_STARTED: RunEventEnvelope = {
   runId: RUN_ID,
   type: 'runStarted',
   payload: {
-    busSchemaVersion: 1,
+    busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
     scope: { tier: 'product', key: 'cohost' },
     executionContext: 'local-headless',
     buildOrdinal: 1,

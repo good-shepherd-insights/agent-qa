@@ -16,7 +16,7 @@ export const SEQUENTIAL_BASELINE: ReadonlyArray<{
     "type": "runStarted",
     "runId": "run-baseline",
     "payload": {
-      "busSchemaVersion": 1,
+      "busSchemaVersion": 2,
       "scope": {
         "tier": "suite",
         "key": "checkout"

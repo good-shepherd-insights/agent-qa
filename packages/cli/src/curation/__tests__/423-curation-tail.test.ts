@@ -6,7 +6,14 @@ import { DatabaseSync } from 'node:sqlite'
 import { chainJobIdsForRun } from '@vostride/agent-qa-agent'
 import { composeLocalAgent, LOCAL_CURATION_CAPABILITIES, DIGEST_JOB_ID_SOURCE, type ComposeLocalAgentInput } from '@vostride/agent-qa-agent-local'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
-import { asRecordId, asRunId, CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, type CompletedRunHandoff } from '@vostride/agent-qa-schema'
+import {
+  asRecordId,
+  asRunId,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  CurationSnapshotSchema,
+  type CompletedRunHandoff,
+  CURRENT_BUS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import * as tailModule from '../curation-tail.js'
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
 import { defaultPostRunTailOperations, runPostRunTail, type PostRunTailHostInput, type PostRunTailOperations } from '../post-run-tail.js'
@@ -258,7 +265,7 @@ function zeroEffectHandoff(runId: string): CompletedRunHandoff {
 }
 function zeroEffectEvents(runId: string) {
   return [
-    { seq: 1, ts: 10, runId, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+    { seq: 1, ts: 10, runId, type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION } },
     { seq: 2, ts: 20, runId, type: 'verdict', payload: { verdict: 'passed' } },
     { seq: 3, ts: 30, runId, type: 'runFinished', payload: { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 3 } },
   ]

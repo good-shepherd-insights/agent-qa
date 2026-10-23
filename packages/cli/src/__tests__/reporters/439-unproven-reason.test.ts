@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   RunEventEnvelope,
   RunEventType,
@@ -53,7 +54,7 @@ function envelopes(): RunEventEnvelope[] {
   }
   return [
     env('runStarted', {
-      busSchemaVersion: 1,
+      busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
       scope: { tier: 'suite', key: 'settings-suite' },
       executionContext: 'local-headless',
       buildOrdinal: 1,

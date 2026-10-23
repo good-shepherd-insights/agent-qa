@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import { asRunId } from '@vostride/agent-qa-schema'
+import { asRunId, RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, RunDetailStep, RunDetailSubAction, RunsEvidenceResult, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import { TabA11y } from '@/components/run-detail/tab-a11y'
 import { TabPanels } from '@/components/run-detail/tab-panels'
@@ -51,7 +51,7 @@ function ready(stepIndex = 0, records: Extract<EvidenceDocument, { kind: 'a11y' 
   { ruleId: 'minor-rule', impact: 'minor' as const, help: 'Minor issue', description: 'minor description', helpUrl: 'https://example.com/minor', nodes: [] },
   { ruleId: 'critical-rule', impact: 'critical' as const, help: 'Critical issue', description: '<img src=x onerror=alert(1)>', helpUrl: 'https://example.com/critical', nodes: [] },
 ]): RunsEvidenceResult {
-  return { address: { runId, testIndex: 0, stepIndex, kind: 'a11y' }, outcome: 'ready', evidence: present, document: { schemaVersion: 1, kind: 'a11y', records } }
+  return { address: { runId, testIndex: 0, stepIndex, kind: 'a11y' }, outcome: 'ready', evidence: present, document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records } }
 }
 function response(result: RunsEvidenceResult) {
   return { ok: true, json: async () => result } as Response
@@ -202,7 +202,7 @@ for (const { label, tab, kind } of [
   expect(container.querySelector('[data-evidence-state="empty"]')).toBeNull()
   fetchMock.mockResolvedValue(response(kind === 'a11y' ? ready(0, []) : {
     address: { runId, testIndex: 0, stepIndex: 0, kind }, outcome: 'ready',
-    evidence: selected.evidence!.variables, document: { schemaVersion: 1, kind, records: {} },
+    evidence: selected.evidence!.variables, document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind, records: {} },
   }))
   await act(async () => { container.querySelector<HTMLButtonElement>('[data-evidence-state="failed"] button')!.click() })
   await flushRecords()
@@ -264,7 +264,7 @@ for (const kind of ['network', 'console', 'aria'] as const) it(`TAB-LOAD-FAILURE
   expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="failed"][data-evidence-failure="load"]`)).not.toBeNull()
   expect(container.querySelector('[data-evidence-state="empty"]')).toBeNull()
   fetchMock.mockResolvedValue(documentResponse(kind === 'aria'
-    ? { schemaVersion: 1, kind, tree: '' } : { schemaVersion: 1, kind, records: [] }))
+    ? { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind, tree: '' } : { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind, records: [] }))
   await act(async () => { container.querySelector<HTMLButtonElement>('[data-evidence-state="failed"] button')!.click() })
   await flushRecords()
   expect(container.querySelector(`[data-evidence-kind="${kind}"][data-evidence-state="empty"]`)).not.toBeNull()
@@ -300,7 +300,7 @@ it('PRE-MILESTONE-UNAVAILABLE-ALL-TABS says not recorded on every historical evi
 })
 
 it('ARIA-READS-SUB-ACTION renders the selected artifact as text, never markup', async () => {
-  fetchMock.mockResolvedValue(documentResponse({ schemaVersion: 1, kind: 'aria', tree: 'button [secret:PW] <img src=x onerror=alert(1)>' }))
+  fetchMock.mockResolvedValue(documentResponse({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: 'button [secret:PW] <img src=x onerror=alert(1)>' }))
   await evidencePanels('aria')
   expect(fetchMock).toHaveBeenCalledExactlyOnceWith(`/api/runs/${runId}/evidence?testIndex=0&stepIndex=0&kind=aria&subActionIndex=2`)
   expect(container.querySelector('pre')?.textContent).toBe('button [secret:PW] <img src=x onerror=alert(1)>')
@@ -315,8 +315,8 @@ for (const kind of ['network', 'console'] as const) it(`RECORDS-${kind.toUpperCa
   const earlier = { ...step(0), consoleLogs: [{ level: 'log', timestamp: 0, text: 'earlier console' }],
     networkLogs: [{ url: 'https://example.com/earlier', method: 'GET', status: 200, requestHeaders: {}, responseHeaders: {}, startTime: 0, endTime: 1 }] }
   fetchMock.mockResolvedValue(documentResponse(kind === 'console'
-    ? { schemaVersion: 1, kind, records: [{ level: 'error', timestamp: 1, text: 'selected [secret:PW] <img src=x>' }] }
-    : { schemaVersion: 1, kind, records: [{ url: 'https://example.com/selected-[secret:PW]', method: 'GET', status: 200,
+    ? { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind, records: [{ level: 'error', timestamp: 1, text: 'selected [secret:PW] <img src=x>' }] }
+    : { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind, records: [{ url: 'https://example.com/selected-[secret:PW]', method: 'GET', status: 200,
       requestHeaders: {}, responseHeaders: { 'content-type': 'text/html' }, body: '<img src=x> [secret:PW]', startTime: 2, endTime: 3 }] }))
   await evidencePanels(kind, selected, subAction, [], [earlier, selected])
   expect(container.textContent).toContain('selected')

@@ -20,6 +20,7 @@ import {
 } from './433-door-fixture.js'
 import { populatedRunSpawnEnv } from './populated-run-fixture.js'
 import { CLI_ENTRY, cleanupTempRoots, hermeticEnv } from './spawned-chat.js'
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const BUDGET_MS = 300_000
 
@@ -64,7 +65,7 @@ function seedVerdictlessRun(): string {
     ts: Date.parse(startedAt),
     runId: id,
     type: 'runStarted',
-    payload: { busSchemaVersion: 1, memberTestCount: 1 },
+    payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1 },
   })}\n`, 'utf8')
   return id
 }

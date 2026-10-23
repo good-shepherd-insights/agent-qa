@@ -15,6 +15,7 @@ import {
   RunOverviewProjectionSchema,
   asRunId,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -320,15 +321,15 @@ function multiScene(): Multi {
   }
   const entry = (value: unknown) => EvidenceEntrySchema.parse(value) as EvidenceEntry
 
-  const consoleT0 = store({ schemaVersion: 1, kind: 'console',
+  const consoleT0 = store({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console',
     records: [{ level: 'error', text: 'console body t0s0', timestamp: 1 }] }, 'console-evidence')
-  const networkT0 = store({ schemaVersion: 1, kind: 'network', records: [{ url: 'https://example.test/t0s0',
+  const networkT0 = store({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{ url: 'https://example.test/t0s0',
     method: 'GET', status: 500, requestHeaders: {}, responseHeaders: {}, startTime: 1, endTime: 2,
     body: 'network body t0s0' }] }, 'network-evidence')
-  const ariaT0A0 = store({ schemaVersion: 1, kind: 'aria', tree: 'aria tree t0s0a0' }, 'aria-state')
-  const consoleT1 = store({ schemaVersion: 1, kind: 'console',
+  const ariaT0A0 = store({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: 'aria tree t0s0a0' }, 'aria-state')
+  const consoleT1 = store({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console',
     records: [{ level: 'warning', text: 'console body t1s0', timestamp: 1 }] }, 'console-evidence', false)
-  const a11yT1 = store({ schemaVersion: 1, kind: 'a11y', records: [{ ruleId: 'label', impact: 'serious',
+  const a11yT1 = store({ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y', records: [{ ruleId: 'label', impact: 'serious',
     description: 'a11y body t1s0', help: 'label it', helpUrl: 'https://example.test/rule',
     nodes: [{ html: '<input>', target: ['#q'] }] }] }, 'a11y-evidence')
   const shotT0A0 = shot('t0s0a0')

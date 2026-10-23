@@ -39,7 +39,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
 import { DashboardDatabase } from '@vostride/agent-qa-dashboard'
 import { resolveModelCacheDir } from '@vostride/agent-qa-knowledge-local'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { RETRIEVAL_TRACE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  RETRIEVAL_TRACE_SCHEMA_VERSION,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { EvidenceDocument } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -78,7 +81,7 @@ const PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 const PNG = Uint8Array.from(atob(PNG_BASE64), (char) => char.charCodeAt(0))
 const NETWORK: Extract<EvidenceDocument, { kind: 'network' }> = {
-  schemaVersion: 1, kind: 'network', records: [{
+  schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [{
     url: 'https://app.test/api/cart', method: 'GET', status: 500,
     requestHeaders: { accept: 'application/json' }, responseHeaders: { 'content-type': 'application/json' },
     body: 'cart unavailable', startTime: 1, endTime: 2,

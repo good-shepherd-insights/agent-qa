@@ -27,6 +27,7 @@ import {
   type CompletedRunHandoff,
   type MarkReceipt,
   type RunDetailProjection,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Browser, type Page } from 'playwright-core'
@@ -53,7 +54,9 @@ async function startFixture(
   const mask = (text: string) => redactor.redactString(text)
   const authPlaceholder = mask(AUTH_STATE)
   const allowedPlaceholder = mask(ALLOWED)
-  const evidenceDocument = { schemaVersion: 1 as const, kind: 'console' as const, records: [
+  const evidenceDocument = {
+    schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION as typeof RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+    kind: 'console' as const, records: [
     { level: 'log', text: allowedPlaceholder, timestamp: 1 },
     { level: 'log', text: authPlaceholder, timestamp: 2 },
   ] }

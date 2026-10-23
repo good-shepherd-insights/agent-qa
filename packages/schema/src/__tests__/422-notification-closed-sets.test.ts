@@ -212,11 +212,8 @@ describe('422-22 historical absence is a representation, not an invented stage',
 })
 
 describe('422-22 the persisted versions this plan did NOT move', () => {
-  it('leaves the handoff at 2 and the analysis artifact at 1', () => {
-    // 422 carried circularity evidence across four persisted boundaries with no version bump,
-    // because every member is optional-additive inside a block no historical document carries.
-    // A bump owes every historical row a migration, and the only honest one here is the identity.
+  it('reads the handoff and the analysis artifact at 2', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
-    expect(CURRENT_ANALYSIS_SCHEMA_VERSION).toBe(1)
+    expect(CURRENT_ANALYSIS_SCHEMA_VERSION).toBe(2)
   })
 })

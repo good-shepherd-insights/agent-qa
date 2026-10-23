@@ -39,6 +39,7 @@ import { describe, expect, it } from 'vitest'
 
 import { maskedToolResult } from '../masked-result.js'
 import { createEntityResourceReadHandler } from '../resources.js'
+import { RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 /** Plain, alphanumeric — the shape every pre-existing credential plant in this repository has. */
 const CLEAN_PLANT = 'qeb4t7zmv1x8s3d0g5j2n9'
@@ -239,7 +240,7 @@ describe('X · the escape classes reach neither channel (CR-01)', () => {
       const output = {
         address: { runId: 'r_x9', testIndex: 0, stepIndex: 0, kind: 'variables' },
         outcome: 'ready',
-        document: { schemaVersion: 1, kind: 'variables', records },
+        document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records },
       }
       const result = maskedToolResult(output, masker.mask)
 

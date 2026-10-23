@@ -15,6 +15,7 @@ import {
   type RunStreamState,
 } from '@/lib/run-stream-reducer'
 
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope, RunEventPayload, RunEventType } from '@vostride/agent-qa-schema'
 
 type Outcome = NonNullable<MemberRow['outcome']>
@@ -84,7 +85,7 @@ describe('the live preview watches the running member (G-428-3)', () => {
 
   it('WATCH-FOLLOWS-A-RETRY: a member whose outcome a retry cleared is running again', () => {
     const state = reduced(
-      envelope('runStarted', { busSchemaVersion: 1, scope: { kind: 'suite', id: 's' }, executionContext: 'local', buildOrdinal: 1, handles: [0, 1] }),
+      envelope('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, scope: { kind: 'suite', id: 's' }, executionContext: 'local', buildOrdinal: 1, handles: [0, 1] }),
       envelope('testStarted', { testId: 't0', testIndex: 0, name: 'first', totalSteps: 1 }),
       envelope('testFinished', { testId: 't0', testIndex: 0, outcome: 'failed', durationMs: 1 }),
       envelope('testStarted', { testId: 't1', testIndex: 1, name: 'second', totalSteps: 1 }),

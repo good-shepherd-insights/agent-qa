@@ -1,7 +1,7 @@
 // 2026-10-18 (444-13, D-17): a per-run read that refuses a missing handoff says what happened to a
 // run that never reached a verdict, instead of claiming the run does not exist.
 
-import { asJobId } from '@vostride/agent-qa-schema'
+import { asJobId, CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, FunctionCaller, RunEventEnvelope } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
@@ -21,7 +21,7 @@ function envelope(seq: number, type: RunEventEnvelope['type'], payload: unknown)
   return { seq, ts: seq, runId: RUN_ID, type, payload } as unknown as ReplayedRunEvent
 }
 
-const STARTED_ONLY = [envelope(1, 'runStarted', { busSchemaVersion: 1 })]
+const STARTED_ONLY = [envelope(1, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION })]
 const WITH_VERDICT = [...STARTED_ONLY, envelope(2, 'verdict', { verdict: 'failed' })]
 
 const ENDED = `Run ${RUN_ID} ended before it reached a verdict. Its record is in the dashboard.`

@@ -17,6 +17,7 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
+import { RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import * as schema from '@vostride/agent-qa-schema'
 import type { CompletedRunHandoff, FunctionCaller } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -106,14 +107,14 @@ function evidenceAnswer(address: Json): unknown {
     return {
       address, outcome: 'ready',
       evidence: { kind: 'variables', state: 'present', counts: { count: 2 } },
-      document: { schemaVersion: 1, kind: 'variables', records: variablesRecords() },
+      document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records: variablesRecords() },
     }
   }
   if (address.kind === 'console') {
     return {
       address, outcome: 'ready',
       evidence: { kind: 'console', state: 'present', ref: { id: `console-evidence:${sha}`, sha }, counts: { total: 0, errors: 0, warnings: 0 } },
-      document: { schemaVersion: 1, kind: 'console', records: [] },
+      document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [] },
     }
   }
   return { address, outcome: 'read-error', code: 'address-not-found' }

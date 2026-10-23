@@ -9,6 +9,7 @@ import { describe, expect, test } from 'vitest'
 import { z } from 'zod'
 
 import * as api from '../index'
+import { RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION } from '../run/evidence'
 
 type Json = Record<string, unknown>
 
@@ -137,18 +138,18 @@ const evidenceArms: readonly (readonly [string, unknown])[] = [
   ['ready console', {
     address: address('console'), outcome: 'ready',
     evidence: { kind: 'console', state: 'present', ref: ref('console-evidence:'), counts: { total: 1, errors: 1, warnings: 0 } },
-    document: { schemaVersion: 1, kind: 'console', records: [{ level: 'error', text: 'boom', timestamp: 5 }] },
+    document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [{ level: 'error', text: 'boom', timestamp: 5 }] },
   }],
   ['ready console, empty records', {
     address: address('console'), outcome: 'ready',
     evidence: { kind: 'console', state: 'present', ref: ref('console-evidence:'), counts: { total: 0, errors: 0, warnings: 0 } },
-    document: { schemaVersion: 1, kind: 'console', records: [] },
+    document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console', records: [] },
   }],
   ['ready network', {
     address: address('network'), outcome: 'ready',
     evidence: { kind: 'network', state: 'present', ref: ref('network-evidence:'), counts: { total: 1, failed: 0, errored: 0 } },
     document: {
-      schemaVersion: 1, kind: 'network',
+      schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network',
       records: [{ url: 'https://x.test', method: 'GET', status: 200, requestHeaders: {}, responseHeaders: { a: 'b' }, startTime: 1, endTime: 2 }],
     },
   }],
@@ -156,24 +157,24 @@ const evidenceArms: readonly (readonly [string, unknown])[] = [
     address: address('a11y'), outcome: 'ready',
     evidence: { kind: 'a11y', state: 'present', ref: ref('a11y-evidence:'), counts: { minor: 0, moderate: 0, serious: 1, critical: 0 } },
     document: {
-      schemaVersion: 1, kind: 'a11y',
+      schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y',
       records: [{ ruleId: 'r', impact: 'serious', description: 'd', help: 'h', helpUrl: 'u', nodes: [{ html: '<a>', target: ['a'] }] }],
     },
   }],
   ['ready aria on a sub-action', {
     address: address('aria', { subActionIndex: 2 }), outcome: 'ready',
     evidence: { kind: 'aria', state: 'present', ref: ref('aria-state:') },
-    document: { schemaVersion: 1, kind: 'aria', tree: '- button "Pay"' },
+    document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: '- button "Pay"' },
   }],
   ['ready variables with own special keys', {
     address: address('variables'), outcome: 'ready',
     evidence: { kind: 'variables', state: 'present', counts: { count: 3 } },
-    document: { schemaVersion: 1, kind: 'variables', records: variables() },
+    document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records: variables() },
   }],
   ['ready variables, empty map', {
     address: address('variables'), outcome: 'ready',
     evidence: { kind: 'variables', state: 'present', counts: { count: 0 } },
-    document: { schemaVersion: 1, kind: 'variables', records: {} },
+    document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records: {} },
   }],
   ['absent', {
     address: address('network'), outcome: 'absent',
@@ -264,7 +265,7 @@ describe('OUTPUT-CONTRACT-FIDELITY', () => {
     const arm = {
       address: address('variables'), outcome: 'ready',
       evidence: { kind: 'variables', state: 'present', counts: { count: 1 } },
-      document: { schemaVersion: 1, kind: 'variables', records },
+      document: { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'variables', records },
     }
     expect(validate(api.RunsEvidenceOutputContract, arm).issues?.length).toBeGreaterThan(0)
     expect(conformance(advertised(api.RunsEvidenceOutputContract), arm).length).toBeGreaterThan(0)

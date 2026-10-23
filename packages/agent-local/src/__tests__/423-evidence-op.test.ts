@@ -5,7 +5,12 @@ import * as agent from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
 import { generateRunId } from '../../../ids/dist/index.js'
 import { FsEvidenceArtifactStore } from '@vostride/agent-qa-runner-local'
-import { asRunId, EvidenceArtifactRefSchema, RunsEvidenceResultSchema } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  EvidenceArtifactRefSchema,
+  RunsEvidenceResultSchema,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { FunctionCaller, RunDetailRows } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
@@ -26,7 +31,9 @@ afterEach(() => {
 function fixture(populated = true) {
   const root = join(temporary, '.agent-qa')
   const runId = asRunId(generateRunId())
-  const document = { schemaVersion: 1 as const, kind: 'console' as const,
+  const document = {
+    schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION as typeof RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+    kind: 'console' as const,
     records: [{ level: 'error', text: 'recorded console', timestamp: 2 }] }
   const store = new FsEvidenceArtifactStore({ root, runId })
   const ref = populated ? EvidenceArtifactRefSchema.parse(store.persistEvidenceDocument(document)) : undefined

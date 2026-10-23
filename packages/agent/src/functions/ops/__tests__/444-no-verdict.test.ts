@@ -1,7 +1,11 @@
 // 2026-10-18 (444-12, D-14): a run that ended with no verdict reads `skipped (no verdict)`, derived
 // from the run's own record (its runs.db row and its event log), never from missing job rows.
 
-import { asJobId, PostProcessingStatusSchema } from '@vostride/agent-qa-schema'
+import {
+  asJobId,
+  PostProcessingStatusSchema,
+  CURRENT_BUS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
@@ -23,7 +27,7 @@ function envelope(seq: number, type: RunEventEnvelope['type'], payload: unknown)
   return { seq, ts: seq, runId: RUN_ID, type, payload } as unknown as ReplayedRunEvent
 }
 
-const STARTED_ONLY = [envelope(1, 'runStarted', { busSchemaVersion: 1 })]
+const STARTED_ONLY = [envelope(1, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION })]
 const WITH_VERDICT = [...STARTED_ONLY, envelope(2, 'verdict', { verdict: 'failed' })]
 
 interface Fixture {

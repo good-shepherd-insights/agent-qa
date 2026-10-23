@@ -76,6 +76,7 @@ import {
   relevantEnvDigest,
   RUN_ARTIFACT_SCHEMA_VERSION,
   RUN_SERVICE_CONTRACT_VERSION,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CacheableStepInput,
@@ -177,7 +178,7 @@ function buildRollCallFixture(): RollCallFixture {
     ({ seq: seq++, ts: 1_000 + seq, runId: RUN_ID, type, payload }) as RunEventEnvelope
 
   const runStarted: RunStartedPayload = {
-    busSchemaVersion: 1,
+    busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
     scope: { tier: 'suite', key: 'auth-suite' },
     executionContext: 'local-headless',
     buildOrdinal: 1,

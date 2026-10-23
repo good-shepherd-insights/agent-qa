@@ -69,24 +69,28 @@ export const VariableSnapshotSchema = z.record(z.string(), VariableSnapshotEntry
 )
 export type VariableSnapshot = z.infer<typeof VariableSnapshotSchema>
 
+export const RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION = 2
+
 export const ConsoleEvidenceDocumentSchema = z.strictObject({
-  schemaVersion: z.literal(1), kind: z.literal('console'),
+  schemaVersion: z.literal(RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION), kind: z.literal('console'),
   records: z.array(ConsoleEvidenceRecordSchema),
 })
 export const NetworkEvidenceDocumentSchema = z.strictObject({
-  schemaVersion: z.literal(1), kind: z.literal('network'),
+  schemaVersion: z.literal(RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION), kind: z.literal('network'),
   records: z.array(NetworkEvidenceRecordSchema),
 })
 export const A11yEvidenceDocumentSchema = z.strictObject({
-  schemaVersion: z.literal(1), kind: z.literal('a11y'),
+  schemaVersion: z.literal(RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION), kind: z.literal('a11y'),
   records: z.array(A11yEvidenceRecordSchema),
 })
 export const AriaEvidenceDocumentSchema = z.strictObject({
-  schemaVersion: z.literal(1), kind: z.literal('aria'), tree: z.string(),
+  schemaVersion: z.literal(RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION), kind: z.literal('aria'),
+  tree: z.string(),
 })
 // Variables share the read-document shape but remain inline; they have no blob ref kind.
 export const VariablesEvidenceDocumentSchema = z.strictObject({
-  schemaVersion: z.literal(1), kind: z.literal('variables'), records: VariableSnapshotSchema,
+  schemaVersion: z.literal(RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION), kind: z.literal('variables'),
+  records: VariableSnapshotSchema,
 })
 export const EvidenceDocumentSchema = z.discriminatedUnion('kind', [
   ConsoleEvidenceDocumentSchema, NetworkEvidenceDocumentSchema, A11yEvidenceDocumentSchema,

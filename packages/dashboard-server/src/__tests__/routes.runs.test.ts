@@ -15,6 +15,7 @@ import {
   createRouter,
   sanitizeQueuedExecutionTimeout,
 } from '../server/routes.js'
+import { RUN_ARTIFACT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 interface MockRun {
   id: string
@@ -201,8 +202,8 @@ function createMockDatabase() {
       const artifact = {
         runId: input.runId,
         kind: input.kind,
-        schemaVersion: 1,
-        payload: { schemaVersion: 1, ...(input.payload ?? {}) },
+        schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
+        payload: { schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION, ...(input.payload ?? {}) },
         finalizedAt: null,
         createdAt: '2026-04-18T00:00:00Z',
         updatedAt: '2026-04-18T00:00:00Z',

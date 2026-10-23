@@ -1,5 +1,9 @@
 import { expect, it, vi } from 'vitest'
-import { AriaEvidenceDocumentSchema, sha256hexBytes } from '@vostride/agent-qa-schema'
+import {
+  AriaEvidenceDocumentSchema,
+  sha256hexBytes,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, RunEventEnvelope, SubActionRecordedPayload } from '@vostride/agent-qa-schema'
 import { executeStep } from '../index.js'
 import type { EvidenceArtifactStorePort, LoopPorts } from '../ports.js'
@@ -53,7 +57,7 @@ it('ARIA-LIVE-MASK: the live run mask persists only before tree and leaves raw h
   const raw = JSON.stringify([f.before, f.after])
   const result = await executeStep('Click Log in', f.ports, makeStepContext())
   expect(result.status).toBe('passed')
-  expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: 'before [secret:RUN_SECRET]' }])
+  expect(f.documents).toEqual([{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: 'before [secret:RUN_SECRET]' }])
   expect(JSON.stringify(f.documents)).not.toContain('synthetic-run-secret')
   expect(JSON.stringify([f.before, f.after])).toBe(raw)
   expect(result.evidence?.subActions[0]?.stateBefore?.tree).toBe(f.before.tree)
@@ -85,7 +89,7 @@ it('ARIA-ROTATED-SECRET: two runs use their own independent declared masks', asy
   for (const [name, secret] of [['FIRST_RUN', 'synthetic-first-run'], ['SECOND_RUN', 'synthetic-second-run']] as const) {
     const f = fixture(`before ${secret}`, { [name]: secret })
     await executeStep('Click Log in', f.ports, makeStepContext())
-    expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: `before [secret:${name}]` }])
+    expect(f.documents).toEqual([{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: `before [secret:${name}]` }])
     expect(JSON.stringify(f.documents)).not.toContain(secret)
     expect(f.before.tree).toContain(secret)
   }
@@ -127,7 +131,7 @@ for (const platform of ['android', 'ios'] as const) {
     f.after.platform = platform
     f.ports.planner = makePlanner([makeActionPlan({ action: { type: 'wait' } })])
     await executeStep('Wait', f.ports, makeStepContext())
-    expect(f.documents).toEqual([{ schemaVersion: 1, kind: 'aria', tree: `native ${platform} [secret:RUN_SECRET]` }])
+    expect(f.documents).toEqual([{ schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'aria', tree: `native ${platform} [secret:RUN_SECRET]` }])
     expect(f.children()[0]?.ariaEvidence?.state).toBe('present')
     expect(f.observe).toHaveBeenCalledTimes(4)
   })

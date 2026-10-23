@@ -27,6 +27,7 @@ import {
   type RunEventEnvelope,
   type RunSession,
   type RunStartAcknowledgement,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -45,7 +46,7 @@ const ROSTER = [3, 7, 11] as const
  * the fail-closed posture on the wire: it belongs to the firehose and to no handle at all.
  */
 const FEED: readonly RunEventEnvelope[] = Object.freeze([
-  { seq: 1, ts: 1, runId: 'r_feed', type: 'runStarted', payload: { busSchemaVersion: 1, memberTestCount: 3, handles: [...ROSTER] } },
+  { seq: 1, ts: 1, runId: 'r_feed', type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 3, handles: [...ROSTER] } },
   { seq: 2, ts: 2, runId: 'r_feed', type: 'hookStarted', payload: { hookName: 'suite-setup', phase: 'setup', hookExecutionId: 'h0', scope: 'suite' } },
   { seq: 3, ts: 3, runId: 'r_feed', type: 'testStarted', payload: { testId: 'a', testIndex: 3, name: 'a' } },
   { seq: 5, ts: 5, runId: 'r_feed', type: 'testStarted', payload: { testId: 'b', testIndex: 7, name: 'b' } },
@@ -66,7 +67,7 @@ const FEED: readonly RunEventEnvelope[] = Object.freeze([
 
 /** The same run, announcing NO roster — a run that cannot answer a per-handle question. */
 const ROSTERLESS: readonly RunEventEnvelope[] = Object.freeze([
-  { seq: 1, ts: 1, runId: 'r_norost', type: 'runStarted', payload: { busSchemaVersion: 1, memberTestCount: 2 } },
+  { seq: 1, ts: 1, runId: 'r_norost', type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 2 } },
   { seq: 2, ts: 2, runId: 'r_norost', type: 'testStarted', payload: { testId: 'a', testIndex: 0, name: 'a' } },
   { seq: 3, ts: 3, runId: 'r_norost', type: 'runFinished', payload: { aggregateVerdict: 'passed', disposition: 'detached', finalSeq: 3 } },
 ] as unknown as readonly RunEventEnvelope[])

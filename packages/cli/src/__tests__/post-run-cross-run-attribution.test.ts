@@ -34,6 +34,7 @@ import {
   type PostProcessingStatus,
   type RunEventEnvelope,
   type Verdict,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -118,7 +119,7 @@ function fixtureHandoff(runId: string): CompletedRunHandoff {
 /** The run's own log as its runner left it: `runFinished` last, `finalSeq` its own seq. */
 function fixtureEventLines(runId: string): RunEventEnvelope[] {
   return [
-    { seq: 1, ts: 10, runId, type: 'runStarted', payload: { busSchemaVersion: 1 } },
+    { seq: 1, ts: 10, runId, type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION } },
     { seq: 2, ts: 20, runId, type: 'verdict', payload: { verdict: 'failed' } },
     {
       seq: 3,

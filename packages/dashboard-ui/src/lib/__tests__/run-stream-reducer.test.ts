@@ -22,6 +22,7 @@ import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   RunEventEnvelope,
   RunEventPayload,
@@ -262,7 +263,7 @@ describe('D-10: each sub-action is one tick, and no reasoning content survives i
     // `result` and `reasoning` (plus `error` and `failureSummary`) with the same sentinel and then
     // asks the RUNTIME object, serialised whole, whether any of it survived.
     const state = fold([
-      envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] }),
+      envelope('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] }),
       envelope('testStarted', { testId: 't0', testIndex: 0, name: 'a member', totalSteps: 2 }),
       stepStarted(0, 0, 'click login'),
       subAction(0, 0, 0),
@@ -391,12 +392,12 @@ describe('members, the thin handle stream and the terminal freeze', () => {
   })
 
   it('records the run\'s handle roster from runStarted', () => {
-    const state = fold([envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 2, handles: [0, 1] })])
+    const state = fold([envelope('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 2, handles: [0, 1] })])
     expect(state.handles).toEqual([0, 1])
   })
 
   it('leaves handles undefined for a run that announced none — an absent roster is not an empty one', () => {
-    const state = fold([envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 2 }, 3)], 4_000)
+    const state = fold([envelope('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 2 }, 3)], 4_000)
     expect(state.handles).toBeUndefined()
     // The absence is only a measurement if the envelope was INGESTED. Without this half the cell
     // passes for a reducer that does nothing at all.
@@ -749,7 +750,7 @@ describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that
     // present-with-undefined. `retrievalRung` is deliberately NOT written there — the cell above
     // is where that absence is the subject.
     const state = fold([
-      envelope('runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] }),
+      envelope('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] }),
       stepStarted(0, 0, 'click login'),
       stepFinalized(0, 0, {
         status: 'failed',

@@ -72,6 +72,7 @@ import {
   type RunEventType,
   type ScreenState,
   type SubActionEvidence,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -425,7 +426,9 @@ const declaredMask: NonNullable<FunctionDeps['secretMask']> = (text) => text
 async function serveEvidence() {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-http-evidence-'))
   roots.push(root)
-  const document = { schemaVersion: 1 as const, kind: 'console' as const,
+  const document = {
+    schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION as typeof RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+    kind: 'console' as const,
     records: [{ level: 'error', text: '<SECRET_0>', timestamp: 1 }] }
   const ref = new FsEvidenceArtifactStore({ root, runId: RUN_ID }).persistEvidenceDocument(document)
   const db = new DashboardDatabase({ dbPath: ':memory:' })

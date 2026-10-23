@@ -24,7 +24,10 @@ import type {
   PostProcessingStatus,
   RunEventEnvelope,
 } from '@vostride/agent-qa-schema'
-import { CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION,
+  CURRENT_BUS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { DashboardDatabase } from '../db/database.js'
@@ -186,7 +189,7 @@ describe('the read route joins the op result with the run record (D-18/D-22)', (
     const { port, calls } = await serveWith({
       status,
       events: [
-        envelope(1, 'runStarted', { busSchemaVersion: 1 } as RunEventEnvelope['payload']),
+        envelope(1, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION } as RunEventEnvelope['payload']),
         envelope(2, 'analysisFailed', { runId: RUN_ID, error: 'first attempt', willRetry: true }),
         envelope(3, 'runFinished', { aggregateVerdict: 'failed', disposition: 'drained', finalSeq: 3 }),
         envelope(4, 'analysisFailed', { runId: RUN_ID, error: 'the last word', willRetry: false }),

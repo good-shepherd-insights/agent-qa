@@ -19,6 +19,7 @@ import {
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  RUN_ARTIFACT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -143,29 +144,29 @@ describe('RUN-TARGET-HISTORY: the local reader answers from the recorded snapsho
 
   it.each([
     ['unparseable JSON', '{"schemaVersion":1,'],
-    ['no source snapshot', JSON.stringify({ schemaVersion: 1 })],
+    ['no source snapshot', JSON.stringify({ schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION })],
     ['a non-string target', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'test', resolvedDefinition: { target: 42 } },
     })],
     ['an empty target', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'test', resolvedDefinition: { target: '' } },
     })],
     ['suite members that are not a list', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'suite', members: { target: 'web' } },
     })],
     ['a suite member with a malformed target', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'suite', members: [{ target: 'web' }, { target: ['android'] }] },
     })],
     ['a suite with no member target at all', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'suite', members: [{ target: null }] },
     })],
     ['an unrecognised source kind', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'config', resolvedDefinition: { target: 'web' } },
     })],
   ])('answers unknown, never an empty known list, for %s', async (_label, contents) => {
@@ -177,12 +178,12 @@ describe('RUN-TARGET-HISTORY: the local reader answers from the recorded snapsho
 
   it('never resolves an id the reader does not enumerate as a completed run', async () => {
     writeRawArtifact('run-orphan', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'test', resolvedDefinition: { target: 'orphan-target' } },
     }))
     mkdirSync(join(agentQaRoot, 'outside'), { recursive: true })
     writeFileSync(join(agentQaRoot, 'outside', ARTIFACT_FILE), JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'test', resolvedDefinition: { target: 'escaped' } },
     }))
 
@@ -209,7 +210,7 @@ describe('RUN-TARGET-HISTORY: the local reader answers from the recorded snapsho
       tests: [],
     }))
     writeRawArtifact('run-b', JSON.stringify({
-      schemaVersion: 1,
+      schemaVersion: RUN_ARTIFACT_SCHEMA_VERSION,
       source: { kind: 'test', resolvedDefinition: { target: 'impostor-target' } },
     }))
 

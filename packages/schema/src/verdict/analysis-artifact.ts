@@ -20,7 +20,7 @@ import type { VerdictSentenceParts } from './sentence-parts'
 import { isVerdictClass } from './verdict'
 import type { Verdict } from './verdict'
 
-export const CURRENT_ANALYSIS_SCHEMA_VERSION = 1
+export const CURRENT_ANALYSIS_SCHEMA_VERSION = 2
 
 /** The artifact's file name inside a run directory: `runs/<slug(runId)>/analysis.json`. */
 export const ANALYSIS_FILE = 'analysis.json'
@@ -52,7 +52,6 @@ export class AnalysisVersionError extends VersionGuardError {
   }
 }
 
-/** The older-version migration seam — empty at version 1, registered so growth is additive. */
 export const ANALYSIS_MIGRATIONS: MigrationRegistry = {}
 
 function isNonArrayObject(value: unknown): value is Record<string, unknown> {

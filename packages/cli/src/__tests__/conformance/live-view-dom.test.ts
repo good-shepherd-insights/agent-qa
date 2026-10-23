@@ -60,6 +60,7 @@ import {
   startLiveViewHarness,
 } from './live-view-fixture.js'
 import type { LiveViewHarness, PlantedLiveRun } from './live-view-fixture.js'
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 const BROWSER_INSTALL_INSTRUCTION =
   'these cells drive the BUILT dashboard UI in a real Chromium: run '
@@ -197,9 +198,9 @@ beforeAll(async () => {
   harness.plant(dom)
   harness.plant(none)
 
-  publishTo(dom, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+  publishTo(dom, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
   publishTo(dom, 'testStarted', { testId: 't0', testIndex: 0, name: 'the surface member', totalSteps: 2 })
-  publishTo(none, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+  publishTo(none, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
   publishTo(none, 'testStarted', { testId: 't0', testIndex: 0, name: 'the browserless member', totalSteps: 1 })
 
   fixture = { harness, browser, dom, none, jpeg }
@@ -478,7 +479,7 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     const started = plantLiveRun({ runId: 'r_none_started', heartbeatMs: 10_000, capability: { kind: 'none' } })
     plantedRuns.push(started)
     held().harness.plant(started)
-    publishTo(started, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+    publishTo(started, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
     publishTo(started, 'testStarted', { testId: 't0', testIndex: 0, name: 'the browserless member', totalSteps: 1 })
     publishTo(started, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'open the page' })
 
@@ -554,7 +555,7 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       })
       plantedRuns.push(quiet)
       held().harness.plant(quiet)
-      publishTo(quiet, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+      publishTo(quiet, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
 
       const reading = await onLivePage(quiet.runId, async (page, attaches) => {
         await page.locator('[data-live-pane="steps"]').waitFor({ state: 'attached', timeout: 20_000 })
@@ -752,7 +753,7 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
       held().harness.plant(run)
       // The roster is real and the member has NOT started a step — which is the whole
       // discriminator: "the browser is not up yet", not "this target declares no stream".
-      publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+      publishTo(run, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
       publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the not-yet member', totalSteps: 2 })
 
       const reading = await onLivePage(run.runId, async (page) => {
@@ -834,7 +835,7 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
         const runOverBefore = await page.locator('[data-run-over]').count()
 
         held().harness.plant(run)
-        publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+        publishTo(run, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
         const controlAfter = await mintStreamKind(run.runId)
 
         const afterPlant = await previewWordUntil(page, 'live', 20_000)
@@ -869,7 +870,7 @@ describe('the built live surface, in a real browser (403-06 Task 1)', () => {
     // row at `running` ACROSS the navigation on purpose, so the no-bounce claim is measured
     // against the losing side of the race rather than around it.
     f.harness.insertRunRow({ runId: 'r_nav', name: 'the navigating run', status: 'running' })
-    publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+    publishTo(run, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
     publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the navigating member', totalSteps: 1 })
 
     const page = await f.browser.newPage()

@@ -1,6 +1,13 @@
 // Member-only terminal boundary. The standalone loop keeps its synchronous callback contract;
 // only this injected proxy holds its terminal until the member finishes capture/enrichment.
-import { A11yEvidenceDocumentSchema, ConsoleEvidenceDocumentSchema, EvidenceArtifactRefSchema, NetworkEvidenceDocumentSchema, VariableSnapshotSchema } from '@vostride/agent-qa-schema'
+import {
+  A11yEvidenceDocumentSchema,
+  ConsoleEvidenceDocumentSchema,
+  EvidenceArtifactRefSchema,
+  NetworkEvidenceDocumentSchema,
+  VariableSnapshotSchema,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, ModelUsageObservations, StepEvidence, StepEvidenceEntries } from '@vostride/agent-qa-schema'
 import type { LoopEventEmitPort } from '../loop/ports.js'
 import type { AccessibilityViolation, StepResult } from '../result.js'
@@ -64,7 +71,7 @@ export function createStepReadFinalizer(
       }
       const mask = (text: string) => redactSecretValue(text, secretRedactor)
       const document = ConsoleEvidenceDocumentSchema.parse({
-        schemaVersion: 1, kind: 'console',
+        schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'console',
         records: records.map(record => ({
           level: mask(record.level), text: mask(record.text), timestamp: record.timestamp,
           ...(record.location === undefined ? {} : { location: {
@@ -111,7 +118,7 @@ export function createStepReadFinalizer(
       const store = config.evidenceArtifacts
       if (!secretRedactor || !store?.persistEvidenceDocument) throw new Error('Network evidence not bound')
       const document: Extract<EvidenceDocument, { kind: 'network' }> = {
-        schemaVersion: 1, kind: 'network', records: [],
+        schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: [],
       }
       // A measured 600-record, two-body fixture blocked timers for >400ms. Yield between
       // batches, retaining all drained records and the declared mask until one final publication.
@@ -161,7 +168,7 @@ export function createStepReadFinalizer(
       if (!secretRedactor || !store?.persistEvidenceDocument) throw new Error('Accessibility evidence not bound')
       const mask = (text: string) => redactSecretValue(text, secretRedactor)
       const document = A11yEvidenceDocumentSchema.parse({
-        schemaVersion: 1, kind: 'a11y',
+        schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'a11y',
         records: a11yRecords.map(record => ({
           ruleId: mask(record.ruleId), impact: record.impact, description: mask(record.description),
           help: mask(record.help), helpUrl: mask(record.helpUrl),

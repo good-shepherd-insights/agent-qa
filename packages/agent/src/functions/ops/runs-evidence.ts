@@ -1,6 +1,7 @@
 import {
   EvidenceDocumentSchema, EvidenceEntrySchema, RunsEvidenceInputSchema, RunsEvidenceOutputContract,
   RunsEvidenceResultSchema, sha256hexBytes, utf8Decode, utf8Encode,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   EvidenceDocument, EvidenceEntry, MaskFn, RunDetailRows, RunsEvidenceInput, RunsEvidenceResult,
@@ -99,7 +100,11 @@ export const runsEvidenceSpec: FunctionSpec<RunsEvidenceInput, RunsEvidenceResul
     let rawDocument: unknown
     if (capture.kind === 'variables') {
       if (step.variableSnapshot === undefined) return error('snapshot-missing', capture)
-      rawDocument = { schemaVersion: 1, kind: 'variables', records: step.variableSnapshot }
+      rawDocument = {
+        schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+        kind: 'variables',
+        records: step.variableSnapshot,
+      }
     } else {
       if (capture.kind === 'aria' && !child?.artifactRefs?.some(ref => ref.id === capture.ref.id && ref.sha === capture.ref.sha)) {
         return error('ref-not-owned', capture)

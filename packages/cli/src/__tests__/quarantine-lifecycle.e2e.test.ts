@@ -65,6 +65,7 @@ import {
   asRef,
   exercisedAnchors,
   slugBranch,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -411,7 +412,7 @@ function envelopesFor(script: RunScript, aggregate: RunStatus): RunEventEnvelope
   const failed = script.outcome === 'failed'
   return [
     env('runStarted', {
-      busSchemaVersion: 1,
+      busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
       scope: { tier: 'product', key: PRODUCT },
       executionContext: 'ci',
       buildOrdinal: script.buildOrdinal,

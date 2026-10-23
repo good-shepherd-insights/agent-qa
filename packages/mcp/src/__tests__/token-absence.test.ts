@@ -138,7 +138,11 @@ import {
   type FunctionRegistry,
   type LiveViewPort,
 } from '@vostride/agent-qa-agent'
-import { asRunId, CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import {
+  asRunId,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  CURRENT_BUS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   FunctionCaller,
@@ -237,7 +241,7 @@ const runStartedEnvelope = (handles: readonly number[]): RunEventEnvelope => ({
   runId: FIXTURE_RUN_ID,
   type: 'runStarted',
   payload: {
-    busSchemaVersion: 1,
+    busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION,
     scope: { tier: 'test', key: 'TST-408-04' },
     executionContext: 'local-headless',
     buildOrdinal: 1,

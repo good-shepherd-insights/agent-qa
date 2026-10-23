@@ -1,4 +1,9 @@
-import { NETWORK_BODY_CONTENT_TYPES, NETWORK_BODY_MAX_BYTES, utf8Encode } from '@vostride/agent-qa-schema'
+import {
+  NETWORK_BODY_CONTENT_TYPES,
+  NETWORK_BODY_MAX_BYTES,
+  RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
+  utf8Encode,
+} from '@vostride/agent-qa-schema'
 import type { EvidenceDocument, MaskFn } from '@vostride/agent-qa-schema'
 import type { NetworkLogEntry } from '../result.js'
 
@@ -30,7 +35,7 @@ export function projectNetworkEvidence(
   records: readonly (NetworkLogEntry & Pick<NetworkRecord, 'requestSize' | 'responseSize'>)[],
   mask: MaskFn,
 ): Extract<EvidenceDocument, { kind: 'network' }> {
-  return { schemaVersion: 1, kind: 'network', records: records.map(record => {
+  return { schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION, kind: 'network', records: records.map(record => {
     const requestBody = admittedBody(record.requestBody, record.requestHeaders, mask)
     const body = admittedBody(record.body, record.responseHeaders, mask)
     return {

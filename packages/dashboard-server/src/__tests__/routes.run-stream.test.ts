@@ -49,6 +49,7 @@ import {
   type RunServiceReadiness,
   type RunSession,
   type RunStartAcknowledgement,
+  CURRENT_BUS_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -90,7 +91,7 @@ const ROSTER = [3, 7, 11] as const
 
 /** An interleaved feed over three concurrent members, with chosen (gappy) seqs. */
 const FEED: readonly RunEventEnvelope[] = Object.freeze([
-  { seq: 1, ts: 1, runId: 'r_local', type: 'runStarted', payload: { busSchemaVersion: 1, memberTestCount: 3, handles: [...ROSTER] } },
+  { seq: 1, ts: 1, runId: 'r_local', type: 'runStarted', payload: { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 3, handles: [...ROSTER] } },
   { seq: 3, ts: 3, runId: 'r_local', type: 'testStarted', payload: { testId: 'a', testIndex: 3, name: 'a' } },
   { seq: 5, ts: 5, runId: 'r_local', type: 'testStarted', payload: { testId: 'b', testIndex: 7, name: 'b' } },
   { seq: 8, ts: 8, runId: 'r_local', type: 'stepStarted', payload: { testIndex: 3, stepIndex: 0, stepText: 'a0' } },
@@ -159,7 +160,7 @@ function floorSession(): RunSession {
     // fixture whose retained window can grow on a timer is a fixture whose floor moves.
     timer: { now: () => 1_700_000_000_000, schedule: () => () => undefined },
   })
-  bus.publish('runStarted', { busSchemaVersion: 1, memberTestCount: 3, handles: [...ROSTER] })
+  bus.publish('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 3, handles: [...ROSTER] })
   bus.publish('testStarted', { testId: 'a', testIndex: 3, name: 'a' })
   bus.publish('testStarted', { testId: 'b', testIndex: 7, name: 'b' })
   bus.publish('testStarted', { testId: 'c', testIndex: 11, name: 'c' })

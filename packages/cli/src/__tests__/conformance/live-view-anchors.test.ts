@@ -25,7 +25,11 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { EditorLiveUrlResultSchema, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
+import {
+  EditorLiveUrlResultSchema,
+  RunsLiveUrlResultSchema,
+  CURRENT_BUS_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
 import { chromium } from 'playwright-core'
 import type { Browser, Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -494,7 +498,7 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
     const url = `${harnessHeld().origin}/api/run-stream/r_two`
 
     const a = openIdStream(url)
-    publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+    publishTo(run, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
     publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the two-surface member', totalSteps: 3 })
     await a.waitForIdCount(2)
 
@@ -577,7 +581,7 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
     const url = `${harnessHeld().origin}/api/run-stream/r_three`
 
     const early = openIdStream(url)
-    publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+    publishTo(run, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
     publishTo(run, 'testStarted', { testId: 't0', testIndex: 0, name: 'the abandoned member', totalSteps: 2 })
     publishTo(run, 'stepStarted', { testIndex: 0, stepIndex: 0, stepText: 'a step nobody is watching' })
     await early.waitForIdCount(3)
@@ -618,7 +622,7 @@ describe('INVK-05 on real sockets: two surfaces, a mid-run resume, and a detach 
     const pageA = await held.newPage()
     const pageB = await held.newPage()
     try {
-      publishTo(run, 'runStarted', { busSchemaVersion: 1, memberTestCount: 1, handles: [0] })
+      publishTo(run, 'runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION, memberTestCount: 1, handles: [0] })
       // RE-SPELLED 2026-09-26 (428-30, owner decision 2026-09-26 (2), G-428-2). A row with no text
       // is no longer drawn, so this testStarted carries its step texts and the pending rows both
       // surfaces wait for and count are still drawn.

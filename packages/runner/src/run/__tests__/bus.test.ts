@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createRunEventBus } from '../bus.js'
 import type { RunEventBus, ReplayIncompleteError } from '../bus.js'
 import type { EventLogPort, RunTimerPort } from '../ports.js'
+import { CURRENT_BUS_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope, RunEventType } from '@vostride/agent-qa-schema'
 
 // ---- Fakes ---------------------------------------------------------------
@@ -237,7 +238,7 @@ describe('heartbeat via injected RunTimerPort (spec §2.2)', () => {
     const bus = createRunEventBus({ runId: 'run-1', timer })
     const received = collect(bus, 1)
 
-    bus.publish('runStarted', { busSchemaVersion: 1 })
+    bus.publish('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION })
     timer.fireLatest() // simulate ~10 s of silence
     expect(received.some(e => e.type === 'heartbeat')).toBe(true)
 
@@ -254,7 +255,7 @@ describe('heartbeat via injected RunTimerPort (spec §2.2)', () => {
     const timer = makeFakeTimer()
     const spy = vi.spyOn(timer, 'schedule')
     const bus = createRunEventBus({ runId: 'run-1', timer })
-    bus.publish('runStarted', { busSchemaVersion: 1 })
+    bus.publish('runStarted', { busSchemaVersion: CURRENT_BUS_SCHEMA_VERSION })
     expect(spy).toHaveBeenCalled()
     bus.close()
   })
