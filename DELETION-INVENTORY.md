@@ -7585,8 +7585,10 @@ older-version arm, and no read arm was retained; the census's second-version cel
 migration step, alias, stamp union or stamp-keyed union in production. Writers stamp 2. Field-level
 members that a reader still accepts only so that older documents parse (436's `localEffect`,
 `stagnation` and `cycle`; 432's `approval_decision` chat reader; 438's evidence `ordinal`; 439's
-`'assert-value'`; 402's `suite-parent` members) are not version arms; they are deferred for the
-owner (D-24 OQ-B) and left as they were.
+`'assert-value'`; 402's `suite-parent` members; the retrieval-rung reason `index-unavailable`, which
+no current fold mints; a staged eval report with no publication manifest, which still loads
+unbound; and a score file with no scoring context, which is still read) are not version arms; they
+are deferred for the owner (D-24 OQ-B) and left as they were, comments included.
 
 ### What degrades, stated plainly
 
