@@ -57,7 +57,8 @@
 # Phase 413 publishes none; 415 uses the built eval package schema and committability guards, and
 # forbids the literal reports/**/noise-floor.json path in favor of reports/noise-floor/<key>.json.
 #
-# ENV OVERRIDES exist for the self-test only:
+# ENV OVERRIDES. EVAL_ROOT and DEMO_CONFIG default to the in-repo eval workspace under
+# test-fixtures/eval-workspace and can be overridden; the self-test overrides all three:
 #   EVAL_ROOT             the committed eval root to scan
 #   DEMO_CONFIG           the demo config to read for L3
 #   GATE_PATHS_OVERRIDE   colon-separated replacement for L2's gate path list
@@ -65,8 +66,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-EVAL_ROOT="${EVAL_ROOT:-$ROOT/../demo/init/agent-qa-eval}"
-DEMO_CONFIG="${DEMO_CONFIG:-$ROOT/../demo/init/agent-qa.config.yaml}"
+EVAL_ROOT="${EVAL_ROOT:-$ROOT/test-fixtures/eval-workspace/agent-qa-eval}"
+DEMO_CONFIG="${DEMO_CONFIG:-$ROOT/test-fixtures/eval-workspace/agent-qa.config.yaml}"
 
 FIXTURE_BATCH_KEY='358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e'
 

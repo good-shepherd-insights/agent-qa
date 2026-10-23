@@ -7,6 +7,7 @@
     "paths": [
       "demo/init/agent-qa-eval/contracts",
       "demo/init/agent-qa-eval/corpus",
+      "demo/init/agent-qa-eval/reports/358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e/report.json",
       "demo/init/agent-qa-eval/reports/noise-floor",
       "demo/init/agent-qa.config.yaml"
     ],
@@ -903,6 +904,11 @@
       "path": "agent-qa-eval/corpus/google-maps/r_weekly-emma-shoe-proto-rain-rein-gaz-fake-minor-median/test-00-step-05-d05-leaf.json",
       "sha256": "c9e3296fbff04b937d8f62dc4f506cdf03713205a2e6a06d9ccd546a51aef4dc",
       "bytes": 572
+    },
+    {
+      "path": "agent-qa-eval/reports/358327d21294f77b91645e3cefde46ad12fe065422757372835447a41865a71e/report.json",
+      "sha256": "1b1de69f1e8f5e62950a93f8d790191d98f94770c03191daadce1ed62e63f199",
+      "bytes": 3260
     },
     {
       "path": "agent-qa-eval/reports/noise-floor/planner-gpt-5.6-terra-fingerprint-ddfecc548fbd9a50d182edd0e0fa6f855c3507840b328ac5dd1b595d926f9837-matcher-1-judge-none-judgeVersion-none.json",
