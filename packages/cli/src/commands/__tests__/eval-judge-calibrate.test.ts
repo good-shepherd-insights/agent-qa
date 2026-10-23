@@ -308,7 +308,7 @@ it.each([undefined, [], ['model1']].flatMap(judges => [false, true].flatMap(repl
   const f = fixture()
   await invoke(f.configPath, ['--judge-panel', '--commit', '--json'])
   const historical = readFileSync(new URL('../../../../../test-fixtures/eval-workspace/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url), 'utf8')
-  expect(sha256hex(historical)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
+  expect(sha256hex(historical)).toBe('106807bef1934ad439eda53929c06a783ae7cab45dde0bebc8d09a528ad60024')
   writeFileSync(join(f.committedRoot, 'contracts/judge-config.v1.json'), historical)
   // Existing unrelated bytes are protected even when they are outside panel admission.
   writeFileSync(join(f.committedRoot, 'labels/calibration.json'), JSON.stringify(core.calibrateLabels({ snapshot: {

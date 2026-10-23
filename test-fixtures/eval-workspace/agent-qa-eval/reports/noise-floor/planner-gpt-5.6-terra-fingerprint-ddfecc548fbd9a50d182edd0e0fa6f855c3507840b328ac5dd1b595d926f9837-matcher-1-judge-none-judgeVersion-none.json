@@ -914,7 +914,7 @@
         "runSlug": "r_arena-knife-stripe-veal-ambo-cate-joker-hep-strict-gage"
       }
     ],
-    "schemaVersion": 1
+    "schemaVersion": 2
   },
   "corpusDigest": "cbf1e3833f04bf2acc0603c137ecac2918922f816d1dd9b7aaa5c7fbf3c3bd68",
   "cost": {
@@ -2851,7 +2851,7 @@
       "seedHonored": false
     }
   ],
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "seedHonored": false,
   "seeds": [
     11,

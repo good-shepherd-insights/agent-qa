@@ -44,6 +44,6 @@
     "rubric": "The judge answers ONLY the narrow equivalence question asked, against the reference evidence provided, and must answer 'unsure' rather than guess when the evidence is insufficient."
   },
   "kind": "judge-config",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "version": 1
 }

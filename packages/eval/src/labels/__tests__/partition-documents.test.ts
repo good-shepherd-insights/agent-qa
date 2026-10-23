@@ -102,7 +102,7 @@ describe('partitionManifest', () => {
 
     // A partition recipe change is a named migration, never a silent re-read.
     expect(() => guardPartitionManifest(manifestBytes({ partitionVersion: 2 }))).toThrow(TypeError)
-    expect(() => guardPartitionManifest(manifestBytes({ schemaVersion: 2 }))).toThrow(TypeError)
+    expect(() => guardPartitionManifest(manifestBytes({ schemaVersion: 3 }))).toThrow(TypeError)
     expect(() => guardPartitionManifest(manifestBytes({ product: '' }))).toThrow(TypeError)
     expect(() => guardPartitionManifest(manifestBytes({ note: 'extra' }))).toThrow(TypeError)
   })

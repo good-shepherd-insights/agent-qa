@@ -6,7 +6,7 @@ import { GENERALIZATION_VERDICTS, type GeneralizationVerdict } from '../stats/ge
 import { classifierRepeatabilitySchema, runCostRecordSchema } from './classifier-repeatability'
 import type { ClassifierRepeatability } from './classifier-repeatability'
 
-export const NOISE_FLOOR_SCHEMA_VERSION = 1 as const
+export const NOISE_FLOOR_SCHEMA_VERSION = 2 as const
 export const NOISE_FLOOR_METHOD = 'aa-repeat-spread-plus-wilson' as const
 export type FloorSplit = 'natural' | 'held-out-shared' | 'held-out-private'
 // prettier-ignore

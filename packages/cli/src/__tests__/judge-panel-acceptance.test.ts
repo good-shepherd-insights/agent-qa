@@ -66,7 +66,7 @@ function fixture(models: core.CassetteModelReceipt[] = [{}], members = ['claude-
   const rows = models.map((model, index) => addEvidence(project, index, model, members))
   if (rows.length > 0) {
     const historical = readFileSync(new URL('../../../../test-fixtures/eval-workspace/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url), 'utf8')
-    expect(sha256hex(historical)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
+    expect(sha256hex(historical)).toBe('106807bef1934ad439eda53929c06a783ae7cab45dde0bebc8d09a528ad60024')
     writeFileSync(join(project, 'agent-qa-eval/contracts/judge-config.v1.json'), historical)
   }
   for (const row of rows) {

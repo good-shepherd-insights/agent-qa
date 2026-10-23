@@ -138,7 +138,7 @@ it('publishes the frozen v2 constitution and sanctioned public panel binding', (
   expect(publicApi).toHaveProperty('bindJudgePanel', expect.any(Function))
   const oldFile = new URL('../../../../test-fixtures/eval-workspace/agent-qa-eval/contracts/judge-config.v1.json', import.meta.url)
   const before = readFileSync(oldFile, 'utf8')
-  expect(sha256hex(before)).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
+  expect(sha256hex(before)).toBe('106807bef1934ad439eda53929c06a783ae7cab45dde0bebc8d09a528ad60024')
   const projection = projectJudgeConfigContract()
   const text = committedFileText(projection)
   expect(projection).toMatchObject({ version: 2, config: { judgeVersion: 2,

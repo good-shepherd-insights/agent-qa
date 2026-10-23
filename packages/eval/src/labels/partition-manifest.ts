@@ -36,7 +36,7 @@ import { z } from 'zod'
 import { PARTITION_VERSION, type PartitionParams } from './split-assignment'
 
 /** Single version gate for the partition manifest document (D-05). */
-export const PARTITION_MANIFEST_SCHEMA_VERSION = 1 as const
+export const PARTITION_MANIFEST_SCHEMA_VERSION = 2 as const
 
 /**
  * One product's committed partition parameters. `partitionVersion` names the

@@ -10,7 +10,7 @@ import type { JudgeConfig } from '../judge/config'
 import { MATCHER_CONFIG } from '../match/config'
 import type { MatcherConfig } from '../match/config'
 
-export const CONTRACT_PROJECTION_SCHEMA_VERSION = 1
+export const CONTRACT_PROJECTION_SCHEMA_VERSION = 2
 
 export interface ContractProjection {
   schemaVersion: typeof CONTRACT_PROJECTION_SCHEMA_VERSION

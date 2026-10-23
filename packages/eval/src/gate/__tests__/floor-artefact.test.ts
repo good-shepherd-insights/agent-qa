@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
+import { CLASSIFIER_REPEATABILITY_SCHEMA_VERSION } from '../classifier-repeatability'
 import {
   FLOOR_PROTOCOL_MINIMUM,
   FLOOR_SPLITS,
@@ -39,7 +40,7 @@ export function floorFixture(): NoiseFloorArtefact {
     searchedUpTo: 100000,
   }
   return {
-    schemaVersion: 1,
+    schemaVersion: NOISE_FLOOR_SCHEMA_VERSION,
     method: 'aa-repeat-spread-plus-wilson',
     profileKey: 'synthetic-profile',
     fingerprint: 'synthetic-fingerprint',
@@ -91,7 +92,7 @@ describe('committed noise floor document', () => {
     const result = guardNoiseFloorArtefact({
       ...floorFixture(),
       classifierRepeatability: {
-        schemaVersion: 1,
+        schemaVersion: CLASSIFIER_REPEATABILITY_SCHEMA_VERSION,
         k: 3,
         n: 0,
         incomplete: [],
@@ -108,7 +109,7 @@ describe('committed noise floor document', () => {
   it('round-trips all document levels without changing raw doubles', () => {
     const artefact = floorFixture()
     artefact.axes.headline = { n: 48, aggregateFloor: 1 / 48, pairs: [] }
-    expect(NOISE_FLOOR_SCHEMA_VERSION).toBe(1)
+    expect(NOISE_FLOOR_SCHEMA_VERSION).toBe(2)
     expect(NOISE_FLOOR_METHOD).toBe('aa-repeat-spread-plus-wilson')
     expect(FLOOR_SPLITS).toEqual(['natural', 'held-out-shared', 'held-out-private'])
     expect(FLOOR_PROTOCOL_MINIMUM).toEqual({ repeats: 3, seeds: 2 })
@@ -120,7 +121,7 @@ describe('committed noise floor document', () => {
 
   it.each([
     ['unknown top-level key', (a: any) => { a.extra = true }, '<root>'],
-    ['new version', (a: any) => { a.schemaVersion = 2 }, 'schemaVersion'],
+    ['new version', (a: any) => { a.schemaVersion = 3 }, 'schemaVersion'],
     ['missing digest', (a: any) => { delete a.corpusDigest }, 'corpusDigest'],
     ['non-array seeds', (a: any) => { a.seeds = 11 }, 'seeds'],
     ['missing axis', (a: any) => { delete a.axes.value }, 'axes.value'],

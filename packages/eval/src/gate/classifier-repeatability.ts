@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { EXCLUSION_CLASSES } from '../labels/run-exclusion'
 import type { RunCostRecord } from './floor-artefact'
 
-export const CLASSIFIER_REPEATABILITY_SCHEMA_VERSION = 1 as const
+export const CLASSIFIER_REPEATABILITY_SCHEMA_VERSION = 2 as const
 
 export interface ClassifierSweep {
   analysisDigest: string

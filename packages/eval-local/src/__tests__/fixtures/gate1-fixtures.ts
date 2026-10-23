@@ -8,6 +8,7 @@ import {
   extractRunCassettes,
   FLOOR_AXES,
   FLOOR_SPLITS,
+  NOISE_FLOOR_SCHEMA_VERSION,
   projectCorpusEntry,
   projectPartitionManifest,
   type AxisFloorSet,
@@ -256,7 +257,7 @@ export function writeGate1Fixture(
     searchedUpTo: count,
   }
   const artefact: NoiseFloorArtefact = {
-    schemaVersion: 1,
+    schemaVersion: NOISE_FLOOR_SCHEMA_VERSION,
     method: 'aa-repeat-spread-plus-wilson',
     ...identity,
     profileKey,

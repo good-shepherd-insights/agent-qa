@@ -18,6 +18,7 @@ import { extractRunCassettes } from '../../extract/extract-run'
 import { countGateSet } from '../../gate/gate-set'
 import type { CorpusEntry, TargetEnvironment } from '../../labels/corpus-entry'
 import type { StandaloneLabelRecord } from '../../labels/label-record'
+import { PARTITION_MANIFEST_SCHEMA_VERSION } from '../../labels/partition-manifest'
 import type { PartitionManifest } from '../../labels/partition-manifest'
 import type { ExclusionClass, RunExclusionRecord, VerdictProducer } from '../../labels/run-exclusion'
 import type { ArtifactSource } from '../../ports'
@@ -502,7 +503,7 @@ function manifestFor(
   },
 ): PartitionManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: PARTITION_MANIFEST_SCHEMA_VERSION,
     partitionVersion: 1,
     product,
     salt,

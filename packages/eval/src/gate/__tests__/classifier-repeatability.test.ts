@@ -27,9 +27,9 @@ function runs(): ClassifierRunInput[] {
 describe('classifier repeatability', () => {
   it('reports class and admission flips over completed runs with inline digests', () => {
     const result = foldClassifierRepeatability({ k: 3, runs: runs() })
-    expect(CLASSIFIER_REPEATABILITY_SCHEMA_VERSION).toBe(1)
+    expect(CLASSIFIER_REPEATABILITY_SCHEMA_VERSION).toBe(2)
     expect(result).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: CLASSIFIER_REPEATABILITY_SCHEMA_VERSION,
       k: 3,
       n: 3,
       incomplete: ['unfinished'],
@@ -80,7 +80,7 @@ describe('classifier repeatability', () => {
   it('omits rates when all runs are incomplete, including zero-sweep input', () => {
     const result = foldClassifierRepeatability({ k: 3, runs: [runs()[3]!, { runSlug: 'no-sweeps', product: 'maps', sweeps: [] }] })
     expect(result).toEqual({
-      schemaVersion: 1,
+      schemaVersion: CLASSIFIER_REPEATABILITY_SCHEMA_VERSION,
       k: 3,
       n: 0,
       incomplete: ['unfinished', 'no-sweeps'],

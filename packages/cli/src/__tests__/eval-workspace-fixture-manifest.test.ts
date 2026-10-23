@@ -32,7 +32,7 @@ it('EVAL-WORKSPACE-FIXTURE: every vendored file matches its manifest sha-256 and
 })
 
 it('EVAL-WORKSPACE-FIXTURE: the frozen judge contracts and config keep their pinned hashes', () => {
-  expect(sha('agent-qa-eval/contracts/judge-config.v1.json')).toBe('8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea')
-  expect(sha('agent-qa-eval/contracts/judge-config.v2.json')).toBe('7fc8f16e4210333638a7dd51f36cd9cc291c7a3a72809d96cc623de578b272ec')
+  expect(sha('agent-qa-eval/contracts/judge-config.v1.json')).toBe('106807bef1934ad439eda53929c06a783ae7cab45dde0bebc8d09a528ad60024')
+  expect(sha('agent-qa-eval/contracts/judge-config.v2.json')).toBe('92f43fe73d90b253985cb8d12bd66b6324f35639ffc160fe502046c7571520a1')
   expect(sha('agent-qa.config.yaml')).toBe('6be9e2eedfe2b79d00ba80fc683748464002bd1fe28e8deb30d38ff71c7677f4')
 })

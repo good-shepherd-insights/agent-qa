@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "frozen": true,
   "source": {
     "repo": "super-repo (agent-qa's parent checkout)",
@@ -16,37 +16,37 @@
   "files": [
     {
       "path": "agent-qa-eval/contracts/judge-config.v1.json",
-      "sha256": "8f385c65a0c4011b7610a698c64848645c0cf51167b7e3f8018e280dd4ba9eea",
+      "sha256": "106807bef1934ad439eda53929c06a783ae7cab45dde0bebc8d09a528ad60024",
       "bytes": 2192
     },
     {
       "path": "agent-qa-eval/contracts/judge-config.v2.json",
-      "sha256": "7fc8f16e4210333638a7dd51f36cd9cc291c7a3a72809d96cc623de578b272ec",
+      "sha256": "92f43fe73d90b253985cb8d12bd66b6324f35639ffc160fe502046c7571520a1",
       "bytes": 2683
     },
     {
       "path": "agent-qa-eval/contracts/matcher-config.v1.json",
-      "sha256": "9f339980d93649944dc9607a73edc97693ec1b8ae4df8c801629aab3cd380c6e",
+      "sha256": "0ac383eb8da2820abae5935514e4a86bbab6ceac3d1588fde2652752b1838e0d",
       "bytes": 2305
     },
     {
       "path": "agent-qa-eval/contracts/partition-apple-maps.json",
-      "sha256": "0467850c93c74508b0a70436a808535d74da42d715cb6df62f1ccd73b9c5d2fe",
+      "sha256": "932f2e3bf33811663d61e3a5eefa846644a75767492b21d3745ab3f4b89d1caa",
       "bytes": 208
     },
     {
       "path": "agent-qa-eval/contracts/partition-automation-exercise.json",
-      "sha256": "246061b41bca94f42450edf3f4b5d33089f7452580db35927d8bdb0eb6bcbff6",
+      "sha256": "c311a3e7800612348ea432736ace09ad54c9b220a8ead2248bd9b619443297eb",
       "bytes": 217
     },
     {
       "path": "agent-qa-eval/contracts/partition-example-web.json",
-      "sha256": "5f81b90728aacb1644058ebb190db1cf18e83df1138097e4d69e1b2e2e842ced",
+      "sha256": "9ae110065574f1ded49ec1a504a0593bc129b2290e7b52af65e1c2b8906cc046",
       "bytes": 209
     },
     {
       "path": "agent-qa-eval/contracts/partition-google-maps.json",
-      "sha256": "66f9fcb65cd5dafc53b447240d430f1fc36e869ab3273e3ffc6a205d4a98ec7b",
+      "sha256": "d7ba0987ef93e19d9ffb3c3fbd5c2edff507bd95ae173deff676ffa7170c90c5",
       "bytes": 209
     },
     {
@@ -906,7 +906,7 @@
     },
     {
       "path": "agent-qa-eval/reports/noise-floor/planner-gpt-5.6-terra-fingerprint-ddfecc548fbd9a50d182edd0e0fa6f855c3507840b328ac5dd1b595d926f9837-matcher-1-judge-none-judgeVersion-none.json",
-      "sha256": "71d4fe0eeca869cf79268e7a25b06ef9127c78cc5476022eebe23be0f42751d6",
+      "sha256": "98cbffb9ee8d8715a3fc780fec43c71023865fb34a43a7164597f773670d6cb1",
       "bytes": 108020
     },
     {

@@ -77,6 +77,6 @@
     }
   },
   "kind": "matcher-config",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "version": 1
 }

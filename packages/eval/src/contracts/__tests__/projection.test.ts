@@ -46,8 +46,8 @@ describe('contract projection', () => {
     )
   })
 
-  it('stamps schemaVersion 1 on every projection', () => {
-    expect(CONTRACT_PROJECTION_SCHEMA_VERSION).toBe(1)
+  it('stamps schemaVersion 2 on every projection', () => {
+    expect(CONTRACT_PROJECTION_SCHEMA_VERSION).toBe(2)
     expect(projectMatcherConfigContract().schemaVersion).toBe(CONTRACT_PROJECTION_SCHEMA_VERSION)
     expect(projectJudgeConfigContract().schemaVersion).toBe(CONTRACT_PROJECTION_SCHEMA_VERSION)
   })
