@@ -111,15 +111,6 @@
     },
     {
       "runner": "vitest",
-      "file": "packages/eval-local/src/__tests__/committed-brief-rendering.test.ts",
-      "fullName": "415 D-07 — committed populated-brief reconstruction reconstructs all 79 populated briefs as proof/exact with matching policyDigest",
-      "kind": "skipped",
-      "reason": "removed model gate (V2-REL-02)",
-      "condition": "no ../demo/init beside agent-qa, so no eval cassettes (it.skipIf(CASSETTE_SWEEP_SKIP_REASON !== undefined))",
-      "conditional": false
-    },
-    {
-      "runner": "vitest",
       "file": "packages/cli/src/__tests__/binding-override.live.test.ts",
       "fullName": "D-12: the mapper binds the argument, and the model cannot re-address the clause A5 AUTH SMOKE: the host resolved a chat model",
       "kind": "skipped",
