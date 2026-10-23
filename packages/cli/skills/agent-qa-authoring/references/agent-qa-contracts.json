@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "ids": {
     "instruction": "Never mint or hand-write an ID. IDs are minted host-side where the entity is written; read the id back off the entity card `agent_qa_get_entity` returns.",
     "contracts": [
