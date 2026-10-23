@@ -395,7 +395,7 @@ export async function captureInvocation(invocation) {
     for (const dir of runDirs(fixture.project)) {
       const handoff = JSON.parse(readFileSync(join(dir, 'handoff.json'), 'utf8'))
       assert.deepEqual(JSON.parse(readFileSync(join(dir, 'canary-policy.json'), 'utf8')), {
-        schemaVersion: 1, runId: handoff.runId, maxAblations: 4, source: 'default',
+        schemaVersion: 2, runId: handoff.runId, maxAblations: 4, source: 'default',
       })
     }
     const context = {
