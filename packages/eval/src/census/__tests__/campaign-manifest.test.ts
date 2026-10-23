@@ -31,7 +31,7 @@ function fullLeg(): CampaignLeg {
     completionTokens: 810,
     steps: 7,
     proofSteps: 7,
-    rung: { schemaVersion: 1, rung: 'lexical-only', reason: 'model-not-downloaded' },
+    rung: { schemaVersion: 2, rung: 'lexical-only', reason: 'model-not-downloaded' },
   }
 }
 
@@ -52,7 +52,7 @@ describe('413 D-16 campaign manifest guard', () => {
 
     expect(guarded).toEqual(manifest)
     expect(guarded.legs[0]?.rung).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'lexical-only',
       reason: 'model-not-downloaded',
     })

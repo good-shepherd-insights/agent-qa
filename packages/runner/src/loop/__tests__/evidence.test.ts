@@ -187,7 +187,7 @@ describe('makeEmptyServedBrief', () => {
 // records). The recorder does not resolve it — it is handed one, once per run.
 describe('EvidenceRecorder retrievalRung stamping (407 D-13)', () => {
   const rung: RecordedRetrievalRung = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rung: 'static-floor',
     reason: 'native-runtime-unavailable',
   }

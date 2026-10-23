@@ -75,7 +75,7 @@ describe('neutral host prior passthrough', () => {
       asOfBuild: 1, capabilities: { text: true, vision: false, toolCalling: false, contextWindow: 8192, maxOutput: 1024 } as never,
       accounting: { estimate: () => 1, getCeilings: () => ({ contextWindow: 8192, maxOutput: 1024 }) },
       qaRulesText: '', workingContextText: '', resolveTrustPriors,
-      resolveRetrievalRung: async () => ({ schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' }),
+      resolveRetrievalRung: async () => ({ schemaVersion: 2, rung: 'bundle-scan', reason: 'index-unavailable' }),
     })
     expect(vi.mocked(reader.openKnowledgeReader).mock.calls.at(-1)![0]).toMatchObject({ priors })
   })

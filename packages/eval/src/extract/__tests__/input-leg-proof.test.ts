@@ -19,7 +19,7 @@ import { extractRunCassettes } from '../extract-run'
 import { projectInputLeg } from '../input-leg'
 
 const RUNG: RecordedRetrievalRung = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   rung: 'lexical-only',
   reason: 'model-not-downloaded',
 }

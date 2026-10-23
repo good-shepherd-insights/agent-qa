@@ -116,7 +116,7 @@ describe('event sink — stepFinalized tokenUsage leg (405 D-05)', () => {
 
 describe('event sink — stepFinalized retrievalRung leg (407 D-13/D-14)', () => {
   const rung: RecordedRetrievalRung = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rung: 'bundle-scan',
     reason: 'index-unavailable',
   }

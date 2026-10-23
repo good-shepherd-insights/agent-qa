@@ -244,7 +244,7 @@ describe("the run header wires it as a second row, once (D-14)", () => {
           run={runRow()}
           shortcutsOpen={false}
           onToggleShortcuts={() => {}}
-          retrievalRung={{ schemaVersion: 1, rung: "static-floor", reason: "native-runtime-unavailable" }}
+          retrievalRung={{ schemaVersion: 2, rung: "static-floor", reason: "native-runtime-unavailable" }}
         />
       </MemoryRouter>,
     )
@@ -260,7 +260,7 @@ describe("the run header wires it as a second row, once (D-14)", () => {
           run={runRow()}
           shortcutsOpen={false}
           onToggleShortcuts={() => {}}
-          retrievalRung={{ schemaVersion: 1, rung: "memidex" }}
+          retrievalRung={{ schemaVersion: 2, rung: "memidex" }}
         />
       </MemoryRouter>,
     )

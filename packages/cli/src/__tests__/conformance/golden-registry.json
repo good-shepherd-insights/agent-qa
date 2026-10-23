@@ -322,7 +322,7 @@
       "classifies": true,
       "id": "knowledge.brief.why",
       "inputSchemaDigest": "a7c3ebe968b988c12628029b8918a57799f5dca5392f68fa04ae2136861275f8",
-      "outputSchemaDigest": "6055f749cf1889e46e6d51c285a362d7216aa033e3eab849bd03cae3fa40dbc8",
+      "outputSchemaDigest": "ba14b43dfe5ec14c5a096cff91faf1f583fbac2f124772d1ef014eb6d85ddf0b",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_explain_brief"
@@ -577,7 +577,7 @@
       "classifies": true,
       "id": "runs.evidence",
       "inputSchemaDigest": "f93fb418e51869c67457b37b03d4af0a9b55621d81bac733aa239b599426bb9a",
-      "outputSchemaDigest": "e50d566692c43be55d3a7431d1a403d3c06d410f20e736a7287a14afb436124d",
+      "outputSchemaDigest": "c30a7be0670302df09a53d46105ee6505916fa4441fc97add041d2c385060e90",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_get_run_evidence"
@@ -611,7 +611,7 @@
       "classifies": true,
       "id": "runs.knowledge",
       "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
-      "outputSchemaDigest": "9355b543a6d7f61bf796256faabc56527e2c4ffebb55a759d15c81de2fd84e8e",
+      "outputSchemaDigest": "13a79bf50f047dba9c87a1bf797329dd904e6b2a752e9853f65eedcb64fd5ecb",
       "partition": {
         "kind": "projected",
         "tool": "agent_qa_get_run_knowledge"

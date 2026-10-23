@@ -30,7 +30,7 @@ import {
  * which are about budgets, not about the host — hand it a fake and never probe the machine.
  */
 const fakeResolveRetrievalRung = (): Promise<RecordedRetrievalRung> => Promise.resolve({
-  schemaVersion: 1,
+  schemaVersion: 2,
   rung: 'bundle-scan',
   reason: 'index-unavailable',
 })

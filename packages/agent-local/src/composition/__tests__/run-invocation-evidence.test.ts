@@ -315,7 +315,7 @@ describe('the runs.start ack is read off the durable record, over the core (401-
 // ---------------------------------------------------------------------------------------------
 
 const FIXTURE_RUNG: RecordedRetrievalRung = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   rung: 'bundle-scan',
   reason: 'index-unavailable',
 }

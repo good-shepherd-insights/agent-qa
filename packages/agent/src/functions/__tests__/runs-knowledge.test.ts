@@ -57,7 +57,7 @@ const OTHER_RUN_ID = 'RUN-407-99'
 const SCOPE: ScopeKey = { tier: 'product', key: 'shop' }
 
 const RUNG: RecordedRetrievalRung = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   rung: 'static-floor',
   reason: 'native-runtime-unavailable',
 }
@@ -1125,7 +1125,6 @@ describe('423 recorded rung causes on runs.knowledge (D-22)', () => {
     { face: 'corrupt', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt' } },
     { face: 'schema-version', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-corrupt' } },
   ] as const
-  const HISTORICAL = { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' } as const
 
   function withRungs(rungs: readonly unknown[]): CompletedRunHandoff {
     return handoff([
@@ -1184,30 +1183,9 @@ describe('423 recorded rung causes on runs.knowledge (D-22)', () => {
     })
   })
 
-  describe('RUNG-HISTORICAL-READ', () => {
-    it('projects a historical v1 handoff row unchanged, never as a current cause', async () => {
-      const result = await ready({ document: withRungs([HISTORICAL]) })
-
-      expect(JSON.stringify(result.retrievalRung)).toBe(JSON.stringify(HISTORICAL))
-      expect(JSON.stringify(result.steps[0]?.retrievalRung)).toBe(JSON.stringify(HISTORICAL))
-      const parsed = RunKnowledgeProjectionSchema.parse(result)
-      expect(parsed.kind === 'ready' ? parsed.retrievalRung : undefined).toEqual(HISTORICAL)
-    })
-
-    it('keeps each step on the version it was written under in a mixed run', async () => {
-      const result = await ready({ document: withRungs([HISTORICAL, CURRENT_FOLDS[0].rung, RUNG]) })
-
-      expect(result.steps.map((row) => row.retrievalRung)).toEqual([
-        HISTORICAL,
-        CURRENT_FOLDS[0].rung,
-        RUNG,
-      ])
-      expect(result.retrievalRung).toEqual(HISTORICAL)
-    })
-  })
-
   describe('RUNG-INVALID-VERSION', () => {
     const INVALID = [
+      { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' },
       { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-not-built' },
       { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-locked' },
       { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-corrupt' },

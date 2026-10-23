@@ -1509,8 +1509,8 @@ describe('the bus is the truth on this page', () => {
 })
 
 describe('the live header says which rung served this run, from the evidence (407-10 · TRST-01, D-14)', () => {
-  const FLOOR = { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
-  const TOP = { schemaVersion: 1, rung: 'memidex' } as const
+  const FLOOR = { schemaVersion: 2, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
+  const TOP = { schemaVersion: 2, rung: 'memidex' } as const
   const BOOTSTRAP = { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-not-built' } as const
 
   it('paints NOTHING before a frame has carried a rung — "not yet known" is the absent element', async () => {

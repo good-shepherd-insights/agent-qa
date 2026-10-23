@@ -2,7 +2,7 @@
 // The class is a pure function of the recorded (rung, reason); nothing here probes the store.
 
 import { describe, expect, it } from 'vitest'
-import { RECORDED_RETRIEVAL_RUNG_REASONS, type RetrievalRung, type RecordedRetrievalRungReason } from '@vostride/agent-qa-schema'
+import { RETRIEVAL_RUNG_REASONS, type RetrievalRung, type RetrievalRungReason } from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from '@/lib/api'
 import {
@@ -21,7 +21,7 @@ type LowerRung = Exclude<RetrievalRung, 'memidex'>
 
 // The rung the v2 fold pairs each reason with (knowledge-local/src/retrieval-rung.ts), and the
 // class D-21 assigns it. Spelled here, not read from the subject, so a re-mapped reason reds.
-const EXPECTED: Record<RecordedRetrievalRungReason, readonly [LowerRung, string]> = {
+const EXPECTED: Record<RetrievalRungReason, readonly [LowerRung, string]> = {
   'index-not-built': ['bundle-scan', 'fresh-index'],
   'index-unavailable': ['bundle-scan', 'cause-not-recorded'],
   'index-locked': ['bundle-scan', 'index-problem'],
@@ -29,13 +29,12 @@ const EXPECTED: Record<RecordedRetrievalRungReason, readonly [LowerRung, string]
   'native-runtime-unavailable': ['static-floor', 'semantic-search-unavailable'],
   'model-not-downloaded': ['lexical-only', 'semantic-search-unavailable'],
   'embedder-load-failed': ['lexical-only', 'semantic-search-unavailable'],
-  'low-ram-deferral': ['lexical-only', 'semantic-search-unavailable'],
   'profile-unresolved': ['lexical-only', 'semantic-search-unavailable'],
   'profile-static-configured': ['static-floor', 'by-configuration'],
   'floor-disabled': ['lexical-only', 'by-configuration'],
 }
 
-const REASON_ROWS = RECORDED_RETRIEVAL_RUNG_REASONS.map(reason => [reason, ...EXPECTED[reason]] as const)
+const REASON_ROWS = RETRIEVAL_RUNG_REASONS.map(reason => [reason, ...EXPECTED[reason]] as const)
 
 const BOOTSTRAP =
   "The knowledge index hadn't been built yet, so this run read knowledge straight from the bundles. "
@@ -46,7 +45,7 @@ const POINTER =
 
 // One (rung, reason) per class, plus the second wording inside semantic-search-unavailable and
 // by-configuration, and the reason-less historical row.
-const SENTENCES: ReadonlyArray<readonly [LowerRung, RecordedRetrievalRungReason | undefined, string, string]> = [
+const SENTENCES: ReadonlyArray<readonly [LowerRung, RetrievalRungReason | undefined, string, string]> = [
   ['bundle-scan', 'index-not-built', 'fresh-index', BOOTSTRAP],
   [
     'bundle-scan',
@@ -98,7 +97,7 @@ const SENTENCES: ReadonlyArray<readonly [LowerRung, RecordedRetrievalRungReason 
   ],
 ]
 
-function ready(retrievalRung?: { schemaVersion: 1 | 2; rung: RetrievalRung; reason?: RecordedRetrievalRungReason }, knowledgeStore = 'bound'): KnowledgeRead {
+function ready(retrievalRung?: { schemaVersion: 2; rung: RetrievalRung; reason?: RetrievalRungReason }, knowledgeStore = 'bound'): KnowledgeRead {
   return {
     kind: 'read',
     projection: {
@@ -122,7 +121,7 @@ function usedRetrieval(read: KnowledgeRead) {
 
 describe('every recorded reason maps to exactly one retrieval class (D-21)', () => {
   it('covers the whole recorded vocabulary with one expected row each', () => {
-    expect(Object.keys(EXPECTED).sort()).toEqual([...RECORDED_RETRIEVAL_RUNG_REASONS].sort())
+    expect(Object.keys(EXPECTED).sort()).toEqual([...RETRIEVAL_RUNG_REASONS].sort())
   })
 
   it.each(REASON_ROWS)('RETRIEVAL-CLASS-PER-REASON: %s on %s is %s', (reason, rung, expected) => {
@@ -171,7 +170,7 @@ describe('each class states this run\'s retrieval level in its own words (D-20, 
       expect(retrievalStatement(rung, reason).toLowerCase()).toContain('this run')
     }
     expect([...classes].sort()).toEqual([...RETRIEVAL_CLASSES].sort())
-    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
       const [rung] = EXPECTED[reason]
       expect(retrievalStatement(rung, reason).toLowerCase()).toContain('this run')
     }
@@ -186,7 +185,7 @@ describe('each class states this run\'s retrieval level in its own words (D-20, 
   it('warning statements embed the recorded cause label verbatim (D-21, D-23)', () => {
     expect(retrievalStatement).toBeTypeOf('function')
     expect(RETRIEVAL_CLASS_TONES).toBeTypeOf('object')
-    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
       const [rung, cls] = EXPECTED[reason]
       if (RETRIEVAL_CLASS_TONES[cls as keyof typeof RETRIEVAL_CLASS_TONES] !== 'warning') continue
       expect(retrievalStatement(rung, reason)).toContain(`— ${RUNG_CAUSE_LABELS[reason]}.`)
@@ -201,7 +200,7 @@ describe('each class states this run\'s retrieval level in its own words (D-20, 
 
   it('no statement carries a backtick or the retired degraded wording', () => {
     expect(retrievalStatement).toBeTypeOf('function')
-    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
       const [rung] = EXPECTED[reason]
       const sentence = retrievalStatement(rung, reason)
       expect(sentence).not.toContain('`')
@@ -234,7 +233,7 @@ describe('the ready view carries the statement under used, and only below memide
   })
 
   it('a reason-less lower rung reads as cause-not-recorded with no reason key', () => {
-    const retrieval = usedRetrieval(ready({ schemaVersion: 1, rung: 'lexical-only' }))
+    const retrieval = usedRetrieval(ready({ schemaVersion: 2, rung: 'lexical-only' }))
     expect(retrieval?.retrievalClass).toBe('cause-not-recorded')
     expect(retrieval !== undefined && 'reason' in retrieval).toBe(false)
   })
@@ -249,7 +248,7 @@ describe('the ready view carries the statement under used, and only below memide
   it('the view, the strip and the statement agree on every render of one record (idempotency)', () => {
     expect(retrievalStatement).toBeTypeOf('function')
     expect(RETRIEVAL_CLASS_TONES).toBeTypeOf('object')
-    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
       const [rung, cls] = EXPECTED[reason]
       const read = ready({ schemaVersion: 2, rung, reason })
       const first = usedRetrieval(read)

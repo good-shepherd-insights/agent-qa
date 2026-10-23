@@ -30,7 +30,7 @@ import type {
   RunKnowledgeStep,
   TraceLine,
 } from '@vostride/agent-qa-schema'
-import { RECORDED_RETRIEVAL_RUNG_REASONS, RETRIEVAL_RUNGS } from '@vostride/agent-qa-schema'
+import { RETRIEVAL_RUNG_REASONS, RETRIEVAL_RUNGS } from '@vostride/agent-qa-schema'
 
 import type { KnowledgeRead } from '@/lib/api'
 import {
@@ -336,7 +336,7 @@ describe('the recorded rung rides the view when the evidence recorded one (D-13)
   it('carries the rung and its cause through untouched', () => {
     const view = projectKnowledgeView(ready({
       steps: [step()],
-      retrievalRung: { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' },
+      retrievalRung: { schemaVersion: 2, rung: 'static-floor', reason: 'native-runtime-unavailable' },
     }))
 
     if (view.state !== 'ready') throw new Error('unreachable')
@@ -361,7 +361,7 @@ describe('absence is an absent key, everywhere (the layer idiom)', () => {
       projectKnowledgeView(ready({ steps: [] })),
       projectKnowledgeView(ready({
         steps: [step({ served: { channel1: [briefLine(true)], channel2: [], channel3: [] } })],
-        retrievalRung: { schemaVersion: 1, rung: 'lexical-only', reason: 'floor-disabled' },
+        retrievalRung: { schemaVersion: 2, rung: 'lexical-only', reason: 'floor-disabled' },
       })),
     ]
 
@@ -1922,7 +1922,7 @@ describe('the strip sentence exists only for warning classes, composed from clos
 
   it('ends every warning sentence with the doctor pointer; no rung sentence says Retrieval degraded or carries a backtick', () => {
     expect(DOCTOR_HINT_TEXT).toBe('Run `agent-qa doctor`.')
-    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
       for (const rung of ['bundle-scan', 'static-floor', 'lexical-only'] as const) {
         const text = rungBannerText({ rung, reason })
         if (text === undefined) continue
@@ -1937,8 +1937,8 @@ describe('the strip sentence exists only for warning classes, composed from clos
 
 describe('the two label tables are TOTAL over the schema vocabularies', () => {
   it('RUNG_CAUSE_LABELS has exactly the recorded reasons, none blank', () => {
-    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RECORDED_RETRIEVAL_RUNG_REASONS].sort())
-    for (const reason of RECORDED_RETRIEVAL_RUNG_REASONS) {
+    expect(Object.keys(RUNG_CAUSE_LABELS).sort()).toEqual([...RETRIEVAL_RUNG_REASONS].sort())
+    for (const reason of RETRIEVAL_RUNG_REASONS) {
       expect(RUNG_CAUSE_LABELS[reason].length).toBeGreaterThan(0)
     }
   })
@@ -1963,7 +1963,7 @@ describe('the two label tables are TOTAL over the schema vocabularies', () => {
 })
 
 describe('the header reads the rung off the DURABLE projection, and only where there is one (D-13/D-16)', () => {
-  const RECORDED = { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
+  const RECORDED = { schemaVersion: 2, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
 
   it('hands the recorded value back untouched for a bound store', () => {
     expect(bannerRung(ready({ retrievalRung: RECORDED }))).toEqual(RECORDED)

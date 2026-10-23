@@ -150,7 +150,7 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
 // because a host probe was slow, and a step FAILED because asking about the host threw.
 describe('loop retrieval rung threading (407 D-13/D-16)', () => {
   const rung: RecordedRetrievalRung = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     rung: 'lexical-only',
     reason: 'floor-disabled',
   }

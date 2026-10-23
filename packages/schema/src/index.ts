@@ -311,7 +311,6 @@ export {
 // runner that records, the banner that prints and the doctor row that grades.
 export {
   NO_KNOWLEDGE_READER_TRUNCATION,
-  RECORDED_RETRIEVAL_RUNG_REASONS,
   RETRIEVAL_RUNGS,
   RETRIEVAL_RUNG_REASONS,
   RecordedRetrievalRungSchema,
@@ -546,7 +545,6 @@ export type {
   LosslessServedBriefProofV1,
   ReadTrace,
   RecordedRetrievalRung,
-  RecordedRetrievalRungReason,
   RetrievalRung,
   RetrievalRungReason,
   RetrievalTraceLeg,

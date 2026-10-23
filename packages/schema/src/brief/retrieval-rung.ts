@@ -73,62 +73,11 @@ export const RETRIEVAL_RUNG_REASONS = [
 
 export type RetrievalRungReason = (typeof RETRIEVAL_RUNG_REASONS)[number]
 
-/**
- * The eight reasons a `schemaVersion: 1` rung could be written with, frozen as of 407.
- * `low-ram-deferral` survives only here: the RAM gate that minted it is gone, but committed
- * v1 bytes still carry it and must stay loadable.
- */
-const HISTORICAL_RETRIEVAL_RUNG_REASONS = [
-  'native-runtime-unavailable',
-  'profile-unresolved',
-  'low-ram-deferral',
-  'model-not-downloaded',
-  'embedder-load-failed',
-  'index-unavailable',
-  'floor-disabled',
-  'profile-static-configured',
-] as const
-
-/** Every reason a persisted rung can carry, across both arms: the current ten plus the retired v1 word. */
-export const RECORDED_RETRIEVAL_RUNG_REASONS = [
-  ...RETRIEVAL_RUNG_REASONS,
-  'low-ram-deferral',
-] as const satisfies readonly (RetrievalRungReason | (typeof HISTORICAL_RETRIEVAL_RUNG_REASONS)[number])[]
-
-export type RecordedRetrievalRungReason = (typeof RECORDED_RETRIEVAL_RUNG_REASONS)[number]
-
-/**
- * The rung as persisted, stamped with its own literal `schemaVersion` in the same
- * committed-artifact style `ServedRetrievalTraceV1Schema` next door established: the stamp
- * travels with the value, so a rung read out of an old handoff states which contract it was
- * written under rather than being interpreted under today's.
- *
- * TWO STRICT ARMS (423 D-22). `schemaVersion: 1` is the historical arm with its original eight
- * reasons, so a v1 value carrying a 423 cause is refused as mislabelled. `schemaVersion: 2` is
- * what every current fold writes, over the widened vocabulary. Old bytes are read under their
- * own arm and never upgraded.
- *
- * `reason` is ABSENT IFF `rung === 'memidex'` — the top rung is not a degradation and has no
- * cause to name. Every lower rung carries one, which is what lets the banner say rung AND cause
- * in one line without a second read. The invariant is asserted by the fold that mints these
- * values rather than by this schema, because a `superRefine` here would refuse a historical
- * value the product already wrote and a handoff must stay loadable.
- */
-const RecordedRetrievalRungV1Schema = z.object({
-  schemaVersion: z.literal(1),
-  rung: z.enum(RETRIEVAL_RUNGS),
-  reason: z.enum(HISTORICAL_RETRIEVAL_RUNG_REASONS).optional(),
-}).strict()
-
-const RecordedRetrievalRungV2Schema = z.object({
+/** A recorded rung carries the current reason vocabulary. */
+export const RecordedRetrievalRungSchema = z.object({
   schemaVersion: z.literal(2),
   rung: z.enum(RETRIEVAL_RUNGS),
   reason: z.enum(RETRIEVAL_RUNG_REASONS).optional(),
 }).strict()
-
-export const RecordedRetrievalRungSchema = z.discriminatedUnion('schemaVersion', [
-  RecordedRetrievalRungV1Schema,
-  RecordedRetrievalRungV2Schema,
-])
 
 export type RecordedRetrievalRung = z.infer<typeof RecordedRetrievalRungSchema>

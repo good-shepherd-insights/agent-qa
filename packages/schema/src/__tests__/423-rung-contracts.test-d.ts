@@ -15,12 +15,8 @@ type SharedReason =
   | 'index-unavailable'
   | 'floor-disabled'
   | 'profile-static-configured'
-type HistoricalReason = SharedReason | 'low-ram-deferral'
 type CurrentReason = SharedReason | 'index-not-built' | 'index-locked' | 'index-corrupt'
 type Rung = 'memidex' | 'bundle-scan' | 'static-floor' | 'lexical-only'
-
-type V1 = Extract<RecordedRetrievalRung, { schemaVersion: 1 }>
-type V2 = Extract<RecordedRetrievalRung, { schemaVersion: 2 }>
 
 describe('C423-RUNG-REASONS-EXACT', () => {
   test('pins ten current reasons in both directions through public exports', () => {
@@ -35,27 +31,15 @@ describe('C423-RUNG-REASONS-EXACT', () => {
     expectTypeOf<Brief.RetrievalRungReason>().toEqualTypeOf<RetrievalRungReason>()
   })
 
-  test('pins the historical v1 arm to exactly the eight pre-423 reasons', () => {
-    expectTypeOf<NonNullable<V1['reason']>>().toEqualTypeOf<HistoricalReason>()
-    expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-not-built'>>().toEqualTypeOf<never>()
-    expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-locked'>>().toEqualTypeOf<never>()
-    expectTypeOf<Extract<NonNullable<V1['reason']>, 'index-corrupt'>>().toEqualTypeOf<never>()
+  test('pins the recorded rung to exactly the ten reasons', () => {
+    expectTypeOf<NonNullable<RecordedRetrievalRung['reason']>>().toEqualTypeOf<CurrentReason>()
+    expectTypeOf<Extract<NonNullable<RecordedRetrievalRung['reason']>, 'index-missing'>>()
+      .toEqualTypeOf<never>()
   })
 
-  test('pins the current v2 arm to exactly the ten reasons', () => {
-    expectTypeOf<NonNullable<V2['reason']>>().toEqualTypeOf<CurrentReason>()
-    expectTypeOf<Extract<NonNullable<V2['reason']>, 'low-ram-deferral'>>().toEqualTypeOf<never>()
-    expectTypeOf<Extract<NonNullable<V2['reason']>, 'index-missing'>>().toEqualTypeOf<never>()
-  })
-
-  test('pins exactly two strict versioned arms over the same four rungs', () => {
-    expectTypeOf<RecordedRetrievalRung['schemaVersion']>().toEqualTypeOf<1 | 2>()
-    expectTypeOf<V1>().toEqualTypeOf<{
-      schemaVersion: 1
-      rung: Rung
-      reason?: HistoricalReason | undefined
-    }>()
-    expectTypeOf<V2>().toEqualTypeOf<{
+  test('pins one strict arm stamped 2 over the same four rungs', () => {
+    expectTypeOf<RecordedRetrievalRung['schemaVersion']>().toEqualTypeOf<2>()
+    expectTypeOf<RecordedRetrievalRung>().toEqualTypeOf<{
       schemaVersion: 2
       rung: Rung
       reason?: CurrentReason | undefined
@@ -66,7 +50,7 @@ describe('C423-RUNG-REASONS-EXACT', () => {
 })
 
 describe('RUNG-INVALID-VERSION', () => {
-  test('refuses a third version and a v1 value carrying a 423 cause at the type boundary', () => {
+  test('refuses any stamp other than 2 at the type boundary', () => {
     expectTypeOf<Extract<RecordedRetrievalRung, { schemaVersion: 3 }>>().toEqualTypeOf<never>()
     expectTypeOf<{ schemaVersion: 1; rung: 'bundle-scan'; reason: 'index-locked' }>()
       .not.toExtend<RecordedRetrievalRung>()
@@ -75,7 +59,7 @@ describe('RUNG-INVALID-VERSION', () => {
     expectTypeOf<{ schemaVersion: 2; rung: 'bundle-scan'; reason: 'index-locked' }>()
       .toExtend<RecordedRetrievalRung>()
     expectTypeOf<{ schemaVersion: 1; rung: 'bundle-scan'; reason: 'index-unavailable' }>()
-      .toExtend<RecordedRetrievalRung>()
+      .not.toExtend<RecordedRetrievalRung>()
     expectTypeOf<Extract<keyof RecordedRetrievalRung, 'detail'>>().toEqualTypeOf<never>()
   })
 })

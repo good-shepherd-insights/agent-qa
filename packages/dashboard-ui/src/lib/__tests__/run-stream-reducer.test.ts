@@ -696,8 +696,8 @@ describe('markGap records what a replay floor cost the viewer', () => {
 })
 
 describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that carries it (407-10 · D-14)', () => {
-  const FLOOR = { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
-  const LEXICAL = { schemaVersion: 1, rung: 'lexical-only', reason: 'floor-disabled' } as const
+  const FLOOR = { schemaVersion: 2, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
+  const LEXICAL = { schemaVersion: 2, rung: 'lexical-only', reason: 'floor-disabled' } as const
 
   it('takes the rung off the first `stepFinalized` payload that carries one', () => {
     const state = fold([stepStarted(0, 0), stepFinalized(0, 0, { status: 'passed', retrievalRung: FLOOR })])

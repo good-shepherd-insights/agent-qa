@@ -24,11 +24,8 @@ const SHARED_REASONS = [
   'floor-disabled',
   'profile-static-configured',
 ] as const
-const RETIRED_REASONS = ['low-ram-deferral'] as const
-const HISTORICAL_REASONS = [...SHARED_REASONS, ...RETIRED_REASONS] as const
 const NEW_INDEX_REASONS = ['index-not-built', 'index-locked', 'index-corrupt'] as const
 const CURRENT_REASONS = [...SHARED_REASONS, ...NEW_INDEX_REASONS] as const
-const EVERY_REASON = [...SHARED_REASONS, ...RETIRED_REASONS, ...NEW_INDEX_REASONS] as const
 
 const identity = (value: string) => value
 
@@ -98,44 +95,26 @@ describe('C423-RUNG-REASONS-EXACT', () => {
     expect(RETRIEVAL_RUNGS).toEqual(['memidex', 'bundle-scan', 'static-floor', 'lexical-only'])
   })
 
-  test('the historical v1 arm admits exactly the eight pre-423 reasons', () => {
-    const admitted = EVERY_REASON.filter((reason) => RecordedRetrievalRungSchema.safeParse({
-      schemaVersion: 1,
-      rung: 'bundle-scan',
-      reason,
-    }).success)
-    expect(admitted).toEqual([...HISTORICAL_REASONS])
-  })
-
-  test('the current v2 arm admits exactly the ten reasons and no invented word', () => {
-    const admitted = EVERY_REASON.filter((reason) => RecordedRetrievalRungSchema.safeParse({
+  test('the recorded rung admits exactly the ten reasons and no invented word', () => {
+    const admitted = CURRENT_REASONS.filter((reason) => RecordedRetrievalRungSchema.safeParse({
       schemaVersion: 2,
       rung: 'bundle-scan',
       reason,
     }).success)
     expect(admitted).toEqual([...CURRENT_REASONS])
-    for (const schemaVersion of [1, 2]) {
-      expect(RecordedRetrievalRungSchema.safeParse({
-        schemaVersion,
-        rung: 'bundle-scan',
-        reason: 'index-missing',
-      }).success).toBe(false)
-    }
+    expect(RecordedRetrievalRungSchema.safeParse({
+      schemaVersion: 2,
+      rung: 'bundle-scan',
+      reason: 'index-missing',
+    }).success).toBe(false)
   })
-})
 
-describe('RUNG-V1', () => {
-  test.each([
-    { schemaVersion: 1, rung: 'memidex' },
-    { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' },
-    { schemaVersion: 1, rung: 'static-floor', reason: 'native-runtime-unavailable' },
-    { schemaVersion: 1, rung: 'lexical-only', reason: 'floor-disabled' },
-  ])('historical bytes stay readable and byte-identical through every reader: %j', (recorded) => {
-    const read = readThroughEveryReader(recorded)
-    const bytes = JSON.stringify(recorded)
-    expect(JSON.stringify(read.parsed)).toBe(bytes)
-    expect(JSON.stringify(read.handoff)).toBe(bytes)
-    expect(JSON.stringify(read.stepFinalized)).toBe(bytes)
+  test.each([1, 3])('a recorded rung stamped %i is refused', (schemaVersion) => {
+    const recorded = { schemaVersion, rung: 'bundle-scan', reason: 'index-unavailable' }
+    expect(RecordedRetrievalRungSchema.safeParse(recorded).success).toBe(false)
+    expect(() => guardCompletedRunHandoff(handoffWith(recorded))).toThrow(
+      /failed structural validation/,
+    )
   })
 })
 
@@ -165,14 +144,6 @@ describe('RUNG-V2', () => {
 })
 
 describe('LEGACY-HISTORICAL', () => {
-  test('a v1 index-unavailable is never upgraded, reinterpreted or re-versioned by a read', () => {
-    const recorded = { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' }
-    const read = readThroughEveryReader(recorded)
-    for (const value of [read.parsed, read.handoff, read.stepFinalized]) {
-      expect(value).toEqual({ schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' })
-    }
-  })
-
   test('the legacy code stays a member of the current vocabulary with its historical meaning', () => {
     expect(RETRIEVAL_RUNG_REASONS).toContain('index-unavailable')
     expect(RecordedRetrievalRungSchema.parse({

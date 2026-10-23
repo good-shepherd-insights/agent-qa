@@ -311,7 +311,7 @@ describe('deriveCensus (413 D-14/D-16, ROOT-05)', () => {
 
   it('counts proof coverage beside the rung, tallying rung-less cassettes as legacy-no-rung', () => {
     const proven = cassetteWith('proven', (draft) => {
-      draft.input.retrievalRung = { schemaVersion: 1, rung: 'lexical-only' }
+      draft.input.retrievalRung = { schemaVersion: 2, rung: 'lexical-only' }
       draft.input.servedBrief.proof = {
         schemaVersion: SERVED_BRIEF_PROOF_SCHEMA_VERSION,
         completeness: 'lossless',
@@ -336,7 +336,7 @@ describe('deriveCensus (413 D-14/D-16, ROOT-05)', () => {
     })
 
     const rungOnly = cassetteWith('rung-only', (draft) => {
-      draft.input.retrievalRung = { schemaVersion: 1, rung: 'memidex' }
+      draft.input.retrievalRung = { schemaVersion: 2, rung: 'memidex' }
       delete (draft.input.servedBrief as { proof?: LosslessServedBriefProofV1 }).proof
     })
     const legacy = cassetteWith('legacy', (draft) => {

@@ -39,9 +39,6 @@ export type IndexAxis = IndexFace
 /** The embedder half of the fold — `embedder-acquire`'s capability outcome, unchanged. */
 export type EmbedderAxis = AcquireEmbedderOutcome
 
-/** What every current fold writes: the `schemaVersion: 2` arm (423 D-22). */
-export type CurrentRecordedRetrievalRung = Extract<RecordedRetrievalRung, { schemaVersion: 2 }>
-
 /**
  * `RebuildReason` → the recorded cause (423 D-22), as a total map for the same reason as below.
  *
@@ -82,7 +79,7 @@ export function foldRetrievalRung(
   index: IndexAxis,
   embedder: EmbedderAxis,
   preferredProfile: EmbeddingProfile = DEFAULT_EMBEDDING_PROFILE,
-): CurrentRecordedRetrievalRung {
+): RecordedRetrievalRung {
   if (index.source === 'scan') {
     return { schemaVersion: 2, rung: 'bundle-scan', reason: INDEX_REASONS[index.reason] }
   }
@@ -138,7 +135,7 @@ export interface ResolveRetrievalRungOptions {
  */
 export async function resolveRetrievalRung(
   options: ResolveRetrievalRungOptions,
-): Promise<CurrentRecordedRetrievalRung> {
+): Promise<RecordedRetrievalRung> {
   const preferredProfile = options.preferredProfile ?? DEFAULT_EMBEDDING_PROFILE
   const index = classifyIndexFace(options.knowledgeRoot)
   if (index.source === 'scan') {

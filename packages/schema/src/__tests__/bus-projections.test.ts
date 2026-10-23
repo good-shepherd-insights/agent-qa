@@ -441,13 +441,13 @@ describe('projectStepFinalized retrievalRung (407 D-14 — read from the EVIDENC
   it('carries the recorded rung verbatim; the closed enum words survive the mask', () => {
     const evidence = makeStepEvidence(false)
     evidence.retrievalRung = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'static-floor',
       reason: 'native-runtime-unavailable',
     }
     const payload = projectStepFinalized(evidence, { testIndex: 0, stepIndex: 0 }, mask)
     expect(payload.retrievalRung).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'static-floor',
       reason: 'native-runtime-unavailable',
     })
@@ -456,9 +456,9 @@ describe('projectStepFinalized retrievalRung (407 D-14 — read from the EVIDENC
 
   it('carries a memidex rung with no reason key', () => {
     const evidence = makeStepEvidence(false)
-    evidence.retrievalRung = { schemaVersion: 1, rung: 'memidex' }
+    evidence.retrievalRung = { schemaVersion: 2, rung: 'memidex' }
     const payload = projectStepFinalized(evidence, { testIndex: 0, stepIndex: 0 }, mask)
-    expect(payload.retrievalRung).toEqual({ schemaVersion: 1, rung: 'memidex' })
+    expect(payload.retrievalRung).toEqual({ schemaVersion: 2, rung: 'memidex' })
     expect('reason' in (payload.retrievalRung as object)).toBe(false)
   })
 

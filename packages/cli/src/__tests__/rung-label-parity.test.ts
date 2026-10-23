@@ -31,7 +31,7 @@ import { fileURLToPath } from 'node:url'
 
 import {
   DEFAULT_EMBEDDING_PROFILE,
-  RECORDED_RETRIEVAL_RUNG_REASONS,
+  RETRIEVAL_RUNG_REASONS,
   STATIC_FLOOR_EMBEDDING_PROFILE,
   type EmbeddingProfile,
 } from '@vostride/agent-qa-schema'
@@ -89,7 +89,7 @@ function dashboardCauseLabels(): Record<string, string> {
 const DASHBOARD_CAUSE_LABELS = dashboardCauseLabels()
 
 /** Every reason the recorded enum admits, sorted — the ONE denominator both tables answer to. */
-const RECORDED_REASONS = [...RECORDED_RETRIEVAL_RUNG_REASONS].sort()
+const RECORDED_REASONS = [...RETRIEVAL_RUNG_REASONS].sort()
 
 // ── The property cell's host matrix ──────────────────────────────────────────────────────────────
 
@@ -222,8 +222,8 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
   it('the CLI table names exactly the recorded reasons, none missing and none invented', () => {
     expect(
       Object.keys(RUNG_CAUSE_LABELS).sort(),
-      'doctor\'s `RUNG_CAUSE_LABELS` no longer keys exactly `RECORDED_RETRIEVAL_RUNG_REASONS`. It is typed '
-      + '`Record<RecordedRetrievalRungReason, string>` so a MISSING key is a compile error; an EXTRA key '
+      'doctor\'s `RUNG_CAUSE_LABELS` no longer keys exactly `RETRIEVAL_RUNG_REASONS`. It is typed '
+      + '`Record<RetrievalRungReason, string>` so a MISSING key is a compile error; an EXTRA key '
       + 'that is not a recorded reason is dead prose nothing can ever print.',
     ).toEqual(RECORDED_REASONS)
     expect(
@@ -236,7 +236,7 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
   it('the dashboard table names exactly the same recorded reasons', () => {
     expect(
       Object.keys(DASHBOARD_CAUSE_LABELS).sort(),
-      'the dashboard\'s `RUNG_CAUSE_LABELS` no longer keys exactly `RECORDED_RETRIEVAL_RUNG_REASONS`, so '
+      'the dashboard\'s `RUNG_CAUSE_LABELS` no longer keys exactly `RETRIEVAL_RUNG_REASONS`, so '
       + 'the banner has a reason it cannot name — or names one the recorder cannot produce.',
     ).toEqual(RECORDED_REASONS)
     expect(
@@ -323,7 +323,7 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
 // ── 423 D-22 / D-23: distinct index causes, one historical word, and doctor as current health ──
 // Plan 423-23 owns the mutation script; RUNG-LABEL-PARITY is its required named RED cell.
 
-/** Hand-spelled, never derived from `RECORDED_RETRIEVAL_RUNG_REASONS`. */
+/** Hand-spelled, never derived from `RETRIEVAL_RUNG_REASONS`. */
 const EXPECTED_REASONS = [
   'embedder-load-failed',
   'floor-disabled',
@@ -331,7 +331,6 @@ const EXPECTED_REASONS = [
   'index-locked',
   'index-not-built',
   'index-unavailable',
-  'low-ram-deferral',
   'model-not-downloaded',
   'native-runtime-unavailable',
   'profile-static-configured',

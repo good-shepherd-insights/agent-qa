@@ -206,7 +206,7 @@ function curationSnapshot(runId: string) {
   ], breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 } })
 }
 
-const LEGACY_RUNG = { schemaVersion: 1, rung: 'bundle-scan', reason: 'index-unavailable' } as const
+const LEGACY_RUNG = { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-unavailable' } as const
 const CURRENT_RUNG = { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-locked' } as const
 
 function knowledgeHandoff(runId: RunId, allowedPlaceholder: string): CompletedRunHandoff {

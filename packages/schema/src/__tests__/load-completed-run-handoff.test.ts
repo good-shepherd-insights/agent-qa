@@ -210,9 +210,9 @@ describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', 
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
 
-  it('loads a v7 document whose step carries a recorded rung, field intact', () => {
+  it('loads a document whose step carries a recorded rung, field intact', () => {
     const recorded = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       rung: 'static-floor',
       reason: 'native-runtime-unavailable',
     }
@@ -221,7 +221,7 @@ describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', 
   })
 
   it('admits a memidex rung carrying no reason key (the top rung names no cause)', () => {
-    const recorded = { schemaVersion: 1, rung: 'memidex' }
+    const recorded = { schemaVersion: 2, rung: 'memidex' }
     const guarded = guardCompletedRunHandoff(makeHandoffWithStep(recorded))
     expect(guarded.tests[0]?.steps[0]?.retrievalRung).toEqual(recorded)
   })
@@ -235,7 +235,7 @@ describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', 
 
   it('refuses a rung whose word is outside the closed vocabulary', () => {
     expect(() =>
-      guardCompletedRunHandoff(makeHandoffWithStep({ schemaVersion: 1, rung: 'dense-only' })),
+      guardCompletedRunHandoff(makeHandoffWithStep({ schemaVersion: 2, rung: 'dense-only' })),
     ).toThrow(/failed structural validation/)
   })
 })

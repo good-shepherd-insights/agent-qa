@@ -42,7 +42,7 @@ import type {
   RecordChange,
   RecordedRetrievalRung,
   RetrievalRung,
-  RecordedRetrievalRungReason,
+  RetrievalRungReason,
   RetrievalTraceLeg,
   RunKnowledgeCanaryAttribution,
   RunKnowledgeContentAbsence,
@@ -1013,7 +1013,7 @@ export function recordIdCopyFailedText(id: string): string {
  * The retrieval level one step recorded, stated only below `memidex` (427 D-19). A step whose rung
  * differs from the run's therefore says so on its own ledger row.
  */
-export function ledgerRungLine(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RecordedRetrievalRungReason): string {
+export function ledgerRungLine(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RetrievalRungReason): string {
   const cause = reason === undefined ? '' : ` — ${RUNG_CAUSE_LABELS[reason]}`
   return `Retrieval level: ${RUNG_LABELS[rung]}${cause}`
 }
@@ -1501,7 +1501,7 @@ export interface PlanSourceView {
 /** A step's recorded retrieval level, present only when it was below `memidex` (427 D-19). */
 export interface LedgerRungView {
   readonly rung: Exclude<RetrievalRung, 'memidex'>
-  readonly reason?: RecordedRetrievalRungReason
+  readonly reason?: RetrievalRungReason
 }
 
 /** Everything an EXPANDED step row shows. Empty channels are empty arrays, never absent. */
@@ -1854,7 +1854,7 @@ export interface LearnedView {
 /** The rung that served THIS run, if the evidence recorded one (D-13). */
 export interface RungView {
   readonly rung: RetrievalRung
-  readonly reason?: RecordedRetrievalRungReason
+  readonly reason?: RetrievalRungReason
 }
 
 /**
@@ -2452,23 +2452,11 @@ export function projectKnowledgeView(read: KnowledgeRead): KnowledgeView {
  * `schemaVersion` is dropped rather than carried: it states which contract the value was WRITTEN
  * under, which is a fact about the handoff and not about the run, and a view member nothing
  * paints is a member a component can accidentally paint.
- *
- * Both arms are folded explicitly (423 D-22) and neither translates its reason: a v1
- * `index-unavailable` stays that word and renders as a historical cause-not-recorded, never as
- * one of the v2 causes a pre-423 run could not have named.
  */
 function rungView(recorded: RecordedRetrievalRung): RungView {
-  switch (recorded.schemaVersion) {
-    case 1:
-    case 2:
-      return {
-        rung: recorded.rung,
-        ...(recorded.reason === undefined ? {} : { reason: recorded.reason }),
-      }
-    default: {
-      const unreachable: never = recorded
-      return unreachable
-    }
+  return {
+    rung: recorded.rung,
+    ...(recorded.reason === undefined ? {} : { reason: recorded.reason }),
   }
 }
 
@@ -2501,17 +2489,16 @@ export const RUNG_LABELS: Record<Exclude<RetrievalRung, 'memidex'>, string> = {
  * `static` PREFERRED profile are three distinct operator situations, and 407-08 chose the wording
  * for them first. This table follows that one rather than the spec where the two differ.
  *
- * A new `RecordedRetrievalRungReason` becomes a compile error here instead of a blank cause printed
+ * A new `RetrievalRungReason` becomes a compile error here instead of a blank cause printed
  * after an em dash.
  *
  * 423 D-22: a banner states what a run RECORDED. The three index causes are what post-423 runs
  * record; `index-unavailable` is only ever read off a pre-423 run and says so ("cause not
  * recorded") rather than guessing which of the three it was. Current health is `agent-qa doctor`.
  */
-export const RUNG_CAUSE_LABELS: Record<RecordedRetrievalRungReason, string> = {
+export const RUNG_CAUSE_LABELS: Record<RetrievalRungReason, string> = {
   'native-runtime-unavailable': 'native ONNX runtime unavailable',
   'profile-unresolved': 'embedder profile unresolved (deferred)',
-  'low-ram-deferral': 'embedding deferred on low memory',
   'model-not-downloaded': 'embedding model not downloaded',
   'embedder-load-failed': 'embedder failed to load',
   'index-unavailable': 'knowledge index unavailable (cause not recorded), scanning bundles',
@@ -2562,11 +2549,10 @@ export const RETRIEVAL_CLASS_BY_REASON = {
   'native-runtime-unavailable': 'semantic-search-unavailable',
   'model-not-downloaded': 'semantic-search-unavailable',
   'embedder-load-failed': 'semantic-search-unavailable',
-  'low-ram-deferral': 'semantic-search-unavailable',
   'profile-unresolved': 'semantic-search-unavailable',
   'profile-static-configured': 'by-configuration',
   'floor-disabled': 'by-configuration',
-} as const satisfies Record<RecordedRetrievalRungReason, RetrievalClass>
+} as const satisfies Record<RetrievalRungReason, RetrievalClass>
 
 // prettier-ignore
 export const RETRIEVAL_CLASS_TONES = {
@@ -2586,11 +2572,11 @@ export function retrievalClassFor(rung: RungView): RetrievalClass | undefined {
   return rung.rung === 'memidex' ? undefined : classOfReason(rung.reason)
 }
 
-function classOfReason(reason: RecordedRetrievalRungReason | undefined): RetrievalClass {
+function classOfReason(reason: RetrievalRungReason | undefined): RetrievalClass {
   return reason === undefined ? 'cause-not-recorded' : RETRIEVAL_CLASS_BY_REASON[reason]
 }
 
-export function retrievalStatement(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RecordedRetrievalRungReason): string {
+export function retrievalStatement(rung: Exclude<RetrievalRung, 'memidex'>, reason?: RetrievalRungReason): string {
   const retrievalClass = classOfReason(reason)
   switch (retrievalClass) {
     case 'fresh-index':
@@ -2614,7 +2600,7 @@ export function retrievalStatement(rung: Exclude<RetrievalRung, 'memidex'>, reas
   }
 }
 
-function causeLabel(reason: RecordedRetrievalRungReason | undefined): string {
+function causeLabel(reason: RetrievalRungReason | undefined): string {
   return reason === undefined ? '' : RUNG_CAUSE_LABELS[reason]
 }
 
@@ -2623,7 +2609,7 @@ export interface RetrievalStatementView {
   readonly retrievalClass: RetrievalClass
   readonly tone: RetrievalTone
   readonly rung: Exclude<RetrievalRung, 'memidex'>
-  readonly reason?: RecordedRetrievalRungReason
+  readonly reason?: RetrievalRungReason
   readonly sentence: string
   readonly pointer?: string
 }
