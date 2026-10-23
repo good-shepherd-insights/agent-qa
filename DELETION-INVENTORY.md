@@ -7425,17 +7425,17 @@ Formats that were at 1 (each moved to 2):
 | Format | Site | Old → new | Reading rule |
 |---|---|---|---|
 | embedder worker protocol | `EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION`, `worker-registration.ts` | 1 → 2 | refuse |
-| auth-state metadata | `AUTH_STATE_SCHEMA_VERSION`, `core/src/auth-state/schema.ts`; its copy `AUTH_STATE_METADATA_VERSION`, `dashboard-ui/src/lib/api.ts` (was literal 1 at three sites) | 1 → 2 | refuse (the UI drops the entry and refuses it on save) |
+| auth-state metadata | `AUTH_STATE_SCHEMA_VERSION`, `core/src/auth-state/schema.ts`; its copy `AUTH_STATE_METADATA_VERSION`, `dashboard-ui/src/lib/api.ts` (was literal 1 at three sites) | 1 → 2 | miss (the list skips the entry, a run reports the state as not found, and the UI drops it and refuses it on save) |
 | product-tour cookie | `PRODUCT_TOUR_SCHEMA_VERSION`, `dashboard-ui/src/lib/product-tour-state.ts` | 1 → 2 | miss (the tour shows again) |
 | run artifact | `RUN_ARTIFACT_SCHEMA_VERSION`, `schema/src/run/run-artifact.ts` | 1 → 2 | no-reader |
 | knowledge bundle files and record frontmatter | `BUNDLE_SCHEMA_VERSION`, `schema/src/knowledge/bundle-files.ts` | 1 → 2 | refuse |
 | distilled observation | `DISTILLED_OBSERVATION_SCHEMA_VERSION` | 1 → 2 | refuse (one stamp-1 line fails an index rebuild) |
 | gate and promotion receipts | `GATE_RECEIPT_SCHEMA_VERSION`; `receiptCoreShape` now reads it instead of a duplicate `z.literal(1)` | 1 → 2 | refuse |
-| procedure body | new `PROCEDURE_BODY_SCHEMA_VERSION`, `schema/src/knowledge/procedure-steps.ts` (was inline `z.literal(1)`) | 1 → 2 | refuse (`parseProcedureBody` returns undefined) |
+| procedure body | new `PROCEDURE_BODY_SCHEMA_VERSION`, `schema/src/knowledge/procedure-steps.ts` (was inline `z.literal(1)`) | 1 → 2 | miss (`parseProcedureBody` returns undefined and serving skips the body) |
 | purge receipt | `PURGE_RECEIPT_SCHEMA_VERSION`, `knowledge-local/src/purge-receipt.ts` | 1 → 2 | refuse, naming the receipt file |
 | addressing ledger | `ADDRESSING_LEDGER_USER_VERSION`, `knowledge-local/src/addressing/ledger.ts` | 1 → 2 | refuse (`AddressingLedgerSchemaVersionError`) |
 | eval-root marker | `COMMITTED_ROOT_SCHEMA_VERSION`, `eval-local/src/committed-root-store.ts` | 1 → 2 | refuse (`corpus-unreadable`) |
-| contract projection | `CONTRACT_PROJECTION_SCHEMA_VERSION`, `eval/src/contracts/projection.ts` | 1 → 2 | refuse (a write-once conflict on re-seeding; `constitutionDigest` follows the constant) |
+| contract projection | `CONTRACT_PROJECTION_SCHEMA_VERSION`, `eval/src/contracts/projection.ts` | 1 → 2 | no-reader (no production code reads a contracts file; re-seeding reports a write-once conflict; `constitutionDigest` follows the constant) |
 | partition manifest | `PARTITION_MANIFEST_SCHEMA_VERSION` | 1 → 2 | refuse |
 | run exclusion | `RUN_EXCLUSION_SCHEMA_VERSION` | 1 → 2 | refuse |
 | label record | `LABEL_RECORD_SCHEMA_VERSION`; `effective-labels.ts` reads it instead of an inline `z.literal(1)` | 1 → 2 | refuse |
@@ -7453,7 +7453,7 @@ Formats that were at 1 (each moved to 2):
 | mark receipt | `MARK_RECEIPT_SCHEMA_VERSION`, `schema/src/functions/feedback.ts` | 1 → 2 | refuse (`MarkLedgerCorruptError` for the line) |
 | improvement plan | `IMPROVEMENT_PLAN_SCHEMA_VERSION` | 1 → 2 | refuse |
 | commit receipt | `COMMIT_RECEIPT_SCHEMA_VERSION`, `schema/src/knowledge/change.ts` | 1 → 2 | refuse |
-| forget receipt | new `FORGET_RECEIPT_SCHEMA_VERSION`, `change.ts` (was inline) | 1 → 2 | refuse |
+| forget receipt | new `FORGET_RECEIPT_SCHEMA_VERSION`, `change.ts` (was inline) | 1 → 2 | rebuild (the recorded receipt reads as absent, and a retry re-assembles and records it) |
 | chat session header and events | `CURRENT_CHAT_SESSION_SCHEMA_VERSION`, `schema/src/chat/session-events.ts` | 1 → 2 | refuse (`ChatSessionHeaderError`, `ChatSessionEventSchemaError`) |
 | run-config record | new module-local `RUN_CONFIG_RECORD_SCHEMA_VERSION`, `cli/src/curation/run-curation-context.ts` | 1 → 2 | miss (reads as absent) |
 | daemon identity | `DAEMON_IDENTITY_SCHEMA_VERSION`, `cli/src/daemon/server.ts` | 1 → 2 | refuse |
@@ -7470,9 +7470,9 @@ Formats that were at 1 (each moved to 2):
 | entity index | `ENTITY_INDEX_USER_VERSION`, `knowledge-local/src/entity-index/entity-index.ts` | 1 → 2 | refuse (`EntityIndexSchemaVersionError`) |
 | authored checkpoint | `AUTHORED_CHECKPOINT_SCHEMA_VERSION`, `knowledge-local/src/curator/author-contract.ts` | 1 → 2 | refuse |
 | bundle mutation journal | `BUNDLE_MUTATION_JOURNAL_VERSION` (field `version`), `knowledge-local/src/journal/bundle-mutation.ts` | 1 → 2 | refuse (the journal is left in place) |
-| commit intent | `COMMIT_INTENT_SCHEMA_VERSION`, `journal/intent-journal.ts` | 1 → 2 | refuse (lists as malformed) |
+| commit intent | `COMMIT_INTENT_SCHEMA_VERSION`, `journal/intent-journal.ts` | 1 → 2 | rebuild (reconcile lists it as malformed, requeues the candidate and deletes the intent) |
 | curation observation, curation effect receipt | inline literals, `journal/curation-effect-receipt.ts` | 1 → 2 | refuse |
-| curation job state | `CURATION_JOB_STATE_SCHEMA_VERSION`, `queue/job-state.ts` | 1 → 2 | refuse (`malformed`) |
+| curation job state | `CURATION_JOB_STATE_SCHEMA_VERSION`, `queue/job-state.ts` | 1 → 2 | rebuild (read as `malformed`; recovery rewrites it as a fresh `queued` state) |
 | curation quarantine reason | `CURATION_QUARANTINE_SCHEMA_VERSION`, `queue/curation-queue.ts` | 1 → 2 | no-reader |
 | canary run policy and canary completion | inline, `cli/src/curation/canary-run-state.ts` | 1 → 2 | refuse |
 | misdirection run policy, check reservation and root posture | inline, `cli/src/curation/misdirection-run-state.ts` | 1 → 2 | refuse |
@@ -7482,7 +7482,7 @@ Formats that were at 1 (each moved to 2):
 | adversarial batch manifest, retirement record and lifecycle owner | inline, `eval-local/src/adversarial-composition.ts` | 1 → 2 | refuse (a stamp-1 owner keeps the lock busy) |
 | gate-2 feedback | inline, `eval-local/src/gate2-composition.ts` | 1 → 2 | refuse |
 | mark intent and mark lock owner | inline, `eval-local/src/mark-ledger.ts`, `mark-lock.ts` | 1 → 2 | refuse (`MarkIntentUnusableError`; a stamp-1 owner keeps the lock busy) |
-| report publication | inline, `eval-local/src/report-store.ts` | 1 → 2 | miss (the profile proof reads as missing) |
+| report publication | inline, `eval-local/src/report-store.ts` | 1 → 2 | refuse (the read returns a refusal naming the file; the release gate reports it, and the profile proof reads it as missing) |
 | scoring context in `score.json` | inline, `eval/src/match/scoring-context.ts` | 1 → 2 | refuse (the score reads `stale-replay`) |
 | gate inputs `register.json` and `regressions.json`, and the reader in `scripts/gate/evaluate.mjs` | line 2 of each input; `screenList` | 1 → 2 | refuse (`register-entry-invalid`, `regression-entry-invalid`) |
 | gate pins `node-tests.json` and `packages.json` | line 2 | 1 → 2 | no-reader |
