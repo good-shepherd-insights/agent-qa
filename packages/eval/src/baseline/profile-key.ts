@@ -10,8 +10,7 @@
  *
  * 415 FLOOR-05 (2026-09-05): v2 keys the resolved replay profile, including the seed POLICY,
  * never its value. A provider `system_fingerprint` is disclosure only (Plan 03 carries it on
- * the report); nothing here reads it. A changed profile names a new committed pointer, while
- * v1 pointers remain readable as history without an invented fingerprint.
+ * the report); nothing here reads it. A changed profile names a new committed pointer.
  *
  * Composition law: pure string + pure projection, no IO and no clock. The pointer body carries
  * no `designatedAt`: a wall-clock field would make byte-identical re-designation a

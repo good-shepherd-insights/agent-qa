@@ -220,7 +220,7 @@ export interface RunTestDetail {
 }
 
 /**
- * The `runs.get` result: one completed run projected across the `CompletedRunHandoff` v4
+ * The `runs.get` result: one completed run projected across the `CompletedRunHandoff`
  * surface a review UI needs (Phase 384, D-06/D-16).
  *
  * A superset of {@link RunSummary} — every listing field, plus the config digests a

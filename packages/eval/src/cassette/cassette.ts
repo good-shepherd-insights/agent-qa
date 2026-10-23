@@ -115,7 +115,7 @@ export interface ProcedureCassette extends CassetteEnvelopeBase {
   endState: ProcedureEndState
 }
 
-/** Supported cassette granularities for the v1 contract (D-08). */
+/** Supported cassette granularities. */
 export type CassetteGranularity = 'leaf' | 'procedure'
 
 /** Complete versioned cassette wire contract (CASS-01). */

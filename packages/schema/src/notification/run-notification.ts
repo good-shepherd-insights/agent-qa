@@ -79,14 +79,11 @@ export interface RunNotificationVerdictSummary {
 /**
  * The stages the chain actually runs: two always, a third when the chain reached it.
  *
- * Narrowed to two in v2 (Phase 404, D-01); re-widened in v3 with an OPTIONAL third (Phase 422,
- * D-13). The optionality is the contract, not a convenience. `proposals` absent means the
- * proposal stage WAS NOT RECORDED — which is the truth for every row written before v3 and for
- * every chain that halted at a permanently failed fold — and it is deliberately distinct from
- * `{status: 'failed'}`, which claims a stage that ran and did not finish. The v2 → v3 migration
- * therefore leaves the member absent rather than filling it in; a walk that synthesized a
- * successful historical stage would be this build inventing work nobody did, on every row ever
- * written, and the read-side surfaces cannot tell an invented stage from a recorded one.
+ * The optional third is the contract, not a convenience. `proposals` absent means the proposal
+ * stage WAS NOT RECORDED — which is the truth for every chain that halted at a permanently failed
+ * fold — and it is deliberately distinct from `{status: 'failed'}`, which claims a stage that ran
+ * and did not finish. Synthesizing a successful stage would be this build inventing work nobody
+ * did, and the read-side surfaces cannot tell an invented stage from a recorded one.
  *
  * A stage record carries its STATUS and, for curation, the counts it committed. It carries NO
  * failure text, and that absence is a decision rather than an omission (404 D-21, T-404-01):
@@ -194,7 +191,7 @@ export function toRunNotificationView(notification: RunNotification): RunNotific
  * the failure the exact-key idiom was chosen against in the first place.
  *
  * Stated here rather than inline in the guard so the admissible shapes are a value an oracle can
- * read and a reviewer can count. The ORDER is historical: the v2 pair first, then the v3 triple.
+ * read and a reviewer can count. The pair comes first, then the triple.
  */
 export const RUN_NOTIFICATION_STAGE_KEY_SETS = [
   'analysis,curation',

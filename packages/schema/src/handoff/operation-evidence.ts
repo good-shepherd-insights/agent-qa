@@ -55,7 +55,6 @@ export interface InputEvidence {
 export interface OperationEvidence {
   downloads?: DownloadEvidence[]
   clipboard?: ClipboardEvidence[]
-  /** Optional-additive at handoff schema version 7 (437 D-05). */
   input?: InputEvidence[]
 }
 

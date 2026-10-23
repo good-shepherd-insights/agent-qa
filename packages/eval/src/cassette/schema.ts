@@ -515,7 +515,7 @@ const procedureCassetteSchema = z
   })
   .strict()
 
-/** Full v1 wire validator for both cassette granularities (D-15). */
+/** The wire validator for both cassette granularities. */
 export const cassetteSchema = z.discriminatedUnion('granularity', [
   leafCassetteSchema,
   procedureCassetteSchema,

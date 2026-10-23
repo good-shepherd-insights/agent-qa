@@ -680,7 +680,7 @@ export type {
   RunArtifactTestSourceSnapshot,
   RunArtifactTestsSourceSnapshot,
 } from './run/index'
-// 361 bus schema v1 + M1-lite session vocabulary (SESSION-01/02/03, D-05/D-13/D-15)
+// The bus schema version and the session vocabulary
 export { CURRENT_BUS_SCHEMA_VERSION, RUN_EVENT_TYPES } from './run/index'
 // 361 D-10/D-09: pure masked payload projections (SESSION-03 projection layer).
 export {

@@ -719,10 +719,7 @@ export function createRunsReader(agentQaRoot: string): RunsReaderPort {
      * Through `loadCompletedRunHandoff` — the version guard — and NOT through a raw JSON read,
      * which is the load-bearing half. 387-02 gave the guard a present-implies-valid clause for
      * the retrieval trace, so a document whose trace is present but malformed is refused here
-     * rather than reaching the why-verb looking well-formed. A v4 document loads through the
-     * registered identity migration and simply carries no trace at all: that is the honest
-     * pre-387 absence, and it is exactly what the guard's version stamp exists to make
-     * distinguishable from a run that captured nothing.
+     * rather than reaching the why-verb looking well-formed.
      *
      * The ambiguity check is the never-guess law at this seam. `stepIndex` numbers steps per
      * MEMBER TEST, so a run with two tests has two step 0s; when the address does not name a

@@ -49,8 +49,7 @@ export interface CompletedRunHandoff {
    * retroactively change a running build — and the run's own record says exactly which
    * dispositions it was operating under, and until when.
    *
-   * Absent on runs that applied nothing (the overwhelmingly common case), and absent on every
-   * handoff written before version 6.
+   * Absent on runs that applied nothing (the overwhelmingly common case).
    */
   quarantineApplied?: readonly QuarantineAppliedEntry[]
   /**

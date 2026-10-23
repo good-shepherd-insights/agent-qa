@@ -1133,8 +1133,8 @@ export function runPostRunTail(opts: RunPostRunTailOptions): PostRunTailHandle {
         if (status.notification !== undefined && drainOutcome === 'drained') {
           // D-09: this process ran the chain to its terminal, so the human line is the honest
           // close-out — it reports what HAPPENED, where the summary reports what is pending.
-          // 418 D-04: diagnostics come from this run's validated durable v4 receipt;
-          // older/missing receipts keep the pre-v4 line. The line prints the served view's words (444 D-36).
+          // Diagnostics come from this run's validated durable receipt; without one the line
+          // omits them. The line prints the served view's words.
           const receipt = readCurationTailReceipt(completedRunDir(opts.agentQaRoot, opts.runId))
           log.info?.(renderChainTerminalLine(status.notification,
             { ...(receipt?.runId === opts.runId ? receipt : {}),

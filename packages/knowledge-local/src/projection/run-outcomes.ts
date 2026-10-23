@@ -644,10 +644,8 @@ function loadRebuildHandoff(file: string): CompletedRunHandoff | undefined {
     const tests = (guarded as { tests?: unknown }).tests
     if (tests !== undefined && !Array.isArray(tests)) return undefined
 
-    // RESEARCH A2 / v2 no-back-compat: pre-fix v3 handoffs lacking the REQUIRED
-    // per-test filePath or human testName still load. The guard-level shape hook and
-    // this consumer wall are independent: reject unsafe members and steps here before
-    // projection traversal can observe them.
+    // The guard-level shape hook and this consumer wall are independent: reject unsafe
+    // members and steps here before projection traversal can observe them.
     const structurallyCurrent = (tests ?? []).every((test) => {
       if (test === null || typeof test !== 'object' || Array.isArray(test)) return false
 

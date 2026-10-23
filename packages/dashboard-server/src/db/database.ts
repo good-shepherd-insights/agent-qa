@@ -299,7 +299,7 @@ function stepModelName(usage: ModelUsage): string | undefined {
 function mapRunStepRow(row: Record<string, unknown>): RunDetailStep {
   const evidence = parseJsonColumn(row.evidence_json)
   const variableSnapshot = parseJsonColumn(row.variable_snapshot_json)
-  // First binding of the reserved v3 column: mirror both optional bus fields, independently.
+  // The model_usage_json column mirrors both optional bus fields, independently.
   // A present envelope owns absence too; malformed JSON must never revive legacy scalar spend.
   const usageEnvelope = parseJsonColumn(row.model_usage_json)
   const modelUsage = isPlainObject(usageEnvelope)

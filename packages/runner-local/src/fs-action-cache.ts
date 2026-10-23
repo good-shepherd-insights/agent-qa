@@ -8,9 +8,8 @@
 //
 // The 16-hex CacheKey is the WHOLE filename (D-06) — no raw step text or secret
 // can appear on disk. Writes go only to the current-branch namespace; reads fall
-// back current-branch -> default-branch (D-14). A bumped CACHE_SCHEMA_VERSION
-// guarantees v1 on-disk entries (version 9) are never read as valid (D-03,
-// no migration).
+// back current-branch -> default-branch. An entry stamped with any other
+// CACHE_SCHEMA_VERSION is never read as valid.
 
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'

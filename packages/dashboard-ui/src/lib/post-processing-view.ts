@@ -510,8 +510,8 @@ export function proposalsFailedText(reason: string): string {
  *
  * v54 closed the chip set at two, so `proposals` has no indicator of its own. Two readings are
  * user-relevant: a stage that FAILED (otherwise invisible) and one that staged something (there is
- * now work waiting). A zero-output pass and an absent stage say nothing — an absent stage is the
- * not-recorded fact of every pre-v3 row, and a line about it would be this build inventing work.
+ * now work waiting). A zero-output pass and an absent stage say nothing — an absent stage was not
+ * recorded, and a line about it would be this build inventing work.
  *
  * The chain's terminal row is what says `failed`; the JOB row is where the masked reason lives
  * (the same split D-21 draws for the two chip stages).

@@ -123,7 +123,7 @@ function toNumber(value: unknown): number {
 
 function toRow(row: Record<string, unknown> | undefined): PostProcessingJobRow | undefined {
   if (row === undefined) return undefined
-  // SQLite v3 has no conclusion column. Match sqlite-job-store's quarantineConclusionOf:
+  // The job store has no conclusion column. Match sqlite-job-store's quarantineConclusionOf:
   // only the complete recorded quarantine landing supports this conclusion (422 D-16).
   const conclusionKind: JobConclusionKind | undefined =
     !isJobKind(String(row.kind))

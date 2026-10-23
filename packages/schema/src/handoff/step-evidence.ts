@@ -206,7 +206,7 @@ export interface StepEvidence {
   verifierIdentity?: ModelIdentity
   /**
    * The per-condition verdicts the runner computed the pass from (439 D-07), beside
-   * `verifierVerdict` and never inside it. Optional-additive at handoff schema version 7.
+   * `verifierVerdict` and never inside it.
    */
   conditionVerdicts?: ConditionVerdictsEvidence
   /**
