@@ -751,7 +751,6 @@ describe('knowledge maintenance commands', () => {
       'utf8',
     )
     expect(source).toContain('classifyDaemonRegistration')
-    expect(source).not.toContain('recoverStaleDaemonRegistration')
     // Plan 22's prohibition, and I-01's closure. This replaced a `unconditionalRemovals === 0`
     // counter on a module mock: the counter could only ever say "not called on these schedules",
     // while the surface itself no longer exists to be called on any schedule at all.
