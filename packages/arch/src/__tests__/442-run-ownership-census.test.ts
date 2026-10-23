@@ -373,12 +373,12 @@ describe('C442-CENSUS — no path finalizes runs it does not own (442 D-05)', ()
 
   it('C442-OWNER-REQUIRED: the runs table requires an owner on every running row', () => {
     const schema = bytesOf(SCHEMA)
-    expect(code(SCHEMA)).toMatch(/\bexport const SCHEMA_VERSION = 6\b/)
+    expect(code(SCHEMA)).toMatch(/\bexport const SCHEMA_VERSION = 2\b/)
     const migrations = schema.indexOf('export const MIGRATIONS')
     const start = schema.indexOf('CREATE TABLE IF NOT EXISTS runs (')
     expect(migrations, `${SCHEMA} declares no MIGRATIONS`).toBeGreaterThan(-1)
     expect(start, 'the runs DDL is not inside MIGRATIONS').toBeGreaterThan(migrations)
-    expect(schema.slice(migrations, start)).toMatch(/version: 6,/)
+    expect(schema.slice(migrations, start)).toMatch(/version: 2,/)
     const ddl = schema.slice(start, schema.indexOf('`', start))
     const parts = ['owner_pid INTEGER', 'owner_incarnation TEXT', 'owner_host TEXT', RUNNING_CHECK]
     for (const part of parts) {

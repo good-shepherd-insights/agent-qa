@@ -46,13 +46,13 @@
  * carried verbatim from 410, and the negative-control cell below pins that behaviour so the
  * lookbehind can neither silently widen nor silently swallow a real occurrence.
  *
- * THE BY-NAME CONTROL IS POSITIVE, NEVER A FILTER. CLSR-01 excludes three sites from the quoted
+ * THE BY-NAME CONTROL IS POSITIVE, NEVER A FILTER. CLSR-01 excludes two sites from the quoted
  * status literal, and the exclusion is MEASURED rather than documented: production scope stays a
- * path rule that names no file, and a separate cell asserts BY NAME that exactly the two migration
- * fixtures still spell the quoted literal outside production and that the conformance domain-list
- * spells only the bare marker key. A fourth speller REDs that control instead of hiding behind an
- * exclusion list. The reasons are the assertion messages: the v1 three-stage row the migrate-older
- * walk exists to read is load-bearing input rather than debris, and a dated reservation marker on a
+ * path rule that names no file, and a separate cell asserts BY NAME that exactly the one refusal
+ * fixture still spells the quoted literal outside production and that the conformance domain-list
+ * spells only the bare marker key. A third speller REDs that control instead of hiding behind an
+ * exclusion list. The reasons are the assertion messages: the older three-stage row the refusal
+ * cell plants is load-bearing input rather than debris, and a dated reservation marker on a
  * domain-list member is a different concept that happens to share a word.
  *
  * THE SWEEP'S IDENTIFIER-SHAPED SPELLINGS ARE IN THE INVENTORY TOO. This phase's prose sweep
@@ -435,11 +435,11 @@ describe('the issue-slot needle set is gone from every package src, tests includ
     })
   }
 
-  // The by-name control (D-03). CLSR-01's three exclusions live HERE, in a positive assertion, and
-  // never in a scan filter: an exclusion list would pass while measuring nothing, and a fourth
+  // The by-name control. CLSR-01's two exclusions live HERE, in a positive assertion, and
+  // never in a scan filter: an exclusion list would pass while measuring nothing, and a third
   // file that started spelling the quoted literal outside production would slip past it. The list
   // is sorted before comparison so the assertion is independent of readdir order.
-  it('names exactly the two migration fixtures that spell the retired status literal outside production, and the domain-list marker that spells only the bare key', () => {
+  it('names exactly the one refusal fixture that spells the retired status literal outside production, and the domain-list marker that spells only the bare key', () => {
     const quoted = "'reser" + "ved'"
     const spellers = SOURCES.filter((f) => !PRODUCTION_SOURCES.includes(f))
       .filter((f) => readFileSync(f, 'utf8').includes(quoted))
@@ -447,10 +447,9 @@ describe('the issue-slot needle set is gone from every package src, tests includ
       .sort()
     expect(
       spellers,
-      `only the two v1 migration fixtures may still spell it — they carry the v1 three-stage row the migrate-older walk exists to read, which is load-bearing input rather than debris:\n${spellers.join('\n')}`,
+      `only the refusal fixture may still spell it — it plants the older three-stage row whose refusal it proves, which is load-bearing input rather than debris:\n${spellers.join('\n')}`,
     ).toEqual([
       'agent-local/src/__tests__/post-processing-status.test.ts',
-      'schema/src/__tests__/run-notification-migration.test.ts',
     ])
 
     const domainListPath = join(PACKAGES_DIR, 'cli/src/__tests__/conformance/domain-list.ts')

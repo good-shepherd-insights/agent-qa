@@ -77,6 +77,7 @@ import {
   RUN_ARTIFACT_SCHEMA_VERSION,
   RUN_SERVICE_CONTRACT_VERSION,
   CURRENT_BUS_SCHEMA_VERSION,
+  CURRENT_HANDOFF_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CacheableStepInput,
@@ -320,7 +321,7 @@ function buildRollCallFixture(): RollCallFixture {
     steps: [maskedStep],
   }
   const handoff: CompletedRunHandoff = {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: RUN_ID as unknown as RunId,
     scope: SCOPE,
     buildOrdinal: 1,
@@ -391,7 +392,7 @@ const ALL_ORIGINALS = Object.values(SECRETS)
  * The quote carries `SECRETS.error`'s marker, which both doors must serve as the marker.
  */
 const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
-  schemaVersion: 1,
+  schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
   runId: RUN_ID as unknown as RunId,
   scope: SCOPE,
   buildOrdinal: 1,
