@@ -9,7 +9,7 @@ export type { JudgeCalibrationArtifact, JudgeCalibrationReadInput, JudgeCalibrat
 export type { RunJudgePanelCalibrationInput, RunJudgeCalibrationResult } from './judge-calibration-composition.js'
 export { loadJudgeCalibrationEvidence } from './judge-calibration-evidence-source.js'
 export type { LoadJudgeCalibrationEvidenceInput, JudgeCalibrationEvidenceRead } from './judge-calibration-evidence-source.js'
-export { readLabelCalibration, LABEL_CALIBRATION_PATH } from './calibration-source.js'
+export { readLabelCalibration, LABEL_CALIBRATION_PATH, LABEL_CALIBRATION_SCHEMA_VERSION } from './calibration-source.js'
 export type { LabelCalibrationArtifact, LabelCalibrationRead } from './calibration-source.js'
 export { runLabelCalibration } from './calibration-composition.js'
 export type { RunLabelCalibrationInput, RunLabelCalibrationResult } from './calibration-composition.js'

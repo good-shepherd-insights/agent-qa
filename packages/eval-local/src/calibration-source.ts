@@ -6,8 +6,9 @@ import { ORIGIN_PRIORS, sha256hex } from '@vostride/agent-qa-schema'
 import { committedLabelPath } from './committed-root-store.js'
 
 export const LABEL_CALIBRATION_PATH = 'labels/calibration.json'
+export const LABEL_CALIBRATION_SCHEMA_VERSION = 2
 export interface LabelCalibrationArtifact extends Omit<LabelCalibrationReport, 'minGold'> {
-  schemaVersion: 1
+  schemaVersion: typeof LABEL_CALIBRATION_SCHEMA_VERSION
   minGold: { value: number; source: 'default' | 'cli' }
   evidenceDigest: string
   generationId: string
@@ -36,7 +37,7 @@ const rate = z.object({ numerator: count, denominator: count, rate: unit.optiona
 const accuracy = z.object({ n: count, correct: count, accuracy: unit.optional() }).strict()
   .refine(v => v.correct <= v.n && (v.n === 0 ? v.accuracy === undefined : v.accuracy === v.correct / v.n))
 const artifactSchema = z.object({
-  schemaVersion: z.literal(1), generationId: digest, evidenceDigest: digest,
+  schemaVersion: z.literal(LABEL_CALIBRATION_SCHEMA_VERSION), generationId: digest, evidenceDigest: digest,
   corpusDigest: digest, goldSetDigest: digest,
   minGold: z.object({ value: count.min(2), source: z.enum(['default', 'cli']) }).strict(),
   channels: z.object({ 'recorded-verdict': noisy, 'self-heal-pair': noisy, 'user-mark': gold, 'overturned-verdict': gold }).strict(),

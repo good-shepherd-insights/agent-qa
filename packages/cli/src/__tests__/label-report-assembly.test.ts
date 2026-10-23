@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { calibrateLabels, canonicalJson, createLabelRevision, projectSilverLabelRecord } from '@vostride/agent-qa-eval'
-import { FsReplayRecordStore, FsScoreStore, committedLabelPath, readCommittedCorpus } from '@vostride/agent-qa-eval-local'
+import { FsReplayRecordStore, FsScoreStore, LABEL_CALIBRATION_SCHEMA_VERSION, committedLabelPath, readCommittedCorpus } from '@vostride/agent-qa-eval-local'
 import { sha256hex } from '@vostride/agent-qa-schema'
 import { resolveEvalSession, runReportVerb } from '../eval-session-composition.js'
 import { createFeedbackPortForHost } from '../gates/feedback-host.js'
@@ -82,7 +82,7 @@ it('rejects partial Phase420 metadata on the actual from-committed command path'
 it('copies guarded calibration once into the report and discloses unknown staged ownership', async () => {
   const f = await fixture()
   const calibration = calibrateLabels({ snapshot: readCommittedCorpus(f.committedRoot).snapshot, marks: [] })
-  const body = { ...calibration, schemaVersion: 1, evidenceDigest: sha256hex('fixture'), targetRevisions: [] }
+  const body = { ...calibration, schemaVersion: LABEL_CALIBRATION_SCHEMA_VERSION, evidenceDigest: sha256hex('fixture'), targetRevisions: [] }
   write(join(f.committedRoot, 'labels/calibration.json'), { ...body, generationId: sha256hex(canonicalJson(body)) })
   const { report } = await runReportVerb(f.session, {}, { source: 'committed' })
   expect(report.calibration).toEqual({ status: 'uncalibrated', n_gold: 0,

@@ -55,7 +55,7 @@ function setup() {
 
 it('dry-run computes all pair weights without creating committed, lock or audit bytes', async () => {
   const f = setup(), before = bytes(f.root)
-  expect((await f.invoke())).toMatchObject({ kind: 'dry-run', refreshedCount: 2, artifact: { schemaVersion: 1 } })
+  expect((await f.invoke())).toMatchObject({ kind: 'dry-run', refreshedCount: 2, artifact: { schemaVersion: api.LABEL_CALIBRATION_SCHEMA_VERSION } })
   expect(bytes(f.root)).toEqual(before)
 })
 it('commits once, reuses semantic terminals and returns byte-identical unchanged', async () => {

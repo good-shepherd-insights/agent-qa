@@ -6,7 +6,7 @@ import { asRef } from '@vostride/agent-qa-schema'
 import {
   adjudicateCassetteScore, buildEvalReport, computeDecisionIdentity,
   decisionCorrectnessVectors, effectiveGold, extractRunCassettes, scoreCassetteReplay,
-  createScoringContext, JUDGE_CONFIG,
+  createScoringContext, JUDGE_CONFIG, LABEL_RECORD_SCHEMA_VERSION,
   type LeafReplayResult, type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
 import { FsCassetteStore, FsReplayRecordStore, FsScoreStore, assembleScoredBatch, loadScoreRecord } from '../index.js'
@@ -24,7 +24,7 @@ async function fixture(verdict: 'equivalent' | 'different' | 'unsure' | 'error' 
   const cassette = extracted.cassette
   const correctedAction = { type: 'fill' as const, ref: asRef('e-continue'),
     text: 'alpha beta gamma delta', clearMode: 'replace' as const, submit: false }
-  const label: StandaloneLabelRecord = { schemaVersion: 1, cassetteId: cassette.id,
+  const label: StandaloneLabelRecord = { schemaVersion: LABEL_RECORD_SCHEMA_VERSION, cassetteId: cassette.id,
     label: { ...cassette.label, tier: 'gold', sourceChannel: 'user-mark' },
     provenance: { runId: cassette.runId, runSlug: 'fixture', capturedAtOrdinal: 1, receiptDigest: 'a'.repeat(64) },
     correction: { verdict: 'fail', overturnedVerdict: { pass: true, reasoning: 'recorded' },

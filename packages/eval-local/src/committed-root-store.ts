@@ -42,7 +42,7 @@ export const COMMITTED_CENSUS_SUBDIR = 'census'
 export const COMMITTED_NOISE_FLOOR_SUBDIR = 'noise-floor'
 
 export const COMMITTED_ROOT_MARKER_FILE = 'eval-root.json'
-export const COMMITTED_ROOT_SCHEMA_VERSION = 1
+export const COMMITTED_ROOT_SCHEMA_VERSION = 2
 
 /** Scaffolded ignore content: one rule covering every blobs/ dir at any depth (D-15). */
 export const COMMITTED_GITIGNORE_TEXT =

@@ -4,7 +4,7 @@ import type { StandaloneLabelRecord } from '../label-record'
 
 function base(): StandaloneLabelRecord {
   return {
-    schemaVersion: 1,
+    schemaVersion: api.LABEL_RECORD_SCHEMA_VERSION,
     cassetteId: api.deriveLeafCassetteId({ runSlug: api.deriveRunSlug('revision fixture'), testIndex: 0, stepIndex: 0, decisionOrdinal: 0 }),
     label: { sourceChannel: 'recorded-verdict', tier: 'silver', verdict: { pass: false, reasoning: 'original' } },
     provenance: { runId: 'revision fixture', runSlug: api.deriveRunSlug('revision fixture'), capturedAtOrdinal: 1, receiptDigest: 'a'.repeat(64) },

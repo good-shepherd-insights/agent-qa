@@ -2,7 +2,7 @@ import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openS
 import { dirname, join } from 'node:path'
 import { calibrateLabels, canonicalJson, collectSoftPopulation, committedFileText, computeCorpusDigest, computeSoftWeight, createLabelRevision, deriveLabelRevisionId, type StandaloneLabelRecord } from '@vostride/agent-qa-eval'
 import { sha256hex } from '@vostride/agent-qa-schema'
-import { assertCalibrationPath, calibrationGenerationId, guardLabelCalibration, LABEL_CALIBRATION_PATH, type LabelCalibrationArtifact } from './calibration-source.js'
+import { assertCalibrationPath, calibrationGenerationId, guardLabelCalibration, LABEL_CALIBRATION_PATH, LABEL_CALIBRATION_SCHEMA_VERSION, type LabelCalibrationArtifact } from './calibration-source.js'
 import { readCommittedCorpus } from './committed-corpus-source.js'
 import { loadCalibrationEvidence } from './calibration-evidence-source.js'
 import { loadLabelEvidence } from './label-evidence-source.js'
@@ -81,7 +81,7 @@ function prepare(input: RunLabelCalibrationInput) {
     desired.push({ product, record, changed: record !== current })
   }
   const body: Omit<LabelCalibrationArtifact, 'generationId'> = {
-    ...report, schemaVersion: 1,
+    ...report, schemaVersion: LABEL_CALIBRATION_SCHEMA_VERSION,
     minGold: { value: report.minGold.value, source: report.minGold.source === 'flag' ? 'cli' : 'default' },
     evidenceDigest: sha256hex(canonicalJson({ population: population.evidenceDigest,
       observations: calibration.observations, goldSetDigest: report.goldSetDigest, missing: calibration.missingEvidenceCounts })),

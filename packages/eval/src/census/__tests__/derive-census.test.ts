@@ -17,9 +17,11 @@ import type { LeafCassette } from '../../cassette/cassette'
 import { extractRunCassettes } from '../../extract/extract-run'
 import { countGateSet } from '../../gate/gate-set'
 import type { CorpusEntry, TargetEnvironment } from '../../labels/corpus-entry'
+import { LABEL_RECORD_SCHEMA_VERSION } from '../../labels/label-record'
 import type { StandaloneLabelRecord } from '../../labels/label-record'
 import { PARTITION_MANIFEST_SCHEMA_VERSION } from '../../labels/partition-manifest'
 import type { PartitionManifest } from '../../labels/partition-manifest'
+import { RUN_EXCLUSION_SCHEMA_VERSION } from '../../labels/run-exclusion'
 import type { ExclusionClass, RunExclusionRecord, VerdictProducer } from '../../labels/run-exclusion'
 import type { ArtifactSource } from '../../ports'
 import { computeCorpusDigest } from '../corpus-digest'
@@ -122,7 +124,7 @@ function labelFor(
 ): StandaloneLabelRecord {
   const label = structuredClone(FIXTURE_LEAF.label)
   return {
-    schemaVersion: 1,
+    schemaVersion: LABEL_RECORD_SCHEMA_VERSION,
     cassetteId,
     label: { ...label, tier },
     provenance: {
@@ -518,7 +520,7 @@ function exclusionFor(
   verdict: { class: ExclusionClass; producer: VerdictProducer },
 ): RunExclusionRecord {
   return {
-    schemaVersion: 1,
+    schemaVersion: RUN_EXCLUSION_SCHEMA_VERSION,
     runId: runSlug,
     runSlug,
     product,

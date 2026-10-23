@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { canonicalJson } from '../../canonical-json'
 import type { CorpusEntry } from '../../labels/corpus-entry'
 import { createLabelRevision, selectEffectiveLabels } from '../../labels/effective-labels'
-import type { StandaloneLabelRecord } from '../../labels/label-record'
+import { LABEL_RECORD_SCHEMA_VERSION, type StandaloneLabelRecord } from '../../labels/label-record'
 import { deriveCensus, type CommittedCorpusSnapshot } from '../derive-census'
 import { renderCensusMarkdown } from '../render-census'
 
@@ -10,7 +10,7 @@ const entry = (cassetteId: string): CorpusEntry => ({ schemaVersion: 2, cassette
   product: 'actual-product', split: 'natural', captured_at_ordinal: 1,
   run_links: { runId: 'run-fixture', runSlug: 'run-fixture' }, receiptDigest: 'a'.repeat(64) })
 const label = (cassetteId: string, pairedCassetteId?: string): StandaloneLabelRecord => ({
-  schemaVersion: 1, cassetteId,
+  schemaVersion: LABEL_RECORD_SCHEMA_VERSION, cassetteId,
   label: { sourceChannel: pairedCassetteId ? 'self-heal-pair' : 'recorded-verdict',
     tier: pairedCassetteId ? 'near-gold' : 'silver',
     ...(pairedCassetteId ? { pairing: { pairedCassetteId, relation: 'contrastive-positive' as const } } : {}) },

@@ -22,7 +22,7 @@ vi.mock('@vostride/agent-qa-agent-local', async original => {
     drainQueue: vi.fn(actual.LOCAL_CURATION_CAPABILITIES.drainQueue),
   } }
 })
-import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
+import { LABEL_CALIBRATION_SCHEMA_VERSION, readLabelCalibration } from '@vostride/agent-qa-eval-local'
 
 const roots: string[] = []
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -30,7 +30,7 @@ afterAll(() => { removeInProcessFixtures() })
 
 function artifact(root: string, precision = 0.75) {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })
-  const body = { ...report, schemaVersion: 1, evidenceDigest: sha256hex('daemon fixture'), targetRevisions: [],
+  const body = { ...report, schemaVersion: LABEL_CALIBRATION_SCHEMA_VERSION, evidenceDigest: sha256hex('daemon fixture'), targetRevisions: [],
     channels: { ...report.channels, 'recorded-verdict': { status: 'calibrated', n: 20, n_gold: 20, precision, wilson95: { lower: 0.1, upper: 0.9, halfWidth: 0.4 } } },
     priors: { 'agent-verified': { alpha: precision * 3, beta: (1 - precision) * 3 } } }
   const value = { ...body, generationId: sha256hex(canonicalJson(body)) }

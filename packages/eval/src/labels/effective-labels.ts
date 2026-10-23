@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { canonicalJson } from '../canonical-json'
 import { cassetteSchema } from '../cassette/schema'
 import { actionWireSchema } from '../cassette/action-wire-schema'
-import type { StandaloneLabelRecord } from './label-record'
+import { LABEL_RECORD_SCHEMA_VERSION, type StandaloneLabelRecord } from './label-record'
 import { ADVERSARIAL_MUTATORS, GENERATOR_KINDS, generatorProvenance } from './corpus-entry'
 import type { CorpusGenerator } from './corpus-entry'
 
@@ -65,7 +65,7 @@ const derivedFromSchema = z.object({
 
 const recordSchema = z.object({
   derivedFrom: derivedFromSchema.optional(),
-  schemaVersion: z.literal(1), cassetteId: z.string().min(1),
+  schemaVersion: z.literal(LABEL_RECORD_SCHEMA_VERSION), cassetteId: z.string().min(1),
   label: cassetteSchema.options[0].shape.label,
   supersedes: z.string().min(1).optional(),
   revision: z.object({ id: digest, predecessorId: digest, generationId: z.string().min(1).optional() }).strict().optional(),

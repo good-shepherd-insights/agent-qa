@@ -10,6 +10,7 @@ import {
   computeBatchKey,
   computeCorpusDigest,
   computeGateVerdict,
+  DECISION_VECTORS_SCHEMA_VERSION,
   extractRunCassettes,
   projectBaselinePointer,
 } from '@vostride/agent-qa-eval'
@@ -134,7 +135,7 @@ describe('runNoiseFloorMeasurement', () => {
       for (const key of ['weightSum', 'pairsWithoutWeight', 'weightedAccuracy']) Reflect.deleteProperty(historical.recovery, key)
       historicalReportDigests.push(sha256hex(canonicalJson(historical)))
       new evalLocal.FsReportStore({ root: input.agentQaRoot, outputDir: join(root, 'reports') })
-        .save(historical, { schemaVersion: 1, batchKey: old.report.batchKey,
+        .save(historical, { schemaVersion: DECISION_VECTORS_SCHEMA_VERSION, batchKey: old.report.batchKey,
           matcherVersion: old.report.matcherVersion, vectors: old.vectors })
       expect(old.vectors.every(vector => vector.product === 'default')).toBe(true)
       snapshot(root)

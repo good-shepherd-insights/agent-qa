@@ -31,7 +31,7 @@ import type { CorpusGenerator } from './corpus-entry'
 import { generatorProvenance } from './corpus-entry'
 
 /** Single version gate for the standalone label record document (D-01). */
-export const LABEL_RECORD_SCHEMA_VERSION = 1
+export const LABEL_RECORD_SCHEMA_VERSION = 2
 
 /** Run-anchored provenance stamped on every standalone record (ROOT-03 base). */
 export interface LabelProvenance {
@@ -87,7 +87,7 @@ export interface StandaloneLabelRecord {
   correction?: LabelCorrection
   supersedes?: string
   /** Version gate (D-01). */
-  schemaVersion: 1
+  schemaVersion: typeof LABEL_RECORD_SCHEMA_VERSION
   /** Deterministic cassette identity this record labels (D-01). */
   cassetteId: string
   /**

@@ -27,6 +27,8 @@ import {
   countGateSet,
   deriveCensus,
   foldClassifierRepeatability,
+  CAMPAIGN_MANIFEST_SCHEMA_VERSION,
+  DECISION_VECTORS_SCHEMA_VERSION,
   foldNoiseFloorArtefact,
   guardDecisionVectorsDocument,
   guardNoiseFloorArtefact,
@@ -85,6 +87,7 @@ import {
   resolveBaselineCache,
   runReplayGate,
   stageFeedbackEntry,
+  COMMITTED_ROOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-eval-local'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { appendGateReceipt } from '@vostride/agent-qa-knowledge-local'
@@ -1851,7 +1854,7 @@ describe('runReportVerb — one batch, one report, one headline (D-13/D-14)', ()
     expect(guardDecisionVectorsDocument(document)).toEqual({
       kind: 'ok',
       document: {
-        schemaVersion: 1, batchKey: result.batchKey,
+        schemaVersion: DECISION_VECTORS_SCHEMA_VERSION, batchKey: result.batchKey,
         matcherVersion: result.report.matcherVersion, vectors: [],
       },
     })
@@ -1992,7 +1995,7 @@ async function feedbackVerbFixture() {
   await appendFile(configPath, '\nknowledge:\n  dir: knowledge\n')
   const committedRoot = join(dir, 'agent-qa-eval')
   await mkdir(committedRoot)
-  await writeFile(join(committedRoot, 'eval-root.json'), '{"schemaVersion":1}')
+  await writeFile(join(committedRoot, 'eval-root.json'), JSON.stringify({ schemaVersion: COMMITTED_ROOT_SCHEMA_VERSION }))
   const agentQaRoot = join(dir, '.agent-qa')
   for (let index = 0; index < 2; index++) {
     const runId = generateRunId()
@@ -3784,7 +3787,7 @@ function commitFixtureReport(
 
 function campaignManifest(): unknown {
   return {
-    schemaVersion: 1,
+    schemaVersion: CAMPAIGN_MANIFEST_SCHEMA_VERSION,
     phase: '413',
     submoduleHead: 'c'.repeat(40),
     legs: [

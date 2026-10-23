@@ -244,6 +244,6 @@ describe('the two documents together', () => {
     const manifest: PartitionManifest = guardPartitionManifest(manifestBytes())
     expect(manifest.schemaVersion).toBe(PARTITION_MANIFEST_SCHEMA_VERSION)
     expect(manifest.partitionVersion).toBe(PARTITION_VERSION)
-    expect(RUN_EXCLUSION_SCHEMA_VERSION).toBe(1)
+    expect(RUN_EXCLUSION_SCHEMA_VERSION).toBe(2)
   })
 })

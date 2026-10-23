@@ -27,6 +27,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  COMMITTED_ROOT_SCHEMA_VERSION,
   committedBlobPath,
   committedCassettePath,
   committedContractPath,
@@ -209,7 +210,7 @@ describe('seedCommittedCorpus (ROOT-02, D-13/D-14/D-15/D-16/D-17)', () => {
     // D-15 scaffold + D-04 contracts land at the store's anatomy.
     expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('**/blobs/')
     expect(JSON.parse(readFileSync(join(root, 'eval-root.json'), 'utf8'))).toEqual({
-      schemaVersion: 1,
+      schemaVersion: COMMITTED_ROOT_SCHEMA_VERSION,
     })
     expect(existsSync(join(root, committedContractPath('matcher-config.v1.json')))).toBe(true)
     expect(existsSync(join(root, committedContractPath(`judge-config.v${JUDGE_CONFIG.judgeVersion}.json`)))).toBe(true)

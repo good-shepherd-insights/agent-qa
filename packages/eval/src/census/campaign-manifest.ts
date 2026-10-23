@@ -29,7 +29,7 @@ import { RecordedRetrievalRungSchema, VERDICT_CLASSES } from '@vostride/agent-qa
 import { z } from 'zod'
 
 /** Single version gate for the campaign manifest document (D-16). */
-export const CAMPAIGN_MANIFEST_SCHEMA_VERSION = 1 as const
+export const CAMPAIGN_MANIFEST_SCHEMA_VERSION = 2 as const
 
 /** The two producers that can author a run verdict (D-04, mirrors `Verdict['producer']`). */
 const CAMPAIGN_VERDICT_PRODUCERS = ['deterministic-classifier', 'analyze-run'] as const

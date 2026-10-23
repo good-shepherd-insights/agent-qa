@@ -15,7 +15,7 @@ vi.mock('@vostride/agent-qa-agent-local', async original => {
   return { ...actual, LOCAL_CURATION_CAPABILITIES: { ...actual.LOCAL_CURATION_CAPABILITIES,
     readLowerTrustShares: vi.fn(actual.LOCAL_CURATION_CAPABILITIES.readLowerTrustShares) } }
 })
-import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
+import { LABEL_CALIBRATION_SCHEMA_VERSION, readLabelCalibration } from '@vostride/agent-qa-eval-local'
 import { LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import * as replayHost from '../gates/replay-gate-host.js'
 import { markFixture } from '../gates/__tests__/feedback-fixture.js'
@@ -30,7 +30,7 @@ function project(knowledge = true) {
 }
 function artifact(verified = false, observed = false, stale = false) {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })
-  const body = { ...report, schemaVersion: 1, evidenceDigest: sha256hex('doctor fixture'), targetRevisions: [],
+  const body = { ...report, schemaVersion: LABEL_CALIBRATION_SCHEMA_VERSION, evidenceDigest: sha256hex('doctor fixture'), targetRevisions: [],
     goldSetDigest: stale ? sha256hex('old gold') : report.goldSetDigest,
     channels: { ...report.channels }, priors: { ...report.priors } }
   for (const [yes, channel, origin, mass, n] of [[verified, 'recorded-verdict', 'agent-verified', 3, 20], [observed, 'self-heal-pair', 'agent-observed', 2, 25]] as const) {

@@ -301,7 +301,7 @@ describe('419 gold projections', () => {
   it('keeps silver serialized bytes identical to the pre-419 shape', () => {
     const cassette = silverLeaf()
     expect(committedFileText(projectSilverLabelRecord({ cassette, runId: RUN_ID }))).toBe(committedFileText({
-      schemaVersion: 1, cassetteId: cassette.id, label: { ...cassette.label },
+      schemaVersion: LABEL_RECORD_SCHEMA_VERSION, cassetteId: cassette.id, label: { ...cassette.label },
       provenance: { runId: RUN_ID, runSlug: RUN_SLUG, capturedAtOrdinal: cassette.receipt.buildOrdinal, receiptDigest: sha256hex(canonicalJson(cassette.receipt)) },
     }))
   })

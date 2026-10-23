@@ -30,6 +30,7 @@ import {
   computeDecisionIdentity,
   canonicalizeInputLeg,
   computeCorpusDigest,
+  LABEL_RECORD_SCHEMA_VERSION,
   type LeafCassette,
   type StandaloneLabelRecord,
 } from '@vostride/agent-qa-eval'
@@ -182,7 +183,7 @@ describe('leaf candidate earns a Gate-1 receipt', () => {
         blobs: [],
       })
       if (options.correctedTie && cassette.id === f.targetId) {
-        const label: StandaloneLabelRecord = { schemaVersion: 1, cassetteId: cassette.id,
+        const label: StandaloneLabelRecord = { schemaVersion: LABEL_RECORD_SCHEMA_VERSION, cassetteId: cassette.id,
           label: { ...cassette.label, tier: 'gold', sourceChannel: 'user-mark' },
           provenance: { runId: cassette.runId, runSlug: slugBranch(cassette.runId), capturedAtOrdinal: 1,
             receiptDigest: sha256hex(JSON.stringify(cassette.receipt)) },

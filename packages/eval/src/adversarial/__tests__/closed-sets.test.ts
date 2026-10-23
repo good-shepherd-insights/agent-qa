@@ -372,7 +372,7 @@ describe('422-22 the vocabularies 422 did NOT move', () => {
     // must move none of them: a bump owes every historical row a migration, and nothing here
     // changes what a historical row means.
     expect(CORPUS_ENTRY_SCHEMA_VERSION).toBe(2)
-    expect(LABEL_RECORD_SCHEMA_VERSION).toBe(1)
+    expect(LABEL_RECORD_SCHEMA_VERSION).toBe(2)
     expect(CASSETTE_SCHEMA_VERSION).toBe(2)
     expect(ADVERSARIAL_TABLE_VERSION).toBe(2)
     expect(ADVERSARIAL_GENERATOR_VERSION).toBe(2)

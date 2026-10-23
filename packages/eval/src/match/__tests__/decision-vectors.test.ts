@@ -206,10 +206,10 @@ describe('decisionCorrectnessVectors', () => {
 })
 
 describe('decision vectors document', () => {
-  const valid = () => ({ schemaVersion: 1, batchKey: 'batch', matcherVersion: 1, vectors: [vector()] })
+  const valid = () => ({ schemaVersion: DECISION_VECTORS_SCHEMA_VERSION, batchKey: 'batch', matcherVersion: 1, vectors: [vector()] })
 
   it('projects a deterministic strict document and round-trips through its guard', () => {
-    expect(DECISION_VECTORS_SCHEMA_VERSION).toBe(1)
+    expect(DECISION_VECTORS_SCHEMA_VERSION).toBe(2)
     const input = { batchKey: 'batch', matcherVersion: 1, vectors: [vector()] }
     const document = projectDecisionVectorsDocument(input)
     expect(document).toEqual(valid())
@@ -221,7 +221,7 @@ describe('decision vectors document', () => {
   })
 
   it.each([
-    ['wrong schema', () => ({ ...valid(), schemaVersion: 2 })],
+    ['wrong schema', () => ({ ...valid(), schemaVersion: 3 })],
     ['unknown document key', () => ({ ...valid(), prompt: 'must never be persisted' })],
     ['unknown vector key', () => ({ ...valid(), vectors: [{ ...vector(), heldOutVisibility: 'private' }] })],
     ['unknown axis', () => ({ ...valid(), vectors: [{ ...vector(), axes: { ...fullAxes, recovery: 'correct' } }] })],

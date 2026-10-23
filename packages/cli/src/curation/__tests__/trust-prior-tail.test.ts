@@ -28,7 +28,7 @@ vi.mock('@vostride/agent-qa-knowledge-local', async original => {
   const actual = await original<typeof import('@vostride/agent-qa-knowledge-local')>()
   return { ...actual, drainQueue: vi.fn(actual.drainQueue), rebuildIndex: vi.fn(actual.rebuildIndex), acquireWriterLease: vi.fn(actual.acquireWriterLease) }
 })
-import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
+import { LABEL_CALIBRATION_SCHEMA_VERSION, readLabelCalibration } from '@vostride/agent-qa-eval-local'
 import { composeLocalAgent, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { drainQueue, rebuildIndex, acquireWriterLease, readWriterLease } from '@vostride/agent-qa-knowledge-local'
 import * as registration from '../../daemon/registration.js'
@@ -47,7 +47,7 @@ function fixture() {
 }
 function artifact(root: string, precision = 0.75) {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })
-  const body = { ...report, schemaVersion: 1, evidenceDigest: sha256hex('tail fixture'), targetRevisions: [],
+  const body = { ...report, schemaVersion: LABEL_CALIBRATION_SCHEMA_VERSION, evidenceDigest: sha256hex('tail fixture'), targetRevisions: [],
     channels: { ...report.channels, 'recorded-verdict': { status: 'calibrated', n: 20, n_gold: 20, precision, wilson95: { lower: 0.1, upper: 0.9, halfWidth: 0.4 } } },
     priors: { 'agent-verified': { alpha: precision * 3, beta: (1 - precision) * 3 } } }
   const value = { ...body, generationId: sha256hex(canonicalJson(body)) }

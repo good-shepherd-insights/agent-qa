@@ -13,7 +13,7 @@ import { assertCalibrationPath } from './calibration-source.js'
 import { loadJudgeCalibrationEvidence, type LoadJudgeCalibrationEvidenceInput } from './judge-calibration-evidence-source.js'
 import { acquireMarkLock } from './mark-lock.js'
 
-export const JUDGE_CALIBRATION_SCHEMA_VERSION = 1
+export const JUDGE_CALIBRATION_SCHEMA_VERSION = 2
 export const JUDGE_CALIBRATION_SUBDIR = 'judge-calibration'
 const hash = (value: unknown) => sha256hex(canonicalJson(value))
 const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b)

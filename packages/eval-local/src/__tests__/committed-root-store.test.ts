@@ -53,10 +53,10 @@ describe('FsCommittedRootStore (ROOT-01, D-15/D-17)', () => {
     })
     const gitignoreBytes = await readFile(join(root, '.gitignore'), 'utf8')
     expect(gitignoreBytes).toContain('**/blobs/')
-    expect(COMMITTED_ROOT_SCHEMA_VERSION).toBe(1)
+    expect(COMMITTED_ROOT_SCHEMA_VERSION).toBe(2)
     expect(
       JSON.parse(await readFile(join(root, COMMITTED_ROOT_MARKER_FILE), 'utf8')),
-    ).toEqual({ schemaVersion: 1 })
+    ).toEqual({ schemaVersion: 2 })
 
     const second = store.scaffold(COMMITTED_GITIGNORE_TEXT, markerText())
     expect(second).toEqual({

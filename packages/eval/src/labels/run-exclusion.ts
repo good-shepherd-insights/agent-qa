@@ -33,7 +33,7 @@
 import { z } from 'zod'
 
 /** Single version gate for the run-exclusion document (D-02). */
-export const RUN_EXCLUSION_SCHEMA_VERSION = 1 as const
+export const RUN_EXCLUSION_SCHEMA_VERSION = 2 as const
 
 /** Verdict classes D-04 excludes a growth run for; every other class seeds. */
 export const EXCLUSION_CLASSES = ['environment', 'flake', 'timeout'] as const

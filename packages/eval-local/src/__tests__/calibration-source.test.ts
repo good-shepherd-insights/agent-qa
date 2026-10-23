@@ -33,7 +33,7 @@ function setup() {
   const terminal = createLabelRevision(next, { provenance: { ...base.provenance, rerun: { attempt: 2 } } }, 'newer-generation')
   const append = (record: typeof next) => write(root, committedLabelPath('fixture', record.cassetteId).replace(/\.json$/, `--revision-${record.revision!.id}.json`), record)
   const report = calibrateLabels({ snapshot: api.readCommittedCorpus(root).snapshot, marks: [] })
-  const body = { ...report, schemaVersion: 1, evidenceDigest: sha256hex('evidence'), targetRevisions: [{ cassetteId: base.cassetteId, revisionId: terminal.revision!.id }] }
+  const body = { ...report, schemaVersion: api.LABEL_CALIBRATION_SCHEMA_VERSION, evidenceDigest: sha256hex('evidence'), targetRevisions: [{ cassetteId: base.cassetteId, revisionId: terminal.revision!.id }] }
   const artifact = { ...body, generationId: sha256hex(canonicalJson(body)) }
   return { root, base, next, terminal, append, artifact }
 }
@@ -77,7 +77,7 @@ it.each(['schema', 'prior', 'count', 'digest', 'target', 'interval', 'unknown'])
   const f = setup()
   f.append(f.next); f.append(f.terminal)
   const artifact: any = structuredClone(f.artifact)
-  if (mutation === 'schema') artifact.schemaVersion = 2
+  if (mutation === 'schema') artifact.schemaVersion = 3
   if (mutation === 'prior') artifact.priors = { user: { alpha: -1, beta: 2 } }
   if (mutation === 'count') artifact.channels['user-mark'].n_gold = -1
   if (mutation === 'digest') artifact.evidenceDigest = 'unsafe persisted content'

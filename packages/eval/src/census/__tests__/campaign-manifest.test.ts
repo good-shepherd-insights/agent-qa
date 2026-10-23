@@ -45,7 +45,7 @@ function fullManifest(): CampaignManifest {
 }
 
 describe('413 D-16 campaign manifest guard', () => {
-  it('admits a complete schemaVersion-1 manifest unchanged', () => {
+  it('admits a complete manifest unchanged', () => {
     const manifest = fullManifest()
 
     const guarded = guardCampaignManifest(structuredClone(manifest) as unknown)
@@ -74,7 +74,7 @@ describe('413 D-16 campaign manifest guard', () => {
     }
     expect(() => guardCampaignManifest(withUnknownProducer)).toThrow(TypeError)
 
-    const withFutureVersion = { ...fullManifest(), schemaVersion: 2 }
+    const withFutureVersion = { ...fullManifest(), schemaVersion: 3 }
     expect(() => guardCampaignManifest(withFutureVersion)).toThrow(/campaign manifest rejected:/)
   })
 

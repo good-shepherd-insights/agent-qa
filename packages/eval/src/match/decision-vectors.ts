@@ -82,10 +82,10 @@ export function decisionCorrectnessVectors(
   return vectors
 }
 
-export const DECISION_VECTORS_SCHEMA_VERSION = 1 as const
+export const DECISION_VECTORS_SCHEMA_VERSION = 2 as const
 
 export interface DecisionVectorsDocument {
-  schemaVersion: 1
+  schemaVersion: typeof DECISION_VECTORS_SCHEMA_VERSION
   batchKey: string
   matcherVersion: number
   vectors: readonly DecisionCorrectnessVector[]

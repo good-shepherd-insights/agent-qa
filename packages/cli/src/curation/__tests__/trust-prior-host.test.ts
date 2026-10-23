@@ -18,7 +18,7 @@ vi.mock('@vostride/agent-qa-agent-local', async original => {
     // 432-09: a mark's fix goes through the direct writer, which receives the same priors resolver.
     applyKnowledgeChange: vi.fn(actual.applyKnowledgeChange) }
 })
-import { readLabelCalibration } from '@vostride/agent-qa-eval-local'
+import { LABEL_CALIBRATION_SCHEMA_VERSION, readLabelCalibration } from '@vostride/agent-qa-eval-local'
 import { applyKnowledgeChange, composeLocalAgent, createKnowledgeReader, openRunKnowledgeComposition, LOCAL_CURATION_CAPABILITIES } from '@vostride/agent-qa-agent-local'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 import { createReplayGateHost, createReplayGatePortForHost } from '../../gates/replay-gate-host.js'
@@ -36,7 +36,7 @@ afterAll(async () => {
 function fixture(precision = 0.75): LabelCalibrationArtifact {
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })
   const mass = ORIGIN_PRIORS['agent-verified'].alpha + ORIGIN_PRIORS['agent-verified'].beta
-  const body = { ...report, minGold: { value: report.minGold.value, source: 'default' as const }, schemaVersion: 1 as const, evidenceDigest: sha256hex('synthetic evidence'), targetRevisions: [],
+  const body = { ...report, minGold: { value: report.minGold.value, source: 'default' as const }, schemaVersion: LABEL_CALIBRATION_SCHEMA_VERSION as typeof LABEL_CALIBRATION_SCHEMA_VERSION, evidenceDigest: sha256hex('synthetic evidence'), targetRevisions: [],
     channels: { ...report.channels, 'recorded-verdict': { status: 'calibrated' as const, n: 20, n_gold: 20,
       precision, wilson95: { lower: 0.1, upper: 0.9, halfWidth: 0.4 } } },
     priors: { 'agent-verified': { alpha: precision * mass, beta: (1 - precision) * mass } },
@@ -78,7 +78,7 @@ it('distinguishes absent and uncalibrated fallback from a fixed safe refusal', a
   expect(absent.resolve()).toBeUndefined()
   expect(absent.disclosure.status).toBe('provisional')
   const report = calibrateLabels({ snapshot: { entries: [], labelsById: new Map(), cassettesById: new Map(), blobPresentById: new Map() }, marks: [] })
-  const body = { ...report, schemaVersion: 1, evidenceDigest: sha256hex('fixture'), targetRevisions: [] }
+  const body = { ...report, schemaVersion: LABEL_CALIBRATION_SCHEMA_VERSION, evidenceDigest: sha256hex('fixture'), targetRevisions: [] }
   writeArtifact({ ...body, generationId: sha256hex(canonicalJson(body)) })
   const empty = await build()
   expect(empty.resolve()).toBeUndefined()

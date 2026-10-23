@@ -209,7 +209,7 @@ it('changes evidence digest when actual recorded identity changes or disappears'
 it('honors committed run exclusions and refuses malformed exclusion evidence', () => {
   const f = fixture(), path = join(f.committedRoot, 'exclusions/shop/fixture.json')
   mkdirSync(join(f.committedRoot, 'exclusions/shop'), { recursive: true })
-  writeFileSync(path, JSON.stringify({ schemaVersion: 1, runId: f.handoff.runId, runSlug: core.deriveRunSlug(f.handoff.runId),
+  writeFileSync(path, JSON.stringify({ schemaVersion: core.RUN_EXCLUSION_SCHEMA_VERSION, runId: f.handoff.runId, runSlug: core.deriveRunSlug(f.handoff.runId),
     product: 'shop', verdicts: [{ class: 'test_bug', producer: 'analyze-run' }], analysisDigest: 'b'.repeat(64), reason: 'excluded-verdict-class' }))
   expect(f.read()?.evidence).toEqual([])
   writeFileSync(path, '{')

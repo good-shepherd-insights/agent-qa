@@ -1,20 +1,32 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CAMPAIGN_MANIFEST_SCHEMA_VERSION,
   CLASSIFIER_REPEATABILITY_SCHEMA_VERSION,
   CONTRACT_PROJECTION_SCHEMA_VERSION,
+  DECISION_VECTORS_SCHEMA_VERSION,
+  LABEL_RECORD_SCHEMA_VERSION,
   NOISE_FLOOR_SCHEMA_VERSION,
   PARTITION_MANIFEST_SCHEMA_VERSION,
+  RUN_EXCLUSION_SCHEMA_VERSION,
   committedFileText,
+  deriveLeafCassetteId,
+  deriveRunSlug,
   foldClassifierRepeatability,
+  guardCampaignManifest,
   guardClassifierRepeatability,
+  guardDecisionVectorsDocument,
   guardNoiseFloorArtefact,
   guardPartitionManifest,
+  guardRunExclusionRecord,
+  parseStandaloneLabelRecord,
+  projectDecisionVectorsDocument,
   projectJudgeConfigContract,
   projectMatcherConfigContract,
   projectPartitionManifest,
+  projectRunExclusion,
 } from '../index'
-import type { AxisFloorSet, NoiseFloorArtefact } from '../index'
+import type { AxisFloorSet, CampaignManifest, NoiseFloorArtefact, StandaloneLabelRecord } from '../index'
 
 const contracts = [
   ['judge', projectJudgeConfigContract],
@@ -92,6 +104,62 @@ function floor(): NoiseFloorArtefact {
   }
 }
 
+const exclusion = () => projectRunExclusion({
+  runId: 'run-excluded',
+  runSlug: deriveRunSlug('run-excluded'),
+  product: 'example-web',
+  verdicts: [{ class: 'flake', producer: 'analyze-run' }],
+  analysisDigest: 'b'.repeat(64),
+})
+
+const labelRecord = (): StandaloneLabelRecord => ({
+  schemaVersion: LABEL_RECORD_SCHEMA_VERSION,
+  cassetteId: deriveLeafCassetteId({ runSlug: deriveRunSlug('run-labelled'), testIndex: 0, stepIndex: 0, decisionOrdinal: 0 }),
+  label: { sourceChannel: 'recorded-verdict', tier: 'silver', verdict: { pass: false, reasoning: 'recorded' } },
+  provenance: { runId: 'run-labelled', runSlug: deriveRunSlug('run-labelled'), capturedAtOrdinal: 1, receiptDigest: 'a'.repeat(64) },
+})
+
+const decisions = () => projectDecisionVectorsDocument({ batchKey: 'batch', matcherVersion: 1, vectors: [] })
+
+const campaign = (): CampaignManifest => ({
+  schemaVersion: CAMPAIGN_MANIFEST_SCHEMA_VERSION,
+  phase: 'campaign',
+  submoduleHead: '93c37d43',
+  legs: [{
+    testId: 'example-web/login.spec.ts::signs in',
+    testFile: 'tests/login.spec.ts',
+    product: 'example-web',
+    runSlug: 'run-signs-in-1',
+    repeat: 1,
+    exitCode: 0,
+    aggregateVerdict: 'pass',
+    verdicts: [{ class: 'app_bug', producer: 'analyze-run' }],
+    excluded: false,
+    seeded: true,
+    wallClockMs: 54_000,
+    modelCalls: 12,
+    promptTokens: 9_400,
+    completionTokens: 810,
+    steps: 7,
+    proofSteps: 7,
+  }],
+})
+
+const documents = [
+  ['run exclusion', exclusion, (value: unknown) => guardRunExclusionRecord(value)],
+  ['label record', labelRecord, (value: unknown) => {
+    const parsed = parseStandaloneLabelRecord(value)
+    if (!parsed.ok) throw new TypeError(parsed.issues)
+    return parsed.record
+  }],
+  ['decision vectors document', decisions, (value: unknown) => {
+    const guarded = guardDecisionVectorsDocument(value)
+    if (guarded.kind !== 'ok') throw new TypeError(guarded.reason)
+    return guarded.document
+  }],
+  ['campaign manifest', campaign, (value: unknown) => guardCampaignManifest(value)],
+] as const
+
 describe('committed eval stamps', () => {
   it.each(contracts)('projects the %s contract stamped 2', (_name, project) => {
     expect(CONTRACT_PROJECTION_SCHEMA_VERSION).toBe(2)
@@ -136,4 +204,19 @@ describe('committed eval stamps', () => {
     expect(result.kind).toBe('rejected')
     if (result.kind === 'rejected') expect(result.reason).toContain('classifierRepeatability.schemaVersion')
   })
+
+  it.each(documents)('reads a %s stamped 2', (_name, build, read) => {
+    expect([RUN_EXCLUSION_SCHEMA_VERSION, LABEL_RECORD_SCHEMA_VERSION, DECISION_VECTORS_SCHEMA_VERSION,
+      CAMPAIGN_MANIFEST_SCHEMA_VERSION]).toEqual([2, 2, 2, 2])
+    const document = build()
+    expect(document.schemaVersion).toBe(2)
+    expect(read(JSON.parse(committedFileText(document)))).toEqual(document)
+  })
+
+  it.each(documents.flatMap(([name, build, read]) => [1, 3].map(stamp => [name, stamp, build, read] as const)))(
+    'refuses a %s stamped %i',
+    (_name, stamp, build, read) => {
+      expect(() => read({ ...build(), schemaVersion: stamp })).toThrow(TypeError)
+    },
+  )
 })
