@@ -170,7 +170,6 @@ describe('415 gate randomness and release-gate isolation', () => {
     ]
     for (const file of manifests) {
       const manifest = JSON.parse(readFileSync(file, 'utf8')) as { scripts?: { test?: string } }
-      // Only scripts.test: validate:release-gate is the legitimate standalone entrypoint.
       if (gateReference.test(manifest.scripts?.test ?? '')) {
         hits.push(`${relativePath(file)}:scripts.test`)
       }

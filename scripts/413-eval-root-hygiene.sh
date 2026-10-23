@@ -93,7 +93,6 @@ gate_paths() {
   echo "$ROOT/packages/eval/src"
   echo "$ROOT/packages/eval-local/src"
   echo "$ROOT/packages/cli/src/commands/eval.ts"
-  [ -e "$ROOT/scripts/m3-release-gate.sh" ] && echo "$ROOT/scripts/m3-release-gate.sh"
   for file in "$ROOT/packages/cli/src/"eval-*.ts; do
     [ -e "$file" ] && echo "$file"
   done

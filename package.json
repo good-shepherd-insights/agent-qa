@@ -29,7 +29,6 @@
     "validate:arch": "pnpm --filter @vostride/agent-qa-arch exec vitest run src/__tests__/validate-arch.test.ts src/__tests__/412-issue-slot-deleted.test.ts src/__tests__/415-no-randomness-on-gate-paths.test.ts src/__tests__/416-promotion-doors.test.ts src/__tests__/418-no-eval-writer.test.ts src/__tests__/419-one-commit-door.test.ts src/__tests__/419-one-policy-writer.test.ts --reporter=verbose src/__tests__/420-label-calibration-walls.test.ts src/__tests__/421-judge-panel-walls.test.ts src/__tests__/422-no-eval-writer.test.ts src/__tests__/430-dashboard-chat-deleted.test.ts src/__tests__/432-approval-permission-deleted.test.ts src/__tests__/433-knowledge-explorer-absent.test.ts src/__tests__/434-no-super-repo-reads.test.ts src/__tests__/436-harness-progress-deleted.test.ts src/__tests__/437-mobile-input-census.test.ts src/__tests__/438-ordinal-census.test.ts src/__tests__/439-verifier-binding-census.test.ts src/__tests__/441-declared-secret-masking-deleted.test.ts src/__tests__/442-run-ownership-census.test.ts src/__tests__/443-one-record-census.test.ts src/__tests__/449.1-version-register.test.ts",
     "validate:safety": "pnpm --filter @vostride/agent-qa-safety exec vitest run src/__tests__/validate-safety.test.ts",
     "validate:eval-root-hygiene": "bash scripts/413-eval-root-hygiene.sh",
-    "validate:release-gate": "bash scripts/m3-release-gate.sh",
     "release:docker": "node scripts/release/docker.mjs",
     "release:docker:check": "node scripts/release/docker.mjs --check-local",
     "release:dry-run": "node scripts/release/dry-run.mjs",
