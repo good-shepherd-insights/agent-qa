@@ -336,7 +336,7 @@ describe('a recorded run is never re-spent (D-18)', () => {
     await fixture.prepare(narrow.port)
     expect(narrow.calls.check).toHaveLength(1)
     expect(readMisdirectionRunState(fixture.runDir, fixture.runId).policy).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: fixture.runId,
       maxChecks: 1,
       source: 'flag',
@@ -481,12 +481,12 @@ describe('an absent evaluation root is not a broken one (D-19)', () => {
     // reader can actually find it.
     expect(absent.onDisk().misdirectionEvidence).toEqual(broken.onDisk().misdirectionEvidence)
     expect(readMisdirectionRunPosture(absent.runDir, absent.runId)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: absent.runId,
       kind: 'no-eval-root',
     })
     expect(readMisdirectionRunPosture(broken.runDir, broken.runId)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: broken.runId,
       kind: 'broken-eval-root',
       reason: 'corpus unreadable',
@@ -497,7 +497,7 @@ describe('an absent evaluation root is not a broken one (D-19)', () => {
     const fixture = project(oneFailingStep(ids(1)))
     await fixture.prepare(stubArbiter().port)
     expect(readMisdirectionRunPosture(fixture.runDir, fixture.runId)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: fixture.runId,
       kind: 'eval-root',
       corpusDigest: CORPUS_DIGEST,
@@ -561,7 +561,7 @@ describe('CR-04: exception text from a credential-resolving layer never becomes 
     ])
     // The DURABLE record is the half no downstream allow-list protects.
     expect(readMisdirectionRunPosture(fixture.runDir, fixture.runId)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: fixture.runId,
       kind: 'broken-eval-root',
       reason: MISDIRECTION_ROOT_UNREADABLE,
@@ -615,7 +615,7 @@ describe('WR-08: persistMisdirectionSidecar leaves handoff.json as it found it',
       mkdirSync(runDir)
       process.umask(Number(process.argv[3]))
       persistMisdirectionSidecar(handoff, [])
-      writeMisdirectionRunPosture(runDir, { schemaVersion: 1, runId: 'fixture', kind: 'no-eval-root' })
+      writeMisdirectionRunPosture(runDir, { schemaVersion: 2, runId: 'fixture', kind: 'no-eval-root' })
       process.stdout.write(JSON.stringify({
         existingMode: statSync(handoff).mode & 0o777,
         newMode: statSync(join(runDir, MISDIRECTION_POSTURE_FILE)).mode & 0o777,

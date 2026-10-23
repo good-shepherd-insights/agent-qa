@@ -129,7 +129,7 @@ const CAP_SOURCES: readonly MisdirectionCapSource[] = ['flag', 'default']
  * the source it came from, exactly as `writeRunCanaryPolicy` does for the ablation cap.
  */
 export interface MisdirectionRunPolicy {
-  readonly schemaVersion: 1
+  readonly schemaVersion: 2
   readonly runId: string
   readonly maxChecks: number
   readonly source: MisdirectionCapSource
@@ -137,7 +137,7 @@ export interface MisdirectionRunPolicy {
 
 const policySchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     runId: z.string().min(1),
     maxChecks: z.number().int().nonnegative(),
     source: z.enum(['flag', 'default']),
@@ -197,7 +197,7 @@ export function writeMisdirectionRunPolicy(runDir: string, policy: MisdirectionR
  * reportable rather than merely absent.
  */
 export interface MisdirectionCheckReservation extends MisdirectionCheckKey {
-  readonly schemaVersion: 1
+  readonly schemaVersion: 2
   readonly handoffBaseDigest: string
   readonly briefDigest: string
   readonly corpusDigest: string
@@ -206,7 +206,7 @@ export interface MisdirectionCheckReservation extends MisdirectionCheckKey {
 
 const reservationSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     runId: z.string().min(1),
     perTest: z.number().int().nonnegative(),
     stepIndex: z.number().int().nonnegative(),
@@ -390,7 +390,7 @@ export function readMisdirectionRunState(runDir: string, runId: string): Misdire
  * — a reader sees the whole old record or the whole new one.
  */
 export interface MisdirectionRunPostureRecord {
-  readonly schemaVersion: 1
+  readonly schemaVersion: 2
   readonly runId: string
   readonly kind: 'eval-root' | 'no-eval-root' | 'broken-eval-root'
   readonly corpusDigest?: string
@@ -400,7 +400,7 @@ export interface MisdirectionRunPostureRecord {
 
 const postureSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     runId: z.string().min(1),
     kind: z.enum(['eval-root', 'no-eval-root', 'broken-eval-root']),
     corpusDigest: z.string().min(1).optional(),

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import type { Server } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -7,9 +8,34 @@ import { join } from 'node:path'
 import type { ConfigReaderPort, JobModelCapability } from '@vostride/agent-qa-agent'
 import { composeLocalAgent } from '@vostride/agent-qa-agent-local'
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
-import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, canonicalJson } from '@vostride/agent-qa-schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ZodTypeAny } from 'zod'
+
+import {
+  readCompletedCanaryAblations,
+  readRunCanaryPolicy,
+  saveCompletedCanaryAblation,
+  writeRunCanaryPolicy,
+} from '../curation/canary-run-state.js'
+import {
+  MISDIRECTION_POLICY_FILE,
+  MISDIRECTION_POSTURE_FILE,
+  MISDIRECTION_RESERVATIONS_DIR,
+  readMisdirectionCheckReservations,
+  readMisdirectionRunPolicy,
+  readMisdirectionRunPosture,
+  reserveMisdirectionCheck,
+  writeMisdirectionRunPolicy,
+  writeMisdirectionRunPosture,
+} from '../curation/misdirection-run-state.js'
+import {
+  MARK_EDIT_RECORD_FILE,
+  MarkEditRecordUnreadableError,
+  answerRecordedMarkEdit,
+  recordMarkEditAhead,
+  withMarkEditScope,
+} from '../gates/mark-edit-record.js'
 
 import { invokeViaDaemon } from '../daemon/client.js'
 import { runDaemonHost } from '../daemon/host.js'
@@ -73,6 +99,18 @@ function temporaryProject(label: string): { agentQaRoot: string; knowledgeRoot: 
   const agentQaRoot = join(root, '.agent-qa')
   mkdirSync(agentQaRoot, { recursive: true })
   return { agentQaRoot, knowledgeRoot: join(root, 'agent-qa-knowledge') }
+}
+
+function restamp(file: string, stamp: number): void {
+  const document = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+  writeFileSync(file, `${canonicalJson({ ...document, schemaVersion: stamp })}\n`, 'utf8')
+}
+
+function runDir(label: string): string {
+  const { agentQaRoot } = temporaryProject(label)
+  const dir = join(agentQaRoot, 'runs', 'run-stamps')
+  mkdirSync(dir, { recursive: true })
+  return dir
 }
 
 async function startRegisteredDaemon(label: string): Promise<{
@@ -228,5 +266,105 @@ describe('cli runtime stamps', () => {
     expect(acquireWriterLease).not.toHaveBeenCalled()
     expect(readFileSync(registrationFile)).toEqual(bytesBefore)
     expect(existsSync(socketPath)).toBe(true)
+  })
+
+  it('writes a canary policy at 2 and refuses one stamped 1 as invalid', () => {
+    const dir = runDir('canary-policy-1')
+    writeRunCanaryPolicy(dir, { schemaVersion: 2, runId: 'run-stamps', maxAblations: 3, source: 'flag' })
+    expect(readRunCanaryPolicy(dir, 'run-stamps')).toMatchObject({ schemaVersion: 2 })
+
+    restamp(join(dir, 'canary-policy.json'), 1)
+    expect(() => readRunCanaryPolicy(dir, 'run-stamps')).toThrow('canary policy invalid')
+  })
+
+  it('writes a canary completion at 2 and refuses one stamped 1', () => {
+    const dir = runDir('canary-completion-1')
+    const completion = {
+      schemaVersion: 2 as const,
+      runId: 'run-stamps',
+      candidateId: 'candidate-stamps',
+      attributedObservationId: 'observation-stamps',
+      observedStateDigest: 'a'.repeat(64),
+      result: { kind: 'no-eval-root' as const },
+    }
+    saveCompletedCanaryAblation(dir, completion)
+    expect(readCompletedCanaryAblations(dir, 'run-stamps')).toEqual([completion])
+    expect(() => saveCompletedCanaryAblation(dir, { ...completion, schemaVersion: 1 as never }))
+      .toThrow()
+
+    const completions = join(dir, 'canary-completions')
+    restamp(join(completions, readdirSync(completions)[0]!), 1)
+    expect(() => readCompletedCanaryAblations(dir, 'run-stamps'))
+      .toThrow('completed canary evidence invalid')
+  })
+
+  it('writes a misdirection policy at 2 and refuses one stamped 1 as invalid', () => {
+    const dir = runDir('misdirection-policy-1')
+    writeMisdirectionRunPolicy(dir, { schemaVersion: 2, runId: 'run-stamps', maxChecks: 2, source: 'default' })
+    expect(readMisdirectionRunPolicy(dir, 'run-stamps')).toMatchObject({ schemaVersion: 2 })
+
+    restamp(join(dir, MISDIRECTION_POLICY_FILE), 1)
+    expect(() => readMisdirectionRunPolicy(dir, 'run-stamps')).toThrow('misdirection policy invalid')
+  })
+
+  it('writes a misdirection check reservation at 2 and refuses one stamped 1 as invalid', () => {
+    const dir = runDir('misdirection-reservation-1')
+    reserveMisdirectionCheck(dir, {
+      schemaVersion: 2,
+      runId: 'run-stamps',
+      perTest: 0,
+      stepIndex: 1,
+      decisionOrdinal: 0,
+      recordId: 'fact-stamps',
+      handoffBaseDigest: 'h'.repeat(64),
+      briefDigest: 'b'.repeat(64),
+      corpusDigest: 'c'.repeat(64),
+      profileDigest: 'p'.repeat(64),
+    })
+    expect(readMisdirectionCheckReservations(dir, 'run-stamps')).toEqual([
+      expect.objectContaining({ schemaVersion: 2 }),
+    ])
+
+    const reservations = join(dir, MISDIRECTION_RESERVATIONS_DIR)
+    restamp(join(reservations, readdirSync(reservations)[0]!), 1)
+    expect(() => readMisdirectionCheckReservations(dir, 'run-stamps'))
+      .toThrow('misdirection check reservation invalid')
+  })
+
+  it('refuses a misdirection root posture stamped 1 and re-derives it on the next write', () => {
+    const dir = runDir('misdirection-posture-1')
+    writeMisdirectionRunPosture(dir, { schemaVersion: 2, runId: 'run-stamps', kind: 'no-eval-root' })
+    restamp(join(dir, MISDIRECTION_POSTURE_FILE), 1)
+    expect(() => readMisdirectionRunPosture(dir, 'run-stamps'))
+      .toThrow('misdirection root posture invalid')
+
+    writeMisdirectionRunPosture(dir, { schemaVersion: 2, runId: 'run-stamps', kind: 'no-eval-root' })
+    expect(readMisdirectionRunPosture(dir, 'run-stamps')).toEqual({
+      schemaVersion: 2,
+      runId: 'run-stamps',
+      kind: 'no-eval-root',
+    })
+  })
+
+  it('records a mark edit at 2 and refuses one stamped 1 as unreadable', async () => {
+    const dir = runDir('mark-edit-1')
+    const recordPath = join(dir, MARK_EDIT_RECORD_FILE)
+    const scope = { recordPath, operationId: 'operation-stamps' }
+    const content = 'name: stamps\n'
+    const contentDigest = createHash('sha256').update(content).digest('hex')
+    await withMarkEditScope(scope, async () => {
+      recordMarkEditAhead({ filePath: 'stamps.yaml', contentDigest })
+    })
+    writeFileSync(join(dir, 'stamps.yaml'), content, 'utf8')
+    expect(JSON.parse(readFileSync(recordPath, 'utf8'))).toMatchObject({ schemaVersion: 2 })
+    expect(answerRecordedMarkEdit({ ...scope, configDir: dir })).toEqual({
+      kind: 'written',
+      filePath: 'stamps.yaml',
+      contentDigest,
+    })
+
+    restamp(recordPath, 1)
+    expect(() => answerRecordedMarkEdit({ ...scope, configDir: dir }))
+      .toThrow(MarkEditRecordUnreadableError)
   })
 })

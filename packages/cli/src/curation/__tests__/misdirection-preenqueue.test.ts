@@ -480,7 +480,7 @@ describe('evidence is durable BEFORE the queue row exists (D-18)', () => {
     expect(state.reservations).toHaveLength(1)
     expect(state.interrupted).toEqual([])
     expect(state.policy).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: fixture.runId,
       maxChecks: 4,
       source: 'default',

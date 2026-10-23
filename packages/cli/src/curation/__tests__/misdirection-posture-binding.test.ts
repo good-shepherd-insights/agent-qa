@@ -435,8 +435,8 @@ describe('422-27 recorded posture reaches both production analysis hosts', () =>
   })
 
   it.each([
-    ['foreign identity', { schemaVersion: 1, runId: 'foreign-run', kind: 'no-eval-root' }, 'identity mismatch'],
-    ['strict schema', { schemaVersion: 1, kind: 'no-eval-root', extra: true }, 'invalid'],
+    ['foreign identity', { schemaVersion: 2, runId: 'foreign-run', kind: 'no-eval-root' }, 'identity mismatch'],
+    ['strict schema', { schemaVersion: 2, kind: 'no-eval-root', extra: true }, 'invalid'],
   ])('rejects a planted %s record', async (_name, record, reason) => {
     const terminal = await terminalRunOptions()
     const runId = generateRunId()
@@ -454,7 +454,7 @@ describe('422-27 recorded posture reaches both production analysis hosts', () =>
     const outside = join(terminal.created.project, 'outside')
     mkdirSync(outside)
     writeFileSync(join(outside, MISDIRECTION_POSTURE_FILE), JSON.stringify({
-      schemaVersion: 1, runId, kind: 'broken-eval-root',
+      schemaVersion: 2, runId, kind: 'broken-eval-root',
     }))
     expect(terminal.postRun.readMisdirectionRootPosture).toBeTypeOf('function')
     expect(terminal.postRun.readMisdirectionRootPosture!(runId)).toBeUndefined()
@@ -462,7 +462,7 @@ describe('422-27 recorded posture reaches both production analysis hosts', () =>
     expect(runDir.startsWith(join(terminal.created.agentQaRoot, 'runs') + '/')).toBe(true)
     mkdirSync(runDir, { recursive: true })
     writeFileSync(join(runDir, MISDIRECTION_POSTURE_FILE), JSON.stringify({
-      schemaVersion: 1, runId, kind: 'no-eval-root',
+      schemaVersion: 2, runId, kind: 'no-eval-root',
     }))
     expect(terminal.postRun.readMisdirectionRootPosture!(runId)).toBe('no-eval-root')
   })

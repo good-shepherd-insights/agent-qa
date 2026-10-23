@@ -71,8 +71,8 @@ describe('canary receipt contract', () => {
       }
       const dirs = handoffs.map(h => join(root, RUNS_SUBDIR, slugBranch(h.runId)))
       dirs.forEach(dir => mkdirSync(dir, { recursive: true }))
-      writeRunCanaryPolicy(dirs[0]!, { schemaVersion: 1, runId: String(handoffs[0]!.runId), maxAblations: 1, source: 'flag' })
-      writeRunCanaryPolicy(dirs[1]!, { schemaVersion: 1, runId: String(handoffs[1]!.runId), maxAblations: 2, source: 'config' })
+      writeRunCanaryPolicy(dirs[0]!, { schemaVersion: 2, runId: String(handoffs[0]!.runId), maxAblations: 1, source: 'flag' })
+      writeRunCanaryPolicy(dirs[1]!, { schemaVersion: 2, runId: String(handoffs[1]!.runId), maxAblations: 2, source: 'config' })
       const ablation: CanaryAblation = { isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' }),
         corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'a'.repeat(64) }),
         resolveCaps: async () => ({ maxAblations: 4, source: 'default' }),

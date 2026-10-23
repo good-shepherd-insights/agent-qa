@@ -441,7 +441,7 @@ export async function prepareMisdirectionEvidence(
     }
 
     // THE CHARGE, BEFORE THE CALL.
-    reserveMisdirectionCheck(input.runDir, { schemaVersion: 1, ...identities })
+    reserveMisdirectionCheck(input.runDir, { schemaVersion: 2, ...identities })
     budget -= 1
     let checked: MisdirectionChecked
     try {
@@ -504,7 +504,7 @@ function postureRecord(
 ): MisdirectionRunPostureRecord {
   if (posture.kind === 'eval-root') {
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId,
       kind: 'eval-root',
       corpusDigest: posture.corpusDigest,
@@ -512,8 +512,8 @@ function postureRecord(
     }
   }
   return posture.kind === 'no-eval-root'
-    ? { schemaVersion: 1, runId, kind: 'no-eval-root' }
-    : { schemaVersion: 1, runId, kind: 'broken-eval-root', reason: posture.reason }
+    ? { schemaVersion: 2, runId, kind: 'no-eval-root' }
+    : { schemaVersion: 2, runId, kind: 'broken-eval-root', reason: posture.reason }
 }
 
 /**
@@ -567,7 +567,7 @@ async function resolveDurableCap(
     throw new TypeError('misdirection check cap must be a non-negative integer')
   }
   writeMisdirectionRunPolicy(input.runDir, {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     maxChecks: caps.maxChecks,
     source: caps.source,

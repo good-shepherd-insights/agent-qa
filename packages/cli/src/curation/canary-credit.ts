@@ -186,7 +186,7 @@ export async function creditCanaryAttributions(
           // Every handled result consumed an attempt. Persist only safe terminal DATA,
           // BEFORE queue/projection/drain work can fail. A
           // persistence failure escapes the fold; it must not mint a successful tail receipt.
-          input.saveCompletedAblation({ schemaVersion: 1,
+          input.saveCompletedAblation({ schemaVersion: 2,
             runId: outcome.runId, candidateId: outcome.candidateId,
             attributedObservationId: input.observationIdOf(outcome), observedStateDigest: outcome.observedStateDigest,
             result: result.kind === 'ablated' ? { kind: 'ablated', crossCheck: result.crossCheck, corpusDigest: result.corpusDigest,

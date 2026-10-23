@@ -414,7 +414,7 @@ describe('createPostVerdictStep — decide without mutating, acquire only for a 
     const runId = generateRunId()
     try {
       writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify({
-        schemaVersion: 1, runId, maxAblations: 4, source,
+        schemaVersion: 2, runId, maxAblations: 4, source,
       }))
       expect(() => readRunCanaryPolicy(runDir, runId)).toThrow('canary policy invalid')
     } finally { rmSync(runDir, { recursive: true, force: true }) }
@@ -422,7 +422,7 @@ describe('createPostVerdictStep — decide without mutating, acquire only for a 
   it.each(['flag', 'config', 'default'] as const)('accepts the primitive stored policy source %s', source => {
     const runDir = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
     const runId = generateRunId()
-    const policy = { schemaVersion: 1, runId, maxAblations: 4, source }
+    const policy = { schemaVersion: 2, runId, maxAblations: 4, source }
     try {
       writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify(policy))
       expect(readRunCanaryPolicy(runDir, runId)).toEqual(policy)
@@ -435,7 +435,7 @@ describe('createPostVerdictStep — decide without mutating, acquire only for a 
     mkdirSync(runDir, { recursive: true })
     try {
       writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify({
-        schemaVersion: 1, runId, maxAblations: 1, source: ['flag'],
+        schemaVersion: 2, runId, maxAblations: 1, source: ['flag'],
       }))
       const operations = stubOperations({
         recordCanaryPolicy,
@@ -464,7 +464,7 @@ describe('createPostVerdictStep — decide without mutating, acquire only for a 
       mkdirSync(runDir, { recursive: true })
       const configPath = join(root, 'agent-qa.config.yaml')
       writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\neval:\n  gate2:\n    maxAblations: 4\n')
-      const expected = { schemaVersion: 1, runId, maxAblations: flag ? 1 : 4, source: flag ? 'flag' : 'config' }
+      const expected = { schemaVersion: 2, runId, maxAblations: flag ? 1 : 4, source: flag ? 'flag' : 'config' }
       const operations = stubOperations({
         recordCanaryPolicy,
         loadCompletedRunHandoff: () => ({ ...HANDOFF, runId: asRunId(runId) }),

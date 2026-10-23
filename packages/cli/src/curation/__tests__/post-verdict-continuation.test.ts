@@ -449,7 +449,7 @@ it.each(['terminal', 'daemon'] as const)('CR-10 %s recovery preserves flag one a
     finally { await daemon.stop() }
   }
   expect(readRunCanaryPolicy(f.runDir, f.input.runId), 'the original flag one must never become recovery default four')
-    .toEqual({ schemaVersion: 1, runId: f.input.runId, maxAblations: 1, source: 'flag' })
+    .toEqual({ schemaVersion: 2, runId: f.input.runId, maxAblations: 1, source: 'flag' })
   expect(existsSync(f.pendingPath)).toBe(false)
   expect(readFileSync(join(f.runDir, 'canary-policy.json'))).toEqual(originalPolicy)
   expect(fetch).not.toHaveBeenCalled()
@@ -463,7 +463,7 @@ it.each((['terminal', 'daemon'] as const).flatMap(door =>
   await expect(f.own({ maxAblations: 1, queued: async () => { throw new Error('retain') } })).rejects.toThrow('retain')
   const policyPath = join(f.runDir, 'canary-policy.json')
   if (state === 'missing') rmSync(policyPath)
-  if (state === 'conflicting') writeFileSync(policyPath, JSON.stringify({ schemaVersion: 1, runId: f.input.runId, maxAblations: 4, source: 'default' }))
+  if (state === 'conflicting') writeFileSync(policyPath, JSON.stringify({ schemaVersion: 2, runId: f.input.runId, maxAblations: 4, source: 'default' }))
   if (state === 'malformed') writeFileSync(policyPath, '{bad')
   if (state === 'legacy') {
     const { policyDigest: _digest, ...legacy } = JSON.parse(readFileSync(f.pendingPath, 'utf8'))

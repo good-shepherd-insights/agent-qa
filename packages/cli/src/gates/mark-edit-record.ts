@@ -26,7 +26,7 @@ import { z } from 'zod'
 export const MARK_EDIT_RECORD_FILE = 'mark-edit.json'
 
 const recordSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   operationId: z.string().min(1),
   filePath: z.string().min(1),
   /** Absent when the target did not exist. */
@@ -65,7 +65,7 @@ export function withMarkEditScope<T>(value: MarkEditScope, run: () => Promise<T>
 export function recordMarkEditAhead(write: PendingTestWrite): void {
   const active = scope.getStore()
   if (active === undefined) return
-  const record = recordSchema.parse({ schemaVersion: 1, operationId: active.operationId, ...write })
+  const record = recordSchema.parse({ schemaVersion: 2, operationId: active.operationId, ...write })
   const staged = `${active.recordPath}.pending`
   const fd = openSync(staged, 'w', 0o600)
   try {

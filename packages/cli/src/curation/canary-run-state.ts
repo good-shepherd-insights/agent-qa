@@ -6,7 +6,7 @@ import { z } from 'zod'
 import { CROSS_CHECKS, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
 
 export interface RunCanaryPolicy {
-  schemaVersion: 1
+  schemaVersion: 2
   runId: string
   maxAblations: number
   source: 'flag' | 'config' | 'default'
@@ -22,7 +22,7 @@ export function readRunCanaryPolicy(runDir: string, runId: string): RunCanaryPol
   const policy: unknown = JSON.parse(text)
   if (typeof policy !== 'object' || policy === null || Array.isArray(policy)
     || Object.keys(policy).sort().join(',') !== 'maxAblations,runId,schemaVersion,source'
-    || !('schemaVersion' in policy) || policy.schemaVersion !== 1
+    || !('schemaVersion' in policy) || policy.schemaVersion !== 2
     || !('runId' in policy) || policy.runId !== runId
     || !('maxAblations' in policy) || typeof policy.maxAblations !== 'number'
     || !Number.isSafeInteger(policy.maxAblations) || policy.maxAblations < 1
@@ -54,7 +54,7 @@ export function writeRunCanaryPolicy(runDir: string, policy: RunCanaryPolicy): v
 const count = z.number().int().nonnegative()
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
 const completionSchema = z.object({
-  schemaVersion: z.literal(1), runId: z.string().min(1), candidateId: z.string().min(1),
+  schemaVersion: z.literal(2), runId: z.string().min(1), candidateId: z.string().min(1),
   attributedObservationId: z.string().min(1), observedStateDigest: digest,
   result: z.union([z.object({
     kind: z.literal('ablated'), crossCheck: z.enum(CROSS_CHECKS), corpusDigest: digest,

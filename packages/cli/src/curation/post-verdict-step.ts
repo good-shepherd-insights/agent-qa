@@ -685,7 +685,7 @@ export async function recordCanaryPolicy(options: Pick<PostVerdictStepOptions, '
     ...(options.maxAblations === undefined ? {} : { maxAblations: options.maxAblations }),
   }).resolveCaps()
   if (!['flag', 'config', 'default'].includes(caps.source)) throw new Error('canary policy source invalid')
-  writeRunCanaryPolicy(runDir, { schemaVersion: 1, runId: options.runId,
+  writeRunCanaryPolicy(runDir, { schemaVersion: 2, runId: options.runId,
     maxAblations: caps.maxAblations, source: caps.source as 'flag' | 'config' | 'default' })
 }
 
