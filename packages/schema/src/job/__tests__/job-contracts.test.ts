@@ -95,7 +95,7 @@ describe('jobCheckpointEnvelopeSchema', () => {
   // D-04: stamp and hard-fail, no migration machinery. The stamp is a literal, so a file
   // written by a different build is refused rather than reinterpreted. A plain
   // `z.number()` would accept every one of these.
-  it.each([0, 2, 99, '1', null])('rejects an envelope stamped %p', (version) => {
+  it.each([0, 1, 3, 99, '2', null])('rejects an envelope stamped %p', (version) => {
     expect(
       jobCheckpointEnvelopeSchema.safeParse({ ...VALID_ENVELOPE, schemaVersion: version }).success,
     ).toBe(false)

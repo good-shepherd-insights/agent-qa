@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 
 import { afterAll, describe, expect, it } from 'vitest'
-import { CurationSnapshotSchema } from '@vostride/agent-qa-schema'
+import { CurationSnapshotSchema, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 import {
   PERMITTED_RUN_RECEIPT_DIFF_FIELDS,
@@ -38,7 +38,7 @@ function assertCompletedSnapshot(oneShot: LegReport, daemon: LegReport, expected
   for (const field of SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS) expect(daemon.runReceipt).not.toHaveProperty(field)
   // Equal completed snapshots remain comparable, and a snapshot is never an ignored field.
   expect(() => compareRunReceipts(oneShot.runReceipt, { ...oneShot.runReceipt })).not.toThrow()
-  const empty = { schemaVersion: 1, rows: [], breakdown: {
+  const empty = { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: {
     added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0,
   } }
   expect(() => compareRunReceipts(oneShot.runReceipt, { ...oneShot.runReceipt, snapshot: empty }))

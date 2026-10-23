@@ -18,6 +18,7 @@ import {
   RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
   INSPECT_RECORD_VIEW_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -432,7 +433,7 @@ function snapshot() {
   const classified = (recordId: string, change: RecordChange['change']) => learnedChange({
     recordId, change, sourceRunId: RUN_ID, evidenceToken: `receipt-${recordId}`,
     observationId: `observation-${recordId}` })
-  return CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [
+  return CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [
     { recordId: 'rec-learned', bucket: 'added', changes: [{ bucket: 'added', change: classified('rec-learned', 'added') }] },
     { recordId: 'rec-a', bucket: 'confirmed', changes: [{ bucket: 'confirmed', change: classified('rec-a', 'confirmed') }] },
   ], breakdown: { added: 1, confirmed: 1, superseded: 0, deprecated: 0, proposed: 0 } })

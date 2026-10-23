@@ -16,7 +16,7 @@
     "pass counts as pass, and the heal is recorded."
   ],
 
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "frozenAt": "2026-08-10",
   "target": "local-form (demo/init/agent-qa.config.yaml -> http://127.0.0.1:8931/form.html)",
   "suiteUnderComparison": [

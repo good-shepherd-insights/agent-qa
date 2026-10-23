@@ -65,6 +65,7 @@ import {
   INSPECT_RECORD_VIEW_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -198,7 +199,7 @@ function curationSnapshot(runId: string) {
   const classified = (recordId: string, change: RecordChange['change'], atOrdinal: number): RecordChange => ({
     schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change, atOrdinal, sourceRunId: runId,
     evidenceToken: `receipt-${recordId}`, observationId: `observation-${recordId}` })
-  return CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [
+  return CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [
     { recordId: RECORD_LEARNED, bucket: 'added', changes: [{ bucket: 'added', change: classified(RECORD_LEARNED, 'added', 20) }] },
     { recordId: 'confirmed-423-38', bucket: 'confirmed', changes: [{ bucket: 'confirmed', change: classified('confirmed-423-38', 'confirmed', 21) }] },
     { recordId: 'victim-423-38', bucket: 'superseded', byRecordId: 'replacement-423-38', changes: [

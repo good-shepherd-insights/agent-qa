@@ -1,5 +1,5 @@
 import {
-  canonicalJson, CURATION_BUCKET_PRECEDENCE, CurationSnapshotSchema,
+  canonicalJson, CURATION_BUCKET_PRECEDENCE, CURATION_SNAPSHOT_SCHEMA_VERSION, CurationSnapshotSchema,
   CurationSnapshotChangeSchema, RECORD_CHANGE_SCHEMA_VERSION, survivingOutcomeEvents,
   type CurationSnapshot, type CurationSnapshotChange, type CurationSnapshotRow,
 } from '@vostride/agent-qa-schema'
@@ -118,5 +118,5 @@ export function foldCurationSnapshot(effects: readonly CurationSnapshotChange[])
   }
   const breakdown = { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 }
   for (const row of retained) breakdown[row.bucket]++
-  return CurationSnapshotSchema.parse({ schemaVersion: 1, rows: retained, breakdown })
+  return CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: retained, breakdown })
 }

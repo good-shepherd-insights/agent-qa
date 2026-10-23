@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange, RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, asEvidenceToken, asRecordId, CurationSnapshotSchema, type BundleDraft, type Delta, type RecordChange, RECORD_CHANGE_SCHEMA_VERSION, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { diffSince } from '../diff-since.js'
 import * as bundleAppend from '../bundle-append.js'
 import { loadBundle } from '../bundle-read.js'
@@ -360,7 +360,7 @@ describe('423 curation snapshot', () => {
     expect({ kind: report.kind, failures: report.failures, requeued: report.requeued, remaining: report.remaining })
       .toEqual({ kind: 'drained', failures: 0, requeued: 0, remaining: 0 })
     expect(report.effects).toEqual([])
-    const zero = { schemaVersion: 1, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } }
+    const zero = { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } }
     expect(report.snapshot).toEqual(zero)
     expect(CurationSnapshotSchema.parse(report.snapshot)).toEqual(zero)
   })

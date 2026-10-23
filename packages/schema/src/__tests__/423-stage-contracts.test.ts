@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 
 import {
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
   CURATION_SNAPSHOT_WITHHELD_REASONS,
   CurationSnapshotWithheldSchema,
   POST_PROCESSING_CHIP_STATUSES,
@@ -119,7 +120,7 @@ describe('C423-STAGES-EXACT', () => {
 
 describe('C423-WITHHELD-EXACT', () => {
   const emptySnapshot = {
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [],
     breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
   }

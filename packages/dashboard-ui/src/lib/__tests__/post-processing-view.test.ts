@@ -13,7 +13,7 @@
 // daemon" and a lie. Blank is a lie by omission; `pending` is a lie outright.
 
 import { describe, expect, it } from 'vitest'
-import { POST_PROCESSING_SKIP_REASONS, VERDICT_CLASSES } from '@vostride/agent-qa-schema'
+import { POST_PROCESSING_SKIP_REASONS, VERDICT_CLASSES, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CurationBreakdown, PostProcessingStatus } from '@vostride/agent-qa-schema'
 
 import type { PostProcessingRead } from '@/lib/api'
@@ -174,7 +174,7 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
   it('reads the breakdown off the snapshot on the same read — five buckets, zeros omitted', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }), {
-        curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 4, deprecated: 2 }) },
+        curationSnapshot: { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: breakdown({ added: 4, deprecated: 2 }) },
       }),
       disposition: 'drained',
     })))
@@ -206,7 +206,7 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
   it('renders an all-zero breakdown as `no memory changes` rather than as five zeros (D-17)', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }), {
-        curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown() },
+        curationSnapshot: { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: breakdown() },
       }),
     })))
     expect(view.curation.card?.outcome).toBe(`Curation complete — ${NO_MEMORY_CHANGES_TEXT}`)
@@ -218,7 +218,7 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
   it('never invents a card for the analysis chip from curation counts', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }, { total: 1, byClass: { app_bug: 1 } }), {
-        curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 4 }) },
+        curationSnapshot: { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: breakdown({ added: 4 }) },
       }),
     })))
     expect(view.analysis.state).toBe('complete')
@@ -276,7 +276,7 @@ describe('the curation breakdown is one function, and legacy rows say what they 
   it('prefers the snapshot over the legacy pair — a snapshot-bearing row never says `curated`', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete', curated: 2, deprecated: 0 }), {
-        curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 2 }) },
+        curationSnapshot: { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: breakdown({ added: 2 }) },
       }),
     })))
     expect(view.curation.card?.outcome).toBe('Curation complete — 2 added')
@@ -609,7 +609,7 @@ describe('the projection is pure and total (PXH-RUN-03)', () => {
       read({ status: status('failed', 'failed'), disposition: 'handedOff', failures: {} }),
       read({
         status: status('complete', 'complete', notification({ status: 'complete' }, { total: 0, byClass: {} }), {
-          curationSnapshot: { schemaVersion: 1, rows: [], breakdown: breakdown({ added: 1 }) },
+          curationSnapshot: { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: breakdown({ added: 1 }) },
         }),
         disposition: 'drained',
       }),

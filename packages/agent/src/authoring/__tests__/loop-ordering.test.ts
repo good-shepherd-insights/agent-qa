@@ -30,6 +30,7 @@ import {
   computeDraftDisposition,
   WrittenTestReceiptSchema,
   authoredSuiteTargetPath,
+  CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   AuthoringBrief,
@@ -584,7 +585,7 @@ function scriptedReceipt(
   runs: { readonly requested: number; readonly completed: number },
 ): DraftReceipt {
   return {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
       filePath: STAGED_DRAFT.filePath,
       testId: STAGED_DRAFT.testId,

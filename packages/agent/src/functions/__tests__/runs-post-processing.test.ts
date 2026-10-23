@@ -9,6 +9,7 @@ import {
   toRunNotificationView,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, MaskFn, PostProcessingStageDetail, RunNotification } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -56,7 +57,7 @@ function read(state: PostProcessingChainState | undefined, secretMask?: MaskFn) 
 
 function snapshot(): CurationSnapshot {
   return CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [{ recordId: 'record-synthetic-snapshot-secret', bucket: 'superseded',
       byRecordId: 'replacement-synthetic-snapshot-secret',
       changes: [{ bucket: 'superseded', change: {
@@ -91,7 +92,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
   })
 
   it('NOTIFICATION-MASK-COLLISION: nested identity collisions withhold generically without deleting history', async () => {
-    const recorded: CurationSnapshot = { schemaVersion: 1,
+    const recorded: CurationSnapshot = { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: [{ recordId: 'synthetic-record', bucket: 'confirmed', changes: [
         { bucket: 'confirmed', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'synthetic-record',
           change: 'confirmed', atOrdinal: 1, evidenceToken: 'synthetic-secret-one' } },
@@ -168,14 +169,14 @@ describe('423 checkpoint-backed snapshot projection', () => {
   it('POSTPROCESSING-SNAPSHOT-STRICT rejects malformed optional snapshots and extra fields', () => {
     const base = { runId: RUN_ID, chips: { analysis: 'complete', curation: 'complete' }, curationSnapshot: snapshot() }
     expect(PostProcessingStatusSchema.safeParse(base).success).toBe(true)
-    for (const invalid of [null, { ...snapshot(), schemaVersion: 2 }, { ...snapshot(), extra: true },
+    for (const invalid of [null, { ...snapshot(), schemaVersion: 1 }, { ...snapshot(), extra: true },
       { ...snapshot(), breakdown: { ...snapshot().breakdown, superseded: 0 } }]) {
       expect(PostProcessingStatusSchema.safeParse({ ...base, curationSnapshot: invalid }).success).toBe(false)
     }
   })
 
   it('POSTPROCESSING-SNAPSHOT-WITHHELD degrades the snapshot, never the read', async () => {
-    const recorded = CurationSnapshotSchema.parse({ schemaVersion: 1,
+    const recorded = CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: ['first-record', 'second-record'].map(recordId => ({ recordId, bucket: 'added',
         changes: [{ bucket: 'added', change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId, change: 'added', atOrdinal: 1 } }],
       })),
@@ -222,7 +223,7 @@ describe('423 checkpoint-backed snapshot projection', () => {
       expect(JSON.stringify(refused)).not.toContain(identity)
     }
 
-    const empty = CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [],
+    const empty = CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [],
       breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } })
     const served = await read({ curationSnapshot: empty }, identity)
     expect(served).toEqual({ runId: RUN_ID, chips: pending, curationSnapshot: empty })

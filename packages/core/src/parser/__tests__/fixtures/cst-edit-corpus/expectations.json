@@ -24,7 +24,7 @@
     "time no applier existed. That is what makes this a denominator rather than a transcript."
   ],
 
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "frozenAt": "2026-08-11",
   "appliedBy": "packages/core/src/parser/cst-patch.ts (did not exist when this table was frozen)",
   "vocabulary": "packages/schema/src/authoring/patch-ops.ts — the RFC-6902 {thoughts, patches} envelope",

@@ -2,6 +2,7 @@
 // [secret:NAME] and accepts every other draft text unchanged.
 
 import type { AuthoringBrief, DraftReceipt, ScopeKey } from '@vostride/agent-qa-schema'
+import { CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { DraftSecretMarkerRefusedError, runAuthoringLoop } from '../loop.js'
@@ -67,7 +68,7 @@ function draftWithSteps(steps: readonly string[]): ParsedDraftLike {
 
 function keepEligibleReceipt(draft: ParsedDraftLike): DraftReceipt {
   return {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
       filePath: draft.filePath,
       testId: draft.testId,

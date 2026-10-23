@@ -8,6 +8,7 @@ import {
   RunKnowledgeProjectionSchema,
   type RunKnowledgeProjection,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 
 import { BREAKDOWN_NOT_RECORDED_TEXT, NO_MEMORY_CHANGES_TEXT, curationBreakdownLine } from '@/lib/post-processing-view'
@@ -65,7 +66,7 @@ function joined(change: ReturnType<typeof recorded>, overrides: Partial<Content>
 
 function fiveBucketSnapshot() {
   return CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [
       { recordId: 'fact-added', bucket: 'added', changes: [{ bucket: 'added', change: recorded('fact-added', 'added', 20) }] },
       { recordId: 'fact-confirmed', bucket: 'confirmed', changes: [{ bucket: 'confirmed', change: recorded('fact-confirmed', 'promoted', 21, {
@@ -127,7 +128,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
 
   it('SUPERSESSION-ONE-ROW: the new version leads and the old one reads on a Was: line', () => {
     const snapshot = CurationSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: [{ recordId: 'fact-old', bucket: 'superseded', byRecordId: 'fact-new', changes: [
         { bucket: 'superseded', change: recorded('fact-old', 'superseded', 40, { byRecordId: 'fact-new' }) },
         { bucket: 'added', change: recorded('fact-new', 'added', 40) },
@@ -179,7 +180,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
 
   it('LEARNED-ROW-CONTENT-JOIN: a row leads with its joined summary, or says why it cannot, and is shown either way', () => {
     const snapshot = CurationSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: ['rec-joined', 'rec-gone', 'rec-unrecorded'].map((id, index) => ({
         recordId: id, bucket: 'added', changes: [{ bucket: 'added', change: recorded(id, 'added', 50 + index) }],
       })),
@@ -206,7 +207,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
   // proposed row is held for review". Nothing reviews it; it is recorded and not applied.
   it('PROPOSED-NOT-APPLIED: a proposed row is recorded and not applied, and an open question says so', () => {
     const snapshot = CurationSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: [
         { recordId: 'rec-fact', bucket: 'proposed', changes: [{ bucket: 'proposed', change: recorded('rec-fact', 'added', 60) }] },
         { recordId: 'rec-question', bucket: 'proposed', changes: [{ bucket: 'proposed', change: recorded('rec-question', 'added', 61) }] },
@@ -231,7 +232,7 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
 
   it('SINCE-THEN-ROWS: a later change is its own row with what happened later, and never moves the counts', () => {
     const snapshot = CurationSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: ['rec-a', 'rec-b'].map((id, index) => ({
         recordId: id, bucket: 'added', changes: [{ bucket: 'added', change: recorded(id, 'added', 70 + index) }],
       })),
@@ -277,7 +278,7 @@ describe('every bucket word explains itself, and the section speaks of memory ch
       expect(unsettled.curationSnapshot?.reconciliation).toBeUndefined()
     }
     const zero = CurationSnapshotSchema.parse({
-      schemaVersion: 1, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
     const nothing = learnedView(projection('complete', { curationSnapshot: zero, sinceThen: { changes: [], count: 0 } }))
     expect(nothing.countLine).toBe(NO_MEMORY_CHANGES_TEXT)

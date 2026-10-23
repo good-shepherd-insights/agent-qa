@@ -21,7 +21,7 @@ import { z } from 'zod'
 import { asJobId } from './job-id'
 import type { JobId } from './job-id'
 
-export const JOB_CHECKPOINT_SCHEMA_VERSION = 1
+export const JOB_CHECKPOINT_SCHEMA_VERSION = 2
 
 export interface JobCheckpointEnvelope {
   schemaVersion: typeof JOB_CHECKPOINT_SCHEMA_VERSION

@@ -22,6 +22,7 @@ import {
   formatEntityUri,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CurationBreakdown,
@@ -919,7 +920,7 @@ function change(
  */
 function snapshotOf(breakdown: Partial<CurationBreakdown> = {}) {
   return {
-    schemaVersion: 1 as const,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION as typeof CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [],
     breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0, ...breakdown },
   }
@@ -928,7 +929,7 @@ function snapshotOf(breakdown: Partial<CurationBreakdown> = {}) {
 /** A schema-valid snapshot of `ids.length` added records, one row each (427 D-15: rows equal counts). */
 function addedSnapshot(ids: readonly string[]) {
   return CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: ids.map((id, index) => ({
       recordId: id, bucket: 'added', changes: [{ bucket: 'added', change: change('added', id, { atOrdinal: 10 + index }) }],
     })),

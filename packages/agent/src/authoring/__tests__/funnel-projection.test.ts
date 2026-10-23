@@ -12,7 +12,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { DraftReceiptSchema, draftDispositionWritesTarget } from '@vostride/agent-qa-schema'
+import { DraftReceiptSchema, draftDispositionWritesTarget, CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   DraftReceipt,
   QuarantineEntryState,
@@ -90,7 +90,7 @@ function assertProduced(rows: readonly DraftReceipt[]): void {
  */
 function receipt(digest: string, evaluatedAt = 1_700_000_000_000): DraftReceipt {
   return DraftReceiptSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
       filePath: `tests/.agent-qa-drafts/${digest}.yaml`,
       testId: `t_${digest}`,

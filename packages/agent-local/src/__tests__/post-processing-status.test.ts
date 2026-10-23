@@ -25,10 +25,12 @@ import {
   canonicalJson,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   CurationSnapshotSchema,
+  JOB_CHECKPOINT_SCHEMA_VERSION,
   sha256hex,
   toRunNotificationView,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -226,7 +228,7 @@ function readQueue(root: string) {
 }
 
 const CURATION_SNAPSHOT = CurationSnapshotSchema.parse({
-  schemaVersion: 1,
+  schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
   rows: [{ recordId: 'affected-record', bucket: 'added', changes: [{ bucket: 'added',
     change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'affected-record', change: 'added', atOrdinal: 9 },
   }] }],
@@ -278,6 +280,23 @@ describe('423 completed checkpoint snapshot', () => {
     writeFileSync(path, JSON.stringify({ ...envelope, jobId: ids.analyzeRun }))
     expect(() => readJobCheckpointEnvelope({ root }, ids.curateMemory, 'bundle-committed'))
       .toThrow('does not match its address')
+  })
+
+  it.each([1, 3])('refuses a checkpoint file stamped %i by name', (stamp) => {
+    const root = join(createHarness().agentQaRoot, 'stamped-root')
+    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
+    const store = createJobCheckpointStore({ root })
+    store.publish(ids.curateMemory, 'bundle-committed', {})
+    const path = store.checkpointPath(ids.curateMemory, 'bundle-committed')
+    const envelope = JSON.parse(readFileSync(path, 'utf8'))
+    expect(envelope.schemaVersion).toBe(JOB_CHECKPOINT_SCHEMA_VERSION)
+    writeFileSync(path, JSON.stringify({ ...envelope, schemaVersion: stamp }))
+    expect(() => readJobCheckpointEnvelope({ root }, ids.curateMemory, 'bundle-committed'))
+      .toThrowError(expect.objectContaining({
+        name: 'JobCheckpointSchemaVersionError',
+        path,
+        observedVersion: stamp,
+      }))
   })
 
   it('CHECKPOINT-BEFORE-NOTIFICATION reads actual curation while the real proposals stage is blocked', async () => {
@@ -389,7 +408,7 @@ describe('423 completed checkpoint snapshot', () => {
 
   it('CHECKPOINT-LATEST reads the newest fenced attempt, never a stale valid file', async () => {
     const { writer, ids } = await completedCuration()
-    const empty = CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [],
+    const empty = CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [],
       breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })
     const db = new DatabaseSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))

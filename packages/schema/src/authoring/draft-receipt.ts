@@ -23,7 +23,7 @@ import type { DraftGateBooleans } from './disposition'
  * a receipt written by an earlier build fails loudly at read time instead of being silently
  * reinterpreted under the new shape (the house stamp-and-hard-fail convention).
  */
-export const CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION = 1
+export const CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION = 2
 
 /**
  * Which draft this receipt is about.

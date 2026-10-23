@@ -1,4 +1,4 @@
-import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { RECORD_CHANGE_SCHEMA_VERSION, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // THE KNOWLEDGE TAB A PERSON ACTUALLY SEES (407-02 · LERN-01, D-01/D-03/D-06/D-16, T-407-06).
@@ -317,7 +317,7 @@ describe("the ready arm paints four sections in KNOWLEDGE_SECTIONS order (427 D-
       learned: {
         changes: [], canaryAttributions: [],
         curationSnapshot: CurationSnapshotSchema.parse({
-          schemaVersion: 1, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
+          schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
         }),
       },
     })
@@ -395,7 +395,7 @@ function joined(row: LearnedChange): LearnedChange {
 
 function snapshot() {
   return CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [
       { recordId: "fact-added", bucket: "added", changes: [{ bucket: "added", change: change("fact-added", "added", 20) }] },
       { recordId: "fact-confirmed", bucket: "confirmed", changes: [{ bucket: "confirmed", change: change("fact-confirmed", "confirmed", 21) }] },

@@ -36,7 +36,7 @@ test('REPLACEMENT-NOT-ADDED: supersession has a required historical replacement 
 })
 
 test('SNAPSHOT-COUNTS-EXACT: version and exact five numeric count keys', () => {
-  expectTypeOf<CurationSnapshot['schemaVersion']>().toEqualTypeOf<1>()
+  expectTypeOf<CurationSnapshot['schemaVersion']>().toEqualTypeOf<2>()
   expectTypeOf<keyof CurationSnapshot>().toEqualTypeOf<'schemaVersion' | 'rows' | 'breakdown'>()
   expectTypeOf<CurationBreakdown>().toEqualTypeOf<{
     added: number, confirmed: number, superseded: number, deprecated: number, proposed: number,

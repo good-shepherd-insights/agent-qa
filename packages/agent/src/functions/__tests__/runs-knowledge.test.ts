@@ -25,6 +25,7 @@ import {
   RETRIEVAL_TRACE_SCHEMA_VERSION,
   INSPECT_RECORD_VIEW_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
@@ -292,7 +293,7 @@ function fixedSnapshot() {
   const classified = (recordId: string, kind: RecordChange['change'], atOrdinal: number) =>
     change({ recordId, change: kind, atOrdinal, sourceRunId: RUN_ID,
       evidenceToken: `receipt-${recordId}`, observationId: `observation-${recordId}` })
-  return CurationSnapshotSchema.parse({ schemaVersion: 1,
+  return CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [
       { recordId: 'added', bucket: 'added', changes: [{ bucket: 'added', change: classified('added', 'added', 20) }] },
       { recordId: 'confirmed', bucket: 'confirmed', changes: [
@@ -410,7 +411,7 @@ describe('423 current content and fixed historical sections', () => {
   })
 
   it('KNOWLEDGE-SNAPSHOT-WITHHELD: an unprojectable snapshot keeps every learned row and names its absence', async () => {
-    const snapshot = CurationSnapshotSchema.parse({ schemaVersion: 1,
+    const snapshot = CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: ['first-learned', 'second-learned'].map(recordId => ({ recordId, bucket: 'added',
         changes: [{ bucket: 'added', change: change({ recordId, change: 'added', atOrdinal: 20, sourceRunId: RUN_ID }) }] })),
       breakdown: { added: 2, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } })

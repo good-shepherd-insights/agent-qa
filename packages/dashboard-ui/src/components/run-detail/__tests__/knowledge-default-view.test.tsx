@@ -1,4 +1,4 @@
-import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { RECORD_CHANGE_SCHEMA_VERSION, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // 427 · SC2 / SC4 / D-10 / D-19 — the default view carries no id and no retrieval machinery.
@@ -99,7 +99,7 @@ function recorded(recordId: string, change: string, atOrdinal: number, extra: Re
 
 function snapshot() {
   return CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [
       { recordId: ADDED, bucket: "added", changes: [{ bucket: "added", change: recorded(ADDED, "added", 20) }] },
       { recordId: CONFIRMED, bucket: "confirmed", changes: [{ bucket: "confirmed", change: recorded(CONFIRMED, "confirmed", 21) }] },

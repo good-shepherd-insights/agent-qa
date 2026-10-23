@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest'
 
 import * as schema from '../index'
-import { FORGET_RECEIPT_SCHEMA_VERSION } from '../index'
+import { CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION, FORGET_RECEIPT_SCHEMA_VERSION } from '../index'
 
 const OPERATION = '0123456789abcdef0123456789abcdef'
 
@@ -23,7 +23,7 @@ const FORGET_RECEIPT = {
 function draftReceipt(disposition: 'keep-eligible' | 'rejected') {
   const pass = disposition === 'keep-eligible'
   return schema.DraftReceiptSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
       filePath: 'tests/.agent-qa-drafts/d1.yaml',
       testId: 't_d1',

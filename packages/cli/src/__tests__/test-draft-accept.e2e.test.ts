@@ -30,6 +30,7 @@ import { spawnSync } from 'node:child_process'
 import { runAuthoringLoop } from '@vostride/agent-qa-agent'
 import type { DraftShelfPortLike } from '@vostride/agent-qa-agent'
 import type { AuthoringBrief, DraftDisposition, DraftReceipt } from '@vostride/agent-qa-schema'
+import { CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import * as localHost from '../composition/local-agent-host.js'
@@ -281,7 +282,7 @@ function receiptFor(
   pass: boolean,
 ): DraftReceipt {
   return {
-    schemaVersion: 1,
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
       filePath: draft.filePath,
       testId: draft.testId,

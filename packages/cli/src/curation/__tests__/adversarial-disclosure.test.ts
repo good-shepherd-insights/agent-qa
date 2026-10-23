@@ -25,6 +25,7 @@ import {
   type RecordChange,
   type RunNotification,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type { ProposeGate1Report } from '@vostride/agent-qa-agent'
 import {
@@ -215,7 +216,7 @@ function snapshotChange(recordId: string, change: RecordChange['change'], atOrdi
 describe('the chain terminal line and the five-bucket curation breakdown (423 D-15)', () => {
   it('CHAIN-LINE-FIVE-BUCKETS: prints the recorded breakdown instead of the legacy pair', () => {
     const curationSnapshot = CurationSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: [
         { recordId: 'added-1', bucket: 'added',
           changes: [{ bucket: 'added', change: snapshotChange('added-1', 'added', 1) }] },
@@ -243,7 +244,7 @@ describe('the chain terminal line and the five-bucket curation breakdown (423 D-
     expect(renderStoredLine(notification())).toContain('curation: complete (2 curated, 1 deprecated)')
 
     const zero = CurationSnapshotSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: [],
       breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })

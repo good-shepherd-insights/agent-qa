@@ -8,7 +8,7 @@ import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '@vostride/agent-qa-agen
 import type { LocalAgentHost } from '@vostride/agent-qa-agent-local'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, sha256hex, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, CurationSnapshotSchema, sha256hex, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, RECORD_CHANGE_SCHEMA_VERSION, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type { CurationSnapshot, PostProcessingStatus } from '@vostride/agent-qa-schema'
 
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
@@ -44,7 +44,7 @@ function project() {
 
 function snapshot(runId: string, evidenceTokens = [sha256hex('first-event'), sha256hex('second-event')]) {
   return CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [{ recordId: 'confirmed-record', bucket: 'confirmed',
       changes: evidenceTokens.map((evidenceToken, index) => ({ bucket: 'confirmed', change: {
         schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: 'confirmed-record', change: 'confirmed', atOrdinal: 1,

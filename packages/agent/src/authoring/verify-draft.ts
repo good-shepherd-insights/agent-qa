@@ -25,6 +25,7 @@
 
 import {
   computeDraftDisposition,
+  CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
   DRAFT_STABILITY_RUNS_N,
   DraftReceiptSchema,
   testFingerprintElements,
@@ -197,7 +198,7 @@ export async function evaluateDraft(
 
   const runRefs = stability.gateRuns.map((row) => row.runId)
   const receipt = DraftReceiptSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
       filePath: input.draft.filePath,
       testId: input.draft.testId,

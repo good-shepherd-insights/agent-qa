@@ -3,7 +3,7 @@
 // this file carried for the deleted credential screen stay here. The fake shelf remints `filePath`
 // on every apply, as the host does, which is what makes the candidate's path measurable.
 
-import { TestEditPatchSetSchema } from '@vostride/agent-qa-schema'
+import { TestEditPatchSetSchema, CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   CompletedRunHandoff,
   DraftReceipt,
@@ -113,7 +113,7 @@ interface Harness {
 }
 
 const FINAL_RECEIPT = {
-  schemaVersion: 1,
+  schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
   draftRef: DRAFT_REF,
   gates: {
     executesDefinitive: { pass: true, runRefs: [], indefinitiveRunRefs: [] },

@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { z } from 'zod'
 
 import {
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
+  CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
+  CurationSnapshotSchema,
+  DraftReceiptSchema,
   IMPROVEMENT_PLAN_SCHEMA_VERSION,
   INSPECT_RECORD_VIEW_SCHEMA_VERSION,
   ImprovementPlanSchema,
+  JOB_CHECKPOINT_SCHEMA_VERSION,
   KNOWLEDGE_BUNDLE_SUMMARY_SCHEMA_VERSION,
   KnowledgeBundleSummarySchema,
   KnowledgeRecordShowOutputSchema,
@@ -24,6 +29,7 @@ import {
   RunSummarySchema,
   guardInspectRecordView,
   guardRecordChange,
+  jobCheckpointEnvelopeSchema,
 } from '../index'
 
 const scope = { tier: 'suite', key: 'checkout' }
@@ -143,6 +149,55 @@ const recordShowOutput = {
   body: 'The cart button reads Add to cart.',
 }
 
+const curationSnapshot = {
+  schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
+  rows: [{ recordId: 'record-1', bucket: 'confirmed', changes: [{ bucket: 'confirmed', change: recordChange }] }],
+  breakdown: { added: 0, confirmed: 1, superseded: 0, deprecated: 0, proposed: 0 },
+}
+
+const jobCheckpoint = {
+  schemaVersion: JOB_CHECKPOINT_SCHEMA_VERSION,
+  jobId: 'run-wire->curate-memory',
+  checkpointId: 'bundle-committed',
+  payload: { committed: 1 },
+}
+
+const draftReceipt = {
+  schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
+  draftRef: {
+    filePath: 'drafts/checkout.test.yaml',
+    testId: 'drafts/checkout.test.yaml::checkout happy path',
+    testName: 'checkout happy path',
+    contentDigest: 'a'.repeat(64),
+  },
+  gates: {
+    executesDefinitive: { pass: true, runRefs: ['run-1'], indefinitiveRunRefs: [] },
+    stableVerdict: { pass: true, runRefs: ['run-1'], distinctOutcomes: ['passed'], earlyStopped: false },
+    addsValue: { pass: true, novelElementCount: 1, comparedTestCount: 2 },
+    falsifiableAssertion: { pass: true, assertionStepCount: 1, falsifiableAssertionCount: 1 },
+  },
+  stepTable: [{
+    stepText: 'assert the order number is shown',
+    role: 'assertion',
+    falsifiable: true,
+    captureSignatureHits: [],
+  }],
+  gateRuns: [{ runId: 'run-1', memberOutcome: 'passed', definitive: true, healed: false }],
+  addsValueFinding: {
+    novelElements: ['{"anchor":{"name":"order number","ordinal":0,"role":"text","t":"el"}}'],
+    comparedTests: [{
+      filePath: 'suite/checkout.test.ts',
+      testName: 'checkout happy path',
+      lane: 'fingerprint',
+      covered: false,
+    }],
+  },
+  stabilityRunsRequested: 3,
+  stabilityRunsCompleted: 3,
+  disposition: 'keep-eligible',
+  evaluatedAt: 1_700_000_000_000,
+}
+
 // These outputs spell no stamp on the wire; their version is the constant, and a document that
 // carries a stamp of its own is refused by the strict schema.
 const unstampedOutputs: ReadonlyArray<readonly [string, number, z.ZodType, Record<string, unknown>]> = [
@@ -184,6 +239,9 @@ const stampedOutputs: ReadonlyArray<readonly [string, (value: unknown) => unknow
     (value) => KnowledgeRecordShowResultSchema.parse(value),
     { kind: 'not-found', schemaVersion: 2, recordId: 'record-9' },
   ],
+  ['curation snapshot', (value) => CurationSnapshotSchema.parse(value), curationSnapshot],
+  ['job checkpoint', (value) => jobCheckpointEnvelopeSchema.parse(value), jobCheckpoint],
+  ['draft receipt', (value) => DraftReceiptSchema.parse(value), draftReceipt],
 ]
 
 describe('wire stamps', () => {

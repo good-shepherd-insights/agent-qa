@@ -48,7 +48,7 @@ const proposed: CurationSnapshotRow = {
   } }],
 }
 const five: CurationSnapshot = {
-  schemaVersion: 1, rows: [added, confirmed, superseded, deprecated, proposed],
+  schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [added, confirmed, superseded, deprecated, proposed],
   breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 },
 }
 
@@ -93,7 +93,7 @@ test('NOTIFICATION-OTHER-REFUSE: invalid and other versions refuse without a gue
 test('INVALID-BREAKDOWN: notification guards reject malformed snapshot membership with generic errors', () => {
   // Prove the valid arm first so a blanket refusal cannot satisfy the negative cells.
   expect(() => guardRunNotification(notification(CURRENT_RUN_NOTIFICATION_SCHEMA_VERSION, five))).not.toThrow()
-  const invalids = [null, { ...five, schemaVersion: 2 }, { ...five, syntheticSecretKey: true },
+  const invalids = [null, { ...five, schemaVersion: 1 }, { ...five, syntheticSecretKey: true },
     { ...five, breakdown: { ...five.breakdown, added: 0 } },
     { ...five, rows: [...five.rows, added], breakdown: { ...five.breakdown, added: 2 } },
     { ...five, rows: [{ ...added, recordId: 'syntheticSecretIdentity' }] }]
@@ -107,11 +107,11 @@ test('INVALID-BREAKDOWN: notification guards reject malformed snapshot membershi
   }
 })
 
-test('C423-BUCKETS-EXACT: exactly five literals and version one with strict keys', () => {
+test('C423-BUCKETS-EXACT: exactly five literals and version two with strict keys', () => {
   expect(CURATION_BREAKDOWN_BUCKETS).toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'proposed'])
   expect(CurationBucketSchema.options).toEqual(['added', 'confirmed', 'superseded', 'deprecated', 'proposed'])
   expect(CURATION_BUCKET_PRECEDENCE).toEqual(['superseded', 'deprecated', 'proposed', 'added', 'confirmed'])
-  expect(CURATION_SNAPSHOT_SCHEMA_VERSION).toBe(1)
+  expect(CURATION_SNAPSHOT_SCHEMA_VERSION).toBe(2)
   expect(CurationSnapshotSchema.parse(five)).toEqual(five)
   expect(Object.keys(CurationBreakdownSchema.shape)).toEqual([
     'added', 'confirmed', 'superseded', 'deprecated', 'proposed',
@@ -120,7 +120,7 @@ test('C423-BUCKETS-EXACT: exactly five literals and version one with strict keys
     expect(CurationBucketSchema.safeParse(invalid).success).toBe(false)
   }
   for (const invalid of [
-    { ...five, schemaVersion: 2 }, { ...five, schemaVersion: undefined },
+    { ...five, schemaVersion: 1 }, { ...five, schemaVersion: 3 }, { ...five, schemaVersion: undefined },
     { ...five, currentStatus: 'active' }, { ...five, breakdown: { ...five.breakdown, curated: 5 } },
     { ...five, rows: [{ ...added, unknown: true }] },
   ]) expect(CurationSnapshotSchema.safeParse(invalid).success).toBe(false)
@@ -159,13 +159,13 @@ test('STRONGEST-ONCE: every stronger historical bucket wins regardless of orderi
 })
 
 test('STRONGEST-ONCE: confirmation, canary and promotion retain distinct identities in one unit', () => {
-  const snapshot = { schemaVersion: 1, rows: [confirmed], breakdown: { ...zero, confirmed: 1 } }
+  const snapshot = { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [confirmed], breakdown: { ...zero, confirmed: 1 } }
   expect(CurationSnapshotSchema.parse(snapshot)).toEqual(snapshot)
   expect(CurationSnapshotSchema.safeParse({ ...snapshot, breakdown: { ...zero, confirmed: 3 } }).success).toBe(false)
 })
 
 test('REPLACEMENT-NOT-ADDED: victim represents replacement Add identity without a second membership', () => {
-  const snapshot = { schemaVersion: 1, rows: [superseded], breakdown: { ...zero, superseded: 1 } }
+  const snapshot = { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [superseded], breakdown: { ...zero, superseded: 1 } }
   expect(CurationSnapshotSchema.parse(snapshot)).toEqual(snapshot)
   const replacement = { recordId: 'record-replacement', bucket: 'added', changes: [superseded.changes[1]] }
   expect(CurationSnapshotSchema.safeParse({ ...snapshot, rows: [superseded, replacement],
@@ -173,7 +173,7 @@ test('REPLACEMENT-NOT-ADDED: victim represents replacement Add identity without 
   expect(CurationSnapshotSchema.safeParse({ ...snapshot, rows: [replacement, superseded],
     breakdown: { ...zero, superseded: 1, added: 1 } }).success).toBe(false)
   // A successfully committed replacement without a victim effect is an actual Add.
-  expect(CurationSnapshotSchema.safeParse({ schemaVersion: 1, rows: [replacement],
+  expect(CurationSnapshotSchema.safeParse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [replacement],
     breakdown: { ...zero, added: 1 } }).success).toBe(true)
 })
 
@@ -187,8 +187,8 @@ test('SNAPSHOT-COUNTS-EXACT: each bucket counts unique rows rather than events o
   }
   expect(CurationSnapshotSchema.safeParse({ ...five,
     breakdown: { added: 0, confirmed: 2, superseded: 1, deprecated: 1, proposed: 1 } }).success).toBe(false)
-  expect(CurationSnapshotSchema.parse({ schemaVersion: 1, rows: [], breakdown: zero })).toEqual({
-    schemaVersion: 1, rows: [], breakdown: zero,
+  expect(CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: zero })).toEqual({
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: zero,
   })
 })
 
@@ -235,7 +235,7 @@ test('REPLACEMENT-NOT-ADDED: historical replacements remain suppressed after a l
   }
   expect(CurationSnapshotRowSchema.parse(row)).toEqual(row)
   expect(CurationSnapshotRowSchema.safeParse({ ...row, byRecordId: 'record-replacement' }).success).toBe(false)
-  expect(CurationSnapshotSchema.safeParse({ schemaVersion: 1,
+  expect(CurationSnapshotSchema.safeParse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [row, { recordId: 'record-replacement', bucket: 'added', changes: [superseded.changes[1]] }],
     breakdown: { ...zero, superseded: 1, added: 1 },
   }).success).toBe(false)

@@ -18,7 +18,7 @@
 // Unit-level on purpose: these are claims about what the registry RETURNS, and proving them
 // through a store and a pump would make the assertion depend on everything between.
 
-import { CURRENT_HANDOFF_SCHEMA_VERSION, canonicalJson, sha256hex } from '@vostride/agent-qa-schema'
+import { CURRENT_HANDOFF_SCHEMA_VERSION, canonicalJson, sha256hex, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   ChainedJobRequest,
   CompletedRunHandoff,
@@ -231,7 +231,7 @@ describe('the real post-run kinds (388 D-04)', () => {
 
   it('CURATE-SNAPSHOT-DEGRADES publishes the committed counts without a malformed snapshot and completes', async () => {
     const malformed = {
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: [],
       breakdown: { added: 5, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     }

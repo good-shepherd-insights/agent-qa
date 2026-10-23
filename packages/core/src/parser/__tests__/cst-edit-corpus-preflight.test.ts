@@ -46,7 +46,7 @@ const caseIds = Object.keys(expectations.cases)
 
 describe('the frozen edit corpus — shape of the denominator', () => {
   it('carries the treadmill warning, a schema version and a freeze date', () => {
-    expect(expectations.schemaVersion).toBe(1)
+    expect(expectations.schemaVersion).toBe(2)
     expect(expectations.frozenAt).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     const comment = expectations.$comment.join(' ')
     expect(comment).toContain('FROZEN SCORING DENOMINATOR')

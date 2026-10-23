@@ -26,6 +26,7 @@ import {
   asEvidenceToken,
   canonicalJson,
   slugBranch,
+  CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import {
   QUARANTINE_LEDGER_FILENAME,
@@ -240,7 +241,7 @@ describe('composeLocalAgent (D-15)', () => {
     const payload = proposalKind === 'knowledge' ? {
       schemaVersion: 1, proposalId, verb: 'accept', targetRef: { grain: 'record', recordId: 'record-fixture' }, deltas: [], proposedAt: Date.now(), status: 'pending',
     } : {
-      schemaVersion: 1, draftRef: { filePath: 'tests/draft.yaml', testId: 'fixture', testName: 'Checkout', contentDigest: 'digest' }, targetPath: 'tests/checkout.yaml', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Checkout edit',
+      schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION, draftRef: { filePath: 'tests/draft.yaml', testId: 'fixture', testName: 'Checkout', contentDigest: 'digest' }, targetPath: 'tests/checkout.yaml', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Checkout edit',
     }
     // 2026-10-01 (432-17): the store that wrote and read these records is deleted, so the legacy
     // record is planted as the bytes it wrote and asserted untouched by the composed host.

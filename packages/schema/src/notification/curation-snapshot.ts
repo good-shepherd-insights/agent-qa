@@ -10,7 +10,7 @@ export const CURATION_BREAKDOWN_BUCKETS = [
 export const CURATION_BUCKET_PRECEDENCE = [
   'superseded', 'deprecated', 'proposed', 'added', 'confirmed',
 ] as const satisfies readonly CurationBucket[]
-export const CURATION_SNAPSHOT_SCHEMA_VERSION = 1
+export const CURATION_SNAPSHOT_SCHEMA_VERSION = 2
 export const CurationBucketSchema = z.enum(CURATION_BREAKDOWN_BUCKETS)
 
 /** Classification is recorded by curation, not inferred from a record's current status. */

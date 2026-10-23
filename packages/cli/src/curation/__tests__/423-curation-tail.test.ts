@@ -15,6 +15,7 @@ import {
   CURRENT_BUS_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import * as tailModule from '../curation-tail.js'
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
@@ -28,7 +29,7 @@ import {
 
 const roots: string[] = []
 const RUN_ID = asRunId('synthetic-423-run')
-const snapshot = CurationSnapshotSchema.parse({ schemaVersion: 1,
+const snapshot = CurationSnapshotSchema.parse({ schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
   rows: ['added', 'confirmed', 'superseded', 'deprecated', 'proposed'].map((bucket, i) => ({
     recordId: `record-${i}`, bucket, ...(bucket === 'superseded' ? { byRecordId: 'replacement' } : {}),
     changes: [{ bucket, change: { schemaVersion: RECORD_CHANGE_SCHEMA_VERSION, recordId: `record-${i}`,
@@ -36,7 +37,7 @@ const snapshot = CurationSnapshotSchema.parse({ schemaVersion: 1,
       sourceRunId: RUN_ID, observationId: `observation-${i}`,
       ...(bucket === 'superseded' ? { byRecordId: 'replacement' } : {}) } }],
   })), breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 } })
-const ZERO_SNAPSHOT = { schemaVersion: 1, rows: [],
+const ZERO_SNAPSHOT = { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [],
   breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 } }
 const malformedSnapshot = { ...snapshot, breakdown: { ...snapshot.breakdown, added: 20 } }
 function tempRoot() { const root = mkdtempSync(join(tmpdir(), '423-curation-tail-')); roots.push(root); return root }

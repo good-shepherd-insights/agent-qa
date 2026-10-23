@@ -1,4 +1,4 @@
-import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { RECORD_CHANGE_SCHEMA_VERSION, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
 // THE LEARNED HALF A PERSON ACTUALLY SEES (407-09 · LERN-02, D-09..D-12, T-407-21/T-407-22).
@@ -880,7 +880,7 @@ function recorded(recordId: string, change: LearnedChange["change"], atOrdinal: 
 
 function fiveBucketSnapshot() {
   return CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [
       { recordId: "fact-added", bucket: "added", changes: [{ bucket: "added", change: recorded("fact-added", "added", 20) }] },
       { recordId: "fact-confirmed", bucket: "confirmed", changes: [{ bucket: "confirmed", change: recorded("fact-confirmed", "confirmed", 21) }] },

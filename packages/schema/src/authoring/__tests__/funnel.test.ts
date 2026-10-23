@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { DraftReceiptSchema } from '../draft-receipt'
+import { CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION, DraftReceiptSchema } from '../draft-receipt'
 import type { DraftReceipt } from '../draft-receipt'
 
 /** The subject, resolved per cell. Absent it, each cell reds by NAME rather than the file. */
@@ -50,7 +50,7 @@ function receipt(fixture: ReceiptFixture): DraftReceipt {
   const disposition = fixture.disposition ?? (allPassed ? 'keep-eligible' : 'rejected')
 
   return DraftReceiptSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
     draftRef: {
       filePath: `tests/.agent-qa-drafts/${fixture.digest}.yaml`,
       testId: `t_${fixture.digest}`,

@@ -8,6 +8,7 @@ import {
   type RunKnowledgeProjection,
   RETRIEVAL_TRACE_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import { chromium, type BrowserContext, type CDPSession, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -150,7 +151,7 @@ function buildProjection(runId: string, steps: RealStep[], world: World): Extrac
     observationId: `canary-outcome:${recordId.slice(-8)}-${String(at.testIndex)}-${String(at.stepIndex)}`, outcome }))
 
   const snapshot = CurationSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
     rows: [
       { recordId: ID.added, bucket: 'added', changes: [{ bucket: 'added', change: recorded(runId, ID.added, 'added', 20) }] },
       { recordId: ID.confirmedChange, bucket: 'confirmed', changes: [{ bucket: 'confirmed', change: recorded(runId, ID.confirmedChange, 'confirmed', 21) }] },

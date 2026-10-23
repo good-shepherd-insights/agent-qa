@@ -46,6 +46,7 @@ import {
   CURRENT_BUS_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
   RECORD_CHANGE_SCHEMA_VERSION,
+  CURATION_SNAPSHOT_SCHEMA_VERSION,
 } from '@vostride/agent-qa-schema'
 import type {
   AnalysisGetOutput,
@@ -844,7 +845,7 @@ describe('the pure renderers (exported for exactly these pins)', () => {
 
 /** A committed fold's snapshot: one record in each bucket, so no bucket's count is a default. */
 const COMMITTED_SNAPSHOT = CurationSnapshotSchema.parse({
-  schemaVersion: 1,
+  schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
   rows: [{
     recordId: 'record-added',
     bucket: 'added',
@@ -1039,7 +1040,7 @@ describe('425 D-20 — the chain-terminal line a real snapshot-bearing run print
     expect(report.drain).toBe('drained')
     // The real fold wrote the record the line is about.
     expect(readCurationTailReceipt(runDir)?.snapshot).toEqual({
-      schemaVersion: 1,
+      schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
       rows: [],
       breakdown: { added: 0, confirmed: 0, superseded: 0, deprecated: 0, proposed: 0 },
     })

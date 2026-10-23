@@ -40,7 +40,7 @@ expectTypeOf<JobCheckpointEnvelope['jobId']>().toEqualTypeOf<JobId>()
 
 const misstamped: JobCheckpointEnvelope = {
   // @ts-expect-error the version stamp is a literal; an arbitrary number is not an envelope.
-  schemaVersion: 2,
+  schemaVersion: 3,
   jobId: 'job_1' as JobId,
   checkpointId: 'analysis',
   payload: null,
