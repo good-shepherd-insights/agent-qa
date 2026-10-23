@@ -7487,7 +7487,7 @@ Formats that were at 1 (each moved to 2):
 | gate inputs `register.json` and `regressions.json`, and the reader in `scripts/gate/evaluate.mjs` | line 2 of each input; `screenList` | 1 → 2 | refuse (`register-entry-invalid`, `regression-entry-invalid`) |
 | gate pins `node-tests.json` and `packages.json` | line 2 | 1 → 2 | no-reader |
 | gate summary, repeat summary and node:test report | `scripts/gate/run.mjs` (two writers), `scripts/gate/node-test-json.mjs` | 1 → 2 | no-reader |
-| skills contracts document | `"version"` of both `agent-qa-contracts.json` copies (`skills/agent-qa-authoring/references/`, `packages/cli/skills/agent-qa-authoring/references/`) | 1 → 2 | no-reader (`validate:publish` keeps the copies identical) |
+| skills contracts document | `"version"` of both `agent-qa-contracts.json` copies (`skills/agent-qa-authoring/references/`, `packages/cli/skills/agent-qa-authoring/references/`) | 1 → 2 | no-reader (`packages/cli/scripts/copy-skills.mjs` copies the file at prepack, and the census cell compares the two copies byte for byte; `validate:publish` checks only that each copy exists and is non-empty) |
 
 Formats already at 2 at `28f7c163f`, whose numbers did not change: `INDEX_RENDERING_SCHEMA_VERSION`,
 `DAEMON_REGISTRATION_SCHEMA_VERSION` (its v1 arm is deleted above), `RUN_SERVICE_CONTRACT_VERSION`
@@ -7570,8 +7570,11 @@ reason, and nothing excluded is also registered`; and the instruments `a planted
 found as code and not as a comment`, `a planted unregistered schemaVersion literal at 1 is found as
 code and not as a comment`, `a planted migration step and a planted stamp union are found as code
 and not as a comment` and `this file spells none of its needles, lies outside every region it
-scans, and is named in validate:arch` (each prefixed `schema version census`). No row was delisted.
-The list holds 2565 rows, and its own stamp is 2.
+scans, and is named in validate:arch` (each prefixed `schema version census`). No row of
+`regressions.json` was delisted. `register.json` lost one skip entry, the one for the deleted
+79-brief sweep cell (`reconstructs all 79 populated briefs as proof/exact with matching
+policyDigest`), because that cell no longer exists. The list holds 2565 rows, and its own stamp
+is 2.
 
 ### The reading rule
 
@@ -7625,13 +7628,16 @@ owner (D-24 OQ-B) and left as they were.
   `validate:arch`): its eight census cells check every registered value, constant, inline stamp,
   copy, JSON stamp and fixture stamp against the register and refuse a second readable version, and
   its four instrument twins prove the scanners fire on a planted constant at 3, a planted
-  unregistered literal at 1, a planted migration step and stamp union, and on the census file
-  itself.
+  unregistered literal at 1, a planted migration step and stamp union (including a step in the run
+  notification registry's own declaration and a step assigned into a registry), and on the census
+  file itself.
 - **The per-format refusal cells** named in the tables above, most of them in the refusal tables
   `449.1-wire-stamps.test.ts`, `449.1-run-evidence-stamps.test.ts`, `449.1-user-records-stamps.test.ts`
   (schema), `449.1-committed-knowledge-stamps.test.ts` (schema knowledge), `449.1-runtime-stamps.test.ts`
   (cli and knowledge-local), `449.1-committed-eval-stamps.test.ts` (eval),
-  `449.1-committed-eval.test.ts` and `449.1-eval-runtime-stamps.test.ts` (eval-local).
+  `449.1-committed-eval.test.ts` and `449.1-eval-runtime-stamps.test.ts` (eval-local). None of
+  the cells in those nine refusal tables is a registered gate row, so the gate's listed-rows check
+  would not notice one being deleted; only the package suites run them.
 - **The converted-fixture cells:** the three `EVAL-WORKSPACE-FIXTURE` cells, the five
   `C436-PRE-CHANGE-HANDOFF` cells and the C437, C438 and C439 key-set cells against the new pins.
 - **The hygiene script and its selftest** (`bash scripts/413-eval-root-hygiene.sh`, `--selftest`).
