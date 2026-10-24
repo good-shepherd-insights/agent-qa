@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-tools-local",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": false,
   "description": "StorageImplementation shell for future local tool execution and host-IO adapters in agent-qa.",
   "keywords": [
