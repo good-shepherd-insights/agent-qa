@@ -1,33 +1,51 @@
-import { useEffect, useMemo, useState } from "react"
-import { Loader2, Pencil, Plus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
+// DEVICES (429-22 · D-02, D-08, D-19, D-23, D-24 · UI-SPEC S2 "Record/list editors", S6, S8, E8).
+//
+// Each device is a row opened in place: platform and connection autosave, and each match setting
+// shows its key with its value through SecretValue, replaced explicitly. A new setting
+// saves only through Save setting. Add device opens an inline draft row; delete acts at once with
+// Undo.
 
-import { updateSettings } from "@/lib/api"
+import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent } from "react"
+import { Plus, X } from "lucide-react"
+import type { ConfigChange } from "@vostride/agent-qa-schema"
+
+import { ConfigField } from "@/components/config-manager/config-field"
 import {
-  ConfigSectionBody,
-  ConfigSectionHeader,
-  ConfigSectionShell,
-} from "@/components/config-manager/config-section-shell"
+  DraftTextField,
+  RecordRow,
+  leavesGroup,
+  useFocusNewRow,
+  useHeldDraft,
+  useOpenRows,
+  useRecordDeletes,
+} from "@/components/config-manager/record-list"
+import { SecretValue } from "@/components/config-manager/secret-value"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Textarea } from "@/components/ui/textarea"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+  configFieldControlId,
+  configFieldKeyOf,
+  useConfigAutosaveContext,
+  type ConfigFieldRef,
+} from "@/hooks/use-config-autosave"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+  ADD_DEVICE_LABEL,
+  ADD_SETTING_LABEL,
+  DEVICE_FIELD_LABELS,
+  DEVICE_NAME_REQUIRED_ERROR,
+  DISCARD_DEVICE_LABEL,
+  DISCARD_SETTING_LABEL,
+  NO_DEVICES_TEXT,
+  SAVE_SETTING_LABEL,
+  TARGET_PLATFORM_LABELS,
+  deleteActionName,
+  deviceMatchKeysHelp,
+  deviceMatchSettingLabel,
+  deviceNameTakenError,
+  removeMatchSettingName,
+} from "@/lib/config-copy"
 
 type DevicePlatform = "android" | "ios"
 type DeviceTransport = "local" | "browserstack"
@@ -37,9 +55,19 @@ export const DEVICE_TRANSPORT_OPTIONS: { value: DeviceTransport; label: string }
   { value: "browserstack", label: "BrowserStack" },
 ]
 
+const DEVICE_PLATFORM_OPTIONS: { value: DevicePlatform; label: string }[] = [
+  { value: "android", label: TARGET_PLATFORM_LABELS.android },
+  { value: "ios", label: TARGET_PLATFORM_LABELS.ios },
+]
+
+const LOCAL_MATCH_FIELDS: Record<DevicePlatform, readonly string[]> = {
+  android: ["avd", "serial", "appPackage", "appActivity", "automationName", "browserName", "platformVersion"],
+  ios: ["udid", "bundleId", "automationName", "platformVersion"],
+}
+
 interface DeviceEntry {
-  platform: DevicePlatform
-  transport: DeviceTransport
+  platform?: string
+  transport?: string
   match?: Record<string, unknown>
 }
 
@@ -48,278 +76,405 @@ interface DevicesSectionProps {
   onConfigChange: () => void
 }
 
-const LOCAL_MATCH_FIELDS: Record<DevicePlatform, string[]> = {
-  android: ["avd", "serial", "appPackage", "appActivity", "automationName", "browserName", "platformVersion"],
-  ios: ["udid", "bundleId", "automationName", "platformVersion"],
+const LIST_REF: ConfigFieldRef = { segments: ["registry", "devices"], tab: "targets" }
+const MATCH_PATTERN = "registry.devices.*.match.*"
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-const EMPTY_DEVICE: DeviceEntry = {
-  platform: "android",
-  transport: "local",
-  match: {},
+function devicesOf(config: Record<string, unknown>): [string, DeviceEntry][] {
+  const registry = config.registry
+  const devices = isRecord(registry) ? registry.devices : undefined
+  if (!isRecord(devices)) return []
+  return Object.entries(devices).map(([name, entry]) => [name, isRecord(entry) ? (entry as DeviceEntry) : {}])
 }
 
-export function DevicesSection({ config, onConfigChange }: DevicesSectionProps) {
-  const initialDevices = useMemo(
-    () => (((config.registry as Record<string, unknown> | undefined) ?? {}).devices ?? {}) as Record<string, DeviceEntry>,
-    [config],
-  )
-  const [devices, setDevices] = useState<Record<string, DeviceEntry>>(initialDevices)
-  const [editingName, setEditingName] = useState<string | null>(null)
-  const [draftName, setDraftName] = useState("")
-  const [draftDevice, setDraftDevice] = useState<DeviceEntry>(EMPTY_DEVICE)
-  const [matchText, setMatchText] = useState("{}")
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
+function platformOf(value: unknown): DevicePlatform {
+  return value === "ios" ? "ios" : "android"
+}
+
+function transportOf(value: unknown): DeviceTransport {
+  return value === "browserstack" ? "browserstack" : "local"
+}
+
+function transportLabel(transport: DeviceTransport): string {
+  return DEVICE_TRANSPORT_OPTIONS.find((option) => option.value === transport)?.label ?? transport
+}
+
+function summarizeDevice(device: DeviceEntry): string {
+  return `${TARGET_PLATFORM_LABELS[platformOf(device.platform)]} · ${transportLabel(transportOf(device.transport))}`
+}
+
+function maskedTextOf(value: unknown): string {
+  if (typeof value === "string") return value
+  if (value === null || value === undefined) return ""
+  return typeof value === "object" ? JSON.stringify(value) : String(value)
+}
+
+export function DevicesSection({ config }: DevicesSectionProps) {
+  const held = useHeldDraft(LIST_REF, EMPTY_DRAFT)
+  const [adding, setAdding] = useState(() => held.restored !== undefined)
+  const list = useRef<HTMLDivElement>(null)
+  const addButton = useRef<HTMLButtonElement>(null)
+  const focusAddNext = useRef(false)
+  const rows = useOpenRows()
+  const { removing, remove } = useRecordDeletes({ kind: "delete-device", attr: "device", list, addButton })
+  const all = devicesOf(config)
+  const devices = all.filter(([name]) => !removing.has(name))
+  const focusNewRow = useFocusNewRow(list, "device", devices.map(([name]) => name))
 
   useEffect(() => {
-    setDevices(initialDevices)
-  }, [initialDevices])
-
-  function resetDraft() {
-    setEditingName(null)
-    setDraftName("")
-    setDraftDevice(EMPTY_DEVICE)
-    setMatchText("{}")
-  }
-
-  function openCreateDialog() {
-    resetDraft()
-    setDialogOpen(true)
-  }
-
-  function parseMatch() {
-    try {
-      const parsed = JSON.parse(matchText || "{}")
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        toast.error("Device match must be a JSON object")
-        return null
-      }
-      const match = parsed as Record<string, unknown>
-      if (draftDevice.transport === "local") {
-        const allowed = LOCAL_MATCH_FIELDS[draftDevice.platform]
-        const invalidKeys = Object.keys(match).filter((key) => !allowed.includes(key))
-        if (invalidKeys.length > 0) {
-          toast.error(`Invalid local match fields: ${invalidKeys.join(", ")}`)
-          return null
-        }
-      }
-      return match
-    } catch {
-      toast.error("Device match must be valid JSON")
-      return null
+    if (!adding && focusAddNext.current) {
+      focusAddNext.current = false
+      addButton.current?.focus()
     }
-  }
+  }, [adding])
 
-  function handleApplyDevice() {
-    if (!draftName.trim()) {
-      toast.error("Device name is required")
-      return
-    }
-    const parsedMatch = parseMatch()
-    if (!parsedMatch) return
+  return (
+    <div ref={list} data-field-list="registry.devices" className="space-y-3">
+      {devices.length > 0 ? (
+        <ul className="divide-y divide-border">
+          {devices.map(([name, device]) => (
+            <RecordRow
+              key={name}
+              attr="device"
+              name={name}
+              summary={summarizeDevice(device)}
+              open={rows.isOpen(name)}
+              onToggle={() => rows.toggle(name)}
+              deleteName={deleteActionName("delete-device", name)}
+              onDelete={() => void remove(name, ["registry", "devices", name])}
+            >
+              <DeviceFields name={name} device={device} />
+            </RecordRow>
+          ))}
+        </ul>
+      ) : null}
+      {adding ? (
+        <AddDeviceRow
+          initial={held.restored ?? EMPTY_DRAFT}
+          takenNames={new Set(all.map(([name]) => name))}
+          onHold={held.hold}
+          onDiscard={() => {
+            held.discard()
+            focusAddNext.current = true
+            setAdding(false)
+          }}
+          onAdded={(name) => {
+            setAdding(false)
+            focusNewRow(name)
+          }}
+        />
+      ) : null}
+      {adding ? null : (
+        <div className="flex flex-wrap items-center gap-3">
+          {devices.length === 0 ? <p className="text-sm text-muted-foreground">{NO_DEVICES_TEXT}</p> : null}
+          <Button ref={addButton} type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
+            <Plus className="size-3.5" aria-hidden="true" />
+            {ADD_DEVICE_LABEL}
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
 
-    const trimmedName = draftName.trim()
-    const nextDevices = { ...devices }
-    if (editingName && editingName !== trimmedName) {
-      delete nextDevices[editingName]
-    }
-    nextDevices[trimmedName] = {
-      platform: draftDevice.platform,
-      transport: draftDevice.transport,
-      match: parsedMatch,
-    }
-    setDevices(nextDevices)
-    setDialogOpen(false)
-    resetDraft()
-  }
+function DeviceFields({ name, device }: { name: string; device: DeviceEntry }) {
+  const autosave = useConfigAutosaveContext()
+  const [removingKeys, setRemovingKeys] = useState<ReadonlySet<string>>(new Set())
+  const at = (...rest: string[]) => ({ segments: ["registry", "devices", name, ...rest], tab: "targets" as const })
+  const match = isRecord(device.match) ? device.match : {}
+  const keys = Object.keys(match).filter((key) => !removingKeys.has(key))
 
-  function handleEdit(name: string) {
-    const device = devices[name]
-    if (!device) return
-    setEditingName(name)
-    setDraftName(name)
-    setDraftDevice({
-      platform: device.platform,
-      transport: device.transport,
-      match: device.match ?? {},
+  async function removeKey(key: string) {
+    setRemovingKeys((current) => new Set(current).add(key))
+    await autosave.runExplicit([{ op: "unset", path: ["registry", "devices", name, "match", key] }])
+    setRemovingKeys((current) => {
+      const next = new Set(current)
+      next.delete(key)
+      return next
     })
-    setMatchText(JSON.stringify(device.match ?? {}, null, 2))
-    setDialogOpen(true)
   }
-
-  async function handleSave() {
-    setSaving(true)
-    try {
-      await updateSettings({ "registry.devices": devices })
-      onConfigChange()
-      toast.success("Changes saved")
-    } catch {
-      toast.error("Failed to save configuration")
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const deviceNames = Object.keys(devices).sort()
 
   return (
     <>
-      <ConfigSectionShell>
-        <ConfigSectionHeader>
-          <h2 className="text-base font-semibold">Devices</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Manage reusable named device profiles and transport matching rules.</p>
-        </ConfigSectionHeader>
-        <ConfigSectionBody>
-          <div className="flex flex-wrap items-start justify-between gap-3 border border-border bg-transparent rounded-none px-4 py-3">
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Reusable device profiles</p>
-              <p className="text-xs text-muted-foreground">
-                Store a platform, transport, and match contract once, then reference it from execution defaults or per-test overrides.
-              </p>
-            </div>
-            <Button size="sm" onClick={openCreateDialog}>
-              <Plus className="size-4" />
-              Add Device
-            </Button>
-          </div>
-
-          <div className="space-y-3">
-            {deviceNames.length === 0 ? (
-              <div className="border border-dashed border-border bg-transparent rounded-none p-6 text-sm text-muted-foreground">
-                No devices configured. Add a named device profile to make it selectable in runtime defaults.
-              </div>
-            ) : (
-              deviceNames.map((name) => {
-                const device = devices[name]
-                return (
-                  <div key={name} className="border border-border bg-transparent rounded-none px-4 py-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-medium">{name}</p>
-                          <Badge variant="secondary">{device.platform}</Badge>
-                          <Badge variant="outline">{device.transport}</Badge>
-                        </div>
-                        <pre className="overflow-auto rounded-none bg-muted/40 p-3 text-xs text-muted-foreground">
-                          {JSON.stringify(device.match ?? {}, null, 2)}
-                        </pre>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button variant="outline" size="sm" onClick={() => handleEdit(name)}>
-                          <Pencil className="size-4" />
-                          Edit
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setDevices((current) => {
-                            const next = { ...current }
-                            delete next[name]
-                            return next
-                          })}
-                        >
-                          <Trash2 className="size-4" />
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
+      <ConfigField
+        field={{ ...at("platform"), pattern: "registry.devices.*.platform" }}
+        label={DEVICE_FIELD_LABELS.platform}
+        kind="select"
+        options={DEVICE_PLATFORM_OPTIONS}
+      />
+      <ConfigField
+        field={{ ...at("transport"), pattern: "registry.devices.*.transport" }}
+        label={DEVICE_FIELD_LABELS.transport}
+        kind="select"
+        options={DEVICE_TRANSPORT_OPTIONS}
+      />
+      <div className="space-y-2">
+        {keys.length > 0 ? (
+          <dl data-field-list="registry.devices.*.match" className="space-y-2">
+            {keys.map((key) => (
+              <div key={key} className="grid items-center gap-1 sm:grid-cols-[minmax(8rem,auto)_1fr] sm:gap-3">
+                <dt className="font-mono text-xs text-muted-foreground wrap-anywhere">{key}</dt>
+                <dd className="flex min-w-0 items-center gap-1">
+                  <div className="min-w-0 flex-1">
+                    <SecretValue
+                      field={{ segments: ["registry", "devices", name, "match", key], pattern: MATCH_PATTERN }}
+                      label={deviceMatchSettingLabel(name, key)}
+                      maskedText={maskedTextOf(match[key])}
+                    />
                   </div>
-                )
-              })
-            )}
-          </div>
-
-          <Button size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : "Save Changes"}
-          </Button>
-        </ConfigSectionBody>
-      </ConfigSectionShell>
-
-      <Dialog
-        open={dialogOpen}
-        onOpenChange={(open) => {
-          setDialogOpen(open)
-          if (!open) resetDraft()
-        }}
-      >
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{editingName ? `Edit ${editingName}` : "Add Device"}</DialogTitle>
-            <DialogDescription>
-              Update the device entry in this section draft. Use Save Changes in the section to persist it to config.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="device-name">Device Name</Label>
-              <Input
-                id="device-name"
-                placeholder="ios-local"
-                value={draftName}
-                onChange={(e) => setDraftName(e.target.value)}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="device-platform">Platform</Label>
-              <Select
-                value={draftDevice.platform}
-                onValueChange={(value) => setDraftDevice((current) => ({ ...current, platform: value as DevicePlatform }))}
-              >
-                <SelectTrigger id="device-platform">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="android">Android</SelectItem>
-                  <SelectItem value="ios">iOS</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="device-transport">Transport</Label>
-              <Select
-                value={draftDevice.transport}
-                onValueChange={(value) => setDraftDevice((current) => ({ ...current, transport: value as DeviceTransport }))}
-              >
-                <SelectTrigger id="device-transport">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DEVICE_TRANSPORT_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="device-match">Match JSON</Label>
-              <Textarea
-                id="device-match"
-                className="min-h-[160px] font-mono text-sm"
-                value={matchText}
-                onChange={(e) => setMatchText(e.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Local transport fields for {draftDevice.platform}:{" "}
-                <span className="font-mono">{LOCAL_MATCH_FIELDS[draftDevice.platform].join(", ")}</span>
-              </p>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleApplyDevice}>
-              {editingName ? "Apply Device Changes" : "Add Device to Section"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={removeMatchSettingName(name, key)}
+                    className="hover:text-destructive"
+                    onClick={() => void removeKey(key)}
+                  >
+                    <X className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        <AddMatchSetting
+          device={name}
+          existingKeys={Object.keys(match)}
+          platform={platformOf(device.platform)}
+          transport={transportOf(device.transport)}
+        />
+      </div>
     </>
+  )
+}
+
+interface SettingDraft {
+  key: string
+  value: string
+}
+
+const EMPTY_SETTING: SettingDraft = { key: "", value: "" }
+
+function AddMatchSetting({
+  device,
+  existingKeys,
+  platform,
+  transport,
+}: {
+  device: string
+  existingKeys: readonly string[]
+  platform: DevicePlatform
+  transport: DeviceTransport
+}) {
+  const autosave = useConfigAutosaveContext()
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState<SettingDraft>(EMPTY_SETTING)
+  const [saving, setSaving] = useState(false)
+  const addButton = useRef<HTMLButtonElement>(null)
+  const focusAddNext = useRef(false)
+  const helpId = useId()
+  const key = draft.key.trim()
+  const allowed = transport === "local" ? LOCAL_MATCH_FIELDS[platform] : undefined
+  const ready =
+    key !== "" && draft.value !== "" && !existingKeys.includes(key) && (allowed === undefined || allowed.includes(key))
+
+  useEffect(() => {
+    if (!open && focusAddNext.current) {
+      focusAddNext.current = false
+      addButton.current?.focus()
+    }
+  }, [open])
+
+  function close() {
+    setDraft(EMPTY_SETTING)
+    focusAddNext.current = true
+    setOpen(false)
+  }
+
+  async function save() {
+    if (!ready || saving) return
+    setSaving(true)
+    const change: ConfigChange = { op: "set", path: ["registry", "devices", device, "match", key], value: draft.value }
+    const landed = await autosave.runExplicit([change])
+    setSaving(false)
+    if (landed) close()
+  }
+
+  function keyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault()
+      void save()
+    } else if (event.key === "Escape") {
+      event.preventDefault()
+      close()
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button ref={addButton} type="button" variant="ghost" size="xs" onClick={() => setOpen(true)}>
+        <Plus className="size-3" aria-hidden="true" />
+        {ADD_SETTING_LABEL}
+      </Button>
+    )
+  }
+
+  const platformLabel = TARGET_PLATFORM_LABELS[platform]
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-1">
+        <Input
+          type="text"
+          autoComplete="off"
+          autoFocus
+          aria-label={DEVICE_FIELD_LABELS.key}
+          aria-describedby={allowed === undefined ? undefined : helpId}
+          placeholder={DEVICE_FIELD_LABELS.key}
+          value={draft.key}
+          onChange={(event) => setDraft({ ...draft, key: event.target.value })}
+          onKeyDown={keyDown}
+          className="h-8 w-36 font-mono"
+        />
+        <Input
+          type="password"
+          autoComplete="off"
+          aria-label={DEVICE_FIELD_LABELS.value}
+          placeholder={DEVICE_FIELD_LABELS.value}
+          value={draft.value}
+          onChange={(event) => setDraft({ ...draft, value: event.target.value })}
+          onKeyDown={keyDown}
+          className="h-8 min-w-0 flex-1 font-mono"
+        />
+        <Button type="button" variant="outline" size="sm" disabled={!ready || saving} onClick={() => void save()}>
+          {SAVE_SETTING_LABEL}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={close}>
+          {DISCARD_SETTING_LABEL}
+        </Button>
+      </div>
+      {allowed === undefined ? null : (
+        <p id={helpId} className="text-xs text-muted-foreground break-words">
+          {deviceMatchKeysHelp(platformLabel, allowed)}
+        </p>
+      )}
+    </div>
+  )
+}
+
+interface DeviceDraft extends Record<string, string> {
+  name: string
+  platform: string
+  transport: string
+}
+
+const EMPTY_DRAFT: DeviceDraft = { name: "", platform: "android", transport: "local" }
+
+function draftNameError(draft: DeviceDraft, takenNames: ReadonlySet<string>): string | undefined {
+  const name = draft.name.trim()
+  if (name === "") return DEVICE_NAME_REQUIRED_ERROR
+  if (takenNames.has(name)) return deviceNameTakenError(name)
+  return undefined
+}
+
+interface AddDeviceRowProps {
+  initial: DeviceDraft
+  takenNames: ReadonlySet<string>
+  onHold: (draft: DeviceDraft) => void
+  onDiscard: () => void
+  onAdded: (name: string) => void
+}
+
+function AddDeviceRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddDeviceRowProps) {
+  const autosave = useConfigAutosaveContext()
+  const [draft, setDraft] = useState(initial)
+  const [touched, setTouched] = useState(false)
+  const saving = useRef(false)
+  const baseId = useId()
+  const nameError = touched ? draftNameError(draft, takenNames) : undefined
+
+  useEffect(() => {
+    onHold(initial)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  function change(next: DeviceDraft) {
+    setDraft(next)
+    onHold(next)
+  }
+
+  async function settle(current: DeviceDraft, markTouched: boolean) {
+    if (markTouched) setTouched(true)
+    if (saving.current || draftNameError(current, takenNames) !== undefined) return
+    saving.current = true
+    const name = current.name.trim()
+    const landed = await autosave.runExplicit(
+      [
+        {
+          op: "set",
+          path: ["registry", "devices", name],
+          value: { platform: platformOf(current.platform), transport: transportOf(current.transport) },
+        },
+      ],
+      undefined,
+      [LIST_REF],
+    )
+    saving.current = false
+    if (landed) onAdded(name)
+  }
+
+  function leave(event: FocusEvent<HTMLDivElement>) {
+    if (leavesGroup(event)) void settle(draft, true)
+  }
+
+  function select(key: "platform" | "transport", label: string, options: readonly { value: string; label: string }[]) {
+    return (
+      <div className="space-y-2">
+        <Label htmlFor={`${baseId}-${key}`}>{label}</Label>
+        <Select
+          value={draft[key]}
+          onValueChange={(value) => {
+            const next = { ...draft, [key]: value }
+            change(next)
+            void settle(next, false)
+          }}
+        >
+          <SelectTrigger id={`${baseId}-${key}`} className="w-full max-w-md">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
+  return (
+    <div data-device-draft onBlur={leave} className="space-y-4 border-t border-border pt-3">
+      <DraftTextField
+        id={configFieldControlId(configFieldKeyOf(LIST_REF.segments))}
+        name="name"
+        label={DEVICE_FIELD_LABELS.name}
+        value={draft.name}
+        placeholder="pixel-8"
+        mono
+        autoFocus
+        error={nameError}
+        onChange={(value) => change({ ...draft, name: value })}
+        onEnter={() => void settle(draft, true)}
+      />
+      {select("platform", DEVICE_FIELD_LABELS.platform, DEVICE_PLATFORM_OPTIONS)}
+      {select("transport", DEVICE_FIELD_LABELS.transport, DEVICE_TRANSPORT_OPTIONS)}
+      <Button type="button" variant="ghost" size="sm" onClick={onDiscard}>
+        {DISCARD_DEVICE_LABEL}
+      </Button>
+    </div>
   )
 }

@@ -1,46 +1,20 @@
-import { Command } from 'commander'
-import { VERSION } from './index.js'
-import { createRunCommand, createInitCommand, createInstallBrowsersCommand, createInstallMobileDriversCommand, createDoctorCommand, createDashboardCommand, createServeCommand, createMcpCommand, createConfigCommand, createQueueCommand, createCacheCommand, createValidateCommand, createAuthCommand, createAuthStateCommand, createDevicesCommand, createIdsCommand, createCreateTestCommand, createCreateSuiteCommand, createCleanMemoryCommand, createSkillsCommand } from './commands/index.js'
-import { rejectRemovedCliSurface } from './removed-cli-surface.js'
+import './color-posture.js'
+import { nodeFloorRefusal } from './node-floor.js'
 
-rejectRemovedCliSurface()
+// 2026-10-18 (444-14, D-47): a variable specifier keeps the bundler from inlining the CLI, so no
+// static import evaluates (and reads the environment) before the posture above.
+const main = './cli-main.js'
 
-const program = new Command()
-program.enablePositionalOptions()
-
-program
-  .name('agent-qa')
-  .description('The self-improving Agentic QA harness with Memory')
-  .version(VERSION)
-
-program
-  .option('--config <path>', 'config file path', 'agent-qa.config.yaml')
-  .option('--log-level <level>', 'log verbosity: silent|error|warn|info|debug')
-  .option('--verbose', 'shorthand for --log-level debug')
-  .option('--quiet', 'shorthand for --log-level silent')
-
-program.addCommand(createRunCommand())
-program.addCommand(createInitCommand())
-program.addCommand(createInstallBrowsersCommand())
-program.addCommand(createInstallMobileDriversCommand())
-
-program.addCommand(createDoctorCommand())
-program.addCommand(createDashboardCommand())
-program.addCommand(createServeCommand())
-program.addCommand(createMcpCommand())
-program.addCommand(createConfigCommand())
-program.addCommand(createQueueCommand())
-program.addCommand(createCacheCommand())
-program.addCommand(createValidateCommand())
-program.addCommand(createAuthCommand())
-program.addCommand(createAuthStateCommand())
-program.addCommand(createDevicesCommand())
-program.addCommand(createIdsCommand())
-program.addCommand(createCreateTestCommand())
-program.addCommand(createCreateSuiteCommand())
-program.addCommand(createCleanMemoryCommand())
-program.addCommand(createSkillsCommand())
-
-program.parse()
-
-export { program }
+const refusal = nodeFloorRefusal(process.version)
+if (refusal !== undefined) {
+  process.stderr.write(refusal)
+  process.exit(2)
+} else {
+  void import(main).catch((error: unknown) => {
+    console.error(`Framework error: ${error instanceof Error ? error.message : String(error)}`)
+    // 2026-10-18 (444-27, D-62 WR-01): the stack follows the line, so a load-time or synchronous
+    // CLI failure still names where it threw.
+    if (error instanceof Error && error.stack) console.error(error.stack)
+    process.exit(2)
+  })
+}

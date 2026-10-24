@@ -1,42 +1,23 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+// WHAT THESE CELLS ARE GUARDING (398-11, D-18).
+//
+// This file used to drive the `POST /api/analytics/events` bridge: the dashboard UI beaconed one
+// of three v33 product events at it, and the route captured them through core's ambient analytics
+// helpers. D-18 drops those three events now and lets M5's dashboard rebuild re-add whatever it
+// wants against the new `AnalyticsPort`; D-20 deletes `core/src/analytics` outright, which is what
+// the route imported. So the route is GONE, and these cells are the witness that it stays gone.
+//
+// The behavioural cell drives the real router and asserts the path 404s — a route re-added with a
+// silently-swallowing body would still pass a "capture was never called" assertion, so the claim is
+// made on what a caller observes rather than on a mock. The source pins refuse the vocabulary back
+// into the two files that carried it, the same treatment `commands/dashboard.ts` got in 398-10.
+
+import { readFile } from 'node:fs/promises'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
 import { Socket } from 'node:net'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-import {
-  buildAnalyticsEvent,
-  captureAnalytics,
-  resolveAnalyticsStandardProperties,
-} from '@vostride/agent-qa-core'
-
-const {
-  mockBuildAnalyticsEvent,
-  mockCaptureAnalytics,
-  mockResolveAnalyticsStandardProperties,
-} = vi.hoisted(() => ({
-  mockBuildAnalyticsEvent: vi.fn(),
-  mockCaptureAnalytics: vi.fn(),
-  mockResolveAnalyticsStandardProperties: vi.fn(),
-}))
-
-vi.mock('@vostride/agent-qa-core', async () => {
-  const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
-  return {
-    ...actual,
-    buildAnalyticsEvent: mockBuildAnalyticsEvent,
-    captureAnalytics: mockCaptureAnalytics,
-    resolveAnalyticsStandardProperties: mockResolveAnalyticsStandardProperties,
-  }
-})
-
-await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
-const buildAnalyticsEventMock = vi.mocked(buildAnalyticsEvent)
-const captureAnalyticsMock = vi.mocked(captureAnalytics)
-const resolveAnalyticsStandardPropertiesMock = vi.mocked(resolveAnalyticsStandardProperties)
-type ConfigManagerInstance = InstanceType<typeof import('../config/index.js').ConfigManager>
+import { beforeEach, describe, expect, it } from 'vitest'
 
 interface MockResponse {
   status: number
@@ -44,14 +25,17 @@ interface MockResponse {
   body: string
 }
 
-let ConfigManager: typeof import('../config/index.js').ConfigManager
+const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'server')
+
 let createRouter: typeof import('../server/routes.js').createRouter
 let router: ReturnType<typeof import('../server/routes.js').createRouter>
-let tempDirs: string[] = []
 
 function createMockDatabase() {
   return {
     getRuns() {
+      return []
+    },
+    getFlakyTests() {
       return []
     },
     close() {},
@@ -127,20 +111,6 @@ async function invokeRoute(
   })
 }
 
-async function createConfigWorkspace(configContent: string): Promise<{
-  configManager: ConfigManagerInstance
-  configPath: string
-}> {
-  const dir = await mkdtemp(join(tmpdir(), 'agent-qa-analytics-route-'))
-  tempDirs.push(dir)
-  const configPath = join(dir, 'agent-qa.config.yaml')
-  await writeFile(configPath, configContent, 'utf-8')
-  return {
-    configManager: new ConfigManager(configPath),
-    configPath,
-  }
-}
-
 function routeBody(body: unknown): { method: 'POST'; body: string; headers: IncomingHttpHeaders } {
   return {
     method: 'POST',
@@ -149,190 +119,51 @@ function routeBody(body: unknown): { method: 'POST'; body: string; headers: Inco
   }
 }
 
-function createAnalyticsBridge() {
-  return {
-    buildAnalyticsEvent: buildAnalyticsEventMock,
-    captureAnalytics: captureAnalyticsMock,
-    resolveAnalyticsStandardProperties: resolveAnalyticsStandardPropertiesMock,
-  }
-}
-
 beforeEach(async () => {
-  ;({ ConfigManager } = await import('../config/index.js'))
   ;({ createRouter } = await import('../server/routes.js'))
-  buildAnalyticsEventMock.mockImplementation((input) => ({
-    name: input.name as never,
-    properties: {
-      ...(input.properties ?? {}),
-      $process_person_profile: false,
-    },
-  }))
-  captureAnalyticsMock.mockResolvedValue(undefined)
-  resolveAnalyticsStandardPropertiesMock.mockResolvedValue({
-    surface: 'dashboard-ui',
-    runtime_context: 'user',
-    agent_qa_version: '0.1.0',
-  })
-  router = createRouter({ db: createMockDatabase() as any, analyticsBridge: createAnalyticsBridge() })
+  router = createRouter({ db: createMockDatabase() as never })
 })
 
-afterEach(async () => {
-  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
-  tempDirs = []
-  vi.clearAllMocks()
-})
-
-describe('dashboard analytics bridge route', () => {
-  it('accepts dashboard product events and delegates capture through shared core analytics', async () => {
-    const response = await invokeRoute('/api/analytics/events', routeBody({
-      name: 'agent-qa.dashboard.opened',
-      properties: {
-        route: 'phase244-route-secret',
-        url: 'https://phase244-secret.example',
-        query: '?token=secret',
-        entity_id: 'e_secret',
-        entity_name: 'phase244-entity-name',
-      },
-    }))
-
-    expect(response.status).toBe(202)
-    expect(JSON.parse(response.body)).toEqual({ accepted: true })
-
-    await vi.waitFor(() => expect(captureAnalyticsMock).toHaveBeenCalledTimes(1))
-    expect(resolveAnalyticsStandardPropertiesMock).toHaveBeenCalledWith({ surface: 'dashboard-ui' })
-    expect(buildAnalyticsEventMock).toHaveBeenCalledWith({
-      name: 'agent-qa.dashboard.opened',
-      properties: expect.objectContaining({
-        surface: 'dashboard-ui',
-        runtime_context: 'user',
-        agent_qa_version: '0.1.0',
-      }),
-    })
-
-    const buildInput = buildAnalyticsEventMock.mock.calls[0][0]
-    expect(buildInput.properties).not.toHaveProperty('route')
-    expect(buildInput.properties).not.toHaveProperty('url')
-    expect(buildInput.properties).not.toHaveProperty('query')
-    expect(buildInput.properties).not.toHaveProperty('entity_id')
-    expect(buildInput.properties).not.toHaveProperty('entity_name')
-    expect(captureAnalyticsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent-qa.dashboard.opened' }),
-      { config: {} },
-    )
-  })
-
-  it('skips all analytics work when analytics privacy is enabled and still accepts the event', async () => {
-    const { configManager, configPath } = await createConfigWorkspace([
-      'workspace: {}',
-      'services: {}',
-      'registry: {}',
-      'use: {}',
-      'analytics:',
-      '  privacy: true',
-      '',
-    ].join('\n'))
-    const readConfigSpy = vi.spyOn(configManager, 'read')
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-      analyticsBridge: createAnalyticsBridge(),
-    })
-
+describe('the dropped dashboard analytics bridge route (D-18/D-20)', () => {
+  it('has no ingest endpoint: a v33 dashboard product event is refused, not accepted', async () => {
     const response = await invokeRoute('/api/analytics/events', routeBody({
       name: 'agent-qa.dashboard.opened',
       properties: {},
     }))
 
-    expect(response.status).toBe(202)
-    await vi.waitFor(() => expect(readConfigSpy).toHaveBeenCalled())
-    expect(resolveAnalyticsStandardPropertiesMock).not.toHaveBeenCalled()
-    expect(buildAnalyticsEventMock).not.toHaveBeenCalled()
-    expect(captureAnalyticsMock).not.toHaveBeenCalled()
+    expect(response.status).toBe(404)
   })
 
-  it('captures analytics when config omits analytics privacy', async () => {
-    const { configManager, configPath } = await createConfigWorkspace([
-      'workspace: {}',
-      'services: {}',
-      'registry: {}',
-      'use: {}',
-      '',
-    ].join('\n'))
-    const readConfigSpy = vi.spyOn(configManager, 'read')
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager,
-      configPath,
-      analyticsBridge: createAnalyticsBridge(),
-    })
+  it('refuses every one of the three v33 event names, not just the first', async () => {
+    for (const name of [
+      'agent-qa.dashboard.opened',
+      'agent-qa.dashboard.live_mode.started',
+      'agent-qa.dashboard.entity.created',
+    ]) {
+      const response = await invokeRoute('/api/analytics/events', routeBody({ name, properties: {} }))
 
-    const response = await invokeRoute('/api/analytics/events', routeBody({
-      name: 'agent-qa.dashboard.opened',
-      properties: {},
-    }))
-
-    expect(response.status).toBe(202)
-    await vi.waitFor(() => expect(readConfigSpy).toHaveBeenCalled())
-    await vi.waitFor(() => expect(captureAnalyticsMock).toHaveBeenCalledTimes(1))
-    expect(resolveAnalyticsStandardPropertiesMock).toHaveBeenCalledWith({ surface: 'dashboard-ui' })
-    expect(buildAnalyticsEventMock).toHaveBeenCalledWith({
-      name: 'agent-qa.dashboard.opened',
-      properties: expect.objectContaining({
-        surface: 'dashboard-ui',
-        runtime_context: 'user',
-        agent_qa_version: '0.1.0',
-      }),
-    })
-    expect(captureAnalyticsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'agent-qa.dashboard.opened' }),
-      { config: {} },
-    )
+      expect(response.status).toBe(404)
+    }
   })
 
-  it('fails closed for telemetry when analytics config cannot be read and still accepts the event', async () => {
-    const readConfigMock = vi.fn().mockRejectedValue(new Error('phase244 config read failed'))
-    router = createRouter({
-      db: createMockDatabase() as any,
-      configManager: { read: readConfigMock } as unknown as ConfigManagerInstance,
-      analyticsBridge: createAnalyticsBridge(),
-    })
+  it('leaves the read-only analytics reporting routes alone — only the ingest route dropped', async () => {
+    // `/api/analytics/tests|suites|breakdowns` are the dashboard's own run-history reporting and
+    // have nothing to do with product telemetry. Pinned so "delete the analytics routes" cannot be
+    // read as a licence to take these with them.
+    const response = await invokeRoute('/api/analytics/tests')
 
-    const response = await invokeRoute('/api/analytics/events', routeBody({
-      name: 'agent-qa.dashboard.opened',
-      properties: {},
-    }))
-
-    expect(response.status).toBe(202)
-    await vi.waitFor(() => expect(readConfigMock).toHaveBeenCalled())
-    expect(resolveAnalyticsStandardPropertiesMock).not.toHaveBeenCalled()
-    expect(buildAnalyticsEventMock).not.toHaveBeenCalled()
-    expect(captureAnalyticsMock).not.toHaveBeenCalled()
+    expect(response.status).not.toBe(404)
   })
 
-  it('does not surface shared capture failures as dashboard HTTP errors', async () => {
-    captureAnalyticsMock.mockRejectedValueOnce(new Error('phase244 capture failed'))
+  it('keeps the capture vocabulary out of the dashboard server source', async () => {
+    for (const file of ['routes.ts', 'server.ts']) {
+      const source = await readFile(join(SERVER_DIR, file), 'utf8')
 
-    const response = await invokeRoute('/api/analytics/events', routeBody({
-      name: 'agent-qa.dashboard.opened',
-      properties: {},
-    }))
-
-    expect(response.status).toBe(202)
-    expect(JSON.parse(response.body)).toEqual({ accepted: true })
-    await vi.waitFor(() => expect(captureAnalyticsMock).toHaveBeenCalledTimes(1))
-  })
-
-  it.each([
-    [{ properties: {} }, 'missing name'],
-    [{ name: 42, properties: {} }, 'non-string name'],
-    [{ name: 'agent-qa.dashboard.opened', properties: [] }, 'array properties'],
-    [{ name: 'agent-qa.dashboard.route.viewed', properties: {} }, 'route event'],
-  ])('rejects invalid analytics payloads: %s', async (body, _caseName) => {
-    const response = await invokeRoute('/api/analytics/events', routeBody(body))
-
-    expect(response.status).toBe(400)
-    expect(JSON.parse(response.body)).toEqual({ error: 'Invalid analytics event' })
-    expect(captureAnalyticsMock).not.toHaveBeenCalled()
+      expect(source).not.toMatch(/\bcaptureAnalytics\b/u)
+      expect(source).not.toMatch(/\bbuildAnalyticsEvent\b/u)
+      expect(source).not.toMatch(/\bresolveAnalyticsStandardProperties\b/u)
+      expect(source).not.toMatch(/\banalyticsBridge\b/u)
+      expect(source).not.toMatch(/agent-qa\.dashboard\./u)
+    }
   })
 })

@@ -24,7 +24,7 @@ vi.mock('../targets.js', () => ({
 }))
 
 vi.mock('@vostride/agent-qa-core', () => ({
-  AUTH_STATE_SCHEMA_VERSION: 1,
+  AUTH_STATE_SCHEMA_VERSION: 2,
   resolveAuthStatePaths: mocks.resolveAuthStatePaths,
   listAuthStateMetadata: mocks.listAuthStateMetadata,
   readAuthStateMetadata: mocks.readAuthStateMetadata,
@@ -53,7 +53,7 @@ const paths = {
 }
 
 const metadata = {
-  version: 1,
+  version: 2,
   kind: 'web',
   target: 'test-app',
   name: 'admin',
@@ -277,7 +277,7 @@ describe('auth-state capture command', () => {
     mocks.listAuthStateMetadata.mockResolvedValue([
       metadata,
       {
-        version: 1,
+        version: 2,
         kind: 'web',
         target: 'uat',
         name: 'demo-acc',

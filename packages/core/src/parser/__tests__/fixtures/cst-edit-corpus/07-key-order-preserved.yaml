@@ -1,0 +1,9 @@
+# Top-level keys are deliberately NOT in alphabetical order and NOT in the house order either.
+target: local-form
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Click the Submit button
+  - Verify the page says "Received!"
+name: Sign in with the keys out of order
+test-id: t_energy-web-dirty-phrase-dop-spire-twig-direct-lose-oust
+context: A round-trip through a plain JS object would sort or re-order these keys.

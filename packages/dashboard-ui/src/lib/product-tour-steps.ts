@@ -1,3 +1,4 @@
+import { TOUR_LLM_SETUP_BODY } from '@/lib/config-copy'
 import { routes } from '@/lib/routes'
 import { normalizeRunStatus } from '@/lib/status'
 
@@ -6,7 +7,6 @@ export const PRODUCT_TOUR_AUTO_START_PATHS = [
   routes.tests,
   routes.hooks,
   routes.suites,
-  routes.memory,
   routes.config,
 ] as const
 
@@ -64,8 +64,8 @@ export const foundationProductTourSteps = [
   {
     id: 'llm-setup',
     title: 'Configure your LLM first',
-    body: 'A run needs an LLM. Add or choose one, test the connection, save the config, then continue.',
-    route: routes.configItem('registry', 'llms'),
+    body: TOUR_LLM_SETUP_BODY,
+    route: routes.configTab('models'),
     targetId: 'tour-config-section',
   },
   {
@@ -97,17 +97,10 @@ export const foundationProductTourSteps = [
     targetId: 'tour-hooks-table',
   },
   {
-    id: 'memory',
-    title: 'Memory keeps learned observations',
-    body: 'Memory lets you review learned product observations that can make future runs more aware.',
-    route: routes.memory,
-    targetId: 'tour-memory-table',
-  },
-  {
     id: 'config',
     title: 'Config controls local setup',
     body: 'Config controls the model, target, runtime, and dashboard setup agent-qa uses locally.',
-    route: routes.config,
+    route: routes.configTab('models'),
     targetId: 'tour-config-section',
   },
   {
@@ -137,7 +130,7 @@ export const foundationProductTourSteps = [
   {
     id: 'live-run',
     title: 'Watch the run live',
-    body: 'Live mode shows the active execution while the harness works through each step.',
+    body: 'Live mode shows the running test: its steps on one side and the browser beside them.',
     route: (context) => (context.runId ? routes.runLive(context.runId) : null),
     targetId: 'tour-live-run-status',
     include: hasRun,

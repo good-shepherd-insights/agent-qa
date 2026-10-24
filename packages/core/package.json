@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-core",
-  "version": "0.1.21",
+  "version": "0.2.1",
   "private": false,
   "description": "Core agent-qa runtime, schemas, tools, and execution services.",
   "keywords": [
@@ -41,40 +41,32 @@
     "NOTICE.md"
   ],
   "scripts": {
-    "prebuild": "node scripts/ensure-posthog-project.cjs",
     "build": "tsup",
-    "predev": "node scripts/ensure-posthog-project.cjs",
     "dev": "tsup --watch",
-    "pretest": "node scripts/ensure-posthog-project.cjs",
     "test": "vitest run",
-    "pretypecheck": "node scripts/ensure-posthog-project.cjs",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.74",
-    "@ai-sdk/google": "3.0.67",
-    "@ai-sdk/openai": "3.0.58",
     "@vostride/agent-qa-ids": "workspace:*",
+    "@vostride/agent-qa-runner": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*",
     "ai": "6.0.174",
-    "better-sqlite3": "12.9.0",
     "bytes": "3.1.2",
     "fast-xml-parser": "5.7.2",
     "glob": "13.0.6",
-    "id-agent": "1.0.3",
     "ms": "2.1.3",
     "picocolors": "1.1.1",
-    "posthog-node": "5.33.2",
+    "playwright-core": "1.61.0",
     "semver": "7.8.1",
-    "sharp": "0.34.5",
     "yaml": "2.8.4",
-    "zod": "4.4.2"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "~7.6.13",
     "@types/bytes": "~3.1.5",
     "@types/ms": "~2.1.0",
     "@types/node": "~24.12.2",
+    "@vostride/agent-qa-arch": "workspace:*",
     "tsup": "~8.5.1",
     "typescript": "~6.0.3",
     "vitest": "~4.1.5"

@@ -9,18 +9,34 @@ interface LLMAuthConfig {
   providerHeaders?: Record<string, string>
 }
 
-function missingMessage(provider: string, plugin?: LLMAuthProviderPlugin): string {
+const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
+
+export const PUBLIC_PROVIDER_API_HOSTS: readonly string[] = Object.freeze([
+  'api.openai.com',
+  'api.anthropic.com',
+])
+
+function onPublicProviderApi(baseURL: string | undefined): boolean {
+  if (typeof baseURL !== 'string' || !URL.canParse(baseURL)) return false
+  return PUBLIC_PROVIDER_API_HOSTS.includes(new URL(baseURL).hostname)
+}
+
+function missingMessage(configName: string, provider: string, plugin?: LLMAuthProviderPlugin): string {
   if (plugin) {
-    return `Authenticate "${plugin.label}" for this config before testing.`
+    return `Sign in to "${plugin.label}" for the "${configName}" config: agent-qa auth login --config ${configName}`
   }
 
+  const setKey = `agent-qa auth set --config ${configName} --type api-key`
   switch (provider) {
     case 'gemini':
-      return 'Save a Gemini API key for this config before testing.'
+      return `Save a Gemini API key for the "${configName}" config: ${setKey}`
     case 'openai-compatible':
-      return 'Save an API key for this config before testing.'
+      return `Save an API key for the "${configName}" config: ${setKey}`
     case 'anthropic-compatible':
-      return 'Save an API key or bearer token for this config before testing.'
+      return `Save an API key for the "${configName}" config: ${setKey} (or --type bearer-token)`
+    case 'openai-subscription':
+    case 'anthropic-subscription':
+      return `Provider "${provider}" needs the subscription-auth plugin: npm install -D ${SUBSCRIPTION_AUTH_PACKAGE}, and declare it under plugins.auth in agent-qa.config.yaml`
     default:
       return `Provider "${provider}" requires an auth plugin.`
   }
@@ -63,7 +79,7 @@ function missing(configName: string, provider: string, plugin?: LLMAuthProviderP
     credentialKey: configName,
     provider,
     required: true,
-    message: missingMessage(provider, plugin),
+    message: missingMessage(configName, provider, plugin),
   }
 }
 
@@ -124,7 +140,8 @@ export async function resolveLLMAuth(
   const plugin = getLLMAuthProviderPlugin(llmConfig.provider)
 
   if (!credential) {
-    if (isCompatibleProvider(llmConfig.provider)) {
+    // 2026-10-20 (445-16, D-41): a keyless config on the public provider API cannot run.
+    if (isCompatibleProvider(llmConfig.provider) && !onPublicProviderApi(llmConfig.baseURL)) {
       return unauthenticated(configName, llmConfig.provider)
     }
     return missing(configName, llmConfig.provider, plugin)

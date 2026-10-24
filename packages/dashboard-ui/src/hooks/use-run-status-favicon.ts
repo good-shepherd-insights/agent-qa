@@ -45,7 +45,6 @@ export function getRunFaviconState(status: string | null | undefined): RunFavico
     case 'queued':
       return 'running'
     case 'passed':
-    case 'flaky':
     case 'healed':
       return 'passed'
     case 'failed':

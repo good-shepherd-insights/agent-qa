@@ -1,12 +1,14 @@
-import { readFile, writeFile, mkdir, rm, stat } from 'node:fs/promises'
+import { readFile, mkdir, rm, stat } from 'node:fs/promises'
 import { dirname, basename } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { generateTestId } from '@vostride/agent-qa-ids'
-import { parse as parseYaml } from 'yaml'
+import { parseAllDocuments, parse as parseYaml } from 'yaml'
 import {
   discoverWorkspaceFiles,
   resolveWorkspaceFileTarget,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
+import { createPathLock, replaceFileAtomic } from './replace-file-atomic.js'
 
 export interface TestFileInfo {
   path: string
@@ -48,76 +50,132 @@ function normalizePlatform(value: unknown): SupportedPlatform | null {
   return value
 }
 
-export function extractTestFileMetadata(content: string): TestFileMetadata {
-  let parsed: Record<string, unknown> | null = null
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
 
+export function presentText(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const text = value.trim()
+  return text === '' ? null : text
+}
+
+// 2026-10-19 (444-37, D-68): only a file that does not parse is read line by line, each key from its own line.
+function valueOnLine(match: RegExpMatchArray | null): string | null {
+  if (match === null) return null
+  const value = normalizeQuotedString(match[1])
+  return value.trim() === '' ? null : value
+}
+
+// 2026-10-19 (444-37, D-68): a bare, blank or comment-only id key is filled in place; otherwise the id line goes after a
+// leading byte-order mark and the stream's first --- marker, or first, in the file's own line ending.
+export function withIdLine(content: string, key: 'test-id' | 'suite-id', id: string): string {
+  const bom = content.startsWith('\uFEFF') ? '\uFEFF' : ''
+  const rest = content.slice(bom.length)
+  const firstBreak = rest.indexOf('\n')
+  const eol = firstBreak > 0 && rest[firstBreak - 1] === '\r' ? '\r\n' : '\n'
+  const line = `${key}: ${id}`
+  const blankKey = new RegExp(`^${key}:(?:[ \\t]*(["'])[ \\t]*\\1)?(?:[ \\t]+#[^\\r\\n]*)?[ \\t]*$`, 'm')
+  if (blankKey.test(rest)) return bom + rest.replace(blankKey, () => line)
+  const marker = rest.match(/^(?:(?:[ \t]*(?:#[^\r\n]*)?|%[^\r\n]*)\r?\n)*---[ \t]*(?:#[^\r\n]*)?(?:\r?\n|$)/)
+  if (marker === null) return `${bom}${line}${eol}${rest}`
+  const head = marker[0].endsWith('\n') ? marker[0] : `${marker[0]}${eol}`
+  return `${bom}${head}${line}${eol}${rest.slice(marker[0].length)}`
+}
+
+// 2026-10-19 (444-37, D-68): an id write lands only if it parses, as one document, to the old mapping plus the id.
+export function idWriteText(content: string, key: 'test-id' | 'suite-id', id: string): string | null {
+  let old: unknown
   try {
-    const yamlValue = parseYaml(content)
-    if (yamlValue && typeof yamlValue === 'object' && !Array.isArray(yamlValue)) {
-      parsed = yamlValue as Record<string, unknown>
-    }
+    old = parseYaml(content)
   } catch {
-    // fall back to regex extraction for partially-authored files
+    return null
   }
+  if (!isMapping(old)) return null
+  const next = withIdLine(content, key, id)
+  let written: unknown
+  try {
+    written = parseYaml(next)
+  } catch {
+    return null
+  }
+  return isDeepStrictEqual(written, { ...old, [key]: id }) ? next : null
+}
 
-  const config = parsed?.config
-  const parsedConfig = config && typeof config === 'object' && !Array.isArray(config)
-    ? config as Record<string, unknown>
-    : null
-  const use = parsed?.use
-  const parsedUse = use && typeof use === 'object' && !Array.isArray(use)
-    ? use as Record<string, unknown>
-    : null
+function lineMetadata(content: string): TestFileMetadata {
+  const nameMatch = content.match(/^name:[ \t]*(\S.*)$/m)
+  const targetMatch = content.match(/^[ \t]*target:[ \t]*(\S.*)$/m)
+  const testIdMatch = content.match(/^test-id:[ \t]*(\S.*)$/m)
+  const platformMatch = content.match(/^[ \t]*platform:[ \t]*(web|android|ios)[ \t]*$/m)
+  const parallelMatch = content.match(/^[ \t]*parallel:[ \t]*(true|false)[ \t]*$/m)
+  return {
+    name: valueOnLine(nameMatch),
+    testId: valueOnLine(testIdMatch),
+    targetName: valueOnLine(targetMatch),
+    platform: normalizePlatform(platformMatch?.[1]),
+    parallel: parallelMatch ? parallelMatch[1] === 'true' : null,
+  }
+}
 
-  const nameMatch = content.match(/^name:\s*(.+)$/m)
-  const targetMatch = content.match(/^\s*target:\s*(.+)$/m)
-  const testIdMatch = content.match(/^test-id:\s*(.+)$/m)
-  const platformMatch = content.match(/^\s*platform:\s*(web|android|ios)\s*$/m)
-  const parallelMatch = content.match(/^\s*parallel:\s*(true|false)\s*$/m)
+// 2026-10-19 (444-37, D-68): a file that parses is read from its mapping, where a null, empty or blank value is absent.
+export function extractTestFileMetadata(content: string): TestFileMetadata {
+  let parsed: unknown
+  try {
+    parsed = parseYaml(content)
+  } catch {
+    return lineMetadata(content.replace(/^\uFEFF/, ''))
+  }
+  if (!isMapping(parsed)) return { name: null, testId: null, targetName: null, platform: null, parallel: null }
 
-  const name = typeof parsed?.name === 'string' && parsed.name.trim().length > 0
-    ? parsed.name.trim()
-    : nameMatch
-      ? normalizeQuotedString(nameMatch[1])
-      : null
-
-  const targetName = typeof parsed?.target === 'string' && parsed.target.trim().length > 0
-    ? parsed.target.trim()
-    : targetMatch
-      ? normalizeQuotedString(targetMatch[1])
-      : null
-
-  const testId = typeof parsed?.['test-id'] === 'string' && parsed['test-id'].trim().length > 0
-    ? parsed['test-id'].trim()
-    : testIdMatch
-      ? normalizeQuotedString(testIdMatch[1])
-      : null
-
-  const platform = normalizePlatform(parsed?.platform)
-    ?? normalizePlatform(parsedConfig?.platform)
-    ?? normalizePlatform(platformMatch?.[1])
-
-  const parallel = typeof parsedUse?.parallel === 'boolean'
-    ? parsedUse.parallel
-    : typeof parsed?.parallel === 'boolean'
+  const config = isMapping(parsed.config) ? parsed.config : null
+  const use = isMapping(parsed.use) ? parsed.use : null
+  const parallel = typeof use?.parallel === 'boolean'
+    ? use.parallel
+    : typeof parsed.parallel === 'boolean'
       ? parsed.parallel
-      : typeof parsedConfig?.parallel === 'boolean'
-        ? parsedConfig.parallel
-        : parallelMatch
-          ? parallelMatch[1] === 'true'
-          : null
+      : typeof config?.parallel === 'boolean'
+        ? config.parallel
+        : null
 
   return {
-    name,
-    testId,
-    targetName,
-    platform,
+    name: presentText(parsed.name),
+    testId: presentText(parsed['test-id']),
+    targetName: presentText(parsed.target),
+    platform: normalizePlatform(parsed.platform) ?? normalizePlatform(config?.platform),
     parallel,
   }
 }
 
+// 2026-10-19 (444.1-11, D-18): a mint reads bytes that decode losslessly, or it does not write.
+export function decodeUtf8(bytes: Uint8Array): string | undefined {
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+  } catch (err) {
+    if (err instanceof TypeError) return undefined
+    throw err
+  }
+}
+
+// 2026-10-19 (444.1-11, D-19, D-21): every document's target is read, and the line pattern reads only top-level target lines.
+export function targetsForMarkerCheck(content: string): unknown[] {
+  const targets: unknown[] = []
+  try {
+    for (const doc of parseAllDocuments(content)) {
+      if (doc.errors.length === 0) {
+        const value: unknown = doc.toJS()
+        if (isMapping(value)) targets.push(value.target)
+      }
+    }
+  } catch { /* the line pattern below still reads it */ }
+  for (const match of content.matchAll(/^target:[ \t]*(\S.*)$/gm)) targets.push(match[1])
+  return targets
+}
+
 export class TestFileManager {
   constructor(private readonly workspace: ResolvedWorkspacePaths) {}
+
+  // 2026-10-18 (444-33, D-65; 444-35, D-66): each list call reads the workspace itself; each file is written whole and one writer at a time.
+  private readonly underLock = createPathLock()
 
   async list(): Promise<TestFileInfo[]> {
     const records = await discoverWorkspaceFiles({ workspace: this.workspace, kind: 'test' })
@@ -131,18 +189,29 @@ export class TestFileManager {
           let platform: string | null = null
           let targetName: string | null = null
           let testId: string | null = null
+          const take = (metadata: TestFileMetadata): void => {
+            testName = metadata.name || basename(record.workspaceRelativePath)
+            targetName = metadata.targetName || null
+            platform = metadata.platform
+            testId = metadata.testId
+          }
           try {
-            let content = await readFile(record.absolutePath, 'utf-8')
-            const metadata = extractTestFileMetadata(content)
-            if (metadata.name) testName = metadata.name
-            if (metadata.targetName) targetName = metadata.targetName
-            if (metadata.platform) platform = metadata.platform
-            if (metadata.testId) {
-              testId = metadata.testId
-            } else {
-              testId = generateTestId()
-              content = `test-id: ${testId}\n${content}`
-              await writeFile(record.absolutePath, content, 'utf-8')
+            const first = extractTestFileMetadata(await readFile(record.absolutePath, 'utf-8'))
+            take(first)
+            if (!first.testId) {
+              take(await this.underLock(record.absolutePath, async () => {
+                const content = decodeUtf8(await readFile(record.absolutePath))
+                if (content === undefined) return first
+                const current = extractTestFileMetadata(content)
+                if (current.testId) return current
+                // 2026-10-18 (444-35, IN-20): an empty file may be an outside save mid-write; it is never minted.
+                if (content.trim() === '') return current
+                const minted = generateTestId()
+                const next = idWriteText(content, 'test-id', minted)
+                if (next === null) return current
+                await replaceFileAtomic(record.absolutePath, next)
+                return { ...current, testId: minted }
+              }))
             }
           } catch { /* fall back to filename */ }
           files.push({
@@ -179,12 +248,12 @@ export class TestFileManager {
   async write(relativePath: string, content: string): Promise<void> {
     const target = await this.resolveTarget(relativePath, false)
     await mkdir(dirname(target.absolutePath), { recursive: true })
-    await writeFile(target.absolutePath, content, 'utf-8')
+    await this.underLock(target.absolutePath, () => replaceFileAtomic(target.absolutePath, content))
   }
 
   async delete(relativePath: string): Promise<void> {
     const target = await this.resolveTarget(relativePath, true)
-    await rm(target.absolutePath)
+    await this.underLock(target.absolutePath, () => rm(target.absolutePath))
   }
 
   async validate(content: string): Promise<TestValidationResult> {

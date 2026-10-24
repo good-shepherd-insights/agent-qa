@@ -3,8 +3,8 @@ import { AgentQaConfigSchema } from '../schema/config-schema.js'
 import {
   ModelConfigSchema,
   NamedLLMConfigSchema,
+  NameSlugSchema,
   TimeoutConfigSchema,
-  HealingConfigSchema,
   PlannerConfigSchema,
   BrowserConfigSchema,
 } from '../schema/primitives.js'
@@ -14,7 +14,9 @@ import {
   AccessibilityConfigSchema,
   CacheConfigSchema,
   AuthStateConfigSchema,
-  MemoryConfigSchema,
+  ServicesSchema,
+  VisionServiceSchema,
+  RecordingConfigSchema,
 } from '../schema/services-schema.js'
 
 const validWorkspace = {
@@ -22,7 +24,6 @@ const validWorkspace = {
   suiteMatch: ['suites/**/*.suite.yaml'],
   testPathIgnore: ['tests/skip/**'],
   hooksFile: 'hooks.yaml',
-  agentRules: './agent-rules.md',
   envFile: '.env',
   secretsFile: '.env.secrets.local',
 }
@@ -63,7 +64,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         suiteMatch: ['suites/**/*.suite.yaml'],
         testPathIgnore: ['tests/skip/**'],
         hooksFile: 'hooks.yaml',
-        agentRules: 'rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
@@ -78,12 +78,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
           standard: 'wcag2aa' as const,
           runAfter: 'every-step' as const,
           failOnViolation: false,
-        },
-        memory: {
-          enabled: true,
-          provider: 'local' as const,
-          curatorEnabled: true,
-          dir: '.agent-qa/custom-memory',
         },
         mcp: {
           enabled: true,
@@ -103,8 +97,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         browser: { name: 'chromium' as const, headless: true },
         mobile: { appState: 'preserve' as const },
         timeout: { step: '30s', test: '10m', navigation: '10s' },
-        healing: { maxAttempts: 3 },
-        planner: { maxSubActions: 10, previousStepCount: 5 },
+        planner: { maxActions: 10, maxPlanningTurns: 10, previousStepCount: 5 },
         logCapture: { console: true, network: false },
         llm: 'claude-main',
         parallel: false,
@@ -146,6 +139,61 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     }))
 
     expect(result.success).toBe(false)
+  })
+
+  it('accepts explicit provider plugin package and path declarations', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      plugins: {
+        providers: [
+          { package: '@scope/pkg' },
+          { path: '../x/dist/index.js' },
+        ],
+      },
+    }))
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.plugins?.providers).toEqual([
+        { package: '@scope/pkg' },
+        { path: '../x/dist/index.js' },
+      ])
+    }
+  })
+
+  it('rejects ambiguous provider plugin declarations', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      plugins: {
+        providers: [
+          {
+            package: '@scope/pkg',
+            path: '../x/dist/index.js',
+          },
+        ],
+      },
+    }))
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects empty provider plugin declarations', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      plugins: {
+        providers: [{}],
+      },
+    }))
+
+    expect(result.success).toBe(false)
+  })
+
+  it('defaults omitted provider plugin declarations to an empty array', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      plugins: {},
+    }))
+
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.plugins?.providers).toEqual([])
+    }
   })
 
   it('rejects root use.headless and accepts browser-scoped headless', () => {
@@ -204,6 +252,46 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     expect(result.success).toBe(true)
   })
 
+  it('REC-KNOB-PARSES: preserves optional failures-only recording settings', () => {
+    for (const keepFailuresOnly of [true, false]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({
+        services: { recording: { keepFailuresOnly } },
+      }))
+      expect(result.success).toBe(true)
+      if (result.success) expect(result.data.services?.recording).toEqual({ enabled: true, keepFailuresOnly })
+    }
+    const empty = AgentQaConfigSchema.parse(withWorkspace({ services: { recording: {} } }))
+    expect(empty.services?.recording).toEqual({ enabled: true })
+    const absent = AgentQaConfigSchema.parse(withWorkspace({ services: {} }))
+    expect(absent.services?.recording).toEqual({ enabled: true })
+  })
+
+  it('REC-SCHEMA-DEFAULT: materializes default-on through omitted containers without mutating input', () => {
+    for (const input of [{}, { services: {} }, { services: { recording: {} } }]) {
+      const config = withWorkspace(input)
+      const original = structuredClone(config)
+      expect(AgentQaConfigSchema.parse(config).services?.recording).toEqual({ enabled: true })
+      expect(config).toEqual(original)
+    }
+    expect(RecordingConfigSchema.parse({})).toEqual({ enabled: true })
+    expect(ServicesSchema.parse({}).recording).toEqual({ enabled: true })
+    for (const enabled of [true, false]) {
+      expect(RecordingConfigSchema.parse({ enabled })).toEqual({ enabled })
+      expect(AgentQaConfigSchema.parse(withWorkspace({
+        services: { recording: { enabled } },
+      })).services?.recording).toEqual({ enabled })
+    }
+  })
+
+  it('REC-KNOB-STRICT: accepts the knob but rejects unknown recording keys', () => {
+    const recording = { keepFailuresOnly: true }
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ services: { recording } })).success)
+      .toBe(true)
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({
+      services: { recording: { ...recording, videoDir: 'videos' } },
+    })).success).toBe(false)
+  })
+
   it('accepts a complete service runtime path config sample', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({
       services: {
@@ -228,12 +316,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         accessibility: {
           enabled: false,
         },
-        memory: {
-          enabled: true,
-          provider: 'local',
-          curatorEnabled: true,
-          dir: '.agent-qa/custom-memory',
-        },
       },
     }))
 
@@ -246,9 +328,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
       expect(result.data.services?.logging?.level).toBe('warn')
       expect(result.data.services?.recording?.enabled).toBe(false)
       expect(result.data.services?.accessibility?.enabled).toBe(false)
-      expect(result.data.services?.memory?.provider).toBe('local')
-      expect(result.data.services?.memory?.curatorEnabled).toBe(true)
-      expect(result.data.services?.memory?.dir).toBe('.agent-qa/custom-memory')
     }
   })
 
@@ -296,7 +375,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         suiteMatch: ['**/*.suite.yaml'],
         testPathIgnore: ['node_modules'],
         hooksFile: 'hooks.yaml',
-        agentRules: 'rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
@@ -305,7 +383,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
   })
 
   it('rejects workspace config that omits each required workspace key', () => {
-    const requiredKeys = ['testMatch', 'suiteMatch', 'hooksFile', 'agentRules', 'envFile', 'secretsFile'] as const
+    const requiredKeys = ['testMatch', 'suiteMatch', 'hooksFile', 'envFile', 'secretsFile'] as const
     for (const key of requiredKeys) {
       const workspace = { ...validWorkspace }
       delete workspace[key]
@@ -335,7 +413,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
   })
 
   it('rejects empty workspace scalar file keys', () => {
-    const requiredKeys = ['hooksFile', 'agentRules', 'envFile', 'secretsFile'] as const
+    const requiredKeys = ['hooksFile', 'envFile', 'secretsFile'] as const
     for (const key of requiredKeys) {
       const result = AgentQaConfigSchema.safeParse({
         workspace: {
@@ -465,6 +543,29 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     })
 
     expect(result.success).toBe(false)
+  })
+
+  // KDIR-03 (Phase 373): the slim knowledge block replaced the retired v1 memory services block.
+  it('materializes knowledge defaults when the block is omitted', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.knowledge.dir).toBe('agent-qa-knowledge')
+      expect(result.data.knowledge.commitArtifacts).toBe('none')
+      expect(result.data.knowledge.contextBudgetTokens).toBeUndefined()
+    }
+  })
+
+  it('accepts an explicit knowledge block', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      knowledge: { dir: 'docs/knowledge', commitArtifacts: 'thumbnails', contextBudgetTokens: 4096 },
+    }))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.knowledge.dir).toBe('docs/knowledge')
+      expect(result.data.knowledge.commitArtifacts).toBe('thumbnails')
+      expect(result.data.knowledge.contextBudgetTokens).toBe(4096)
+    }
   })
 
   it('rejects stale global use.actionProofs', () => {
@@ -743,15 +844,6 @@ describe('Sub-schemas — primitives', () => {
     ).toBe(true)
   })
 
-  it('HealingConfigSchema requires all fields', () => {
-    expect(HealingConfigSchema.safeParse({}).success).toBe(false)
-    expect(
-      HealingConfigSchema.safeParse({
-        maxAttempts: 3,
-      }).success,
-    ).toBe(true)
-  })
-
   it('CacheConfigSchema requires all fields', () => {
     expect(CacheConfigSchema.safeParse({}).success).toBe(false)
     expect(CacheConfigSchema.safeParse({ dir: '.cache', ttl: '7d' }).success).toBe(true)
@@ -763,17 +855,12 @@ describe('Sub-schemas — primitives', () => {
     expect(AuthStateConfigSchema.safeParse({ dir: '.agent-qa/auth-states', ttlSeconds: 3600 }).success).toBe(false)
   })
 
-  it('MemoryConfigSchema defaults and validates dir', () => {
-    expect(MemoryConfigSchema.parse({}).dir).toBe('agent-qa-memory')
-    expect(MemoryConfigSchema.safeParse({ dir: '.agent-qa/custom-memory' }).success).toBe(true)
-    expect(MemoryConfigSchema.safeParse({ dir: '' }).success).toBe(false)
-  })
-
   it('PlannerConfigSchema requires all fields', () => {
     expect(PlannerConfigSchema.safeParse({}).success).toBe(false)
     expect(
       PlannerConfigSchema.safeParse({
-        maxSubActions: 10,
+        maxActions: 10,
+        maxPlanningTurns: 10,
         previousStepCount: 5,
       }).success,
     ).toBe(true)
@@ -839,60 +926,84 @@ describe('Sub-schemas — primitives', () => {
   })
 })
 
-describe('ModelConfigSchema — screenshotSize', () => {
-  it('parses screenshotSize string to byte count', () => {
+describe('ModelConfigSchema — vision config relocation', () => {
+  it('defaults model vision to true', () => {
     const result = ModelConfigSchema.safeParse({
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.vision).toBe(true)
+    }
+  })
+
+  it('rejects relocated per-model screenshotSize and effectiveResolution', () => {
+    expect(ModelConfigSchema.safeParse({
       provider: 'anthropic-subscription',
       model: 'claude-sonnet-4-20250514',
       screenshotSize: '1m',
+    }).success).toBe(false)
+
+    expect(ModelConfigSchema.safeParse({
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+      effectiveResolution: 1024,
+    }).success).toBe(false)
+  })
+
+  it('accepts services.vision sizing and transforms screenshotSize', () => {
+    const result = ServicesSchema.safeParse({
+      vision: {
+        screenshotSize: '256k',
+        effectiveResolution: 768,
+      },
     })
+
     expect(result.success).toBe(true)
     if (result.success) {
-      expect(result.data.screenshotSize).toBe(1048576)
+      expect(result.data.vision?.screenshotSize).toBe(262144)
+      expect(result.data.vision?.effectiveResolution).toBe(768)
     }
   })
 
-  it('parses without screenshotSize (optional field)', () => {
-    const result = ModelConfigSchema.safeParse({
+  it('rejects removed per-model vision sizing override', () => {
+    const removedOverrideKey = ['vision', 'Override'].join('')
+
+    expect(ModelConfigSchema.safeParse({
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+      [removedOverrideKey]: {
+        screenshotSize: '128k',
+        effectiveResolution: 1024,
+      },
+    }).success).toBe(false)
+
+    expect(NamedLLMConfigSchema.safeParse({
+      name: 'claude-main',
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+      [removedOverrideKey]: {
+        screenshotSize: '128k',
+      },
+    }).success).toBe(false)
+
+    const validResult = NamedLLMConfigSchema.safeParse({
+      name: 'claude-main',
       provider: 'anthropic-subscription',
       model: 'claude-sonnet-4-20250514',
     })
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.screenshotSize).toBeUndefined()
+    expect(validResult.success).toBe(true)
+    if (validResult.success) {
+      expect(validResult.data.vision).toBe(true)
     }
   })
-})
 
-describe('ModelConfigSchema — effectiveResolution', () => {
-  it('parses effectiveResolution as positive integer', () => {
-    const result = ModelConfigSchema.safeParse({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-20250514',
-      effectiveResolution: 1568,
-    })
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.effectiveResolution).toBe(1568)
-    }
-  })
-
-  it('rejects negative effectiveResolution', () => {
-    const result = ModelConfigSchema.safeParse({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-20250514',
-      effectiveResolution: -100,
-    })
-    expect(result.success).toBe(false)
-  })
-
-  it('rejects non-integer effectiveResolution', () => {
-    const result = ModelConfigSchema.safeParse({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-4-20250514',
-      effectiveResolution: 1024.5,
-    })
-    expect(result.success).toBe(false)
+  it('rejects unknown services.vision keys', () => {
+    expect(VisionServiceSchema.safeParse({
+      screenshotSize: '256k',
+      extra: true,
+    }).success).toBe(false)
   })
 })
 
@@ -922,6 +1033,36 @@ describe('NamedLLMConfigSchema — name validation', () => {
       model: 'claude-sonnet-4-20250514',
     })
     expect(result.success).toBe(false)
+  })
+
+  it('DOTTED-NAMES-ACCEPTED: dotted names parse, bad spellings are refused (D-13)', () => {
+    const parse = (name: string) => NamedLLMConfigSchema.safeParse({
+      name,
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+    })
+    for (const name of ['gpt-5.6', 'claude-sonnet-4.5', 'local', 'gpt-5-6', 'claude-main']) {
+      expect(parse(name).success, name).toBe(true)
+      expect(NameSlugSchema.safeParse(name).success, name).toBe(true)
+    }
+    for (const name of ['-gpt', '.gpt', 'GPT-5', 'gpt 5']) {
+      expect(parse(name).success, name).toBe(false)
+      const direct = NameSlugSchema.safeParse(name)
+      expect(direct.success, name).toBe(false)
+      if (!direct.success) {
+        expect(direct.error.issues[0]!.message).toBe(
+          'Name must be lowercase letters, digits, hyphens and dots, starting with a letter or digit',
+        )
+      }
+    }
+
+    const config = AgentQaConfigSchema.safeParse(withWorkspace({
+      registry: {
+        llms: [{ name: 'gpt-5.6', provider: 'openai-compatible', model: 'gpt-5.6', baseURL: 'https://remote.example/api/v1' }],
+      },
+      use: { llm: 'gpt-5.6' },
+    }))
+    expect(config.success).toBe(true)
   })
 })
 
@@ -1043,5 +1184,264 @@ describe('TargetSchema — product key validation', () => {
 
       expect(result.success, JSON.stringify(targetName)).toBe(false)
     }
+  })
+})
+
+// 2026-10-01 (432-22, D-12/D-15/D-18/D-22): the retired keys are deleted, not migrated. The four
+// `safety.trustMode` cells this block held (accept, non-boolean, strict subkeys, optional) asserted
+// a key that no longer exists; their surviving claim is that a config without it parses, kept below.
+// A file that still declares a retired key gets zod's ordinary unrecognized-key issue at the owning
+// object, naming exactly that key, with no retired-key message, migration or notice.
+describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)', () => {
+  const RETIRED: readonly [string, Record<string, unknown>, string, string][] = [
+    ['safety.trustMode', { safety: { trustMode: true } }, '', 'safety'],
+    ['safety (empty)', { safety: {} }, '', 'safety'],
+    [
+      'services.mcp.tokens',
+      { services: { mcp: { enabled: true, tokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_MCP_CI', scopes: ['read'] }] } } },
+      'services.mcp',
+      'tokens',
+    ],
+    ['services.mcp.tokens (empty)', { services: { mcp: { tokens: [] } } }, 'services.mcp', 'tokens'],
+    ['services.mcp.stdio.grantConfigWrite', { services: { mcp: { stdio: { grantConfigWrite: true } } } }, 'services.mcp', 'stdio'],
+    ['services.mcp.stdio (empty)', { services: { mcp: { stdio: {} } } }, 'services.mcp', 'stdio'],
+    [
+      'services.dashboard.runServiceTokens',
+      { services: { dashboard: { runServiceTokens: [{ name: 'ci', tokenEnvVar: 'AGENT_QA_RUN_CI', trustScope: { project: 'p' } }] } } },
+      'services.dashboard',
+      'runServiceTokens',
+    ],
+  ]
+
+  for (const [label, config, path, key] of RETIRED) {
+    it(`C432-OLD-KEYS-STRICT: ${label} gets the normal unrecognized-key error and nothing else`, () => {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace(config))
+      expect(result.success).toBe(false)
+      if (result.success) return
+      expect(result.error.issues).toHaveLength(1)
+      const [issue] = result.error.issues as unknown as [{ code: string; path: unknown[]; keys: string[]; message: string }]
+      expect(issue.code).toBe('unrecognized_keys')
+      expect(issue.path.join('.')).toBe(path)
+      expect(issue.keys).toEqual([key])
+      expect(issue.message, 'no retired-key message').toBe(`Unrecognized key: "${key}"`)
+    })
+  }
+
+  it('C432-OLD-KEYS-STRICT: every retired key at once is refused key by key, each at its own owner', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      safety: { trustMode: false },
+      services: {
+        mcp: { tokens: [], stdio: { grantConfigWrite: false } },
+        dashboard: { runServiceTokens: [] },
+      },
+    }))
+    expect(result.success).toBe(false)
+    if (result.success) return
+    const found = result.error.issues.map(issue => {
+      expect(issue.code).toBe('unrecognized_keys')
+      return `${issue.path.join('.')}:${[...(issue as unknown as { keys: string[] }).keys].sort().join(',')}`
+    })
+    expect(found.sort()).toEqual([':safety', 'services.dashboard:runServiceTokens', 'services.mcp:stdio,tokens'])
+  })
+
+  it('C432-OLD-KEYS-STRICT: minimal empty service objects parse and materialize no retired member', () => {
+    for (const services of [{}, { mcp: {} }, { dashboard: {} }, { mcp: {}, dashboard: {} }]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({ services }))
+      expect(result.success, JSON.stringify(services)).toBe(true)
+      if (!result.success) continue
+      expect(result.data.services?.mcp ?? {}, JSON.stringify(services)).toEqual({})
+      expect(result.data.services?.dashboard ?? {}, JSON.stringify(services)).toEqual({})
+      expect(Object.keys(result.data)).not.toContain('safety')
+    }
+    expect(McpConfigSchema.parse({})).toEqual({})
+    expect(DashboardConfigSchema.parse({})).toEqual({})
+  })
+
+  it('C432-OLD-KEYS-STRICT: a config without any retired key parses (the surviving optional claim)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+  })
+
+  // EDGE-13: the removal is exact. The retired spellings stay legal where a free-form record owns
+  // the key, and an unrelated strict object refuses them exactly as it always did.
+  it('C432-OLD-KEYS-STRICT: strict removal rejects exactly the retired keys and nothing that merely shares a name', () => {
+    const shared = AgentQaConfigSchema.safeParse(withWorkspace({
+      registry: { providers: { farm: { tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' } } },
+      services: { mcp: { enabled: false } },
+      knowledge: { contextBudgetTokens: 4000 },
+    }))
+    expect(shared.success, JSON.stringify(shared.error?.issues)).toBe(true)
+    if (shared.success) {
+      expect(shared.data.registry?.providers?.farm).toEqual({ tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' })
+      expect(shared.data.services?.mcp).toEqual({ enabled: false })
+    }
+    const elsewhere = AgentQaConfigSchema.safeParse(withWorkspace({ services: { cache: { dir: '.c', ttl: '1d', tokens: [] } } }))
+    expect(elsewhere.success).toBe(false)
+    if (!elsewhere.success) {
+      expect(elsewhere.error.issues.map(issue => [issue.code, issue.path.join('.')])).toEqual([['unrecognized_keys', 'services.cache']])
+    }
+    for (const nested of [{ services: { mcp: { stdio: { grantConfigWrite: false } } } }, { eval: { safety: {} } }]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace(nested))
+      expect(result.success, JSON.stringify(nested)).toBe(false)
+      if (!result.success) expect(result.error.issues.every(issue => issue.code === 'unrecognized_keys')).toBe(true)
+    }
+  })
+
+  it('C432-OLD-KEYS-STRICT: the retained guardrail settings keep their contracts', () => {
+    const kept = AgentQaConfigSchema.safeParse(withWorkspace({
+      allowProduction: true,
+      services: {
+        mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
+        dashboard: { port: 3470, host: '127.0.0.1', baseUrl: 'http://127.0.0.1:3470' },
+      },
+    }))
+    expect(kept.success).toBe(true)
+    if (kept.success) {
+      expect(kept.data.services?.mcp).toEqual({ enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' })
+      expect(kept.data.allowProduction).toBe(true)
+    }
+    expect(McpConfigSchema.safeParse({ host: '0.0.0.0' }).success, 'MCP stays loopback-only').toBe(false)
+    expect(DashboardConfigSchema.safeParse({ baseUrl: 'javascript:alert(1)' }).success, 'the live-link base stays http(s)').toBe(false)
+    expect(DashboardConfigSchema.safeParse({ host: '0.0.0.0' }).success, 'the bind refusal stays a runtime guard').toBe(true)
+  })
+})
+
+// 432 D-18: production is a config declaration. A target may declare `environment: production`,
+// and only the top-level boolean `allowProduction` opts in; absence and false never do.
+describe('AgentQaConfigSchema — production declarations (432 D-18)', () => {
+  const productionTarget = { platform: 'web', url: 'https://shop.example.com', environment: 'production' }
+
+  it('C432-PRODUCTION-CONFIG: allowProduction is optional, and absent stays absent rather than defaulting', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(Object.keys(result.data)).not.toContain('allowProduction')
+    expect(result.data.allowProduction).toBeUndefined()
+  })
+
+  it('C432-PRODUCTION-CONFIG: allowProduction accepts exactly false and true', () => {
+    for (const allowProduction of [false, true]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({
+        allowProduction,
+        registry: { targets: { shop: productionTarget } },
+      }))
+      expect(result.success, String(allowProduction)).toBe(true)
+      if (!result.success) continue
+      expect(result.data.allowProduction).toBe(allowProduction)
+      expect(result.data.registry?.targets?.shop?.environment).toBe('production')
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: allowProduction refuses null, strings and other non-booleans', () => {
+    for (const allowProduction of [null, 'true', 'false', 'yes', '', 1, 0, {}, []]) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace({ allowProduction }))
+      expect(result.success, JSON.stringify(allowProduction)).toBe(false)
+      if (result.success) continue
+      expect(result.error.issues.map(issue => issue.path.join('.')), JSON.stringify(allowProduction))
+        .toContain('allowProduction')
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: a target declares production, beside local, shared and undeclared', () => {
+    for (const environment of ['local', 'shared', 'production', undefined] as const) {
+      const target = environment === undefined
+        ? { platform: 'web', url: 'https://shop.example.com' }
+        : { ...productionTarget, environment }
+      const result = TargetSchema.safeParse(target)
+      expect(result.success, String(environment)).toBe(true)
+      if (!result.success) continue
+      if (environment === undefined) expect(Object.keys(result.data)).not.toContain('environment')
+      else expect(result.data.environment).toBe(environment)
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: a target refuses malformed environment spellings', () => {
+    for (const environment of ['Production', 'prod', 'staging', ' production', '', null, true]) {
+      const result = TargetSchema.safeParse({ ...productionTarget, environment })
+      expect(result.success, JSON.stringify(environment)).toBe(false)
+      if (result.success) continue
+      expect(result.error.issues.map(issue => issue.path.join('.'))).toContain('environment')
+    }
+  })
+
+  it('C432-PRODUCTION-CONFIG: misplaced or misspelled opt-ins get the normal unrecognized-key error', () => {
+    const cases: readonly [Record<string, unknown>, string, string][] = [
+      [{ allowProd: true }, '', 'allowProd'],
+      [{ allowproduction: true }, '', 'allowproduction'],
+      [{ registry: { targets: { shop: { ...productionTarget, allowProduction: true } } } }, 'registry.targets.shop', 'allowProduction'],
+    ]
+    for (const [config, path, key] of cases) {
+      const result = AgentQaConfigSchema.safeParse(withWorkspace(config))
+      expect(result.success, key).toBe(false)
+      if (result.success) continue
+      const unrecognized = result.error.issues.filter(issue => issue.code === 'unrecognized_keys')
+      expect(unrecognized.map(issue => issue.path.join('.')), key).toEqual([path])
+      expect((unrecognized[0] as { keys: string[] }).keys).toEqual([key])
+    }
+  })
+})
+
+// D-03 (Phase 372): eval substrate params — judge names a registry.llms entry;
+// strict so unknown eval subkeys are rejected; optional so pre-372 configs still parse.
+describe('AgentQaConfigSchema — eval block (D-03)', () => {
+  it('accepts a full eval block', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: {
+        judge: 'gpt-judge',
+        k: 3,
+        seed: 42,
+        seeding: { silverPerTestCap: 5 },
+      },
+    }))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.eval?.judge).toBe('gpt-judge')
+      expect(result.data.eval?.k).toBe(3)
+      expect(result.data.eval?.seed).toBe(42)
+      expect(result.data.eval?.seeding?.silverPerTestCap).toBe(5)
+    }
+  })
+
+  it('rejects unknown eval subkeys (strict)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { judg: 'x' },
+    }))
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects unknown eval.seeding subkeys (strict)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { seeding: { silverPerTest: 5 } },
+    }))
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects non-positive k and non-integer seed', () => {
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { k: 0 } })).success).toBe(false)
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { seed: 1.5 } })).success).toBe(false)
+    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { seeding: { silverPerTestCap: 0 } } })).success).toBe(false)
+  })
+
+  it('parses a config WITHOUT the eval key (optional, additive)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
+    expect(result.success).toBe(true)
+  })
+
+  // Owner override of D-10 (2026-07-12): the explicit same-family judging opt-in.
+  it('accepts eval.judgeAllowSameFamily as a boolean (D-10 owner override)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { judge: 'judge', judgeAllowSameFamily: true },
+    }))
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.eval?.judgeAllowSameFamily).toBe(true)
+    }
+  })
+
+  it('rejects a non-boolean eval.judgeAllowSameFamily (strict)', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      eval: { judge: 'judge', judgeAllowSameFamily: 'yes' },
+    }))
+    expect(result.success).toBe(false)
   })
 })

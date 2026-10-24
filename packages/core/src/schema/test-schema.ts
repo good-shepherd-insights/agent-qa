@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import ms from 'ms'
 import { isCanonicalHookId, isCanonicalTestId } from '@vostride/agent-qa-ids'
+import { retiredUseKeyScan } from './retired-keys.js'
 import { UseOverrideSchema } from './use-schema.js'
 
 const OptionalDuration = z.string()
@@ -26,7 +27,6 @@ export const TestStepSchema = z.union([
     retries: z.number().optional(),
     screenshot: z.boolean().optional(),
     capture: CaptureConfigSchema.optional(),
-    maxAttempts: z.number().optional(),
   }).strict(),
 ])
 
@@ -47,7 +47,7 @@ export const TestDefinitionSchema = z.object({
   name: z.string(),
   target: z.string(),
   context: z.string().optional(),
-  use: UseOverrideSchema.optional(),
+  use: retiredUseKeyScan.pipe(UseOverrideSchema).optional(),
   meta: TestMetaSchema.optional(),
   setup: z.array(HookIdSchema).optional(),
   teardown: z.array(HookIdSchema).optional(),

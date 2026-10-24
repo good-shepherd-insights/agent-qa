@@ -38,8 +38,7 @@ commands, validation commands, and packaged skills.
   plugins automatically.
 - Auth commands must not print or persist secrets outside the existing auth
   store paths.
-- Run command changes must preserve dashboard event, run ID, suite queue, and
-  live-event environment behavior.
+- Run command changes must preserve dashboard event, run ID and live-event environment behavior.
 - Packaged skills come from the source `skills/` directory through `copy:skills`.
 
 ## Verification

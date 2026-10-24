@@ -1,0 +1,87 @@
+import { Command } from 'commander'
+import { VERSION } from './index.js'
+import {
+  createAgentJobsCommand,
+  createAuthCommand,
+  createAuthStateCommand,
+  createCacheCommand,
+  createConfigCommand,
+  createDashboardCommand,
+  createDaemonCommand,
+  createDevicesCommand,
+  createDoctorCommand,
+  createEntitiesCommand,
+  createEvalCommand,
+  createDigestCommand,
+  createAskCommand,
+  createChatCommand,
+  createFnCommand,
+  createInitCommand,
+  createInstallBrowsersCommand,
+  createInstallMobileDriversCommand,
+  createKnowledgeCommand,
+  createMcpCommand,
+  createQueueCommand,
+  createRunCommand,
+  createServeCommand,
+  createSkillsCommand,
+  createValidateCommand,
+} from './commands/index.js'
+import { createRunsCommand } from './commands/runs.js'
+
+/** The whole `agent-qa` command tree, unparsed; `cli.ts` parses it and tests read it. */
+export function createAgentQaProgram(): Command {
+  const program = new Command()
+  program.enablePositionalOptions()
+
+  program
+    .name('agent-qa')
+    .description('The self-improving Agentic QA harness with Memory')
+    .version(VERSION)
+
+  program
+    .option('--config <path>', 'config file path', 'agent-qa.config.yaml')
+    .option('--log-level <level>', 'log verbosity: silent|error|warn|info|debug')
+    .option('--verbose', 'shorthand for --log-level debug')
+    .option('--quiet', 'shorthand for --log-level silent')
+
+  program.addCommand(createRunCommand())
+  program.addCommand(createRunsCommand())
+  program.addCommand(createInitCommand())
+  program.addCommand(createInstallBrowsersCommand())
+  program.addCommand(createInstallMobileDriversCommand())
+
+  program.addCommand(createDoctorCommand())
+  program.addCommand(createDashboardCommand())
+  program.addCommand(createServeCommand())
+  program.addCommand(createMcpCommand())
+  program.addCommand(createConfigCommand())
+  program.addCommand(createQueueCommand())
+  program.addCommand(createKnowledgeCommand())
+  program.addCommand(createCacheCommand())
+  program.addCommand(createValidateCommand())
+  program.addCommand(createAuthCommand())
+  program.addCommand(createAuthStateCommand())
+  program.addCommand(createDevicesCommand())
+  program.addCommand(createEntitiesCommand())
+  program.addCommand(createEvalCommand())
+  program.addCommand(createSkillsCommand())
+  program.addCommand(createFnCommand())
+  // 392 D-01/D-24: the one-shot chat verb, registered beside `fn` because it is the same KIND of
+  // thing — a thin client that invokes one registered op through `invokeFunction`.
+  program.addCommand(createAskCommand())
+  // D-01's other surface. Two commands, ONE turn engine: the REPL and the one-shot verb differ in
+  // the session and the loop and in nothing else, which is why a routing change cannot be right in
+  // one of them and wrong in the other.
+  program.addCommand(createChatCommand())
+  // 391 D-17: the per-run digest on demand. 2026-10-01 (432-17, D-02/D-05): `agent-qa proposals`
+  // (the inbox and its `grants list | revoke` subtree) is deleted with no alias.
+  program.addCommand(createDigestCommand())
+  program.addCommand(createDaemonCommand())
+  // 413 D-06: the agent job queue's operator verbs, registered beside the daemon that is its
+  // resident drainer — `pump --only <kind>` is the in-process drain for a host that must run one
+  // kind and leave the rest queued.
+  program.addCommand(createAgentJobsCommand())
+
+  return program
+}

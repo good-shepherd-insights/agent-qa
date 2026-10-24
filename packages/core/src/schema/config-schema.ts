@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { WorkspaceSchema } from './workspace-schema.js'
 import { ServicesSchema } from './services-schema.js'
+import { KnowledgeConfigSchema } from './knowledge-schema.js'
+import { retiredKeyScan } from './retired-keys.js'
 import { RegistrySchema } from './registry-schema.js'
 import { MobileAppStateSchema, UseSchema } from './use-schema.js'
 import { AnalyticsSchema } from './analytics-schema.js'
@@ -14,19 +16,99 @@ export const AuthPluginDeclarationSchema = z.union([
   }).strict(),
 ])
 
+// Provider plugins load in-process with full Node access; keep them first-party-only
+// until a container sandbox exists.
+export const ProviderPluginDeclarationSchema = z.union([
+  z.object({
+    package: z.string().trim().min(1),
+  }).strict(),
+  z.object({
+    path: z.string().trim().min(1),
+  }).strict(),
+])
+
 export const PluginsSchema = z.object({
   auth: z.array(AuthPluginDeclarationSchema).optional().default([]),
+  providers: z.array(ProviderPluginDeclarationSchema).optional().default([]),
 }).strict()
 
-export const AgentQaConfigSchema = z.object({
+const AgentQaConfigSchemaInner = z.object({
   workspace: WorkspaceSchema,
-  services: ServicesSchema.optional(),
+  services: ServicesSchema.prefault({}).optional(),
+  // D-08: slim replacement for the retired v1 memory config surface; prefaulted so parsed
+  // configs always materialize knowledge defaults (zod 4 .default() short-circuits without
+  // parsing — .prefault() runs the inner defaults) — matches the providers `.default([])`
+  // precedent in spirit.
+  knowledge: KnowledgeConfigSchema.prefault({}),
   registry: RegistrySchema.optional(),
   use: UseSchema.optional(),
   plugins: PluginsSchema.optional(),
   analytics: AnalyticsSchema.optional(),
+  // 432 D-18: the one production opt-in. Optional with no default: its consumer reads absence as
+  // false, so only an explicit `true` in the validated config authorizes a production target.
+  allowProduction: z.boolean().optional(),
+  // 2026-10-01 (432-22, D-15/D-18/D-22): the `safety` section (`safety.trustMode`) is deleted with
+  // trust mode. `allowProduction` above is the only production opt-in, and a file that still
+  // declares `safety` gets the normal strict unrecognized-key error.
+  // D-03 (Phase 372): eval substrate params. `judge` references a NAMED registry.llms entry;
+  // strict so unknown eval subkeys are rejected.
+  eval: z.object({
+    judge: z.string().min(1).refine(name => name.trim().length > 0).optional(),
+    judges: z.array(z.string().min(1).refine(name => name.trim().length > 0)).max(3).optional(),
+    // Owner override of D-10 (2026-07-12): explicit default-off opt-in that lets a
+    // KNOWN-same-family judge run; the eligibility law discloses the override on every
+    // scored entry (familyOverride) and the report projection renders one honesty line.
+    // Unknown families stay forbidden regardless.
+    judgeAllowSameFamily: z.boolean().optional(),
+    k: z.number().int().positive().optional(),
+    seed: z.number().int().optional(),
+    // 2026-09-07, 417 D-19: Gate-1 screen cap; recorded default lives in the CLI.
+    // 2026-09-11, 422 D-14: `maxPerJob` bounds how many Gate-1 CALLS one post-run proposal job
+    // may make; recorded default lives beside the handler (PROPOSE_DEFAULT_MAX_GATE1_PER_JOB).
+    // A SECOND axis beside `maxScreens`, not a refinement of it — that one bounds how much a
+    // single screening looks at, this one bounds how many screenings a run's tail buys — and an
+    // operator can legitimately want a generous first and a tight second. Positive-integer only,
+    // for the sharper version of the usual reason: a bound that silently fell back to the
+    // recorded default because the operator typed `0` would buy replay work they refused. There
+    // is deliberately NO CLI flag: the bound is charged durably per job and read back by a
+    // resumed attempt, so a per-invocation flag would be a bound that could change between the
+    // attempt that spent it and the attempt that has to honour what was spent.
+    gate1: z.object({
+      maxScreens: z.number().int().positive().optional(),
+      maxPerJob: z.number().int().positive().optional(),
+    }).strict().optional(),
+    // 2026-09-07, 418 D-04/D-13/D-14: Gate-2 ablation cap, canary horizon (build ordinals)
+    // and per-scope lower-trust cap; recorded defaults live in the CLI (GATE2_DEFAULT_*).
+    gate2: z.object({
+      maxAblations: z.number().int().positive().optional(),
+      canaryHorizonBuilds: z.number().int().positive().optional(),
+      maxLowerTrustPerScope: z.number().int().positive().optional(),
+    }).strict().optional(),
+    // 2026-09-11, 422 D-04: how many NOVEL seeds one adversarial refresh may derive from
+    // before the rest are counted and deferred; recorded default lives in eval core
+    // (ADVERSARIAL_DEFAULT_MAX_SEEDS_PER_REFRESH). Strict, and positive-integer only: a cap
+    // that silently fell back to the default because the operator typed `0` is not a cap.
+    // 2026-09-11, 422 D-04/D-10: `maxProbeCalls` bounds PROVIDER CALLS one refresh may make to
+    // author probes; recorded default lives in eval-local
+    // (ADVERSARIAL_DEFAULT_MAX_PROBE_CALLS). It is a SECOND budget beside the seed cap on
+    // purpose — deterministic seeds cost CPU and authored probes cost money no later run can
+    // recover — and it is held to the same positive-integer strictness for the sharper version
+    // of the same reason: a cap that silently fell back to the default because the operator
+    // typed `0` would buy calls they refused.
+    adversarial: z.object({
+      maxSeedsPerRefresh: z.number().int().positive().optional(),
+      maxProbeCalls: z.number().int().positive().optional(),
+    }).strict().optional(),
+    seeding: z.object({
+      silverPerTestCap: z.number().int().positive().optional(),
+    }).strict().optional(),
+  }).strict().optional(),
 }).strict()
 .superRefine((val, ctx) => {
+  if (val.eval?.judge !== undefined && val.eval.judges !== undefined) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['eval'],
+      message: 'Set either eval.judge or eval.judges, never both; remove one declaration.' })
+  }
   const llms = val.registry?.llms ?? []
   const names = llms.map(c => c.name)
   const dupes = names.filter((n, i) => names.indexOf(n) !== i)
@@ -60,8 +142,15 @@ export const AgentQaConfigSchema = z.object({
   }
 })
 
+// D-07: retired-key pipe pre-scan — the scan MUST run before the strict object because
+// zod (4.6.7 verified) skips refinements chained after a strict parse that rejects a value
+// (RESEARCH Pitfall 1). z.infer of the piped schema yields the stage-B output type,
+// so the exported AgentQaConfig type semantics are unchanged.
+export const AgentQaConfigSchema = retiredKeyScan.pipe(AgentQaConfigSchemaInner)
+
 export { WorkspaceSchema } from './workspace-schema.js'
 export { AuthStateConfigSchema, ServicesSchema } from './services-schema.js'
+export { KnowledgeConfigSchema } from './knowledge-schema.js'
 export { RegistrySchema } from './registry-schema.js'
 export {
   AuthStateUseSchema,

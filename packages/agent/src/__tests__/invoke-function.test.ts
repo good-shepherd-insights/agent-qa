@@ -1,0 +1,380 @@
+// The invoke pipeline's load-bearing order and typed refusals (Phase 384, Plan 01 — FUNC-01 /
+// FUNC-03 / D-11).
+//
+// 2026-09-30 (432-13, D-14/D-15): THERE IS NO OP GATE. `invokeFunction` no longer calls
+// `evaluate`, so nothing is classified, asked or audited at dispatch. The cells that measured the
+// gate's uniform audit are re-spelled as its absence (C432-INVOKE-DIRECT); the refusals that are
+// not approvals — unknown id, invalid input, scope, origin, binding — stay measured unchanged.
+//
+// 2026-10-02 (432-39, D-10/D-12): the caller's `grantedScopes`/`safeMode`, the metadata's
+// `requiredScopes` and the registry's `resolveExecutionContext` option are deleted. Where a cell
+// proves one of them is unread, the value is SMUGGLED past the type with a cast so the cell stays
+// non-vacuous; everywhere else the fixture simply stops passing it.
+
+import {
+  CURRENT_HANDOFF_SCHEMA_VERSION,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
+import type {
+  CompletedRunHandoff,
+  FunctionCaller,
+  RunSummary,
+} from '@vostride/agent-qa-schema'
+import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
+
+import {
+  FunctionInputError,
+  FunctionNotBoundError,
+  UnknownFunctionError,
+  invokeFunction,
+} from '../functions/invoke.js'
+import { runsListSpec } from '../functions/ops/runs-list.js'
+import {
+  DuplicateFunctionIdError,
+  createRegistryFromSpecs,
+} from '../functions/registry.js'
+import type { CreateFunctionRegistryOptions } from '../functions/registry.js'
+import type { FunctionDeps, FunctionSpec } from '../functions/spec.js'
+
+function handoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: runId as CompletedRunHandoff['runId'],
+    scope: { tier: 'product', key: 'shop' },
+    buildOrdinal,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'passed',
+    configDigests: { suiteConfigDigest: 'suite', testConfigDigest: 'test' },
+    startedAt: 1_000,
+    endedAt: 2_000,
+    tests: [],
+  }
+}
+
+interface SpyDeps {
+  deps: FunctionDeps
+  listCalls: () => number
+}
+
+function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
+  let listCalls = 0
+  return {
+    deps: {
+      secretMask: (text: string) => text,
+      runs: {
+        list: () => {
+          listCalls += 1
+          return Promise.resolve(documents)
+        },
+        get: (runId) => Promise.resolve(
+          documents.find((document) => document.runId === runId),
+        ),
+        // The stream port belongs to runs-events.test.ts; it exists here because
+        // FunctionDeps is a required, non-partial record — which is exactly how an
+        // unbound port becomes a compile error rather than a silent gap (D-09).
+        readEvents: () => Promise.resolve([]),
+        readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+      },
+      knowledge: {
+        listBundles: () => Promise.resolve([]),
+        inspectRecords: () => Promise.resolve([]),
+        diffSince: () => Promise.resolve([]),
+        showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
+      },
+      // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
+      // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases
+      // exercise other ops, and nothing in this file mints an address, so an honest miss and a
+      // reported absence are the truthful answers.
+      entities: {
+        resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+        get: () => Promise.resolve(undefined),
+      },
+      config: {
+        getMasked: () => Promise.resolve({
+          schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+          configPath: 'agent-qa.config.yaml',
+          entries: [],
+        }),
+      },
+    },
+    listCalls: () => listCalls,
+  }
+}
+
+// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell captures audit rows.
+
+/** A caller smuggling a retired scope set and safe-mode flag past the type (432-39): both unread. */
+function caller(grantedScopes: readonly string[], safeMode = false): FunctionCaller {
+  return { surface: 'test', grantedScopes, safeMode, origin: 'agent' } as FunctionCaller
+}
+
+/**
+ * A second synthetic capability so ordering and safe-mode filtering are observable.
+ *
+ * Deliberately a NON-REGISTERED id: `config.get` is a real read-only capability now, so
+ * reusing that id here would have this file assert a false thing about a shipped op.
+ */
+const configSetSpec = {
+  id: 'config.set',
+  summary: 'Synthetic non-read capability used to exercise the listing filter.',
+  requiredScopes: ['config-write'],
+  resultKind: 'unary',
+  input: z.object({}).strict(),
+  output: z.object({ ok: z.literal(true) }).strict(),
+  risk: { name: 'fn:config.set', recognized: true },
+  // 399.1-04: `classify` is a REQUIRED member now. A synthetic op's fold is the smallest honest
+  // one — the shape has a single arm, so there is nothing to discriminate.
+  classify: () => ({ status: 'executed' as const, outcome: '' }),
+  invoke: () => Promise.resolve({ ok: true as const }),
+} as FunctionSpec<Record<string, never>, { ok: true }>
+
+/**
+ * A synthetic capability declaring 394's `test-write` beside the two scopes an authoring loop
+ * also needs.
+ *
+ * The point of the multi-scope declaration is that the refusal must be SPECIFIC: a caller holding
+ * `run` and `read` is missing exactly one thing, and being told which one is the difference
+ * between an actionable refusal and a generic denial. Deliberately a non-registered id — the real
+ * `authoring.draft.write` lands later in this phase, and pinning it here would assert a false
+ * thing about a shipped op.
+ */
+const authoringDraftWriteSpec = {
+  id: 'authoring.draft.write.synthetic',
+  summary: 'Synthetic test-write capability used to exercise the scope refusal by name.',
+  requiredScopes: ['test-write', 'run', 'read'],
+  resultKind: 'unary',
+  input: z.object({}).strict(),
+  output: z.object({ ok: z.literal(true) }).strict(),
+  risk: { name: 'fn:authoring.draft.write.synthetic', recognized: true },
+  // 399.1-04: `classify` is a REQUIRED member now. A synthetic op's fold is the smallest honest
+  // one — the shape has a single arm, so there is nothing to discriminate.
+  classify: () => ({ status: 'executed' as const, outcome: '' }),
+  invoke: () => Promise.resolve({ ok: true as const }),
+} as FunctionSpec<Record<string, never>, { ok: true }>
+
+function registryOptions(
+  overrides: Partial<CreateFunctionRegistryOptions> = {},
+): CreateFunctionRegistryOptions {
+  return {
+    deps: spyDeps().deps,
+    ...overrides,
+  }
+}
+
+describe('invokeFunction pipeline', () => {
+  it('rejects an unknown id before any dependency is touched', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    await expect(
+      invokeFunction(registry, 'runs.nope', {}, caller(['read'])),
+    ).rejects.toBeInstanceOf(UnknownFunctionError)
+    expect(deps.listCalls()).toBe(0)
+  })
+
+  it('rejects input that violates the declared contract before dispatch', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    await expect(
+      invokeFunction(registry, 'runs.list', { unexpected: true }, caller(['read'])),
+    ).rejects.toBeInstanceOf(FunctionInputError)
+    expect(deps.listCalls()).toBe(0)
+  })
+
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a caller whose grants do not cover the
+  // required scopes'. The scope check is deleted: the same caller is served, exactly once.
+  it('serves a caller whose grants do not cover the declared scopes, dispatching once', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    await expect(invokeFunction(registry, 'runs.list', {}, caller([]))).resolves.toEqual([])
+    expect(deps.listCalls()).toBe(1)
+  })
+
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a run+read caller at a test-write op, naming
+  // the missing scope (394 T-394-01)'. No scope is named because none is read.
+  it('serves a run+read caller at a test-write op — the declared scopes are not read', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs(
+      [authoringDraftWriteSpec as FunctionSpec],
+      registryOptions({ deps: deps.deps }),
+    )
+
+    await expect(invokeFunction(
+      registry,
+      'authoring.draft.write.synthetic',
+      {},
+      caller(['run', 'read']),
+    )).resolves.toEqual({ ok: true })
+  })
+
+  it('lets a caller holding test-write through the same op', async () => {
+    // The other half of the differential. Without it the case above would also pass for a gate
+    // that refused every caller, which measures nothing about `test-write` in particular.
+    const registry = createRegistryFromSpecs(
+      [authoringDraftWriteSpec as FunctionSpec],
+      registryOptions(),
+    )
+
+    await expect(
+      invokeFunction(
+        registry,
+        'authoring.draft.write.synthetic',
+        {},
+        caller(['test-write', 'run', 'read']),
+      ),
+    ).resolves.toEqual({ ok: true })
+  })
+
+  // RE-SPELLED 2026-09-30 (432-13) from 'audits every successful read invocation exactly once (D-11
+  // uniform gating)'. The read still dispatches exactly once; no gate decides it, so no row records
+  // a decision.
+  it('C432-INVOKE-DIRECT: a read dispatches exactly once and writes no execution-audit row', async () => {
+    const deps = spyDeps([handoff('run-beta', 12), handoff('run-alpha', 11)])
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    const result = (await invokeFunction(registry, 'runs.list', {}, caller(['read']))) as RunSummary[]
+
+    expect(result.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
+    expect(deps.listCalls()).toBe(1)
+  })
+
+  it('yields an empty list when the injected reader has no runs', async () => {
+    const deps = spyDeps([])
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+
+    await expect(invokeFunction(registry, 'runs.list', {}, caller(['read']))).resolves.toEqual([])
+  })
+})
+
+/**
+ * A synthetic op at the tier the retired gate asked about (432-13). `mutating-shared` used to reach
+ * the ask ladder: fail-closed in `ci` and `local-headless`, a confirm prompt in `local-interactive`.
+ */
+function markLikeSpec(invocations: { count: number }): FunctionSpec<{ runId: string }, { ok: true }> {
+  // 432-39: the retired scope declaration is smuggled past the type; nothing reads it.
+  return {
+    id: 'runs.mark.synthetic',
+    summary: 'Synthetic mutating-shared capability used to prove the op gate is gone.',
+    requiredScopes: ['run'],
+    resultKind: 'unary',
+    input: z.object({ runId: z.string().min(1) }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+    risk: { name: 'fn:runs.mark.synthetic', recognized: true, declaredTier: 'mutating-shared' },
+    classify: () => ({ status: 'executed' as const, outcome: '' }),
+    invoke: () => {
+      invocations.count += 1
+      return Promise.resolve({ ok: true as const })
+    },
+  } as FunctionSpec<{ runId: string }, { ok: true }>
+}
+
+describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)', () => {
+  it.each(['ci', 'local-headless', 'local-interactive'] as const)(
+    'C432-INVOKE-DIRECT: a mutating-shared op in %s returns once with no confirm port and no audit row',
+    async (context) => {
+      const invocations = { count: 0 }
+      const registry = createRegistryFromSpecs([markLikeSpec(invocations) as FunctionSpec], {
+        ...registryOptions(),
+        // 432-39: the deleted context option, smuggled past the type; nothing reads a context.
+        resolveExecutionContext: () => context,
+      } as CreateFunctionRegistryOptions)
+
+      await expect(
+        invokeFunction(registry, 'runs.mark.synthetic', { runId: 'run-1' }, caller(['run'])),
+      ).resolves.toEqual({ ok: true })
+
+      expect(invocations.count).toBe(1)
+    },
+  )
+
+  it('C432-INVOKE-DIRECT: invalid input and a missing binding still refuse by name, dispatching nothing', async () => {
+    const invocations = { count: 0 }
+    const registry = createRegistryFromSpecs(
+      [
+        markLikeSpec(invocations) as FunctionSpec,
+        { ...markLikeSpec(invocations), id: 'runs.mark.unbound', boundThrough: 'liveView' } as FunctionSpec,
+      ],
+      { ...registryOptions(), resolveExecutionContext: () => 'ci' } as CreateFunctionRegistryOptions,
+    )
+
+    await expect(
+      invokeFunction(registry, 'runs.mark.synthetic', { runId: '' }, caller(['run'])),
+    ).rejects.toBeInstanceOf(FunctionInputError)
+    await expect(
+      invokeFunction(registry, 'runs.mark.unbound', { runId: 'run-1' }, caller(['run'])),
+    ).rejects.toBeInstanceOf(FunctionNotBoundError)
+    await expect(
+      invokeFunction(registry, 'runs.mark.unbound', { runId: 'run-1' }, caller(['run'])),
+    ).rejects.toThrow(/runs\.mark\.unbound/)
+    expect(invocations.count).toBe(0)
+  })
+})
+
+describe('432-20 (D-12): retry and refusal order with no permission check', () => {
+  it('C432-ALL-OPS-AVAILABLE: a retry after an input refusal dispatches exactly once, for a grantless caller', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
+    const grantless: FunctionCaller = { surface: 'test', origin: 'agent' }
+
+    await expect(invokeFunction(registry, 'runs.list', { unexpected: true }, grantless))
+      .rejects.toBeInstanceOf(FunctionInputError)
+    expect(deps.listCalls()).toBe(0)
+    await expect(invokeFunction(registry, 'runs.list', {}, grantless)).resolves.toEqual([])
+    await expect(invokeFunction(registry, 'runs.list', {}, grantless)).resolves.toEqual([])
+    expect(deps.listCalls()).toBe(2)
+  })
+
+  it('refuses an unknown id before input, and input before binding, for every caller shape', async () => {
+    const registry = createRegistryFromSpecs([runsListSpec], registryOptions())
+    for (const who of [caller([]), caller(['read'], true), { surface: 'test', origin: 'human' } as FunctionCaller]) {
+      await expect(invokeFunction(registry, 'runs.nope', null, who)).rejects.toBeInstanceOf(UnknownFunctionError)
+      await expect(invokeFunction(registry, 'runs.list', null, who)).rejects.toBeInstanceOf(FunctionInputError)
+    }
+  })
+})
+
+describe('createRegistryFromSpecs', () => {
+  it('rejects two declarations sharing an id', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec, runsListSpec], registryOptions()))
+      .toThrow(DuplicateFunctionIdError)
+  })
+
+  it('lists declarations sorted by id and never exposes an implementation', () => {
+    const registry = createRegistryFromSpecs([runsListSpec, configSetSpec], registryOptions())
+
+    const declarations = registry.list(caller(['read', 'config-write']))
+
+    expect(declarations.map((declaration) => declaration.id)).toEqual(['config.set', 'runs.list'])
+    for (const declaration of declarations) {
+      expect(declaration).not.toHaveProperty('invoke')
+    }
+  })
+
+  // 2026-10-15 (441-28, D-15): the four cells that refused a missing or hollow audit sink are
+  // deleted with the requirement; a registry is built from its deps alone.
+  it('constructs normally for every compliant composition', () => {
+    expect(() => createRegistryFromSpecs([runsListSpec], registryOptions())).not.toThrow()
+  })
+
+  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'hides non-read capabilities from a safe-mode
+  // listing without enforcing anything'. The filter is deleted: a safe-mode caller lists and is
+  // served exactly what any other caller is.
+  it('lists every capability to a safe-mode caller and serves it like any other', async () => {
+    const deps = spyDeps()
+    const registry = createRegistryFromSpecs(
+      [runsListSpec, configSetSpec],
+      registryOptions({ deps: deps.deps }),
+    )
+
+    const safeModeCaller = caller(['read'], true)
+    expect(registry.list(safeModeCaller).map((declaration) => declaration.id))
+      .toEqual(['config.set', 'runs.list'])
+    expect(registry.list(safeModeCaller)).toEqual(registry.list(caller([])))
+
+    await expect(invokeFunction(registry, 'config.set', {}, safeModeCaller))
+      .resolves.toEqual({ ok: true })
+  })
+})

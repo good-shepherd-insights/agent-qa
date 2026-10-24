@@ -6,26 +6,35 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { DEFAULT_FAVICON_HREF } from "@/hooks/use-run-status-favicon"
+import { displayStepsForGroups } from "@/lib/display-step"
+import type { RunDetailGroup } from "@/lib/run-detail-view"
+
+import type { RunDetailProjection } from "@vostride/agent-qa-schema"
+import { asRef } from "@vostride/agent-qa-schema"
+
+import { routes } from "@/lib/routes"
+import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
+
 import RunDetailPage from "@/pages/run-detail"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const {
   fetchRunMock,
+  fetchRunDetailMock,
   fetchRunArtifactMock,
   fetchActiveExecutionsMock,
   fetchExecutionLogsMock,
-  fetchAccessibilitySummaryMock,
   useKeyboardShortcutsMock,
   latestShortcuts,
 } = vi.hoisted(() => {
   let latest: Record<string, (event: KeyboardEvent) => void> | null = null
   return {
     fetchRunMock: vi.fn(),
+    fetchRunDetailMock: vi.fn(),
     fetchRunArtifactMock: vi.fn(),
     fetchActiveExecutionsMock: vi.fn(),
     fetchExecutionLogsMock: vi.fn(),
-    fetchAccessibilitySummaryMock: vi.fn(),
     useKeyboardShortcutsMock: vi.fn((shortcuts: Record<string, (event: KeyboardEvent) => void>) => {
       latest = shortcuts
     }),
@@ -38,11 +47,24 @@ const {
 
 vi.mock("@/lib/api", () => ({
   fetchRun: fetchRunMock,
+  fetchRunDetail: fetchRunDetailMock,
+  // 2026-08-29 (406-01, D-04): the page's THIRD read — the failure view's. This whole-module
+  // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
+  // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
+  fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
+  fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchActiveExecutions: fetchActiveExecutionsMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
-  fetchAccessibilitySummary: fetchAccessibilitySummaryMock,
+  fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
   triggerRun: vi.fn(),
+  // 2026-08-27 (404-07): run detail now subscribes a post-processing chip client on mount. This
+  // whole-module mock REPLACES `@/lib/api`, so an omitted export is `undefined` at the call site
+  // and every cell in this file dies before it asserts. It is a no-op DOUBLE rather than the real
+  // function on purpose: the real one constructs an `EventSource` and a 3 s interval against a
+  // `fetch` these cells do not stub, which is a socket and a poll inside a test about something
+  // else. The client's own behaviour is measured in `run-detail.post-processing.test.tsx`.
+  watchPostProcessing: () => () => {},
 }))
 
 vi.mock("@/hooks/use-page-title", () => ({
@@ -72,16 +94,14 @@ vi.mock("@/components/run-detail/run-navbar", () => ({
 }))
 
 vi.mock("@/components/run-detail/step-tree", () => ({
+  // 405-08: the tree takes the member-grouped projection now, not a flat step list. The double
+  // flattens it through the SAME helper the page uses, so the ids it renders are the ids the page
+  // selects by — a second flattening here would let this file pass on keys nobody can click.
   StepTree: ({
-    steps,
+    groups,
     selection,
   }: {
-    steps: Array<{
-      id: string
-      name: string
-      rawRunId: string | null
-      rawStepOrder: number
-    }>
+    groups: readonly RunDetailGroup[]
     selection: { type: string; stepId?: string; subIndex?: number } | null
   }) => {
     const selectionLabel = selection
@@ -89,13 +109,8 @@ vi.mock("@/components/run-detail/step-tree", () => ({
       : ""
     return (
       <div data-testid="step-tree" data-selection={selectionLabel}>
-        {steps.map((step) => (
-          <div
-            key={step.id}
-            data-step-id={step.id}
-            data-run-id={step.rawRunId ?? ""}
-            data-raw-order={String(step.rawStepOrder)}
-          >
+        {displayStepsForGroups(groups).map((step) => (
+          <div key={step.id} data-step-id={step.id}>
             {step.name}
           </div>
         ))}
@@ -104,18 +119,17 @@ vi.mock("@/components/run-detail/step-tree", () => ({
   },
 }))
 
+// A FAITHFUL DOUBLE, NOT A BLANK. It renders the `img` the real viewer renders and wires the same
+// failure callback, so the cells below measure the minted `src` and the D-15 refusal rather than
+// the mock. The real component drives a `ResizeObserver` jsdom does not provide.
 vi.mock("@/components/screenshot-viewer", () => ({
-  ScreenshotViewer: ({ screenshotPath }: { screenshotPath: string }) => (
-    <div data-testid="screenshot-viewer">{screenshotPath}</div>
+  ScreenshotViewer: ({ src, onUnavailable }: { src: string; onUnavailable?: () => void }) => (
+    <img data-testid="screenshot-viewer" src={src} onError={() => onUnavailable?.()} />
   ),
 }))
 
 vi.mock("@/components/reasoning-pipeline", () => ({
   ReasoningPipeline: () => <div data-testid="reasoning-pipeline" />,
-}))
-
-vi.mock("@/components/healing-chain", () => ({
-  HealingChain: () => <div data-testid="healing-chain" />,
 }))
 
 vi.mock("@/components/ui/tooltip", () => ({
@@ -159,55 +173,40 @@ vi.mock("@/components/ui/button", () => ({
   ),
 }))
 
-function makeSubAction(index: number, beforePath: string | null, afterPath: string | null) {
-  return {
-    index,
-    observation: "Observed checkout screen",
-    reasoning: "Need to compare screenshots",
-    plannedAction: { type: "click", ref: "checkout" },
-    result: "success" as const,
-    screenStateBefore: "",
-    confidence: 0.9,
-    cached: false,
-    screenshotBeforePath: beforePath ?? undefined,
-    screenshotAfterPath: afterPath ?? undefined,
-  }
-}
+const DECISION_SHA = "a1b2c3d4".repeat(8)
 
-function makeStep(afterPath: string | null = "screens/run-1/after.png") {
+function makeProjection(runId: string, artifactRefs = [
+  { id: `decision-screenshot:${DECISION_SHA}`, sha: DECISION_SHA },
+]): RunDetailProjection {
   return {
-    id: "step-1",
-    runId: "run-1",
-    name: "Compare checkout screenshots",
-    status: "passed",
-    duration: 1000,
-    action: null,
-    observation: null,
-    reasoning: null,
-    plannedAction: null,
-    result: null,
-    error: null,
-    screenshotPath: null,
-    screenshotBeforePath: null,
-    healingAttempts: null,
-    retryCount: 0,
-    capturedVariables: null,
-    stepOrder: 0,
-    annotationData: null,
-    healingScreenshotPaths: null,
-    accessibilityViolations: null,
-    consoleLogs: null,
-    networkLogs: null,
-    confidence: null,
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    subActionsData: [makeSubAction(0, "screens/run-1/before.png", afterPath)],
-    variableSnapshot: null,
-    originalStepName: null,
-    screenContextBefore: null,
-    screenContextAfter: null,
-    createdAt: "2026-04-18T00:00:00.000Z",
+    runId,
+    members: [{ testIndex: 0, name: "Screenshot test", attempts: 1 }],
+    steps: [
+      {
+        testIndex: 0,
+        stepIndex: 0,
+        stepText: "Compare checkout screenshots",
+        cacheStatus: "miss",
+        verifierVerdict: { pass: true, reasoning: "the checkout screen is up" },
+        selfHealOccurred: false,
+        briefDigest: "d00",
+        status: "passed",
+        durationMs: 1000,
+      },
+    ],
+    subActions: [
+      {
+        testIndex: 0,
+        stepIndex: 0,
+        subActionIndex: 0,
+        plan: "Need to compare screenshots",
+        plannedAction: { type: "click", ref: asRef("checkout") },
+        result: { success: true },
+        screenStateHash: "abcdef0123456789".repeat(4),
+        artifactRefs,
+      },
+    ],
+    tokens: { measuredSteps: 0, unmeasuredSteps: 1 },
   }
 }
 
@@ -224,7 +223,6 @@ function makeRun(id: string, status = "passed") {
     startedAt: "2026-04-18T00:00:00.000Z",
     endedAt: "2026-04-18T00:00:01.000Z",
     source: "dashboard",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,
@@ -311,8 +309,8 @@ async function renderAt(url: string) {
   return container
 }
 
-function screenshotPath(view: HTMLElement) {
-  return view.querySelector('[data-testid="screenshot-viewer"]')?.textContent ?? ""
+function screenshotSrc(view: HTMLElement) {
+  return view.querySelector('[data-testid="screenshot-viewer"]')?.getAttribute("src") ?? ""
 }
 
 function expectSearchParams(
@@ -329,33 +327,21 @@ beforeEach(() => {
   resetFavicon()
   document.title = ""
   fetchRunMock.mockReset()
+  fetchRunDetailMock.mockReset()
   fetchRunArtifactMock.mockReset()
   fetchActiveExecutionsMock.mockReset()
   fetchExecutionLogsMock.mockReset()
-  fetchAccessibilitySummaryMock.mockReset()
   useKeyboardShortcutsMock.mockClear()
 
   fetchActiveExecutionsMock.mockResolvedValue({ executions: [] })
   fetchExecutionLogsMock.mockResolvedValue({ logs: [] })
-  fetchAccessibilitySummaryMock.mockResolvedValue({
-    enabled: null,
-    total: 0,
-    bySeverity: { critical: 0, serious: 0, moderate: 0, minor: 0 },
-    byRule: [],
-    stepsWithViolations: 0,
-    scannedSteps: 0,
-    unscannedSteps: 0,
-    totalSteps: 0,
-  })
   fetchRunArtifactMock.mockResolvedValue({ run: makeRun("run-1"), artifact: null, children: [], missingSections: ["artifact"] })
-  fetchRunMock.mockImplementation(async (id: string) => ({
-    run: makeRun(id),
-    steps: [makeStep(id === "missing-after" ? null : "screens/run-1/after.png")],
-    attempts: [],
-  }))
+  fetchRunMock.mockImplementation(async (id: string) => ({ run: makeRun(id) }))
+  fetchRunDetailMock.mockImplementation(async (id: string) => makeProjection(id))
 })
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   if (root) {
     act(() => root!.unmount())
   }
@@ -366,77 +352,91 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe("RunDetailPage screenshot shortcuts", () => {
-  it("syncs the default selected step into the URL without repeated rewrites", async () => {
+// THE SCREENSHOT PANE, THROUGH THE PAGE (405-11 · D-14 / D-15).
+//
+// WHAT THESE CELLS USED TO PIN, AND WHY THEY DO NOT ANY MORE. Until 405-07 there were four of them
+// asserting that `a` and `b` selected the After/Before side of a screenshot pair built from two
+// stored capture paths. 405-08 could not keep them — the paths' producer was deleted and the ref
+// side had not landed — so it consolidated them into two cells asserting the keys were INERT, and
+// handed the side-selection assertions here.
+//
+// THERE IS NO SIDE TO SELECT, AND SO THERE ARE NO KEYS. The bus records ONE decision screenshot per
+// sub-action: the screen the planner LOOKED AT when it decided. It records no post-action capture
+// on the same turn, so a "Before/After" control would have to derive its second side from
+// somewhere — the obvious candidate being the NEXT sub-action's shot, which is a join nobody
+// recorded. The screen may have moved for reasons this action did not cause, and a caption
+// claiming otherwise is a lie a reader cannot check. So the pair, its segmented control, its two
+// hotkeys and their legend rows are all retired together, and the coverage those cells were
+// carrying is restored HERE, against the thing that does exist: a ref-minted image, its D-15
+// refusal, and the absence of any key that pretends otherwise.
+describe("RunDetailPage decision screenshot", () => {
+  it("syncs the default selected step into the URL, by its member-scoped key, without repeated rewrites", async () => {
     const view = await renderAt("/runs/run-1")
     const location = view.querySelector('[data-testid="location"]') as HTMLElement
 
-    expect(location.getAttribute("data-search")).toBe("?step=0")
+    expect(location.getAttribute("data-search")).toBe("?step=0%3A0&sub=0")
 
     await flushRender()
 
-    expect(location.getAttribute("data-search")).toBe("?step=0")
+    expect(location.getAttribute("data-search")).toBe("?step=0%3A0&sub=0")
   })
 
-  it("uses useKeyboardShortcuts A/B handlers to select After and Before without changing navigation state", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0")
+  it("renders the selected sub-action's decision screenshot from its ref, through the one minter", async () => {
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+    const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
+
+    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
+    expect(view.querySelector('[data-artifact-state="available"]')).not.toBeNull()
+    expect(screenshotSrc(view)).toBe(routes.runArtifact("run-1", DECISION_SHA))
+  })
+
+  it("renders a visible refusal, and no image, when the blob request fails", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 404 }))
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    const image = view.querySelector("img")
+    expect(image).not.toBeNull()
+
+    await act(async () => {
+      image!.dispatchEvent(new Event("error"))
+    })
+
+    expect(view.querySelector("img")).toBeNull()
+    expect(
+      view.querySelector('[data-artifact-state="unavailable"] [data-evidence-state="unavailable"][data-evidence-incomplete]'),
+    ).not.toBeNull()
+    expect(view.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
+  })
+
+  it("shows no image at all for a turn that recorded no screenshot", async () => {
+    fetchRunDetailMock.mockImplementation(async (id: string) => makeProjection(id, []))
+
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    expect(view.querySelector("img")).toBeNull()
+    expect(view.querySelector('[data-artifact-state="available"]')).toBeNull()
+    expect(view.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).toBeNull()
+    expect(view.textContent).not.toContain(EVIDENCE_INCOMPLETE_LABEL)
+  })
+
+  // A retired key must be GONE, not silently rebound. A page that still answered `a` would be
+  // doing something a reader has no way to predict.
+  it("binds the source toggle without screenshot side-selection keys", async () => {
+    await renderAt("/runs/run-1?step=0:0&sub=0")
+
+    const bound = Object.keys(latestShortcuts())
+    expect(bound).not.toContain("a")
+    expect(bound).not.toContain("b")
+    expect(bound).toContain("v")
+  })
+
+  it("keeps the selection and the URL untouched when the viewer is on another tab", async () => {
+    const view = await renderAt("/runs/run-1?step=0:0&sub=0&tab=network")
     const location = view.querySelector('[data-testid="location"]') as HTMLElement
     const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
 
-    expect(screenshotPath(view)).toBe("screens/run-1/before.png")
-    expect(view.textContent).toContain("Before")
-    expect(view.textContent).toContain("After")
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(location.getAttribute("data-search")).toBe("?step=0&sub=0")
-
-    await act(async () => {
-      latestShortcuts().a(new KeyboardEvent("keydown", { key: "a" }))
-    })
-
-    expect(screenshotPath(view)).toBe("screens/run-1/after.png")
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(location.getAttribute("data-search")).toBe("?step=0&sub=0")
-
-    await act(async () => {
-      latestShortcuts().b(new KeyboardEvent("keydown", { key: "b" }))
-    })
-
-    expect(screenshotPath(view)).toBe("screens/run-1/before.png")
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(location.getAttribute("data-search")).toBe("?step=0&sub=0")
-  })
-
-  it("no-ops outside overview without changing the active tab URL or selected sub-action marker", async () => {
-    const view = await renderAt("/runs/run-1?step=0&sub=0&tab=network")
-    const location = view.querySelector('[data-testid="location"]') as HTMLElement
-    const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
-
-    expectSearchParams(location, { step: "0", sub: "0", tab: "network" })
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-
-    await act(async () => {
-      latestShortcuts().a(new KeyboardEvent("keydown", { key: "a" }))
-      latestShortcuts().b(new KeyboardEvent("keydown", { key: "b" }))
-    })
-
-    expectSearchParams(location, { step: "0", sub: "0", tab: "network" })
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-  })
-
-  it("keeps the Before screenshot when the current pair has no After screenshot", async () => {
-    const view = await renderAt("/runs/missing-after?step=0&sub=0")
-    const location = view.querySelector('[data-testid="location"]') as HTMLElement
-    const stepTree = view.querySelector('[data-testid="step-tree"]') as HTMLElement
-
-    expect(screenshotPath(view)).toBe("screens/run-1/before.png")
-
-    await act(async () => {
-      latestShortcuts().a(new KeyboardEvent("keydown", { key: "a" }))
-    })
-
-    expect(screenshotPath(view)).toBe("screens/run-1/before.png")
-    expect(stepTree.getAttribute("data-selection")).toBe("subaction:step-1:0")
-    expect(location.getAttribute("data-search")).toBe("?step=0&sub=0")
+    expectSearchParams(location, { step: "0:0", sub: "0", tab: "network" })
+    expect(stepTree.getAttribute("data-selection")).toBe("subaction:0:0:0")
   })
 })
 
@@ -452,11 +452,7 @@ describe("RunDetailPage favicon lifecycle", () => {
   it.each(["passed", "failed", "cancelled"] as const)(
     "sets a non-default favicon for loaded %s runs",
     async (status) => {
-      fetchRunMock.mockImplementation(async (id: string) => ({
-        run: makeRun(id, status),
-        steps: [makeStep()],
-        attempts: [],
-      }))
+      fetchRunMock.mockImplementation(async (id: string) => ({ run: makeRun(id, status) }))
 
       await renderAt(`/runs/run-${status}`)
 
@@ -465,11 +461,7 @@ describe("RunDetailPage favicon lifecycle", () => {
   )
 
   it("restores the default favicon on unmount", async () => {
-    fetchRunMock.mockImplementation(async (id: string) => ({
-      run: makeRun(id, "failed"),
-      steps: [makeStep()],
-      attempts: [],
-    }))
+    fetchRunMock.mockImplementation(async (id: string) => ({ run: makeRun(id, "failed") }))
 
     await renderAt("/runs/run-failed")
 

@@ -1,0 +1,10 @@
+name: Export the local account form submissions report
+test-id: t_rice-tag-uds-hoven-messe-noma-rant-angers-stuff-azole
+target: local-form
+use:
+  browser:
+    headless: true
+steps:
+  - Open the Reports panel from the top navigation bar
+  - Click the Export report button
+  - Verify the export status banner says "Export complete"

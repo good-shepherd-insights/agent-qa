@@ -1,150 +1,121 @@
+// Container scroll for a ref (436-17 · D-25, review CR-03). The ref resolves through
+// ElementResolver, the aria-ref locator every other web action uses. A ref that does not resolve,
+// or names an element in a child frame (frames are deferred, 438 D-09), performs no gesture and
+// reports no offsets, so the swipe reads `unknown`. Offsets always belong
+// to the container that was actually scrolled: the element, its nearest scrolling ancestor over
+// the flat tree, or document.scrollingElement, which reports them only when it has scroll range on
+// the swiped axis.
+// 2026-10-08 (436-22): the walk follows the flat tree (slot, parent, shadow host), never takes a
+// body whose overflow propagates to the viewport as a container, and the document fallback scrolls
+// and measures document.scrollingElement; with none, it reports no offsets (review CR-06).
+
 import type { Page } from 'playwright-core'
+import type { Ref } from '@vostride/agent-qa-schema'
+import { isChildFrameRef } from './binding.js'
+import { ElementResolver } from './element-resolver.js'
+import type { RefMap } from './types.js'
 
-interface ScrollRefData {
-  role: string
-  name?: string
-  nth?: number
-}
-
-interface ScrollResult {
+export interface ScrollResult {
   bounds: { x: number; y: number; width: number; height: number } | null
   scrolledContainer: 'element' | 'ancestor' | 'documentElement' | 'notFound'
   scrolled: boolean
+  /** The scrolled container's offset on the swiped axis before and after, and its largest offset. */
+  offsets?: { before: number; after: number; max: number }
 }
+
+const NOT_FOUND: ScrollResult = { bounds: null, scrolledContainer: 'notFound', scrolled: false }
+
+// Bounds the evaluate's own wait if the element detaches between count() and evaluate().
+const EVALUATE_TIMEOUT_MS = 1_000
 
 export async function scrollWithRef(
   page: Page,
-  refData: ScrollRefData,
+  lastRefs: RefMap,
+  ref: Ref,
   deltaX: number,
   deltaY: number,
   scrollAxis: 'horizontal' | 'vertical',
 ): Promise<ScrollResult> {
-  return page.evaluate(
-    (args: [string, string | undefined, number, number, number, string]) => {
-      const [role, name, nth, dx, dy, axis] = args
-      const doc = (globalThis as any).document
-      const win = (globalThis as any).window
+  const nativeRef = lastRefs[ref]?.nativeRef
+  if (nativeRef !== undefined && isChildFrameRef(nativeRef)) return NOT_FOUND
+  try {
+    const locator = new ElementResolver(page, lastRefs).resolve(ref)
+    if ((await locator.count()) === 0) return NOT_FOUND
+    const scrolled = await locator.evaluate(
+      (target: unknown, args: [number, number, string]) => {
+        const [dx, dy, axis] = args
+        const win = globalThis as any
+        const doc = win.document
+        const el = target as any
 
-      const IMPLICIT_ROLES: Record<string, string> = {
-        button: 'button', a: 'link', input: 'textbox', select: 'combobox',
-        textarea: 'textbox', h1: 'heading', h2: 'heading', h3: 'heading',
-        h4: 'heading', h5: 'heading', h6: 'heading', nav: 'navigation',
-        main: 'main', aside: 'complementary', footer: 'contentinfo',
-        header: 'banner', form: 'form', table: 'table', img: 'img',
-        ul: 'list', ol: 'list', li: 'listitem', dialog: 'dialog',
-        details: 'group', summary: 'button', progress: 'progressbar',
-        meter: 'meter', output: 'status', article: 'article',
-        section: 'region', fieldset: 'group', legend: 'legend',
-      }
-      const INPUT_TYPE_ROLES: Record<string, string> = {
-        checkbox: 'checkbox', radio: 'radio', range: 'slider',
-        number: 'spinbutton', search: 'searchbox', email: 'textbox',
-        tel: 'textbox', url: 'textbox', password: 'textbox',
-      }
-
-      function getAccessibleName(el: any): string {
-        const label = el.getAttribute('aria-label')
-        if (label) return label.trim()
-        const labelledBy = el.getAttribute('aria-labelledby')
-        if (labelledBy) {
-          const parts = labelledBy.split(/\s+/).map((id: string) => {
-            const ref = doc.getElementById(id)
-            return ref ? (ref.textContent || '').trim() : ''
-          }).filter(Boolean)
-          if (parts.length) return parts.join(' ')
-        }
-        const title = el.getAttribute('title')
-        if (title) return title.trim()
-        const alt = el.getAttribute('alt')
-        if (alt) return alt.trim()
-        return (el.textContent || '').trim()
-      }
-
-      function getImplicitRole(el: any): string | null {
-        const tag = el.tagName.toLowerCase()
-        if (tag === 'input') {
-          const type = (el.getAttribute('type') || 'text').toLowerCase()
-          return INPUT_TYPE_ROLES[type] || 'textbox'
-        }
-        if (tag === 'a' && el.hasAttribute('href')) return 'link'
-        return IMPLICIT_ROLES[tag] || null
-      }
-
-      const candidates: any[] = []
-      doc.querySelectorAll(`[role="${role}"]`).forEach((el: any) => candidates.push(el))
-      doc.querySelectorAll('*').forEach((el: any) => {
-        if (el.getAttribute('role')) return
-        if (getImplicitRole(el) === role) candidates.push(el)
-      })
-
-      let matched = candidates
-      if (name) {
-        matched = candidates.filter((el: any) =>
-          getAccessibleName(el).toLowerCase().includes(name.toLowerCase())
-        )
-      }
-
-      const target = matched[nth]
-      if (!target) {
-        win.scrollBy(dx, dy)
-        return { bounds: null, scrolledContainer: 'notFound' as const, scrolled: true }
-      }
-
-      // Check target element itself for scrollability
-      const targetStyle = win.getComputedStyle(target)
-      const targetOverflow = axis === 'horizontal' ? targetStyle.overflowX : targetStyle.overflowY
-      const targetScrollable = targetOverflow === 'auto' || targetOverflow === 'scroll' || targetOverflow === 'hidden'
-      const targetHasContent = axis === 'horizontal'
-        ? target.scrollWidth > target.clientWidth
-        : target.scrollHeight > target.clientHeight
-      if (targetScrollable && targetHasContent) {
         const prop = axis === 'horizontal' ? 'scrollLeft' : 'scrollTop'
-        const before = target[prop]
-        target.scrollBy(dx, dy)
-        const after = target[prop]
-        const rect = target.getBoundingClientRect()
-        return {
-          bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-          scrolledContainer: 'element' as const,
-          scrolled: before !== after,
+        const maxOf = (node: any): number => axis === 'horizontal'
+          ? node.scrollWidth - node.clientWidth
+          : node.scrollHeight - node.clientHeight
+        const boundsOf = () => {
+          const rect = el.getBoundingClientRect()
+          return { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) }
         }
-      }
+        const scrollable = (node: any): boolean => {
+          const style = win.getComputedStyle(node)
+          const overflow = axis === 'horizontal' ? style.overflowX : style.overflowY
+          return (overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden') && maxOf(node) > 0
+        }
 
-      // Walk ancestors
-      let parent = target.parentElement
-      while (parent && parent !== doc.documentElement) {
-        const style = win.getComputedStyle(parent)
-        const overflow = axis === 'horizontal' ? style.overflowX : style.overflowY
-        const isScrollable = overflow === 'auto' || overflow === 'scroll' || overflow === 'hidden'
-        const hasContent = axis === 'horizontal'
-          ? parent.scrollWidth > parent.clientWidth
-          : parent.scrollHeight > parent.clientHeight
-        if (isScrollable && hasContent) {
-          const prop = axis === 'horizontal' ? 'scrollLeft' : 'scrollTop'
-          const before = parent[prop]
-          parent.scrollBy(dx, dy)
-          const after = parent[prop]
-          const rect = target.getBoundingClientRect()
-          return {
-            bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-            scrolledContainer: 'ancestor' as const,
-            scrolled: before !== after,
+        // A body whose overflow propagates to the viewport is not a scroll container; the
+        // document scroller stands for the page in standards and quirks mode alike.
+        const scroller = doc.scrollingElement
+        const rootStyle = win.getComputedStyle(doc.documentElement)
+        const bodyPropagates = rootStyle.overflowX === 'visible' && rootStyle.overflowY === 'visible'
+        const isDocumentScroller = (node: any): boolean =>
+          node === doc.documentElement || node === scroller || (bodyPropagates && node === doc.body)
+        const parentOf = (node: any): any => {
+          if (node.assignedSlot) return node.assignedSlot
+          if (node.parentElement) return node.parentElement
+          const parent = node.parentNode
+          return parent && parent.host ? parent.host : null
+        }
+
+        // The element itself, then its nearest scrollable ancestor over the flat tree.
+        if (!isDocumentScroller(el)) {
+          if (scrollable(el)) {
+            const before = el[prop]
+            el.scrollBy(dx, dy)
+            const after = el[prop]
+            return { bounds: boundsOf(), scrolledContainer: 'element', scrolled: before !== after, offsets: { before, after, max: maxOf(el) } }
+          }
+          for (let parent = parentOf(el); parent && !isDocumentScroller(parent); parent = parentOf(parent)) {
+            if (!scrollable(parent)) continue
+            const before = parent[prop]
+            parent.scrollBy(dx, dy)
+            const after = parent[prop]
+            return { bounds: boundsOf(), scrolledContainer: 'ancestor', scrolled: before !== after, offsets: { before, after, max: maxOf(parent) } }
           }
         }
-        parent = parent.parentElement
-      }
 
-      const prop = axis === 'horizontal' ? 'scrollLeft' : 'scrollTop'
-      const before = doc.documentElement[prop]
-      doc.documentElement.scrollBy(dx, dy)
-      const after = doc.documentElement[prop]
-      const rect = target.getBoundingClientRect()
-      return {
-        bounds: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
-        scrolledContainer: 'documentElement' as const,
-        scrolled: before !== after,
-      }
-    },
-    [refData.role, refData.name, refData.nth ?? 0, deltaX, deltaY, scrollAxis] as [string, string | undefined, number, number, number, string],
-  )
+        // The document scroller, whose offsets prove something only when it has range on this axis.
+        if (!scroller) {
+          const x = win.scrollX
+          const y = win.scrollY
+          win.scrollBy(dx, dy)
+          return { bounds: boundsOf(), scrolledContainer: 'documentElement', scrolled: x !== win.scrollX || y !== win.scrollY }
+        }
+        const before = scroller[prop]
+        scroller.scrollBy(dx, dy)
+        const after = scroller[prop]
+        const max = maxOf(scroller)
+        return {
+          bounds: boundsOf(),
+          scrolledContainer: 'documentElement',
+          scrolled: before !== after,
+          ...(max > 0 ? { offsets: { before, after, max } } : {}),
+        }
+      },
+      [deltaX, deltaY, scrollAxis] as [number, number, string],
+      { timeout: EVALUATE_TIMEOUT_MS },
+    )
+    return scrolled && typeof scrolled === 'object' ? (scrolled as ScrollResult) : NOT_FOUND
+  } catch {
+    return NOT_FOUND
+  }
 }

@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { getAgentQaVersion } from '../version.js'
 
-const require = createRequire(import.meta.url)
+const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url)
 
 const AGENT_QA_NPM_REGISTRY_URL = 'https://registry.npmjs.org/agent-qa'
 

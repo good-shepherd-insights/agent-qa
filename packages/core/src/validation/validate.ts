@@ -8,6 +8,7 @@ import { SuiteDefinitionSchema } from '../schema/suite-schema.js'
 import { parseTestFile } from '../parser/yaml-parser.js'
 import { parseHooksFile } from '../hooks/parser.js'
 import { isPathInsideDir } from '../utils/path-validation.js'
+import { yamlParseFailureMessage } from './yaml-fault.js'
 import {
   discoverWorkspaceFiles,
   isWorkspacePathMatch,
@@ -54,11 +55,18 @@ export async function validateConfig(configPath: string): Promise<ValidationDiag
   try {
     parsed = parseYaml(content)
   } catch (err) {
+    // WHERE, NEVER WHAT (395-14 · F-01). This line used to interpolate the thrown error's own text,
+    // and the vendored `yaml` package pretty-prints a parse error with an excerpt of the source
+    // around the point it gave up — the person's own file content, printed by `agent-qa validate`
+    // and measured carrying a planted credential. The diagnostic's `file` field already names the
+    // file, so the message is the position and nothing else. This is the SIBLING SITE of the cli
+    // loader's guard: `agent-qa validate` catches its own `resolveConfig` failure and defers here,
+    // so a fix that hardened only the loader would leave this road printing the excerpt.
     diagnostics.push({
       file: configPath,
       line: 1,
       column: 1,
-      message: `YAML syntax error: ${(err as Error).message}`,
+      message: yamlParseFailureMessage(err),
       severity: 'error',
     })
     return diagnostics
@@ -109,11 +117,16 @@ export function validateSuiteFile(filePath: string, content: string, basedir: st
   try {
     parsed = parseYaml(content, { lineCounter })
   } catch (err) {
+    // WHERE, NEVER WHAT — the THIRD MEMBER (395-16 · WINDOWS 139). Measured, not inferred: this
+    // arm answered `YAML syntax error: Map keys must be unique at line 7, column 1:` followed by
+    // the person's own line, rendered by `agent-qa validate`. The diagnostic's `file` field already
+    // names the file, so the message is the position and nothing else — the same composition as the
+    // config arm at :69 and the hooks arm in `parseHooksFile`.
     diagnostics.push({
       file: filePath,
       line: 1,
       column: 1,
-      message: `YAML syntax error: ${(err as Error).message}`,
+      message: yamlParseFailureMessage(err),
       severity: 'error',
     })
     return diagnostics
@@ -384,8 +397,9 @@ function appendDiagnostics(result: ValidationResult, diagnostics: ValidationDiag
 
 function validateRequiredWorkspaceFiles(workspace: ResolvedWorkspacePaths): ValidationDiagnostic[] {
   const diagnostics: ValidationDiagnostic[] = []
+  // The workspace agent-rules file was retired in Phase 373 — rules return as
+  // committed agent-qa-knowledge/policies/ files via Reader L0 in Phase 380.
   for (const [key, file] of [
-    ['workspace.agentRules', workspace.agentRules],
     ['workspace.envFile', workspace.envFile],
     ['workspace.secretsFile', workspace.secretsFile],
   ] as const) {

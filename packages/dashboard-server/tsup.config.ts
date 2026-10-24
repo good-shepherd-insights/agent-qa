@@ -8,4 +8,5 @@ export default defineConfig({
   sourcemap: true,
   target: 'node24',
   splitting: false,
+  removeNodeProtocol: false,
 })

@@ -9,11 +9,11 @@ export {
   AdapterLogDataSchema,
   CacheLogDataSchema,
   PlannerLogDataSchema,
-  HealerLogDataSchema,
   HookLogDataSchema,
   RunnerLogDataSchema,
   LogSourceDataSchemas,
 } from './types.js'
 
-export { LogManager } from './log-manager.js'
+export { LogManager, MemberLogScopeUnavailableError } from './log-manager.js'
+export type { AsyncScopeStore, MemberLogScope } from './log-manager.js'
 export { formatLogEntry } from './cli-formatter.js'

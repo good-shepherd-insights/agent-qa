@@ -47,6 +47,7 @@ function createMockSession(overrides: Partial<LiveSession> = {}) {
   }
 
   let sink: ((message: unknown) => void) | null = null
+  let generation = 0
 
   return {
     sessionId: 'suite-live-session',
@@ -153,6 +154,8 @@ function createMockSession(overrides: Partial<LiveSession> = {}) {
     attachMessageSink: vi.fn().mockImplementation((nextSink: ((message: unknown) => void) | null) => {
       sink = nextSink
     }),
+    beginAttachment: vi.fn(() => ++generation),
+    isCurrentAttachment: vi.fn((candidate: number) => candidate === generation),
     ...overrides,
   } as unknown as LiveSession
 }

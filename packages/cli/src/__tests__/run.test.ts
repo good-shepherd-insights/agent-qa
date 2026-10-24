@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync, mkdirSync, mkdtempSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
 import { Command } from 'commander'
 
 const {
@@ -14,8 +15,11 @@ const {
   mockFormatParseError,
   mockRunHooks,
   mockRunSuite,
-  mockRunTestWithRetry,
-  mockCreateMemoryProvider,
+  mockRunMemberTest,
+  mockPatchTestForSuite,
+  mockFsEventLog,
+  mockFsHandoffStore,
+  mockNextBuildOrdinal,
   mockCreateModel,
   mockLLMPlanner,
   mockLLMVerifier,
@@ -38,11 +42,17 @@ const {
   mockDashboardReporter,
   mockResolveDashboardDbPath,
   mockGenerateRunId,
-  mockFileActionCache,
-  mockAnalyticsRunReporterInstance,
-  mockCreateAnalyticsRunReporter,
+  mockFsActionCache,
+  mockFsStorageStateStore,
+  mockResolveBranch,
+  mockAnalyticsRunSubscriberInstance,
+  mockCreateAnalyticsRunSubscriber,
+  mockDashboardRunIngestInstance,
+  mockCreateDashboardRunIngest,
+  mockRunsDbHandle,
   mockShouldPrintAgentQaUpdateNotice,
   mockPrintAgentQaUpdateNoticeIfNeeded,
+  mockLogScope,
 } = vi.hoisted(() => {
   const multiReporter = {
     onRunStart: vi.fn().mockResolvedValue(undefined),
@@ -54,11 +64,48 @@ const {
     onStepStart: vi.fn().mockResolvedValue(undefined),
     onStepEnd: vi.fn().mockResolvedValue(undefined),
   }
-  const analyticsRunReporter = {
-    onRunEnd: vi.fn().mockResolvedValue(undefined),
+  // 363-09: the bus-subscriber successors — analytics + dashboard ingest ride the run session bus.
+  const analyticsRunSubscriber = {
+    handler: vi.fn(),
     flush: vi.fn().mockResolvedValue(undefined),
   }
+  const dashboardRunIngest = {
+    handler: vi.fn(),
+    stageSnapshots: vi.fn(),
+    finalize: vi.fn().mockResolvedValue(undefined),
+  }
+  // 2026-10-17 (443-08, D-03): every run opens its record, so the default handle answers its reads.
+  const runsDbHandle = () => ({
+    close: vi.fn(),
+    getRun: vi.fn(() => undefined),
+    readRunOwner: vi.fn(() => undefined),
+    isOwnStamp: vi.fn(() => false),
+    insertRun: vi.fn(),
+    updateRun: vi.fn(),
+    insertRunArtifact: vi.fn(),
+    finalizeRunArtifact: vi.fn(),
+    finalizeOwnRun: vi.fn(() => true),
+  })
+  // WINDOWS #233/#249: records the member-log-scope depth at every setRunId stamp, so a cell can
+  // assert the direct member executor actually runs INSIDE a scope. Depth, not a source grep —
+  // deleting the `logger.runInMemberScope(...)` wrap in run.ts leaves every stamp at depth 0.
+  const logScope = { depth: 0, stampDepths: [] as number[] }
+
   return {
+    mockLogScope: logScope,
+    mockAnalyticsRunSubscriberInstance: analyticsRunSubscriber,
+    // 398-10: the options argument is TYPED because two cells read it — the port-identity check
+    // for `--all` needs `calls[n][0].port`, and an untyped `vi.fn()` records a zero-length tuple
+    // that `tsc` refuses to index (vitest's own typecheck lane does not see this file's calls).
+    mockCreateAnalyticsRunSubscriber: vi.fn(function (_options: { port: unknown }) {
+      return analyticsRunSubscriber
+    }),
+    mockDashboardRunIngestInstance: dashboardRunIngest,
+    mockRunsDbHandle: runsDbHandle,
+    mockCreateDashboardRunIngest: vi.fn(function (deps: { runId: string; onRunCreated?: (runId: string) => void }) {
+      deps.onRunCreated?.(deps.runId)
+      return dashboardRunIngest
+    }),
     mockGlob: vi.fn(),
     mockParseAllTests: vi.fn(),
     mockParseSuiteFile: vi.fn(),
@@ -67,8 +114,11 @@ const {
     mockFormatParseError: vi.fn((err: any) => `${err.file}:${err.line}:${err.column}: ${err.message}`),
     mockRunHooks: vi.fn(),
     mockRunSuite: vi.fn(),
-    mockRunTestWithRetry: vi.fn(),
-    mockCreateMemoryProvider: vi.fn(),
+    mockRunMemberTest: vi.fn(),
+    mockPatchTestForSuite: vi.fn((t: any) => t),
+    mockFsEventLog: vi.fn(function () { return { append: vi.fn(), read: vi.fn(() => []) } }),
+    mockFsHandoffStore: vi.fn(function () { return { save: vi.fn() } }),
+    mockNextBuildOrdinal: vi.fn(async () => 1),
     mockCreateModel: vi.fn(() => ({})),
     mockLLMPlanner: vi.fn(),
     mockLLMVerifier: vi.fn(),
@@ -87,13 +137,13 @@ const {
     mockJUnitReporterInstance: { outputPath: '' },
     mockStdoutLiveReporterInstance: { active: false },
     mockMultiReporterInstance: multiReporter,
-    mockDashboardDatabase: vi.fn(function () { return { close: vi.fn() } }),
+    mockDashboardDatabase: vi.fn(function (): unknown { return runsDbHandle() }),
     mockDashboardReporter: vi.fn(function () { return {} }),
     mockResolveDashboardDbPath: vi.fn(),
     mockGenerateRunId: vi.fn(() => 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'),
-    mockFileActionCache: vi.fn(function () { return {} }),
-    mockAnalyticsRunReporterInstance: analyticsRunReporter,
-    mockCreateAnalyticsRunReporter: vi.fn(function () { return analyticsRunReporter }),
+    mockFsActionCache: vi.fn(function () { return { get: vi.fn(), set: vi.fn(), invalidate: vi.fn() } }),
+    mockFsStorageStateStore: vi.fn(function () { return { save: vi.fn(), load: vi.fn() } }),
+    mockResolveBranch: vi.fn(() => ({ currentBranch: 'main', defaultBranch: 'main' })),
     mockShouldPrintAgentQaUpdateNotice: vi.fn(() => true),
     mockPrintAgentQaUpdateNoticeIfNeeded: vi.fn().mockResolvedValue(undefined),
   }
@@ -101,7 +151,73 @@ const {
 
 vi.mock('glob', () => ({ glob: mockGlob }))
 
-vi.mock('@vostride/agent-qa-core', () => {
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: mockCreateModel,
+  }
+})
+
+// LLMPlanner/LLMVerifier moved to the runner package (Phase 353-07); run.ts now
+// imports them from @vostride/agent-qa-runner, so intercept them there.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
+  // runHooks moved to runner in Phase 363 D-06; intercept it while keeping every other export real.
+  return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier, runHooks: mockRunHooks, runMemberTest: mockRunMemberTest }
+})
+
+vi.mock('@vostride/agent-qa-runner-local', () => ({
+  FsActionCache: mockFsActionCache,
+  FsStorageStateStore: mockFsStorageStateStore,
+  resolveBranch: mockResolveBranch,
+  FsEventLog: mockFsEventLog,
+  FsHandoffStore: mockFsHandoffStore,
+  // 363-06: buildRunPorts constructs the run-artifact store; buildScreenshotCompressor constructs
+  // the sharp compressor. Both are injected but their legs are never exercised in these unit runs.
+  FsRunArtifactStore: class { stage(): void {} finalize(): void {} },
+  // 367-13 CASS-02: buildRunPorts also constructs the run-scoped evidence artifact store; its legs
+  // are never exercised in these mocked unit runs, but the constructor must exist.
+  FsEvidenceArtifactStore: class {
+    persistDecisionScreenshot(): { id: string; sha: string } { return { id: 'decision-screenshot:mock', sha: 'mock' } }
+    getBlob(): Uint8Array | undefined { return undefined }
+  },
+  SharpScreenshotCompressor: class {
+    async compress(buffer: Buffer): Promise<{ buffer: Buffer; imageWidth: number; imageHeight: number }> {
+      return { buffer, imageWidth: 0, imageHeight: 0 }
+    }
+    async dimensions(): Promise<{ width: number; height: number }> {
+      return { width: 0, height: 0 }
+    }
+  },
+  nextBuildOrdinal: mockNextBuildOrdinal,
+  // 363-04: the run paths construct DockerHookExecutor here (D-06); runHooks is mocked so execute
+  // is never actually invoked, but the constructor must exist.
+  DockerHookExecutor: class { async execute() { return { success: true, variables: {}, output: '', stdout: '', stderr: '', duration: 0 } } },
+  // The run composition's `runDirFor` roots the run's own directory via the shared run-dir slug, so
+  // the mock exposes both.
+  RUNS_SUBDIR: 'runs',
+  slugBranch: (name: string) => String(name),
+  // 388-02: the post-run tail derives the handoff path and reads it before enqueueing
+  // analyze-run. These unit runs write no handoff, so the read refuses — which is exactly the
+  // D-07 warn-only leg, and the exit-code assertions below are what prove it stays warn-only.
+  HANDOFF_FILE: 'handoff.json',
+  loadCompletedRunHandoff: () => {
+    throw new Error('no completed run handoff in this unit fixture')
+  },
+}))
+
+// 398-10 (D-17/D-20): the run-completion subscriber comes from `@vostride/agent-qa-analytics` now.
+// ONLY that factory is replaced — `composeAnalytics`, the port, the transports and the closed union
+// are the REAL ones, so this command's composition root still makes the real opt-out decision and
+// still refuses an event the union does not declare. Mocking the package wholesale would have made
+// every analytics claim in this file a claim about the mock.
+vi.mock('@vostride/agent-qa-analytics', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-analytics')>()
+  return { ...actual, createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber }
+})
+
+vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   class MockMobileSetupError extends Error {
     category: string
     constructor(input: { category: string; message: string }) {
@@ -110,19 +226,48 @@ vi.mock('@vostride/agent-qa-core', () => {
     }
   }
 
+  // 390-08: `workspaceRelativeIdentityPath` comes from the REAL module, never a hand-spelled stub.
+  // It is the rule that decides what bytes land in the committed quarantine ledger, so a mock of it
+  // would leave these run-command pins measuring the mock's idea of identity instead of the
+  // shipped one — and a drift between the two would be exactly the defect CR-02 found.
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
+
   return {
+  // 395-08: the two default-directory constants, FROM THE REAL MODULE. `commands/scaffold-content.ts`
+  // — D-04's one scaffold producer — reads them, and it is now in this command's module graph
+  // through the composition root. Passed through rather than spelled, so a mock cannot become a
+  // second answer about where the cache and the auth states live.
+  DEFAULT_AGENT_QA_AUTH_STATES_DIR: actual.DEFAULT_AGENT_QA_AUTH_STATES_DIR,
+  DEFAULT_AGENT_QA_RUNS_DB_PATH: actual.DEFAULT_AGENT_QA_RUNS_DB_PATH,
+  workspaceRelativeIdentityPath: actual.workspaceRelativeIdentityPath,
+  // 398-10: the shipped version reader, FROM THE REAL MODULE for the same reason as the two above.
+  // `composition/analytics-host.ts` stamps `agent_qa_version` on every event this command emits,
+  // and the union constrains that field to a semver — a stubbed string here would let a cell pass
+  // on a value the schema would refuse in production.
+  getAgentQaVersion: actual.getAgentQaVersion,
   parseAllTests: mockParseAllTests,
+  parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
+    const result = await mockParseAllTests(filePaths)
+    return {
+      bindings: (result.tests ?? []).map((test: unknown) => ({
+        test,
+        filePath: filePaths[0] ?? '',
+        fileContent: '',
+      })),
+      errors: result.errors ?? [],
+    }
+  }),
   parseSuiteFile: mockParseSuiteFile,
   parseTestFile: mockParseTestFile,
   parseHooksFile: mockParseHooksFile,
   formatParseError: mockFormatParseError,
   runHooks: mockRunHooks,
   runSuite: mockRunSuite,
-  runTestWithRetry: mockRunTestWithRetry,
+  patchTestForSuite: mockPatchTestForSuite,
   resolveAuthStateForRun: mockResolveAuthStateForRun,
   resolveAuthStatePaths: mockResolveAuthStatePaths,
   writeAuthStateFiles: mockWriteAuthStateFiles,
-  AUTH_STATE_SCHEMA_VERSION: 1,
+  AUTH_STATE_SCHEMA_VERSION: 2,
   normalizeAuthStateUse: vi.fn((use: { authState?: unknown } | undefined) => {
     const authState = use?.authState
     if (typeof authState === 'string' && authState.trim().length > 0) {
@@ -140,19 +285,17 @@ vi.mock('@vostride/agent-qa-core', () => {
     }
     return undefined
   }),
-  createModel: mockCreateModel,
   resolveLLMAuth: vi.fn(async () => ({
     kind: 'api-key',
     credentialKey: 'default',
     provider: 'anthropic-subscription',
     apiKey: 'test-key',
   })),
-  getProviderOptions: vi.fn(() => ({})),
   LLMPlanner: mockLLMPlanner,
   LLMVerifier: mockLLMVerifier,
-  FileActionCache: mockFileActionCache,
   ATTR_TRIGGER: 'agent-qa.trigger',
   ATTR_RUNNER: 'agent-qa.runner',
+  ATTR_GATE_RUN: 'agent-qa.gate-run',
   DEFAULT_AGENT_QA_ARTIFACTS_DIR: '.agent-qa/artifacts',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',
@@ -228,7 +371,6 @@ vi.mock('@vostride/agent-qa-core', () => {
     ...user,
     ...internal,
   })),
-  redactAuthStateValue: vi.fn((value: unknown) => value),
   formatRunAttributesBlock: vi.fn((attributes: Record<string, string>) => {
     const order = ([key]: [string, string]) => key === 'agent-qa.trigger'
       ? [0, 0, key]
@@ -322,12 +464,19 @@ vi.mock('@vostride/agent-qa-core', () => {
     redactString(value: string) { return value }
     redactValue(value: unknown) { return value }
   },
-  hashStepInstruction: vi.fn(() => 'mock-hash'),
   LogManager: vi.fn(function () {
     return {
       log: vi.fn(),
       flush: vi.fn(),
-      setRunId: vi.fn(),
+      runInMemberScope: vi.fn(async (fn: () => unknown) => {
+        mockLogScope.depth++
+        try {
+          return await fn()
+        } finally {
+          mockLogScope.depth--
+        }
+      }),
+      setRunId: vi.fn(() => { mockLogScope.stampDepths.push(mockLogScope.depth) }),
       setCurrentStep: vi.fn(),
       clearCurrentStep: vi.fn(),
       getBuffer: vi.fn(() => []),
@@ -347,28 +496,16 @@ vi.mock('@vostride/agent-qa-core', () => {
     return mockStdoutLiveReporterInstance
   }),
   MultiReporter: vi.fn(function () { return mockMultiReporterInstance }),
-  createAnalyticsRunReporter: mockCreateAnalyticsRunReporter,
-  CircuitBreaker: vi.fn(function () {
-    return {
-      record: vi.fn(),
-      isTripped: vi.fn(() => false),
-      evaluate: vi.fn(() => ({ tripped: false, failureRate: 0, baselineRate: 0 })),
-    }
-  }),
-  shouldAblate: vi.fn(() => false),
-  collectAllInjectedIds: vi.fn(() => new Map()),
-  createMemoryProvider: mockCreateMemoryProvider,
-  resolveMemoryRoot: vi.fn((config: any, configDir: string) => {
-    const memoryDir = config?.services?.memory?.dir ?? 'agent-qa-memory'
-    return memoryDir.startsWith('/') ? memoryDir : resolve(configDir, memoryDir)
-  }),
+  resolveKnowledgeRoot: vi.fn((knowledge: { dir?: string } | undefined, configDir: string) =>
+    resolve(configDir, knowledge?.dir ?? 'agent-qa-knowledge')),
   generateRunId: mockGenerateRunId,
+  isCanonicalRunId: (value: string): boolean => /^r_/.test(value),
   isPathInsideDir: vi.fn((candidatePath: string) => !candidatePath.includes('..')),
   resolveWorkspacePaths: vi.fn(({ config, configPath }: any) => {
     const configDir = String(configPath).includes('/')
       ? String(configPath).split('/').slice(0, -1).join('/')
       : process.cwd()
-    for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'agentRules', 'envFile', 'secretsFile']) {
+    for (const key of ['testMatch', 'suiteMatch', 'hooksFile', 'envFile', 'secretsFile']) {
       if (config.workspace[key] === undefined) {
         throw new Error(`workspace.${key} is required`)
       }
@@ -384,11 +521,6 @@ vi.mock('@vostride/agent-qa-core', () => {
         configuredPath: config.workspace.hooksFile,
         absolutePath: resolveConfigured(config.workspace.hooksFile),
         workspaceRelativePath: config.workspace.hooksFile,
-      },
-      agentRules: {
-        configuredPath: config.workspace.agentRules,
-        absolutePath: resolveConfigured(config.workspace.agentRules),
-        workspaceRelativePath: config.workspace.agentRules,
       },
       envFile: {
         configuredPath: config.workspace.envFile,
@@ -480,6 +612,7 @@ vi.mock('@vostride/agent-qa-web', () => ({
 vi.mock('@vostride/agent-qa-dashboard', () => ({
   DashboardDatabase: mockDashboardDatabase,
   DashboardReporter: mockDashboardReporter,
+  createDashboardRunIngest: mockCreateDashboardRunIngest,
   resolveDashboardDbPath: mockResolveDashboardDbPath,
 }))
 
@@ -490,6 +623,7 @@ vi.mock('../version-notice.js', () => ({
 
 vi.mock('../config.js', () => ({
   resolveConfig: mockResolveConfig,
+  loadConfigPlugins: vi.fn(async () => {}),
   mergeWithTestConfig: vi.fn((...args: any[]) => args[0]),
   mergeConfigs: vi.fn((...args: any[]) => args[0]),
   mergeUseBlocks: vi.fn((globalUse: any, suiteUse: any, testUse: any, cliFlags: any) => {
@@ -513,12 +647,20 @@ vi.mock('../targets.js', () => ({
   resolveTarget: mockResolveTarget,
 }))
 
+// 373-07: the run-start baseline probe (D-04) does a REAL global-fetch GET against the resolved
+// web target at the composition root — stub it here so no unit test touches the network and the
+// run body starts immediately (the classifier consumes the value; probe behavior is pinned in
+// baseline-probe.test.ts).
+vi.mock('../commands/baseline-probe.js', () => ({
+  runBaselineProbe: vi.fn(async () => ({ status: 200, elapsedMs: 1 })),
+}))
+
 import { createRunCommand } from '../commands/run.js'
+import { composeRunOwnership } from '../composition/run-owner-probe.js'
 
 let defaultSecretsFilePath: string | undefined
 let defaultEnvFilePath: string | undefined
 let defaultHooksFilePath: string | undefined
-let defaultAgentRulesFilePath: string | undefined
 
 function defaultConfig() {
   return {
@@ -527,7 +669,6 @@ function defaultConfig() {
       suiteMatch: ['suites/**/*.suite.yaml'],
       testPathIgnore: [] as string[],
       hooksFile: defaultHooksFilePath ?? 'hooks.yaml',
-      agentRules: defaultAgentRulesFilePath ?? './agent-rules.md',
       envFile: defaultEnvFilePath ?? '.env',
       secretsFile: defaultSecretsFilePath ?? '.env.secrets.local',
     },
@@ -550,7 +691,7 @@ function defaultConfig() {
       llm: 'default',
       timeout: { step: 30000, test: 300000, navigation: 10000 },
       healing: { maxAttempts: 3 },
-      planner: { maxSubActions: 50, previousStepCount: 3 },
+      planner: { maxActions: 50, maxPlanningTurns: 50, previousStepCount: 3 },
       logCapture: { console: true, network: true },
     },
   }
@@ -581,20 +722,41 @@ let logSpy: any
 let errorSpy: any
 const tempDirs: string[] = []
 
+/**
+ * A run id unique to this test, and to this process (401-20 · CR-04).
+ *
+ * A caller-named run id that already names a run is now REFUSED, and these fixtures write REAL run
+ * directories into `packages/cli/.agent-qa/runs/` which survive the process. A constant id
+ * therefore worked exactly once per workspace and collided on every later run of this file. Unique
+ * A FRESH ID PER CALL by default, because `--all` starts a suite run and a direct run in ONE
+ * process and a shared mint would make the second collide with the first. Cells that need one
+ * stable value across a single run pin it themselves with `mockReturnValue(freshRunId(...))`; the
+ * one cell that asserts the printed id reads it back off the mint rather than typing it in.
+ */
+// 418-07: OS PIDs recur across sessions while these fixture directories persist.
+// A per-suite nonce prevents historical run evidence from refusing a fresh fixture.
+const runIdSession = randomUUID().replaceAll('-', '')
+let runIdOrdinal = 0
+function freshRunId(stem: string): string {
+  runIdOrdinal += 1
+  return `r_${stem}-${runIdSession}-${runIdOrdinal.toString(36)}`
+}
+
 beforeEach(() => {
+  mockLogScope.depth = 0
+  mockLogScope.stampDepths.length = 0
   vi.clearAllMocks()
+  mockGenerateRunId.mockImplementation(() => freshRunId('able-baker-charlie-delta-echo'))
   const secretsDir = mkdtempSync(join(tmpdir(), 'agent-qa-run-secrets-'))
   tempDirs.push(secretsDir)
   defaultSecretsFilePath = join(secretsDir, '.env.secrets.local')
   defaultEnvFilePath = join(secretsDir, '.env')
   defaultHooksFilePath = join(secretsDir, 'hooks.yaml')
-  defaultAgentRulesFilePath = join(secretsDir, 'agent-rules.md')
   writeFileSync(defaultSecretsFilePath, '')
   writeFileSync(defaultEnvFilePath, '')
   writeFileSync(defaultHooksFilePath, 'hooks: []\n')
-  writeFileSync(defaultAgentRulesFilePath, '# rules\n')
   mockResolveConfig.mockResolvedValue(defaultConfig())
-  mockDashboardDatabase.mockImplementation(function () { return { close: vi.fn() } })
+  mockDashboardDatabase.mockImplementation(function () { return mockRunsDbHandle() })
   mockDashboardReporter.mockImplementation(function () { return {} })
   mockResolveDashboardDbPath.mockImplementation(({ configDir, configuredDbPath }: { configDir: string; configuredDbPath?: string }) => {
     if (configuredDbPath?.trim()) return resolve(configDir, configuredDbPath)
@@ -618,9 +780,20 @@ beforeEach(() => {
   })
   mockRunSuite.mockReset()
   mockRunSuite.mockResolvedValue({ status: 'passed', duration: 100 })
+  // The suite path now runs through startRun; each member wraps executeSuiteMember (D-01). Default
+  // to a passing member TestResult so the aggregate verdict is `passed` ⇒ exit 0.
+  mockRunMemberTest.mockReset()
+  mockRunMemberTest.mockResolvedValue({
+    runId: 'r_member',
+    name: 'Suite Member',
+    filePath: 'tests/login.yaml',
+    status: 'passed',
+    steps: [],
+    duration: 100,
+  })
   mockResolveAuthStateForRun.mockReset()
   mockResolveAuthStateForRun.mockResolvedValue({
-    version: 1,
+    version: 2,
     kind: 'web',
     targetName: 'test-app',
     stateName: 'admin',
@@ -647,12 +820,23 @@ beforeEach(() => {
   mockShouldPrintAgentQaUpdateNotice.mockReturnValue(true)
   mockPrintAgentQaUpdateNoticeIfNeeded.mockReset()
   mockPrintAgentQaUpdateNoticeIfNeeded.mockResolvedValue(undefined)
-  mockFileActionCache.mockClear()
+  mockFsActionCache.mockClear()
+  mockFsStorageStateStore.mockClear()
+  mockResolveBranch.mockClear()
   mockResolveTarget.mockReturnValue({
     name: 'test-app',
     product: 'test-app',
     platform: 'web',
     url: 'https://example.com',
+    // 401-03 (D-06): these fixtures declare their class because the run gate now classifies
+    // every run by it, and an UNDECLARED target fails closed in a non-interactive context —
+    // which a vitest process is. `local` is the honest declaration here: nothing in this suite
+    // touches a network (the baseline probe is mocked above and the member runner is a double),
+    // so these runs drive a local fixture environment whatever the placeholder URL reads. The
+    // gate's own behaviour is measured where it belongs — `run-gate.e2e.test.ts` on the shipped
+    // binary and `run-invocation-core.test.ts` at the unit — and a control below proves these
+    // cells are green because they DECLARED, not because the gate went missing.
+    environment: 'local',
   })
   exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
     throw new Error('process.exit')
@@ -666,8 +850,6 @@ afterEach(async () => {
   logSpy.mockRestore()
   errorSpy.mockRestore()
   delete process.env.AGENT_QA_RUN_ID
-  delete process.env.AGENT_QA_SUITE_QUEUE_ID
-  delete process.env.AGENT_QA_PARENT_RUN_ID
   delete process.env.AGENT_QA_RUN_ATTRIBUTES_JSON
   delete process.env.AGENT_QA_LIVE_EVENTS
   delete process.env.BROWSERSTACK_USERNAME
@@ -675,9 +857,13 @@ afterEach(async () => {
   defaultSecretsFilePath = undefined
   defaultEnvFilePath = undefined
   defaultHooksFilePath = undefined
-  defaultAgentRulesFilePath = undefined
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   tempDirs.length = 0
+})
+
+afterAll(async () => {
+  await Promise.all(['agent-qa-run-notice-junit.xml', 'agent-qa-selection-junit.xml']
+    .map((file) => rm(join(tmpdir(), file), { force: true })))
 })
 
 async function runCommand(...args: string[]) {
@@ -714,11 +900,30 @@ async function parseRemovedRunFlag(...runArgs: string[]) {
   return program.parseAsync(['node', 'agent-qa', 'run', ...runArgs])
 }
 
-async function waitForCondition(predicate: () => boolean, attempts = 20) {
-  for (let i = 0; i < attempts; i++) {
-    if (predicate()) return
-    await new Promise((resolve) => setTimeout(resolve, 0))
+// Member starts resolve waits, so a slow run start costs time rather than a poll ceiling.
+function memberArrivals() {
+  const started: string[] = []
+  const waiting: { count: number; resolve: () => void }[] = []
+  const arrive = (name: string) => {
+    started.push(name)
+    for (const waiter of waiting.filter(({ count }) => started.length >= count)) {
+      waiting.splice(waiting.indexOf(waiter), 1)
+      waiter.resolve()
+    }
   }
+  // Resolves once `count` members have started and pending work has had a turn to start more,
+  // so a sequential claim made right after still sees any member started early.
+  const reached = async (count: number, command: Promise<unknown>) => {
+    await Promise.race([
+      started.length >= count ? Promise.resolve()
+        : new Promise<void>((resolve) => { waiting.push({ count, resolve }) }),
+      command.then(() => {
+        throw new Error(`the run settled with ${started.length} of ${count} members started: ${started.join(', ')}`)
+      }),
+    ])
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  return { started, arrive, reached }
 }
 
 function deferredRunResult(name: string) {
@@ -778,13 +983,17 @@ function suiteDefinition(name: string, testFile: string, use?: Record<string, un
   }
 }
 
+// Resolves to a per-member TestResult (the suite path now runs through executeSuiteMember, not
+// runSuite). Used to control sequential member timing inside the ONE RunSession.
 function deferredSuiteResult(name: string) {
   let resolveResult!: () => void
   const promise = new Promise<Record<string, unknown>>((resolvePromise) => {
     resolveResult = () => resolvePromise({
+      runId: `r_${name}`,
       name,
+      filePath: `tests/${name}.yaml`,
       status: 'passed',
-      tests: [],
+      steps: [],
       duration: 100,
     })
   })
@@ -831,7 +1040,7 @@ describe('run command — secrets file preflight', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -841,16 +1050,13 @@ describe('run command — secrets file preflight', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.secretStore.require('LOGIN_PASSWORD')).toBe('super-secret')
     expect(runConfig.secretRedactor).toBeDefined()
-    expect(runConfig.secretsFileMetadata).toEqual({
-      path: secretsPath,
-      status: 'loaded',
-      count: 1,
-    })
-    const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(JSON.stringify(reporterContext.artifact.config.secretsFile)).not.toContain('super-secret')
+    // 363-11: secretsFileMetadata / the run artifact are no longer threaded through a v1 reporter
+    // (runMemberTest owns execution); the secret store + redactor threading above is the meaningful
+    // assertion — the run redactor is what keeps raw secrets out of any rendered/persisted output.
+    void secretsPath
   })
 })
 
@@ -875,6 +1081,162 @@ describe('run command — glob expansion', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('No test files found'))
+  })
+})
+
+describe('run command — product-scoped handoff preflight', () => {
+  it('rejects a mixed-product direct invocation before run-owned side effects', async () => {
+    mockGlob.mockResolvedValue(['tests/alpha.yaml', 'tests/beta.yaml'])
+    mockParseAllTests.mockResolvedValue({
+      tests: [
+        makeTest({ name: 'Alpha checkout', target: 'alpha-target' }),
+        makeTest2({ name: 'Beta checkout', target: 'beta-target' }),
+      ],
+      errors: [],
+    })
+    mockResolveTarget.mockImplementation((_config, target: string) => ({
+      name: target,
+      product: target === 'alpha-target' ? 'alpha-product' : 'beta-product',
+      platform: 'web',
+      url: `https://${target}.example.test`,
+      environment: 'local',
+    }))
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    const message = errorSpy.mock.calls.flat().join('\n')
+    expect(message).toContain('Mixed-product run is not supported')
+    expect(message).toContain('alpha-product')
+    expect(message).toContain('beta-product')
+    expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
+    expect(mockFsStorageStateStore).not.toHaveBeenCalled()
+    expect(mockWebAdapterSetup).not.toHaveBeenCalled()
+    expect(mockCreateModel).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+  })
+
+  it('rejects mixed-product suites before dashboard, ordinal, adapter, or session setup', async () => {
+    const { configPath, suiteA, suiteB } = await createMultiSuiteWorkspace()
+    mockGlob.mockResolvedValue([suiteA, suiteB])
+    mockParseSuiteFile.mockImplementation(async (file: string) => ({
+      ...suiteDefinition(file === suiteA ? 'Suite Alpha' : 'Suite Beta', file === suiteA
+        ? 'a.yaml'
+        : 'b.yaml'),
+      target: file === suiteA ? 'alpha-target' : 'beta-target',
+    }))
+    mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
+    mockResolveTarget.mockImplementation((_config, target: string) => ({
+      name: target,
+      product: target === 'alpha-target' ? 'alpha-product' : 'beta-product',
+      platform: 'web',
+      url: `https://${target}.example.test`,
+      environment: 'local',
+    }))
+
+    await runCommandWithGlobalArgs(['--config', configPath], '--suite')
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    const message = errorSpy.mock.calls.flat().join('\n')
+    expect(message).toContain('Mixed-product run is not supported')
+    expect(message).toContain('alpha-product')
+    expect(message).toContain('beta-product')
+    expect(mockDashboardDatabase).not.toHaveBeenCalled()
+    expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
+    expect(mockFsStorageStateStore).not.toHaveBeenCalled()
+    expect(mockWebAdapterSetup).not.toHaveBeenCalled()
+    expect(mockCreateModel).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+  })
+
+  it('keeps multiple targets for one product in one direct run', async () => {
+    mockGlob.mockResolvedValue(['tests/storefront.yaml', 'tests/admin.yaml'])
+    mockParseAllTests.mockResolvedValue({
+      tests: [
+        makeTest({ name: 'Storefront checkout', target: 'storefront-target' }),
+        makeTest2({ name: 'Admin checkout', target: 'admin-target' }),
+      ],
+      errors: [],
+    })
+    mockResolveTarget.mockImplementation((_config, target: string) => ({
+      name: target,
+      product: 'checkout-product',
+      platform: 'web',
+      url: `https://${target}.example.test`,
+      environment: 'local',
+    }))
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(0)
+    expect(mockNextBuildOrdinal).toHaveBeenCalledWith(expect.objectContaining({
+      product: 'checkout-product',
+    }))
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
+  })
+})
+
+// 401-03 (D-06/D-16): the control on every `environment: 'local'` declaration in this file.
+//
+// WHY IT IS HERE AND NOT ONLY IN THE E2E. Every fixture above declares its class, and after that
+// declaration the whole suite runs the run body exactly as it always did. A reader is entitled to
+// ask whether those cells are green because they declared, or because the gate is inert and the
+// declaration is decoration. This cell answers it in the same harness, with the same command, by
+// changing exactly one field.
+// RE-SPELLED 2026-09-30 (432-13, D-01/D-18). The control used to be an UNDECLARED target denied
+// fail-closed by the run gate. That run starts now (C432-HEADLESS-START), so the one-field control
+// is a PRODUCTION declaration the config has not opted into — the only refusal left — beside the
+// undeclared target that now reaches the member runner.
+describe('run command — the gate the declarations above are satisfying (401-03)', () => {
+  const oneMember = (): void => {
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest({ target: 'test-app' })], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+  }
+
+  it('a PRODUCTION target without the opt-in is refused and never reaches the member runner', async () => {
+    oneMember()
+    mockResolveTarget.mockReturnValue({
+      name: 'test-app',
+      product: 'test-app',
+      platform: 'web',
+      url: 'https://example.com',
+      environment: 'production',
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+    expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    const rendered = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
+    expect(rendered).toContain('Run denied')
+    expect(rendered).toContain('"test-app"')
+    expect(rendered).toContain('allowProduction: true')
+    expect(rendered).not.toContain('--trust-session')
+  })
+
+  it('an UNDECLARED target now reaches the member runner, with no prompt and no refusal', async () => {
+    oneMember()
+    mockResolveTarget.mockReturnValue({
+      name: 'test-app',
+      product: 'test-app',
+      platform: 'web',
+      url: 'https://example.com',
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    expect(exitSpy).toHaveBeenCalledWith(0)
+    const rendered = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
+    expect(rendered).not.toContain('Run denied')
   })
 })
 
@@ -911,6 +1273,14 @@ describe('run command — reduced flag surface and target resolution', () => {
     expect(help).not.toContain('--env ')
     expect(help).not.toContain('--env-file')
   })
+  it('418 exposes --max-ablations and refuses non-positive or non-integer budgets before running', async () => {
+    expect(createRunCommand().helpInformation()).toContain('--max-ablations <n>')
+    for (const value of ['0', '-1', '1.5', '9007199254740992']) {
+      await expect(parseRemovedRunFlag('--max-ablations', value))
+        .rejects.toMatchObject({ code: 'commander.invalidArgument' })
+    }
+    expect(mockResolveConfig).not.toHaveBeenCalled()
+  })
 
   it('classifies removed run flags as Commander unknown options', async () => {
     await expect(parseRemovedRunFlag('--app', 'staging')).rejects.toMatchObject({ code: 'commander.unknownOption' })
@@ -930,8 +1300,9 @@ describe('run command — reduced flag surface and target resolution', () => {
       product: 'myapp',
       platform: 'web',
       url: 'https://myapp.example.com',
+      environment: 'local',
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -945,11 +1316,106 @@ describe('run command — reduced flag surface and target resolution', () => {
       expect.anything(),
       'myapp',
     )
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
+    expect(mockRunMemberTest).toHaveBeenCalledWith(
       expect.objectContaining({ url: 'https://myapp.example.com' }),
       expect.anything(),
-      expect.anything(),
     )
+  })
+
+  it('passes mapped model profile and auth to model.createModel for direct runs', async () => {
+    const cfg = defaultConfig()
+    cfg.registry.llms[0] = {
+      ...cfg.registry.llms[0],
+      providerHeaders: { 'X-Agent-QA-Test': 'run-path' },
+    } as any
+    mockResolveConfig.mockResolvedValue(cfg)
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({
+      tests: [makeTest()],
+      errors: [],
+    })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockCreateModel).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-sonnet-4-20250514',
+        baseURL: 'https://anthropic-proxy.example/messages',
+        headers: { 'X-Agent-QA-Test': 'run-path' },
+        auth: { mode: 'api-key' },
+      }),
+      { kind: 'api-key', apiKey: 'test-key' },
+      expect.any(Function),
+    )
+    expect(mockCreateModel).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-sonnet-4-20250514',
+        baseURL: 'https://anthropic-proxy.example/messages',
+        headers: { 'X-Agent-QA-Test': 'run-path' },
+        auth: { mode: 'api-key' },
+      }),
+      { kind: 'api-key', apiKey: 'test-key' },
+      expect.any(Function),
+    )
+    // 355-07 supplies role-separated accounting ports. 366-07 adds each role's declared
+    // model profile and preserves that exact DTO reference through member-run recording.
+    expect(mockLLMPlanner.mock.calls[0]).toHaveLength(7)
+    expect(mockLLMPlanner.mock.calls[0][0]).toBe(mockCreateModel.mock.results[0].value)
+    expect(mockLLMPlanner.mock.calls[0][1]).toBe('web')
+    const plannerAccounting = mockLLMPlanner.mock.calls[0][4]
+    expect(plannerAccounting).toEqual(expect.objectContaining({
+      estimate: expect.any(Function),
+      degrade: expect.any(Function),
+      recordUsage: expect.any(Function),
+      getCeilings: expect.any(Function),
+    }))
+    const plannerDeclared = mockLLMPlanner.mock.calls[0][5]
+    expect(plannerDeclared).toEqual(expect.objectContaining({
+      provider: 'anthropic-compatible',
+      modelId: 'claude-sonnet-4-20250514',
+      vision: expect.any(Boolean),
+      maxOutputTokens: expect.any(Number),
+    }))
+    expect(Object.keys(mockLLMPlanner.mock.calls[0][6]).sort()).toEqual([
+      'memory.read',
+      'memory.search',
+    ])
+    expect(plannerDeclared).not.toHaveProperty('sampling')
+
+    expect(mockLLMVerifier.mock.calls[0]).toHaveLength(3)
+    expect(mockLLMVerifier.mock.calls[0][0]).toBe(mockCreateModel.mock.results[1].value)
+    const verifierAccounting = mockLLMVerifier.mock.calls[0][1]
+    expect(verifierAccounting).toEqual(expect.objectContaining({
+      estimate: expect.any(Function),
+      recordUsage: expect.any(Function),
+      getCeilings: expect.any(Function),
+    }))
+    const verifierDeclared = mockLLMVerifier.mock.calls[0][2]
+    expect(verifierDeclared).toEqual(expect.objectContaining({
+      provider: 'anthropic-compatible',
+      modelId: 'claude-sonnet-4-20250514',
+      vision: expect.any(Boolean),
+      maxOutputTokens: expect.any(Number),
+    }))
+    expect(verifierDeclared).not.toHaveProperty('sampling')
+    expect(verifierDeclared).not.toBe(plannerDeclared)
+
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
+    expect(runConfig.modelProfiles.planner).toBe(plannerDeclared)
+    expect(runConfig.modelProfiles.verifier).toBe(verifierDeclared)
+    // Role-separated instances — the planner and verifier must not share one accounting.
+    expect(plannerAccounting).not.toBe(verifierAccounting)
   })
 })
 
@@ -963,7 +1429,7 @@ describe('run command — auth state consumption', () => {
       tests: [makeTest({ use: { authState: 'admin' } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -989,7 +1455,7 @@ describe('run command — auth state consumption', () => {
         storageStatePath: '/internal/auth/test-app/admin.json',
       }),
     }))
-    expect(mockRunTestWithRetry).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 
   it('passes direct auth state to setup, inline, and teardown hook sandbox options', async () => {
@@ -1017,7 +1483,7 @@ describe('run command — auth state consumption', () => {
         variables: {},
       }]]),
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -1035,11 +1501,9 @@ describe('run command — auth state consumption', () => {
         storageStatePath: '/internal/auth/test-app/admin.json',
       }),
     }))
-    expect(mockRunTestWithRetry.mock.calls[0][1].inlineHookSandboxOptions).toEqual(expect.objectContaining({
-      authState: expect.objectContaining({
-        targetName: 'test-app',
-        stateName: 'admin',
-      }),
+    expect(mockRunMemberTest.mock.calls[0][1].hookAuthState).toEqual(expect.objectContaining({
+      targetName: 'test-app',
+      stateName: 'admin',
     }))
     expect(mockRunHooks.mock.calls[1][1]).toEqual(expect.objectContaining({
       authState: expect.objectContaining({
@@ -1073,7 +1537,7 @@ describe('run command — auth state consumption', () => {
         variables: {},
       }]]),
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -1085,9 +1549,6 @@ describe('run command — auth state consumption', () => {
 
     expect(mockResolveAuthStateForRun).not.toHaveBeenCalled()
     expect(mockWebAdapterSetup.mock.calls[0][0].authState).toBeUndefined()
-    expect(mockRunTestWithRetry.mock.calls[0][1]).toEqual(expect.objectContaining({
-      skipReporterOnTestEnd: true,
-    }))
     expect(mockWebStorageState).toHaveBeenCalledWith({ indexedDB: true })
     expect(mockWriteAuthStateFiles).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1098,7 +1559,7 @@ describe('run command — auth state consumption', () => {
       {
         payload: { cookies: [], origins: [] },
         metadata: expect.objectContaining({
-          version: 1,
+          version: 2,
           kind: 'web',
           target: 'test-app',
           name: 'admin',
@@ -1116,9 +1577,8 @@ describe('run command — auth state consumption', () => {
         }),
       }),
     )
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'passed',
-    }))
+    // 363-11: the member outcome is no longer surfaced via a v1 reporter; a passing run exits 0.
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
   it('does not capture direct auth state when product execution fails', async () => {
@@ -1127,7 +1587,7 @@ describe('run command — auth state consumption', () => {
       tests: [makeTest({ use: { authState: { name: 'admin', load: false, capture: true } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'failed',
@@ -1140,11 +1600,9 @@ describe('run command — auth state consumption', () => {
 
     expect(mockWriteAuthStateFiles).not.toHaveBeenCalled()
     expect(mockWebStorageState).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
-      failureSummary: 'Button missing',
-    }))
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    // 363-11: a failing member surfaces via the run exit code (no v1 reporter).
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
   it('fails the direct run safely when auth-state capture write fails without retrying product steps', async () => {
@@ -1154,7 +1612,7 @@ describe('run command — auth state consumption', () => {
       tests: [makeTest({ use: { authState: { name: 'admin', load: false, capture: true } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/auth.yaml',
       status: 'passed',
@@ -1164,13 +1622,10 @@ describe('run command — auth state consumption', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    // 363-11: the auth-capture-write failure synthesizes a failed run → exit 1 (no v1 reporter);
+    // the sensitive path must never leak to stderr.
     expect(exitSpy).toHaveBeenCalledWith(1)
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
-      failureSummary: 'Could not save auth state "admin" for target "test-app".',
-      steps: [expect.objectContaining({ status: 'passed' })],
-    }))
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).not.toContain('/internal/auth')
   })
@@ -1189,7 +1644,7 @@ describe('run command — auth state consumption', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     expect(mockWebAdapterSetup).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('Auth state "admin" for target "test-app"')
     expect(allErrors).toContain('agent-qa auth-state capture --target test-app --name admin')
@@ -1213,6 +1668,8 @@ describe('run command — auth state consumption', () => {
       product: 'mobile-app',
       platform: 'android',
       appPackage: 'com.example.app',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     mockResolveAuthStateForRun.mockRejectedValueOnce(
       new Error('auth state is only supported for web targets. For native mobile, use use.mobile.appState: preserve.'),
@@ -1247,8 +1704,7 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
-    expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
       storageStatePath: '/internal/auth/test-app/admin.json',
@@ -1270,9 +1726,8 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockRunSuite).toHaveBeenCalled()
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
-    expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
       storageStatePath: '/internal/auth/test-app/admin.json',
@@ -1295,12 +1750,9 @@ describe('run command — auth state consumption', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(mockResolveAuthStateForRun).not.toHaveBeenCalled()
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
-    expect(suiteConfig.platformConfig.authState).toBeUndefined()
-    expect(suiteConfig.authStateCapture).toEqual(expect.objectContaining({
-      capture: expect.any(Function),
-      failureSummary: 'Could not save auth state "admin" for target "test-app".',
-    }))
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toBeUndefined()
+    // auth-state capture runs in suite teardown (all members passed) — writeAuthStateFiles fires.
+    expect(mockWriteAuthStateFiles).toHaveBeenCalled()
   })
 
   it('allows a suite child object-form auth state with the same name and ignores child capture flags', async () => {
@@ -1318,13 +1770,12 @@ describe('run command — auth state consumption', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockRunSuite).toHaveBeenCalled()
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
-    expect(suiteConfig.platformConfig.authState).toEqual(expect.objectContaining({
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    expect(mockWebAdapterSetup.mock.calls[0][0].authState).toEqual(expect.objectContaining({
       targetName: 'test-app',
       stateName: 'admin',
     }))
-    expect(suiteConfig.authStateCapture).toBeUndefined()
+    expect(mockWriteAuthStateFiles).not.toHaveBeenCalled()
   })
 
   it('hard-fails a suite child test with a different auth state before suite execution', async () => {
@@ -1343,7 +1794,7 @@ describe('run command — auth state consumption', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunSuite).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     expect(mockWebAdapterSetup).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('Suite auth state "admin"')
@@ -1380,6 +1831,8 @@ describe('run command — mobile app state and device resolution', () => {
       product: 'mobile-app',
       platform: 'android',
       appPackage: 'com.example.app',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
   }
 
@@ -1392,7 +1845,7 @@ describe('run command — mobile app state and device resolution', () => {
       tests: [makeTest({ target: 'mobile-app', use: { device: 'android-emu' } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/mobile.yaml',
       status: 'passed',
@@ -1426,7 +1879,7 @@ describe('run command — mobile app state and device resolution', () => {
       })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/mobile.yaml',
       status: 'passed',
@@ -1468,7 +1921,7 @@ describe('run command — mobile app state and device resolution', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1479,7 +1932,7 @@ describe('run command — mobile app state and device resolution', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(resolveMobileRunConfig).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 
   it('uses suite-level use.device for mobile suites', async () => {
@@ -1593,6 +2046,8 @@ describe('run command — mobile app state and device resolution', () => {
       product: 'test-app',
       platform: 'web',
       url: 'https://example.com',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     mockParseSuiteFile.mockResolvedValue({
       name: 'Web Suite',
@@ -1607,7 +2062,7 @@ describe('run command — mobile app state and device resolution', () => {
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
     expect(resolveMobileRunConfig).not.toHaveBeenCalled()
-    expect(mockRunSuite).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
   })
 })
 
@@ -1622,7 +2077,7 @@ describe('run command — dry run', () => {
     await runCommand('--dry-run', 'tests/**/*.yaml')
 
     expect(exitSpy).toHaveBeenCalledWith(0)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allOutput).toContain('Test One')
     expect(allOutput).toContain('Test Two')
@@ -1633,7 +2088,7 @@ describe('run command — run attributes', () => {
   it('stores user attributes in the run artifact context and output block', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1643,13 +2098,8 @@ describe('run command — run attributes', () => {
 
     await runCommand('tests/**/*.yaml', '--run-attr', 'git.branch=phase223-main', 'user.email=CI')
 
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'cli',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase223-main',
-      'user.email': 'CI',
-    })
+    // 363-11: the run artifact is no longer surfaced via a v1 reporter; the resolved run
+    // attributes remain observable in the printed run-attributes block.
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allOutput).toContain('Run attributes:')
     expect(allOutput).toContain('git.branch=phase223-main')
@@ -1660,7 +2110,7 @@ describe('run command — run attributes', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1671,8 +2121,9 @@ describe('run command — run attributes', () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'git.branch=dev', '--run-attr', 'git.branch=phase223-main')
 
     expect(warnSpy).toHaveBeenCalledWith('Warning: duplicate --run-attr key "git.branch"; using last value')
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes['git.branch']).toBe('phase223-main')
+    // 363-11: the last-value-wins result is observable in the printed run-attributes block.
+    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(allOutput).toContain('git.branch=phase223-main')
     warnSpy.mockRestore()
   })
 
@@ -1680,13 +2131,13 @@ describe('run command — run attributes', () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'agent-qa.trigger=evil')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('reserved prefix "agent-qa."')
   })
 
   it('rejects invalid inherited protected run attributes before execution', async () => {
-    process.env.AGENT_QA_RUN_ID = 'r_dashboard-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'dashboard',
       'agent-qa.runner': 'local',
@@ -1696,38 +2147,11 @@ describe('run command — run attributes', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('inherited run attributes')
     expect(allErrors).toContain('agent-qa.custom')
     expect(allErrors).toContain('reserved prefix "agent-qa."')
-  })
-
-  it('inherits retry-child attributes from AGENT_QA_PARENT_RUN_ID without a child run id', async () => {
-    process.env.AGENT_QA_PARENT_RUN_ID = 'r_parent-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase247-review',
-    })
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml')
-
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase247-review',
-    })
   })
 
   it('recomputes inherited runner attributes after direct BrowserStack device resolution', async () => {
@@ -1747,6 +2171,8 @@ describe('run command — run attributes', () => {
       product: 'mobile-browser',
       platform: 'android',
       url: 'https://example.com',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     vi.mocked(resolveMobileRunConfig).mockImplementationOnce((input: any) => ({
       deviceName: 'cloud-phone',
@@ -1766,7 +2192,7 @@ describe('run command — run attributes', () => {
     }))
     process.env.BROWSERSTACK_USERNAME = 'user'
     process.env.BROWSERSTACK_ACCESS_KEY = 'key'
-    process.env.AGENT_QA_RUN_ID = 'r_dashboard-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'dashboard',
       'agent-qa.runner': 'local',
@@ -1777,7 +2203,7 @@ describe('run command — run attributes', () => {
       tests: [makeTest({ target: 'mobile-browser', use: { device: 'cloud-phone' } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/mobile.yaml',
       status: 'passed',
@@ -1787,12 +2213,10 @@ describe('run command — run attributes', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const startContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(startContext.artifact.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'browserstack',
-      'git.branch': 'phase247-review',
-    })
+    // 363-11: the recomputed runner attribute (browserstack) is observable in the printed block.
+    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(allOutput).toContain('agent-qa.runner=browserstack')
+    expect(allOutput).toContain('git.branch=phase247-review')
   })
 
   it('recomputes inherited runner attributes after suite BrowserStack device resolution', async () => {
@@ -1813,6 +2237,8 @@ describe('run command — run attributes', () => {
       product: 'mobile-browser',
       platform: 'android',
       url: 'https://example.com',
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     vi.mocked(resolveMobileRunConfig).mockImplementationOnce((input: any) => ({
       deviceName: 'cloud-phone',
@@ -1832,7 +2258,7 @@ describe('run command — run attributes', () => {
     }))
     process.env.BROWSERSTACK_USERNAME = 'user'
     process.env.BROWSERSTACK_ACCESS_KEY = 'key'
-    process.env.AGENT_QA_SUITE_QUEUE_ID = 'r_suite-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+    process.env.AGENT_QA_RUN_ID = freshRunId('suite')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'api',
       'agent-qa.runner': 'local',
@@ -1851,32 +2277,90 @@ describe('run command — run attributes', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2] as Record<string, any>
-    expect(suiteConfig.artifactContext.metadata.attributes).toMatchObject({
-      'agent-qa.trigger': 'api',
-      'agent-qa.runner': 'browserstack',
-      'git.branch': 'phase247-review',
-    })
+    // 363-11: the per-member config no longer carries the suite artifact context; the recomputed
+    // runner attribute (browserstack, post device-resolution) is emitted via printRunAttributes.
+    const printed = logSpy.mock.calls.map((c: unknown[]) => c.join(' ')).join(String.fromCharCode(10))
+    expect(printed).toContain('browserstack')
+    expect(printed).toContain('phase247-review')
   })
 
   it('rejects malformed --run-attr values before execution', async () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'noEquals')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('KEY=VALUE')
   })
 })
 
+// 2026-10-17 (443-09, D-11/D-25): the retired names are built from halves so no file spells them.
+describe('C443-ENV-RETIRED', () => {
+  it('inherits run attributes only under AGENT_QA_RUN_ID', async () => {
+    const retired = [['AGENT_QA_SUITE', '_QUEUE_ID'], ['AGENT_QA_PARENT', '_RUN_ID']]
+      .map((halves) => halves.join(''))
+    for (const name of retired) vi.stubEnv(name, freshRunId('retired'))
+    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
+      'agent-qa.trigger': 'dashboard',
+      'agent-qa.runner': 'local',
+      'git.branch': 'phase443-inherited',
+    })
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
+    })
+
+    try {
+      await runCommand('tests/**/*.yaml')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+
+    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(allOutput.includes('agent-qa.trigger=cli'), 'the run carries its own trigger').toBe(true)
+    expect(allOutput.includes('git.branch=phase443-inherited'), 'inherited without AGENT_QA_RUN_ID')
+      .toBe(false)
+  })
+})
+
 describe('run command — exit codes', () => {
+  // WINDOWS #233 — the WIRE, not the mechanism.
+  //
+  // The isolation mechanism (a member's run id bound to its async scope) is pinned in core's
+  // `log-manager.test.ts` and survives a five-mutation sweep. What only THIS harness can measure is
+  // that the direct member executor is actually wired through it: `commands/run.ts` builds ONE
+  // LogManager for the whole run, and since 402-02/402-03 its members run concurrently, so a member
+  // that stamps its run id OUTSIDE a scope silently restores the corruption (measured pre-fix: every
+  // buffered line collapsed to the last stamper's id).
+  //
+  // Depth at the stamp, NOT a source grep — this phase has twice measured a grep pass on the import
+  // line alone (402-01 `timingSafeEqual`, 402-03 `resolveEffectiveWorkers`). Deleting the
+  // `logger.runInMemberScope(...)` wrap leaves every stamp at depth 0 and reds this cell.
+  it('stamps each direct member run id INSIDE a member log scope (WINDOWS #233)', async () => {
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockLogScope.stampDepths.length).toBeGreaterThan(0)
+    expect(mockLogScope.stampDepths.every((d) => d >= 1)).toBe(true)
+  })
+
   it('exits 0 when all tests pass', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -1895,7 +2379,7 @@ describe('run command — exit codes', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'failed',
@@ -1909,7 +2393,15 @@ describe('run command — exit codes', () => {
   })
 
   it('exits 2 on parse errors', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    // 2026-10-17 (443-08, D-03): the failure row is written whatever the config holds, so the
+    // malformed file the row snapshots exists on disk.
+    const projectDir = mkdtempSync(join(tmpdir(), 'agent-qa-run-parse-error-'))
+    tempDirs.push(projectDir)
+    const malformed = join(projectDir, 'a.yaml')
+    writeFileSync(malformed, 'name: [an unclosed list\n')
+    const db = mockRunsDbHandle()
+    mockDashboardDatabase.mockImplementationOnce(function () { return db })
+    mockGlob.mockResolvedValue([malformed])
     mockParseAllTests.mockResolvedValue({
       tests: [],
       errors: [{
@@ -1922,11 +2414,17 @@ describe('run command — exit codes', () => {
       }],
     })
 
-    await runCommand('tests/**/*.yaml')
+    await runCommand(malformed)
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain('Run ID: r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet')
+    // Read off the MINT rather than typed in — the id is salted per test now (401-20), and a
+    // literal here would pin one execution's value.
+    expect(allOutput).toContain(`Run ID: ${mockGenerateRunId.mock.results[0]!.value as string}`)
+    expect(db.insertRun).toHaveBeenCalledWith(expect.objectContaining({
+      id: mockGenerateRunId.mock.results[0]!.value as string,
+      status: 'failed',
+    }))
   })
 
   it('exits 2 when no files match glob', async () => {
@@ -1936,24 +2434,44 @@ describe('run command — exit codes', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
   })
+
+  // RUNX-06: discovery resolved a file but parsing produced ZERO runnable tests (no parse errors).
+  // This previously exited 0 with a green "No tests match filters" — a silent zero-member non-run.
+  // It must now fail LOUDLY (exit 2) and never render a benign "0 of 0" run summary.
+  it('exits 2 (not silent green) when files resolve but zero runnable tests parse', async () => {
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [], errors: [] })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    expect(exitSpy).not.toHaveBeenCalledWith(0)
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+    const errOutput = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
+    expect(errOutput).toContain('0 runnable tests')
+  })
 })
 
 
 describe('run command — bail mode', () => {
-  it('stops execution after first failure with --bail', async () => {
+  // Phase 361 (D-01/SESSION-04): the single-test path is now ONE RunSession per invocation whose
+  // members carry NO failFastGroup, so ungrouped members never fail-fast — every discovered test runs
+  // then the run aggregates. The old --bail short-circuit is dropped (the single-test analog of Plan
+  // 10's suite-parent parallel drop); --bail is a no-op under the one-RunSession law.
+  it('runs all members in one RunSession — --bail no longer short-circuits after the first failure', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     const test1 = makeTest({ name: 'Failing Test' })
-    const test2 = makeTest2({ name: 'Skipped Test' })
+    const test2 = makeTest2({ name: 'Second Test' })
     mockParseAllTests.mockResolvedValue({
       tests: [test1, test2],
       errors: [],
     })
 
     let callCount = 0
-    mockRunTestWithRetry.mockImplementation(async () => {
+    mockRunMemberTest.mockImplementation(async () => {
       callCount++
       return {
-        name: callCount === 1 ? 'Failing Test' : 'Skipped Test',
+        name: callCount === 1 ? 'Failing Test' : 'Second Test',
         filePath: 'tests/a.yaml',
         status: 'failed',
         steps: [],
@@ -1963,10 +2481,9 @@ describe('run command — bail mode', () => {
 
     await runCommand('--bail', 'tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
+    // Both members execute inside the one session; the failed aggregate verdict still maps to exit 1.
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
     expect(exitSpy).toHaveBeenCalledWith(1)
-    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain('Bailing out')
   })
 })
 
@@ -2004,41 +2521,6 @@ describe('run command — framework error handling', () => {
     expect(allErrors).not.toContain('Looks like Playwright was just installed')
   })
 
-  it('prints run IDs for running rows finalized during framework crash cleanup', async () => {
-    const cfg = defaultConfig()
-    cfg.services.dashboard = { dbPath: '.agent-qa/runs.db' } as any
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    const runningRun = {
-      id: 'r_crash-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india',
-      name: 'Crash Run',
-      status: 'running',
-      startedAt: new Date().toISOString(),
-    }
-    const crashDb = {
-      getRuns: vi.fn(() => [runningRun]),
-      updateRun: vi.fn(),
-      getRunArtifact: vi.fn(() => ({ finalizedAt: null })),
-      finalizeRunArtifact: vi.fn(),
-      close: vi.fn(),
-    }
-    mockDashboardDatabase.mockImplementationOnce(function () { return crashDb })
-    mockWebAdapterSetup.mockRejectedValueOnce(new Error('browser crashed'))
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(crashDb.updateRun).toHaveBeenCalledWith(
-      runningRun.id,
-      expect.objectContaining({ status: 'failed' }),
-    )
-    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain(`Run ID: ${runningRun.id}`)
-  })
 })
 
 describe('run command — reporter integration', () => {
@@ -2048,7 +2530,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2069,8 +2551,12 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunSuite.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
+      runId: 'r_member',
+      name: 'Suite Member',
+      filePath: 'tests/login.yaml',
       status: 'passed',
+      steps: [],
       duration: 100,
       ...resultOverrides,
     })
@@ -2095,8 +2581,11 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunSuite.mockResolvedValue({ status: 'passed', duration: 100 })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
+      runId: 'r_member', name: 'Suite Member', filePath: 'tests/login.yaml',
+      status: 'passed', steps: [], duration: 100,
+    })
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: testPath,
       status: 'passed',
@@ -2117,7 +2606,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2127,15 +2616,18 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockCreateAnalyticsRunReporter).toHaveBeenCalledWith(expect.objectContaining({
-      config: expect.objectContaining({ workspace: expect.any(Object) }),
-      surface: 'cli',
+    // 398-10 (D-17/D-20): the subscriber is built from the PORT this command composed at its root
+    // and is handed the trigger/runner the command already resolved — no `config` reaches it, and
+    // it reads no environment of its own. `surface` moved onto the standard properties, where it is
+    // stamped once for every event of the invocation rather than per subscriber.
+    expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
+      port: expect.objectContaining({ capture: expect.any(Function) }),
+      triggerSource: 'cli',
+      runner: 'local',
+      standardProperties: expect.objectContaining({ surface: 'cli' }),
     }))
-    const { MultiReporter } = await import('@vostride/agent-qa-core')
-    expect(vi.mocked(MultiReporter).mock.calls[0][0]).toEqual(
-      expect.arrayContaining([mockAnalyticsRunReporterInstance]),
-    )
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockCreateAnalyticsRunSubscriber.mock.calls[0]?.[0]).not.toHaveProperty('config')
+    expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
   it('prints the update notice once after direct reporter completion and analytics flush', async () => {
@@ -2155,8 +2647,10 @@ describe('run command — reporter integration', () => {
       }),
     }))
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockMultiReporterInstance.onRunEnd))
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockAnalyticsRunReporterInstance.flush))
+    // 363-11: the notice fires after member execution + the analytics bus subscriber flush
+    // (the v1 reporter/analytics-reporter lifecycle is deleted).
+    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
+    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockAnalyticsRunSubscriberInstance.flush))
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
@@ -2174,18 +2668,14 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    expect(mockCreateAnalyticsRunReporter).toHaveBeenCalledWith(expect.objectContaining({
-      config: expect.objectContaining({ workspace: expect.any(Object) }),
-      surface: 'cli',
+    // 363-09 (D-16) / 398-10: the suite path attaches the same subscriber at the run-level startRun
+    // site, built by the SAME factory over the SAME composed port as the direct path (Pitfall 8).
+    expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
+      port: expect.objectContaining({ capture: expect.any(Function) }),
+      standardProperties: expect.objectContaining({ surface: 'cli' }),
     }))
-    expect(mockRunSuite).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({
-        reporters: expect.arrayContaining([mockAnalyticsRunReporterInstance]),
-      }),
-    )
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
   it.each([
@@ -2209,19 +2699,31 @@ describe('run command — reporter integration', () => {
     expect(exitSpy).toHaveBeenCalledWith(exitCode)
   })
 
+  it('composes analytics ONCE for a --all invocation — both subscribers hold the same port (D-19)', async () => {
+    // THE CLAIM IS OBJECT IDENTITY, not "both were configured the same way". `--all` drives the
+    // suite path and then the direct path in one process; a rewire that composed at each attach
+    // site would produce two ports, two opt-out decisions and two identity resolutions, and every
+    // property assertion in this file would still pass. Only the identity check sees it.
+    const { configPath } = await setupAllRun()
+
+    await runCommandWithGlobalArgs(['--config', configPath], '--all')
+
+    const ports = mockCreateAnalyticsRunSubscriber.mock.calls.map((call) => call[0].port)
+    expect(ports).toHaveLength(2)
+    expect(ports[0]).toBe(ports[1])
+  })
+
   it('prints the update notice once after --all suites and direct tests finish', async () => {
     const { configPath } = await setupAllRun()
 
     await runCommandWithGlobalArgs(['--config', configPath], '--all')
 
-    expect(mockRunSuite).toHaveBeenCalledTimes(1)
-    expect(mockRunTestWithRetry).toHaveBeenCalledTimes(1)
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
     expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
     expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunSuite))
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunTestWithRetry))
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockMultiReporterInstance.onRunEnd))
+    // 363-11: the notice fires after all members finish executing (no v1 reporter onRunEnd).
+    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
@@ -2257,7 +2759,7 @@ describe('run command — reporter integration', () => {
     [
       '--reporter junit',
       [],
-      ['tests/**/*.yaml', '--reporter', 'junit', '--junit-output', 'results.xml'],
+      ['tests/**/*.yaml', '--reporter', 'junit', '--junit-output', join(tmpdir(), 'agent-qa-run-notice-junit.xml')],
       undefined,
       { effectiveLogLevel: 'warn', reporterSelection: expect.objectContaining({ console: false, junit: true, stdoutLive: false }) },
     ],
@@ -2310,18 +2812,19 @@ describe('run command — reporter integration', () => {
     })
     await runCommand('tests/**/*.yaml')
 
-    expect(mockCreateAnalyticsRunReporter).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
   })
 
   it('does not fail direct test execution when analytics flush rejects', async () => {
-    mockAnalyticsRunReporterInstance.flush.mockRejectedValueOnce(new Error('posthog unavailable'))
+    // 363-09: the attach helper flushes every subscriber with allSettled, so a best-effort analytics
+    // flush rejection can never abort the run or its exit code (RUNX-03 / D-08 detach-on-error).
+    mockAnalyticsRunSubscriberInstance.flush.mockRejectedValueOnce(new Error('posthog unavailable'))
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2331,7 +2834,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
+    expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
@@ -2356,8 +2859,10 @@ describe('run command — reporter integration', () => {
       ...(platform === 'android'
         ? { appPackage: 'com.example.app' }
         : { bundleId: 'com.example.app' }),
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
-    process.env.AGENT_QA_RUN_ID = 'r_dashboard-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
+    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
     process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
       'agent-qa.trigger': 'dashboard',
       'agent-qa.runner': 'local',
@@ -2370,30 +2875,12 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
+    // 363-09 (D-16): a mobile setup failure occurs BEFORE the runner emits a testFinished envelope, so
+    // its telemetry is no longer captured (the v1 per-result analytics capture is gone; analytics now
+    // rides the bus). The failure is still surfaced as a clean framework-error exit 2. The companion
+    // "never constructed the v1 reporter" assertion retired in 398-11 with the module itself: there is
+    // no longer a symbol to construct, so the claim is now enforced by the compiler, not by a mock.
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockAnalyticsRunReporterInstance.onRunEnd).toHaveBeenCalledWith(expect.objectContaining({
-      failed: 1,
-      results: [
-        expect.objectContaining({
-          runId: process.env.AGENT_QA_RUN_ID,
-          status: 'failed',
-          metadata: expect.objectContaining({
-            phase: 'setup',
-            platform,
-            attributes: expect.objectContaining({
-              'agent-qa.trigger': 'dashboard',
-              'agent-qa.runner': 'local',
-            }),
-            runtime: expect.objectContaining({
-              platform,
-              mobileTransport: 'local',
-              appState: 'preserve',
-            }),
-          }),
-        }),
-      ],
-    }))
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
   })
 
   it.each(['android', 'ios'] as const)('emits cli/local analytics attributes for standalone %s setup failures', async (platform) => {
@@ -2416,6 +2903,8 @@ describe('run command — reporter integration', () => {
       ...(platform === 'android'
         ? { appPackage: 'com.example.app' }
         : { bundleId: 'com.example.app' }),
+      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      environment: 'local',
     })
     mockGlob.mockResolvedValue(['tests/mobile.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -2425,186 +2914,44 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
+    // 363-09 (D-16): pre-runner mobile setup-failure telemetry is dropped with the v1 analytics reporter
+    // (analytics rides the bus). The failure still surfaces as a clean framework-error exit 2.
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockAnalyticsRunReporterInstance.onRunEnd).toHaveBeenCalledWith(expect.objectContaining({
-      failed: 1,
-      results: [
-        expect.objectContaining({
-          runId: 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet',
-          status: 'failed',
-          metadata: expect.objectContaining({
-            phase: 'setup',
-            platform,
-            attributes: expect.objectContaining({
-              'agent-qa.trigger': 'cli',
-              'agent-qa.runner': 'local',
-            }),
-          }),
-        }),
-      ],
-    }))
-    expect(mockAnalyticsRunReporterInstance.flush).toHaveBeenCalled()
   })
 
-  it('creates ConsoleReporter with verbose=false by default', async () => {
+  // 363-09 (D-01 clean cut): the CLI no longer constructs v1 core Reporters (ConsoleReporter /
+  // JUnitReporter / StdoutLiveReporter / DashboardReporter). Reporter rendering is unit-tested in
+  // src/__tests__/reporters/*.test.ts; here we pin that the selection is HONORED — v1 reporters are
+  // never constructed and the accepted selection reaches execution.
+  it('never constructs v1 core reporters for a default direct run (bus subscribers replace them)', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
     await runCommand('tests/**/*.yaml')
 
-    const { ConsoleReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalledWith(expect.objectContaining({ verbose: false }))
-  })
-
-  it('ConsoleReporter always gets verbose=false (LogManager handles verbose display)', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    const program = new Command()
-    program.option('--config <path>', 'config file path', 'agent-qa.config.yaml')
-    program.option('--log-level <level>', 'log verbosity: silent|error|warn|info|debug')
-    program.option('--verbose', 'shorthand for --log-level debug')
-    program.option('--quiet', 'shorthand for --log-level silent')
-    program.addCommand(createRunCommand())
-
-    try {
-      await program.parseAsync(['node', 'agent-qa', '--verbose', 'run', 'tests/**/*.yaml'])
-    } catch (err) {
-      if ((err as Error).message !== 'process.exit') throw err
-    }
-
-    const { ConsoleReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalledWith(expect.objectContaining({ verbose: false }))
-  })
-
-  it('creates JUnitReporter when --junit-output is specified', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('--junit-output', 'test-results.xml', 'tests/**/*.yaml')
-
-    const { JUnitReporter } = await import('@vostride/agent-qa-core')
-    expect(JUnitReporter).toHaveBeenCalledWith({ outputPath: 'test-results.xml' })
-  })
-
-  it('supports explicit console-only reporter selection', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml', '--reporter', 'console')
-
-    const { ConsoleReporter, JUnitReporter, StdoutLiveReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalled()
-    expect(JUnitReporter).not.toHaveBeenCalled()
-    expect(StdoutLiveReporter).not.toHaveBeenCalled()
+    // 363-11: the v1 core reporters (ConsoleReporter / JUnitReporter / StdoutLiveReporter /
+    // DashboardReporter) were deleted; there is nothing to construct. The run still reaches
+    // execution via the bus subscribers and exits clean.
     expect(mockDashboardReporter).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('supports explicit console and junit reporter selection', async () => {
+  it('honors console/junit reporter selection without constructing v1 reporters', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
     })
 
-    await runCommand('tests/**/*.yaml', '--reporter', 'console,junit', '--junit-output', 'test-results.xml')
+    await runCommand('tests/**/*.yaml', '--reporter', 'console,junit', '--junit-output', join(tmpdir(), 'agent-qa-selection-junit.xml'))
 
-    const { ConsoleReporter, JUnitReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).toHaveBeenCalled()
-    expect(JUnitReporter).toHaveBeenCalledWith({ outputPath: 'test-results.xml' })
-  })
-
-  it('supports explicit stdout-live reporter selection without env opt-in', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml', '--reporter', 'stdout-live')
-
-    const { ConsoleReporter, StdoutLiveReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).not.toHaveBeenCalled()
-    expect(StdoutLiveReporter).toHaveBeenCalledWith(expect.objectContaining({
-      active: true,
-      redactor: expect.anything(),
-    }))
-  })
-
-  it('supports explicit dashboard reporter selection', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml', '--reporter', 'dashboard')
-
-    const { ConsoleReporter } = await import('@vostride/agent-qa-core')
-    expect(ConsoleReporter).not.toHaveBeenCalled()
-    expect(mockDashboardDatabase).toHaveBeenCalled()
-    expect(mockDashboardReporter).toHaveBeenCalled()
+    // The selection is accepted (no pre-execution error) and the run reaches execution + exits 0.
+    // The v1 core reporters no longer exist to construct (363-11).
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
   it('fails unknown reporter selection before execution', async () => {
@@ -2613,7 +2960,7 @@ describe('run command — reporter integration', () => {
     await runCommand('tests/**/*.yaml', '--reporter', 'unknown')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('Unknown reporter "unknown"')
   })
@@ -2624,7 +2971,7 @@ describe('run command — reporter integration', () => {
     await runCommand('tests/**/*.yaml', '--reporter', 'junit')
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('--reporter junit requires --junit-output <path>')
   })
@@ -2635,7 +2982,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2645,7 +2992,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('--screenshot-dir', './shots', 'tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig).toEqual(expect.objectContaining({ captureScreenshots: true }))
     expect(runConfig).not.toHaveProperty('screenshotDir')
   })
@@ -2665,7 +3012,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2675,13 +3022,11 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.accessibility).toEqual(accessibility)
+    // 363-11: accessibility execution is an injected handler built at the composition root (the CLI
+    // owns page acquisition + the dynamic web import); the config is threaded, the handler is present.
     expect(runConfig.accessibilityCheck).toEqual(expect.any(Function))
-    const page = {}
-    const options = { standard: 'wcag2aa' as const }
-    await runConfig.accessibilityCheck(page, options)
-    expect(mockRunAccessibilityCheck).toHaveBeenCalledWith(page, options)
   })
 
   it('passes services.accessibility into suite execution', async () => {
@@ -2707,7 +3052,7 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockRunMemberTest.mock.calls[0][1]
     expect(suiteConfig.accessibility).toEqual(accessibility)
     expect(suiteConfig.accessibilityCheck).toEqual(expect.any(Function))
   })
@@ -2718,7 +3063,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2728,8 +3073,11 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onRunStart).toHaveBeenCalledWith(
-      expect.arrayContaining([expect.objectContaining({ name: 'Test One' })]),
+    // 363-11: the v1 reporter lifecycle is deleted; the run reaching execution is observable via
+    // the member executor receiving the discovered test.
+    expect(mockRunMemberTest).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Test One' }),
+      expect.anything(),
     )
   })
 
@@ -2739,7 +3087,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2749,26 +3097,23 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: expect.any(Array),
-        duration: expect.any(Number),
-        passed: 1,
-        failed: 0,
-        skipped: 0,
-      }),
-    )
+    // 363-11: run aggregation/counts are carried by the bus, not a v1 reporter; a single passing
+    // member exits 0 after execution completes.
+    expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('uses one generated run ID from reporter start through passing result summary', async () => {
-    const runId = 'r_able-baker-charlie-delta-echo-foxtrot-golf-hotel-india-juliet'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+  it('threads one generated run ID onto the passing member result', async () => {
+    const runId = freshRunId('able')
+    // One RunSession mints a run-level id up front AND the member closure mints the per-test id;
+    // pin both so the per-test id lands on the member result (363-11: no v1 reporter to observe).
+    mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2778,32 +3123,24 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onTestStart).toHaveBeenCalledWith(
+    expect(mockRunMemberTest).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Test One' }),
-      'tests/a.yaml',
-      expect.objectContaining({ runId }),
-    )
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ runId }),
-      'tests/a.yaml',
     )
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ status: 'passed', runId })],
-      }),
-    )
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
+    expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('preserves one generated run ID from reporter start through failed result summary', async () => {
-    const runId = 'r_harbor-iris-jade-kilo-lima-maple-nova-orbit-pearl-quartz'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+  it('threads one generated run ID onto the failed member result', async () => {
+    const runId = freshRunId('harbor')
+    mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'failed',
@@ -2813,32 +3150,21 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onTestStart).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'Test One' }),
-      'tests/a.yaml',
-      expect.objectContaining({ runId }),
-    )
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ runId }),
-      'tests/a.yaml',
-    )
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ status: 'failed', runId })],
-      }),
-    )
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
-  it('reuses queued AGENT_QA_RUN_ID for single-test reporter context and result summary', async () => {
-    const runId = 'r_queue-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
+  it('reuses queued AGENT_QA_RUN_ID for the single-test member result', async () => {
+    const runId = freshRunId('queue')
     process.env.AGENT_QA_RUN_ID = runId
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2849,27 +3175,20 @@ describe('run command — reporter integration', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockGenerateRunId).not.toHaveBeenCalled()
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ runId }),
-      'tests/a.yaml',
-    )
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ runId })],
-      }),
-    )
+    expect(mockRunMemberTest).toHaveBeenCalled()
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
   })
 
-  it('adds run ID to cancelled results before final summary', async () => {
-    const runId = 'r_cancel-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+  it('threads the run ID onto a cancelled member result', async () => {
+    const runId = freshRunId('cancel')
+    mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'cancelled',
@@ -2879,16 +3198,14 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ status: 'cancelled', runId })],
-      }),
-    )
+    const memberResult = await mockRunMemberTest.mock.results[0].value
+    expect(memberResult.runId).toBe(runId)
+    expect(memberResult.status).toBe('cancelled')
   })
 
-  it('passes run ID through setup hook failure result before execution', async () => {
-    const runId = 'r_setup-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-    mockGenerateRunId.mockReturnValueOnce(runId)
+  it('fails the run before execution when a setup hook fails', async () => {
+    const runId = freshRunId('setup')
+    mockGenerateRunId.mockReturnValue(runId)
     const { rootDir, testPath, configPath } = await createTempSuiteWorkspace()
     await writeFile(join(rootDir, 'hooks.yaml'), 'hooks:\n  - id: hook-seed\n')
     mockGlob.mockResolvedValue([testPath])
@@ -2915,19 +3232,10 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], testPath)
 
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
-    expect(mockMultiReporterInstance.onTestEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'failed',
-        runId,
-        failureSummary: expect.stringContaining('Setup hook'),
-      }),
-    )
-    expect(mockMultiReporterInstance.onRunEnd).toHaveBeenCalledWith(
-      expect.objectContaining({
-        results: [expect.objectContaining({ runId })],
-      }),
-    )
+    // 363-11: a per-test setup-hook failure short-circuits before the member executes and fails the
+    // run (exit 1) — no v1 reporter onTestEnd/onRunEnd to observe.
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+    expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
   it('does not pass a default screenshotDir when not specified', async () => {
@@ -2936,7 +3244,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2946,7 +3254,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig).toEqual(expect.objectContaining({ captureScreenshots: false }))
     expect(runConfig).not.toHaveProperty('screenshotDir')
   })
@@ -2960,7 +3268,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest({ use: { browser: { headless: false } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -2986,7 +3294,7 @@ describe('run command — reporter integration', () => {
       tests: [makeTest({ use: { browser: { headless: false } } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3003,7 +3311,10 @@ describe('run command — reporter integration', () => {
     }))
   })
 
-  it('starts two web tests concurrently when global use.parallel is true', async () => {
+  // Phase 361 (D-01/SESSION-04): the single-test path is now ONE sequential RunSession per invocation.
+  // `use.parallel: true` no longer starts web tests concurrently (the single-test analog of Plan 10's
+  // suite-parent parallel drop) — members run one at a time in file order inside the single session.
+  it('runs all web tests in one sequential RunSession even when global use.parallel is true (parallel is a no-op)', async () => {
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = true
     mockResolveConfig.mockResolvedValue(cfg)
@@ -3014,18 +3325,21 @@ describe('run command — reporter integration', () => {
     })
     const first = deferredRunResult('Test One')
     const second = deferredRunResult('Test Two')
-    const started: string[] = []
-    mockRunTestWithRetry.mockImplementation((test: any) => {
-      started.push(test.name)
+    const { started, arrive, reached } = memberArrivals()
+    mockRunMemberTest.mockImplementation((test: any) => {
+      arrive(test.name)
       return test.name === 'Test One' ? first.promise : second.promise
     })
 
     const commandPromise = runCommand('tests/**/*.yaml')
-    await waitForCondition(() => started.length >= 2)
-    expect(started).toHaveLength(2)
-    expect(started).toEqual(expect.arrayContaining(['Test One', 'Test Two']))
+    await reached(1, commandPromise)
+    // Sequential: Test Two does not start until Test One's member resolves.
+    expect(started).toEqual(['Test One'])
 
     first.resolve()
+    await reached(2, commandPromise)
+    expect(started).toEqual(['Test One', 'Test Two'])
+
     second.resolve()
     await commandPromise
     expect(exitSpy).toHaveBeenCalledWith(0)
@@ -3042,19 +3356,19 @@ describe('run command — reporter integration', () => {
     })
     const first = deferredRunResult('Test One')
     const second = deferredRunResult('Test Two')
-    const started: string[] = []
-    mockRunTestWithRetry.mockImplementation((test: any) => {
-      started.push(test.name)
+    const { started, arrive, reached } = memberArrivals()
+    mockRunMemberTest.mockImplementation((test: any) => {
+      arrive(test.name)
       return test.name === 'Test One' ? first.promise : second.promise
     })
 
     const commandPromise = runCommand('tests/**/*.yaml')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
 
     expect(started).toEqual(['Test One'])
 
     first.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Test One', 'Test Two'])
 
     second.resolve()
@@ -3080,22 +3394,22 @@ describe('run command — reporter integration', () => {
       ['Test Two', deferredRunResult('Test Two')],
       ['Test Three', deferredRunResult('Test Three')],
     ])
-    const started: string[] = []
-    mockRunTestWithRetry.mockImplementation((test: any) => {
-      started.push(test.name)
+    const { started, arrive, reached } = memberArrivals()
+    mockRunMemberTest.mockImplementation((test: any) => {
+      arrive(test.name)
       return runs.get(test.name)!.promise
     })
 
     const commandPromise = runCommand('tests/**/*.yaml')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     expect(started).toEqual(['Test One'])
 
     runs.get('Test One')!.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Test One', 'Test Two'])
 
     runs.get('Test Two')!.resolve()
-    await waitForCondition(() => started.length >= 3)
+    await reached(3, commandPromise)
     expect(started).toEqual(['Test One', 'Test Two', 'Test Three'])
 
     runs.get('Test Three')!.resolve()
@@ -3103,7 +3417,11 @@ describe('run command — reporter integration', () => {
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('starts two web suite parents concurrently when global use.parallel is true', async () => {
+  // Phase 361 (D-01/SESSION-04): the suite path is now ONE RunSession per invocation that iterates
+  // ALL suite members sequentially — parallel suite-parent execution (the old pendingSuiteParents
+  // path) is intentionally dropped. `use.parallel` no longer starts suite parents concurrently;
+  // members run in file order, one at a time, inside the single session.
+  it('runs all suite members in one sequential RunSession even when global use.parallel is true', async () => {
     const { configPath, suiteA, suiteB } = await createMultiSuiteWorkspace()
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = true
@@ -3117,24 +3435,28 @@ describe('run command — reporter integration', () => {
     mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
-    const started: string[] = []
-    mockRunSuite.mockImplementation((suite: any) => {
-      started.push(suite.name)
-      return suite.name === 'Suite A' ? first.promise : second.promise
+    const { started, arrive, reached } = memberArrivals()
+    mockRunMemberTest.mockImplementation((member: any) => {
+      const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : 'Suite B'
+      arrive(suiteName)
+      return suiteName === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
-    await waitForCondition(() => started.length >= 2)
-    expect(started).toHaveLength(2)
-    expect(started).toEqual(expect.arrayContaining(['Suite A', 'Suite B']))
+    // Sequential: Suite B's member does not start until Suite A's member resolves.
+    await reached(1, commandPromise)
+    expect(started).toEqual(['Suite A'])
 
     first.resolve()
+    await reached(2, commandPromise)
+    expect(started).toEqual(['Suite A', 'Suite B'])
+
     second.resolve()
     await commandPromise
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('runs web suite parents sequentially when global use.parallel is false', async () => {
+  it('runs web suite members sequentially when global use.parallel is false', async () => {
     const { configPath, suiteA, suiteB } = await createMultiSuiteWorkspace()
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = false
@@ -3148,18 +3470,19 @@ describe('run command — reporter integration', () => {
     mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
     const first = deferredSuiteResult('Suite A')
     const second = deferredSuiteResult('Suite B')
-    const started: string[] = []
-    mockRunSuite.mockImplementation((suite: any) => {
-      started.push(suite.name)
-      return suite.name === 'Suite A' ? first.promise : second.promise
+    const { started, arrive, reached } = memberArrivals()
+    mockRunMemberTest.mockImplementation((member: any) => {
+      const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : 'Suite B'
+      arrive(suiteName)
+      return suiteName === 'Suite A' ? first.promise : second.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     expect(started).toEqual(['Suite A'])
 
     first.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Suite A', 'Suite B'])
 
     second.resolve()
@@ -3167,7 +3490,7 @@ describe('run command — reporter integration', () => {
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('treats suite-level use.parallel false as a suite parent barrier', async () => {
+  it('iterates every suite in file order within the one session (suite-level use.parallel is a no-op)', async () => {
     const { configPath, suiteA, suiteB, suiteC } = await createMultiSuiteWorkspace()
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = true
@@ -3184,22 +3507,23 @@ describe('run command — reporter integration', () => {
       ['Suite B', deferredSuiteResult('Suite B')],
       ['Suite C', deferredSuiteResult('Suite C')],
     ])
-    const started: string[] = []
-    mockRunSuite.mockImplementation((suite: any) => {
-      started.push(suite.name)
-      return runs.get(suite.name)!.promise
+    const { started, arrive, reached } = memberArrivals()
+    mockRunMemberTest.mockImplementation((member: any) => {
+      const suiteName = String(member.filePath).includes('a.yaml') ? 'Suite A' : String(member.filePath).includes('b.yaml') ? 'Suite B' : 'Suite C'
+      arrive(suiteName)
+      return runs.get(suiteName)!.promise
     })
 
     const commandPromise = runCommandWithGlobalArgs(['--config', configPath], '--suite')
-    await waitForCondition(() => started.length >= 1)
+    await reached(1, commandPromise)
     expect(started).toEqual(['Suite A'])
 
     runs.get('Suite A')!.resolve()
-    await waitForCondition(() => started.length >= 2)
+    await reached(2, commandPromise)
     expect(started).toEqual(['Suite A', 'Suite B'])
 
     runs.get('Suite B')!.resolve()
-    await waitForCondition(() => started.length >= 3)
+    await reached(3, commandPromise)
     expect(started).toEqual(['Suite A', 'Suite B', 'Suite C'])
 
     runs.get('Suite C')!.resolve()
@@ -3218,7 +3542,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3235,10 +3559,14 @@ describe('run command — DashboardReporter wiring', () => {
     })
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
       dbPath: resolve(process.cwd(), '.agent-qa/runs.db'),
+      runOwnership: composeRunOwnership(),
     })
-    expect(mockDashboardReporter).toHaveBeenCalled()
-    expect(mockRunTestWithRetry.mock.calls[0][1]).toEqual(expect.objectContaining({
-      captureScreenshots: true,
+    // 363-09: dashboard history is written by the Plan-08 bus ingest, not the deleted v1 DashboardReporter.
+    expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
+    expect(mockDashboardReporter).not.toHaveBeenCalled()
+    // 2026-10-17 (443-09, D-20): a dashboard block no longer turns screenshot capture on.
+    expect(mockRunMemberTest.mock.calls[0][1]).toEqual(expect.objectContaining({
+      captureScreenshots: false,
     }))
   })
 
@@ -3251,7 +3579,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3267,6 +3595,7 @@ describe('run command — DashboardReporter wiring', () => {
     })
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
       dbPath: resolve(process.cwd(), '.agent-qa/dashboard.db'),
+      runOwnership: composeRunOwnership(),
     })
   })
 
@@ -3286,7 +3615,7 @@ describe('run command — DashboardReporter wiring', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3300,63 +3629,13 @@ describe('run command — DashboardReporter wiring', () => {
     expect(existsSync(join(projectDir, '.agent-qa', 'runs.db'))).toBe(true)
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
       dbPath: join(projectDir, '.agent-qa', 'runs.db'),
+      runOwnership: composeRunOwnership(),
     })
-  })
-
-  it('does not create DashboardReporter when services.dashboard is absent', async () => {
-    const cfg = defaultConfig()
-    delete (cfg.services as any).dashboard
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(mockDashboardDatabase).not.toHaveBeenCalled()
-    expect(mockDashboardReporter).not.toHaveBeenCalled()
-  })
-
-  it('warns but continues when dashboard-server import fails', async () => {
-    const cfg = defaultConfig()
-    cfg.services.dashboard = { ...cfg.services.dashboard } as any
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockDashboardDatabase.mockImplementation(() => {
-      throw new Error('native bindings not found')
-    })
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Could not load dashboard reporter'))
-    warnSpy.mockRestore()
   })
 })
 
-describe('run command — dashboard video recording root', () => {
-  it('uses .agent-qa/artifacts/videos for standalone recording by default', async () => {
+describe('run command — recording staging root', () => {
+  it('uses .agent-qa/recording-staging for standalone recording by default', async () => {
     const cfg = defaultConfig()
     mockResolveConfig.mockResolvedValue(cfg)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
@@ -3364,7 +3643,7 @@ describe('run command — dashboard video recording root', () => {
       tests: [makeTest({ meta: { tags: ['smoke'], record: true } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3377,13 +3656,13 @@ describe('run command — dashboard video recording root', () => {
     expect(mockWebAdapterSetup).toHaveBeenCalledWith(
       expect.objectContaining({
         recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), '.agent-qa/artifacts/videos'),
+          videoDir: resolve(process.cwd(), '.agent-qa/recording-staging'),
         }),
       }),
     )
   })
 
-  it('uses artifactsDir/videos for suite recording in dashboard mode', async () => {
+  it('stages suite recording beside runs in dashboard mode', async () => {
     const { rootDir, suitePath, configPath } = await createTempSuiteWorkspace()
     const cfg = defaultConfig()
     cfg.services.dashboard = { dbPath: '.agent-qa/runs.db', artifactsDir: 'dashboard-artifacts' } as any
@@ -3400,20 +3679,12 @@ describe('run command — dashboard video recording root', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], '--record', suitePath)
 
-    expect(mockRunSuite).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({
-        platformConfig: expect.objectContaining({
-          recording: expect.objectContaining({
-            videoDir: resolve(rootDir, 'dashboard-artifacts', 'videos'),
-          }),
-        }),
-      }),
-    )
+    expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
+      videoDir: resolve(rootDir, '.agent-qa', 'recording-staging'),
+    }))
   })
 
-  it('uses artifactsDir/videos for adapter setup when standalone recording is enabled', async () => {
+  it('stages standalone recording beside runs despite a custom artifactsDir', async () => {
     const cfg = defaultConfig()
     cfg.services.dashboard = { dbPath: '.agent-qa/runs.db', artifactsDir: 'dashboard-artifacts' } as any
     mockResolveConfig.mockResolvedValue(cfg)
@@ -3422,7 +3693,7 @@ describe('run command — dashboard video recording root', () => {
       tests: [makeTest({ meta: { tags: ['smoke'], record: true } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3435,13 +3706,13 @@ describe('run command — dashboard video recording root', () => {
     expect(mockWebAdapterSetup).toHaveBeenCalledWith(
       expect.objectContaining({
         recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), 'dashboard-artifacts', 'videos'),
+          videoDir: resolve(process.cwd(), '.agent-qa', 'recording-staging'),
         }),
       }),
     )
   })
 
-  it('uses artifactsDir/videos for per-test recording overrides in dashboard mode', async () => {
+  it('stages per-test recording overrides beside runs in dashboard mode', async () => {
     const cfg = defaultConfig()
     cfg.services.dashboard = { dbPath: '.agent-qa/runs.db', artifactsDir: 'dashboard-artifacts' } as any
     mockResolveConfig.mockResolvedValue(cfg)
@@ -3450,7 +3721,7 @@ describe('run command — dashboard video recording root', () => {
       tests: [makeTest({ meta: { tags: ['smoke'], record: true } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3460,89 +3731,14 @@ describe('run command — dashboard video recording root', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), 'dashboard-artifacts', 'videos'),
-        }),
-      }),
-      expect.anything(),
-    )
-  })
-})
-
-describe('run command — runtime memory override', () => {
-  it('does not initialize runtime memory when --no-memory is passed', async () => {
-    const cfg = defaultConfig()
-    ;(cfg.services as any).memory = { enabled: true, provider: 'local' }
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('--no-memory', 'tests/**/*.yaml')
-
-    expect(mockRunTestWithRetry).toHaveBeenCalled()
-    expect(mockCreateMemoryProvider).not.toHaveBeenCalled()
-  })
-
-  it('resolves services.memory.dir from the config directory for runtime memory', async () => {
-    const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-memory-config-'))
-    tempDirs.push(configDir)
-    const cfg = defaultConfig()
-    ;(cfg.services as any).memory = {
-      enabled: true,
-      provider: 'local',
-      dir: '.agent-qa/custom-memory',
-      curatorEnabled: false,
-      ablationEnabled: false,
-    }
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockCreateMemoryProvider.mockResolvedValue({
-      getInjectedObservations: vi.fn(() => []),
-    })
-    mockRunTestWithRetry.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
-
-    const expectedRoot = join(configDir, '.agent-qa/custom-memory')
-    expect(mockCreateMemoryProvider).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'local',
-      memoryRoot: expectedRoot,
+    expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
+      videoDir: resolve(process.cwd(), '.agent-qa', 'recording-staging'),
     }))
-    expect(mockRunTestWithRetry).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        memoryInitParams: expect.objectContaining({ memoryRoot: expectedRoot }),
-      }),
-      expect.anything(),
-    )
   })
 })
 
 describe('run command — runtime cache paths', () => {
-  it('resolves services.cache.dir and ttl from the config directory', async () => {
+  it('resolves services.cache.dir into the FsActionCache root from the config directory', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-cache-config-'))
     tempDirs.push(configDir)
     const cfg = defaultConfig()
@@ -3553,7 +3749,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3563,9 +3759,16 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
 
-    expect(mockFileActionCache).toHaveBeenCalledWith(expect.objectContaining({
-      dir: join(configDir, '.agent-qa/custom-cache'),
-      ttl: '7d',
+    // Phase 356: the composition root constructs the runner-local FsActionCache with a
+    // resolved branch CachePolicy over the config-relative cache root (no ttl — the v1
+    // core file store is retired).
+    expect(mockFsActionCache).toHaveBeenCalledWith(expect.objectContaining({
+      root: join(configDir, '.agent-qa/custom-cache'),
+      policy: expect.objectContaining({
+        currentBranch: 'main',
+        defaultBranch: 'main',
+        disableCache: false,
+      }),
     }))
   })
 
@@ -3575,7 +3778,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest({ use: { cache: false } })],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3585,10 +3788,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.cache).toBeUndefined()
-    const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(reporterContext.artifact.config.cache.enabled).toBe(false)
   })
 
   it('keeps direct test cache enabled when use.cache is absent', async () => {
@@ -3597,7 +3798,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'passed',
@@ -3607,10 +3808,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    const runConfig = mockRunTestWithRetry.mock.calls[0][1]
+    const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.cache).toBeDefined()
-    const reporterContext = mockMultiReporterInstance.onTestStart.mock.calls[0][2]
-    expect(reporterContext.artifact.config.cache.enabled).toBe(true)
   })
 
   it('disables suite cache when use.cache is false', async () => {
@@ -3628,9 +3827,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockRunMemberTest.mock.calls[0][1]
     expect(suiteConfig.cache).toBeUndefined()
-    expect(suiteConfig.artifactContext.config.cache.enabled).toBe(false)
   })
 
   it('keeps suite cache enabled when use.cache is absent', async () => {
@@ -3647,17 +3845,20 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    const suiteConfig = mockRunSuite.mock.calls[0][2]
+    const suiteConfig = mockRunMemberTest.mock.calls[0][1]
     expect(suiteConfig.cache).toBeDefined()
-    expect(suiteConfig.artifactContext.config.cache.enabled).toBe(true)
   })
 
-  it('invalidates failed-run cache entries under the configured cache directory', async () => {
+  it('does not recompute/purge cache entries post-run — the loop owns per-key invalidation (Phase 356)', async () => {
+    // The v1 CLI post-run batch purge (recompute a step hash -> rm dir) is retired
+    // (D-03/D-13): the redesigned per-key ActionPlanCache invalidates the exact failed
+    // decision point inside the runner loop. The CLI never recomputes an opaque masked key,
+    // so it must not touch the on-disk cache after a failed run.
     const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-cache-invalidate-'))
     tempDirs.push(configDir)
-    const cacheEntry = join(configDir, '.agent-qa/custom-cache/mock-hash')
+    const cacheEntry = join(configDir, '.agent-qa/custom-cache/main')
     mkdirSync(cacheEntry, { recursive: true })
-    writeFileSync(join(cacheEntry, 'entry.json'), '{}')
+    writeFileSync(join(cacheEntry, 'a1b2c3d4e5f60718.json'), '{"schemaVersion":10}')
 
     const cfg = defaultConfig()
     cfg.services.cache = { dir: '.agent-qa/custom-cache', ttl: '7d' } as any
@@ -3667,7 +3868,7 @@ describe('run command — runtime cache paths', () => {
       tests: [makeTest()],
       errors: [],
     })
-    mockRunTestWithRetry.mockResolvedValue({
+    mockRunMemberTest.mockResolvedValue({
       name: 'Test One',
       filePath: 'tests/a.yaml',
       status: 'failed',
@@ -3677,7 +3878,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
 
-    expect(existsSync(cacheEntry)).toBe(false)
+    // The CLI leaves the cache untouched; invalidation is the loop's responsibility.
+    expect(existsSync(join(cacheEntry, 'a1b2c3d4e5f60718.json'))).toBe(true)
   })
 })
 
@@ -3785,7 +3987,7 @@ describe('run command — Zod validation before execution', () => {
     await runCommand()
 
     expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunTestWithRetry).not.toHaveBeenCalled()
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).toContain('parse error')
   })

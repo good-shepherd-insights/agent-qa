@@ -10,7 +10,7 @@ export const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 4,
 }
 
-export type LogSource = 'agent' | 'adapter' | 'cache' | 'planner' | 'healer' | 'hook' | 'runner'
+export type LogSource = 'agent' | 'adapter' | 'cache' | 'planner' | 'hook' | 'runner'
 
 export interface LogEntry {
   id: string
@@ -76,14 +76,6 @@ export const PlannerLogDataSchema = z.object({
   actionType: z.string().optional(),
 })
 
-export const HealerLogDataSchema = z.object({
-  strategy: z.string().optional(),
-  attempt: z.number().optional(),
-  maxAttempts: z.number().optional(),
-  stateDiffDetected: z.boolean().optional(),
-  success: z.boolean().optional(),
-})
-
 export const HookLogDataSchema = z.object({
   hookName: z.string().optional(),
   phase: z.enum(['setup', 'teardown']).optional(),
@@ -103,7 +95,6 @@ export const LogSourceDataSchemas: Record<LogSource, z.ZodType> = {
   adapter: AdapterLogDataSchema,
   cache: CacheLogDataSchema,
   planner: PlannerLogDataSchema,
-  healer: HealerLogDataSchema,
   hook: HookLogDataSchema,
   runner: RunnerLogDataSchema,
 }

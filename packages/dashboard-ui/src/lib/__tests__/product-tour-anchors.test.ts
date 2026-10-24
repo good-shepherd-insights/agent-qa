@@ -7,8 +7,8 @@ type SourceKey =
   | 'tests'
   | 'hooks'
   | 'suites'
-  | 'memory'
   | 'config'
+  | 'configTabs'
   | 'testViewer'
   | 'liveRun'
   | 'runDetail'
@@ -22,8 +22,8 @@ const sources: Record<SourceKey, string> = {
   tests: readSource('../../pages/tests.tsx'),
   hooks: readSource('../../pages/hooks.tsx'),
   suites: readSource('../../pages/suites.tsx'),
-  memory: readSource('../../pages/memory.tsx'),
   config: readSource('../../pages/config.tsx'),
+  configTabs: readSource('../../components/config-manager/config-tabs.tsx'),
   testViewer: readSource('../../pages/test-viewer.tsx'),
   liveRun: readSource('../../pages/live-run.tsx'),
   runDetail: readSource('../../pages/run-detail.tsx'),
@@ -38,7 +38,6 @@ const routeSources = [
   sources.tests,
   sources.hooks,
   sources.suites,
-  sources.memory,
   sources.config,
 ].join('\n')
 
@@ -47,7 +46,6 @@ const approvedUiSpecAnchorIds = [
   'tour-nav-tests',
   'tour-nav-hooks',
   'tour-nav-suites',
-  'tour-nav-memory',
   'tour-nav-config',
   'tour-help-menu',
   'tour-help-product-tour',
@@ -59,7 +57,6 @@ const approvedUiSpecAnchorIds = [
   'tour-hooks-new',
   'tour-suites-table',
   'tour-suites-new',
-  'tour-memory-table',
   'tour-config-nav',
   'tour-config-section',
   'tour-test-detail-overview',
@@ -103,11 +100,6 @@ const approvedAnchors = [
     file: 'suites',
     anchor: 'tour-suites-new',
     element: 'Button',
-  },
-  {
-    file: 'memory',
-    anchor: 'tour-memory-table',
-    element: 'ScrollArea',
   },
 ] as const satisfies readonly {
   file: SourceKey
@@ -160,10 +152,6 @@ const emptyStateAnchors = [
     file: 'suites',
     anchor: 'tour-suites-table',
   },
-  {
-    file: 'memory',
-    anchor: 'tour-memory-table',
-  },
 ] as const satisfies readonly {
   file: SourceKey
   anchor: string
@@ -171,7 +159,6 @@ const emptyStateAnchors = [
 
 const forbiddenDynamicPatterns = [
   'data-runs-row-surface',
-  'data-memory-product',
   'row.id',
   'run.id',
   'child.id',
@@ -239,16 +226,22 @@ describe('product tour route anchors', () => {
     }
   })
 
-  it('places Config anchors on navigation and active section surfaces', () => {
-    const configSource = sources.config
+  it('TOUR-ANCHORS-ON-TABS: Config anchors sit on the TabsList and the active TabsContent, not a rail', () => {
+    const tabList = openingTags(sources.configTabs, 'TabsList')
+    const tabPanels = openingTags(sources.config, 'TabsContent')
 
-    expect(configSource).toContain('data-config-rail')
-    expect(configSource).toContain('data-config-mobile-selector')
-    expect(configSource).toContain('data-config-main')
-    expect(configSource).toContain('tour-config-nav')
-    expect(configSource).toContain('tour-config-section')
-    expect(hasConfigNavAnchor(configSource)).toBe(true)
-    expectAnchorOnElement(configSource, 'tour-config-section', 'section')
+    expect(tabList).toHaveLength(1)
+    expect(tabList[0]).toContain('data-tour-id="tour-config-nav"')
+    expect(tabPanels).toHaveLength(1)
+    expect(tabPanels[0]).toMatch(/data-tour-id=\{[^}]*\bid === tab\b[^}]*"tour-config-section"[^}]*\}/)
+    expect(countOccurrences(sources.configTabs, 'tour-config-nav')).toBe(1)
+    expect(countOccurrences(sources.config, 'tour-config-section')).toBe(1)
+    expect(sources.config).not.toContain('tour-config-nav')
+
+    for (const source of [sources.config, sources.configTabs]) {
+      expect(source).not.toContain('data-config-rail')
+      expect(source).not.toContain('data-config-mobile-selector')
+    }
   })
 
   it('keeps the product tour highlight pulse reduced-motion safe', () => {
@@ -306,28 +299,8 @@ function isEmptyStateTableAnchor(expected: (typeof approvedAnchors)[number]) {
   )
 }
 
-function hasConfigNavAnchor(source: string) {
-  const hasDesktopRailAnchor = hasAttributePair(source, 'aside', 'data-config-rail', 'tour-config-nav')
-  const hasMobileSelectorAnchor = hasAttributePair(
-    source,
-    'section',
-    'data-config-mobile-selector',
-    'tour-config-nav',
-  )
-  const hasSharedWrapperAnchor = /data-tour-id="tour-config-nav"[\s\S]*data-config-rail[\s\S]*data-config-mobile-selector/.test(
-    source,
-  )
-
-  return (hasDesktopRailAnchor && hasMobileSelectorAnchor) || hasSharedWrapperAnchor
-}
-
-function hasAttributePair(source: string, element: string, dataAttribute: string, tourAnchor: string) {
-  const openingTagPattern = new RegExp(`<${element}\\b[\\s\\S]*?>`, 'g')
-  const openingTags = source.match(openingTagPattern) ?? []
-
-  return openingTags.some(
-    (tag) => tag.includes(dataAttribute) && tag.includes(`data-tour-id="${tourAnchor}"`),
-  )
+function openingTags(source: string, element: string) {
+  return source.match(new RegExp(`<${element}\\b[^>]*>`, 'g')) ?? []
 }
 
 function getTourAnchorBlocks(source: string) {

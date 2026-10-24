@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -25,12 +27,14 @@ const requiredNoticeSnippets = [
   'Apache License, Version 2.0',
   'Third-party dependencies are distributed under their own license terms',
 ]
-const requiredSkills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix']
+const requiredSkills = ['agent-qa-authoring', 'agent-qa-result-triage', 'agent-qa-debug-fix', 'agent-qa-knowledge']
 const requiredSkillReferences = {
   'agent-qa-authoring': ['references/agent-qa-contracts.json'],
   'agent-qa-result-triage': ['references/triage-categories.md'],
   'agent-qa-debug-fix': [],
+  'agent-qa-knowledge': ['references/knowledge-reads.md'],
 }
+const ownershipContractMarker = '_OWNERSHIP_CONTRACT'
 const forbiddenPackPatterns = [
   /^\.env($|\.)/,
   /^\.npmrc$/,
@@ -57,6 +61,10 @@ function packageRecords() {
     .filter(dir => statSync(dir).isDirectory() && existsSync(join(dir, 'package.json')))
     .sort()
     .map(dir => ({ dir, pkg: readJson(join(dir, 'package.json')) }))
+}
+
+function publicPackageRecords() {
+  return packageRecords().filter(record => record.pkg.private !== true)
 }
 
 function label(record) {
@@ -168,6 +176,16 @@ function validatePublicPackage(record, allVersions, errors, options = { checkFil
     assert(record.pkg.exports?.['.']?.require === './dist/index.cjs', `${name} must export dist CJS`, errors)
   }
 
+  // 414 D-18: eval-local joined knowledge-local on a `./reader` subpath — the proposer's
+  // read-only door, walled off from the gate-side main entry by validate:arch. A per-package
+  // `if` is how a second package quietly ships an unguarded subpath, so the condition is a LIST.
+  const READER_SUBPATH_PACKAGES = ['@vostride/agent-qa-knowledge-local', '@vostride/agent-qa-eval-local']
+  if (READER_SUBPATH_PACKAGES.includes(record.pkg.name)) {
+    assert(record.pkg.exports?.['./reader']?.types === './dist/reader.d.ts', `${name} reader must export dist types`, errors)
+    assert(record.pkg.exports?.['./reader']?.import === './dist/reader.js', `${name} reader must export dist ESM`, errors)
+    assert(record.pkg.exports?.['./reader']?.require === './dist/reader.cjs', `${name} reader must export dist CJS`, errors)
+  }
+
   if (record.pkg.name === '@vostride/agent-qa-dashboard-ui') {
     assert(!record.pkg.exports, '@vostride/agent-qa-dashboard-ui must not add exports unless package.json is exported for dashboard resolution', errors)
   }
@@ -181,7 +199,7 @@ function validatePublicPackage(record, allVersions, errors, options = { checkFil
 function validateManifestSurface(errors, options = { checkFiles: true }) {
   validateRootPackage(errors, options)
 
-  const records = packageRecords()
+  const records = publicPackageRecords()
   const entryPackages = records.filter(record => record.pkg.name === entryPackageName)
   assert(entryPackages.length === 1, 'exactly one public entry package named agent-qa is required', errors)
 
@@ -192,14 +210,31 @@ function validateManifestSurface(errors, options = { checkFiles: true }) {
   assert(allVersions.size === 1, `public package versions must match, found: ${[...allVersions].join(', ')}`, errors)
 }
 
-function validateCopiedSkills(errors) {
-  const skillsRoot = join(root, 'packages/cli/skills')
+function validateNoArchSymbolInDist(errors, records = publicPackageRecords()) {
+  for (const record of records) {
+    for (const file of ['dist/index.d.ts', 'dist/index.js', 'dist/index.cjs']) {
+      const path = join(record.dir, file)
+      if (!existsSync(path)) continue
+
+      const body = readFileSync(path, 'utf-8')
+      if (body.includes(ownershipContractMarker)) {
+        errors.push(
+          `${label(record)} dist must not ship the ownership contract (found ${ownershipContractMarker} in ${file})`,
+        )
+      }
+    }
+  }
+}
+
+function validateCopiedSkills(errors, skillsRoot = join(root, 'packages/cli/skills')) {
   for (const skillName of requiredSkills) {
     const skillDir = join(skillsRoot, skillName)
     assert(existsSync(join(skillDir, 'SKILL.md')), `agent-qa packaged skill missing ${skillName}/SKILL.md`, errors)
     assert(existsSync(join(skillDir, 'agents/openai.yaml')), `agent-qa packaged skill missing ${skillName}/agents/openai.yaml`, errors)
     for (const ref of requiredSkillReferences[skillName]) {
-      assert(existsSync(join(skillDir, ref)), `agent-qa packaged skill missing ${skillName}/${ref}`, errors)
+      const refPath = join(skillDir, ref)
+      assert(existsSync(refPath), `agent-qa packaged skill missing ${skillName}/${ref}`, errors)
+      if (existsSync(refPath)) assert(statSync(refPath).size > 0, `agent-qa packaged skill has empty ${skillName}/${ref}`, errors)
     }
   }
   assert(!existsSync(join(skillsRoot, 'scripts')), 'agent-qa packaged skills must not include skills/scripts', errors)
@@ -226,7 +261,6 @@ function validateNoStaleMcpToolPrefix(errors) {
     ...requiredSkills.map(skillName => join(root, 'skills', skillName)),
     join(root, 'packages/cli/skills'),
     join(root, 'packages/mcp/src'),
-    join(root, 'packages/mcp/references'),
   ]
   for (const target of scanned) {
     if (!existsSync(target)) {
@@ -310,6 +344,7 @@ function validatePackFiles(record, files, errors) {
 }
 
 function validatePackDryRuns(errors) {
+  let packed = 0
   runCopySkills(errors)
   const npmCache = mkdtempSync(join(tmpdir(), 'agent-qa-npm-pack-cache-'))
   const npmEnv = {
@@ -322,7 +357,7 @@ function validatePackDryRuns(errors) {
   delete npmEnv.npm_config_verify_deps_before_run
 
   try {
-    for (const record of packageRecords()) {
+    for (const record of publicPackageRecords()) {
       let output = ''
       try {
         output = execFileSync('npm', ['pack', '--dry-run', '--json'], {
@@ -337,10 +372,12 @@ function validatePackDryRuns(errors) {
 
       const files = parsePackOutput(output, record, errors)
       validatePackFiles(record, files, errors)
+      packed += 1
     }
   } finally {
     rmSync(npmCache, { recursive: true, force: true })
   }
+  return packed
 }
 
 function expectFixtureFailure(name, fn, expectedText) {
@@ -397,19 +434,51 @@ function runFixtures() {
     }
   }, 'packaged skill missing')
 
+  expectFixtureFailure('empty packaged skill reference', (errors) => {
+    const temp = mkdtempSync(join(tmpdir(), 'agent-qa-publish-fixture-'))
+    try {
+      for (const skillName of requiredSkills) {
+        const skillDir = join(temp, skillName)
+        mkdirSync(join(skillDir, 'agents'), { recursive: true })
+        writeFileSync(join(skillDir, 'SKILL.md'), `---\nname: ${skillName}\n---\n`)
+        writeFileSync(join(skillDir, 'agents/openai.yaml'), 'interface: {}\n')
+        for (const ref of requiredSkillReferences[skillName]) {
+          mkdirSync(dirname(join(skillDir, ref)), { recursive: true })
+          writeFileSync(join(skillDir, ref), skillName === 'agent-qa-knowledge' ? '' : 'x')
+        }
+      }
+      validateCopiedSkills(errors, temp)
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }, 'empty agent-qa-knowledge/references/knowledge-reads.md')
+
+  expectFixtureFailure('ownership contract marker in dist', (errors) => {
+    const temp = mkdtempSync(join(tmpdir(), 'agent-qa-arch-symbol-fixture-'))
+    try {
+      const dist = join(temp, 'dist')
+      mkdirSync(dist, { recursive: true })
+      writeFileSync(join(dist, 'index.d.ts'), `export const BAD${ownershipContractMarker}: string\n`)
+      validateNoArchSymbolInDist(errors, [
+        { dir: temp, pkg: { name: '@vostride/agent-qa-fixture', private: false } },
+      ])
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
+  }, ownershipContractMarker)
+
   console.log('publish surface validation fixtures passed')
 }
 
 function runValidation() {
   const errors = []
   validateManifestSurface(errors)
+  validateNoArchSymbolInDist(errors)
   validateCopiedSkills(errors)
   validateNoStaleMcpToolPrefix(errors)
   runSourceSkillsValidation(errors)
 
-  if (!quick) {
-    validatePackDryRuns(errors)
-  }
+  const packed = quick ? 0 : validatePackDryRuns(errors)
 
   if (errors.length > 0) {
     console.error('publish surface validation failed:')
@@ -421,6 +490,8 @@ function runValidation() {
   }
 
   console.log(`publish surface validation passed (${quick ? 'quick' : 'full'})`)
+  const count = { validator: 'publish', executed: packed, unit: 'packages packed' }
+  console.log(`AGENT_QA_GATE_COUNT ${JSON.stringify(count)}`)
 }
 
 if (fixtures) {

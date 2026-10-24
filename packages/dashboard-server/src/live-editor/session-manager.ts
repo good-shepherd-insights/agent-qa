@@ -3,11 +3,13 @@ import { LiveSession } from './live-session.js'
 import type { SessionState, LiveSessionConfig, EntityRef } from './types.js'
 import type { AppiumManager } from '../execution/appium-manager.js'
 import type { ConfigManager } from '../config/index.js'
+import type { LiveEditorSubjects } from '../live-view/editor-subjects.js'
 
 export interface SessionManagerDeps {
   appiumManager?: AppiumManager
   configManager?: ConfigManager
   configPath?: string
+  liveEditorSubjects?: LiveEditorSubjects
 }
 
 export class SessionManager {
@@ -32,6 +34,15 @@ export class SessionManager {
     const session = new LiveSession(sessionId, this.deps)
     await session.initialize(config)
     this.sessions.set(sessionId, session)
+    // 428 D-07: the session is an editor subject for exactly its lifetime.
+    this.deps.liveEditorSubjects?.register(sessionId, session.liveAttachment())
+    // RESEARCH P1: the idle window runs until the first control socket attaches (the upgrade
+    // clears it), so a session nobody ever opens cannot hold a browser or a lease forever.
+    session.startIdleTimer(() => {
+      void this.terminateSession(sessionId).catch((error: unknown) => {
+        console.error(`[live-editor] idle expiry could not end session ${sessionId}`, error)
+      })
+    })
 
     // sessionNumber is used for display only; never for authorization lookups
     // (always use sessionId UUID for that — see threat T-181.1-07).
@@ -56,15 +67,18 @@ export class SessionManager {
   async terminateSession(sessionId: string): Promise<boolean> {
     const session = this.sessions.get(sessionId)
     if (!session) return false
-    await session.cleanup()
+    // Forgotten before the await, so a concurrent second terminate answers false.
     this.sessions.delete(sessionId)
+    this.deps.liveEditorSubjects?.unregister(sessionId)
+    await session.cleanup()
     // Note: `counters` intentionally left untouched — per D-30 the counter is
     // monotonic per-restart.
     return true
   }
 
   async cleanupAll(): Promise<void> {
-    for (const session of this.sessions.values()) {
+    for (const [sessionId, session] of this.sessions) {
+      this.deps.liveEditorSubjects?.unregister(sessionId)
       try { await session.cleanup() } catch {}
     }
     this.sessions.clear()

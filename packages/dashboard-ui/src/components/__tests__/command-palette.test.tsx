@@ -13,7 +13,6 @@ const apiMocks = vi.hoisted(() => ({
   fetchTestFiles: vi.fn(),
   fetchSuiteFiles: vi.fn(),
   fetchHookCatalog: vi.fn(),
-  fetchMemoryCatalog: vi.fn(),
   restartTour: vi.fn(),
 }))
 const commandState = vi.hoisted(() => ({
@@ -30,7 +29,6 @@ vi.mock('@/lib/api', () => ({
   fetchTestFiles: apiMocks.fetchTestFiles,
   fetchSuiteFiles: apiMocks.fetchSuiteFiles,
   fetchHookCatalog: apiMocks.fetchHookCatalog,
-  fetchMemoryCatalog: apiMocks.fetchMemoryCatalog,
 }))
 
 vi.mock('@/components/product-tour', () => ({
@@ -190,28 +188,6 @@ beforeEach(() => {
     errors: [],
     missing: false,
   })
-  apiMocks.fetchMemoryCatalog.mockResolvedValue({
-    products: [
-      {
-        productKey: 'stripe-checkout',
-        observationCount: 7,
-        scopeCounts: { product: 2, suite: 3, test: 2 },
-        targetReferences: ['staging', 'production', 'checkout-preview', 'webhook-sandbox'],
-        sourceCounts: { suite: 2, test: 4 },
-        freshness: '2026-04-23T12:00:00.000Z',
-        sourceCoverage: 0.75,
-      },
-      {
-        productKey: 'github-search',
-        observationCount: 3,
-        scopeCounts: { product: 1, suite: 1, test: 1 },
-        targetReferences: ['github-web'],
-        sourceCounts: { suite: 1, test: 1 },
-        freshness: '2026-04-23T12:00:00.000Z',
-        sourceCoverage: 1,
-      },
-    ],
-  })
   apiMocks.restartTour.mockReset()
 })
 
@@ -230,6 +206,23 @@ describe('command palette suite navigation (SC-4)', () => {
 
     act(() => { hooksPage?.click() })
     expect(navigateSpy).toHaveBeenCalledWith('/hooks')
+  })
+
+  it('PALETTE-PAGES-EXACT: the Pages group is exactly the six product pages, in order, with no chat page', async () => {
+    await renderPalette()
+
+    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
+    const pageValues = items
+      .map((el) => el.getAttribute('data-value') ?? '')
+      .filter((value) => value.startsWith('page-'))
+    expect(pageValues).toEqual([
+      'page-Runs',
+      'page-Tests',
+      'page-Hooks',
+      'page-Suites',
+      'page-Insights',
+      'page-Config',
+    ])
   })
 
   it('includes creation actions for new tests, suites, and hooks', async () => {
@@ -467,65 +460,6 @@ describe('command palette suite navigation (SC-4)', () => {
     expect(hookItems[0]!.textContent).toContain('Fetch HN top story')
     expect(hookItems[0]!.textContent).toContain('fetch-hn-top-story-python.py')
     expect(hookItems[0]!.getAttribute('data-value')).toContain('fetch-hn-top-story-python.py')
-  })
-
-  it('includes Memory in the Pages group and opens /memory', async () => {
-    await renderPalette()
-
-    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    const memoryPage = items.find((el) => el.getAttribute('data-value') === 'page-Memory')
-    expect(memoryPage).toBeTruthy()
-
-    act(() => { memoryPage?.click() })
-    expect(navigateSpy).toHaveBeenCalledWith('/memory')
-  })
-
-  it('finds memory products by product key and opens the product route', async () => {
-    await renderPalette()
-    await typeSearch('stripe')
-
-    expect(apiMocks.fetchMemoryCatalog).toHaveBeenCalled()
-
-    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    const memoryItems = items.filter((el) => el.getAttribute('data-value')?.startsWith('memory-'))
-    expect(memoryItems).toHaveLength(1)
-    expect(memoryItems[0]!.getAttribute('data-value')).toContain('stripe-checkout')
-    expect(memoryItems[0]!.textContent).toContain('stripe-checkout')
-    expect(memoryItems[0]!.textContent).toContain('staging, production, checkout-preview, +1 more')
-
-    act(() => { memoryItems[0]!.click() })
-    expect(navigateSpy).toHaveBeenCalledWith('/memory/stripe-checkout')
-  })
-
-  it('finds memory products by target reference but still opens the owning product', async () => {
-    await renderPalette()
-    await typeSearch('staging')
-
-    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    const memoryItems = items.filter((el) => el.getAttribute('data-value')?.startsWith('memory-'))
-    expect(memoryItems).toHaveLength(1)
-    expect(memoryItems[0]!.textContent).toContain('stripe-checkout')
-    expect(memoryItems[0]!.textContent).toContain('staging, production, checkout-preview, +1 more')
-
-    act(() => { memoryItems[0]!.click() })
-    expect(navigateSpy).toHaveBeenCalledWith('/memory/stripe-checkout')
-  })
-
-  it('keeps static Memory and other dynamic groups when memory catalog loading fails', async () => {
-    apiMocks.fetchMemoryCatalog.mockRejectedValueOnce(new Error('catalog unavailable'))
-
-    await renderPalette()
-    expect(
-      Array.from(container.querySelectorAll('[data-testid="cmd-item"]'))
-        .some((el) => el.getAttribute('data-value') === 'page-Memory'),
-    ).toBe(true)
-
-    await typeSearch('Palette')
-
-    const items = Array.from(container.querySelectorAll('[data-testid="cmd-item"]')) as HTMLButtonElement[]
-    expect(items.some((el) => el.getAttribute('data-value')?.startsWith('suite '))).toBe(true)
-    expect(items.some((el) => el.getAttribute('data-value')?.startsWith('hook '))).toBe(true)
-    expect(items.some((el) => el.getAttribute('data-value')?.startsWith('memory-'))).toBe(false)
   })
 
   it('ignores stale dynamic results when a slower search resolves after a newer query', async () => {

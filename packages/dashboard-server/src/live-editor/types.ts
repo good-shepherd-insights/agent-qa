@@ -1,19 +1,20 @@
 import type {
+  HookDefinition,
+} from '@vostride/agent-qa-core'
+import type {
   ConsoleLogEntry,
   NetworkLogEntry,
   StepAnnotation,
-  HookDefinition,
-  ModelConfig,
   SecretRedactor,
   SecretStore,
-} from '@vostride/agent-qa-core'
+} from '@vostride/agent-qa-runner'
+import type { DashboardLLMConfig } from '../llm-model-mapping.js'
+import type { PlannerLimits } from '@vostride/agent-qa-schema'
 
-export type LiveSessionLLMConfig = Pick<
-  ModelConfig,
-  'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
-> & {
-  screenshotSize?: number
-  effectiveResolution?: number
+export type LiveSessionLLMConfig = DashboardLLMConfig & {
+  vision?: { screenshotSize?: number; effectiveResolution?: number }
+  /** The model entry's own `vision` flag, when the config sets it (439 D-19). */
+  modelVision?: boolean
 }
 
 export interface LiveDraftMetadata {
@@ -56,7 +57,7 @@ export interface LiveSubActionData {
   observation: string
   reasoning: string
   plannedAction: unknown
-  result: 'success' | 'failure' | 'in-progress'
+  result: 'success' | 'failure' | 'no-input' | 'in-progress'
   error?: string
   screenStateBefore: string
   screenStateAfter?: string
@@ -149,7 +150,6 @@ export type ClientMessage =
     }
   | { type: 'cancel-step' }
   | { type: 'terminate-session' }
-  | { type: 'get-screenshot' }
   | { type: 'get-state' }
   | { type: 'navigate'; url: string }
   | { type: 'refresh-page' }
@@ -173,7 +173,6 @@ export type ServerMessage =
   | { type: 'test-step-error'; step: LiveTestStepPayload; error: string }
   | { type: 'test-complete'; test: LiveTestExecutionPayload; result: LiveTestResultPayload }
   | { type: 'test-error'; test: LiveTestExecutionPayload; error: string }
-  | { type: 'screenshot'; data: string }
   | { type: 'session-state'; state: SessionState }
   | { type: 'session-terminated' }
   | { type: 'browser-disconnected' }
@@ -196,12 +195,26 @@ export interface SessionState {
   terminalError: string | null
 }
 
+/**
+ * What the create door found the current config declares about the session's target (432 D-18).
+ *
+ * It can only add a refusal: `initialize` refuses any name here unless the config it reads itself
+ * opts in. There is deliberately no opt-in field, so nothing a caller passes can allow production.
+ */
+export interface LiveProductionFinding {
+  readonly productionTargetNames: readonly string[]
+}
+
 export interface LiveSessionConfig {
   platform: 'web' | 'android' | 'ios'
   targetName?: string
+  production?: LiveProductionFinding
+  /** 436 D-03: resolved at the create door from the project config and the edited entity. */
+  plannerLimits?: PlannerLimits
+  /** 436 D-03: per executed test, project then suite then the test's own `use`. */
+  plannerLimitsForTest?: (testId: string) => Promise<PlannerLimits>
   llmConfig: LiveSessionLLMConfig
   authFetch?: typeof globalThis.fetch
-  agentRules?: string
   envVars?: Record<string, string>
   secretStore?: SecretStore
   secretRedactor?: SecretRedactor
@@ -229,3 +242,17 @@ export interface LiveSessionConfig {
     appiumUrl?: string
   }
 }
+
+/**
+ * The close code the control socket uses for a session this process does not hold (428 P5), so the
+ * page can say the session ended instead of "Disconnected". The dashboard UI spells the same number;
+ * Plan 23 pins the two equal.
+ */
+export const LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE = 4404
+
+/**
+ * The close code for a control socket a newer one has replaced (428 WR-01). The session is still
+ * held; this socket no longer drives it, so the page must not reconnect and take it back. The
+ * dashboard UI spells the same number.
+ */
+export const LIVE_EDITOR_SUPERSEDED_CLOSE_CODE = 4409

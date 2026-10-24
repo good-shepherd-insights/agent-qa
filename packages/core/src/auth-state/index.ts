@@ -40,9 +40,3 @@ export {
   isReservedAuthStateHookEnvKey,
   stripReservedAuthStateHookEnv,
 } from './hook-env.js'
-export {
-  AUTH_STATE_REDACTION_MARKER,
-  redactAuthStateString,
-  redactAuthStateValue,
-  type AuthStateRedactionContext,
-} from './redaction.js'

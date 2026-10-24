@@ -45,6 +45,17 @@ test('release workflow uses trusted publishing prerequisites without npm tokens'
   assert.match(workflow, /attestations:\s*write/)
   assert.match(workflow, /scripts\/release\/publish\.mjs/)
   assert.match(workflow, /SUBSCRIPTION_AUTH_RELEASE_TOKEN/)
+  assert.match(
+    workflow,
+    /npm:\s*\n\s+name:\s*Publish npm packages[\s\S]*?- name:\s*Checkout\s*\n\s+uses:\s*actions\/checkout@v6\s*\n\s+with:\s*\n\s+fetch-depth:\s*0\s*\n\s+persist-credentials:\s*false\s*\n\s+- name:\s*Validate release push token\s*\n\s+env:\s*\n\s+RELEASE_PUSH_TOKEN:\s*\$\{\{ secrets\.RELEASE_PUSH_TOKEN \}\}/,
+  )
+  assert.match(workflow, /::error::Set RELEASE_PUSH_TOKEN in the vostride\/agent-qa repository Actions secrets\./)
+  assert.match(
+    workflow,
+    /- name:\s*Push release commit and tag\s*\n\s+env:\s*\n\s+RELEASE_PUSH_TOKEN:\s*\$\{\{ secrets\.RELEASE_PUSH_TOKEN \}\}\s*\n\s+run:/,
+  )
+  assert.equal(workflow.split('secrets.RELEASE_PUSH_TOKEN').length - 1, 2)
+  assert.doesNotMatch(workflow, /push origin/)
   assert.doesNotMatch(workflow, /NPM_TOKEN/)
   assert.doesNotMatch(workflow, /docker\/build-push-action|DOCKERHUB_TOKEN/)
 })
@@ -52,20 +63,24 @@ test('release workflow uses trusted publishing prerequisites without npm tokens'
 test('release workflow gates build, staging, commit, tag, push, and publish in order', () => {
   const workflow = readWorkflow()
   const orderedCommands = [
+    'persist-credentials: false',
+    'if [ -z "$RELEASE_PUSH_TOKEN" ]; then',
+    'uses: actions/setup-node@v6',
     'pnpm install --frozen-lockfile',
     'pnpm exec node scripts/release/verify.mjs --bump "${{ inputs.bump }}" --stage preflight',
     'pnpm exec node scripts/release/version.mjs --bump "${{ inputs.bump }}" --write',
-    'pnpm exec node scripts/release/posthog.mjs --write',
     'pnpm typecheck',
-    'pnpm test',
-    'pnpm build',
+    'sudo apt-get update && sudo apt-get install -y --no-install-recommends expect',
+    'pnpm exec turbo test',
+    'pnpm exec node scripts/release/posthog.mjs --write',
+    'pnpm exec turbo build --force',
     'pnpm run validate:skills',
     'pnpm run validate:agents',
     'pnpm run validate:publish',
     'pnpm exec node scripts/release/stage-packages.mjs --target-version "${{ steps.version.outputs.version }}" --out .release/staged-packages',
     'pnpm exec node scripts/release/verify.mjs --bump "${{ inputs.bump }}" --stage postbuild --target-version "${{ steps.version.outputs.version }}" --staged-dir .release/staged-packages',
     'pnpm exec node scripts/release/git.mjs --commit-tag',
-    'git push origin HEAD:${{ github.ref_name }} --follow-tags',
+    'git -c credential.helper= -c \'credential.helper=!f() { echo username=x-access-token; echo "password=$RELEASE_PUSH_TOKEN"; }; f\' push https://github.com/${{ github.repository }}.git HEAD:${{ github.ref_name }} --follow-tags',
     'pnpm exec node scripts/release/publish.mjs --staged-dir .release/staged-packages',
   ]
 
@@ -75,11 +90,13 @@ test('release workflow gates build, staging, commit, tag, push, and publish in o
   }
 })
 
-test('release workflow injects PostHog key before build and validates staged packages before publish', () => {
+test('release workflow writes the PostHog key after the tests and before a forced build, and validates staged packages before publish', () => {
   const workflow = readWorkflow()
 
   assert.match(workflow, /POSTHOG_PROJECT_KEY:\s*\$\{\{ secrets\.POSTHOG_PROJECT_KEY \}\}/)
-  assertBefore(workflow, 'pnpm exec node scripts/release/posthog.mjs --write', 'pnpm build')
+  assertBefore(workflow, 'pnpm exec turbo test', 'pnpm exec node scripts/release/posthog.mjs --write')
+  assertBefore(workflow, 'pnpm exec node scripts/release/posthog.mjs --write', 'pnpm exec turbo build --force')
+  assert.equal(workflow.split('scripts/release/posthog.mjs --write').length - 1, 1)
   assertBefore(
     workflow,
     'pnpm exec node scripts/release/stage-packages.mjs --target-version "${{ steps.version.outputs.version }}" --out .release/staged-packages',

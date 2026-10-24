@@ -14,16 +14,30 @@ RUN corepack enable && corepack prepare pnpm@10.6.1 --activate
 WORKDIR /build
 
 # Copy dependency manifests first for layer caching
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json ./
-COPY packages/core/package.json packages/core/
-COPY packages/web/package.json packages/web/
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json NOTICE.md ./
+COPY packages/agent/package.json packages/agent/
+COPY packages/agent-local/package.json packages/agent-local/
+COPY packages/analytics/package.json packages/analytics/
 COPY packages/android/package.json packages/android/
-COPY packages/ios/package.json packages/ios/
-COPY packages/ids/package.json packages/ids/
-COPY packages/mcp/package.json packages/mcp/
+COPY packages/arch/package.json packages/arch/
 COPY packages/cli/package.json packages/cli/
-COPY packages/dashboard-ui/package.json packages/dashboard-ui/
+COPY packages/core/package.json packages/core/
 COPY packages/dashboard-server/package.json packages/dashboard-server/
+COPY packages/dashboard-ui/package.json packages/dashboard-ui/
+COPY packages/eval/package.json packages/eval/
+COPY packages/eval-local/package.json packages/eval-local/
+COPY packages/ids/package.json packages/ids/
+COPY packages/ios/package.json packages/ios/
+COPY packages/knowledge-local/package.json packages/knowledge-local/
+COPY packages/mcp/package.json packages/mcp/
+COPY packages/model/package.json packages/model/
+COPY packages/runner/package.json packages/runner/
+COPY packages/runner-local/package.json packages/runner-local/
+COPY packages/safety/package.json packages/safety/
+COPY packages/safety-local/package.json packages/safety-local/
+COPY packages/schema/package.json packages/schema/
+COPY packages/tools-local/package.json packages/tools-local/
+COPY packages/web/package.json packages/web/
 
 RUN pnpm install --frozen-lockfile
 
@@ -87,6 +101,7 @@ WORKDIR /agent-qa
 # Copy built monorepo from builder
 COPY --from=builder /build /agent-qa
 COPY LICENSE.md /licenses/agent-qa/LICENSE.md
+COPY NOTICE.md /licenses/agent-qa/NOTICE.md
 
 # Create CLI symlink so 'agent-qa' is available globally
 RUN ln -s /agent-qa/packages/cli/dist/cli.js /usr/local/bin/agent-qa \

@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-ids",
-  "version": "0.1.21",
+  "version": "0.2.1",
   "private": false,
   "description": "Canonical ID helpers for agent-qa tests, suites, hooks, and artifacts.",
   "keywords": [
@@ -51,6 +51,7 @@
   },
   "devDependencies": {
     "@types/node": "~24.12.2",
+    "@vostride/agent-qa-arch": "workspace:*",
     "tsup": "~8.5.1",
     "typescript": "~6.0.3",
     "vitest": "~4.1.5"

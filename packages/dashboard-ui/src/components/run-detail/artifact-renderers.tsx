@@ -38,16 +38,18 @@ export function InspectorSection({
   badges = [],
   children,
   className,
+  'data-drawer-section': drawerSection,
 }: {
   title: string
   badges?: string[]
   children: ReactNode
   className?: string
+  'data-drawer-section'?: string
 }) {
   return (
-    <section className={cn("rounded-[2px] border border-border bg-transparent", className)}>
+    <section data-drawer-section={drawerSection} className={cn("rounded-[2px] border border-border bg-transparent", className)}>
       <header className="flex min-w-0 items-center gap-2 border-b px-4 py-3">
-        <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{title}</h3>
+        <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{title}</h3>
         {badges.map((badge) => (
           <Badge key={badge} variant="outline" className="text-[10px]">
             {badge}

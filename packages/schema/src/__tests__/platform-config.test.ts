@@ -1,0 +1,68 @@
+import { describe, expect, it } from 'vitest'
+import type { z } from 'zod'
+import type { PlatformConfig } from '../config/platform-config'
+import { platformConfigSchema } from '../config/platform-config'
+
+describe('platformConfigSchema', () => {
+  const config: PlatformConfig = {} as z.infer<typeof platformConfigSchema>
+  void config
+
+  it('accepts valid web config', () => {
+    const result = platformConfigSchema.safeParse({
+      platform: 'web',
+      browser: { name: 'chromium' },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects web config with mobile-only bundleId', () => {
+    const result = platformConfigSchema.safeParse({
+      platform: 'web',
+      browser: { name: 'chromium' },
+      bundleId: 'com.x',
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('accepts valid android config with remoteDevice URL', () => {
+    const result = platformConfigSchema.safeParse({
+      platform: 'android',
+      device: { name: 'pixel', platform: 'android', transport: 'remote', match: {} },
+      bundleId: 'com.x',
+      remoteDevice: { appiumUrl: 'http://x' },
+    })
+
+    expect(result.success).toBe(true)
+  })
+
+  it('rejects android config with web-only browser key', () => {
+    const result = platformConfigSchema.safeParse({
+      platform: 'android',
+      device: { name: 'pixel', platform: 'android', transport: 'remote', match: {} },
+      browser: { name: 'chromium' },
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects remoteDevice without a connection URL', () => {
+    const result = platformConfigSchema.safeParse({
+      platform: 'android',
+      device: { name: 'pixel', platform: 'android', transport: 'remote', match: {} },
+      remoteDevice: { app: 'ref' },
+    })
+
+    expect(result.success).toBe(false)
+  })
+
+  it('rejects unknown platform discriminants', () => {
+    const result = platformConfigSchema.safeParse({
+      platform: 'desktop',
+      browser: { name: 'chromium' },
+    })
+
+    expect(result.success).toBe(false)
+  })
+})

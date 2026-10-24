@@ -19,7 +19,6 @@ function withRequiredWorkspaceConfig(configContent: string): string {
   const requiredEntries = [
     ['testMatch', '  testMatch:\n    - specs/web/**/*.yaml'],
     ['suiteMatch', '  suiteMatch:\n    - cases/**/*.suite.yaml'],
-    ['agentRules', '  agentRules: ./agent-rules.md'],
     ['envFile', '  envFile: .env'],
     ['secretsFile', '  secretsFile: .env.secrets.local'],
   ]
@@ -85,7 +84,7 @@ async function createManagerWorkspace(
   return {
     dir,
     configPath,
-    manager: new HookRegistryManager(new ConfigManager(configPath), configPath),
+    manager: new HookRegistryManager(new ConfigManager(configPath, (text) => text), configPath),
   }
 }
 

@@ -24,7 +24,7 @@ import { EmptyState } from "@/components/empty-state"
 import { RunsTable, type VisibleRunRow } from "@/components/runs-table"
 import { BatchActionBar } from "@/components/batch-action-bar"
 import { TestRunOptionsPopover } from "@/components/test-run-options-popover"
-import { deleteRun, fetchRuns, fetchActiveExecutions, fetchQueueStatus, triggerRun, purgeCache, type RunRow, type QueueStatus } from "@/lib/api"
+import { deleteRun, deniedRunSentences, fetchRuns, fetchActiveExecutions, fetchQueueStatus, triggerRun, purgeCache, type RunRow, type QueueStatus } from "@/lib/api"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { useRunsSearchParams } from "@/hooks/use-runs-search-params"
 import { usePageTitle } from "@/hooks/use-page-title"
@@ -32,12 +32,18 @@ import { useSelectionQueue } from "@/hooks/use-selection-queue"
 import { useRunConfig } from "@/hooks/use-run-config"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 
-const TAB_STATUS_MAP: Record<string, string> = {
-  all: '',
-  running: 'running',
-  queued: 'pending',
-  completed: 'passed',
-  failed: 'failed',
+const NO_STATUSES: readonly string[] = []
+
+const TAB_STATUS_MAP: Record<string, readonly string[]> = {
+  all: NO_STATUSES,
+  running: ['running'],
+  queued: ['pending'],
+  completed: ['passed', 'healed', 'failed', 'timeout', 'cancelled'],
+  failed: ['failed', 'timeout'],
+}
+
+function showsLiveRuns(statuses: readonly string[]) {
+  return statuses.length === 0 || (statuses.length === 1 && statuses[0] === 'running')
 }
 
 function matchesSyntheticRunSearch(
@@ -83,17 +89,16 @@ export default function RunsPage() {
   const [batchLoading, setBatchLoading] = useState(false)
   const [runOptionsOpen, setRunOptionsOpen] = useState(false)
   const [useCache, setUseCache] = useState(true)
-  const [useMemory, setUseMemory] = useState(true)
   const { hasFarm, isLoading: isRunConfigLoading } = useRunConfig()
 
   const mergeActiveExecutions = useCallback(async (
     dbRuns: RunRow[],
     dbTotal: number,
-    statusFilter: string,
+    statuses: readonly string[],
     searchValue: string,
   ) => {
     try {
-      if (statusFilter && statusFilter !== 'running') {
+      if (!showsLiveRuns(statuses)) {
         setRuns(dbRuns)
         setTotal(dbTotal)
         return
@@ -119,7 +124,6 @@ export default function RunsPage() {
           metadata: null,
           startedAt: e.startedAt,
           endedAt: null,
-          videoPath: null,
           failureSummary: null,
           errorLog: null,
           memoryLog: null,
@@ -145,7 +149,7 @@ export default function RunsPage() {
 
   const buildFilter = useCallback((opts: {
     name: string
-    status: string
+    statuses: readonly string[]
     platform: string
     target: string
     attributes: typeof attributePredicates
@@ -154,18 +158,18 @@ export default function RunsPage() {
     limit: 50,
     offset: (opts.page - 1) * 50,
     name: opts.name || undefined,
-    status: opts.status || undefined,
+    statuses: opts.statuses.length > 0 ? opts.statuses : undefined,
     platform: opts.platform || undefined,
     target: opts.target || undefined,
     attributes: opts.attributes,
   }), [])
 
-  const apiStatus = TAB_STATUS_MAP[tab] ?? ''
+  const apiStatuses = TAB_STATUS_MAP[tab] ?? NO_STATUSES
 
   const loadRuns = useCallback(async (opts: {
     page: number
     name: string
-    status: string
+    statuses: readonly string[]
     platform: string
     target: string
     attributes: typeof attributePredicates
@@ -178,7 +182,7 @@ export default function RunsPage() {
       ])
       setQueueStatus(qs)
       setTargetOptions(data.targets ?? [])
-      await mergeActiveExecutions(data.runs, data.total, opts.status, opts.name)
+      await mergeActiveExecutions(data.runs, data.total, opts.statuses, opts.name)
     } catch {
       toast.error("Failed to load runs")
     } finally {
@@ -190,7 +194,7 @@ export default function RunsPage() {
   const refreshRuns = useCallback(async (opts: {
     page: number
     name: string
-    status: string
+    statuses: readonly string[]
     platform: string
     target: string
     attributes: typeof attributePredicates
@@ -202,7 +206,7 @@ export default function RunsPage() {
       ])
       setQueueStatus(qs)
       setTargetOptions(data.targets ?? [])
-      await mergeActiveExecutions(data.runs, data.total, opts.status, opts.name)
+      await mergeActiveExecutions(data.runs, data.total, opts.statuses, opts.name)
     } catch {
       // Silent failure on background refresh
     }
@@ -211,11 +215,11 @@ export default function RunsPage() {
   const requestState = useMemo(() => ({
     page,
     name: search,
-    status: apiStatus,
+    statuses: apiStatuses,
     platform,
     target,
     attributes: attributePredicates,
-  }), [page, search, apiStatus, platform, target, attributePredicates])
+  }), [page, search, apiStatuses, platform, target, attributePredicates])
 
   useEffect(() => {
     loadRuns(requestState)
@@ -256,7 +260,6 @@ export default function RunsPage() {
     selectionQueue.clearSelection()
     setRunOptionsOpen(false)
     setUseCache(true)
-    setUseMemory(true)
   }, [selectionQueue])
 
   const handleRunDestination = useCallback(async (local: boolean) => {
@@ -274,13 +277,13 @@ export default function RunsPage() {
           file: filePath,
           local,
           noCache: !useCache,
-          noMemory: !useMemory,
         })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
       const failed = results.length - succeeded
       if (failed > 0) {
-        toast.error(`${succeeded} runs queued, ${failed} failed`)
+        const denied = deniedRunSentences(results)
+        toast.error(`${succeeded} runs queued, ${failed} failed${denied === undefined ? "" : `. ${denied}`}`)
       } else {
         toast.success(`${succeeded} runs queued`)
       }
@@ -288,7 +291,7 @@ export default function RunsPage() {
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedRuns, useCache, useMemory])
+  }, [selectedRuns, useCache])
 
   const handleBatchPurgeCache = useCallback(async () => {
     if (selectedRuns.length === 0) return
@@ -544,12 +547,10 @@ export default function RunsPage() {
               selectedCount={selectionQueue.selectedCount}
               hiddenCount={selectionQueue.hiddenCount}
               useCache={useCache}
-              useMemory={useMemory}
               browserStackAvailable={!isRunConfigLoading && hasFarm}
               open={runOptionsOpen}
               onOpenChange={setRunOptionsOpen}
               onUseCacheChange={setUseCache}
-              onUseMemoryChange={setUseMemory}
               onRunLocal={() => handleRunDestination(true)}
               onRunBrowserStack={() => handleRunDestination(false)}
               disabled={batchLoading}

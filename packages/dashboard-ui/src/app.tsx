@@ -9,10 +9,10 @@ import {
 } from "react-router"
 import { routes } from "@/lib/routes"
 import { fetchAppMetadata, type AppMetadataResponse } from "@/lib/api"
-import { trackDashboardOpenedOnce } from "@/lib/analytics"
 import { ThemeProvider } from "@/components/theme-provider"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
+import { MobileNavigationTrigger } from "@/components/mobile-navigation-trigger"
 import { Toaster } from "@/components/ui/sonner"
 import { CommandPalette } from "@/components/command-palette"
 import { RouteErrorBoundary } from "@/components/error-boundary"
@@ -42,8 +42,6 @@ const HookEditorPage = lazy(() => import("@/pages/hook-editor"))
 const HookViewerPage = lazy(() => import("@/pages/hook-viewer"))
 const TestEditorPage = lazy(() => import("@/pages/test-editor"))
 const TestViewerPage = lazy(() => import("@/pages/test-viewer"))
-const MemoryPage = lazy(() => import("@/pages/memory"))
-const MemoryProductPage = lazy(() => import("@/pages/memory-product"))
 const InsightsPage = lazy(() => import("@/pages/insights"))
 const ConfigPage = lazy(() => import("@/pages/config"))
 const SuitesPage = lazy(() => import("@/pages/suites"))
@@ -55,22 +53,26 @@ const UPDATE_BANNER_ELIGIBLE_PATHS = new Set<string>([
   routes.tests,
   routes.hooks,
   routes.suites,
-  routes.memory,
-  routes.config,
 ])
+
+function isUpdateBannerEligiblePath(pathname: string): boolean {
+  return (
+    UPDATE_BANNER_ELIGIBLE_PATHS.has(pathname) ||
+    pathname === routes.config ||
+    pathname.startsWith(`${routes.config}/`)
+  )
+}
 
 function AppLayout() {
   const matches = useMatches()
   const location = useLocation()
   const hideHeader = matches.some((m) => (m.handle as Record<string, unknown>)?.hideHeader)
+  // Config pins its tab bar and save status with `sticky`, which needs `main` to own the scroll.
+  const mainScrolls = matches.some((m) => (m.handle as Record<string, unknown>)?.mainScrolls)
   const [appMetadata, setAppMetadata] = useState<AppMetadataResponse | null>(null)
   const [updateDismissal, setUpdateDismissal] = useState<UpdateBannerDismissal | null>(() =>
     readUpdateBannerDismissalCookie(),
   )
-
-  useEffect(() => {
-    trackDashboardOpenedOnce()
-  }, [])
 
   useEffect(() => {
     let active = true
@@ -91,7 +93,7 @@ function AppLayout() {
   const installedVersion = appMetadata?.version.trim() ?? ""
   const latestVersion = appMetadata?.update?.latestVersion.trim() ?? ""
   const eligibleBannerRoute =
-    UPDATE_BANNER_ELIGIBLE_PATHS.has(location.pathname) && !hideHeader
+    isUpdateBannerEligiblePath(location.pathname) && !hideHeader
   const showUpdateBanner = Boolean(
     eligibleBannerRoute &&
       installedVersion &&
@@ -114,7 +116,8 @@ function AppLayout() {
     <SidebarProvider>
       <ProductTourProvider pathname={location.pathname} hideHeader={hideHeader}>
         <AppSidebar />
-        <SidebarInset className={cn(hideHeader && "h-svh overflow-hidden")}>
+        <SidebarInset className={cn(hideHeader && "h-svh overflow-hidden", mainScrolls && "h-svh")}>
+          <MobileNavigationTrigger />
           {showUpdateBanner ? (
             <UpdateBanner
               installedVersion={installedVersion}
@@ -137,6 +140,12 @@ function AppLayout() {
     </SidebarProvider>
   )
 }
+
+const configElement = (
+  <Suspense fallback={<FormSkeleton />}>
+    <ConfigPage />
+  </Suspense>
+)
 
 const router = createBrowserRouter([
   {
@@ -328,34 +337,6 @@ const router = createBrowserRouter([
         ],
       },
       {
-        path: "memory",
-        handle: { crumb: "Memory" },
-        errorElement: <RouteErrorBoundary />,
-        children: [
-          {
-            index: true,
-            element: (
-              <Suspense fallback={<TableSkeleton />}>
-                <MemoryPage />
-              </Suspense>
-            ),
-          },
-          {
-            path: ":product",
-            handle: {
-              crumb: (params: Record<string, string>) => params.product ?? "Memory",
-              hideHeader: true,
-            },
-            errorElement: <RouteErrorBoundary />,
-            element: (
-              <Suspense fallback={<DetailSkeleton />}>
-                <MemoryProductPage />
-              </Suspense>
-            ),
-          },
-        ],
-      },
-      {
         path: "suite",
         handle: { crumb: "Suite" },
         errorElement: <RouteErrorBoundary />,
@@ -414,13 +395,15 @@ const router = createBrowserRouter([
       },
       {
         path: "config",
-        handle: { crumb: "Config" },
+        handle: { crumb: "Config", mainScrolls: true },
         errorElement: <RouteErrorBoundary />,
-        element: (
-          <Suspense fallback={<FormSkeleton />}>
-            <ConfigPage />
-          </Suspense>
-        ),
+        element: configElement,
+      },
+      {
+        path: "config/:tab",
+        handle: { crumb: "Config", mainScrolls: true },
+        errorElement: <RouteErrorBoundary />,
+        element: configElement,
       },
       { path: "settings", element: <Navigate to="/config" replace /> },
       { path: "*", element: <Navigate to={routes.runs} replace /> },

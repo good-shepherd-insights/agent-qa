@@ -1,14 +1,37 @@
-import type { Browser, BrowserContext, Page } from 'playwright-core'
-import type { PlatformAdapter, PlatformConfig, ScreenState, Action, ActionResult, ObserveOptions, ConsoleLogEntry, NetworkLogEntry } from '@vostride/agent-qa-core'
+import type { Browser, BrowserContext, Dialog, Page } from 'playwright-core'
+import type {
+  ActionsFor,
+  ActionResult,
+  ConsoleLogEntry,
+  NetworkLogEntry,
+  ObserveOptions,
+  PlatformAdapter,
+  PlatformConfig,
+  RecordingCapability,
+} from '@vostride/agent-qa-runner'
+import { assertNever, buildScreenState } from '@vostride/agent-qa-runner'
+import type { ScreenState } from '@vostride/agent-qa-schema'
 import { getProvider, registerAllProviders } from '@vostride/agent-qa-core'
-import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-core'
+import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner'
 import type { FarmWebConfig } from '@vostride/agent-qa-core'
-import { observePage } from './observer.js'
-import { ElementResolver } from './element-resolver.js'
+import { parseAriaSnapshot, enrichWebNodes, captureWebScroll } from './observer.js'
+import { extractDom } from './dom-extractor.js'
+import { ElementResolver, buildRefMap } from './element-resolver.js'
+import {
+  bindingRefusal,
+  captureEpoch,
+  checkBinding,
+  checkDocument,
+  disposeEpoch,
+  laneRefs,
+  snapshotRoot,
+} from './binding.js'
+import type { ObservationEpoch } from './binding.js'
 import { validateAction } from './action-validator.js'
 import { waitForPageReady } from './smart-wait.js'
-import { scrollWithRef } from './scroll-helper.js'
+import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
 import type { RefMap } from './types.js'
+import { createScreencastRecording } from './recording.js'
 
 interface PageLogBuffers {
   consoleLogs: ConsoleLogEntry[]
@@ -22,13 +45,23 @@ function clickDelayOption(clickDelay?: number): { delay?: number } {
   return clickDelay !== undefined && clickDelay > 0 ? { delay: clickDelay } : {}
 }
 
-export class FarmWebAdapter implements PlatformAdapter {
+// The Plan 10 dispatch seam injects the persisted raw Playwright storage-state blob onto a
+// `storageState`/restore action before it reaches the adapter (the schema restore shape carries
+// only `{op,name}`; the adapter never reads it off disk — D-14). Reading that seam field lives in
+// this `unknown`-typed helper so no cast leaks into the execute switch (no-shims law).
+function readSeamStorageState(action: unknown): Parameters<BrowserContext['setStorageState']>[0] {
+  return (action as { state: Parameters<BrowserContext['setStorageState']>[0] }).state
+}
+
+export class FarmWebAdapter implements PlatformAdapter<'web'> {
   readonly platform = 'web' as const
 
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
+  // The native binding of the last observation and its document (438 D-06).
   private lastRefs: RefMap = {}
+  private epoch: ObservationEpoch | undefined
   private sessionUrl: string | undefined
   private sessionId: string | undefined
   private testFailed = false
@@ -36,8 +69,15 @@ export class FarmWebAdapter implements PlatformAdapter {
   private credentials: { username: string; accessKey: string } | null = null
   private pageLogBuffers = new Map<Page, PageLogBuffers>()
   private logCaptureConfig: { console: boolean; network: boolean } = { console: true, network: true }
+  // Persistent route interception + one-shot dialog arms live until an explicit unroute or
+  // test teardown (D-12/D-18); cleanup() drains both so nothing bleeds across tests (Pitfall 7).
+  private armedRoutes = new Set<string>()
+  private pendingDialogArm: ((dialog: Dialog) => void) | null = null
+  private recordingCapability: RecordingCapability | undefined
+  private recordingConfig: PlatformConfig['recording']
 
   async setup(config: PlatformConfig): Promise<void> {
+    this.recordingConfig = config.recording
     if (!config.farmSession) {
       throw new Error('FarmWebAdapter requires config.farmSession to be set')
     }
@@ -67,12 +107,6 @@ export class FarmWebAdapter implements PlatformAdapter {
 
     const contextOptions: Record<string, unknown> = {
       viewport: config.browser?.viewport ?? { width: 1280, height: 720 },
-    }
-    if (config.recording?.enabled) {
-      contextOptions.recordVideo = {
-        dir: config.recording.videoDir,
-        size: config.recording.videoSize ?? config.browser?.viewport ?? { width: 1280, height: 720 },
-      }
     }
     if (config.authState?.storageStatePath) {
       contextOptions.storageState = config.authState.storageStatePath
@@ -127,7 +161,32 @@ export class FarmWebAdapter implements PlatformAdapter {
     this.attachLogListeners(this.page)
   }
 
+  get recording(): RecordingCapability | undefined {
+    if (!this.page || !this.context || !this.recordingConfig) return undefined
+    return this.recordingCapability ??= createScreencastRecording(
+      () => this.page,
+      this.recordingConfig,
+    )
+  }
+
   async cleanup(): Promise<void> {
+    try { await this.recordingCapability?.stop() } catch { /* best-effort */ }
+    this.recordingCapability = undefined
+    this.recordingConfig = undefined
+    // Pitfall 7: clear persistent route interception, network emulation, and any pending
+    // dialog arm BEFORE closing the browser so state never bleeds into the next test.
+    if (this.context) {
+      try { await this.context.unrouteAll({ behavior: 'ignoreErrors' }) } catch { /* best-effort */ }
+      try { await this.context.setOffline(false) } catch { /* best-effort */ }
+    }
+    if (this.page && this.pendingDialogArm) {
+      try { this.page.off('dialog', this.pendingDialogArm) } catch { /* best-effort */ }
+    }
+    this.armedRoutes.clear()
+    this.pendingDialogArm = null
+    await disposeEpoch(this.epoch)
+    this.epoch = undefined
+
     if (this.browser) {
       await this.browser.close()
     }
@@ -164,16 +223,61 @@ export class FarmWebAdapter implements PlatformAdapter {
     if (!this.page) {
       throw new Error('FarmWebAdapter not initialized — call setup() first')
     }
+    const page = this.page
 
-    await waitForPageReady(this.page)
-    const state = await observePage(this.page, {
-      extractDom: options?.extractDom,
+    await waitForPageReady(page)
+
+    // The epoch is taken before the snapshot, so a document replaced at any point after it is
+    // refused as stale-observation at dispatch (438 D-09).
+    const epoch = await captureEpoch(page)
+    try {
+      const state = await this.observeDocument(page, options)
+      await disposeEpoch(this.epoch)
+      this.epoch = epoch
+      return state
+    } catch (error) {
+      await disposeEpoch(epoch)
+      throw error
+    }
+  }
+
+  private async observeDocument(
+    page: Page,
+    options: ObserveOptions | undefined,
+  ): Promise<ScreenState> {
+    const ariaTree = await snapshotRoot(page)
+
+    const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
+    if (nodes.length > 0) {
+      await enrichWebNodes(page, nodes, nativeRefs)
+    }
+    const { viewport, scroll } = await captureWebScroll(page)
+
+    let domContext: string | undefined
+    if (options?.extractDom) {
+      try {
+        domContext = await extractDom(page)
+      } catch {
+        // DOM extraction is best-effort — never block observation.
+      }
+    }
+
+    const { state, binding } = buildScreenState({
+      platform: 'web',
+      nodes,
+      viewport,
+      scroll,
+      coordSpace: 'viewport',
+      timestamp: Date.now(),
+      url: page.url(),
+      ...(domContext !== undefined ? { domContext } : {}),
     })
-    this.lastRefs = (state.metadata.refMap as RefMap) ?? {}
+
+    this.lastRefs = buildRefMap(binding, nodes, nativeRefs, state.elements)
     return state
   }
 
-  async execute(action: Action): Promise<ActionResult> {
+  async execute(action: ActionsFor<'web'>): Promise<ActionResult> {
     if (!this.page) {
       throw new Error('FarmWebAdapter not initialized — call setup() first')
     }
@@ -221,16 +325,6 @@ export class FarmWebAdapter implements PlatformAdapter {
     return this.page
   }
 
-  async getVideoPath(): Promise<string | null> {
-    try {
-      const video = this.page?.video()
-      if (!video) return null
-      return await video.path()
-    } catch {
-      return null
-    }
-  }
-
   markFailed(): void {
     this.testFailed = true
   }
@@ -260,6 +354,15 @@ export class FarmWebAdapter implements PlatformAdapter {
       const newLogs = buffers.networkLogs.slice(buffers.networkDrainIndex)
       buffers.networkDrainIndex = buffers.networkLogs.length
       all.push(...newLogs)
+    }
+    if (!urlPattern) return all
+    return all.filter(e => e.url.includes(urlPattern))
+  }
+
+  peekNetworkLogs(urlPattern?: string): NetworkLogEntry[] {
+    const all: NetworkLogEntry[] = []
+    for (const buffers of this.pageLogBuffers.values()) {
+      all.push(...buffers.networkLogs.slice(buffers.networkDrainIndex))
     }
     if (!urlPattern) return all
     return all.filter(e => e.url.includes(urlPattern))
@@ -356,9 +459,23 @@ export class FarmWebAdapter implements PlatformAdapter {
     return undefined
   }
 
-  private async executeAction(action: Action): Promise<ActionResult> {
+  private async executeAction(action: ActionsFor<'web'>): Promise<ActionResult> {
     const page = this.page!
     const resolver = new ElementResolver(page, this.lastRefs)
+
+    // 438 D-07, D-09: the element each lane names must still be the one observed; anything else
+    // is a typed refusal with no page interaction. A ref absent from the map keeps the Unknown
+    // ref path.
+    for (const ref of laneRefs(action)) {
+      const entry = this.lastRefs[ref]
+      if (entry === undefined) continue
+      // A scroll's ref names its container, not an input target: only its document is checked,
+      // and a lost or child-frame container reads unknown in the compound (436 D-25).
+      const check = action.type === 'scroll'
+        ? await checkDocument(page, this.epoch)
+        : await checkBinding(page, this.epoch, entry)
+      if (check.outcome !== 'ok') return bindingRefusal(check.outcome, ref)
+    }
 
     if ('ref' in action && typeof (action as any).ref === 'string') {
       const refData = this.lastRefs[(action as any).ref]
@@ -383,8 +500,11 @@ export class FarmWebAdapter implements PlatformAdapter {
       case 'fill': {
         const locator = resolver.resolve(action.ref)
         const box = await resolver.getBoundingBox(action.ref)
-        await locator.fill(action.value)
-        return { success: true, boundingBox: box ?? undefined }
+        return runWebFillCompound(locator, box ?? undefined, action)
+      }
+
+      case 'openApp': {
+        return webOpenAppError()
       }
 
       case 'select': {
@@ -395,59 +515,48 @@ export class FarmWebAdapter implements PlatformAdapter {
       }
 
       case 'navigate': {
-        await page.goto(action.url, { waitUntil: 'domcontentloaded' })
+        // Fold re-key: the schema `to` discriminant drives url/history/reload on the proven
+        // legacy bodies (goto / goBack|goForward / reload).
+        switch (action.to) {
+          case 'url':
+            await page.goto(action.url, { waitUntil: 'domcontentloaded' })
+            break
+          case 'back':
+            await page.goBack({ waitUntil: 'domcontentloaded' })
+            break
+          case 'forward':
+            await page.goForward({ waitUntil: 'domcontentloaded' })
+            break
+          case 'reload':
+            await page.reload({ waitUntil: 'domcontentloaded' })
+            break
+        }
         await waitForPageReady(page)
         return { success: true }
       }
 
       case 'scroll': {
-        const deltaX = action.scrollType === 'horizontal' ? action.value : 0
-        const deltaY = action.scrollType === 'vertical' ? action.value : 0
-        let coordinates: { x: number; y: number } | undefined
-        let boundingBox: { x: number; y: number; width: number; height: number } | undefined
-        let scrollData: { scrolled: boolean; scrolledContainer: string } | undefined
-
-        if (action.ref) {
-          const refData = this.lastRefs[action.ref]
-          if (refData) {
-            const scrollAxis = action.scrollType === 'horizontal' ? 'horizontal' : 'vertical'
-            const result = await scrollWithRef(page, refData, deltaX, deltaY, scrollAxis)
-            if (result.bounds) {
-              coordinates = { x: result.bounds.x + result.bounds.width / 2, y: result.bounds.y + result.bounds.height / 2 }
-              boundingBox = result.bounds
-            }
-            scrollData = { scrolled: result.scrolled, scrolledContainer: result.scrolledContainer }
-          } else {
-            await page.mouse.wheel(deltaX, deltaY)
-          }
-        } else {
-          await page.mouse.wheel(deltaX, deltaY)
-        }
-
-        await page.evaluate(`new Promise(resolve => {
-          const t = setTimeout(() => resolve('timeout'), 500);
-          requestAnimationFrame(() => requestAnimationFrame(() => {
-            clearTimeout(t);
-            resolve('raf');
-          }));
-        })`)
-
-        return { success: true, coordinates, boundingBox, data: scrollData }
+        return runWebScrollCompound(page, this.lastRefs, action)
       }
 
       case 'waitFor': {
-        const timeout = action.timeout ?? 5000
+        const timeout = action.timeoutMs
         try {
-          await page.waitForFunction(
-            `document.body && document.body.innerText.includes(${JSON.stringify(action.condition)})`,
-            { timeout },
-          )
-        } catch {
-          try {
-            await page.waitForSelector(action.condition, { timeout })
-          } catch {
-            // Best-effort
+          switch (action.on) {
+            case 'text':
+              await page.getByText(action.text).first().waitFor({ state: 'visible', timeout })
+              break
+            case 'gone':
+              await page.getByText(action.text).first().waitFor({ state: 'hidden', timeout })
+              break
+            case 'selector':
+              await page.waitForSelector(action.selector, { timeout })
+              break
           }
+        } catch {
+          const what = action.on === 'selector' ? `selector "${action.selector}"` : `text "${action.text}"`
+          const how = action.on === 'gone' ? 'was still present after' : 'did not appear within'
+          return { success: false, error: `waitFor: ${what} ${how} ${timeout}ms.` }
         }
         return { success: true }
       }
@@ -471,12 +580,20 @@ export class FarmWebAdapter implements PlatformAdapter {
       }
 
       case 'keypress': {
+        // Fold re-key of keyDown/keyUp: the schema `mode` selects press / down / up on the
+        // platform-normalized keys.
         const effectiveKeys = convertKeysForPlatform(action.keys, {
           enabled: action.convertPlatformKeys !== false,
           isMac: isMacPlatform(),
         })
         for (const key of effectiveKeys) {
-          await page.keyboard.press(key)
+          if (action.mode === 'down') {
+            await page.keyboard.down(key)
+          } else if (action.mode === 'up') {
+            await page.keyboard.up(key)
+          } else {
+            await page.keyboard.press(key)
+          }
         }
         return { success: true }
       }
@@ -528,81 +645,110 @@ export class FarmWebAdapter implements PlatformAdapter {
         return { success: true, boundingBox: box ?? undefined, data: { copied: text } }
       }
 
-      case 'keyDown': {
-        await page.keyboard.down(action.key)
+      case 'tab': {
+        // Fold re-key of newTab/switchTab: `action` discriminant selects open-new vs switch.
+        if (action.action === 'new') {
+          const newPage = await this.context!.newPage()
+          this.attachLogListeners(newPage)
+          await newPage.goto(action.url, { waitUntil: 'domcontentloaded' })
+          await waitForPageReady(newPage)
+          this.page = newPage
+          return { success: true }
+        }
+        const pages = this.context!.pages()
+        let target: Page | undefined
+        if (action.index !== undefined) {
+          if (action.index < 0 || action.index >= pages.length) {
+            return { success: false, error: `Tab index ${action.index} out of range (${pages.length} tabs open)` }
+          }
+          target = pages[action.index]
+        } else if (action.title !== undefined) {
+          for (const p of pages) {
+            const t = await p.title()
+            if (t.includes(action.title)) { target = p; break }
+          }
+        } else if (action.url !== undefined) {
+          target = pages.find(p => p.url().includes(action.url!))
+        }
+        if (!target) {
+          return { success: false, error: `No tab found matching ${JSON.stringify({ index: action.index, title: action.title, url: action.url })}` }
+        }
+        this.page = target
         return { success: true }
       }
 
-      case 'keyUp': {
-        await page.keyboard.up(action.key)
+      case 'inspect': {
+        // Fold re-key of the four read* verbs; output rides ActionResult.data through the
+        // existing guardActionData/guardBlob compaction path (no new compaction).
+        switch (action.what) {
+          case 'console': {
+            let entries: ConsoleLogEntry[]
+            if (action.tab) {
+              const targetPage = await this.resolveTabTargetAsync(action.tab)
+              if (!targetPage) {
+                return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
+              }
+              const buffers = this.pageLogBuffers.get(targetPage)
+              entries = buffers ? [...buffers.consoleLogs] : []
+            } else {
+              entries = []
+              for (const buffers of this.pageLogBuffers.values()) {
+                entries.push(...buffers.consoleLogs)
+              }
+            }
+            if (action.level) {
+              entries = entries.filter(e => e.level === action.level)
+            }
+            return { success: true, data: entries }
+          }
+          case 'network': {
+            let entries: NetworkLogEntry[]
+            if (action.tab) {
+              const targetPage = await this.resolveTabTargetAsync(action.tab)
+              if (!targetPage) {
+                return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
+              }
+              const buffers = this.pageLogBuffers.get(targetPage)
+              entries = buffers ? [...buffers.networkLogs] : []
+            } else {
+              entries = []
+              for (const buffers of this.pageLogBuffers.values()) {
+                entries.push(...buffers.networkLogs)
+              }
+            }
+            if (action.urlPattern) {
+              entries = entries.filter(e => e.url.includes(action.urlPattern!))
+            }
+            return { success: true, data: entries }
+          }
+          case 'cookies': {
+            const cookies = await this.context!.cookies()
+            if (action.name) {
+              const cookie = cookies.find(c => c.name === action.name) ?? null
+              return { success: true, data: cookie }
+            }
+            return { success: true, data: cookies }
+          }
+          case 'localStorage': {
+            const pageUrl = page.url()
+            if (pageUrl === 'about:blank') {
+              return { success: true, data: action.key ? null : {} }
+            }
+            if (action.key) {
+              const value = await page.evaluate(
+                (k: string) => localStorage.getItem(k), action.key
+              )
+              return { success: true, data: value }
+            }
+            const all = await page.evaluate(
+              () => Object.fromEntries(
+                Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])
+              )
+            )
+            return { success: true, data: all }
+          }
+        }
         return { success: true }
-      }
-
-      case 'refresh': {
-        await page.reload({ waitUntil: 'domcontentloaded' })
-        await waitForPageReady(page)
-        return { success: true }
-      }
-
-      case 'navigateHistory': {
-        if (action.direction === 'back') {
-          await page.goBack({ waitUntil: 'domcontentloaded' })
-        } else {
-          await page.goForward({ waitUntil: 'domcontentloaded' })
-        }
-        await waitForPageReady(page)
-        return { success: true }
-      }
-
-      case 'readConsoleLogs': {
-        let entries: ConsoleLogEntry[]
-        if (action.tab) {
-          const targetPage = await this.resolveTabTargetAsync(action.tab)
-          if (!targetPage) {
-            return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
-          }
-          const buffers = this.pageLogBuffers.get(targetPage)
-          entries = buffers ? [...buffers.consoleLogs] : []
-        } else {
-          entries = []
-          for (const buffers of this.pageLogBuffers.values()) {
-            entries.push(...buffers.consoleLogs)
-          }
-        }
-        if (action.level) {
-          entries = entries.filter(e => e.level === action.level)
-        }
-        return { success: true, data: entries }
-      }
-
-      case 'readNetworkLogs': {
-        let entries: NetworkLogEntry[]
-        if (action.tab) {
-          const targetPage = await this.resolveTabTargetAsync(action.tab)
-          if (!targetPage) {
-            return { success: false, error: `No tab found matching ${JSON.stringify(action.tab)}` }
-          }
-          const buffers = this.pageLogBuffers.get(targetPage)
-          entries = buffers ? [...buffers.networkLogs] : []
-        } else {
-          entries = []
-          for (const buffers of this.pageLogBuffers.values()) {
-            entries.push(...buffers.networkLogs)
-          }
-        }
-        if (action.urlPattern) {
-          entries = entries.filter(e => e.url.includes(action.urlPattern!))
-        }
-        return { success: true, data: entries }
-      }
-
-      case 'readCookies': {
-        const cookies = await this.context!.cookies()
-        if (action.name) {
-          const cookie = cookies.find(c => c.name === action.name) ?? null
-          return { success: true, data: cookie }
-        }
-        return { success: true, data: cookies }
       }
 
       case 'setCookies': {
@@ -614,25 +760,6 @@ export class FarmWebAdapter implements PlatformAdapter {
         return { success: true }
       }
 
-      case 'readLocalStorage': {
-        const pageUrl = page.url()
-        if (pageUrl === 'about:blank') {
-          return { success: true, data: action.key ? null : {} }
-        }
-        if (action.key) {
-          const value = await page.evaluate(
-            (k: string) => localStorage.getItem(k), action.key
-          )
-          return { success: true, data: value }
-        }
-        const all = await page.evaluate(
-          () => Object.fromEntries(
-            Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])
-          )
-        )
-        return { success: true, data: all }
-      }
-
       case 'setLocalStorage': {
         await page.evaluate((entries: Array<{ key: string; value: string }>) => {
           for (const { key, value } of entries) {
@@ -642,8 +769,42 @@ export class FarmWebAdapter implements PlatformAdapter {
         return { success: true }
       }
 
-      case 'assert': {
-        return { success: true }
+      case 'focus': {
+        const locator = resolver.resolve(action.ref)
+        const box = await resolver.getBoundingBox(action.ref)
+        await locator.focus()
+        return { success: true, boundingBox: box ?? undefined }
+      }
+
+      case 'assertValue': {
+        // D-10: the adapter RESOLVES the requested source to a raw value on ActionResult.data;
+        // the runner-side comparator applies the op and judges. The adapter never compares.
+        let value: unknown
+        if ('expr' in action) {
+          value = await page.evaluate(action.expr)
+        } else {
+          switch (action.source) {
+            case 'url':
+              value = page.url()
+              break
+            case 'storage':
+              value = page.url() === 'about:blank'
+                ? {}
+                : await page.evaluate(
+                    () => Object.fromEntries(
+                      Object.keys(localStorage).map(k => [k, localStorage.getItem(k)])
+                    )
+                  )
+              break
+            case 'network':
+              value = this.peekNetworkLogs()
+              break
+            case 'expr-result':
+              value = undefined
+              break
+          }
+        }
+        return { success: true, data: value }
       }
 
       case 'clearText': {
@@ -651,20 +812,6 @@ export class FarmWebAdapter implements PlatformAdapter {
         const clearBox = await resolver.getBoundingBox(action.ref)
         await loc.clear()
         return { success: true, boundingBox: clearBox ?? undefined }
-      }
-
-      case 'drag': {
-        const fromLoc = resolver.resolve(action.fromRef)
-        const toLoc = resolver.resolve(action.toRef)
-        await fromLoc.dragTo(toLoc)
-        return { success: true }
-      }
-
-      case 'doubleTap': {
-        const dblLoc = resolver.resolve(action.ref)
-        const dblBox = await resolver.getBoundingBox(action.ref)
-        await dblLoc.dblclick()
-        return { success: true, boundingBox: dblBox ?? undefined }
       }
 
       case 'doubleClick': {
@@ -698,73 +845,109 @@ export class FarmWebAdapter implements PlatformAdapter {
         return { success: true, coordinates, boundingBox: box ?? undefined }
       }
 
-      case 'openLink': {
-        await page.goto(action.url, { waitUntil: 'domcontentloaded' })
-        await waitForPageReady(page)
+      case 'route': {
+        // D-18: persistent interception until an explicit unroute or teardown. Planner-authored
+        // status/headers/body fulfil the matched request (a mocked response body crosses into
+        // page context — declared destructive in the risk metadata, Plan 09).
+        await this.context!.route(action.urlPattern, async (route) => {
+          await route.fulfill({
+            status: 200,
+            ...(action.contentType !== undefined ? { contentType: action.contentType } : {}),
+            ...(action.headers !== undefined ? { headers: action.headers } : {}),
+            ...(action.body !== undefined ? { body: action.body } : {}),
+          })
+        })
+        this.armedRoutes.add(action.urlPattern)
         return { success: true }
       }
 
-      case 'newTab': {
-        const newPage = await this.context!.newPage()
-        this.attachLogListeners(newPage)
-        await newPage.goto(action.url, { waitUntil: 'domcontentloaded' })
-        await waitForPageReady(newPage)
-        this.page = newPage
-        return { success: true }
-      }
-
-      case 'switchTab': {
-        const pages = this.context!.pages()
-
-        let target: Page | undefined
-
-        if (action.index !== undefined) {
-          if (action.index < 0 || action.index >= pages.length) {
-            return { success: false, error: `Tab index ${action.index} out of range (${pages.length} tabs open)` }
-          }
-          target = pages[action.index]
-        } else if (action.title) {
-          for (const p of pages) {
-            const t = await p.title()
-            if (t.includes(action.title)) { target = p; break }
-          }
-        } else if (action.url) {
-          target = pages.find(p => p.url().includes(action.url!))
+      case 'unroute': {
+        if (action.urlPattern !== undefined) {
+          await this.context!.unroute(action.urlPattern)
+          this.armedRoutes.delete(action.urlPattern)
         } else {
-          return { success: false, error: 'switchTab requires at least one of: index, title, or url' }
+          await this.context!.unrouteAll({ behavior: 'ignoreErrors' })
+          this.armedRoutes.clear()
         }
-
-        if (!target) {
-          return { success: false, error: `No tab found matching ${JSON.stringify({ index: action.index, title: action.title, url: action.url })}` }
-        }
-
-        this.page = target
         return { success: true }
       }
 
-      case 'tap':
-      case 'swipe':
-      case 'longpress':
-      case 'pinch':
-      case 'multiTap': {
-        return { success: false, error: `${action.type} is a mobile-only gesture` }
+      case 'networkState': {
+        if (action.mode === 'offline') {
+          await this.context!.setOffline(true)
+          return { success: true }
+        }
+        // throttle: Chromium-only via CDP; non-Chromium contexts reject newCDPSession (D-18).
+        try {
+          const cdp = await this.context!.newCDPSession(page)
+          await cdp.send('Network.emulateNetworkConditions', {
+            offline: false,
+            latency: action.latencyMs,
+            downloadThroughput: (action.downloadKbps * 1000) / 8,
+            uploadThroughput: (action.uploadKbps * 1000) / 8,
+          })
+          return { success: true }
+        } catch (err) {
+          return {
+            success: false,
+            error: `Network throttling is only available on Chromium (via CDP); this context does not support it. ${err instanceof Error ? err.message : String(err)}`,
+          }
+        }
       }
 
-      case 'tapCoordinate': {
-        await page.mouse.click(action.x, action.y)
-        return { success: true, coordinates: { x: action.x, y: action.y } }
-      }
-
-      case 'hideKeyboard':
-      case 'launchApp':
-      case 'stopApp':
-      case 'setOrientation': {
+      case 'storageState': {
+        // D-14: the adapter only PRODUCES/CONSUMES the raw blob. On save it returns the state +
+        // name (the Plan 10 seam strips + persists it — never fs here); on restore it applies the
+        // seam-injected blob via setStorageState (present in pinned 1.59.1 — never hand-rolled).
+        if (action.op === 'save') {
+          const state = await this.context!.storageState()
+          return { success: true, data: { name: action.name, state } }
+        }
+        await this.context!.setStorageState(readSeamStorageState(action))
         return { success: true }
       }
 
-      default: {
-        return { success: false, error: `Unknown action type: ${(action as any).type}` }
+      case 'handleDialog': {
+        // D-12: one-shot arm for the NEXT dialog; a re-arm REPLACES the pending arm (never stacks).
+        if (this.pendingDialogArm) {
+          page.off('dialog', this.pendingDialogArm)
+          this.pendingDialogArm = null
+        }
+        const accept = action.accept
+        const promptText = action.promptText
+        const handler = (dialog: Dialog): void => {
+          this.pendingDialogArm = null
+          if (accept) {
+            void dialog.accept(promptText)
+          } else {
+            void dialog.dismiss()
+          }
+        }
+        this.pendingDialogArm = handler
+        page.once('dialog', handler)
+        return { success: true }
       }
+
+      case 'executeScript': {
+        return { success: false, error: 'executeScript not supported on farm adapter' }
+      }
+
+      // Runner-minted / author-channel verbs (D-01/D-15/D-16): reportValue, uniqueValue, assertAI,
+      // extractAI, and setVariable are intercepted at the dispatch seam and never reach the adapter.
+      // A grouped §7.1 defensive case surfaces a dispatch-routing error if one arrives here;
+      // assertNever remains the backstop for a genuinely unknown schema verb.
+      case 'reportValue':
+      case 'uniqueValue':
+      case 'assertAI':
+      case 'extractAI':
+      case 'setVariable':
+        return {
+          success: false,
+          error: `Action "${action.type}" is handled by the runner dispatch seam and must not reach the web adapter (runner-minted/author-channel verb). This indicates a dispatch routing error.`,
+        }
+
+      default:
+        return assertNever(action)
     }
   }
 }

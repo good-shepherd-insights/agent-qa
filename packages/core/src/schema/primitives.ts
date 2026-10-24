@@ -123,23 +123,18 @@ const ModelConfigBaseSchema = z.object({
   model: z.string(),
   baseURL: z.string().optional(),
   providerHeaders: z.record(z.string(), z.string()).optional(),
-  screenshotSize: SizeString.optional(),
-  effectiveResolution: z.number().positive().int().optional(),
+  vision: z.boolean().default(true),
 }).strict()
 
 export const ModelConfigSchema = ModelConfigBaseSchema.superRefine(validateModelConfig)
 
-const NameSlugSchema = z.string()
-  .regex(/^[a-z0-9][a-z0-9-]*$/, 'Name must be lowercase alphanumeric + hyphens, starting with alphanumeric')
+export const NameSlugSchema = z.string()
+  .regex(/^[a-z0-9][a-z0-9.-]*$/, 'Name must be lowercase letters, digits, hyphens and dots, starting with a letter or digit')
 
 export const NamedLLMConfigSchema = ModelConfigBaseSchema.extend({
   name: NameSlugSchema,
   contextWindow: SizeString.optional(),
 }).strict().superRefine(validateModelConfig)
-
-export const HealingConfigSchema = z.object({
-  maxAttempts: z.number(),
-}).strict()
 
 export const TimeoutConfigSchema = z.object({
   step: DurationString,
@@ -158,8 +153,11 @@ export const BrowserConfigSchema = z.object({
 
 export const TransportSchema = z.enum(['local', 'browserstack'])
 
+// 436 D-02: the per-step limits are positive integers with no unlimited value; resolvePlannerLimits
+// supplies the default. The old refilling planner key is refused by retired-keys.ts (436-08).
 export const PlannerConfigSchema = z.object({
-  maxSubActions: z.number(),
+  maxActions: z.number().int().positive().optional(),
+  maxPlanningTurns: z.number().int().positive().optional(),
   previousStepCount: z.number(),
 }).strict()
 

@@ -11,13 +11,17 @@ const { mockRunHookInSandbox } = vi.hoisted(() => ({
 
 vi.mock('@vostride/agent-qa-core', async () => {
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
-  return {
-    ...actual,
-    runHookInSandbox: (...args: unknown[]) => mockRunHookInSandbox(...args),
-  }
+  return { ...actual }
 })
 
-import { ConfigManager } from '../config/index.js'
+// Hook execution moved to runner-local DockerHookExecutor in Phase 363 D-06; execute() is the
+// old runHookInSandbox body behind the port.
+vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
+  DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
+}))
+
+import { ConfigManager, readConfigValues } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
 
@@ -146,10 +150,10 @@ async function createConfigWorkspace(
   }
 
   return {
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
     workspacePaths: resolveWorkspacePaths({
-      config: await new ConfigManager(configPath).read() as any,
+      config: await readConfigValues(new ConfigManager(configPath, (text) => text)) as any,
       configPath,
     }),
     dir,
@@ -164,7 +168,6 @@ function withRequiredWorkspaceConfig(configContent: string): string {
   const entries = [
     ['testMatch', '  testMatch:\n    - specs/web/**/*.yaml'],
     ['suiteMatch', '  suiteMatch:\n    - cases/**/*.suite.yaml'],
-    ['agentRules', '  agentRules: ./agent-rules.md'],
     ['envFile', '  envFile: .env'],
     ['secretsFile', '  secretsFile: .env.secrets.local'],
   ]
@@ -909,13 +912,13 @@ describe('POST /api/hooks/:hookId/run', () => {
         runtime: 'node',
         network: false,
       }),
-      {
-        envVars: {
+      expect.objectContaining({
+        env: {
           FROM_ENV: 'base',
           SHARED: 'from-override',
           ADHOC: 'yes',
         },
-      },
+      }),
     )
     expect(JSON.parse(res.body)).toEqual({
       success: true,
@@ -1057,7 +1060,7 @@ describe('POST /api/hooks/:hookId/run', () => {
     }))
     expect(mockRunHookInSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ runtime: 'bun' }),
-      expect.objectContaining({ envVars: { FROM_ENV: 'base' } }),
+      expect.objectContaining({ env: { FROM_ENV: 'base' } }),
     )
   })
 

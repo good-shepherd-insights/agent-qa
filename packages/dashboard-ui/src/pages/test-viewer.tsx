@@ -7,6 +7,7 @@ import {
   FileCode,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { RunStatusBadge } from "@/components/run-status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -29,7 +30,6 @@ import { MonacoEditor } from "@/components/monaco-editor"
 import { VisualBuilder } from "@/components/visual-builder"
 import { TestNavbar } from "@/components/test-navbar"
 import { useOptionalProductTour } from "@/components/product-tour"
-import { SharedScopeMemoryReader } from "@/components/memory-reader/shared-scope-memory-reader"
 import {
   InsightsLineCell,
   InsightsLineGrid,
@@ -45,13 +45,19 @@ import {
   triggerRun,
   purgeCache,
   type TestAnalyticsDetail,
+  type TestHistoryRun,
 } from "@/lib/api"
+import { memberStatus } from "@/lib/status"
 import {
   normalizeViewerUrlState,
   serializeViewerUrlState,
   type ViewerTopTab,
 } from "@/lib/viewer-url-state"
 import { formatDuration, formatDate, formatDateShort, normalizeTimestamp } from "@/lib/utils"
+
+function formatPassRate(rate: number | null): string {
+  return rate === null ? "\u2014" : `${Math.round(rate * 100)}%`
+}
 
 function formatRelativeCompact(iso: string): string {
   if (!iso) return ''
@@ -111,46 +117,13 @@ function MetricScopeControl({
   )
 }
 
-const VALID_TEST_VIEWS = ['builder', 'yaml', 'memory'] as const
+const VALID_TEST_VIEWS = ['builder', 'yaml'] as const
 type TestViewerView = typeof VALID_TEST_VIEWS[number]
 
-function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "passed":
-      return (
-        <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
-          Passed
-        </Badge>
-      )
-    case "failed":
-      return <Badge variant="destructive">Failed</Badge>
-    case "healed":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Healed
-        </Badge>
-      )
-    case "flaky":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Flaky
-        </Badge>
-      )
-    case "running":
-      return (
-        <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 animate-pulse">
-          Running
-        </Badge>
-      )
-    case "cancelled":
-      return (
-        <Badge className="bg-muted text-muted-foreground border-border">
-          Cancelled
-        </Badge>
-      )
-    default:
-      return <Badge variant="outline">{status}</Badge>
-  }
+function MemberOutcomeBadge({ run }: { run: TestHistoryRun }) {
+  const status = memberStatus(run.status, run.memberOutcome)
+  if (status === null) return <span className="text-muted-foreground">{"\u2014"}</span>
+  return <RunStatusBadge status={status} />
 }
 
 function RunHistoryTable({
@@ -187,7 +160,7 @@ function RunHistoryTable({
                 className="absolute inset-0"
                 tabIndex={-1}
               />
-              <StatusBadge status={run.status} />
+              <MemberOutcomeBadge run={run} />
             </TableCell>
             <TableCell>
               {run.status === "running" ? (
@@ -238,6 +211,7 @@ export default function TestViewerPage() {
 
   const [content, setContent] = useState("")
   const [filePath, setFilePath] = useState("")
+  const [loadedTestId, setLoadedTestId] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
   const [analyticsData, setAnalyticsData] =
@@ -266,11 +240,12 @@ export default function TestViewerPage() {
 
   const passRateData = useMemo(() => {
     if (!selectedTrends?.daily) return []
-    return selectedTrends.daily.map((d) => ({
-      date: d.date,
-      passRate:
-        d.total > 0 ? Math.round((d.passed / d.total) * 1000) / 10 : 0,
-    }))
+    return selectedTrends.daily
+      .filter((d) => d.passed + d.failed > 0)
+      .map((d) => ({
+        date: d.date,
+        passRate: Math.round((d.passed / (d.passed + d.failed)) * 1000) / 10,
+      }))
   }, [selectedTrends])
 
   const durationData = useMemo(() => {
@@ -308,6 +283,7 @@ export default function TestViewerPage() {
         if (!cancelled) {
           setContent(data.content)
           setFilePath(data.path)
+          setLoadedTestId(data.testId)
         }
       })
       .catch(() => {
@@ -326,9 +302,13 @@ export default function TestViewerPage() {
   }, [testId])
 
   useEffect(() => {
-    if (!testName) return
+    if (!testName || (!loadedTestId && !filePath)) return
     let cancelled = false
-    fetchTestAnalytics(testName, { limit: 50 })
+    fetchTestAnalytics(testName, {
+      testId: loadedTestId || undefined,
+      filePath: filePath || undefined,
+      limit: 50,
+    })
       .then((data) => {
         if (!cancelled) setAnalyticsData(data)
       })
@@ -336,7 +316,7 @@ export default function TestViewerPage() {
     return () => {
       cancelled = true
     }
-  }, [testName])
+  }, [testName, loadedTestId, filePath])
 
   const handleRun = async (local: boolean) => {
     if (isRunning) return
@@ -442,7 +422,7 @@ export default function TestViewerPage() {
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Pass Rate</span>
           <span className="text-xl font-semibold text-foreground">
-            {Math.round((selectedTrends ?? analyticsData.trends).passRate * 100)}%
+            {formatPassRate((selectedTrends ?? analyticsData.trends).passRate)}
           </span>
         </InsightsLineCell>
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
@@ -495,7 +475,7 @@ export default function TestViewerPage() {
                         className="absolute inset-0"
                         tabIndex={-1}
                       />
-                      <StatusBadge status={run.status} />
+                      <MemberOutcomeBadge run={run} />
                     </TableCell>
                     <TableCell>
                       {run.status === "running" ? (
@@ -523,7 +503,7 @@ export default function TestViewerPage() {
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-screen">
+      <div className="flex h-full min-h-0 flex-col">
         <TestNavbar
           testName={testName || "Test"}
           testId={testId}
@@ -573,11 +553,10 @@ export default function TestViewerPage() {
                 <div className="px-4 border-b border-border">
                   <TabsList
                     variant="line"
-                    className="w-full grid grid-cols-3 md:w-fit md:inline-flex"
+                    className="w-full grid grid-cols-2 md:w-fit md:inline-flex"
                   >
                     <TabsTrigger value="builder">Builder</TabsTrigger>
                     <TabsTrigger value="yaml">YAML</TabsTrigger>
-                    <TabsTrigger value="memory">Memory</TabsTrigger>
                   </TabsList>
                 </div>
                 <div className="relative flex-1 min-h-0">
@@ -592,17 +571,6 @@ export default function TestViewerPage() {
                     className="absolute inset-0 data-[state=inactive]:hidden"
                   >
                     {monacoPanel}
-                  </TabsContent>
-                  <TabsContent
-                    value="memory"
-                    className="absolute inset-0 overflow-y-auto data-[state=inactive]:hidden"
-                  >
-                    <SharedScopeMemoryReader
-                      scope="test"
-                      scopeId={testId}
-                      emptyTitle="No test memory yet"
-                      emptyDescription="This test doesn't have cataloged observations in this workspace yet. Run the test with memory enabled, then reopen this tab."
-                    />
                   </TabsContent>
                 </div>
               </Tabs>
@@ -631,7 +599,7 @@ export default function TestViewerPage() {
                   <InsightsLineCell className="border-b border-border md:border-b-0 md:border-r">
                     <div>
                         <p className="text-sm text-muted-foreground">Pass Rate</p>
-                        <p className="text-2xl font-semibold mt-0.5">{Math.round((selectedTrends ?? analyticsData.trends).passRate * 100)}%</p>
+                        <p className="text-2xl font-semibold mt-0.5">{formatPassRate((selectedTrends ?? analyticsData.trends).passRate)}</p>
                     </div>
                   </InsightsLineCell>
                   <InsightsLineCell>

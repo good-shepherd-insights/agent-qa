@@ -1,4 +1,4 @@
-import type { Action } from '@vostride/agent-qa-core'
+import type { ActionsFor } from '@vostride/agent-qa-runner'
 
 export type ValidationResult =
   | { valid: true }
@@ -17,13 +17,14 @@ export class ActionValidationError extends Error {
 const FILL_ROLES = new Set(['textbox', 'searchbox', 'spinbutton', 'combobox'])
 const SELECT_ROLES = new Set(['listbox', 'combobox'])
 
-// Actions that don't target elements — always valid
-const NO_REF_ACTIONS = new Set(['scroll', 'navigate', 'waitFor', 'delay', 'waitForUrl', 'assert', 'pinch', 'multiTap', 'keyDown', 'keyUp', 'refresh', 'navigateHistory', 'readConsoleLogs', 'readNetworkLogs', 'readCookies', 'setCookies', 'readLocalStorage', 'setLocalStorage', 'executeScript'])
+// Actions that don't target elements — always valid (re-keyed to the schema/folded verbs; the
+// retired verb names — assert/keyDown/keyUp/refresh/navigateHistory/read* — are gone, D-19).
+const NO_REF_ACTIONS = new Set(['scroll', 'navigate', 'waitFor', 'delay', 'waitForUrl', 'tab', 'inspect', 'route', 'unroute', 'networkState', 'storageState', 'handleDialog', 'uniqueValue', 'assertValue', 'assertAI', 'extractAI', 'reportValue', 'setCookies', 'setLocalStorage', 'executeScript', 'setVariable'])
 
 // Actions valid for any role
-const ANY_ROLE_ACTIONS = new Set(['click', 'hover', 'keypress', 'paste', 'doubleClick', 'rightClick'])
+const ANY_ROLE_ACTIONS = new Set(['click', 'hover', 'keypress', 'paste', 'doubleClick', 'rightClick', 'focus'])
 
-export function validateAction(action: Action, elementRole: string | undefined): ValidationResult {
+export function validateAction(action: ActionsFor<'web'>, elementRole: string | undefined): ValidationResult {
   // Actions that don't require an element ref are always valid
   if (NO_REF_ACTIONS.has(action.type)) {
     return { valid: true }

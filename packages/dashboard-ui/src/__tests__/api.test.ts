@@ -3,18 +3,13 @@ import {
   ApiError,
   createHook,
   deleteHook,
-  deleteTestObservation,
   fetchAuthStates,
   fetchHookCatalog,
   fetchHookDetail,
-  fetchMemoryCatalog,
-  fetchMemoryProductDetail,
-  fetchMemoryScope,
   fetchRun,
   fetchRunArtifact,
   fetchRuns,
   fetchStats,
-  fetchTestObservations,
   runHook,
   saveLiveAuthState,
   type HookRunRequest,
@@ -71,9 +66,9 @@ describe('fetchRuns', () => {
 
   it('builds query string from filter options', async () => {
     mockFetch.mockReturnValue(ok({ runs: [], total: 0 }))
-    await fetchRuns({ status: 'failed', name: 'login', limit: 10, offset: 5 })
+    await fetchRuns({ statuses: ['failed', 'timeout'], name: 'login', limit: 10, offset: 5 })
     const url = mockFetch.mock.calls[0][0] as string
-    expect(url).toContain('status=failed')
+    expect(url).toContain('status=failed&status=timeout')
     expect(url).toContain('name=login')
     expect(url).toContain('limit=10')
     expect(url).toContain('offset=5')
@@ -87,7 +82,7 @@ describe('fetchRuns', () => {
 
 describe('auth state API', () => {
   const metadata = {
-    version: 1,
+    version: 2 as const,
     kind: 'web' as const,
     target: 'staging-web',
     name: 'admin',
@@ -152,6 +147,17 @@ describe('auth state API', () => {
     })
     expect(result).toEqual({ authState: metadata })
     expect(Object.keys(result.authState)).toEqual(['version', 'kind', 'target', 'name', 'capturedAt'])
+  })
+
+  it.each([1, 3])('drops auth-state metadata stamped %i from the list and refuses it on save', async (version) => {
+    const stamped = { ...metadata, version }
+    mockFetch.mockReturnValue(ok({ authStates: [stamped, metadata] }))
+
+    await expect(fetchAuthStates()).resolves.toEqual({ authStates: [metadata] })
+
+    mockFetch.mockReturnValue(ok({ authState: stamped }))
+
+    await expect(saveLiveAuthState('session-1', { name: 'admin' })).rejects.toThrow('Invalid auth state response')
   })
 })
 
@@ -462,217 +468,5 @@ describe('runHook', () => {
         ],
       },
     })
-  })
-})
-
-describe('memory api helpers', () => {
-  it('fetches the product-first memory catalog', async () => {
-    const data = {
-      products: [
-        {
-          productKey: 'alpha-product',
-          observationCount: 3,
-          scopeCounts: { product: 1, suite: 1, test: 1 },
-          freshness: '2026-04-22T08:00:00.000Z',
-          sourceCoverage: 2,
-          targetReferences: ['alpha-android', 'alpha-target'],
-          sourceCounts: { suite: 1, test: 2 },
-        },
-      ],
-    }
-
-    mockFetch.mockReturnValue(ok(data))
-    const result = await fetchMemoryCatalog()
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/memory/catalog')
-    expect(result).toEqual(data)
-  })
-
-  it('fetches a canonical product detail payload', async () => {
-    const data = {
-      product: {
-        productKey: 'alpha-product',
-        observationCount: 3,
-        scopeCounts: { product: 1, suite: 1, test: 1 },
-        freshness: '2026-04-22T08:00:00.000Z',
-        sourceCoverage: 2,
-        observations: [
-          {
-            id: 'obs_product',
-            title: 'Account entry point: sign-in stays in the top-right header',
-            content: 'Users can sign in from the top-right account entry point.',
-            trust: 0.82,
-            created: '2026-04-18T08:00:00.000Z',
-            last_confirmed: '2026-04-20T08:00:00.000Z',
-            updated: '2026-04-20T09:15:00.000Z',
-            confirmed_count: 2,
-            contradicted_count: 0,
-            source_test: 't_alpha',
-            scope: 'product',
-            scopeId: 'alpha-product',
-            scopeRef: null,
-            sourceTestRef: {
-              kind: 'source_test',
-              id: 't_alpha',
-              label: 'Alpha login',
-              targetName: 'alpha-target',
-              href: '/test/t_alpha',
-            },
-          },
-          {
-            id: 'obs_suite',
-            title: 'Smoke suite: authenticated landing flow is reused across runs',
-            content: 'The alpha smoke suite reuses the authenticated landing flow.',
-            trust: 0.76,
-            created: '2026-04-19T08:00:00.000Z',
-            last_confirmed: '2026-04-21T08:00:00.000Z',
-            updated: '2026-04-21T09:15:00.000Z',
-            confirmed_count: 3,
-            contradicted_count: 0,
-            source_test: 't_gamma',
-            scope: 'suite',
-            scopeId: 's_alpha',
-            scopeRef: {
-              kind: 'suite',
-              id: 's_alpha',
-              label: 'Alpha smoke',
-              targetName: 'alpha-target',
-              href: '/suite/s_alpha',
-            },
-            sourceTestRef: {
-              kind: 'source_test',
-              id: 't_gamma',
-              label: 'Alpha smoke seed',
-              targetName: 'alpha-target',
-              href: '/test/t_gamma',
-            },
-          },
-          {
-            id: 'obs_test',
-            title: 'Valid credentials: dashboard shell opens after submit',
-            content: 'Submitting valid credentials lands on the dashboard shell.',
-            trust: 0.91,
-            created: '2026-04-20T08:00:00.000Z',
-            last_confirmed: '2026-04-22T08:00:00.000Z',
-            updated: '2026-04-22T09:15:00.000Z',
-            confirmed_count: 4,
-            contradicted_count: 0,
-            source_test: 't_alpha',
-            scope: 'test',
-            scopeId: 't_alpha',
-            scopeRef: {
-              kind: 'test',
-              id: 't_alpha',
-              label: 'Alpha login',
-              targetName: 'alpha-target',
-              href: '/test/t_alpha',
-            },
-            sourceTestRef: {
-              kind: 'source_test',
-              id: 't_alpha',
-              label: 'Alpha login',
-              targetName: 'alpha-target',
-              href: '/test/t_alpha',
-            },
-          },
-        ],
-        scopes: {
-          product: {
-            scope: 'product',
-            observationCount: 1,
-            freshness: '2026-04-20T08:00:00.000Z',
-            sourceCoverage: 1,
-            scopeIds: ['alpha-product'],
-          },
-          suite: {
-            scope: 'suite',
-            observationCount: 1,
-            freshness: '2026-04-21T08:00:00.000Z',
-            sourceCoverage: 1,
-            scopeIds: ['s_alpha'],
-          },
-          test: {
-            scope: 'test',
-            observationCount: 1,
-            freshness: '2026-04-22T08:00:00.000Z',
-            sourceCoverage: 1,
-            scopeIds: ['t_alpha'],
-          },
-        },
-        invalidFiles: [
-          {
-            scope: 'test',
-            scopeId: 't_alpha',
-            filename: 'obs_legacy.md',
-            code: 'parse_error',
-            message: 'Invalid observation frontmatter: title is required.',
-          },
-        ],
-      },
-    }
-
-    mockFetch.mockReturnValue(ok(data))
-    const result = await fetchMemoryProductDetail('alpha/product')
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/memory/products/alpha%2Fproduct')
-    expect(result).toEqual(data)
-  })
-
-  it('fetches shared memory scope reads and preserves legacy test-memory helpers', async () => {
-    const scopeData = {
-      scope: 'test',
-      scopeId: 't_alpha',
-      observations: [
-        {
-          id: 'obs_alpha',
-          title: 'Valid credentials: dashboard shell opens after submit',
-          content: 'Memory',
-          trust: 0.7,
-          created: '2026-04-20T08:00:00.000Z',
-          last_confirmed: '2026-04-22T08:00:00.000Z',
-          confirmed_count: 1,
-          contradicted_count: 0,
-          source_test: 't_alpha',
-          updated: '2026-04-22T09:15:00.000Z',
-          scopeRef: {
-            kind: 'test',
-            id: 't_alpha',
-            label: 'Alpha login',
-            targetName: 'alpha-target',
-            href: '/test/t_alpha',
-          },
-          sourceTestRef: {
-            kind: 'source_test',
-            id: 't_alpha',
-            label: 'Alpha login',
-            targetName: 'alpha-target',
-            href: '/test/t_alpha',
-          },
-        },
-      ],
-      invalidFiles: [
-        {
-          scope: 'test',
-          scopeId: 't_alpha',
-          filename: 'obs_legacy.md',
-          code: 'parse_error',
-          message: 'Invalid observation frontmatter: title is required.',
-        },
-      ],
-    }
-    const legacyData = { observations: scopeData.observations, invalidFiles: scopeData.invalidFiles }
-
-    mockFetch
-      .mockReturnValueOnce(ok(scopeData))
-      .mockReturnValueOnce(ok(legacyData))
-      .mockReturnValueOnce(ok({ deleted: true }))
-
-    await expect(fetchMemoryScope('test', 't alpha')).resolves.toEqual(scopeData)
-    await expect(fetchTestObservations('t alpha')).resolves.toEqual(legacyData)
-    await expect(deleteTestObservation('t alpha', 'obs alpha')).resolves.toEqual({ deleted: true })
-
-    expect(mockFetch.mock.calls[0][0]).toBe('/api/memory/scopes/test/t%20alpha')
-    expect(mockFetch.mock.calls[1][0]).toBe('/api/memory/observations/t%20alpha')
-    expect(mockFetch.mock.calls[2][0]).toBe('/api/memory/observations/t%20alpha/obs%20alpha')
   })
 })

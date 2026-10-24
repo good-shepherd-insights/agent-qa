@@ -1,0 +1,8 @@
+# The steps sequence is the LAST collection in this file, so an append lands on the final line.
+name: Sign in on the local account form
+test-id: t_mer-about-seller-train-antu-prog-army-tiny-halt-fot
+target: local-form
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Click the Submit button
+  - Verify the page says "Received!"

@@ -2,7 +2,11 @@ import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig } from '../config.js'
 
-// All triggers (dashboard, webhook, CLI, API) route through JobQueue — see Phase 60
+// This command operates the RUN QUEUE — the v1 test-execution queue whose implementation is
+// dashboard-server's `JobQueue` class (see Phase 60); all run triggers (dashboard, webhook, CLI,
+// API) route through it. It is not the curation queue (v51 knowledge curation, drained under the
+// writer lease) and not the agent job queue (v52 durable background agent jobs, .agent-qa/
+// agent-jobs.db). D-21 fixes those three names; D-22 keeps this command called `queue`.
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -29,11 +33,19 @@ async function resolveServerUrl(opts: { server?: string }, globalOpts: { config?
 
 export function createQueueCommand(): Command {
   const cmd = new Command('queue')
-    .description('Manage the test execution queue')
+    .description('Manage the run queue (v1 test execution)')
+    .addHelpText(
+      'after',
+      '\nAgentQA runs three separate queues; this command manages the first only:\n' +
+        '  run queue        test executions dispatched by the dashboard server (this command)\n' +
+        '  curation queue   knowledge curation work, drained under the writer lease\n' +
+        '  agent job queue  durable background agent jobs in .agent-qa/agent-jobs.db\n' +
+        '\nSee https://vostride.com/docs/agent-qa/daemon.\n',
+    )
 
   cmd
     .command('list')
-    .description('Show pending and running jobs in the queue')
+    .description('Show pending and running jobs in the run queue')
     .option('--json', 'output raw JSON')
     .option('--all', 'include recently completed jobs')
     .option('--server <url>', 'dashboard server URL')
@@ -64,7 +76,7 @@ export function createQueueCommand(): Command {
         }
 
         console.log()
-        console.log(pc.bold('Queue Status'))
+        console.log(pc.bold('Run Queue Status'))
         console.log(`  Concurrency: ${pc.blue(String(data.concurrency))} slots (${pc.yellow(String(data.activeSlots))} active)`)
         console.log()
 
@@ -72,7 +84,7 @@ export function createQueueCommand(): Command {
         const running = data.running?.jobs ?? []
 
         if (pending.length === 0 && running.length === 0) {
-          console.log(pc.dim('  Queue is empty — no pending or running jobs'))
+          console.log(pc.dim('  Run queue is empty — no pending or running jobs'))
           console.log()
           return
         }
@@ -127,7 +139,7 @@ export function createQueueCommand(): Command {
 
   cmd
     .command('cancel')
-    .description('Cancel a pending or running job')
+    .description('Cancel a pending or running job in the run queue')
     .argument('<runId>', 'ID of the job to cancel')
     .option('--server <url>', 'dashboard server URL')
     .action(async (runId: string, opts: { server?: string }, command: Command) => {
@@ -138,26 +150,33 @@ export function createQueueCommand(): Command {
 
         let response: Response
         try {
-          response = await fetch(`${serverUrl}/api/runs/${runId}/cancel`, { method: 'POST' })
+          response = await fetch(`${serverUrl}/api/runs/${encodeURIComponent(runId)}/cancel`, {
+            method: 'POST',
+          })
         } catch {
           console.error(pc.red(`Could not connect to dashboard server at ${serverUrl}`))
           console.error(pc.dim('Make sure the dashboard is running: agent-qa dashboard'))
           process.exit(1)
         }
 
+        // 2026-10-17 (444-07, D-31): a 2xx prints the route's message; refusals exit 1 on stderr.
         if (response.ok) {
-          const data = await response.json() as any
-          if (data.cancelled) {
-            console.log(pc.green(`✓ Cancelled job ${runId}`))
+          const data = await response.json() as { message?: string }
+          if (typeof data.message === 'string') {
+            console.log(data.message)
           } else {
-            console.log(pc.red(`Failed to cancel: ${data.error ?? 'Unknown error'}`))
+            console.log(pc.red('Failed to cancel: Unknown error'))
+            process.exit(1)
           }
-        } else if (response.status === 404) {
-          console.log(pc.red(`Job not found: ${runId}`))
-        } else {
-          const data = await response.json().catch(() => ({})) as any
-          console.log(pc.red(`Failed to cancel: ${data.error ?? response.statusText}`))
+          return
         }
+        if (response.status === 404) {
+          console.error(pc.red(`Job not found: ${runId}`))
+        } else {
+          const data = await response.json().catch(() => ({})) as { error?: string }
+          console.error(pc.red(data.error ?? `Failed to cancel: ${response.statusText}`))
+        }
+        process.exit(1)
       } catch (err) {
         console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
         process.exit(1)

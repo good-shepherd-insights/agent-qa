@@ -78,7 +78,6 @@ describe('getRunFaviconState', () => {
     expect(getRunFaviconState('complete')).toBe('passed')
     expect(getRunFaviconState('completed')).toBe('passed')
     expect(getRunFaviconState('success')).toBe('passed')
-    expect(getRunFaviconState('flaky')).toBe('passed')
     expect(getRunFaviconState('healed')).toBe('passed')
 
     expect(getRunFaviconState('failed')).toBe('failed')
@@ -92,6 +91,7 @@ describe('getRunFaviconState', () => {
     expect(getRunFaviconState('canceled')).toBe('cancelled')
 
     expect(getRunFaviconState('skipped')).toBe('default')
+    expect(getRunFaviconState('flaky')).toBe('default')
     expect(getRunFaviconState('mystery')).toBe('default')
     expect(getRunFaviconState(null)).toBe('default')
     expect(getRunFaviconState(undefined)).toBe('default')

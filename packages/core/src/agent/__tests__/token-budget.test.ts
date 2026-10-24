@@ -17,14 +17,16 @@ describe('estimateTokens', () => {
 
 describe('PlannerConfigSchema', () => {
   const fullConfig = {
-    maxSubActions: 10,
+    maxActions: 10,
+    maxPlanningTurns: 12,
     previousStepCount: 5,
   }
 
   it('parses with all fields explicitly provided', () => {
     const result = PlannerConfigSchema.parse(fullConfig)
 
-    expect(result.maxSubActions).toBe(10)
+    expect(result.maxActions).toBe(10)
+    expect(result.maxPlanningTurns).toBe(12)
     expect(result.previousStepCount).toBe(5)
   })
 
@@ -34,10 +36,12 @@ describe('PlannerConfigSchema', () => {
     expect(result.success).toBe(false)
   })
 
-  it('rejects missing maxSubActions', () => {
-    const { maxSubActions, ...withoutMSA } = fullConfig
-    const result = PlannerConfigSchema.safeParse(withoutMSA)
-    expect(result.success).toBe(false)
+  // 436-07 (D-02): the limits are optional (resolvePlannerLimits supplies 30) and never non-positive.
+  it('accepts missing maxActions and refuses a non-positive one', () => {
+    const { maxActions, ...withoutMaxActions } = fullConfig
+    expect(PlannerConfigSchema.safeParse(withoutMaxActions).success).toBe(true)
+    expect(PlannerConfigSchema.safeParse({ ...fullConfig, maxActions: 0 }).success).toBe(false)
+    expect(PlannerConfigSchema.safeParse({ ...fullConfig, maxActions: -3 }).success).toBe(false)
   })
 })
 

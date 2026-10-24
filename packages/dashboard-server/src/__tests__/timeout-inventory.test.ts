@@ -19,17 +19,6 @@ type TimeoutInventoryEntry = {
 
 const timeoutInventory: TimeoutInventoryEntry[] = [
   {
-    id: 'dashboard-retired-implicit-10m-process-watchdog',
-    file: 'packages/dashboard-server/src/execution/test-runner.ts',
-    literal: '600_000',
-    contextIncludes: 'defaultTimeout',
-    owner: 'dashboard execution',
-    scope: 'process watchdog',
-    lifecycleAffecting: true,
-    rationale: 'Retired risk: hidden dashboard fallback killed local LLM runs before configured test timeouts.',
-    allowed: false,
-  },
-  {
     id: 'dashboard-process-timeout-buffer',
     file: 'packages/dashboard-server/src/server/routes.ts',
     literal: '60_000',
@@ -60,72 +49,6 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     scope: 'trusted timeout metadata positive guard',
     lifecycleAffecting: true,
     rationale: 'Rejects zero or negative raw schema-parsed timeout values before arming the outer process watchdog.',
-    allowed: true,
-  },
-  {
-    id: 'dashboard-heartbeat-check-interval',
-    file: 'packages/dashboard-server/src/execution/test-runner.ts',
-    literal: '10_000',
-    contextIncludes: 'DEFAULT_HEARTBEAT_INTERVAL_MS',
-    owner: 'dashboard execution',
-    scope: 'stale heartbeat poll cadence',
-    lifecycleAffecting: true,
-    rationale: 'Polls for missing live-event heartbeats without imposing a run duration limit.',
-    allowed: true,
-  },
-  {
-    id: 'dashboard-stale-heartbeat-threshold',
-    file: 'packages/dashboard-server/src/execution/test-runner.ts',
-    literal: '30_000',
-    contextIncludes: 'DEFAULT_STALE_THRESHOLD_MS',
-    owner: 'dashboard execution',
-    scope: 'silent child process stale detection',
-    lifecycleAffecting: true,
-    rationale: 'Fails truly silent child processes after heartbeat loss; heartbeats refresh this threshold.',
-    allowed: true,
-  },
-  {
-    id: 'dashboard-stale-threshold-heartbeat-buffer',
-    file: 'packages/dashboard-server/src/execution/test-runner.ts',
-    literal: '1',
-    contextIncludes: 'this.heartbeatIntervalMs + 1',
-    owner: 'dashboard execution',
-    scope: 'minimum stale threshold above heartbeat poll interval',
-    lifecycleAffecting: true,
-    rationale: 'Prevents a configured stale threshold from being equal to or shorter than the heartbeat checker cadence.',
-    allowed: true,
-  },
-  {
-    id: 'dashboard-process-timeout-positive-check',
-    file: 'packages/dashboard-server/src/execution/test-runner.ts',
-    literal: '0',
-    contextIncludes: 'processTimeoutMs > 0',
-    owner: 'dashboard execution',
-    scope: 'process watchdog disabled sentinel',
-    lifecycleAffecting: true,
-    rationale: 'Only arms the process watchdog for positive explicit metadata or constructor timeouts.',
-    allowed: true,
-  },
-  {
-    id: 'dashboard-sigterm-sigkill-grace',
-    file: 'packages/dashboard-server/src/execution/test-runner.ts',
-    literal: '5_000',
-    contextIncludes: 'PROCESS_TERMINATION_GRACE_MS',
-    owner: 'dashboard execution',
-    scope: 'SIGTERM to SIGKILL escalation grace',
-    lifecycleAffecting: true,
-    rationale: 'Bounds cleanup after an explicit timeout or cancellation signal.',
-    allowed: true,
-  },
-  {
-    id: 'dashboard-handle-retention',
-    file: 'packages/dashboard-server/src/execution/test-runner.ts',
-    literal: '5 * 60 * 1000',
-    contextIncludes: 'HANDLE_RETENTION_MS',
-    owner: 'dashboard execution',
-    scope: 'completed run event buffer retention',
-    lifecycleAffecting: false,
-    rationale: 'Retains buffered live events after terminal state; does not terminate execution.',
     allowed: true,
   },
   {
@@ -161,17 +84,11 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     rationale: 'Allows slow local prompt processing during connectivity checks without affecting real test execution.',
     allowed: true,
   },
-  {
-    id: 'dashboard-sse-comment-heartbeat',
-    file: 'packages/dashboard-server/src/server/routes.ts',
-    literal: '15_000',
-    contextIncludes: 'setInterval',
-    owner: 'dashboard routes',
-    scope: 'SSE keepalive comments',
-    lifecycleAffecting: false,
-    rationale: 'Keeps browser SSE connections alive and does not terminate execution.',
-    allowed: true,
-  },
+  // 2026-08-27 (405-07, D-19): the `15_000` SSE keepalive interval in `routes.ts` is gone with the
+  // legacy live-event route it kept open. The surviving stream — `GET /api/run-stream/:runId` —
+  // heartbeats from `run-service-routes.ts`, which carries its own inventoried literal; this row
+  // named a file that no longer holds one, and an inventory entry with no site is a claim nothing
+  // measures.
   {
     id: 'dashboard-retired-openai-oauth-session-retention',
     file: 'packages/dashboard-server/src/server/routes.ts',
@@ -193,17 +110,6 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     lifecycleAffecting: false,
     rationale: 'Retired with provider-specific callback HTML; plugin auth owns provider callback behavior.',
     allowed: false,
-  },
-  {
-    id: 'stdout-live-reporter-heartbeat',
-    file: 'packages/core/src/reporter/stdout-live-reporter.ts',
-    literal: '10_000',
-    contextIncludes: 'heartbeat',
-    owner: 'core live reporter',
-    scope: 'child process heartbeat emission cadence',
-    lifecycleAffecting: true,
-    rationale: 'Feeds dashboard stale detection while a test is active.',
-    allowed: true,
   },
   {
     id: 'cli-suite-step-timeout-fallback',
@@ -239,49 +145,97 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     allowed: true,
   },
   {
-    id: 'core-test-timeout-disabled-sentinel',
-    file: 'packages/core/src/agent/runner.ts',
-    literal: '0',
-    contextIncludes: 'testTimeout ? startTime + testTimeout : 0',
-    owner: 'core runner',
-    scope: 'test deadline disabled sentinel',
+    id: 'cli-session04-cancel-grace-default',
+    file: 'packages/cli/src/commands/run.ts',
+    literal: '3000',
+    contextIncludes: 'AGENT_QA_CANCEL_GRACE_MS',
+    owner: 'CLI run shutdown',
+    scope: 'SESSION-04 force-exit backstop grace window',
     lifecycleAffecting: true,
-    rationale: 'Disables the core test deadline only when no effective timeout is configured.',
+    rationale: 'Default grace before the un-settleable-run force-exit backstop fires; overridable via AGENT_QA_CANCEL_GRACE_MS. Primary cancel guarantee is the shell settling done cleanly (Plan 361-13 Task 2); this is a hard safety net so a live Ctrl+C can never hang the CLI.',
     allowed: true,
   },
   {
-    id: 'core-test-timeout-artifact-action-sentinel',
-    file: 'packages/core/src/agent/runner.ts',
-    literal: '0',
-    contextIncludes: "timeout: 0",
-    owner: 'core runner',
-    scope: 'timeout failure artifact placeholder',
-    lifecycleAffecting: false,
-    rationale: 'Represents a no-op planned action in failure traces; does not control execution.',
-    allowed: true,
-  },
-  {
-    id: 'core-step-timeout-disabled-sentinel',
-    file: 'packages/core/src/agent/loop.ts',
-    literal: '0',
-    contextIncludes: 'config.stepTimeout ? startTime + config.stepTimeout : 0',
-    owner: 'core loop',
-    scope: 'step deadline disabled sentinel',
+    id: 'cli-session04-cancel-force-exit-code',
+    file: 'packages/cli/src/commands/run.ts',
+    literal: '130',
+    contextIncludes: 'forceExit(130)',
+    owner: 'CLI run shutdown',
+    scope: 'SESSION-04 force-exit backstop exit code',
     lifecycleAffecting: true,
-    rationale: 'Disables the core step deadline only when no effective timeout is configured.',
+    rationale: 'The SIGINT (130) exit code the bounded grace timer forces so a genuinely un-settleable run still exits; armed in both handleShutdown sites and cleared after session.done. Since 444-08 the timer exits through forceExit, which first closes this process\'s own still-running row.',
     allowed: true,
   },
   {
-    id: 'core-step-timeout-artifact-action-sentinel',
-    file: 'packages/core/src/agent/loop.ts',
+    id: 'dashboard-retired-implicit-10m-process-watchdog',
+    file: 'packages/dashboard-server/src/execution/in-process-backend.ts',
+    literal: '600_000',
+    contextIncludes: 'defaultTimeout',
+    owner: 'dashboard execution',
+    scope: 'process watchdog',
+    lifecycleAffecting: true,
+    rationale: 'Retired risk: hidden dashboard fallback killed local LLM runs before configured test timeouts. Re-homed onto the successor backend at 401-07 when test-runner.ts was deleted — the entry follows the seam, not the file name.',
+    allowed: false,
+  },
+  {
+    id: 'dashboard-run-timeout-positive-check',
+    file: 'packages/dashboard-server/src/execution/in-process-backend.ts',
     literal: '0',
-    contextIncludes: "timeout: 0",
-    owner: 'core loop',
-    scope: 'timeout/cancelled failure artifact placeholder',
-    lifecycleAffecting: false,
-    rationale: 'Represents a no-op planned action in traces; does not control execution.',
+    contextIncludes: 'timeoutMs > 0',
+    owner: 'dashboard execution',
+    scope: 'run timeout disabled sentinel',
+    lifecycleAffecting: true,
+    rationale: 'Only arms the per-run abort for positive explicit metadata or composed defaults.',
     allowed: true,
   },
+  {
+    id: 'dashboard-handle-retention',
+    file: 'packages/dashboard-server/src/execution/in-process-backend.ts',
+    literal: '5 * 60 * 1000',
+    contextIncludes: 'DEFAULT_HANDLE_RETENTION_MS',
+    owner: 'dashboard execution',
+    scope: 'completed run event buffer retention',
+    lifecycleAffecting: false,
+    rationale: 'Retains buffered live events after terminal state; does not terminate execution.',
+    allowed: true,
+  },
+  {
+    id: 'dashboard-queued-execution-timeout-positive-guard',
+    file: 'packages/dashboard-server/src/server/routes.ts',
+    literal: '0',
+    contextIncludes: 'value <= 0',
+    owner: 'dashboard routes',
+    scope: 'persisted-row execution timeout positive guard',
+    lifecycleAffecting: true,
+    rationale: 'G-401-18-CR01: `in-process-backend.ts` reads `opts.timeout ?? defaultTimeout` and '
+      + 'validates after, so a non-positive value DISARMS the default reclamation timer instead of '
+      + 'falling back to it.',
+    allowed: true,
+  },
+  {
+    id: 'dashboard-queued-execution-timeout-ceiling',
+    file: 'packages/dashboard-server/src/server/routes.ts',
+    literal: '24 * 60 * 60 * 1000',
+    contextIncludes: 'MAX_QUEUED_EXECUTION_TIMEOUT_MS',
+    owner: 'dashboard routes',
+    scope: 'persisted-row execution timeout ceiling',
+    lifecycleAffecting: true,
+    rationale: 'G-401-18-CR01: a persisted `metadata.timeout` beyond a day is a reclamation timer '
+      + 'that will never fire; over the ceiling the seam falls back to the backend default rather '
+      + 'than arming it.',
+    allowed: true,
+  },
+  // Phase 401 plan 07 (D-01/D-12) — the four `test-runner.ts` entries that inventoried a CHILD
+  // PROCESS are gone with the child: the heartbeat poll cadence, the stale-silence threshold, the
+  // one-millisecond buffer that kept the threshold above the cadence, and the SIGTERM-to-SIGKILL
+  // grace. Liveness comes off the bus now and a cancel is `RunSession.cancel()`, so there is no
+  // silence to detect and no signal to escalate. The two literals with successors — the disabled
+  // sentinel and the buffer retention — are re-homed above.
+  // Phase 353-07 (D-02) — its step-deadline `: 0` disabled sentinel and the
+  // `timeout: 0` failure-artifact placeholder moved with the loop into
+  // packages/runner/src/loop/index.ts. The runner package is outside this
+  // dashboard-server scanner's curated core-execution scope, so those sentinels are
+  // no longer inventoried here.
 ]
 
 const scannedFiles = [...new Set(timeoutInventory.map(entry => entry.file))]
@@ -290,6 +244,20 @@ const numericExpressionPattern = /\b\d[\d_]*(?:\s*\*\s*\d[\d_]*)*\b/g
 
 function normalizeLiteral(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Blank out `//` line comments and `/* … *\/` block comments, replacing every comment
+ * character with a space so byte offsets AND line numbers stay aligned with the original.
+ * Timeout literals are executable config, never comment prose — decision-reference tags
+ * (`D-03`, `D-14`) and exit-code documentation (`healed=0`, `cancelled=130`) live only in
+ * comments, so numeric extraction runs over the code-only projection while context matching
+ * still uses the raw lines.
+ */
+function blankComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, match =>
+    match.replace(/[^\n]/g, ' '),
+  )
 }
 
 describe('execution timeout inventory', () => {
@@ -307,6 +275,9 @@ describe('execution timeout inventory', () => {
     for (const file of scannedFiles) {
       const content = await readFile(join(agentQaRoot, file), 'utf-8')
       const lines = content.split('\n')
+      // Numeric extraction runs over the code-only projection (comments blanked); context
+      // matching still uses the raw lines so `contextIncludes` prose anchors keep working.
+      const codeLines = blankComments(content).split('\n')
 
       for (const retired of retiredInventory.filter(entry => entry.file === file)) {
         expect(content, `${retired.id} must remain retired`).not.toContain(retired.literal)
@@ -318,7 +289,7 @@ describe('execution timeout inventory', () => {
         const timerArgumentLine = /^\s*},\s*\d[\d_\s*]*\)?/.test(line)
         if (!ownLineHasTimeoutContext && !timerArgumentLine) return []
         if (!timeoutContextPattern.test(context)) return []
-        return [...line.matchAll(numericExpressionPattern)].map(match => ({
+        return [...codeLines[index].matchAll(numericExpressionPattern)].map(match => ({
           file,
           line: index + 1,
           literal: normalizeLiteral(match[0]),

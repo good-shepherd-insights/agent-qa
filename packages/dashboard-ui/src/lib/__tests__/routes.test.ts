@@ -1,7 +1,25 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { join as joinPath, resolve as resolvePath, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { describe, it, expect } from 'vitest'
+
+import { CONFIG_SECTIONS, CONFIG_TABS, LEGACY_CONFIG_LINKS, LEGACY_CONFIG_PAIRS } from '@/lib/config-tabs'
 import { routes } from '@/lib/routes'
 
 describe('canonical dashboard routes', () => {
+  it('encodes raw run-detail IDs as exactly one segment, preserving canonical IDs', () => {
+    expect(routes.runDetail('r_canonical-run')).toBe('/runs/r_canonical-run')
+    for (const raw of ['a/b', 'a?b', 'a#b', 'a%b', 'a b', 'a%2Fb']) {
+      const href = routes.runDetail(raw)
+      expect(href).toBe(`/runs/${encodeURIComponent(raw)}`)
+      const url = new URL(href, 'https://dashboard.test')
+      expect(url.pathname.split('/')).toHaveLength(3)
+      expect(decodeURIComponent(url.pathname.slice('/runs/'.length))).toBe(raw)
+      expect(url.search).toBe('')
+      expect(url.hash).toBe('')
+    }
+  })
   it('keeps only the live top-level helpers', () => {
     expect(routes.runs).toBe('/runs')
     expect(routes.tests).toBe('/tests')
@@ -17,10 +35,9 @@ describe('canonical dashboard routes', () => {
     expect('trends' in routes).toBe(false)
   })
 
-  it('adds canonical memory routes without alternate helpers', () => {
-    expect(routes.memory).toBe('/memory')
-    expect(routes.memoryProduct('my-product')).toBe('/memory/my-product')
-    expect('memoryProducts' in routes).toBe(false)
+  it('does not expose retired memory routes', () => {
+    expect('memory' in routes).toBe(false)
+    expect('memoryProduct' in routes).toBe(false)
   })
 })
 
@@ -56,7 +73,86 @@ describe('suite route helpers', () => {
 })
 
 describe('config route helpers', () => {
-  it('configItem returns canonical bucket/item query params', () => {
-    expect(routes.configItem('registry', 'targets')).toBe('/config?bucket=registry&item=targets')
+  it('CONFIG-ITEM-ALIAS: configItem returns the mapped tab URL for a legacy pair, and Models otherwise', () => {
+    expect(routes.configItem('registry', 'llms')).toBe('/config/models?section=models')
+    expect(routes.configItem('registry', 'targets')).toBe('/config/targets?section=targets')
+    expect(routes.configItem('use', 'execution-defaults')).toBe('/config/models?section=models')
+    expect(routes.configItem('registry', 'unknown')).toBe('/config/models')
+    expect(routes.configItem('nope', 'llms')).toBe('/config/models')
+    for (const pair of LEGACY_CONFIG_PAIRS) {
+      const [bucket, item] = pair.split(':')
+      const { tab, section } = LEGACY_CONFIG_LINKS[pair]
+      expect(routes.configItem(bucket, item)).toBe(`/config/${tab}?section=${section}`)
+    }
+  })
+
+  it('CONFIG-TAB-PATH: configTab builds /config/{tab} with an optional section', () => {
+    expect(routes.configTab('models')).toBe('/config/models')
+    expect(routes.configTab('advanced')).toBe('/config/advanced')
+    expect(routes.configTab('execution', 'timeouts')).toBe('/config/execution?section=timeouts')
+    for (const tab of CONFIG_TABS) {
+      expect(routes.configTab(tab)).toBe(`/config/${tab}`)
+      for (const section of CONFIG_SECTIONS[tab]) {
+        expect(routes.configTab(tab, section)).toBe(`/config/${tab}?section=${section}`)
+      }
+    }
+    expect(routes.config).toBe('/config')
+  })
+})
+
+// THE ARTIFACT HREF HAS EXACTLY ONE MINTER (405-06 · DETL-03, D-14 / 400-08).
+//
+// Every artifact the rebuilt page shows is addressed by a `{ id, sha }` ref that the projection
+// carries — never by a URL a store wrote into a row. The href is MINTED here, from the run id and
+// the sha, through the same total route map every other link comes from. The third cell below is
+// the structural half of that law: it walks the source tree and asserts no OTHER file builds an
+// artifact path, because a second minter is how a route rename becomes a 404 that only shows up in
+// production.
+//
+// THE RUN ID IS ENCODED AND THE SHA IS NOT, and the asymmetry is deliberate. A run id is opaque
+// and may carry a space or a slash. A sha is 64 hex characters that the STORE validates before any
+// path use (`FsEvidenceArtifactStore`, 367) — encoding it would be a no-op on a well-formed sha and
+// would corrupt a malformed one into something the server's refusal could no longer name, and
+// case-folding it would change the content address itself.
+
+describe('artifact route helper', () => {
+  const SHA = 'a'.repeat(64)
+
+  it('mints /api/runs/<encoded runId>/artifacts/<sha>', () => {
+    expect(routes.runArtifact('r 1', SHA)).toBe(`/api/runs/r%201/artifacts/${SHA}`)
+  })
+
+  it('passes the sha through verbatim — never encoded, never re-cased', () => {
+    const mixed = `${'A'.repeat(32)}${'f'.repeat(32)}`
+    const href = routes.runArtifact('run_1', mixed)
+
+    expect(href).toBe(`/api/runs/run_1/artifacts/${mixed}`)
+    expect(href.endsWith(mixed)).toBe(true)
+  })
+
+  it('is the only artifact-href minter in the UI source tree', () => {
+    // Concatenated so this assertion cannot satisfy the inventory by matching itself
+    // (the `v1-retry-machinery-deleted.test.ts` idiom, restated in 405-03).
+    const needle = '/artifacts' + '/'
+    const srcRoot = resolvePath(fileURLToPath(new URL('../../', import.meta.url)))
+
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = joinPath(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules') continue
+          walk(full)
+          continue
+        }
+        if (!/\.tsx?$/.test(entry.name)) continue
+        if (full.endsWith(`${sep}lib${sep}routes.ts`)) continue
+        if (/\.test\.tsx?$/.test(entry.name)) continue
+        if (readFileSync(full, 'utf8').includes(needle)) offenders.push(full.slice(srcRoot.length))
+      }
+    }
+    walk(srcRoot)
+
+    expect(offenders).toEqual([])
   })
 })

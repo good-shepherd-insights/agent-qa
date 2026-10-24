@@ -70,7 +70,7 @@ describe('FarmWebAdapter', () => {
         },
       },
       authState: {
-        version: 1,
+        version: 2,
         kind: 'web',
         targetName: 'staging-web',
         stateName: 'admin',
@@ -89,5 +89,106 @@ describe('FarmWebAdapter', () => {
     expect(mockCdpSession.detach).toHaveBeenCalled()
 
     await adapter.cleanup()
+  })
+})
+
+// Compound-behavior parity (Phase 359 Plan 05, Task 3): the farm execute surface speaks the
+// same fill re-read / openApp / untilVisible contracts as the primary adapter. These drive
+// execute() directly against injected private fields to avoid the farm-connect lifecycle.
+function makeFarmLocator(opts: { inputValue?: string; type?: string }) {
+  return {
+    fill: vi.fn().mockResolvedValue(undefined),
+    click: vi.fn().mockResolvedValue(undefined),
+    press: vi.fn().mockResolvedValue(undefined),
+    pressSequentially: vi.fn().mockResolvedValue(undefined),
+    inputValue: vi.fn().mockResolvedValue(opts.inputValue ?? ''),
+    getAttribute: vi.fn().mockResolvedValue(opts.type ?? 'text'),
+    boundingBox: vi.fn().mockResolvedValue({ x: 0, y: 0, width: 10, height: 10 }),
+    nth: vi.fn().mockReturnThis(),
+    first: vi.fn().mockReturnThis(),
+    scrollIntoViewIfNeeded: vi.fn().mockResolvedValue(undefined),
+    evaluate: vi.fn().mockResolvedValue(undefined),
+  }
+}
+
+// The observation's document handle: still the page's document, disposable.
+function documentHandle() {
+  return { evaluate: vi.fn().mockResolvedValue(true), dispose: vi.fn().mockResolvedValue(undefined) }
+}
+
+// 438 D-06: ':root' answers the ai snapshot (the pre-dispatch binding check and the scroll
+// compound's interim tree); any other selector is the observed element's aria-ref locator.
+function makeFarmPage(locator: ReturnType<typeof makeFarmLocator>) {
+  return {
+    getByText: vi.fn().mockReturnValue(locator),
+    goto: vi.fn().mockResolvedValue(undefined),
+    mouse: { wheel: vi.fn().mockResolvedValue(undefined) },
+    viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
+    locator: vi.fn().mockImplementation((selector: string) => (selector === ':root'
+      ? { ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email" [ref=e1]') }
+      : locator)),
+    evaluateHandle: vi.fn().mockImplementation(async () => documentHandle()),
+    evaluate: vi.fn().mockResolvedValue(undefined),
+    screenshot: vi.fn().mockResolvedValue(Buffer.from('x')),
+  }
+}
+
+// Direct injection of the page, the RefMap and the observation's document epoch.
+function primeAdapter(adapter: FarmWebAdapter, locator: ReturnType<typeof makeFarmLocator>) {
+  const page = makeFarmPage(locator)
+  ;(adapter as unknown as { page: unknown }).page = page
+  ;(adapter as unknown as { lastRefs: unknown }).lastRefs = {
+    e1: { nativeRef: 'e1', role: 'textbox', name: 'Email' },
+  }
+  ;(adapter as unknown as { epoch: unknown }).epoch = { page, document: documentHandle() }
+  return page
+}
+
+describe('FarmWebAdapter compound behaviors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('fill re-read mismatch returns success:false with fillReread metadata (D-08, no internal retry)', async () => {
+    const adapter = new FarmWebAdapter()
+    const locator = makeFarmLocator({ inputValue: 'wrong' })
+    primeAdapter(adapter, locator)
+
+    const result = await adapter.execute({ type: 'fill', ref: 'e1', text: 'intended', clearMode: 'replace', submit: false } as never)
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/reads .* after typing .* re-observe and retry/i)
+    expect(result.metadata).toEqual({
+      fillReread: { expected: 'intended', actual: 'wrong' },
+      fillVerdict: { verb: 'fill', verdict: 'mismatch' },
+    })
+    expect(locator.fill).toHaveBeenCalledTimes(1)
+  })
+
+  it('openApp returns the D-09 navigate-directing structured error and never navigates', async () => {
+    const adapter = new FarmWebAdapter()
+    const locator = makeFarmLocator({})
+    const page = primeAdapter(adapter, locator)
+
+    const result = await adapter.execute({ type: 'openApp', appName: 'Gmail' } as never)
+
+    expect(result.success).toBe(false)
+    expect(result.error).toMatch(/navigate/i)
+    expect(page.goto).not.toHaveBeenCalled()
+  })
+
+  it('untilVisible scroll rides scrollUntilVisible metadata bounded by maxSwipes', async () => {
+    const adapter = new FarmWebAdapter()
+    const locator = makeFarmLocator({})
+    primeAdapter(adapter, locator)
+
+    const result = await adapter.execute({
+      type: 'scroll', mode: 'untilVisible', text: 'Nonexistent', direction: 'down', maxSwipes: 2, retryOpposite: false,
+    } as never)
+
+    expect(result.success).toBe(true)
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number; outcome: string } | undefined
+    expect(meta).toBeDefined()
+    expect(meta!.swipes).toBeLessThanOrEqual(2)
   })
 })

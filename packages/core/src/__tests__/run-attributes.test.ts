@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ATTR_GATE_RUN,
   ATTR_RUNNER,
   ATTR_TRIGGER,
   buildInternalRunAttributes,
   formatRunAttributesBlock,
+  mergeRunAttributes,
   parseRunAttrFlags,
   validateTrustedRunAttributes,
   validateUserRunAttributes,
@@ -93,5 +95,54 @@ describe('run attributes', () => {
       '  git.branch=phase223-main',
       '  z.custom=last',
     ].join('\n'))
+  })
+})
+
+// 2026-10-17 (443-07, D-09): a verify run's row carries one internal mark.
+describe('C443-VERIFY-MARK', () => {
+  it('the gate-run mark is an internal attribute with one value', () => {
+    expect(ATTR_GATE_RUN, 'the mark key').toBe('agent-qa.gate-run')
+    const marked = validateTrustedRunAttributes(mergeRunAttributes(
+      { ...buildInternalRunAttributes({ trigger: 'cli', runner: 'local' }), [ATTR_GATE_RUN]: 'true' },
+      { 'git.branch': 'main' },
+    ))
+    expect({ ...marked }, 'the marked attributes after merge and validation').toEqual({
+      'git.branch': 'main',
+      'agent-qa.trigger': 'cli',
+      'agent-qa.runner': 'local',
+      'agent-qa.gate-run': 'true',
+    })
+    const unmarked = buildInternalRunAttributes({ trigger: 'cli', runner: 'local' })
+    expect(Object.hasOwn(unmarked, ATTR_GATE_RUN), 'unmarked attributes carry no mark').toBe(false)
+
+    expect(validateTrustedRunAttributes({ [ATTR_GATE_RUN]: 'true' })[ATTR_GATE_RUN]).toBe('true')
+    for (const value of ['false', 'TRUE', '1', '']) {
+      expect(() => validateTrustedRunAttributes({ [ATTR_GATE_RUN]: value }), `value ${JSON.stringify(value)}`)
+        .toThrow(/Attribute value for "agent-qa\.gate-run" must be "true"/)
+    }
+    expect(() => validateUserRunAttributes({ [ATTR_GATE_RUN]: 'true' })).toThrow(/reserved prefix/)
+    expect(() => parseRunAttrFlags([`${ATTR_GATE_RUN}=true`])).toThrow(/reserved prefix/)
+  })
+
+  it('the mark is listed after the runner among the protected keys', () => {
+    expect(formatRunAttributesBlock({
+      'git.branch': 'main',
+      'agent-qa.zz': 'x',
+      [ATTR_GATE_RUN]: 'true',
+      [ATTR_RUNNER]: 'local',
+      [ATTR_TRIGGER]: 'cli',
+    }).split('\n').join(' | ')).toBe(
+      'Run attributes: |   agent-qa.trigger=cli |   agent-qa.runner=local |   agent-qa.gate-run=true |   agent-qa.zz=x |   git.branch=main',
+    )
+  })
+})
+
+// 2026-10-17 (443-16, GAP-D6): the record's spread is the gate-run mark's one spelling.
+describe('C443-DEAD-SURFACE', () => {
+  it('the internal attribute builder takes no gate-run option', () => {
+    const input = { trigger: 'cli' as const, runner: 'local' as const, gateRun: true as const }
+    const built = buildInternalRunAttributes(input)
+    expect(Object.hasOwn(built, ATTR_GATE_RUN), 'the builder wrote the gate-run mark').toBe(false)
+    expect(built).toEqual({ [ATTR_TRIGGER]: 'cli', [ATTR_RUNNER]: 'local' })
   })
 })

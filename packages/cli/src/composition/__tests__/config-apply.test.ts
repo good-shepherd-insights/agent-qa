@@ -1,0 +1,395 @@
+// The tracer, proven end to end on a real git repository (395-01 · CFGM-01/03/04 · D-01/D-17/D-19).
+//
+// 2026-09-30, 432-11 D-05/D-07: `config.field.set` WRITES IN THE CALL and files nothing, so cells
+// (a)/(a2) measure the direct write.
+//
+// 2026-10-01, 432-16 D-07: agent-qa MAKES NO GIT COMMITS. The one-commit apply that cells (b)-(g)
+// measured through `proposals.accept` and `config.proposal.apply` is deleted, and no host binds a
+// config apply port, so a pre-432 record is refused by name. Each cell keeps its letter and moves
+// its claim onto the direct path where the claim survives:
+//
+//   (b) one file, byte-matched   — the pre-432 accept refuses unbound; the direct change's own
+//                                   byte equality is (a) and C432-CONFIG-DIRECT.
+//   (c) idempotency              — repeating the same change answers `no-change` and writes nothing.
+//   (d) freshness                — a person's uncommitted edit to another field is kept; the change
+//                                   lands on the bytes on disk, not over them.
+//   (e) comments                 — they survive the direct change, verbatim and in place.
+//   (f) shown==applied           — a whole-file publication over bytes that moved refuses before any
+//                                   write (the direct writer's digest guard).
+//   (g) unbound refusal          — the production-shaped registry binds no apply port at all.
+//
+// EVERY PORT ON THIS PATH IS THE PRODUCTION ONE: `createConfigFilesPort`, `createConfigValidatePort`
+// and `createConfigWritePort` are the factories `composeCliLocalAgent` binds. The four REQUIRED read
+// ports are the only doubles, and they answer emptily because nothing on this path reads them.
+
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { UnknownFunctionError, createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
+import type { FunctionDeps } from '@vostride/agent-qa-agent'
+import {
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  base64Decode,
+  sha256hexBytes,
+  utf8Encode,
+} from '@vostride/agent-qa-schema'
+import type {
+  ConfigChangeOutput,
+  FunctionCaller,
+} from '@vostride/agent-qa-schema'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+
+import {
+  createConfigFilesPort,
+  createConfigValidatePort,
+  createConfigWritePort,
+} from '../local-agent-host.js'
+import * as hostModule from '../local-agent-host.js'
+import { filePre432ConfigProposal } from './pre-432-config-proposal.js'
+
+const HUMAN: FunctionCaller = {
+  surface: 'test',
+  origin: 'human',
+}
+
+/**
+ * The seeded config, in the house style — COMMENT-DENSE ON PURPOSE.
+ *
+ * The comments are the subject of cell (e) and the reason the mutation goes through the yaml
+ * Document API at all: `init.ts` has a whole `addYamlComments` function to put these back after a
+ * stringify, so a config a person actually has is one a plain round trip would strip to nothing.
+ */
+const SEEDED_CONFIG = `# agent-qa Configuration
+
+# File discovery and project settings
+workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+
+# Named resource definitions (LLM configs, app targets)
+registry:
+  llms:
+    - name: judge
+      provider: openai-subscription
+      model: gpt-5.6-terra
+  targets:
+    local-form:
+      platform: web
+      url: http://127.0.0.1:8931/form.html
+
+# How runs behave by default.
+use:
+  llm: judge
+  timeout:
+    # Raise this when the app under test is slow to settle.
+    step: 30s
+    test: 90m
+    navigation: 2m
+  mobile:
+    appState: reset
+  parallel: false
+`
+
+let root: string
+let configPath: string
+let agentQaRoot: string
+
+function git(...args: string[]): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+  if (result.error !== undefined) throw result.error
+  if (result.status !== 0) {
+    // 395-24 · WR-12 — a `git` that ran and failed must not return quietly; see
+    // validate-resolution-surface.test.ts for the full note.
+    throw new Error(`git ${args.join(' ')} exited ${result.status}: ${result.stderr}`)
+  }
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+}
+
+function commitCount(): number {
+  return Number(git('rev-list', '--count', 'HEAD').stdout.trim())
+}
+
+/** Where the durable store keeps a PENDING proposal — the store's own naming, not a guess. */
+function pendingProposalPath(proposalId: string): string {
+  return join(agentQaRoot, 'proposals', `${proposalId}.json`)
+}
+
+/**
+ * The stored record, read back OFF DISK — never the object the test handed the store. 2026-10-01
+ * (432-17): the record schema is deleted, so the planted bytes are read as the plain JSON they are.
+ */
+interface StoredPre432Record {
+  readonly kind: string
+  readonly payload: {
+    readonly payloadKind: string
+    readonly files: readonly { readonly newContentBase64: string }[]
+  }
+}
+
+function storedRecord(proposalId: string): StoredPre432Record {
+  return JSON.parse(readFileSync(pendingProposalPath(proposalId), 'utf8')) as StoredPre432Record
+}
+
+function storedConfigPayload(proposalId: string) {
+  const record = storedRecord(proposalId)
+  if (record.kind !== 'config') throw new Error(`stored ${proposalId} is a ${record.kind} proposal`)
+  if (record.payload.payloadKind !== 'applyable') throw new Error('stored payload is not applyable')
+  return record.payload
+}
+
+/**
+ * The registry, with the REAL config ports and no apply port. 2026-10-01 (432-17): the proposals
+ * store, its inbox and the config proposal filer are deleted, so neither is bound.
+ */
+function registryFor() {
+  const deps: FunctionDeps = {
+    runs: {
+      list: () => Promise.resolve([]),
+      get: () => Promise.resolve(undefined),
+      readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+    },
+    knowledge: {
+      listBundles: () => Promise.resolve([]),
+      inspectRecords: () => Promise.resolve([]),
+      diffSince: () => Promise.resolve([]),
+      showRecord: ({ recordId }) =>
+        Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
+    },
+    entities: {
+      resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+      get: () => Promise.resolve(undefined),
+    },
+    config: {
+      getMasked: () => Promise.resolve({
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+        configPath: 'agent-qa.config.yaml',
+        entries: [],
+      }),
+    },
+    // THE REAL THREE, over the real workspace and the real repository.
+    configFiles: createConfigFilesPort(configPath),
+    configValidate: createConfigValidatePort(),
+    // 432-11: the direct writer the config operations publish through.
+    configWrite: createConfigWritePort(configPath, (text) => text),
+  }
+
+  return createFunctionRegistry({
+    deps,
+    // 2026-10-02 (432-39, D-12): no confirm port and no execution-context option. An accept
+    // dispatches directly in every context; the registry takes neither seam any more.
+  })
+}
+
+async function change(
+  registry: ReturnType<typeof registryFor>,
+  input: { path: string; value: string | number | boolean },
+): Promise<ConfigChangeOutput> {
+  return await invokeFunction(registry, 'config.field.set', input, HUMAN) as ConfigChangeOutput
+}
+
+/** A pre-432 proposal record for the tracer edit, filed as the old pipeline filed it. */
+async function pre432Proposal(): Promise<string> {
+  return (await filePre432ConfigProposal({
+    configPath,
+    agentQaRoot,
+    edits: [{ path: 'use.timeout.step', value: '45s' }],
+  })).proposalId
+}
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'config-apply-'))
+  configPath = join(root, 'agent-qa.config.yaml')
+  agentQaRoot = join(root, '.agent-qa')
+  writeFileSync(configPath, SEEDED_CONFIG)
+
+  git('init', '--quiet')
+  // RESEARCH Pitfall 7: a fresh temp repository has no identity, and `git commit` refuses without
+  // one. Signing is disabled for the same reason — a developer machine configured to sign every
+  // commit would otherwise make this suite depend on a key.
+  git('config', 'user.name', 'agent-qa config apply test')
+  git('config', 'user.email', 'config-apply-test@example.invalid')
+  git('config', 'commit.gpgsign', 'false')
+  writeFileSync(join(root, '.gitignore'), '.agent-qa/\n')
+  writeFileSync(join(root, 'README.md'), 'seeded\n')
+  git('add', '--', '.gitignore', 'README.md', 'agent-qa.config.yaml')
+  git('commit', '--quiet', '-m', 'seed')
+})
+
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true })
+})
+
+describe('the config tracer: propose, accept, ONE byte-matched commit', () => {
+  // 432-16: the describe keeps its name; its cells now measure the direct change (see the header).
+  it('(a) writes the edit in the call, answering the diff of the bytes it read and filing nothing', async () => {
+    const seededDigest = sha256hexBytes(Uint8Array.from(readFileSync(configPath)))
+    const answer = await change(registryFor(), { path: 'use.timeout.step', value: '45s' })
+    expect(answer.outcome).toBe('applied')
+    if (answer.outcome !== 'applied') throw new Error('unreachable')
+
+    expect(answer.summaryLine).toBe('set use.timeout.step to 45s')
+    expect(answer.files).toEqual(['agent-qa.config.yaml'])
+    expect(answer.fields).toEqual(['use.timeout.step'])
+
+    // The rendered diff really is a diff of this change against the file as it was.
+    expect(answer.shownDiff).toContain('--- a/agent-qa.config.yaml')
+    expect(answer.shownDiff).toContain('-    step: 30s')
+    expect(answer.shownDiff).toContain('+    step: 45s')
+
+    // THE FILE MOVED IN THE CALL, by exactly the edit, off the bytes that were there.
+    expect(seededDigest).not.toBe(sha256hexBytes(Uint8Array.from(readFileSync(configPath))))
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+
+    // NO RECORD AND NO COMMIT (D-07): a plain edit git shows as modified.
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(commitCount()).toBe(1)
+    expect(git('status', '--porcelain', '--', 'agent-qa.config.yaml').stdout.trim())
+      .toBe('M agent-qa.config.yaml')
+  })
+
+  it('(a2) refuses a mutation that breaks the WHOLE config, before anything surfaces', async () => {
+    // CFGM-01: validation runs before any APPLYABLE proposal exists. `use.parallel` is a boolean in
+    // the schema, so a string there is a candidate config that does not validate.
+    //
+    // 432-11: the blocked answer is the report, and nothing is kept — no record, no write. The claim
+    // it protects is unchanged: nothing a person could accept or apply was ever produced.
+    const answer = await change(registryFor(), { path: 'use.parallel', value: 'yes please' })
+
+    expect(answer.outcome).toBe('blocked')
+    if (answer.outcome !== 'blocked') throw new Error('unreachable')
+    expect(answer.blockedReason).toBe('schema-fail')
+    expect(answer.validationIssues?.length ?? 0).toBeGreaterThan(0)
+    expect((answer.validationIssues ?? []).join('\n')).toContain('use.parallel')
+    // NO RECORD ON DISK and no content in the answer, which is the structural half of D-10.
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+    expect(JSON.stringify(answer)).not.toContain('shownDiff')
+    expect(JSON.stringify(answer)).not.toContain('newContentBase64')
+    // NOTHING WAS WRITTEN AND NOTHING WAS COMMITTED.
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+    expect(commitCount()).toBe(1)
+  })
+
+  // RE-SPELLED 2026-10-01 (432-16): was '(b) accepting adds exactly ONE commit of exactly the
+  // config file, byte-matched'. No apply port is bound; the direct change's byte equality is (a).
+  // RE-SPELLED 2026-10-01 (432-17): the accept op is deleted, so the refusal is an unknown function.
+  it('(b) accepting a pre-432 record is refused unbound: no commit, and the file keeps its bytes', async () => {
+    const registry = registryFor()
+    const id = await pre432Proposal()
+    // The record is still on disk and still names the promised bytes; nothing applies them.
+    expect(base64Decode(storedConfigPayload(id).files[0]!.newContentBase64).length).toBeGreaterThan(0)
+
+    await expect(invokeFunction(registry, 'proposals.accept', { proposalId: id }, HUMAN))
+      .rejects.toBeInstanceOf(UnknownFunctionError)
+
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+    expect(commitCount()).toBe(1)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('')
+  })
+
+  // RE-SPELLED 2026-10-01 (432-16): was '(c) accepting the SAME proposal twice answers
+  // already-applied and commits nothing more'. The retry is now the same change made again.
+  it('(c) repeating the same change answers no-change and writes nothing more', async () => {
+    const registry = registryFor()
+    expect((await change(registry, { path: 'use.timeout.step', value: '45s' })).outcome).toBe('applied')
+    const once = readFileSync(configPath)
+
+    const again = await change(registry, { path: 'use.timeout.step', value: '45s' })
+
+    expect(again.outcome).toBe('no-change')
+    expect(readFileSync(configPath).equals(once)).toBe(true)
+    expect(commitCount()).toBe(1)
+  })
+
+  // RE-SPELLED 2026-10-01 (432-16): was '(d) an out-of-band edit between propose and accept
+  // refuses, writing nothing'. There is no window between a proposal and an accept any more; the
+  // change re-reads the file in the call, so a person's own edit is kept rather than refused.
+  it('(d) an out-of-band edit is kept: the change lands on the bytes on disk, not over them', async () => {
+    const humanEdit = SEEDED_CONFIG.replace('navigation: 2m', 'navigation: 5m')
+    writeFileSync(configPath, humanEdit)
+
+    expect((await change(registryFor(), { path: 'use.timeout.step', value: '45s' })).outcome)
+      .toBe('applied')
+
+    expect(readFileSync(configPath, 'utf8')).toBe(humanEdit.replace('step: 30s', 'step: 45s'))
+    expect(commitCount()).toBe(1)
+  })
+
+  // RE-SPELLED 2026-10-01 (432-16): the change is the direct one, not an accepted proposal.
+  it('(e) the comments survive the applied mutation, verbatim and in place', async () => {
+    await change(registryFor(), { path: 'use.timeout.step', value: '45s' })
+
+    const written = readFileSync(configPath, 'utf8')
+    // Every comment the seed carried, still there — a plain-object round trip would have kept none.
+    for (const comment of [
+      '# agent-qa Configuration',
+      '# File discovery and project settings',
+      '# Named resource definitions (LLM configs, app targets)',
+      '# How runs behave by default.',
+      '# Raise this when the app under test is slow to settle.',
+    ]) {
+      expect(written).toContain(comment)
+    }
+    expect(written).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+  })
+
+  // RE-SPELLED 2026-10-01 (432-16): was '(f) a payload widened after the render refuses at the byte
+  // comparison, before any write'. No stored payload exists to doctor; the direct writer's guard is
+  // that a whole-file publication names the digest it was built from and refuses bytes that moved.
+  it('(f) a whole-file publication over bytes that moved refuses before any write', async () => {
+    const port = createConfigWritePort(configPath, (text) => text)
+    const builtFrom = sha256hexBytes(Uint8Array.from(readFileSync(configPath)))
+    const moved = SEEDED_CONFIG.replace('parallel: false', 'parallel: true')
+    writeFileSync(configPath, moved)
+
+    const outcome = await port.publishFiles({
+      files: [{
+        path: 'agent-qa.config.yaml',
+        baseDigest: builtFrom,
+        bytes: utf8Encode(SEEDED_CONFIG.replace('step: 30s', 'step: 45s')),
+      }],
+    })
+
+    expect(outcome).toMatchObject({ kind: 'refused', reason: 'file-changed', written: [] })
+    expect(readFileSync(configPath, 'utf8')).toBe(moved)
+    expect(commitCount()).toBe(1)
+  })
+
+  // RE-SPELLED 2026-10-01 (432-17): the apply op is deleted, so it is refused as an unknown function.
+  it('(g) an unbound apply refuses BY NAME and leaves the repository untouched', async () => {
+    const id = await pre432Proposal()
+
+    await expect(invokeFunction(registryFor(), 'config.proposal.apply', { proposalId: id }, HUMAN))
+      .rejects.toBeInstanceOf(UnknownFunctionError)
+
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG)
+    expect(commitCount()).toBe(1)
+  })
+})
+
+// 2026-09-30, 432-07 D-05/D-07: the direct writer publishes the tracer's field edit in one call.
+// 432-11 switched `config.field.set` onto it; cell (a) above is the op's own road.
+describe('C432-CONFIG-DIRECT: the tracer edit through the direct writer', () => {
+  it('publishes the field edit byte-matched with its comments, files no proposal and makes no commit', async () => {
+    const create = (hostModule as Record<string, unknown>).createConfigWritePort
+    expect(typeof create, 'the direct config writer is exported').toBe('function')
+    const port = (create as (path: string) => NonNullable<FunctionDeps['configWrite']>)(configPath)
+
+    const outcome = await port.applyFields({
+      changes: [{ op: 'set', path: ['use', 'timeout', 'step'], value: '45s' }],
+    })
+
+    expect(outcome).toMatchObject({ kind: 'applied', file: 'agent-qa.config.yaml' })
+    expect(readFileSync(configPath, 'utf8')).toBe(SEEDED_CONFIG.replace('step: 30s', 'step: 45s'))
+    expect(commitCount()).toBe(1)
+    expect(git('status', '--porcelain').stdout.trim()).toBe('M agent-qa.config.yaml')
+    expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
+  })
+})

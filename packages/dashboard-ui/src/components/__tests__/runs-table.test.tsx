@@ -11,12 +11,23 @@ import { RunsTable, type SuiteRunRow, type VisibleRunRow } from "@/components/ru
 
 const LONG_RUN_NAME = "Open homepage with a deliberately long run name that should wrap inside a compact cell instead of truncating into a single overflowing line"
 
-vi.mock("@/components/ui/tooltip", () => ({
-  TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}))
+// 2026-10-17 (444-16, D-05): a cell can switch to the real Radix tooltip, whose trigger slot is the
+// one that overrode the badge's data-slot.
+const tooltipMode = vi.hoisted(() => ({ real: false }))
+
+vi.mock("@/components/ui/tooltip", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/ui/tooltip")>()
+  return {
+    TooltipProvider: (props: React.ComponentProps<typeof actual.TooltipProvider>) =>
+      tooltipMode.real ? <actual.TooltipProvider {...props} /> : <>{props.children}</>,
+    Tooltip: (props: React.ComponentProps<typeof actual.Tooltip>) =>
+      tooltipMode.real ? <actual.Tooltip {...props} /> : <>{props.children}</>,
+    TooltipTrigger: (props: React.ComponentProps<typeof actual.TooltipTrigger>) =>
+      tooltipMode.real ? <actual.TooltipTrigger {...props} /> : <>{props.children}</>,
+    TooltipContent: (props: React.ComponentProps<typeof actual.TooltipContent>) =>
+      tooltipMode.real ? <actual.TooltipContent {...props} /> : <div data-tooltip-content="">{props.children}</div>,
+  }
+})
 vi.mock("@/components/ui/scroll-area", () => ({
   ScrollArea: ({ children, className }: { children: React.ReactNode; className?: string }) => <div className={className}>{children}</div>,
   ScrollBar: () => null,
@@ -87,7 +98,6 @@ const runs: SuiteRunRow[] = [
     metadata: null,
     startedAt: "2026-04-18T00:00:00.000Z",
     endedAt: "2026-04-18T00:00:22.000Z",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,
@@ -119,7 +129,6 @@ const runs: SuiteRunRow[] = [
         metadata: null,
         startedAt: "2026-04-18T00:00:00.000Z",
         endedAt: "2026-04-18T00:00:04.300Z",
-        videoPath: null,
         failureSummary: null,
         errorLog: null,
         memoryLog: null,
@@ -153,7 +162,6 @@ const runs: SuiteRunRow[] = [
     metadata: null,
     startedAt: "2026-04-17T00:00:00.000Z",
     endedAt: "2026-04-17T00:00:01.800Z",
-    videoPath: null,
     failureSummary: null,
     errorLog: null,
     memoryLog: null,
@@ -266,6 +274,7 @@ afterEach(() => {
   root = null
   if (container) container.remove()
   container = null
+  tooltipMode.real = false
   vi.clearAllMocks()
 })
 
@@ -424,7 +433,9 @@ describe("RunsTable", () => {
 
     expect(view.textContent).toContain("Cancelled")
     expect(view.textContent).toContain("Failed")
-    expect(view.textContent).not.toContain("Timed Out")
+    const badgeTexts = Array.from(view.querySelectorAll('[data-slot="badge"]')).map((element) => element.textContent)
+    expect(badgeTexts).toContain("Failed")
+    expect(badgeTexts).not.toContain("Timed out")
 
     const failedBadge = Array.from(view.querySelectorAll('[data-slot="badge"]')).find(
       (element) => element.textContent === "Failed",
@@ -442,5 +453,268 @@ describe("RunsTable", () => {
       expect.objectContaining({ id: "run_cancelled", status: "cancelled" }),
       expect.anything(),
     )
+  })
+})
+
+// 2026-10-17 (443-07, D-09): a verify run's row carries the gate-run mark; the list shows it beside
+// the name and adds no filter for it.
+describe("C443-VERIFY-MARK", () => {
+  const GATE_RUN_KEY = "agent-qa.gate-run"
+
+  function singleRun(id: string, name: string, attributes: Record<string, string>): SuiteRunRow {
+    return { ...runs[1]!, id, name, attributes }
+  }
+
+  function nameCellOf(view: HTMLDivElement, name: string): HTMLTableCellElement | null {
+    const span = Array.from(view.querySelectorAll("span")).find((element) => element.textContent === name)
+    return span?.closest("td") ?? null
+  }
+
+  function toolbarControls(view: HTMLDivElement): string[] {
+    const search = view.querySelector('input[placeholder="Search runs..."]')
+    const toolbar = search?.parentElement
+    if (!toolbar) return []
+    return Array.from(toolbar.querySelectorAll("input, button, select")).map((element) =>
+      `${element.tagName.toLowerCase()}:${element.getAttribute("aria-label") ?? element.getAttribute("placeholder") ?? element.textContent?.trim() ?? ""}`,
+    )
+  }
+
+  it("the Runs list shows Verify run beside a marked run's name", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [singleRun("run_gate", "Draft verify run", { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "true" })],
+    })
+    const cell = nameCellOf(view, "Draft verify run")
+    expect(cell, "the marked run's name cell").not.toBeNull()
+    expect(cell?.textContent ?? "", "the marked run's name cell text").toContain("Verify run")
+    const badge = Array.from(cell?.querySelectorAll('[data-slot="badge"]') ?? []).find(
+      (element) => element.textContent === "Verify run",
+    )
+    expect(badge?.getAttribute("data-variant"), "the Verify run badge variant").toBe("secondary")
+  })
+
+  it("no badge on an unmarked run", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [
+        singleRun("run_plain", "Started by someone", { "agent-qa.trigger": "cli" }),
+        singleRun("run_false", "Marked false", { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "false" }),
+        singleRun("run_none", "No attributes at all", {}),
+      ],
+    })
+    for (const name of ["Started by someone", "Marked false", "No attributes at all"]) {
+      expect(nameCellOf(view, name), `name cell of ${name}`).not.toBeNull()
+    }
+    expect(view.textContent ?? "", "the list text").not.toContain("Verify run")
+  })
+
+  it("no filter is added", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [singleRun("run_gate", "Draft verify run", { [GATE_RUN_KEY]: "true" })],
+    })
+    expect(toolbarControls(view).join(" | ")).toBe(
+      "input:Search runs... | button:All platforms | button:All targets | button:Filter by attributes",
+    )
+  })
+})
+
+// 2026-10-17 (443-18, GAP-D7): the badge alone displays the mark, explained and first-line aligned.
+describe("C443-VERIFY-BADGE", () => {
+  const GATE_RUN_KEY = "agent-qa.gate-run"
+  const EXPLANATION = "Started by authoring verify. Not used for learning."
+
+  function singleRun(id: string, name: string, attributes: Record<string, string>): SuiteRunRow {
+    return { ...runs[1]!, id, name, attributes }
+  }
+
+  function nameCellOf(view: HTMLDivElement, name: string): HTMLTableCellElement | null {
+    const span = Array.from(view.querySelectorAll("span")).find((element) => element.textContent === name)
+    return span?.closest("td") ?? null
+  }
+
+  function verifyBadgeIn(cell: HTMLTableCellElement | null): Element | undefined {
+    return Array.from(cell?.querySelectorAll('[data-slot="badge"]') ?? []).find(
+      (element) => element.textContent === "Verify run",
+    )
+  }
+
+  it("the Verify run badge explains itself and takes keyboard focus", async () => {
+    const { view } = await renderTable({
+      selectedRunId: "run_gate",
+      tableRuns: [singleRun("run_gate", "Draft verify run", { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "true" })],
+    })
+    const cell = nameCellOf(view, "Draft verify run")
+    const badge = verifyBadgeIn(cell)
+    expect(badge, "the Verify run badge").toBeDefined()
+    expect(badge?.getAttribute("tabindex"), "the badge's tabindex").toBe("0")
+    expect(cell?.textContent ?? "", "the marked run's name cell text").toContain(EXPLANATION)
+  })
+
+  it("the attributes cell does not list the gate-run mark again", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [
+        singleRun("run_gate", "Draft verify run", {
+          "agent-qa.trigger": "cli",
+          "agent-qa.runner": "local",
+          [GATE_RUN_KEY]: "true",
+        }),
+      ],
+    })
+    const row = nameCellOf(view, "Draft verify run")?.closest("tr")
+    const attributesCell = Array.from(row?.querySelectorAll("td") ?? []).find((element) =>
+      (element.textContent ?? "").includes("agent-qa.trigger"),
+    )
+    expect(attributesCell, "the attributes cell").toBeDefined()
+    const text = attributesCell?.textContent ?? ""
+    expect(text, "the attributes cell text").not.toContain(GATE_RUN_KEY)
+    expect(text, "the attributes cell's hidden count").not.toMatch(/\+\d+ more/)
+    const labels = Array.from(attributesCell?.querySelectorAll("[aria-label]") ?? []).map(
+      (element) => element.getAttribute("aria-label") ?? "",
+    )
+    expect(labels.length, "aria-labels in the attributes cell").toBeGreaterThan(0)
+    for (const label of labels) {
+      expect(label, "an aria-label in the attributes cell").toContain("agent-qa.trigger")
+      expect(label, "an aria-label in the attributes cell").not.toContain(GATE_RUN_KEY)
+    }
+  })
+
+  it("the badge lines up with the first line of a wrapped name", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [singleRun("run_gate", LONG_RUN_NAME, { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "true" })],
+    })
+    const badge = verifyBadgeIn(nameCellOf(view, LONG_RUN_NAME))
+    expect(badge, "the Verify run badge").toBeDefined()
+    const wrapperClasses = Array.from(badge?.parentElement?.classList ?? [])
+    expect(wrapperClasses, "the name cell wrapper's classes").toContain("items-start")
+    expect(wrapperClasses, "the name cell wrapper's classes").not.toContain("items-center")
+    expect(Array.from(badge?.classList ?? []), "the badge's classes").toContain("mt-0.5")
+  })
+})
+
+// 2026-10-17 (444-16, D-05): in-row controls take the row's roving tab stop and never open the run;
+// the badge keeps its own slot; Target and Attributes truncate behind a tooltip.
+describe("C444-RUNS-TABLE", () => {
+  const GATE_RUN_KEY = "agent-qa.gate-run"
+  const LONG_TARGET = "checkout-service-staging-eu-west-with-a-very-long-registry-name"
+
+  const suiteRun: SuiteRunRow = { ...runs[0]!, tests: [] }
+  const gateRun: SuiteRunRow = {
+    ...runs[1]!,
+    id: "run_gate",
+    name: "Draft verify run",
+    attributes: { "agent-qa.trigger": "cli", [GATE_RUN_KEY]: "true" },
+  }
+
+  function rowOf(view: HTMLDivElement, id: string): HTMLTableRowElement {
+    const row = view.querySelector(`[data-runs-row-surface="${id}"]`) as HTMLTableRowElement | null
+    expect(row, `the row of ${id}`).not.toBeNull()
+    return row!
+  }
+
+  function verifyBadgeOf(view: HTMLDivElement): HTMLElement {
+    const badge = Array.from(rowOf(view, "run_gate").querySelectorAll<HTMLElement>("*")).find(
+      (element) => element.textContent === "Verify run" && element.children.length === 0,
+    )
+    expect(badge, "the Verify run badge").toBeDefined()
+    return badge!
+  }
+
+  function chevronOf(view: HTMLDivElement): HTMLButtonElement {
+    const chevron = rowOf(view, "suite_run_1").querySelector("td button") as HTMLButtonElement | null
+    expect(chevron, "the suite expand chevron").not.toBeNull()
+    return chevron!
+  }
+
+  function cellsOfColumn(view: HTMLDivElement, header: string): HTMLElement[] {
+    const heads = Array.from(view.querySelectorAll("thead th"))
+    const index = heads.findIndex((th) => (th.textContent ?? "").trim().startsWith(header))
+    expect(index, `the ${header} header`).toBeGreaterThanOrEqual(0)
+    const cells = Array.from(view.querySelectorAll("tbody tr")).map(
+      (tr) => tr.querySelectorAll("td")[index] as HTMLElement,
+    )
+    return [heads[index] as HTMLElement, ...cells]
+  }
+
+  async function press(element: HTMLElement, key: string) {
+    await act(async () => {
+      element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))
+    })
+  }
+
+  it("the badge and the chevron take the row's tab stop", async () => {
+    const { view, rerender } = await renderTable({
+      selectedRunId: "run_gate",
+      tableRuns: [suiteRun, gateRun],
+    })
+    expect(verifyBadgeOf(view).getAttribute("tabindex"), "the badge on the active row").toBe("0")
+    expect(chevronOf(view).getAttribute("tabindex"), "the chevron on an inactive row").toBe("-1")
+
+    await rerender({ selectedRunId: "suite_run_1" })
+    expect(verifyBadgeOf(view).getAttribute("tabindex"), "the badge on an inactive row").toBe("-1")
+    expect(chevronOf(view).getAttribute("tabindex"), "the chevron on the active row").toBe("0")
+  })
+
+  it("Enter and Space on the badge or the chevron never open the run", async () => {
+    const onOpenRun = vi.fn()
+    const { view } = await renderTable({
+      selectedRunId: "run_gate",
+      tableRuns: [suiteRun, gateRun],
+      onOpenRun,
+    })
+    for (const key of ["Enter", " "]) {
+      await press(verifyBadgeOf(view), key)
+      await press(chevronOf(view), key)
+    }
+    expect(onOpenRun, "the row's open callback after keys on the controls").not.toHaveBeenCalled()
+
+    await press(rowOf(view, "run_gate"), "Enter")
+    expect(onOpenRun, "Enter on the row itself still opens it").toHaveBeenCalledWith(
+      expect.objectContaining({ id: "run_gate" }),
+      expect.anything(),
+    )
+  })
+
+  it("the badge keeps its own data-slot under its tooltip", async () => {
+    tooltipMode.real = true
+    const { view } = await renderTable({ selectedRunId: "run_gate", tableRuns: [gateRun] })
+    const badge = verifyBadgeOf(view)
+    expect(badge.getAttribute("data-state"), "the badge is the real tooltip's trigger").toBe("closed")
+    expect(badge.getAttribute("data-slot"), "the badge's data-slot").toBe("badge")
+    const slotted = Array.from(view.querySelectorAll('[data-slot="badge"]')).map((element) => element.textContent)
+    expect(slotted, "the badges [data-slot=badge] finds").toContain("Verify run")
+  })
+
+  it("Target and Attributes truncate with the full value in a tooltip, and Attributes carries the hide-below-1200 container class", async () => {
+    const { view } = await renderTable({
+      selectedRunId: null,
+      tableRuns: [{ ...runs[1]!, id: "run_target", targetName: LONG_TARGET }],
+    })
+    const row = rowOf(view, "run_target")
+    const [, targetCell] = cellsOfColumn(view, "Target")
+    expect(row.contains(targetCell!), "the target cell is the row's").toBe(true)
+    const fullTarget = `${LONG_TARGET} (Web)`
+    const shown = Array.from(targetCell!.querySelectorAll<HTMLElement>(".truncate")).map((element) => element.textContent)
+    expect(shown, "the target cell's truncated text").toContain(fullTarget)
+    const targetTip = targetCell!.querySelector("[data-tooltip-content]")
+    expect(targetTip?.textContent, "the target cell's tooltip").toBe(fullTarget)
+
+    const [attributesHead, attributesCell] = cellsOfColumn(view, "Attributes")
+    const lines = Array.from(attributesCell!.querySelectorAll<HTMLElement>(".truncate.font-mono"))
+    expect(lines.length, "the attributes cell's truncated lines").toBeGreaterThan(0)
+    const attributesTip = attributesCell!.querySelector("[data-tooltip-content]")?.textContent ?? ""
+    for (const [key, value] of Object.entries(runs[1]!.attributes ?? {})) {
+      expect(attributesTip, "the attributes tooltip").toContain(key)
+      expect(attributesTip, "the attributes tooltip").toContain(value)
+    }
+
+    for (const element of [attributesHead!, attributesCell!]) {
+      expect(Array.from(element.classList), `${element.tagName} of Attributes`).toContain("@max-[1200px]/runs:hidden")
+    }
+    let wrapper: HTMLElement | null = view.querySelector("table")
+    while (wrapper && !wrapper.classList.contains("@container/runs")) wrapper = wrapper.parentElement
+    expect(wrapper, "the table's scroll wrapper is the runs container").not.toBeNull()
   })
 })

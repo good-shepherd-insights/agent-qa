@@ -1,0 +1,12 @@
+# A leading comment, before the first key. This line is the whole point of case 01.
+name: Sign in on the local account form
+test-id: t_much-raw-assis-ito-fold-odin-vote-paper-lox-extend
+target: 'local-form' # single-quoted on purpose, with a trailing comment
+use:
+  browser:
+    headless: true
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Type "{{secret:PROBE_TOKEN}}" into the Password field
+  - Click the Submit button
+  - Verify the page says "Received!"

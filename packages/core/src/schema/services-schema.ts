@@ -1,18 +1,103 @@
 import { z } from 'zod'
-import { DEFAULT_MEMORY_DIR } from '../memory/config.js'
-import { DurationString } from './primitives.js'
+import { DurationString, SizeString } from './primitives.js'
+
+/**
+ * Whether a configured value is an ABSOLUTE `http:`/`https:` URL (408 D-08, WR-04 — T-408-16).
+ *
+ * FILE-LOCAL, DELIBERATELY, unlike `isLoopbackHost` below. That predicate is exported because TWO
+ * mechanisms decide loopback membership and must not be two spellings; this one has exactly one
+ * decision site — the parse boundary, immediately below. Exporting it would advertise a second
+ * place to make the same check, and the whole point of a parse-time guard is that there is no
+ * second place: nothing downstream should be re-deciding whether the base is safe.
+ *
+ * A RELATIVE VALUE IS REFUSED, not resolved. `new URL(value)` with no base throws for
+ * `/relative/only` and for `not-a-url`, and the scheme test refuses `javascript:` and `mailto:`
+ * — which parse fine and are exactly the shapes that must not reach an `href`.
+ */
+function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
 
 export const DashboardConfigSchema = z.object({
   port: z.number().optional(),
   dbPath: z.string().optional(),
   artifactsDir: z.string().optional(),
+  // Phase 387, D-10: where an entity card's `url` points. BOTH optional, so the v52 default
+  // is a card with no `url` at all rather than a link to a route nothing serves. The card
+  // producer reads these through the masked config reader and renders
+  // `ENTITY_URL_ROUTE` (@vostride/agent-qa-schema) against them.
+  //
+  // They live on the EXISTING `services.dashboard` block rather than on a new top-level
+  // `dashboard` key: this project already has one dashboard configuration home, and a second
+  // one would be two places an operator could reasonably write the same fact.
+  //
+  // 2026-09-01 (Phase 408 plan 10, WR-04 — T-408-16): REFINED TO AN ABSOLUTE http(s) URL, because
+  // this value stops being a display string in M5. It composes the tokenless live link
+  // (`live-link.ts`'s `liveRunLinkOf`, which only strips trailing slashes), and that link is
+  // assigned to an `href` INSIDE the served App document — which runs with `allow-scripts` at an
+  // opaque origin — as well as appended verbatim to every carrier tool result's model-readable
+  // text. A `javascript:` base therefore composed a script-executing anchor. The trust boundary is
+  // the operator, so this is not remote-triggerable; the finding is that a URL-shaped value reached
+  // an `href` with no scheme check at any hop, and the guard costs one refinement.
+  //
+  // AT THE PARSE BOUNDARY, so there is exactly one place that decides. The defensive drop at the
+  // anchor itself is the SECOND half of the same finding and lives in `app-wrapper.ts`.
+  //
+  // STILL `.optional()`: an absent base is a real and honest posture — a standalone `agent-qa mcp`
+  // with no dashboard — and the carrier result names that absence rather than fabricating a URL.
+  // An EMPTY STRING is now REFUSED, which is stricter than before: `""` is not an absence an
+  // operator wrote by leaving the key out, it is a value that composes a relative fragment reading
+  // as a link and resolving against nothing.
+  baseUrl: z.string().refine(
+    isAbsoluteHttpUrl,
+    { message: 'services.dashboard.baseUrl must be an absolute http(s) URL' },
+  ).optional(),
+  workspace: z.string().optional(),
+  // 2026-10-01 (432-22, D-12/D-22): `runServiceTokens` is deleted. The run service is tokenless
+  // since 432-21, and a file that still declares the key gets the normal strict unrecognized-key
+  // error, with no migration and no special message. The local doors never needed a credential.
+  // Phase 402 D-07: the interface this server binds. Consumed by 402-05's pre-listen bind guard,
+  // which REFUSES any non-loopback value — unconditionally since the phase-402 verification round
+  // (a declared run-service credential authenticates the three run-service paths and nothing else,
+  // so it was never evidence that the rest of this server's surface was authed).
+  //
+  // DELIBERATELY NOT `LoopbackHostSchema` even so. That schema refuses at PARSE time, which would
+  // make the runtime refusal unreachable and would report the problem as a config-shape error
+  // rather than as the security refusal it is — and it would also refuse a loopback SPELLING this
+  // field exists to allow (`localhost`, `::1`, `127.0.0.2` is refused on purpose).
+  host: z.string().trim().min(1).optional(),
 }).strict()
 
+/**
+ * THE ONE MEMBER SET FOR "this host is loopback" (402-05 D-07 — T-402-18).
+ *
+ * Exported because two mechanisms now decide loopback membership and they must not be two
+ * spellings: `LoopbackHostSchema` below refuses a non-loopback MCP host at PARSE time, and
+ * `startServer`'s pre-listen bind guard refuses a non-loopback DASHBOARD host at RUNTIME, with no
+ * exemption. A second literal list would let the two drift, and the direction it would drift in is
+ * a host one mechanism calls loopback and the other does not.
+ */
+export const LOOPBACK_HOSTS: readonly string[] = Object.freeze(['localhost', '127.0.0.1', '::1'])
+
+/** Whether a configured host names a loopback interface. The one predicate over the one set. */
+export function isLoopbackHost(host: string): boolean {
+  return LOOPBACK_HOSTS.includes(host.trim())
+}
+
 const LoopbackHostSchema = z.string().trim().min(1).refine(
-  host => host === 'localhost' || host === '127.0.0.1' || host === '::1',
+  isLoopbackHost,
   { message: 'MCP host must be localhost, 127.0.0.1, or ::1 in local-only mode' },
 )
 
+// 2026-10-01 (432-22, D-12/D-22): the per-caller credential declarations (`tokens`) and the stdio
+// config-write opt-in (`stdio.grantConfigWrite`, and with it the whole `stdio` object) are deleted.
+// MCP is tokenless since 432-21; a file that still declares either key gets the normal strict
+// unrecognized-key error, with no migration and no special message.
 export const McpConfigSchema = z.object({
   enabled: z.boolean().optional(),
   transport: z.enum(['http', 'stdio']).optional(),
@@ -35,7 +120,8 @@ export const LoggingConfigSchema = z.object({
 }).strict()
 
 export const RecordingConfigSchema = z.object({
-  enabled: z.boolean().optional(),
+  enabled: z.boolean().default(true),
+  keepFailuresOnly: z.boolean().optional(),
 }).strict()
 
 export const AccessibilityConfigSchema = z.object({
@@ -47,21 +133,9 @@ export const AccessibilityConfigSchema = z.object({
   exclude: z.array(z.string()).optional(),
 }).strict()
 
-export const MemoryConfigSchema = z.object({
-  enabled: z.boolean().optional().default(true),
-  provider: z.enum(['local']).optional().default('local'),
-  dir: z.string().trim().min(1).optional().default(DEFAULT_MEMORY_DIR),
-  minTrust: z.number().min(0).max(1).optional().default(0.3),
-  maxInjections: z.number().int().min(0).optional().default(3),
-  curatorEnabled: z.boolean().optional().default(true),
-  curatorLockTimeout: z.number().int().min(1000).optional().default(120_000),
-  trustConfirmDelta: z.number().min(0).max(1).optional().default(0.05),
-  trustContradictDelta: z.number().min(0).max(1).optional().default(0.10),
-  ablationEnabled: z.boolean().optional().default(true),
-  circuitBreakerEnabled: z.boolean().optional().default(true),
-  circuitBreakerWindowSize: z.number().int().min(5).optional().default(20),
-  circuitBreakerBaselineSize: z.number().int().min(2).optional().default(3),
-  circuitBreakerThreshold: z.number().min(0).max(1).optional().default(0.15),
+export const VisionServiceSchema = z.object({
+  screenshotSize: SizeString.optional(),
+  effectiveResolution: z.number().positive().int().optional(),
 }).strict()
 
 export const ServicesSchema = z.object({
@@ -70,7 +144,8 @@ export const ServicesSchema = z.object({
   cache: CacheConfigSchema.optional(),
   authState: AuthStateConfigSchema.optional(),
   logging: LoggingConfigSchema.optional(),
-  recording: RecordingConfigSchema.optional(),
+  // Parse omitted containers too, while retaining optional authoring/input compatibility.
+  recording: RecordingConfigSchema.prefault({}).optional(),
   accessibility: AccessibilityConfigSchema.optional(),
-  memory: MemoryConfigSchema.optional(),
+  vision: VisionServiceSchema.optional(),
 }).strict()

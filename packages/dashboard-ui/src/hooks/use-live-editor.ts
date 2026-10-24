@@ -1,7 +1,49 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { LiveExecutionLogEntry, SubActionData } from '@/lib/api'
-import type { LivePhase } from '@/hooks/use-execution-events'
+import { deleteLiveEditorSession, type LiveExecutionLogEntry } from '@/lib/api'
+import type { LivePhase } from '@/lib/display-step'
 import { logLiveDebug } from '@/lib/live-debug'
+import { LIVE_EDITOR_SESSION_GONE_CLOSE_CODE, LIVE_EDITOR_SUPERSEDED_CLOSE_CODE } from '@/lib/live-preview'
+
+/**
+ * One sub-action of a LIVE editor step (405-11).
+ *
+ * IT LIVES HERE NOW, BESIDE ITS ONLY PRODUCER. This shape used to sit in the API module beside the
+ * durable run-detail types and carried five fields the live editor never wrote — two capture paths,
+ * an annotation and two screen-context strings — because run detail borrowed it for its v1
+ * projection. Refs are the only artifact addressing now and the durable page reads the projection's
+ * own sub-action, so what is left is exactly what the live editor produces: the phase texts, the
+ * planned action, the recorded outcome and the per-phase durations.
+ *
+ * The socket sends this list under its own wire key; {@link liveSubActionsOf} is the ONE place that
+ * key is read, so the wire spelling appears once in the UI and this is the shape everything else
+ * holds.
+ */
+export interface LiveSubAction {
+  index: number
+  observation: string
+  reasoning: string
+  plannedAction: unknown
+  result: 'success' | 'failure' | 'no-input' | 'in-progress'
+  error?: string
+  confidence?: number
+  verifierReasoning?: string
+  phaseDurations?: { observe?: number; plan?: number; execute?: number; verify?: number }
+}
+
+/**
+ * Read the live-editor socket's sub-action list off a step result (405-11).
+ *
+ * THE ONE PLACE THE WIRE KEY IS SPELLED. The dashboard-server's live-editor socket names this list
+ * with the v1 run-detail spelling, and that name has a live producer on the other side of the
+ * socket, so it is not this plan's to rename. Reading it in exactly one place keeps the wire
+ * vocabulary from spreading back through the UI, and makes the boundary something a reader can
+ * find rather than something they have to grep for.
+ */
+function liveSubActionsOf(
+  result: { subActionsData?: LiveSubAction[] | null } | null | undefined,
+): LiveSubAction[] | null {
+  return result?.subActionsData ?? null
+}
 
 export interface StepExecution {
   phases: LivePhase[]
@@ -41,7 +83,7 @@ export interface EditorStep {
   }>
   variableSnapshot: Record<string, { value: string; source: string }> | null
   originalStepName: string | null
-  subActionsData: SubActionData[] | null
+  liveSubActions: LiveSubAction[] | null
   executionLogs: LiveExecutionLogEntry[]
   executionGeneration: number
 }
@@ -145,7 +187,6 @@ export interface UseLiveEditorReturn {
   steps: EditorStep[]
   setupHooks: LiveHookExecution[]
   teardownHooks: LiveHookExecution[]
-  screenshot: string | null
   currentUrl: string | null
   pendingNavigation: PendingNavigationState | null
   error: string | null
@@ -153,7 +194,6 @@ export interface UseLiveEditorReturn {
   executeStepByIndex: (index: number, draft?: LiveDraftMetadata) => Promise<void>
   executeHookById: (phase: 'setup' | 'teardown', hookId: string) => Promise<void>
   cancelStep: () => void
-  requestScreenshot: () => void
   refreshPage: () => void
   goBack: () => void
   goForward: () => void
@@ -169,6 +209,8 @@ export interface UseLiveEditorReturn {
   runningStepId: string | null
   sessionId: string | null
   isTerminated: boolean
+  /** The server closed the control socket because it no longer holds this session (4404). */
+  sessionGone: boolean
   deviceLogs: Array<{ level: string; message: string; timestamp: number }>
   platform: 'web' | 'android' | 'ios'
   ariaTree: string | null
@@ -214,7 +256,7 @@ function createEditorStep(
     networkLogs: prev?.networkLogs ?? [],
     variableSnapshot: prev?.variableSnapshot ?? null,
     originalStepName: prev?.originalStepName ?? null,
-    subActionsData: prev?.subActionsData ?? null,
+    liveSubActions: prev?.liveSubActions ?? null,
     executionLogs: prev?.executionLogs ?? [],
     executionGeneration: prev?.executionGeneration ?? 0,
   }
@@ -379,6 +421,16 @@ function isLiveTestOwner(owner: LiveHookOwner): owner is LiveTestOwner {
   return owner.scope === 'test'
 }
 
+// A socket this hook has let go of must not report its close: it would schedule a reconnect to a
+// session the hook no longer holds, or clear the ref of the socket that replaced it.
+function closeQuietly(ws: WebSocket): void {
+  ws.onopen = null
+  ws.onmessage = null
+  ws.onerror = null
+  ws.onclose = null
+  ws.close()
+}
+
 export function useLiveEditor(
   sessionId: string | null,
   options: UseLiveEditorOptions = {},
@@ -392,7 +444,6 @@ export function useLiveEditor(
   const [steps, setSteps] = useState<EditorStep[]>([])
   const [setupHooks, setSetupHooks] = useState<LiveHookExecution[]>(() => syncExternalHooks([], externalSetupHooks, 'setup'))
   const [teardownHooks, setTeardownHooks] = useState<LiveHookExecution[]>(() => syncExternalHooks([], externalTeardownHooks, 'teardown'))
-  const [screenshot, setScreenshot] = useState<string | null>(null)
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigationState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -406,11 +457,11 @@ export function useLiveEditor(
   const [runningTestIndex, setRunningTestIndex] = useState<number | null>(null)
   const [isRunningAllTests, setIsRunningAllTests] = useState(false)
   const [isStoppingRunAllTests, setIsStoppingRunAllTests] = useState(false)
+  const [sessionGone, setSessionGone] = useState(false)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectCountRef = useRef(0)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const connectionStateRef = useRef<ConnectionState>('idle')
   const stepsRef = useRef<EditorStep[]>([])
   const runningStepIndexRef = useRef<number | null>(null)
@@ -440,27 +491,12 @@ export function useLiveEditor(
   testsRef.current = tests
   runningTestIndexRef.current = runningTestIndex
 
-  const clearPollInterval = useCallback(() => {
-    if (pollIntervalRef.current) {
-      clearInterval(pollIntervalRef.current)
-      pollIntervalRef.current = null
-    }
-  }, [])
-
   const sendMessage = useCallback((msg: Record<string, unknown>) => {
     const ws = wsRef.current
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg))
     }
   }, [])
-
-  const startScreenshotPolling = useCallback((interval: number) => {
-    clearPollInterval()
-    pollIntervalRef.current = setInterval(() => {
-      if (document.hidden) return
-      sendMessage({ type: 'get-screenshot' })
-    }, interval)
-  }, [clearPollInterval, sendMessage])
 
   const waitForCancel = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
@@ -484,7 +520,7 @@ export function useLiveEditor(
   const connect = useCallback((sid: string) => {
     if (wsRef.current) {
       logLiveDebug('hook', 'closing previous websocket before reconnect', { sessionId: sid })
-      wsRef.current.close()
+      closeQuietly(wsRef.current)
       wsRef.current = null
     }
 
@@ -523,9 +559,6 @@ export function useLiveEditor(
             platform: sessionPlatform,
             interactive,
           })
-          if (interactive) {
-            startScreenshotPolling(sessionPlatform === 'web' ? 1000 : 2000)
-          }
           break
         }
 
@@ -615,7 +648,6 @@ export function useLiveEditor(
             ) {
               activeHookRunRef.current = null
               setConnectionState('connected')
-              startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
               applyPendingExternalSteps()
             }
           } else if (isLiveTestOwner(hookPayload.owner)) {
@@ -668,7 +700,7 @@ export function useLiveEditor(
                   networkLogs: result?.networkLogs ?? [],
                   variableSnapshot: result?.variableSnapshot ?? null,
                   originalStepName: result?.originalStepName ?? null,
-                  subActionsData: result?.subActionsData ?? null,
+                  liveSubActions: liveSubActionsOf(result),
                   executionLogs: result?.executionLogs ?? [],
                 }
               : s,
@@ -680,7 +712,6 @@ export function useLiveEditor(
             stepIndex: idx ?? undefined,
             status: resolvedStatus,
           })
-          startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
           stepCompleteResolverRef.current?.({ status: resolvedStatus })
           stepCompleteResolverRef.current = null
           cancelResolverRef.current?.()
@@ -726,7 +757,7 @@ export function useLiveEditor(
                 networkLogs: [],
                 variableSnapshot: null,
                 originalStepName: null,
-                subActionsData: null,
+                liveSubActions: null,
                 executionLogs: [],
               },
             ),
@@ -779,7 +810,7 @@ export function useLiveEditor(
                 networkLogs: result?.networkLogs ?? [],
                 variableSnapshot: result?.variableSnapshot ?? null,
                 originalStepName: result?.originalStepName ?? null,
-                subActionsData: result?.subActionsData ?? null,
+                liveSubActions: liveSubActionsOf(result),
                 executionLogs: result?.executionLogs ?? [],
               },
             ),
@@ -854,7 +885,7 @@ export function useLiveEditor(
                       networkLogs: stepResult?.networkLogs ?? existing.networkLogs,
                       variableSnapshot: stepResult?.variableSnapshot ?? existing.variableSnapshot,
                       originalStepName: stepResult?.originalStepName ?? existing.originalStepName,
-                      subActionsData: stepResult?.subActionsData ?? existing.subActionsData,
+                      liveSubActions: liveSubActionsOf(stepResult) ?? existing.liveSubActions,
                       executionLogs: stepResult?.executionLogs ?? existing.executionLogs,
                     },
                   )
@@ -894,7 +925,6 @@ export function useLiveEditor(
           runningTestIndexRef.current = null
           setRunningTestIndex(null)
           setConnectionState('connected')
-          startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
           const resolver = testCompleteResolverRef.current
           testCompleteResolverRef.current = null
           resolver?.({ status: resolvedStatus })
@@ -914,7 +944,6 @@ export function useLiveEditor(
           runningTestIndexRef.current = null
           setRunningTestIndex(null)
           setConnectionState('connected')
-          startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
           const resolver = testCompleteResolverRef.current
           testCompleteResolverRef.current = null
           resolver?.({ status: 'failed' })
@@ -935,7 +964,6 @@ export function useLiveEditor(
           }))
           setRunningStepIndex(null)
           setConnectionState('connected')
-          startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
           stepCompleteResolverRef.current?.({ status: 'failed' })
           stepCompleteResolverRef.current = null
           cancelResolverRef.current?.()
@@ -955,7 +983,6 @@ export function useLiveEditor(
             sessionId: sid,
             stepIndex: runningStepIndexRef.current ?? undefined,
           })
-          startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
           stepCompleteResolverRef.current?.({ status: 'cancelled' })
           stepCompleteResolverRef.current = null
           cancelResolverRef.current?.()
@@ -968,13 +995,8 @@ export function useLiveEditor(
           if (activeHookRunRef.current) {
             activeHookRunRef.current = null
             setConnectionState('connected')
-            startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
           }
           setError(`Step already in progress: ${msg.currentStep}`)
-          break
-
-        case 'screenshot':
-          setScreenshot(`data:image/jpeg;base64,${msg.data}`)
           break
 
         case 'navigate-complete':
@@ -1004,7 +1026,6 @@ export function useLiveEditor(
           setConnectionState('disconnected')
           setPendingNavigation(null)
           activeHookRunRef.current = null
-          clearPollInterval()
           applyPendingExternalSteps()
           logLiveDebug('hook', 'session terminated by server', { sessionId: sid })
           break
@@ -1014,7 +1035,6 @@ export function useLiveEditor(
           if (activeHookRunRef.current) {
             activeHookRunRef.current = null
             setConnectionState('connected')
-            startScreenshotPolling(platformRef.current === 'web' ? 1000 : 2000)
             applyPendingExternalSteps()
           }
           setError(msg.message)
@@ -1026,22 +1046,30 @@ export function useLiveEditor(
       }
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       wsRef.current = null
-      clearPollInterval()
 
       if (terminatedRef.current) {
         logLiveDebug('hook', 'websocket closed after local termination', { sessionId: sid })
         return
       }
 
+      // The server detaches a dropped session for its idle window (428 D-09), so any other close
+      // is worth a reconnect to the same session; 4404 means the server no longer holds it, and
+      // 4409 that another socket took the session over, which a reconnect would only take back.
+      const gone = event.code === LIVE_EDITOR_SESSION_GONE_CLOSE_CODE
+      const superseded = event.code === LIVE_EDITOR_SUPERSEDED_CLOSE_CODE
+      const willReconnect = !gone && !superseded && allowReconnect && reconnectCountRef.current < 3
+
       logLiveDebug('hook', 'websocket closed unexpectedly', {
         sessionId: sid,
         allowReconnect,
         reconnectCount: reconnectCountRef.current,
+        code: event.code,
       })
 
-      setConnectionState('disconnected')
+      if (gone) setSessionGone(true)
+      setConnectionState(willReconnect ? 'connecting' : 'disconnected')
       setPendingNavigation(null)
       activeHookRunRef.current = null
       setSteps(prev => prev.map(s =>
@@ -1055,9 +1083,25 @@ export function useLiveEditor(
       stepCompleteResolverRef.current = null
       cancelResolverRef.current?.()
       cancelResolverRef.current = null
+      // A test in flight is settled the same way (428 CR-01), so "Run all tests" ends. The server
+      // cancels it on the drop; its outcome, if one follows, reaches the reconnected socket and
+      // only updates the row.
+      const runningTest = runningTestIndexRef.current
+      if (runningTest !== null) {
+        setTests(prev => prev.map((t, i) =>
+          i === runningTest && (t.status === 'running' || t.status === 'cancelling')
+            ? { ...t, status: 'cancelled' as const, runningStepIndex: null }
+            : t,
+        ))
+      }
+      runningTestIndexRef.current = null
+      setRunningTestIndex(null)
+      const testResolver = testCompleteResolverRef.current
+      testCompleteResolverRef.current = null
+      testResolver?.({ status: 'cancelled' })
       applyPendingExternalSteps()
 
-      if (allowReconnect && reconnectCountRef.current < 3) {
+      if (willReconnect) {
         const delay = Math.pow(2, reconnectCountRef.current) * 1000
         reconnectCountRef.current++
         logLiveDebug('hook', 'scheduling reconnect', {
@@ -1073,7 +1117,7 @@ export function useLiveEditor(
       // onclose will fire after onerror, reconnect handled there
       logLiveDebug('hook', 'websocket error event', { sessionId: sid })
     }
-  }, [allowReconnect, applyPendingExternalSteps, clearPollInterval, startScreenshotPolling])
+  }, [allowReconnect, applyPendingExternalSteps])
 
   useEffect(() => {
     if (!externalSteps) return
@@ -1110,12 +1154,12 @@ export function useLiveEditor(
   }, [externalTests])
 
   useEffect(() => {
+    setSessionGone(false)
     if (!sessionId) {
       setConnectionState('idle')
       setSteps(externalSteps ? syncExternalSteps([], externalSteps) : [])
       setSetupHooks(syncExternalHooks([], externalSetupHooks, 'setup'))
       setTeardownHooks(syncExternalHooks([], externalTeardownHooks, 'teardown'))
-      setScreenshot(null)
       setCurrentUrl(null)
       setPendingNavigation(null)
       setError(null)
@@ -1135,43 +1179,17 @@ export function useLiveEditor(
     connect(sessionId)
 
     return () => {
-      clearPollInterval()
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current)
         reconnectTimerRef.current = null
       }
       if (wsRef.current) {
         logLiveDebug('hook', 'cleaning up websocket for session effect', { sessionId })
-        wsRef.current.close()
+        closeQuietly(wsRef.current)
         wsRef.current = null
       }
     }
-  }, [clearPollInterval, connect, sessionId])
-
-  useEffect(() => {
-    if (connectionState === 'executing') {
-      startScreenshotPolling(platform === 'web' ? 500 : 1000)
-    } else if (connectionState === 'connected') {
-      startScreenshotPolling(platform === 'web' ? 1000 : 2000)
-    } else {
-      clearPollInterval()
-    }
-  }, [connectionState, platform, startScreenshotPolling, clearPollInterval])
-
-  useEffect(() => {
-    const handler = () => {
-      if (document.hidden) {
-        clearPollInterval()
-      } else {
-        const state = connectionStateRef.current
-        const plat = platformRef.current
-        if (state === 'executing') startScreenshotPolling(plat === 'web' ? 500 : 1000)
-        else if (state === 'connected') startScreenshotPolling(plat === 'web' ? 1000 : 2000)
-      }
-    }
-    document.addEventListener('visibilitychange', handler)
-    return () => document.removeEventListener('visibilitychange', handler)
-  }, [clearPollInterval, startScreenshotPolling])
+  }, [connect, sessionId])
 
   const executeStep = useCallback((instruction: string) => {
     if (isExternalModeRef.current) return
@@ -1187,7 +1205,7 @@ export function useLiveEditor(
       networkLogs: [],
       variableSnapshot: null,
       originalStepName: null,
-      subActionsData: null,
+      liveSubActions: null,
       executionLogs: [],
       executionGeneration: 0,
     }])
@@ -1238,7 +1256,7 @@ export function useLiveEditor(
             networkLogs: [],
             variableSnapshot: null,
             originalStepName: null,
-            subActionsData: null,
+            liveSubActions: null,
             executionLogs: [],
             executionGeneration: currentGen,
           }
@@ -1340,10 +1358,6 @@ export function useLiveEditor(
     sendMessage({ type: 'cancel-step' })
   }, [isRunningAll, sendMessage, sessionId])
 
-  const requestScreenshot = useCallback(() => {
-    sendMessage({ type: 'get-screenshot' })
-  }, [sendMessage])
-
   const refreshPage = useCallback(() => {
     setPendingNavigation({ action: 'refresh' })
     sendMessage({ type: 'refresh-page' })
@@ -1402,7 +1416,7 @@ export function useLiveEditor(
               networkLogs: [],
               variableSnapshot: null,
               originalStepName: null,
-              subActionsData: null,
+              liveSubActions: null,
               executionLogs: [],
               executionGeneration: currentGen,
             }
@@ -1527,14 +1541,32 @@ export function useLiveEditor(
     }
   }, [isRunningAllTests, sendMessage])
 
+  // An explicit end must not depend on the control socket: the server only detaches on a dropped
+  // socket (428 D-09), and the page's unmount runs after this hook has closed it (RESEARCH P2).
   const terminateSession = useCallback(() => {
     runAllAbortedRef.current = true
     setIsRunningAll(false)
     setIsStoppingRunAll(false)
     terminatedRef.current = true
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     logLiveDebug('hook', 'terminating session', { sessionId })
     sendMessage({ type: 'terminate-session' })
+    if (sessionId) {
+      deleteLiveEditorSession(sessionId, { keepalive: true }).catch(() => {
+        logLiveDebug('hook', 'session delete refused or already gone', { sessionId })
+      })
+    }
   }, [sendMessage, sessionId])
+
+  useEffect(() => {
+    if (!sessionId) return
+    const endOnPageHide = () => terminateSession()
+    window.addEventListener('pagehide', endOnPageHide)
+    return () => window.removeEventListener('pagehide', endOnPageHide)
+  }, [sessionId, terminateSession])
 
   const runningStepId = runningStepIndex !== null ? steps[runningStepIndex]?.id ?? null : null
 
@@ -1543,7 +1575,6 @@ export function useLiveEditor(
     steps,
     setupHooks,
     teardownHooks,
-    screenshot,
     currentUrl,
     pendingNavigation,
     error,
@@ -1551,7 +1582,6 @@ export function useLiveEditor(
     executeStepByIndex,
     executeHookById,
     cancelStep,
-    requestScreenshot,
     refreshPage,
     goBack,
     goForward,
@@ -1567,6 +1597,7 @@ export function useLiveEditor(
     runningStepId,
     sessionId,
     isTerminated: terminatedRef.current,
+    sessionGone,
     deviceLogs,
     platform,
     ariaTree,

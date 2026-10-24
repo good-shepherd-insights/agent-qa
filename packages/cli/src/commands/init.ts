@@ -1,7 +1,6 @@
-import { Command } from 'commander'
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { stringify } from 'yaml'
+import { Command, Option } from 'commander'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
 import pc from 'picocolors'
 import select from '@inquirer/select'
 import input from '@inquirer/input'
@@ -10,290 +9,282 @@ import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_CACHE_DIR,
   DEFAULT_AGENT_QA_RUNTIME_DIR,
+  getAgentQaVersion,
 } from '@vostride/agent-qa-core'
-import { DEFAULT_ANTHROPIC_MODEL, DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL } from '../model-defaults.js'
+import { getProvider, listProviders } from '@vostride/agent-qa-model'
+// D-04: the scaffold's CONTENT, shared with `config.project.scaffold`. This file keeps the
+// filesystem machinery and the interactive conversation; the substance being written comes from
+// one producer, so the two scaffolds cannot drift.
+import {
+  SUBSCRIPTION_AUTH_PACKAGE,
+  SUPPORTED_INIT_PLATFORMS,
+  buildHooksFile,
+  buildScaffoldConfig,
+  hasWeb,
+  normalizePlatformSelection,
+  parseInitPlatform,
+  renderScaffoldConfigYaml,
+  type InitLLMConfig,
+  type InitPlatformInput,
+  type MobileRuntime,
+  type PlatformCapability,
+  type Platform,
+} from './scaffold-content.js'
+// TYPE-ONLY at the top, VALUE lazily below — the same rule the `--agent` branch follows and for the
+// same measured reason: this module's graph is loaded by every `init` run and by every test of one,
+// and the analytics binding reaches this package's barrel (for the shipped version) which reaches
+// far more of the host than a scaffold writer needs. Measured 2026-08-17: a top-level import breaks
+// `init.test.ts`, whose partial `node:fs` mock does not carry every export that graph consumes.
+import type { composeAnalyticsHost as ComposeAnalyticsHost } from '../composition/analytics-host.js'
+import {
+  KNOWLEDGE_GITIGNORE_PROBES,
+  TARGET_GITIGNORE_PROBES,
+  classifyInitPath,
+  preflightInitPlan,
+  preflightManagedBlock,
+  upsertManagedBlock,
+  upsertManagedGitignoreBlock,
+  verifyEffectiveGitignore,
+  writeConfigMarkerLast,
+  writeScaffoldFileAtomic,
+  type InitFileResult,
+  type InitFilesystemHooks,
+  type InitPathPlan,
+  type ManagedBlockUpsertPlan,
+} from './init-filesystem.js'
+import {
+  WRITE_AGENT_INSTRUCTIONS_FLAG,
+  buildAgentInstructionPointer,
+  buildKnowledgeAgentGuide,
+} from './knowledge-guide.js'
+import {
+  AGENT_QA_INIT_MARKDOWN_BLOCK,
+  renderManagedBlock,
+  type ManagedBlockContent,
+} from './managed-block.js'
 
-type Platform = 'web' | 'android' | 'ios' | 'web+android' | 'web+ios'
-type PlatformCapability = 'web' | 'mobile'
-type MobileRuntime = 'android' | 'ios'
-type InitPlatformSelection = {
-  capabilities: PlatformCapability[]
-  mobileRuntimes: MobileRuntime[]
-}
-type InitPlatformInput = Platform | InitPlatformSelection
-type LLMSetupChoice = 'none' | 'codex' | 'claude-code'
-type InitLLMConfig = {
-  name: string
-  provider: string
-  model: string
-  baseURL?: string
-}
+// The platform vocabulary and the scaffold's content producers live in `scaffold-content.ts` now
+// (D-04). Re-exported here because this module is their public door.
+export { SUPPORTED_INIT_PLATFORMS, parseInitPlatform } from './scaffold-content.js'
+
+// HOST DEFAULTS, READ HERE AND PASSED DOWN (FUNC-02). `scaffold-content.ts` may not name
+// `@vostride/agent-qa-core` — the surface firewall's ledger never grows — so the two directory
+// defaults are resolved on this side of the boundary and handed over as facts.
 const INIT_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const INIT_AUTH_STATES_DIR = DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth-states'
-const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
-const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
+
 const PACKAGE_JSON_FILE = 'package.json'
-const DEFAULT_SCREENSHOT_SIZE = '50kb'
-const DEFAULT_EFFECTIVE_RESOLUTION = 500
-const OPENAI_SUBSCRIPTION_CONFIG: InitLLMConfig = {
-  name: 'codex',
-  provider: 'openai-subscription',
-  model: DEFAULT_OPENAI_MODEL,
-}
-const ANTHROPIC_SUBSCRIPTION_CONFIG: InitLLMConfig = {
-  name: 'claude-subscription',
-  provider: 'anthropic-subscription',
-  model: DEFAULT_ANTHROPIC_MODEL,
+// Kept here rather than moved: it feeds `buildGitignoreEntries`, the deliberate literal
+// copy this file keeps pinned against `init-filesystem.ts`'s own — see scaffold-content.ts.
+const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
+
+function isSubscriptionProvider(provider: string): boolean {
+  return getProvider(provider)?.subscription === true
 }
 
-export const PROVIDER_CHOICES = [
-  { value: 'openai-compatible', name: 'OpenAI-compatible' },
-  { value: 'anthropic-compatible', name: 'Anthropic-compatible' },
-  { value: 'openai-subscription', name: 'OpenAI subscription' },
-  { value: 'anthropic-subscription', name: 'Anthropic subscription' },
-  { value: 'gemini', name: 'Gemini' },
-]
-export const COMPATIBLE_PROVIDER_CHOICES = PROVIDER_CHOICES.filter(
-  choice => choice.value === 'openai-compatible' || choice.value === 'anthropic-compatible' || choice.value === 'gemini',
-)
-export const LLM_SETUP_CHOICES: Array<{ value: LLMSetupChoice; name: string; description: string }> = [
-  {
-    value: 'none',
-    name: 'No subscription auth',
-    description: 'Configure OpenAI-compatible, Anthropic-compatible, or Gemini credentials later.',
-  },
-  {
-    value: 'codex',
-    name: 'Codex',
-    description: 'Use your existing OpenAI Codex subscription through the subscription-auth plugin.',
-  },
-  {
-    value: 'claude-code',
-    name: 'Claude Code',
-    description: 'Use your existing Anthropic Claude subscription through the subscription-auth plugin.',
-  },
-]
-
-function normalizePlatformSelection(platform: InitPlatformInput): InitPlatformSelection {
-  if (typeof platform !== 'string') {
-    return {
-      capabilities: [...new Set(platform.capabilities)],
-      mobileRuntimes: [...new Set(platform.mobileRuntimes)],
-    }
+/**
+ * An `InitLLMConfig` as the registry writes it — the ONE question the provider registry answers.
+ *
+ * IT STAYS ON THIS SIDE OF THE BOUNDARY (FUNC-02). `needsBaseURL` and `subscription` are facts
+ * about what this machine has installed, and `scaffold-content.ts` may not ask. It receives the
+ * answers.
+ */
+function toLLMEntry(config: InitLLMConfig): Record<string, unknown> {
+  const llmEntry: Record<string, unknown> = {
+    name: config.name,
+    provider: config.provider,
+    model: config.model,
   }
 
-  switch (platform) {
-    case 'web':
-      return { capabilities: ['web'], mobileRuntimes: [] }
-    case 'android':
-      return { capabilities: ['mobile'], mobileRuntimes: ['android'] }
-    case 'ios':
-      return { capabilities: ['mobile'], mobileRuntimes: ['ios'] }
-    case 'web+android':
-      return { capabilities: ['web', 'mobile'], mobileRuntimes: ['android'] }
-    case 'web+ios':
-      return { capabilities: ['web', 'mobile'], mobileRuntimes: ['ios'] }
-  }
-}
-
-function hasWeb(platform: InitPlatformInput): boolean {
-  return normalizePlatformSelection(platform).capabilities.includes('web')
-}
-
-function defaultExampleTargetName(platform: InitPlatformInput): string {
-  const selection = normalizePlatformSelection(platform)
-  if (hasWeb(platform)) return 'example-web'
-  if (selection.mobileRuntimes.includes('android')) return 'example-android'
-  return 'example-ios'
-}
-
-function buildTargets(platform: InitPlatformInput): Record<string, unknown> {
-  const selection = normalizePlatformSelection(platform)
-  const targets: Record<string, unknown> = {}
-
-  if (selection.capabilities.includes('web')) {
-    targets['example-web'] = { platform: 'web', url: 'https://example.com' }
-    targets['automation-exercise'] = { platform: 'web', url: 'https://automationexercise.com' }
-    targets['wai-bad'] = { platform: 'web', url: 'https://www.w3.org/WAI/demos/bad/before/home.html' }
-  }
-  if (selection.mobileRuntimes.includes('android')) {
-    targets['example-android'] = { platform: 'android' }
-  }
-  if (selection.mobileRuntimes.includes('ios')) {
-    targets['example-ios'] = { platform: 'ios' }
+  if (getProvider(config.provider)?.needsBaseURL) {
+    llmEntry.baseURL = config.baseURL
   }
 
-  return targets
+  return llmEntry
 }
 
-function buildExampleTest(platform: InitPlatformInput, variant: 'pass' | 'fail'): string {
-  const expectedUrl = variant === 'pass'
-    ? 'https://www.iana.org/help/example-domains'
-    : 'https://www.iana.org/example-domains'
-  const testId = variant === 'pass'
-    ? 't_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
-    : 't_bronze-cedar-dune-ember-fjord-glade-harbor-ivory-jade-kelp'
-  const name = variant === 'pass' ? 'Example passing test' : 'Example failing test'
-  const browserOverride = variant === 'fail' && hasWeb(platform)
-    ? `use:
-  browser:
-    headless: false
-`
-    : ''
-
-  return `test-id: ${testId}
-name: ${name}
-target: ${defaultExampleTargetName(platform)}
-${browserOverride}steps:
-  - Verify the page says "Example Domain"
-  - Click on "Learn More"
-  - Verify the page url is "${expectedUrl}"
-`
+function buildSingleLLMConfig(provider: string, model: string, baseURL?: string): InitLLMConfig {
+  return { name: 'default', provider, model, baseURL }
 }
 
-const AUTOMATION_EXERCISE_TESTS = [
-  {
-    fileName: 'home-smoke.yaml',
-    id: 't_class-volume-nth-intent-break-gun-gone-ging-twig-vert',
-    name: 'Automation Exercise home smoke',
-    steps: [
-      'Verify the page says "Automation Exercise"',
-      'Verify the page has "Signup / Login"',
-    ],
-  },
-  {
-    fileName: 'products-smoke.yaml',
-    id: 't_umble-ruby-direct-notify-rama-phony-dust-owl-lop-etch',
-    name: 'Automation Exercise products smoke',
-    steps: [
-      'Click on "Products"',
-      'Verify the page says "All Products"',
-    ],
-  },
-  {
-    fileName: 'cart-smoke.yaml',
-    id: 't_kend-lack-infect-nou-bah-kil-point-reak-ura-loo',
-    name: 'Automation Exercise cart smoke',
-    steps: [
-      'Click on "Cart"',
-      'Verify the page says "Shopping Cart"',
-    ],
-  },
-]
-const HN_TOP_STORY_HOOK_ID = 'h_aster-bloom-cloud-drift-ember-field-glade-hollow-ivory-jasper'
-const HN_TOP_STORY_TEST_ID = 't_quad-adar-micro-magic-cross-cue-open-agog-rang-cours'
-const BAD_A11Y_TEST_ID = 't_ponent-toa-base-fred-click-sigma-lad-agen-report-sticky'
+/**
+ * The interactive scaffold's config — the same shape `config.project.scaffold` renders (D-04).
+ *
+ * THE SIGNATURE IS UNCHANGED, deliberately: `init-config-schema.test.ts` and `init.test.ts` drive
+ * it, and this function's answer is byte-identical to what it was before the shared module existed.
+ * What moved is the SHAPE; what stayed is the provider resolution above and the host defaults, both
+ * of which are questions about this machine rather than about a scaffold.
+ */
+export function buildDefaultConfig(
+  platform: InitPlatformInput,
+  providerOrLLMs: string | InitLLMConfig[],
+  model?: string,
+  baseURL?: string,
+): Record<string, unknown> {
+  const llmConfigs = Array.isArray(providerOrLLMs)
+    ? providerOrLLMs
+    : [buildSingleLLMConfig(providerOrLLMs, model ?? 'model-name', baseURL)]
 
-function buildAutomationExerciseTest(test: typeof AUTOMATION_EXERCISE_TESTS[number]): string {
-  return `test-id: ${test.id}
-name: ${test.name}
-target: automation-exercise
+  return buildScaffoldConfig(platform, {
+    llmEntries: llmConfigs.map(toLLMEntry),
+    usesSubscriptionAuth: llmConfigs.some(config => isSubscriptionProvider(config.provider)),
+    cacheDir: INIT_CACHE_DIR,
+    authStatesDir: INIT_AUTH_STATES_DIR,
+  })
+}
+export const INIT_LLM_CHOICES = [
+  'claude-code',
+  'codex',
+  'openai-compatible',
+  'anthropic-compatible',
+  'gemini',
+] as const
+export type InitLLMChoice = (typeof INIT_LLM_CHOICES)[number]
+
+const INIT_LLM_ENTRIES: Record<InitLLMChoice, { name: string; provider: string }> = {
+  'claude-code': { name: 'claude-code', provider: 'anthropic-subscription' },
+  codex: { name: 'codex', provider: 'openai-subscription' },
+  'openai-compatible': { name: 'default', provider: 'openai-compatible' },
+  'anthropic-compatible': { name: 'default', provider: 'anthropic-compatible' },
+  gemini: { name: 'default', provider: 'gemini' },
+}
+
+const INIT_LLM_NAMES: Record<InitLLMChoice, string> = {
+  'claude-code': 'Claude Code (Anthropic subscription)',
+  codex: 'Codex (OpenAI subscription)',
+  'openai-compatible': 'OpenAI-compatible API',
+  'anthropic-compatible': 'Anthropic-compatible API',
+  gemini: 'Gemini API',
+}
+
+// 2026-10-19 (445-04, D-40): the defaults @ai-sdk/openai and @ai-sdk/anthropic use with no baseURL.
+export const INIT_BASE_URL_DEFAULTS: Readonly<Record<string, string>> = {
+  'openai-compatible': 'https://api.openai.com/v1',
+  'anthropic-compatible': 'https://api.anthropic.com/v1',
+}
+
+const BASE_URL_FORM_REFUSAL = '--base-url must be an absolute http or https URL'
+
+function baseUrlFormRefusal(value: string): string | undefined {
+  const url = URL.canParse(value) ? new URL(value) : undefined
+  return url?.protocol === 'http:' || url?.protocol === 'https:' ? undefined : BASE_URL_FORM_REFUSAL
+}
+
+function baseUrlRefusal(provider: string, value: string): string | undefined {
+  if (getProvider(provider)?.needsBaseURL !== true) {
+    return '--base-url applies only to --llm openai-compatible or anthropic-compatible'
+  }
+  return baseUrlFormRefusal(value)
+}
+
+export function getProviderChoices(): Array<{ value: string; name: string }> {
+  return listProviders().map(provider => ({ value: provider.id, name: provider.label }))
+}
+
+const KOMAZON_CHECKOUT_TEST_ID = 't_packer-staff-asha-lak-spill-usher-pele-allen-bid-done'
+const KOMAZON_CART_TOTAL_BUG_TEST_ID = 't_reduce-eva-elding-reset-lai-iban-rum-hin-parent-chang'
+const EXAMPLES_SUITE_ID = 's_dice-ego-veer-warp-ionic-trying-tur-cal-stride-battle'
+const KOMAZON_CHECKOUT_PATH = 'tests/examples/komazon-checkout.yaml'
+const KOMAZON_CART_TOTAL_BUG_PATH = 'tests/examples/komazon-cart-total-bug.yaml'
+const EXAMPLES_SUITE_PATH = 'suites/examples.suite.yaml'
+const GETTING_STARTED_URL = 'https://vostride.com/docs/agent-qa/quickstart'
+const KOMAZON_SHIPPING_HOOK_TEST_ID = 't_ayin-dual-chunk-lou-tablet-ticket-brace-lak-kite-abu'
+const SHIPPING_ADDRESS_HOOK_ID = 'h_phi-arts-vis-band-aira-streng-twig-roi-mino-fold'
+const KOMAZON_SHIPPING_HOOK_PATH = 'tests/examples/komazon-shipping-hook.yaml'
+const SHIPPING_ADDRESS_SCRIPT_PATH = 'scripts/examples/make-shipping-address.mjs'
+
+// 2026-10-20 (445-14, D-32): every run starts a fresh session, so the journey asks for no reset.
+function buildKomazonCheckoutTest(): string {
+  return `test-id: ${KOMAZON_CHECKOUT_TEST_ID}
+name: Komazon checkout journey
+target: komazon
 steps:
-${test.steps.map(step => `  - ${step}`).join('\n')}
+  - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
+  - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
+  - Enter street address 24 Cedar Lane, city Portland and postal code 97205. Continue to delivery.
+  - Select Express delivery and continue with Review order. Verify the review shows one Everyday Ceramic Mug, the entered address, Express delivery and a total of $36.00.
+  - Place the order using Place order · $36.00. Verify Order confirmed and that the bag is empty.
+  - Open View orders. Verify Order FW-1001 contains one Everyday Ceramic Mug and the $36.00 total.
 `
 }
 
-function buildAutomationExerciseSuite(): string {
-  return `suite-id: s_hill-gant-verb-nast-hunter-rita-home-store-amy-crest
-name: Automation Exercise demo suite
-target: automation-exercise
+// 2026-10-19 (445-02, D-32): a suite replaces a member's target, so the bug URL is a step.
+function buildKomazonCartTotalBugTest(): string {
+  return `test-id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
+name: Komazon cart total (fails on the deliberate cart-total bug)
+target: komazon-cart-total-bug
+steps:
+  - Navigate to https://playground.vostride.dev/shop/?bug=cart-total
+  - Add Everyday Ceramic Mug to the bag, open the shopping bag, and increase that product's quantity to two.
+  - Verify the bag contains exactly two Everyday Ceramic Mugs and the order total is $53.00.
+`
+}
+
+function buildExamplesSuite(): string {
+  return `suite-id: ${EXAMPLES_SUITE_ID}
+name: Komazon examples
+target: komazon
 tests:
-${AUTOMATION_EXERCISE_TESTS.map(test => `  - test: tests/automation-exercise/${test.fileName}\n    id: ${test.id}`).join('\n')}
+  - test: ${KOMAZON_CHECKOUT_PATH}
+    id: ${KOMAZON_CHECKOUT_TEST_ID}
+  - test: ${KOMAZON_CART_TOTAL_BUG_PATH}
+    id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
 `
 }
 
-function buildHooksFile(platform: InitPlatformInput): string {
-  if (!hasWeb(platform)) return 'hooks: []\n'
-
+// 2026-10-19 (445-03, D-40): web init's own hooks file; the proposal keeps hooks: [].
+function buildExampleHooksFile(): string {
   return `hooks:
-  - id: ${HN_TOP_STORY_HOOK_ID}
-    name: Fetch first Hacker News story
+  - id: ${SHIPPING_ADDRESS_HOOK_ID}
+    name: Make a shipping address
     runtime: node
-    file: scripts/fetch-hn-top-story.mjs
+    file: ${SHIPPING_ADDRESS_SCRIPT_PATH}
     timeout: 30s
-    network: true
+    network: false
 `
 }
 
-function buildHackerNewsHookScript(): string {
-  return `import { writeFile } from 'node:fs/promises'
+function buildShippingAddressScript(): string {
+  return `// Runs before the test with no network and writes SHIPPING_ADDRESS for {{env:SHIPPING_ADDRESS}}.
+import { writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
 
-const topStoriesUrl = 'https://hacker-news.firebaseio.com/v0/topstories.json'
-
-async function getJson(url) {
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(\`HN API request failed: \${response.status} \${response.statusText}\`)
-  }
-  return response.json()
-}
-
-function escapeEnvValue(value) {
-  return value
-    .replace(/\\r?\\n/g, ' ')
-    .replace(/\\\\/g, '\\\\\\\\')
-    .replace(/"/g, '\\\\"')
-}
-
-const storyIds = await getJson(topStoriesUrl)
-const firstStoryId = Array.isArray(storyIds) ? storyIds[0] : undefined
-if (!Number.isInteger(firstStoryId)) {
-  throw new Error('HN API returned no first story id')
-}
-
-const story = await getJson(\`https://hacker-news.firebaseio.com/v0/item/\${firstStoryId}.json\`)
-const title = typeof story?.title === 'string' ? story.title.trim() : ''
-if (!title) {
-  throw new Error(\`HN item \${firstStoryId} returned no title\`)
-}
-
-await writeFile('/tmp/agent-qa.env', [
-  \`HN_FIRST_STORY_TITLE="\${escapeEnvValue(title)}"\`,
-  \`HN_FIRST_STORY_ID=\${firstStoryId}\`,
-  '',
-].join('\\n'), 'utf-8')
+const address = \`\${100 + (randomBytes(1)[0] % 900)} Cedar Lane\`
+await writeFile('/tmp/agent-qa.env', \`SHIPPING_ADDRESS="\${address}"\\n\`, 'utf-8')
 `
 }
 
-function buildHackerNewsTopStoryTest(): string {
-  return `test-id: ${HN_TOP_STORY_TEST_ID}
-name: Hacker News top story hook demo
-target: example-web
+// 2026-10-20 (445-14, D-32): every run starts a fresh session, so the sample asks for no reset.
+function buildKomazonShippingHookTest(): string {
+  return `test-id: ${KOMAZON_SHIPPING_HOOK_TEST_ID}
+name: Komazon checkout with a shipping address from a hook
+target: komazon
 setup:
-  - ${HN_TOP_STORY_HOOK_ID}
+  - ${SHIPPING_ADDRESS_HOOK_ID}
 use:
   cache: false
 steps:
-  - Navigate to "https://news.ycombinator.com/"
-  - Verify the page shows "{{env:HN_FIRST_STORY_TITLE}}"
+  - Add Everyday Ceramic Mug to the bag, then open the shopping bag and verify it holds one Everyday Ceramic Mug.
+  - Continue to checkout. Sign in with email alex@example.com and password {{secret:KOMAZON_PASSWORD}}, then verify the shipping step is shown.
+  - Type {{env:SHIPPING_ADDRESS}} into the Street address field, enter city Portland and postal code 97205, then continue to delivery.
+  - Select Express delivery and continue with Review order. Verify the review shows {{env:SHIPPING_ADDRESS}} as the street address.
 `
 }
 
-function buildBadA11yTest(): string {
-  return `test-id: ${BAD_A11Y_TEST_ID}
-name: W3C BAD accessibility smoke
-target: wai-bad
-steps:
-  - Verify the page says "Welcome to CityLights"
-  - Verify the page says "Inaccessible Home Page"
-`
-}
-
-function isSubscriptionProvider(provider: string): boolean {
-  return provider === 'openai-subscription' || provider === 'anthropic-subscription'
-}
-
-function readAgentQaPackageVersion(): string | null {
-  try {
-    const manifest = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as Record<string, unknown>
-    return typeof manifest.version === 'string' && manifest.version.trim() ? manifest.version.trim() : null
-  } catch {
-    return null
+export function installedAgentQaVersion(): string {
+  const version = getAgentQaVersion().trim()
+  const exactSemver =
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u
+  if (!exactSemver.test(version) || version === '0.0.0') {
+    throw new Error(
+      'Unable to resolve the installed agent-qa version; refusing to write a dependency range.',
+    )
   }
+  return version
 }
 
 function subscriptionAuthDependencyRange(): string {
-  return readAgentQaPackageVersion() ?? '*'
+  return installedAgentQaVersion()
 }
 
 function objectRecord(value: unknown): Record<string, unknown> | null {
@@ -309,32 +300,51 @@ function configUsesSubscriptionAuth(config: Record<string, unknown>): boolean {
   return authPlugins.some(plugin => objectRecord(plugin)?.package === SUBSCRIPTION_AUTH_PACKAGE)
 }
 
-type SubscriptionAuthDependencyResult = {
-  path: string
-  created: boolean
+type SubscriptionAuthDependencyPlan = {
+  plan: InitPathPlan
   range: string
 }
 
-export function upsertSubscriptionAuthPackageDependency(dir: string): SubscriptionAuthDependencyResult {
+type SubscriptionAuthDependencyResult = InitFileResult & {
+  range: string
+}
+
+function buildSubscriptionAuthPackageDependencyPlan(
+  dir: string,
+): SubscriptionAuthDependencyPlan {
   const packageJsonPath = join(dir, PACKAGE_JSON_FILE)
-  const created = !existsSync(packageJsonPath)
-  const pkg = created
+  const classification = classifyInitPath(packageJsonPath, dir)
+  const existing = classification === 'regular'
+    ? readFileSync(packageJsonPath, 'utf-8')
+    : null
+  const pkg = existing === null
     ? { private: true } as Record<string, unknown>
-    : JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as Record<string, unknown>
+    : JSON.parse(existing) as Record<string, unknown>
 
   if (!objectRecord(pkg)) {
     throw new Error(`${PACKAGE_JSON_FILE} must contain a JSON object to add ${SUBSCRIPTION_AUTH_PACKAGE}`)
   }
 
-  const dependencyBlocks = ['devDependencies', 'dependencies', 'optionalDependencies', 'peerDependencies'] as const
+  const dependencyBlocks = [
+    'devDependencies',
+    'dependencies',
+    'optionalDependencies',
+    'peerDependencies',
+  ] as const
   const existingBlock = dependencyBlocks.find(blockName => {
     const block = objectRecord(pkg[blockName])
     return block && Object.prototype.hasOwnProperty.call(block, SUBSCRIPTION_AUTH_PACKAGE)
   })
   const targetBlock = existingBlock ?? 'devDependencies'
+  const range = subscriptionAuthDependencyRange()
+  let changed = existing === null
+  const existingTargetDependencies = objectRecord(pkg[targetBlock])
+  if (existingTargetDependencies?.[SUBSCRIPTION_AUTH_PACKAGE] !== range) {
+    changed = true
+  }
   const targetDependencies = {
-    ...(objectRecord(pkg[targetBlock]) ?? {}),
-    [SUBSCRIPTION_AUTH_PACKAGE]: subscriptionAuthDependencyRange(),
+    ...(existingTargetDependencies ?? {}),
+    [SUBSCRIPTION_AUTH_PACKAGE]: range,
   }
 
   pkg[targetBlock] = targetDependencies
@@ -342,194 +352,55 @@ export function upsertSubscriptionAuthPackageDependency(dir: string): Subscripti
     if (blockName === targetBlock) continue
     const block = objectRecord(pkg[blockName])
     if (!block || !Object.prototype.hasOwnProperty.call(block, SUBSCRIPTION_AUTH_PACKAGE)) continue
+    changed = true
     const nextBlock = { ...block }
     delete nextBlock[SUBSCRIPTION_AUTH_PACKAGE]
     if (Object.keys(nextBlock).length > 0) pkg[blockName] = nextBlock
     else delete pkg[blockName]
   }
 
-  writeFileSync(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`)
+  const content = existing !== null && !changed
+    ? existing
+    : `${JSON.stringify(pkg, null, 2)}\n`
   return {
-    path: packageJsonPath,
-    created,
-    range: String(targetDependencies[SUBSCRIPTION_AUTH_PACKAGE]),
-  }
-}
-
-function toLLMEntry(config: InitLLMConfig): Record<string, unknown> {
-  const llmEntry: Record<string, unknown> = {
-    name: config.name,
-    provider: config.provider,
-    model: config.model,
-    screenshotSize: DEFAULT_SCREENSHOT_SIZE,
-    effectiveResolution: DEFAULT_EFFECTIVE_RESOLUTION,
-  }
-
-  if (config.provider === 'openai-compatible' || config.provider === 'anthropic-compatible') {
-    llmEntry.baseURL = config.baseURL
-  }
-
-  return llmEntry
-}
-
-function buildSingleLLMConfig(provider: string, model: string, baseURL?: string): InitLLMConfig {
-  return { name: 'default', provider, model, baseURL }
-}
-
-function defaultModelForProvider(provider: string): string {
-  switch (provider) {
-    case 'openai-compatible':
-      return DEFAULT_OPENAI_MODEL
-    case 'anthropic-compatible':
-      return DEFAULT_ANTHROPIC_MODEL
-    case 'gemini':
-      return DEFAULT_GEMINI_MODEL
-    default:
-      return 'model-name'
-  }
-}
-
-function subscriptionConfigsForChoice(choice: LLMSetupChoice): InitLLMConfig[] {
-  if (choice === 'codex') return [OPENAI_SUBSCRIPTION_CONFIG]
-  if (choice === 'claude-code') return [ANTHROPIC_SUBSCRIPTION_CONFIG]
-  return []
-}
-
-function subscriptionConfigsForChoices(choices: LLMSetupChoice[]): InitLLMConfig[] {
-  return choices.flatMap(subscriptionConfigsForChoice)
-}
-
-export function buildDefaultConfig(
-  platform: InitPlatformInput,
-  providerOrLLMs: string | InitLLMConfig[],
-  model?: string,
-  baseURL?: string,
-): Record<string, unknown> {
-  const llmConfigs = Array.isArray(providerOrLLMs)
-    ? providerOrLLMs
-    : [buildSingleLLMConfig(providerOrLLMs, model ?? 'model-name', baseURL)]
-  const llmEntries = llmConfigs.map(toLLMEntry)
-  const usesSubscriptionAuth = llmConfigs.some(config => isSubscriptionProvider(config.provider))
-
-  const config: Record<string, unknown> = {
-    workspace: {
-      testMatch: ['tests/**/*.yaml'],
-      suiteMatch: ['suites/**/*.suite.yaml'],
-      hooksFile: 'hooks.yaml',
-      agentRules: './agent-rules.md',
-      envFile: '.env',
-      secretsFile: '.env.secrets.local',
+    plan: {
+      path: packageJsonPath,
+      root: dir,
+      content,
+      force: existing !== null && changed,
     },
-    services: {
-      dashboard: { port: 3100, artifactsDir: '.agent-qa/artifacts' },
-      mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
-      cache: { dir: INIT_CACHE_DIR, ttl: '7d' },
-      authState: { dir: INIT_AUTH_STATES_DIR },
-      ...(hasWeb(platform)
-        ? {
-            accessibility: {
-              enabled: true,
-              standard: 'wcag2aa',
-              runAfter: 'every-step',
-              failOnViolation: false,
-            },
-          }
-        : {}),
-      recording: { enabled: true },
-      memory: { enabled: true, provider: 'local', dir: 'agent-qa-memory' },
-      logging: { level: 'warn' },
-    },
-    registry: {
-      llms: llmEntries,
-      targets: buildTargets(platform),
-    },
-    ...(usesSubscriptionAuth
-      ? {
-          plugins: {
-            auth: [{ package: SUBSCRIPTION_AUTH_PACKAGE }],
-          },
-        }
-      : {}),
-    use: {
-      ...(hasWeb(platform) ? { browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } } } : {}),
-      mobile: { appState: 'preserve' },
-      timeout: { step: '5m', test: '30m', navigation: '1m' },
-      healing: { maxAttempts: 3 },
-      planner: { maxSubActions: 10, previousStepCount: 5 },
-      logCapture: { console: true, network: true },
-      parallel: false,
-      llm: llmConfigs[0]?.name ?? 'default',
-    },
+    range,
   }
-
-  return config
 }
 
-function addYamlComments(yamlStr: string): string {
-  let result = '# agent-qa Configuration\n\n'
-
-  const lines = yamlStr.split('\n')
-  for (const line of lines) {
-    if (line.startsWith('workspace:')) {
-      result += '# File discovery and project settings\n'
-    } else if (line.startsWith('services:')) {
-      result += '\n# Infrastructure services (dashboard, MCP, cache, auth state, logging)\n'
-    } else if (line.startsWith('registry:')) {
-      result += '\n# Named resource definitions (LLM configs, app targets)\n'
-    } else if (line.startsWith('plugins:')) {
-      result += '\n# Optional subscription auth plugin declarations\n'
-    } else if (line.startsWith('use:')) {
-      result += '\n# Execution settings (cascades: global -> suite -> test -> CLI flags)\n'
-    }
-    result += line + '\n'
-
-    if (line === '  secretsFile: .env.secrets.local') {
-      result += '# Optional: ignore archived or generated tests.\n'
-      result += '  # testPathIgnore:\n'
-      result += '  #   - tests/archive/**/*.yaml\n'
-    } else if (line === '    artifactsDir: .agent-qa/artifacts') {
-      result += '    # Optional: persist dashboard state to a custom SQLite path.\n'
-      result += '    # dbPath: .agent-qa/dashboard.sqlite\n'
-    } else if (line === '    ttl: 7d') {
-      if (yamlStr.includes('\n  accessibility:\n')) {
-        result += '  # Accessibility checks power the W3C BAD demo test.\n'
-      } else {
-        result += '  # Optional accessibility service example:\n'
-        result += '  # accessibility:\n'
-        result += '  #   enabled: false\n'
-        result += '  #   standard: wcag2aa\n'
-      }
-    } else if (line === 'registry:') {
-      result += '  # Optional: local and cloud device/provider profiles.\n'
-      result += '  # devices:\n'
-      result += '  #   android-emu:\n'
-      result += '  #     platform: android\n'
-      result += '  #     transport: local\n'
-      result += '  # providers:\n'
-      result += '  #   browserstack:\n'
-      result += '  #     username: ${BROWSERSTACK_USERNAME}\n'
-      result += '  #     accessKey: ${BROWSERSTACK_ACCESS_KEY}\n'
-    } else if (line === '  targets:') {
-      result += '    # Optional: add more web or mobile targets here.\n'
-      result += '    # my-mobile:\n'
-      result += '    #   platform: android\n'
-      result += '    #   appPackage: com.example.app\n'
-      result += '    #   appActivity: .MainActivity\n'
-      result += '    #   app:\n'
-      result += '    #     path: apps/example.apk\n'
-    } else if (line === '  llm: codex' || line === '  llm: claude-subscription' || line === '  llm: default') {
-      result += '  # Optional: bind mobile runs to a configured device profile.\n'
-      result += '  # device: android-emu\n'
-    }
+export function upsertSubscriptionAuthPackageDependency(
+  dir: string,
+  hooks: InitFilesystemHooks = {},
+): SubscriptionAuthDependencyResult {
+  const dependency = buildSubscriptionAuthPackageDependencyPlan(dir)
+  return {
+    ...writeScaffoldFileAtomic(dependency.plan, hooks),
+    range: dependency.range,
   }
+}
 
-  return result
+export function defaultModelForProvider(provider: string): string {
+  return getProvider(provider)?.defaultModel ?? 'model-name'
 }
 
 const DEFAULT_HOOKS_FILE = 'hooks.yaml'
-const DEFAULT_AGENT_RULES_FILE = 'agent-rules.md'
 const DEFAULT_ENV_FILE = '.env'
 const DEFAULT_SECRETS_FILE = '.env.secrets.local'
+const SECRETS_FILE_MODE = 0o600
+export const EXAMPLE_SECRET_LINE = 'KOMAZON_PASSWORD=komazon123'
+
+// 2026-10-19 (445-03, D-09): applied only when init creates the file (preserveOnForce).
+function buildSecretsFile(platform: InitPlatformInput): string {
+  if (!hasWeb(platform)) return ''
+  return "# The Komazon playground's public demo password (printed on its sign-in page); "
+    + 'the examples type it as {{secret:KOMAZON_PASSWORD}}.\n'
+    + `${EXAMPLE_SECRET_LINE}\n`
+}
 const DEFAULT_LOCAL_CONFIG_FILE = 'agent-qa.local.yaml'
 
 function directoryGitignoreEntry(value: string): string {
@@ -540,10 +411,23 @@ function buildGitignoreEntries(): string[] {
   return [
     directoryGitignoreEntry(INIT_RUNTIME_DIR),
     directoryGitignoreEntry(INIT_AUTH_STATES_DIR),
+    // 394 (T-394-03): the draft shelf, which lives INSIDE `tests/` because that is the only
+    // location a run will admit — see the two-sided admission note in
+    // `composition/local-agent-host.ts`. Spelled literally here for the same reason the durable
+    // temporary rule below is: init-filesystem.js is mocked wholesale by the init suite, and
+    // `TARGET_GITIGNORE_ENTRIES` is the other copy the agreement test pins this against.
+    'tests/.agent-qa-drafts/',
     'node_modules/',
     DEFAULT_LOCAL_CONFIG_FILE,
     DEFAULT_ENV_FILE,
     DEFAULT_SECRETS_FILE,
+    // The namespace `writeDurableTemporary` publishes through. The temporary is a sibling of
+    // its destination carrying that destination's content — for the secrets file, live
+    // credential bytes at 0600 — and it outlives any cleanup that cannot run. Spelled
+    // literally rather than imported because init-filesystem.js is mocked wholesale by the
+    // init suite; `DURABLE_TEMPORARY_GITIGNORE_RULE` is the other copy, and the two are
+    // pinned together by the runtime-versus-defaults agreement test.
+    '.*.agent-qa-init-*.tmp',
   ]
 }
 
@@ -570,79 +454,607 @@ providers:
 `
 }
 
-function appendGitignore(dir: string): void {
-  const gitignorePath = join(dir, '.gitignore')
-  let existing = ''
-  if (existsSync(gitignorePath)) {
-    existing = readFileSync(gitignorePath, 'utf-8')
-  }
+const KNOWLEDGE_ROOT_DIR = 'agent-qa-knowledge'
+// The committed/derived split every knowledge writer relies on (knowledge-store.md §4),
+// plus one init-tool operational rule that is NOT part of that split — see below.
+const KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES = [
+  'memory/index/',
+  'memory/queue/',
+  'memory/*/bundles/.staging/',
+  '.lease',
+  '.epoch',
+  '.writer-authority.sqlite*',
+  '**/artifacts/',
+  'skills/.staging/',
+  '.*.agent-qa-init-*.tmp',
+] as const
 
-  const existingEntries = new Set(
-    existing
+// The committed/derived split below is verbatim from spec/v2/knowledge-store.md §4 — do not
+// paraphrase. Future-shelf lines (skills/.staging/) ship now so the split never needs a later
+// edit (D-13).
+//
+// The final rule is a DELIBERATE DIVERGENCE from that spec section and is labelled as such in
+// the emitted file. It is not part of the committed/derived split; it is an operational rule
+// for this tool's own publication temporaries. It has to live here rather than in the project
+// .gitignore because a knowledge tree is routinely its own repository — measured: a nested
+// repository does not inherit its parent's .gitignore — and because `init` verifies the
+// knowledge root BEFORE the project managed block exists.
+function buildKnowledgeGitignore(): string {
+  return `# agent-qa-knowledge/.gitignore
+memory/index/
+memory/queue/
+memory/*/bundles/.staging/
+.lease
+.epoch
+.writer-authority.sqlite*
+# binary blobs; artifact inventories are committed and live OUTSIDE artifacts/
+**/artifacts/
+skills/.staging/
+# INIT-TOOL OPERATIONAL — outside the committed/derived split above. agent-qa init publishes
+# every file through a temporary sibling that carries the destination's own content; this
+# keeps that temporary out of a commit even when this tree is its own repository.
+.*.agent-qa-init-*.tmp
+`
+}
+
+// D-12: comment-only — zero active rules. An un-authored active rule would be
+// sovereign prompt bytes on every run. HTML comments are stripped at serve time,
+// so this scaffold is an empty policy until a human writes a rule below it.
+function buildGlobalPolicyTemplate(): string {
+  return `<!--
+agent-qa policies — global scope
+
+Write one rule per line, in plain imperative English. Every active (non-comment)
+line in this file becomes a QA rule the agent follows.
+
+Example (inactive — it lives inside this comment):
+Always dismiss the cookie banner before asserting page content
+
+Scoping: this file is the global scope. Add sibling files named <product>.md
+next to it for product-scoped rules.
+
+Sovereignty: policies are human-asserted and win every conflict. Once policy
+serving lands, every active line here is served to the agent verbatim on every
+run — never summarized, never budgeted out — so keep rules few and deliberate.
+
+HTML comments are stripped at serve time: a comment-only file like this one is
+an empty policy. Add rules below this comment block to activate them.
+-->
+`
+}
+
+// D-14: the substantive human entry point for the committed knowledge root.
+// 2026-10-02 (432-40, D-24): the README states the guide's rule — knowledge changes only through
+// agent-qa, applies at once, and wrong knowledge is corrected by new feedback or forget — and no
+// longer cites a design-doc path a user's checkout does not have (431 D7 friction). Its other D7
+// items (policies/global.md's wording, CLI/MCP setup, `<build>`/`--kind`) stay with M7 (D-21).
+export function buildKnowledgeReadme(): string {
+  return `# agent-qa-knowledge
+
+The committed knowledge root for this project's QA agent. Everything the agent
+learns and everything you author for it lives under this one directory.
+
+## Two shelves
+
+- **Learned shelf** (\`memory/\`, created by the first record write): durable
+  records the agent distills from runs — facts, cautions, selectors, flows.
+  Each record is a self-sufficient bundle directory: the fact, its evidence,
+  and its provenance travel together.
+- **Authored shelf** (\`policies/\` now; \`skills/\` arrives with its feature):
+  content people write — QA rules, agent skills.
+
+Only \`policies/\` exists after init; the other directories are created on
+first use.
+
+## How to read a knowledge change
+
+- \`record.md\` is the fact: what the agent now believes, in plain prose.
+- \`evidence/outcomes.jsonl\` is the evidence: the append-only outcome log the
+  belief rests on.
+- Trust is derived by code from the outcome log.
+
+## Changing knowledge
+
+Never edit the learned shelf by hand — not the fact, the evidence, trust
+counters or status fields. Learned knowledge changes only through agent-qa: a
+run mark, or \`agent_qa_change_knowledge\` to accept, reject or forget a
+record. Each change applies at once and shows up here. Wrong knowledge is
+corrected by new feedback (a run mark) or by forgetting the record. The one
+shelf people write by hand is \`policies/\` (below).
+
+## Committed vs. gitignored
+
+\`git diff\` shows exactly what the agent learned. The \`.gitignore\` in this
+directory enforces the split:
+
+- \`memory/index/\` — derived search index; rebuildable from records, never committed.
+- \`memory/queue/\`, \`.lease\`, \`.epoch\` — machine-local curation runtime state.
+- \`.writer-authority.sqlite*\` — the local writer-authority database and its -wal/-shm/-journal files.
+- \`memory/*/bundles/.staging/\` — a bundle being published; present only if a publish was interrupted.
+- \`**/artifacts/\` — binary blobs (screenshots, DOM snapshots, HAR). Excluded
+  from git by default; artifact *inventories* are text, live outside
+  \`artifacts/\`, and are committed.
+- \`skills/.staging/\` — machine-local scratch space for skill writes, never committed.
+
+Everything else — every \`*.md\` and \`*.json\`/\`*.jsonl\` of distilled or
+authored text — is committed, so \`git diff\` and \`git log\` show it.
+
+## How to write policies
+
+QA rules live in \`policies/\` as plain markdown — one rule per line, in
+imperative English. Start with \`policies/global.md\` (its header comment
+teaches the format); add \`policies/<product>.md\` siblings for product-scoped
+rules. Policies are sovereign: served to the agent verbatim on every run.
+
+## Reading knowledge
+
+\`AGENTS.md\` in this directory lists the agent-qa commands and MCP tools that
+answer questions about runs and records. Answer from them rather than from a raw
+\`record.md\`: trust, validity and supersession are worked out when you ask.
+`
+}
+
+function trimGitignoreTrailingWhitespace(line: string): string {
+  let end = line.length
+  while (end > 0 && (line[end - 1] === ' ' || line[end - 1] === '\t')) {
+    let precedingBackslashes = 0
+    for (let index = end - 2; index >= 0 && line[index] === '\\'; index -= 1) {
+      precedingBackslashes += 1
+    }
+    if (precedingBackslashes % 2 === 1) break
+    end -= 1
+  }
+  return line.slice(0, end)
+}
+
+function knowledgeGitignoreFunctionalLines(content: string): Set<string> {
+  return new Set(
+    content
       .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean),
+      .map(trimGitignoreTrailingWhitespace)
+      .filter(line => line.length > 0 && !line.startsWith('#')),
   )
-  const missing = buildGitignoreEntries().filter((entry) => !existingEntries.has(entry))
-  if (missing.length === 0) return
-
-  const append = (existing.length > 0 && !existing.endsWith('\n') ? '\n' : '') + missing.join('\n') + '\n'
-  writeFileSync(gitignorePath, existing + append)
 }
 
-function browserSetupCommand(platform: InitPlatformInput): string | null {
-  return hasWeb(platform) ? 'agent-qa install-browsers --chromium' : null
-}
-
-function mobileDriverSetupCommand(platform: InitPlatformInput): string | null {
-  const runtimes = normalizePlatformSelection(platform).mobileRuntimes
-  if (runtimes.length === 0) return null
-  return 'agent-qa install-mobile-drivers --all'
-}
-
-function initNextSteps(platform: InitPlatformInput): Array<{ command: string; description: string }> {
-  const steps: Array<{ command: string; description: string }> = []
-  const browserCommand = browserSetupCommand(platform)
-  const mobileCommand = mobileDriverSetupCommand(platform)
-
-  if (browserCommand) {
-    steps.push({ command: browserCommand, description: 'Install browser support' })
+function warnForMissingKnowledgeGitignoreRules(path: string): void {
+  const existingLines = knowledgeGitignoreFunctionalLines(readFileSync(path, 'utf-8'))
+  for (const requiredLine of KNOWLEDGE_GITIGNORE_FUNCTIONAL_LINES) {
+    if (existingLines.has(requiredLine)) continue
+    console.warn(pc.yellow(
+      `⚠ ${path} is missing the required line "${requiredLine}" — `
+      + 'add it manually to keep the committed/derived split intact.',
+    ))
   }
-  if (mobileCommand) {
-    steps.push({ command: mobileCommand, description: 'Install mobile driver support' })
+}
+
+type InitNextStep = { command: string; description: string }
+
+function subscriptionAuthInstalled(dir: string): boolean {
+  let current = resolve(dir)
+  while (true) {
+    const manifest = join(
+      current,
+      'node_modules',
+      ...SUBSCRIPTION_AUTH_PACKAGE.split('/'),
+      'package.json',
+    )
+    if (existsSync(manifest)) return true
+    const parent = dirname(current)
+    if (parent === current) return false
+    current = parent
   }
+}
 
-  steps.push(
-    { command: 'agent-qa doctor', description: 'Verify your environment' },
-    { command: 'Edit tests/example-pass.yaml', description: 'Write your first test' },
-    { command: 'agent-qa run', description: 'Run all tests' },
-    { command: 'agent-qa dashboard', description: 'View results in browser' },
-  )
-
+function connectionSteps(config: Record<string, unknown>, dir: string): InitNextStep[] {
+  const registry = config.registry as Record<string, unknown> | undefined
+  const llms = (registry?.llms ?? []) as InitLLMConfig[]
+  const steps: InitNextStep[] = []
+  const usesSubscription = llms.some(llm => isSubscriptionProvider(String(llm.provider)))
+  if (usesSubscription && !subscriptionAuthInstalled(dir)) {
+    steps.push({
+      command: `npm install -D ${SUBSCRIPTION_AUTH_PACKAGE}`,
+      description: 'Install the subscription sign-in plugin',
+    })
+  }
+  for (const llm of llms) {
+    const name = String(llm.name)
+    const provider = String(llm.provider)
+    if (isSubscriptionProvider(provider)) {
+      steps.push({
+        command: `npx agent-qa auth login --config ${name}`,
+        description: 'Sign in with your subscription',
+      })
+      continue
+    }
+    steps.push({
+      command: `npx agent-qa auth set --config ${name} --type api-key`,
+      description: 'Save your API key at a hidden prompt',
+    })
+    if (getProvider(provider)?.authModes.includes('bearer-token')) {
+      steps.push({
+        command: `npx agent-qa auth set --config ${name} --type bearer-token`,
+        description: 'Or save a bearer token at a hidden prompt',
+      })
+    }
+  }
   return steps
 }
 
-export function createInitCommand(): Command {
+// 2026-10-19 (445-05, D-17): the same commands, in the same order, as the published quickstart.
+function initNextSteps(
+  platform: InitPlatformInput,
+  config: Record<string, unknown>,
+  dir: string,
+): InitNextStep[] {
+  const steps: InitNextStep[] = []
+  if (hasWeb(platform)) {
+    steps.push({
+      command: 'npx agent-qa install-browsers --chromium',
+      description: 'Install the browser the examples run in',
+    })
+  }
+  if (normalizePlatformSelection(platform).mobileRuntimes.length > 0) {
+    steps.push({
+      command: 'npx agent-qa install-mobile-drivers --all',
+      description: 'Install mobile driver support',
+    })
+  }
+  steps.push(...connectionSteps(config, dir))
+  if (!hasWeb(platform)) {
+    steps.push({ command: 'Edit agent-qa.local.yaml', description: 'Bind your mobile app' })
+  }
+  steps.push({ command: 'npx agent-qa validate', description: 'Check the config and the tests' })
+  if (hasWeb(platform)) {
+    steps.push({
+      command: `npx agent-qa run ${EXAMPLES_SUITE_PATH}`,
+      description: "Run the examples: one passes, one fails on the playground's deliberate bug (exit 1)",
+    })
+  }
+  steps.push({
+    command: GETTING_STARTED_URL,
+    description: 'The rest of the route: the hook sample, the dashboard and what the run taught agent-qa',
+  })
+  return steps
+}
+
+const ROOT_AGENT_INSTRUCTIONS_FILE = 'AGENTS.md'
+
+function agentInstructionPointerContent(): ManagedBlockContent {
+  return {
+    descriptor: AGENT_QA_INIT_MARKDOWN_BLOCK,
+    body: buildAgentInstructionPointer(),
+    target: ROOT_AGENT_INSTRUCTIONS_FILE,
+  }
+}
+
+function agentInstructionPointerBlock(): string {
+  return renderManagedBlock(agentInstructionPointerContent())
+}
+
+// 431 D-20: the config marker is init's completion record, so a root block that fails to publish
+// must say the scaffold is incomplete rather than leave a half-written project looking done.
+function incompleteScaffoldError(error: unknown): Error {
+  const reason = error instanceof Error ? error.message : String(error)
+  return new Error(
+    `${reason}\nThe other scaffold files were written, but agent-qa.config.yaml was not written, `
+    + 'so this project is not initialized. Fix the cause above and rerun agent-qa init; '
+    + 'files it already wrote are kept.',
+    { cause: error },
+  )
+}
+
+// 431 D-18: printed flush left, because an indented marker line is not a marker and the managed
+// writer would refuse the pasted file as ambiguous.
+function printAgentInstructionPointer(): void {
+  console.log('')
+  console.log(`  Coding agents: add this block to ${ROOT_AGENT_INSTRUCTIONS_FILE} at the project root:`)
+  console.log('')
+  console.log(agentInstructionPointerBlock())
+}
+
+export interface InitCommandHooks {
+  afterWrite?: (result: InitFileResult, boundary: number) => void
+  onComplete?: (outcomes: readonly InitFileResult[]) => void
+  /**
+   * How this invocation composes its analytics (398-10).
+   *
+   * A seam for the same reason the two hooks above are: `init` writes into a directory, and the
+   * production composition resolves the real identity store. A suite substitutes it to observe the
+   * one event this command emits without touching a home directory.
+   */
+  composeAnalytics?: typeof ComposeAnalyticsHost
+  isTTY?: boolean
+}
+
+function scaffoldFilePlan(
+  root: string,
+  path: string,
+  content: string,
+  force: boolean,
+  preserveOnForce = false,
+  mode?: number,
+): InitPathPlan {
+  return {
+    root,
+    path: join(root, path),
+    content,
+    force,
+    preserveOnForce,
+    ...(mode === undefined ? {} : { mode }),
+  }
+}
+
+function buildScaffoldFilePlans(
+  dir: string,
+  platform: InitPlatformInput,
+  force: boolean,
+): InitPathPlan[] {
+  const plans = [
+    // User-owned credential bytes are never replaced, including under --force.
+    scaffoldFilePlan(dir, DEFAULT_ENV_FILE, '', force, true),
+    scaffoldFilePlan(
+      dir,
+      DEFAULT_SECRETS_FILE,
+      buildSecretsFile(platform),
+      force,
+      true,
+      SECRETS_FILE_MODE,
+    ),
+    scaffoldFilePlan(
+      dir,
+      DEFAULT_HOOKS_FILE,
+      hasWeb(platform) ? buildExampleHooksFile() : buildHooksFile(platform),
+      force,
+    ),
+    scaffoldFilePlan(
+      dir,
+      DEFAULT_LOCAL_CONFIG_FILE,
+      buildLocalConfigTemplate(),
+      force,
+    ),
+    // The knowledge root's own covering rule goes down BEFORE any other write inside the
+    // knowledge tree, for the same reason the target managed block leads the whole run:
+    // every scaffold write publishes through a sibling temporary, and a knowledge tree that
+    // is its own repository does NOT inherit the parent's .gitignore (measured). Ordered
+    // after README.md and policies/global.md, those two temporaries existed under no rule at
+    // all in that case.
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, '.gitignore'),
+      buildKnowledgeGitignore(),
+      force,
+      true,
+    ),
+    // 431 D-17: agent-qa's generated file, so --force regenerates it (not preserveOnForce).
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, 'AGENTS.md'),
+      buildKnowledgeAgentGuide(),
+      force,
+    ),
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, 'README.md'),
+      buildKnowledgeReadme(),
+      force,
+      true,
+    ),
+    // 419-POLICY-WRITER: init scaffold
+    scaffoldFilePlan(
+      dir,
+      join(KNOWLEDGE_ROOT_DIR, 'policies', 'global.md'),
+      buildGlobalPolicyTemplate(),
+      force,
+      true,
+    ),
+  ]
+
+  if (!hasWeb(platform)) return plans
+
+  plans.push(
+    scaffoldFilePlan(dir, KOMAZON_CHECKOUT_PATH, buildKomazonCheckoutTest(), force),
+    scaffoldFilePlan(dir, KOMAZON_CART_TOTAL_BUG_PATH, buildKomazonCartTotalBugTest(), force),
+    scaffoldFilePlan(dir, EXAMPLES_SUITE_PATH, buildExamplesSuite(), force),
+    scaffoldFilePlan(dir, SHIPPING_ADDRESS_SCRIPT_PATH, buildShippingAddressScript(), force),
+    scaffoldFilePlan(dir, KOMAZON_SHIPPING_HOOK_PATH, buildKomazonShippingHookTest(), force),
+  )
+
+  return plans
+}
+
+function displayInitPath(dir: string, path: string): string {
+  const localPath = relative(dir, path)
+  return localPath.length > 0 ? localPath : path
+}
+
+function printOutcomeSummary(dir: string, outcomes: readonly InitFileResult[]): void {
+  const groups = [
+    ['created', 'Created'],
+    ['updated', 'Updated'],
+    ['preserved', 'Preserved'],
+  ] as const
+
+  for (const [outcome, label] of groups) {
+    const matching = outcomes.filter(result => result.outcome === outcome)
+    if (matching.length === 0) continue
+    console.log(`  ${label}:`)
+    for (const result of matching) {
+      console.log(`    ${pc.dim('•')} ${displayInitPath(dir, result.path)}`)
+    }
+  }
+}
+
+// 2026-10-19 (445-03, D-27): printed flush left so the line can be pasted as is.
+function printExampleSecretLine(): void {
+  console.log('')
+  console.log(`  Add this line to ${DEFAULT_SECRETS_FILE} so the examples can sign in:`)
+  console.log(EXAMPLE_SECRET_LINE)
+}
+
+function printNextSteps(
+  platform: InitPlatformInput,
+  config: Record<string, unknown>,
+  dir: string,
+): void {
+  console.log('')
+  console.log('  Next steps:')
+  for (const [index, step] of initNextSteps(platform, config, dir).entries()) {
+    console.log(`    ${index + 1}. ${pc.cyan(step.command)}  ${step.description}`)
+  }
+}
+
+export function createInitCommand(hooks: InitCommandHooks = {}): Command {
   const cmd = new Command('init')
     .description('Initialize a new agent-qa project')
     .option('--dir <path>', 'target directory', process.cwd())
-    .option('--platform <type>', 'platform to configure (web, android, ios, web+android, web+ios)')
-    .option('--skip-install', 'deprecated no-op; setup commands are shown after init')
+    .addOption(
+      new Option('--platform <type>', 'platform to configure')
+        .choices([...SUPPORTED_INIT_PLATFORMS]),
+    )
+    .addOption(
+      new Option('--llm <provider>', 'model connection (default: claude-code)')
+        .choices([...INIT_LLM_CHOICES]),
+    )
+    .option('--model <id>', "model id (default: the provider's default model)")
+    .option(
+      '--base-url <url>',
+      'endpoint for openai-compatible or anthropic-compatible (default: the provider API)',
+    )
     .option('--force', 'overwrite existing files')
-    .action(async (opts) => {
+    .option(
+      WRITE_AGENT_INSTRUCTIONS_FLAG,
+      'also write the agent-qa pointer block into AGENTS.md at the project root',
+    )
+    .option(
+      '--agent',
+      'print the JSON capability manifest (catalog, v1 name map, local posture) and exit; '
+      + 'writes nothing',
+    )
+    .action(async (opts, command: Command) => {
+      // `--agent` IS A READ, AND IT RETURNS BEFORE ANYTHING ELSE HAPPENS (D-16). Ahead of it lies
+      // the whole of init: prompts, a scaffold plan, files. Returning here rather than threading a
+      // flag through the prompt checks is what makes "non-interactive, idempotent, writes nothing" a
+      // property of the control flow instead of a claim about it — there is no branch below this
+      // one that a manifest read can reach.
+      if (opts.agent === true) {
+        // IMPORTED HERE AND NOT AT THE TOP, deliberately. The manifest reads the local
+        // composition's posture, so its module graph reaches the agent host — and `init`'s ordinary
+        // job is to write a scaffold into a directory where no host could compose yet. A top-level
+        // import would make every `init` run (and every test of one) evaluate a composition root
+        // that only this branch has any use for. Measured 2026-08-17: it also broke `init.test.ts`,
+        // whose partial `node:fs` mock the durable-store module underneath that graph needs more of.
+        const { buildAgentManifest } = await import('../capability-catalog/manifest.js')
+        const globalOpts = command.parent?.opts<{ config?: string }>() ?? {}
+        // `--dir`-relative when no explicit `--config` was given: `init` is a command aimed at a
+        // directory, and reporting a posture read out of the caller's shell instead would describe
+        // the wrong workspace.
+        const configPath = globalOpts.config ?? join(resolve(opts.dir), 'agent-qa.config.yaml')
+        const manifest = await buildAgentManifest({ configPath })
+        // STDOUT AND NOTHING ELSE ON IT. The whole of this command's output under `--agent` is one
+        // JSON document, so it pipes into a parser without a filter in between.
+        console.log(JSON.stringify(manifest, null, 2))
+        // 2026-08-17 (Phase 398 plan 10, D-16/D-18): AND NOTHING IS EMITTED ON THIS PATH. `--agent`
+        // is a READ — it writes no file, creates no project, and returns before any scaffold exists
+        // — so there is no init to report the completion of. Reporting one would count every
+        // manifest read a coding agent makes as a project being initialised, which is the single
+        // number this member exists to get right.
+        return
+      }
+
+      const initStartedAt = Date.now()
       const dir = resolve(opts.dir)
       const force = opts.force ?? false
+      // 398-14 (D-19): the ONE path the opt-out read consults, resolved once. Same derivation the
+      // `--agent` branch above already uses — `--dir`-relative unless an explicit `--config` was
+      // given — because `init` is a command aimed at a directory, and honouring a declaration out
+      // of the caller's shell instead would be honouring the wrong project's.
+      const analyticsConfigPath =
+        command.parent?.opts<{ config?: string }>().config ?? join(dir, 'agent-qa.config.yaml')
 
-      const isInteractive = !opts.platform
+      const tty = hooks.isTTY ?? process.stdin.isTTY === true
+      let asked = false
+
+      /**
+       * The init/scaffold member (398-10, D-18), emitted from the ONE place that knows how the run
+       * ended — which is why it is a function called from two sites rather than a line at one.
+       *
+       * The outcome is DERIVED from the file outcomes, never assumed: anything created makes this a
+       * `created`, anything only rewritten an `updated`, and a run that changed nothing an
+       * `unchanged`. `preserved` is the filesystem layer's word for a file left alone, and it is
+       * what makes the third arm reachable — including through the "already initialized, use
+       * --force" answer below, which is the common way a person reaches it.
+       *
+       * `failed` is not emitted from here and cannot be: a scaffold that throws never reaches
+       * either call site. Retune: a `failed` arm needs a catch around the whole write phase, which
+       * is a change to how this command reports errors, not to what it measures.
+       *
+       * The binding is imported LAZILY for the reason recorded at the type-only import up top.
+       */
+      const emitInitCompleted = async (
+        results: readonly { readonly outcome: InitFileResult['outcome'] }[],
+      ): Promise<void> => {
+        const { analyticsEvent, composeAnalyticsHost } = await import(
+          '../composition/analytics-host.js'
+        )
+        // 398-14 (D-19): the config THIS COMMAND IS OPERATING ON is read here and handed to the one
+        // opt-out decision — `analyticsConfigPath` above, i.e. the global `--config` when given and
+        // otherwise the target directory's own config file, resolved once at the top of the action.
+        //
+        // An absent or unresolvable config yields `undefined`, and that is a real posture rather
+        // than a gap: a fresh directory genuinely has no declaration to honour yet, and refusing to
+        // scaffold over a telemetry read would be refusing the capability over the telemetry
+        // (`mcp.ts`'s ratified try/catch). `resolveConfig` is imported lazily for the same measured
+        // reason the analytics binding is — see the type-only import up top.
+        // Both readers come from the SAME lazy import — the module-graph reason above applies to
+        // the pair, and taking them together also makes it structurally impossible for the raw
+        // privacy read to drift onto a different module than the validating read.
+        const { readAnalyticsPrivacyDeclaration, resolveConfig } = await import('../config.js')
+        let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
+        try {
+          config = await resolveConfig({
+            configPath: analyticsConfigPath,
+            loadAuthPlugins: false,
+          })
+        } catch {
+          config = undefined
+        }
+        // F-1 / CR-01, at init's root: see the note at chat.ts's composition. `analyticsConfigPath`
+        // is reused verbatim, so the declaration is read from the same file this action already
+        // decided its config lives in — including the `--config` case.
+        const analyticsConfig = config ?? await readAnalyticsPrivacyDeclaration(analyticsConfigPath)
+        const analytics = await (hooks.composeAnalytics ?? composeAnalyticsHost)({
+          surface: 'cli',
+          ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
+        })
+        try {
+          const createdCount = results.filter((result) => result.outcome === 'created').length
+          const updatedCount = results.filter((result) => result.outcome === 'updated').length
+          analytics.port.capture(analyticsEvent(analytics, 'agent-qa.init.completed', {
+            init_mode: asked ? 'interactive' : 'scaffold',
+            outcome: createdCount > 0 ? 'created' : updatedCount > 0 ? 'updated' : 'unchanged',
+            created_file_count: createdCount,
+            duration_ms: Date.now() - initStartedAt,
+          }))
+        } finally {
+          await analytics.shutdown()
+        }
+      }
+
+      const refuseBaseUrl = (provider: string): boolean => {
+        const refusal = opts.baseUrl === undefined ? undefined : baseUrlRefusal(provider, opts.baseUrl)
+        if (refusal) {
+          console.error(pc.red(refusal))
+          process.exitCode = 1
+        }
+        return refusal !== undefined
+      }
+      const askLlm = tty && opts.llm === undefined
+      const flaggedLlm = (opts.llm ?? 'claude-code') as InitLLMChoice
+      if (!askLlm && refuseBaseUrl(INIT_LLM_ENTRIES[flaggedLlm].provider)) return
 
       let platform: InitPlatformInput
-      let provider = 'anthropic-subscription'
-      let model = DEFAULT_ANTHROPIC_MODEL
-      let baseURL: string | undefined
-      let llmConfigs: InitLLMConfig[] | undefined
-
-      if (isInteractive) {
-        // Step 1 — Platform selection
+      if (tty && opts.platform === undefined) {
+        asked = true
         const capabilities = await checkbox<PlatformCapability>({
           message: 'What platform will you test?',
           choices: [
@@ -656,206 +1068,195 @@ export function createInitCommand(): Command {
         const mobileRuntimes: MobileRuntime[] = capabilities.includes('mobile') ? ['android', 'ios'] : []
 
         platform = { capabilities, mobileRuntimes }
-
-        // Step 2 — Subscription-auth choice
-        const llmSetup = await checkbox<LLMSetupChoice>({
-          message: `Subscription auth ${pc.dim('(optional)')}`,
-          choices: LLM_SETUP_CHOICES,
-          required: true,
-          validate: (value) => {
-            if (value.length === 0) return 'Select No subscription auth or at least one subscription provider.'
-            const selectedValues = value.map(choice => choice.value)
-            if (selectedValues.includes('none') && selectedValues.length > 1) {
-              return 'No subscription auth cannot be combined with Codex or Claude Code.'
-            }
-            return true
-          },
-        }) as LLMSetupChoice[]
-
-        if (llmSetup.includes('none')) {
-          // Step 3 — Provider selection for non-subscription paths
-          provider = await select({
-            message: 'Which LLM provider?',
-            choices: COMPATIBLE_PROVIDER_CHOICES,
-            default: 'anthropic-compatible',
-          })
-
-          // Step 4 — Model selection
-          model = await input({ message: 'Model name:', default: defaultModelForProvider(provider) })
-        } else {
-          llmConfigs = subscriptionConfigsForChoices(llmSetup)
-          provider = llmConfigs[0]?.provider ?? provider
-          model = llmConfigs[0]?.model ?? model
-        }
-
-        // Step 5 — Exact compatible endpoint URL
-        if (provider === 'openai-compatible' || provider === 'anthropic-compatible') {
-          baseURL = await input({
-            message: 'Base URL:',
-            validate: (value) => value.trim().length > 0 || 'Base URL is required for compatible providers.',
-          })
-        }
       } else {
-        // Non-interactive mode — use flag values
         platform = (opts.platform ?? 'web') as Platform
-        provider = 'anthropic-subscription'
-        model = DEFAULT_ANTHROPIC_MODEL
+      }
+
+      let llm: InitLLMChoice = opts.llm ?? 'claude-code'
+      if (askLlm) {
+        asked = true
+        llm = await select<InitLLMChoice>({
+          message: 'Which model connection?',
+          choices: INIT_LLM_CHOICES.map(value => ({ value, name: INIT_LLM_NAMES[value] })),
+          default: 'claude-code',
+        })
+      }
+      const { name: llmName, provider } = INIT_LLM_ENTRIES[llm]
+      if (askLlm && refuseBaseUrl(provider)) return
+
+      let model: string = opts.model ?? defaultModelForProvider(provider)
+      if (tty && opts.model === undefined && !isSubscriptionProvider(provider)) {
+        asked = true
+        model = (await input({
+          message: 'Model:',
+          default: model,
+          validate: (value) => value.trim().length > 0 || 'Enter a model id.',
+        })).trim()
+      }
+
+      const needsBaseURL = getProvider(provider)?.needsBaseURL === true
+      let baseURL: string | undefined = needsBaseURL
+        ? opts.baseUrl ?? INIT_BASE_URL_DEFAULTS[provider]
+        : undefined
+      if (tty && opts.baseUrl === undefined && needsBaseURL) {
+        asked = true
+        baseURL = (await input({
+          message: 'Base URL:',
+          default: baseURL,
+          validate: (value) => baseUrlFormRefusal(value.trim()) ?? true,
+        })).trim()
       }
 
       const configPath = join(dir, 'agent-qa.config.yaml')
-
-      // Check existing config
-      if (existsSync(configPath) && !force) {
-        console.log(pc.yellow(`Config file already exists at ${configPath}. Use --force to overwrite.`))
+      const configClassification = classifyInitPath(configPath, dir)
+      if (configClassification === 'regular' && !force) {
+        const completed = [{ path: configPath, outcome: 'preserved' }] as const
+        console.log(pc.yellow(`Project is already initialized at ${dir}. Use --force to rebuild it.`))
+        printOutcomeSummary(dir, completed)
+        hooks.onComplete?.(completed)
+        await emitInitCompleted(completed)
         return
       }
 
-      // Create tests directory
-      const testsDir = join(dir, 'tests')
-      if (!existsSync(testsDir)) {
-        mkdirSync(testsDir, { recursive: true })
-      }
-
-      // Write config file
-      const config = buildDefaultConfig(platform, llmConfigs ?? provider, model, baseURL)
+      const config = buildDefaultConfig(platform, [{ name: llmName, provider, model, baseURL }])
       const usesSubscriptionAuth = configUsesSubscriptionAuth(config)
-      const yamlStr = stringify(config)
-      const configContent = addYamlComments(yamlStr)
-      writeFileSync(configPath, configContent)
-      console.log(pc.green(`✓ Created ${configPath}`))
-
       const subscriptionAuthDependency = usesSubscriptionAuth
-        ? upsertSubscriptionAuthPackageDependency(dir)
+        ? buildSubscriptionAuthPackageDependencyPlan(dir)
         : null
+      const filePlans = buildScaffoldFilePlans(dir, platform, force)
+      const targetGitignorePath = join(dir, '.gitignore')
+      const targetGitignorePlan: InitPathPlan = {
+        root: dir,
+        path: targetGitignorePath,
+        content: '',
+      }
+      const configPlan: InitPathPlan = {
+        root: dir,
+        path: configPath,
+        content: renderScaffoldConfigYaml(config),
+        force,
+      }
+      const agentInstructionsPlan: ManagedBlockUpsertPlan | null = opts.writeAgentInstructions === true
+        ? {
+          root: dir,
+          path: join(dir, ROOT_AGENT_INSTRUCTIONS_FILE),
+          content: agentInstructionPointerContent(),
+        }
+        : null
+      const completePlan = [
+        ...filePlans,
+        ...(subscriptionAuthDependency ? [subscriptionAuthDependency.plan] : []),
+        targetGitignorePlan,
+        ...(agentInstructionsPlan ? [{ root: dir, path: agentInstructionsPlan.path, content: '' }] : []),
+        configPlan,
+      ]
+      const preflight = preflightInitPlan(completePlan)
+      if (agentInstructionsPlan) preflightManagedBlock(agentInstructionsPlan)
+
+      const knowledgeGitignorePath = join(dir, KNOWLEDGE_ROOT_DIR, '.gitignore')
+      const knowledgeGitignoreWasPresent = preflight.some(
+        result => result.path === knowledgeGitignorePath
+          && result.classification === 'regular',
+      )
+      if (knowledgeGitignoreWasPresent) {
+        // 2026-10-20 (445-17, D-43): the refusal prints its message only, never a stack trace.
+        try {
+          warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
+          verifyEffectiveGitignore({
+            cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+            label: 'existing agent-qa-knowledge/.gitignore',
+            probes: KNOWLEDGE_GITIGNORE_PROBES,
+            // Nothing has been written yet at this point in the run.
+            written: 'nothing',
+          })
+        } catch (error) {
+          console.error(pc.red(error instanceof Error ? error.message : String(error)))
+          process.exitCode = 1
+          return
+        }
+      }
+
+      const outcomes: InitFileResult[] = []
+      let boundary = 0
+      const recordOutcome = (result: InitFileResult): void => {
+        outcomes.push(result)
+        if (result.outcome === 'preserved') return
+        boundary += 1
+        hooks.afterWrite?.(result, boundary)
+      }
+
+      // The managed block goes down FIRST, before any other write can create a temporary.
+      // Every scaffold write publishes through a sibling temporary carrying the
+      // destination's own content, and until this block exists no rule covers that name —
+      // so ordering it after the scaffold loop left a window in which `.env.secrets.local`'s
+      // 0600 temporary was untracked and `git add .` could pick it up. The single temporary
+      // this cannot cover is its own, whose content is .gitignore bytes and never a
+      // credential.
+      //
+      // CORRECTION (round 10): that "single temporary" claim was measured against THIS root
+      // only. A knowledge tree that is its own repository does not inherit this file, so the
+      // knowledge root has its own first-write rule — see `buildScaffoldFilePlans`, where the
+      // knowledge `.gitignore` now leads its group for exactly this reason. One uncovered
+      // temporary per root, each of them a `.gitignore`'s own.
+      //
+      // Verifying here does NOT make "no files were changed" true — this write has already
+      // happened. The refusal states what actually happened instead; see `changed` below.
+      recordOutcome(upsertManagedGitignoreBlock(
+        targetGitignorePath,
+        buildGitignoreEntries(),
+      ))
+      verifyEffectiveGitignore({
+        cwd: dir,
+        label: 'target .gitignore',
+        probes: TARGET_GITIGNORE_PROBES,
+        // The managed block is on disk by now — the refusal must not say otherwise.
+        written: 'managed-gitignore',
+      })
+
+      for (const plan of filePlans) {
+        recordOutcome(writeScaffoldFileAtomic(plan, {}))
+      }
+
+      if (!knowledgeGitignoreWasPresent) {
+        verifyEffectiveGitignore({
+          cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+          label: 'agent-qa-knowledge/.gitignore',
+          probes: KNOWLEDGE_GITIGNORE_PROBES,
+          // This one runs AFTER the scaffold loop: the whole scaffold is published.
+          written: 'managed-gitignore-and-scaffold',
+        })
+      }
+
       if (subscriptionAuthDependency) {
-        const action = subscriptionAuthDependency.created ? 'Created' : 'Updated'
-        console.log(pc.green(`✓ ${action} ${subscriptionAuthDependency.path}`))
+        recordOutcome(writeScaffoldFileAtomic(subscriptionAuthDependency.plan, {}))
       }
 
-      const secretsPath = join(dir, DEFAULT_SECRETS_FILE)
-      if (force || !existsSync(secretsPath)) {
-        writeFileSync(secretsPath, '')
-        console.log(pc.green(`✓ Created ${secretsPath}`))
-      }
-
-      const envPath = join(dir, DEFAULT_ENV_FILE)
-      if (force || !existsSync(envPath)) {
-        writeFileSync(envPath, '')
-        console.log(pc.green(`✓ Created ${envPath}`))
-      }
-
-      const hooksPath = join(dir, DEFAULT_HOOKS_FILE)
-      if (force || !existsSync(hooksPath)) {
-        writeFileSync(hooksPath, buildHooksFile(platform))
-        console.log(pc.green(`✓ Created ${hooksPath}`))
-      }
-
-      const agentRulesPath = join(dir, DEFAULT_AGENT_RULES_FILE)
-      if (force || !existsSync(agentRulesPath)) {
-        writeFileSync(agentRulesPath, '# agent-qa Rules\n')
-        console.log(pc.green(`✓ Created ${agentRulesPath}`))
-      }
-
-      const localConfigPath = join(dir, DEFAULT_LOCAL_CONFIG_FILE)
-      if (force || !existsSync(localConfigPath)) {
-        writeFileSync(localConfigPath, buildLocalConfigTemplate())
-        console.log(pc.green(`✓ Created ${localConfigPath}`))
-      }
-
-      // Write example tests
-      const examplePassPath = join(testsDir, 'example-pass.yaml')
-      writeFileSync(examplePassPath, buildExampleTest(platform, 'pass'))
-      console.log(pc.green(`✓ Created ${examplePassPath}`))
-
-      const exampleFailPath = join(testsDir, 'example-fail.yaml')
-      writeFileSync(exampleFailPath, buildExampleTest(platform, 'fail'))
-      console.log(pc.green(`✓ Created ${exampleFailPath}`))
-
-      if (hasWeb(platform)) {
-        const suitesDir = join(dir, 'suites')
-        if (!existsSync(suitesDir)) {
-          mkdirSync(suitesDir, { recursive: true })
+      if (agentInstructionsPlan) {
+        try {
+          recordOutcome(upsertManagedBlock(agentInstructionsPlan))
+        } catch (error) {
+          throw incompleteScaffoldError(error)
         }
-
-        const scriptsDir = join(dir, 'scripts')
-        if (!existsSync(scriptsDir)) {
-          mkdirSync(scriptsDir, { recursive: true })
-        }
-
-        const automationTestsDir = join(testsDir, 'automation-exercise')
-        if (!existsSync(automationTestsDir)) {
-          mkdirSync(automationTestsDir, { recursive: true })
-        }
-
-        for (const test of AUTOMATION_EXERCISE_TESTS) {
-          const testPath = join(automationTestsDir, test.fileName)
-          writeFileSync(testPath, buildAutomationExerciseTest(test))
-          console.log(pc.green(`✓ Created ${testPath}`))
-        }
-
-        const automationSuitePath = join(suitesDir, 'automation-exercise.suite.yaml')
-        writeFileSync(automationSuitePath, buildAutomationExerciseSuite())
-        console.log(pc.green(`✓ Created ${automationSuitePath}`))
-
-        const hnScriptPath = join(scriptsDir, 'fetch-hn-top-story.mjs')
-        writeFileSync(hnScriptPath, buildHackerNewsHookScript())
-        console.log(pc.green(`✓ Created ${hnScriptPath}`))
-
-        const hnTestPath = join(testsDir, 'hacker-news-top-story.yaml')
-        writeFileSync(hnTestPath, buildHackerNewsTopStoryTest())
-        console.log(pc.green(`✓ Created ${hnTestPath}`))
-
-        const badA11yTestPath = join(testsDir, 'bad-a11y.yaml')
-        writeFileSync(badA11yTestPath, buildBadA11yTest())
-        console.log(pc.green(`✓ Created ${badA11yTestPath}`))
       }
 
-      // Update .gitignore
-      appendGitignore(dir)
-      console.log(pc.green('✓ Updated .gitignore'))
+      recordOutcome(writeConfigMarkerLast(configPlan, {}))
+      hooks.onComplete?.([...outcomes])
 
-      // Post-init summary
+      // AFTER the config marker — the scaffold's last write — so the event describes a project
+      // that exists rather than one being attempted.
+      await emitInitCompleted(outcomes)
+
       console.log('')
       console.log(pc.green(pc.bold('✓ agent-qa project initialized!')))
       console.log('')
-      console.log('  Created:')
-      console.log(`    ${pc.dim('•')} agent-qa.config.yaml`)
-      if (subscriptionAuthDependency) {
-        console.log(`    ${pc.dim('•')} ${PACKAGE_JSON_FILE} dependency for ${SUBSCRIPTION_AUTH_PACKAGE}@${subscriptionAuthDependency.range}`)
-      }
-      console.log(`    ${pc.dim('•')} ${DEFAULT_HOOKS_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_AGENT_RULES_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_ENV_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_SECRETS_FILE}`)
-      console.log(`    ${pc.dim('•')} ${DEFAULT_LOCAL_CONFIG_FILE}`)
-      console.log(`    ${pc.dim('•')} tests/example-pass.yaml`)
-      console.log(`    ${pc.dim('•')} tests/example-fail.yaml`)
-      if (hasWeb(platform)) {
-        console.log(`    ${pc.dim('•')} tests/automation-exercise/*.yaml`)
-        console.log(`    ${pc.dim('•')} tests/hacker-news-top-story.yaml`)
-        console.log(`    ${pc.dim('•')} tests/bad-a11y.yaml`)
-        console.log(`    ${pc.dim('•')} suites/automation-exercise.suite.yaml`)
-        console.log(`    ${pc.dim('•')} scripts/fetch-hn-top-story.mjs`)
-      }
-      console.log(`    ${pc.dim('•')} .gitignore entries`)
-      console.log('')
-      console.log('  Next steps:')
-      for (const [index, step] of initNextSteps(platform).entries()) {
-        console.log(`    ${index + 1}. ${pc.cyan(step.command)}  ${step.description}`)
-      }
-      const generatedLLMs = ((config.registry as Record<string, unknown> | undefined)?.llms ?? []) as InitLLMConfig[]
-      const subscriptionLLMs = generatedLLMs.filter(llm => isSubscriptionProvider(String(llm.provider)))
-      if (subscriptionLLMs.length === 0) {
-        console.log(`    ${pc.dim('•')} Save credentials with ${pc.cyan('agent-qa auth set --config default --type api-key')}`)
-        if (provider === 'anthropic-compatible') {
-          console.log(`    ${pc.dim('•')} Bearer tokens use ${pc.cyan('agent-qa auth set --config default --type bearer-token')}`)
-        }
-      } else {
-        console.log(`    ${pc.dim('•')} Fetch ${SUBSCRIPTION_AUTH_PACKAGE} with your package manager install command`)
-        for (const llm of subscriptionLLMs) {
-          console.log(`    ${pc.dim('•')} Authenticate ${pc.cyan(String(llm.name))} from ${pc.cyan('agent-qa dashboard')}`)
-        }
-      }
+      printOutcomeSummary(dir, outcomes)
+      const secretsPath = join(dir, DEFAULT_SECRETS_FILE)
+      const secretsPreserved = outcomes.some(
+        result => result.path === secretsPath && result.outcome === 'preserved',
+      )
+      if (hasWeb(platform) && secretsPreserved) printExampleSecretLine()
+      printNextSteps(platform, config, dir)
+      if (!agentInstructionsPlan) printAgentInstructionPointer()
       console.log('')
     })
 

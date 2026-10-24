@@ -31,7 +31,6 @@ import { useVariableSuggestions } from '@/hooks/use-variable-suggestions'
 import { TestSettingsPanel } from "@/components/test-settings-panel"
 import { TestNavbar } from "@/components/test-navbar"
 import { RunResultsPanel } from "@/components/run-results-panel"
-import { MemoryObservationsPanel } from "@/components/memory-observations-panel"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { useLiveEditor } from "@/hooks/use-live-editor"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -39,6 +38,7 @@ import { usePageTitle } from "@/hooks/use-page-title"
 import { useRunConfig } from "@/hooks/use-run-config"
 import { useTargetDetails, type TargetDetail } from "@/hooks/use-target-details"
 import {
+  ApiError,
   fetchTestFile,
   createTestFile,
   createLiveEditorSession,
@@ -49,6 +49,7 @@ import {
   validateTestContent,
   triggerRun,
   type AuthStateMetadata,
+  type TestValidationResult,
 } from "@/lib/api"
 import { buildLiveSessionConfig, readDraftAuthStateName } from "@/lib/live-session-config"
 import { logLiveDebug } from "@/lib/live-debug"
@@ -78,6 +79,19 @@ function InfoTip({ text }: { text: string }) {
       </TooltipContent>
     </Tooltip>
   )
+}
+
+function formatValidationErrors(errors: TestValidationResult["errors"]): string {
+  return errors
+    .map((e) => (e.line ? `Line ${e.line}: ${e.message}` : e.message))
+    .join("\n")
+}
+
+// The save routes answer 400 `invalid_test_file` with the validator's own errors (G-433-2).
+function readRefusedSaveErrors(error: unknown): TestValidationResult["errors"] | null {
+  if (!(error instanceof ApiError) || error.payload?.error !== "invalid_test_file") return null
+  const errors = error.payload.errors
+  return Array.isArray(errors) ? errors as TestValidationResult["errors"] : null
 }
 
 function isAbortError(error: unknown): boolean {
@@ -309,9 +323,11 @@ export default function TestEditorPage() {
     steps: liveSteps,
     setupHooks: liveHookConfig.setup,
     teardownHooks: liveHookConfig.teardown,
-    allowReconnect: false,
+    // The server detaches a dropped session for its idle window, so a drop resumes it (428 D-09).
+    allowReconnect: true,
   })
   const terminateLiveSession = liveEditor.terminateSession
+  const liveSessionGone = liveEditor.sessionGone
   liveSessionIdRef.current = liveSessionId
   terminateLiveSessionRef.current = terminateLiveSession
 
@@ -361,7 +377,7 @@ export default function TestEditorPage() {
       return {
         reason: "disconnected" as const,
         title: "Live session disconnected",
-        description: "The connection dropped and the disposable session was terminated. Start a fresh session to reconnect.",
+        description: "The connection dropped and could not be restored. Start a fresh session to continue.",
       }
     }
 
@@ -382,6 +398,19 @@ export default function TestEditorPage() {
     || isLoadingTargets
   )
 
+  // Save asks the same validator Validate does and shows its verdict the same way (G-433-2).
+  const refuseInvalidContent = useCallback(async (): Promise<boolean> => {
+    const result = await validateTestContent(content, filePath || filename.trim())
+    if (result.valid) return false
+    toast.error(formatValidationErrors(result.errors))
+    return true
+  }, [content, filePath, filename])
+
+  const openCreatedTest = useCallback(() => {
+    const createdTestId = formState?.testId?.trim()
+    if (createdTestId) navigate(routes.testView(createdTestId))
+  }, [formState, navigate])
+
   const handleSave = useCallback(async () => {
     setIsSaving(true)
     try {
@@ -391,22 +420,27 @@ export default function TestEditorPage() {
           toast.error(fnameError)
           return
         }
+        if (await refuseInvalidContent()) return
         await createTestFile(filename.trim(), content)
         toast.success("Test file created")
-        navigate(routes.testView(formState?.testId ?? ''))
+        openCreatedTest()
       } else {
+        if (await refuseInvalidContent()) return
         await updateTestFile(testId, content)
         setSavedContent(content)
         toast.success("Saved")
       }
     } catch (err) {
+      const refused = readRefusedSaveErrors(err)
       toast.error(
-        `Failed to save: ${err instanceof Error ? err.message : String(err)}`
+        refused
+          ? formatValidationErrors(refused)
+          : `Failed to save: ${err instanceof Error ? err.message : String(err)}`
       )
     } finally {
       setIsSaving(false)
     }
-  }, [isCreateMode, filename, testMatchPatterns, content, testId, navigate, formState])
+  }, [isCreateMode, filename, testMatchPatterns, content, testId, refuseInvalidContent, openCreatedTest])
 
   const closeLiveMode = useCallback(() => {
     logLiveDebug("page", "closing live mode", {
@@ -598,10 +632,7 @@ export default function TestEditorPage() {
       if (result.valid) {
         toast.success("Valid YAML")
       } else {
-        const msgs = result.errors
-          .map((e) => (e.line ? `Line ${e.line}: ${e.message}` : e.message))
-          .join("\n")
-        toast.error(msgs)
+        toast.error(formatValidationErrors(result.errors))
       }
     } catch (err) {
       toast.error(
@@ -623,17 +654,22 @@ export default function TestEditorPage() {
           toast.error(fnameError)
           return
         }
+        if (await refuseInvalidContent()) return
         await createTestFile(filename.trim(), content)
-        navigate(routes.testView(formState?.testId ?? ''))
+        openCreatedTest()
         return
       }
       if (unsaved) {
+        if (await refuseInvalidContent()) return
         await updateTestFile(testId, content)
         setSavedContent(content)
       }
     } catch (err) {
+      const refused = readRefusedSaveErrors(err)
       toast.error(
-        `Failed to save before run: ${err instanceof Error ? err.message : String(err)}`
+        refused
+          ? formatValidationErrors(refused)
+          : `Failed to save before run: ${err instanceof Error ? err.message : String(err)}`
       )
       return
     }
@@ -649,7 +685,7 @@ export default function TestEditorPage() {
       )
       setIsRunning(false)
     }
-  }, [isRunning, isCreateMode, filename, testMatchPatterns, content, unsaved, testId, filePath, navigate, formState])
+  }, [isRunning, isCreateMode, filename, testMatchPatterns, content, unsaved, testId, filePath, refuseInvalidContent, openCreatedTest])
 
   const handleRunClose = useCallback(() => {
     setRunId(null)
@@ -700,9 +736,11 @@ export default function TestEditorPage() {
     }
   }, [])
 
+  // A session the server no longer holds stays on the pane, whose preview names it (428 D-09).
   useEffect(() => {
     if (!liveSessionId) return
     if (liveConnectionState !== "disconnected") return
+    if (liveSessionGone) return
     logLiveDebug("page", "live session moved to terminal state", {
       liveSessionId,
       liveConnectionState,
@@ -714,7 +752,7 @@ export default function TestEditorPage() {
     setLiveSelection(null)
     setLiveHookConfig({ setup: [], teardown: [] })
     setLiveModeOpen(true)
-  }, [liveConnectionState, liveSessionId])
+  }, [liveConnectionState, liveSessionGone, liveSessionId])
 
   useEffect(() => {
     if (!shouldAutoLaunchLive || autoLaunchLiveRef.current) return
@@ -844,7 +882,6 @@ export default function TestEditorPage() {
       <TabsList variant="line" className="px-4">
         <TabsTrigger value="builder">Builder</TabsTrigger>
         <TabsTrigger value="yaml">YAML</TabsTrigger>
-        {!isCreateMode && <TabsTrigger value="memory">Memory</TabsTrigger>}
       </TabsList>
       <TabsContent value="builder" className="mt-2 flex-1 overflow-auto">
         {builderPanel}
@@ -852,11 +889,6 @@ export default function TestEditorPage() {
       <TabsContent value="yaml" className="flex-1 min-h-0 mt-2">
         {monacoPanel}
       </TabsContent>
-      {!isCreateMode && (
-        <TabsContent value="memory" className="mt-2 flex-1 overflow-auto">
-          <MemoryObservationsPanel testId={testId} />
-        </TabsContent>
-      )}
     </Tabs>
   )
 
@@ -897,7 +929,8 @@ export default function TestEditorPage() {
       targetLabel={liveTargetLabel}
       liveSessionNumber={liveSessionNumber}
       platform={livePlatform}
-      screenshot={liveEditor.screenshot}
+      liveSessionId={liveSessionId}
+      sessionGone={liveEditor.sessionGone}
       currentUrl={liveEditor.currentUrl}
       pendingNavigation={liveEditor.pendingNavigation}
       steps={liveEditor.steps}
@@ -927,7 +960,7 @@ export default function TestEditorPage() {
       onRestartSession={setupHooksStale ? () => void handleRestartLiveSession() : undefined}
       showEndSessionAction={isMobile}
       onCloseLiveMode={closeLiveMode}
-      onStartFreshSession={() => void handleConnectLiveSession()}
+      onStartFreshSession={() => void (liveSessionGone ? handleRestartLiveSession() : handleConnectLiveSession())}
       onBack={liveEditor.goBack}
       onForward={liveEditor.goForward}
       onRefresh={liveEditor.refreshPage}
@@ -945,7 +978,7 @@ export default function TestEditorPage() {
   )
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex h-full min-h-0 flex-col">
       <TestNavbar
         testName={isCreateMode ? "New Test" : displayFormState?.name ?? testId}
         testId={displayFormState?.testId ?? ''}

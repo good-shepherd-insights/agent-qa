@@ -7,10 +7,12 @@ import {
 
 import {
   fetchInsightsBreakdown,
+  fetchInsightsKnowledgeChanges,
   fetchStats,
   fetchTokenEventStats,
   type InsightsBreakdownDimension,
   type InsightsBreakdownRow,
+  type InsightsKnowledgeChanges,
   type Stats,
   type TokenEventStats,
 } from "@/lib/api"
@@ -72,6 +74,7 @@ export default function InsightsPage() {
 
   const [stats, setStats] = useState<Stats | null>(null)
   const [tokenStats, setTokenStats] = useState<TokenEventStats | null>(null)
+  const [knowledgeChanges, setKnowledgeChanges] = useState<InsightsKnowledgeChanges | null>(null)
   const [breakdownRows, setBreakdownRows] = useState<InsightsBreakdownRow[]>([])
   const [hasLoadedOverview, setHasLoadedOverview] = useState(false)
   const [hasLoadedBreakdown, setHasLoadedBreakdown] = useState(false)
@@ -125,6 +128,30 @@ export default function InsightsPage() {
   useEffect(() => {
     let cancelled = false
 
+    // Separate from the overview: a failed curation read is named in the Memory section and never
+    // takes the rest of the page down with it.
+    async function loadKnowledgeChanges() {
+      // The previous window's counts must not stay on screen under the new window's label.
+      setKnowledgeChanges(null)
+      let next: InsightsKnowledgeChanges
+      try {
+        next = await fetchInsightsKnowledgeChanges({ from: getWindowFrom(timeWindow) })
+      } catch {
+        next = { status: "unavailable", reason: "request_failed" }
+      }
+      if (!cancelled) setKnowledgeChanges(next)
+    }
+
+    void loadKnowledgeChanges()
+
+    return () => {
+      cancelled = true
+    }
+  }, [timeWindow])
+
+  useEffect(() => {
+    let cancelled = false
+
     async function loadBreakdown() {
       const from = getWindowFrom(timeWindow)
       const scope = scopeMode === "scoped" ? "passRate" : undefined
@@ -162,7 +189,8 @@ export default function InsightsPage() {
   if (isInitialLoading) return <ChartSkeleton />
 
   const hasRuns = Boolean(stats && stats.totalRuns > 0)
-  const passRate = stats && stats.totalRuns > 0 ? Math.round((stats.passed / stats.totalRuns) * 100) : 0
+  const decidedRuns = stats ? stats.passed + stats.failed : 0
+  const passRate = stats && decidedRuns > 0 ? Math.round((stats.passed / decidedRuns) * 100) : null
   const breakdownCopy = BREAKDOWN_OPTIONS.find((option) => option.value === breakdown) ?? BREAKDOWN_OPTIONS[0]
   const avgRunsPerDay = stats && stats.runs.length > 0 ? Math.round(stats.totalRuns / stats.runs.length) : 0
   const showFatalError = hasWindowError && !stats
@@ -267,8 +295,8 @@ export default function InsightsPage() {
                   <InsightsMetricCell
                     className="border-b border-border"
                     label="Pass Rate"
-                    value={`${passRate}%`}
-                    description={`${stats.passed} successful ${scopeActive ? "scoped " : ""}runs out of ${stats.totalRuns}.`}
+                    value={passRate === null ? "\u2014" : `${passRate}%`}
+                    description={`${stats.passed} successful ${scopeActive ? "scoped " : ""}runs out of ${decidedRuns} that passed or failed.`}
                   />
                   <InsightsMetricCell
                     className="border-b border-border sm:border-b-0 sm:border-r"
@@ -290,13 +318,12 @@ export default function InsightsPage() {
                   <p className="text-sm text-muted-foreground">Trend for successful outcomes across the selected window.</p>
                 </div>
                 <PassRateChart
-                  data={stats.runs.map((run) => {
-                    const total = run.passed + run.failed
-                    return {
+                  data={stats.runs
+                    .filter((run) => run.passed + run.failed > 0)
+                    .map((run) => ({
                       date: run.date,
-                      passRate: total > 0 ? Math.round((run.passed / total) * 1000) / 10 : 0,
-                    }
-                  })}
+                      passRate: Math.round((run.passed / (run.passed + run.failed)) * 1000) / 10,
+                    }))}
                   className={cn("mt-4 h-[200px]", isWindowRefreshing && "opacity-70")}
                 />
               </InsightsLineCell>
@@ -314,7 +341,7 @@ export default function InsightsPage() {
             </InsightsLineGrid>
 
             <div className={cn("transition-opacity", isWindowRefreshing && "opacity-70")}>
-              <InsightsSecondarySections stats={stats} tokenStats={tokenStats} />
+              <InsightsSecondarySections tokenStats={tokenStats} knowledgeChanges={knowledgeChanges} />
             </div>
           </section>
 

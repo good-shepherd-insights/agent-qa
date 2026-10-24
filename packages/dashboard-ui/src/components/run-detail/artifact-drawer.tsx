@@ -1,5 +1,4 @@
-import { AlertCircle, Copy } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
+import { AlertCircle, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -12,16 +11,17 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { RunArtifactResponse, RunRow } from "@/lib/api"
-import { cn } from "@/lib/utils"
+import { captureStateOf, DRAWER_COPY, DRAWER_TITLE_FALLBACK, ranAgainstParts } from "@/lib/drawer-view"
+import { ArtifactTestTab } from "./artifact-test-tab"
 import { ArtifactConfigTab } from "./artifact-config-tab"
-import { ArtifactMemoryTab } from "./artifact-memory-tab"
+import { ArtifactTechnicalDetails } from "./artifact-technical-details"
 
-export type ArtifactDrawerTab = "attributes" | "config" | "memory"
+export type ArtifactDrawerTab = "test" | "config"
 
 interface ArtifactDrawerProps {
   run: RunRow
   open: boolean
-  tab: ArtifactDrawerTab
+  tab?: ArtifactDrawerTab
   response: RunArtifactResponse | null
   loading: boolean
   error: string | null
@@ -60,7 +60,7 @@ function ErrorState({ error, onRetry }: { error: string; onRetry: () => void }) 
           </p>
           <p className="mt-2 break-words font-mono text-xs text-red-500">{error}</p>
           <Button className="mt-3" size="sm" variant="outline" onClick={onRetry}>
-            Retry
+            {DRAWER_COPY.retry}
           </Button>
         </div>
       </div>
@@ -81,101 +81,6 @@ function MissingArtifactState() {
   )
 }
 
-function recordAt(value: unknown, key: string): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null
-  const next = (value as Record<string, unknown>)[key]
-  return next && typeof next === "object" && !Array.isArray(next)
-    ? next as Record<string, unknown>
-    : null
-}
-
-function stringAttributesFrom(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
-  return Object.fromEntries(entries)
-}
-
-function getRunAttributes(response: RunArtifactResponse): Record<string, string> {
-  const direct = stringAttributesFrom(response.run.attributes)
-  if (Object.keys(direct).length > 0) return direct
-
-  const payload = response.artifact?.payload
-  const metadata = recordAt(payload, "metadata")
-  return stringAttributesFrom(recordAt(metadata, "attributes"))
-}
-
-function sortedAttributeEntries(attributes: Record<string, string>) {
-  return Object.entries(attributes).sort(([left], [right]) => {
-    const leftInternal = left.startsWith("agent-qa.")
-    const rightInternal = right.startsWith("agent-qa.")
-    if (leftInternal !== rightInternal) return leftInternal ? -1 : 1
-    return left.localeCompare(right)
-  })
-}
-
-function copyText(value: string) {
-  void navigator.clipboard?.writeText(value)
-}
-
-function AttributesTab({ response }: { response: RunArtifactResponse }) {
-  const attributes = getRunAttributes(response)
-  const entries = sortedAttributeEntries(attributes)
-
-  if (entries.length === 0) {
-    return (
-      <div className="rounded-[2px] border border-border p-4">
-        <h3 className="text-sm font-medium text-foreground">No run attributes</h3>
-        <p className="mt-1 text-sm text-muted-foreground">This run did not record any attributes.</p>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => copyText(JSON.stringify(Object.fromEntries(entries), null, 2))}
-        >
-          <Copy className="size-4" />
-          Copy JSON
-        </Button>
-      </div>
-      <div className="overflow-hidden rounded-[2px] border border-border">
-        <table className="w-full table-fixed text-sm">
-          <tbody>
-            {entries.map(([key, value]) => (
-              <tr key={key} className="border-b border-border/70 last:border-b-0">
-                <th className="w-[240px] align-top px-3 py-2 text-left font-mono text-xs font-medium text-muted-foreground">
-                  {key}
-                </th>
-                <td className="align-top px-3 py-2">
-                  <div className="flex min-w-0 items-start gap-2">
-                    <span className="min-w-0 flex-1 break-all font-mono text-xs text-foreground">{value}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Copy ${key} value`}
-                      title="Copy value"
-                      onClick={() => copyText(value)}
-                    >
-                      <Copy className="size-3.5" />
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
 function ShellTabContent({
   tab,
   response,
@@ -183,17 +88,11 @@ function ShellTabContent({
   tab: ArtifactDrawerTab
   response: RunArtifactResponse
 }) {
-  if (tab === "attributes") {
-    return <AttributesTab response={response} />
+  if (tab === "test") {
+    return <ArtifactTestTab response={response} />
   }
 
-  if (tab === "config") {
-    return <ArtifactConfigTab response={response} />
-  }
-
-  return (
-    <ArtifactMemoryTab response={response} />
-  )
+  return <ArtifactConfigTab response={response} />
 }
 
 function DrawerBody({
@@ -202,18 +101,18 @@ function DrawerBody({
   loading,
   error,
   onRetry,
-}: Pick<ArtifactDrawerProps, "tab" | "response" | "loading" | "error" | "onRetry">) {
+}: { tab: ArtifactDrawerTab } & Pick<ArtifactDrawerProps, "response" | "loading" | "error" | "onRetry">) {
   if (loading) return <LoadingState />
   if (error) return <ErrorState error={error} onRetry={onRetry} />
   if (!response) return <MissingArtifactState />
-  if (tab !== "attributes" && !response.artifact) return <MissingArtifactState />
+  if (tab !== "test" && !response.artifact) return <MissingArtifactState />
   return <ShellTabContent tab={tab} response={response} />
 }
 
 export function ArtifactDrawer({
   run,
   open,
-  tab,
+  tab = "test",
   response,
   loading,
   error,
@@ -222,39 +121,25 @@ export function ArtifactDrawer({
   onRetry,
 }: ArtifactDrawerProps) {
   const artifact = response?.artifact ?? null
-  const description = run.name || `Run ${run.id}`
+  const title = run.name || DRAWER_TITLE_FALLBACK(run.id)
+  const parts = ranAgainstParts(artifact?.payload.config)
+  const description = parts.length > 0 ? parts.join(' · ') : DRAWER_COPY.configNotCaptured
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-[min(820px,92vw)] sm:max-w-none gap-0 overflow-hidden p-0">
         <SheetHeader className="border-b px-4 py-3 pr-12">
-          <SheetTitle className="text-base leading-snug">Run details</SheetTitle>
+          <SheetTitle className="text-base leading-snug font-medium line-clamp-2">{title}</SheetTitle>
           <SheetDescription className="truncate text-xs">{description}</SheetDescription>
-          <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
-            <span className="break-all font-mono">{run.id}</span>
-            {artifact ? (
-              <>
-                <Badge variant="outline" className="text-[10px]">
-                  {artifact.kind}
-                </Badge>
-                <Badge variant="outline" className="text-[10px]">
-                  schema {artifact.schemaVersion}
-                </Badge>
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "text-[10px]",
-                    artifact.finalizedAt
-                      ? "border-emerald-500/20 text-emerald-500"
-                      : "border-amber-500/25 text-amber-500",
-                  )}
-                >
-                  {artifact.finalizedAt ? "finalized" : "open"}
-                </Badge>
-              </>
-            ) : null}
-          </div>
         </SheetHeader>
+
+        {artifact && captureStateOf(artifact) === 'unsealed' ? (
+          <div role="status" data-capture-state="unsealed"
+            className="m-4 flex items-start gap-2 rounded-sm border border-amber-500/25 bg-amber-500/5 p-3 text-sm">
+            <TriangleAlert className="h-4 w-4 shrink-0 text-amber-500" />
+            <span>{DRAWER_COPY.unsealedCapture}</span>
+          </div>
+        ) : null}
 
         <Tabs
           value={tab}
@@ -263,21 +148,18 @@ export function ArtifactDrawer({
         >
           <div className="border-b px-3">
             <TabsList variant="line" className="h-9 w-full justify-start">
-              <TabsTrigger value="attributes" className="max-w-32 flex-none">
-                Attributes
+              <TabsTrigger value="test" className="max-w-32 flex-none">
+                {DRAWER_COPY.test}
               </TabsTrigger>
               <TabsTrigger value="config" className="max-w-32 flex-none">
-                Config
-              </TabsTrigger>
-              <TabsTrigger value="memory" className="max-w-32 flex-none">
-                Memory
+                {DRAWER_COPY.config}
               </TabsTrigger>
             </TabsList>
           </div>
           <ScrollArea className="min-h-0 flex-1">
-            <TabsContent value="attributes" className="m-0 px-4 py-4">
+            <TabsContent value="test" className="m-0 px-4 py-4">
               <DrawerBody
-                tab="attributes"
+                tab="test"
                 response={response}
                 loading={loading}
                 error={error}
@@ -293,17 +175,9 @@ export function ArtifactDrawer({
                 onRetry={onRetry}
               />
             </TabsContent>
-            <TabsContent value="memory" className="m-0 px-4 py-4">
-              <DrawerBody
-                tab="memory"
-                response={response}
-                loading={loading}
-                error={error}
-                onRetry={onRetry}
-              />
-            </TabsContent>
           </ScrollArea>
         </Tabs>
+        {artifact ? <ArtifactTechnicalDetails runId={run.id} artifact={artifact} /> : null}
       </SheetContent>
     </Sheet>
   )

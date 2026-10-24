@@ -40,12 +40,16 @@ test('builds the fail-closed release gate plan in exact order through GitHub Rel
     'pnpm install --frozen-lockfile',
     'release preflight',
     'write shared version',
-    'write posthog project key',
     'pnpm typecheck',
     'pnpm test',
+    'write posthog project key',
     'pnpm build',
     'pnpm run validate:skills',
+    'pnpm run validate:agents',
     'pnpm run validate:publish',
+    'pnpm run validate:tools',
+    'pnpm run validate:arch',
+    'pnpm run validate:safety',
     'stage packages',
     'release postbuild verification',
     'create release commit and tag',
@@ -175,7 +179,7 @@ test('preflight verification checks bump, git tag, npm registry, and POSTHOG_PRO
         assert.ok(packages.some(record => (record.pkg?.name ?? record.name) === '@vostride/agent-qa-subscription-auth'))
       },
     })
-    assert.deepEqual(calls, ['git 0.1.1', 'npm 10 0.1.1'])
+    assert.deepEqual(calls, ['git 0.1.1', `npm ${publicPackageNames.length + 1} 0.1.1`])
   } finally {
     await rm(rootDir, { recursive: true, force: true })
   }

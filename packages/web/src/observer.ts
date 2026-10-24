@@ -1,6 +1,6 @@
 import type { Page } from 'playwright-core'
-import type { ScreenState, ElementInfo } from '@vostride/agent-qa-core'
-import type { RefMap } from './types.js'
+import type { ScreenState, ElementState, ElementLabels } from '@vostride/agent-qa-schema'
+import { buildScreenState, type InterimNode } from '@vostride/agent-qa-runner'
 import { extractDom } from './dom-extractor.js'
 
 const INTERACTIVE_ROLES = new Set([
@@ -13,81 +13,137 @@ const INTERACTIVE_ROLES = new Set([
   'grid', 'menu', 'menubar', 'tree', 'treegrid',
 ])
 
+// 439 D-16: 'dialog' and 'alertdialog' are kept so an open dialog is on the screen the judge reads.
 const CONTENT_ROLES = new Set([
   'heading', 'cell', 'listitem', 'article', 'region', 'navigation',
-  'progressbar', 'tabpanel',
+  'progressbar', 'tabpanel', 'row', 'dialog', 'alertdialog',
 ])
+
+const LIMIT_KEYS = ['valuenow', 'valuemin', 'valuemax'] as const
 
 const LINE_PATTERN = /^(\s*-\s*)(\w+)(?:\s+"([^"]*)")?(.*)$/
 // Playwright wraps ARIA entries in single quotes when element names contain
 // colons or other characters that are ambiguous in its snapshot format.
 // e.g. - 'button "Spoken Language: Any"'
 const QUOTED_LINE_PATTERN = /^(\s*-\s*)'(\w+)(?:\s+"([^"]*)")?(.*)'\s*$/
+// Playwright's ai-mode snapshot annotates each element with a native reference,
+// e.g. `- button "Login" [ref=e5]`. These refs are adapter-PRIVATE handles for
+// aria-ref locators; they are NEVER copied into the node identity (D-03).
+const REF_ANNOTATION = /\[ref=([A-Za-z0-9_-]+)\]/
+const BRACKET_ATTR = /\[(\w+)(?:=([^\]]*))?\]/g
+// The inline text after a line's bracket annotations: `- paragraph [ref=e7]: 7 Elm Street`.
+const INLINE_TEXT = /^(?:\s*\[[^\]]*\])*\s*:\s*(.*)$/
 
-export function parseAriaSnapshot(ariaTree: string): { tree: string; elements: ElementInfo[]; refs: RefMap } {
+function inlineText(suffix: string | undefined): string | undefined {
+  const raw = suffix?.match(INLINE_TEXT)?.[1]?.trim()
+  if (!raw) return undefined
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed === 'string') return parsed
+    } catch {
+      return raw.slice(1, -1)
+    }
+  }
+  return raw
+}
+
+function appendText(node: InterimNode, text: string | undefined): void {
+  const tidy = text?.replace(/\s+/g, ' ').trim()
+  if (!tidy) return
+  node.text = node.text === undefined ? tidy : `${node.text} ${tidy}`
+}
+
+/**
+ * Parse a Playwright ARIA snapshot into platform-neutral runner interim nodes.
+ *
+ * Emits nodes in document order with role/name/attributes and a `parentIndex`
+ * derived from indentation depth: the nearest kept entry among the line's true
+ * ancestors; a dropped line still bounds its subtree (438 gap round, CR-02). A line
+ * whose role is not kept never becomes a node: its quoted name and inline text fold
+ * into the nearest kept entry among the line's true ancestors (438 D-02, the row
+ * text), and a kept content line's own inline text becomes its `text`. Playwright
+ * ai-mode `[ref=eN]` annotations are captured into an index-aligned `nativeRefs`
+ * array (adapter-private native handles) and are never written into the node. Accepts both ai-mode (annotated) and default-mode
+ * (unannotated) snapshot text.
+ *
+ * No ref minting and no tree rendering happen here — the shared runner builder
+ * owns both (D-01/D-02/D-03).
+ */
+export function parseAriaSnapshot(ariaTree: string): {
+  nodes: InterimNode[]
+  nativeRefs: (string | undefined)[]
+} {
   const lines = ariaTree.split('\n')
-  const elements: ElementInfo[] = []
-  const refs: RefMap = {}
-  const resultLines: string[] = []
-  let refCounter = 0
-
-  // Track role+name occurrences for disambiguation
-  const roleNameCounts = new Map<string, number>()
-  const refToKey = new Map<string, string>()
+  const nodes: InterimNode[] = []
+  const nativeRefs: (string | undefined)[] = []
+  // Every matched line's depth; `index` (into the FILTERED nodes array) only on kept lines.
+  const ancestors: Array<{ depth: number; index?: number }> = []
 
   for (const line of lines) {
     const match = line.match(LINE_PATTERN) || line.match(QUOTED_LINE_PATTERN)
-    if (!match) {
-      resultLines.push(line)
-      continue
-    }
+    if (!match) continue
 
-    const [, prefix, role, name, suffix] = match
+    const [, , role, name, suffix] = match
     const roleLower = role.toLowerCase()
-    const shouldGetRef = INTERACTIVE_ROLES.has(roleLower) || CONTENT_ROLES.has(roleLower)
 
-    if (!shouldGetRef) {
-      resultLines.push(line)
+    // Indentation depth: Playwright indents snapshot children by 2 spaces per level.
+    const leadingSpaces = line.length - line.trimStart().length
+    const depth = Math.floor(leadingSpaces / 2)
+
+    while (ancestors.length > 0 && ancestors[ancestors.length - 1].depth >= depth) {
+      ancestors.pop()
+    }
+    let keptAncestor: number | undefined
+    for (let k = ancestors.length - 1; k >= 0; k--) {
+      if (ancestors[k].index !== undefined) {
+        keptAncestor = ancestors[k].index
+        break
+      }
+    }
+
+    if (!INTERACTIVE_ROLES.has(roleLower) && !CONTENT_ROLES.has(roleLower)) {
+      if (keptAncestor !== undefined) {
+        appendText(nodes[keptAncestor], name)
+        appendText(nodes[keptAncestor], inlineText(suffix))
+      }
+      ancestors.push({ depth })
       continue
     }
 
-    refCounter++
-    const ref = `e${refCounter}`
-    const key = `${roleLower}:${name ?? ''}`
+    const parentIndex = keptAncestor
 
-    const currentCount = roleNameCounts.get(key) ?? 0
-    roleNameCounts.set(key, currentCount + 1)
-    refToKey.set(ref, key)
+    // Capture the adapter-private native ref (ai-mode) — never copied into the node.
+    const refMatch = suffix?.match(REF_ANNOTATION)
+    const nativeRef = refMatch ? refMatch[1] : undefined
 
-    refs[ref] = { role: roleLower, name, nth: currentCount }
-
-    // Parse attributes from suffix like [level=1], [checked], [disabled]
+    // Remaining bracket annotations become the raw attribute bag (ref excluded).
     const attributes: Record<string, string> = {}
-    const attrMatches = suffix?.matchAll(/\[(\w+)(?:=([^\]]*))?\]/g)
-    if (attrMatches) {
-      for (const am of attrMatches) {
+    if (suffix) {
+      for (const am of suffix.matchAll(BRACKET_ATTR)) {
+        if (am[1] === 'ref') continue
         attributes[am[1]] = am[2] ?? 'true'
       }
     }
 
-    elements.push({ ref, role: roleLower, name: name ?? '', attributes })
+    const node: InterimNode = { role: roleLower }
+    if (name) node.name = name
+    if (parentIndex !== undefined) node.parentIndex = parentIndex
+    if (Object.keys(attributes).length > 0) node.attributes = attributes
+    // Only signals actually present in the snapshot text populate state; the
+    // builder derives all defaults. A [disabled] annotation is the only state
+    // signal the default snapshot text carries.
+    if ('disabled' in attributes) node.state = { enabled: false }
+    // A control's inline text is its value (a password field's included), never static text.
+    if (CONTENT_ROLES.has(roleLower)) appendText(node, inlineText(suffix))
 
-    let enhanced = `${prefix}${role}`
-    if (name) enhanced += ` "${name}"`
-    enhanced += ` [ref=${ref}]`
-    if (suffix?.trim()) enhanced += suffix
-    resultLines.push(enhanced)
+    const index = nodes.length
+    nodes.push(node)
+    nativeRefs.push(nativeRef)
+    ancestors.push({ depth, index })
   }
 
-  // Post-process: remove nth from refs that don't have duplicates
-  for (const [ref, data] of Object.entries(refs)) {
-    const key = refToKey.get(ref)!
-    if ((roleNameCounts.get(key) ?? 0) <= 1) {
-      delete refs[ref].nth
-    }
-  }
-
-  return { tree: resultLines.join('\n'), elements, refs }
+  return { nodes, nativeRefs }
 }
 
 // Browser-context functions use (globalThis as any) to access document
@@ -108,11 +164,198 @@ function restoreAgentQaElements() {
   })
 }
 
+/**
+ * Capture exact web scroll state (Pitfall #2 / D-10). Web scroll is precise:
+ * real `window.scrollX/Y` offsets and `document.documentElement.scrollWidth/Height`
+ * content size — never hardcoded zeros. Best-effort: on failure it degrades to the
+ * Playwright viewport size and zero scroll rather than throwing.
+ */
+export async function captureWebScroll(page: Page): Promise<{
+  viewport: { width: number; height: number }
+  scroll: { offsetX: number; offsetY: number; contentWidth: number; contentHeight: number }
+}> {
+  const fallbackViewport = page.viewportSize() ?? { width: 0, height: 0 }
+  try {
+    const raw = await page.evaluate(() => {
+      const w = globalThis as any
+      const docEl = w.document.documentElement
+      return {
+        width: w.innerWidth,
+        height: w.innerHeight,
+        offsetX: w.scrollX,
+        offsetY: w.scrollY,
+        contentWidth: docEl.scrollWidth,
+        contentHeight: docEl.scrollHeight,
+      }
+    })
+    if (raw && typeof raw === 'object') {
+      return {
+        viewport: {
+          width: numberOr(raw.width, fallbackViewport.width),
+          height: numberOr(raw.height, fallbackViewport.height),
+        },
+        scroll: {
+          offsetX: numberOr(raw.offsetX, 0),
+          offsetY: numberOr(raw.offsetY, 0),
+          contentWidth: numberOr(raw.contentWidth, 0),
+          contentHeight: numberOr(raw.contentHeight, 0),
+        },
+      }
+    }
+  } catch {
+    // Scroll capture is best-effort — never block observation.
+  }
+  return {
+    viewport: fallbackViewport,
+    scroll: { offsetX: 0, offsetY: 0, contentWidth: 0, contentHeight: 0 },
+  }
+}
+
+/**
+ * Resolve exact per-element geometry, state, and labels through Playwright
+ * `aria-ref=` locators (the engine's own ground truth) instead of the removed
+ * in-page inferred-role heuristic. The ai-mode native refs stay adapter-private
+ * handles; builder-minted refs remain the only public identity (D-03).
+ *
+ * Enrichment mutates the interim nodes in place and is best-effort: a node whose
+ * ref fails to resolve (or has no ref) keeps `bounds` absent — the builder's
+ * geometry rule turns that into no refMap entry, never zero-geometry fabrication
+ * (D-08, Pitfall #3). Enrichment failure degrades to unenriched nodes; it never
+ * throws out of observation.
+ */
+export async function enrichWebNodes(
+  page: Page,
+  nodes: InterimNode[],
+  nativeRefs: (string | undefined)[],
+): Promise<void> {
+  try {
+    // Resolve element handles for nodes that carry a native ref.
+    const handles: unknown[] = []
+    const targetIndices: number[] = []
+    for (let i = 0; i < nodes.length; i++) {
+      const ref = nativeRefs[i]
+      if (!ref) continue
+      try {
+        const handle = await page.locator('aria-ref=' + ref).elementHandle()
+        if (handle) {
+          handles.push(handle)
+          targetIndices.push(i)
+        }
+      } catch {
+        // Unresolved ref → node keeps bounds absent (honest absence).
+      }
+    }
+    if (handles.length === 0) return
+
+    // One batched page.evaluate reads bounds/state/labels for every resolved handle.
+    const raw = await page.evaluate((els: any[]) => {
+      const w = globalThis as any
+      const active = w.document.activeElement
+      return els.map((el: any) => {
+        if (!el) return null
+        const rect = typeof el.getBoundingClientRect === 'function'
+          ? el.getBoundingClientRect()
+          : null
+        const style = typeof w.getComputedStyle === 'function' ? w.getComputedStyle(el) : null
+        const hidden = style
+          ? style.visibility === 'hidden' || style.display === 'none'
+          : false
+        const hasBox = !!rect && rect.width > 0 && rect.height > 0
+        const disabled =
+          el.disabled === true ||
+          (typeof el.hasAttribute === 'function' && el.hasAttribute('disabled')) ||
+          (typeof el.getAttribute === 'function' && el.getAttribute('aria-disabled') === 'true')
+        const attr = (n: string) =>
+          typeof el.getAttribute === 'function' ? el.getAttribute(n) : null
+        const inputType = el.tagName === 'INPUT' && typeof el.type === 'string' ? el.type : ''
+        const isRange = inputType === 'range'
+        const isNumber = inputType === 'number'
+        return {
+          bounds: rect
+            ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            : null,
+          enabled: !disabled,
+          focused: el === active,
+          visible: hasBox && !hidden,
+          testId: attr('data-testid'),
+          ariaLabel: attr('aria-label'),
+          placeholder: attr('placeholder'),
+          title: attr('title'),
+          valuenow: attr('aria-valuenow') ?? (isRange || isNumber ? String(el.value) : null),
+          valuemin: attr('aria-valuemin') ?? (isRange ? el.min || '0' : isNumber ? el.min || null : null),
+          valuemax: attr('aria-valuemax') ?? (isRange ? el.max || '100' : isNumber ? el.max || null : null),
+        }
+      })
+    }, handles)
+
+    if (!Array.isArray(raw)) return
+
+    // Coerce untrusted evaluate results to expected primitives before writing them
+    // into the interim nodes (T-352-05): numbers for geometry, strings for labels;
+    // malformed entries degrade to absent fields.
+    for (let k = 0; k < targetIndices.length; k++) {
+      const info = raw[k]
+      if (!info || typeof info !== 'object') continue
+      const node = nodes[targetIndices[k]]
+
+      const bounds = coerceBounds((info as any).bounds)
+      if (bounds) node.bounds = bounds
+
+      const state: Partial<ElementState> = { ...(node.state ?? {}) }
+      if (typeof (info as any).enabled === 'boolean') state.enabled = (info as any).enabled
+      if (typeof (info as any).focused === 'boolean') state.focused = (info as any).focused
+      if (typeof (info as any).visible === 'boolean') state.visible = (info as any).visible
+      if (Object.keys(state).length > 0) node.state = state
+
+      const labels: ElementLabels = { ...(node.labels ?? {}) }
+      const testId = coerceString((info as any).testId)
+      if (testId) labels.testId = testId
+      const ariaLabel = coerceString((info as any).ariaLabel)
+      if (ariaLabel) labels.ariaLabel = ariaLabel
+      const placeholder = coerceString((info as any).placeholder)
+      if (placeholder) labels.placeholder = placeholder
+      const title = coerceString((info as any).title)
+      if (title) labels.title = title
+      if (Object.keys(labels).length > 0) node.labels = labels
+
+      // 439 D-16: a control's reported value and limits; attributes are neither hashed nor rendered.
+      const limits: Record<string, string> = {}
+      for (const key of LIMIT_KEYS) {
+        const value = coerceString((info as any)[key])
+        if (value) limits[key] = value
+      }
+      if (Object.keys(limits).length > 0) node.attributes = { ...(node.attributes ?? {}), ...limits }
+    }
+  } catch {
+    // Enrichment is best-effort — degrade to unenriched nodes, never throw.
+  }
+}
+
+function coerceBounds(
+  value: unknown,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const v = value as Record<string, unknown>
+  const x = v.x, y = v.y, width = v.width, height = v.height
+  if (
+    typeof x === 'number' && Number.isFinite(x) &&
+    typeof y === 'number' && Number.isFinite(y) &&
+    typeof width === 'number' && Number.isFinite(width) &&
+    typeof height === 'number' && Number.isFinite(height)
+  ) {
+    return { x, y, width, height }
+  }
+  return undefined
+}
+
+function coerceString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
 export async function observePage(
   page: Page,
   options?: { filterSelector?: string; extractDom?: boolean },
 ): Promise<ScreenState> {
-  const viewport = page.viewportSize()
   const locator = options?.filterSelector
     ? page.locator(options.filterSelector)
     : page.locator(':root')
@@ -128,123 +371,11 @@ export async function observePage(
     await page.evaluate(restoreAgentQaElements)
   }
 
-  if (!ariaTree) {
-    return {
-      tree: '(empty)',
-      elements: [],
-      url: page.url(),
-      timestamp: Date.now(),
-      metadata: {
-        coordSpace: 'viewport' as const,
-        viewportWidth: viewport?.width ?? 0,
-        viewportHeight: viewport?.height ?? 0,
-        refMap: {},
-      },
-    }
-  }
+  const timestamp = Date.now()
+  const url = page.url()
 
-  const { tree, elements, refs } = parseAriaSnapshot(ariaTree)
-
-  // Bulk bounding box enrichment — single page.evaluate collects all rects in one DOM call.
-  // Previous approach used N sequential getByRole().boundingBox({timeout:500}) calls which
-  // all timed out on complex external pages (100+ elements), reporting "0 visible elements".
-  try {
-    const refEntries = Object.entries(refs)
-    if (refEntries.length > 0) {
-      const refArgs: Array<[string, string, string | undefined, number | undefined]> = refEntries.map(
-        ([ref, data]) => [ref, data.role, data.name, data.nth]
-      )
-
-      type BBoxResult = Array<[string, { x: number; y: number; width: number; height: number } | null]>
-      const result = await Promise.race([
-        page.evaluate((args: Array<[string, string, string | undefined, number | undefined]>) => {
-          const doc = (globalThis as any).document
-          const IMPLICIT_ROLES: Record<string, string> = {
-            button: 'button', a: 'link', input: 'textbox', select: 'combobox',
-            textarea: 'textbox', h1: 'heading', h2: 'heading', h3: 'heading',
-            h4: 'heading', h5: 'heading', h6: 'heading', nav: 'navigation',
-            main: 'main', aside: 'complementary', footer: 'contentinfo',
-            header: 'banner', form: 'form', table: 'table', img: 'img',
-            ul: 'list', ol: 'list', li: 'listitem', dialog: 'dialog',
-            details: 'group', summary: 'button', progress: 'progressbar',
-            meter: 'meter', output: 'status', article: 'article',
-            section: 'region', fieldset: 'group', legend: 'legend',
-          }
-          const INPUT_TYPE_ROLES: Record<string, string> = {
-            checkbox: 'checkbox', radio: 'radio', range: 'slider',
-            number: 'spinbutton', search: 'searchbox', email: 'textbox',
-            tel: 'textbox', url: 'textbox', password: 'textbox',
-          }
-
-          function getAccessibleName(el: any): string {
-            const label = el.getAttribute('aria-label')
-            if (label) return label.trim()
-            const labelledBy = el.getAttribute('aria-labelledby')
-            if (labelledBy) {
-              const parts = labelledBy.split(/\s+/).map((id: string) => {
-                const ref = doc.getElementById(id)
-                return ref ? (ref.textContent || '').trim() : ''
-              }).filter(Boolean)
-              if (parts.length) return parts.join(' ')
-            }
-            const title = el.getAttribute('title')
-            if (title) return title.trim()
-            const alt = el.getAttribute('alt')
-            if (alt) return alt.trim()
-            return (el.textContent || '').trim()
-          }
-
-          function matchesName(elName: string, targetName: string): boolean {
-            return elName.toLowerCase().includes(targetName.toLowerCase())
-          }
-
-          function getImplicitRole(el: any): string | null {
-            const tag = el.tagName.toLowerCase()
-            if (tag === 'input') {
-              const type = (el.getAttribute('type') || 'text').toLowerCase()
-              return INPUT_TYPE_ROLES[type] || 'textbox'
-            }
-            if (tag === 'a' && el.hasAttribute('href')) return 'link'
-            return IMPLICIT_ROLES[tag] || null
-          }
-
-          const results: Array<[string, { x: number; y: number; width: number; height: number } | null]> = []
-          for (const [ref, role, name, nth] of args) {
-            const candidates: any[] = []
-            doc.querySelectorAll(`[role="${role}"]`).forEach((el: any) => candidates.push(el))
-            doc.querySelectorAll('*').forEach((el: any) => {
-              if (el.getAttribute('role')) return
-              if (getImplicitRole(el) === role) candidates.push(el)
-            })
-            let matched = candidates
-            if (name) {
-              matched = candidates.filter((el: any) => matchesName(getAccessibleName(el), name))
-            }
-            const target = matched[nth ?? 0]
-            if (target) {
-              const rect = target.getBoundingClientRect()
-              results.push([ref, {
-                x: Math.round(rect.x), y: Math.round(rect.y),
-                width: Math.round(rect.width), height: Math.round(rect.height),
-              }])
-            } else {
-              results.push([ref, null])
-            }
-          }
-          return results
-        }, refArgs),
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 3000)),
-      ]) as BBoxResult | null
-
-      if (result) {
-        for (const [ref, box] of result) {
-          if (box) refs[ref].bounds = box
-        }
-      }
-    }
-  } catch {
-    // Bounding box enrichment is best-effort — never block observation
-  }
+  // Web scroll + viewport are EXACT (D-10, Pitfall #2).
+  const { viewport: capturedViewport, scroll } = await captureWebScroll(page)
 
   let domContext: string | undefined
   if (options?.extractDom) {
@@ -255,17 +386,30 @@ export async function observePage(
     }
   }
 
-  return {
-    tree,
-    elements,
-    url: page.url(),
-    timestamp: Date.now(),
-    metadata: {
-      coordSpace: 'viewport' as const,
-      viewportWidth: viewport?.width ?? 0,
-      viewportHeight: viewport?.height ?? 0,
-      refMap: refs,
-      ...(domContext ? { domContext } : {}),
-    },
+  const { nodes, nativeRefs } = ariaTree
+    ? parseAriaSnapshot(ariaTree)
+    : { nodes: [] as InterimNode[], nativeRefs: [] as (string | undefined)[] }
+
+  // Exact per-element enrichment via aria-ref locators (honest-absence fallback).
+  if (nodes.length > 0) {
+    await enrichWebNodes(page, nodes, nativeRefs)
   }
+
+  const { state } = buildScreenState({
+    platform: 'web',
+    nodes,
+    viewport: capturedViewport,
+    scroll,
+    coordSpace: 'viewport',
+    timestamp,
+    url,
+    ...(domContext ? { domContext } : {}),
+  })
+
+  return state
+}
+
+/** Coerce an untrusted value to a finite number, falling back when malformed. */
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }

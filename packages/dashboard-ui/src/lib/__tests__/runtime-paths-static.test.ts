@@ -3,8 +3,6 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const repoRoot = new URL('../../../../../', import.meta.url)
-const demoConfig = readFileSync(new URL('../../../../../demo-project/agent-qa.config.yaml', import.meta.url), 'utf-8')
-const releaseConfig = readFileSync(new URL('../../../../../demo-project/agent-qa.release.config.yaml', import.meta.url), 'utf-8')
 const yamlCompletions = readFileSync(new URL('../yaml-completions.ts', import.meta.url), 'utf-8')
 const workspaceResolverTest = readFileSync(new URL('../../../../../packages/core/src/workspace/__tests__/workspace-paths.test.ts', import.meta.url), 'utf-8')
 
@@ -37,33 +35,7 @@ function readSource(relativeRoot: string): string {
     .join('\n')
 }
 
-function readFiles(relativeRoot: string, include: RegExp): string {
-  return filesMatching(relativeRoot, include)
-    .map((file) => readFileSync(file, 'utf-8'))
-    .join('\n')
-}
-
 describe('runtime path static contract', () => {
-  it('keeps the demo config cache under the runtime root', () => {
-    expect(demoConfig).toContain('dir: .agent-qa/cache')
-  })
-
-  it('keeps the demo config memory root explicit and separate from runtime artifacts', () => {
-    expect(demoConfig).toContain('memory:')
-    expect(demoConfig).toContain('dir: agent-qa-memory')
-  })
-
-  it('keeps the demo config on the canonical workspace sample', () => {
-    expect(demoConfig).toContain('tests/web/**/*.yaml')
-    expect(demoConfig).toContain('tests/mobile/**/*.yaml')
-    expect(demoConfig).toContain('tests/farm/**/*.yaml')
-    expect(demoConfig).toContain('suites/**/*.suite.yaml')
-    expect(demoConfig).toContain('hooksFile: hooks.yaml')
-    expect(demoConfig).toContain('agentRules: ./agent-rules.md')
-    expect(demoConfig).toContain('envFile: .env')
-    expect(demoConfig).toContain('secretsFile: .env.secrets.local')
-  })
-
   it('keeps legacy runtime path fallbacks out of CLI and dashboard source', () => {
     const cliSource = readSource('packages/cli/src/')
     const dashboardSource = readSource('packages/dashboard-server/src/')
@@ -86,22 +58,6 @@ describe('runtime path static contract', () => {
     expect(doctorSource).not.toContain('config?.testMatch')
   })
 
-  it('keeps memory runtime consumers on the shared configured root resolver', () => {
-    const cliSource = readSource('packages/cli/src/')
-    const dashboardSource = readSource('packages/dashboard-server/src/')
-    const memoryFactorySource = readFileSync(new URL('../../../../../packages/core/src/memory/factory.ts', import.meta.url), 'utf-8')
-    const localProviderSource = readFileSync(new URL('../../../../../packages/core/src/memory/local-provider.ts', import.meta.url), 'utf-8')
-
-    expect(cliSource).toContain('resolveMemoryRoot')
-    expect(dashboardSource).toContain('resolveMemoryRoot')
-    expect(dashboardSource).not.toContain("join(workspaceDir, 'agent-qa-memory')")
-    expect(dashboardSource).not.toContain("join(configDir, 'agent-qa-memory')")
-    expect(memoryFactorySource).toContain('DEFAULT_MEMORY_DIR')
-    expect(localProviderSource).toContain('DEFAULT_MEMORY_DIR')
-    expect(memoryFactorySource).not.toContain("?? 'agent-qa-memory'")
-    expect(localProviderSource).not.toContain("?? 'agent-qa-memory'")
-  })
-
   it('keeps dashboard UI source exposing audited config paths and create actions', () => {
     const uiSource = readSource('packages/dashboard-ui/src/')
 
@@ -110,16 +66,16 @@ describe('runtime path static contract', () => {
       'services.dashboard.artifactsDir',
       'services.cache.dir',
       'services.cache.ttl',
-      'services.memory.dir',
-      'services.memory.provider',
-      'services.memory.curatorEnabled',
+      'knowledge.dir',
+      'knowledge.commitArtifacts',
+      'knowledge.contextBudgetTokens',
     ]) {
       expect(uiSource).toContain(path)
     }
     expect(uiSource).toContain('routes.testNew')
     expect(uiSource).toContain('routes.suiteNew')
     expect(uiSource).toContain('routes.hookNew')
-    expect(uiSource).toContain('Memory Directory')
+    expect(uiSource).toContain('Knowledge folder')
   })
 
   it('keeps UI source copy aligned with required env files', () => {
@@ -138,22 +94,16 @@ describe('runtime path static contract', () => {
     expect(workspaceResolverTest).toContain('config/env/secrets.local')
   })
 
-  it('keeps public mobile app-state examples and removed knobs guarded', () => {
-    const demoProjectFiles = readFiles('demo-project/', /\.(ya?ml|mjs)$/)
-
-    expect(demoConfig).toContain('appState: preserve')
-    expect(releaseConfig).toContain('appState: preserve')
-    expect(releaseConfig).not.toContain('actionProofs')
-    expect(demoProjectFiles).not.toContain('actionProofs')
+  it('keeps the removed noReset knob out of the YAML completions', () => {
     expect(yamlCompletions).not.toContain('noReset')
   })
 
   it('keeps removed mobile/action-proof copy out of public dashboard surfaces', () => {
     const publicDashboardFiles = [
-      'packages/dashboard-ui/src/components/config-manager/execution-defaults-section.tsx',
       'packages/dashboard-ui/src/components/config-manager/mobile-section.tsx',
+      'packages/dashboard-ui/src/components/config-manager/model-list.tsx',
       'packages/dashboard-ui/src/components/test-settings-panel.tsx',
-      'packages/dashboard-ui/src/lib/config-navigation.ts',
+      'packages/dashboard-ui/src/lib/config-tabs.ts',
       'packages/dashboard-ui/src/pages/config.tsx',
     ].map((file) => readFileSync(new URL(`../../../../../${file}`, import.meta.url), 'utf-8')).join('\n')
 

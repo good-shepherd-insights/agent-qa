@@ -1,20 +1,20 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useNavigate } from "react-router"
-import { Play, FileText, FolderOpen, BarChart3, SlidersHorizontal, Search, Webhook, BrainCircuit, LifeBuoy } from "lucide-react"
+import { Play, FileText, FolderOpen, BarChart3, SlidersHorizontal, Search, Webhook, LifeBuoy } from "lucide-react"
 import {
   fetchHookCatalog,
-  fetchMemoryCatalog,
   fetchRuns,
   fetchTestFiles,
   fetchSuiteFiles,
   type HookCatalogEntry,
-  type MemoryCatalogProduct,
   type RunRow,
   type TestFileInfo,
   type SuiteFileInfo,
 } from "@/lib/api"
-import { getConfigCommandLabel, searchConfigNavigationItems } from "@/lib/config-navigation"
+import { configCommandLabel, CONFIG_SECTION_LABELS } from "@/lib/config-copy"
+import { CONFIG_SECTION_ALIASES, searchConfigSections } from "@/lib/config-tabs"
 import { routes } from "@/lib/routes"
+import { runStatusClass } from "@/lib/status"
 import { useProductTour } from "@/components/product-tour"
 import {
   CommandDialog,
@@ -31,7 +31,6 @@ const pages = [
   { title: "Tests", url: routes.tests, icon: FileText },
   { title: "Hooks", url: routes.hooks, icon: Webhook },
   { title: "Suites", url: routes.suites, icon: FolderOpen },
-  { title: "Memory", url: routes.memory, icon: BrainCircuit },
   { title: "Insights", url: routes.insights, icon: BarChart3 },
   { title: "Config", url: routes.config, icon: SlidersHorizontal },
 ]
@@ -57,23 +56,26 @@ const createActions = [
   },
 ]
 
+function runStatusTextClass(status: string) {
+  switch (runStatusClass(status)) {
+    case "pass":
+      return "text-green-500"
+    case "fail":
+      return "text-red-500"
+    default:
+      return "text-muted-foreground"
+  }
+}
+
 interface SearchResults {
   runs: RunRow[]
   tests: TestFileInfo[]
   hooks: HookCatalogEntry[]
   suites: SuiteFileInfo[]
-  memoryProducts: MemoryCatalogProduct[]
 }
 
 function emptySearchResults(): SearchResults {
-  return { runs: [], tests: [], hooks: [], suites: [], memoryProducts: [] }
-}
-
-function summarizeTargetReferences(targetReferences: string[]) {
-  const visibleReferences = targetReferences.slice(0, 3)
-  const remainingCount = targetReferences.length - visibleReferences.length
-  if (remainingCount <= 0) return visibleReferences.join(", ")
-  return `${visibleReferences.join(", ")}, +${remainingCount} more`
+  return { runs: [], tests: [], hooks: [], suites: [] }
 }
 
 function buildCommandValue(...values: Array<string | string[] | null | undefined>): string {
@@ -97,7 +99,7 @@ export function CommandPalette() {
   const { restartTour } = useProductTour()
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const searchRequestRef = useRef(0)
-  const configResults = searchConfigNavigationItems(searchQuery)
+  const configResults = searchQuery.trim().length < 2 ? [] : searchConfigSections(searchQuery)
 
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -120,12 +122,11 @@ export function CommandPalette() {
     }
     if (requestId === searchRequestRef.current) setIsSearching(true)
     try {
-      const [runsData, testsData, hooksData, suitesData, memoryData] = await Promise.all([
+      const [runsData, testsData, hooksData, suitesData] = await Promise.all([
         fetchRuns({ name: query, limit: 5 }),
         fetchTestFiles(),
         fetchHookCatalog(),
         fetchSuiteFiles(),
-        fetchMemoryCatalog().catch(() => ({ products: [] })),
       ])
       const lowerQuery = query.toLowerCase()
       const filteredTests = testsData.files
@@ -143,19 +144,12 @@ export function CommandPalette() {
       const filteredSuites = suitesData.files
         .filter((suite) => matchesCommandQuery([suite.name, suite.path, suite.suiteId], lowerQuery))
         .slice(0, 5)
-      const filteredMemoryProducts = memoryData.products
-        .filter((product) =>
-          product.productKey.toLowerCase().includes(lowerQuery)
-          || product.targetReferences.some((targetReference) => targetReference.toLowerCase().includes(lowerQuery)),
-        )
-        .slice(0, 5)
       if (requestId !== searchRequestRef.current) return
       setSearchResults({
         runs: runsData.runs,
         tests: filteredTests,
         hooks: filteredHooks,
         suites: filteredSuites,
-        memoryProducts: filteredMemoryProducts,
       })
     } catch {
       if (requestId === searchRequestRef.current) setSearchResults(emptySearchResults())
@@ -203,11 +197,11 @@ export function CommandPalette() {
       open={open}
       onOpenChange={setOpen}
       title="Command Palette"
-      description="Search runs, tests, memory, pages..."
+      description="Search runs, tests, hooks, suites, and pages..."
       className="top-[18vh] translate-y-0"
     >
       <CommandInput
-        placeholder="Search runs, tests, memory, pages..."
+        placeholder="Search runs, tests, hooks, suites, and pages..."
         value={searchQuery}
         onValueChange={setSearchQuery}
       />
@@ -265,7 +259,7 @@ export function CommandPalette() {
                 >
                   <Play />
                   <span className="truncate">{run.name}</span>
-                  <span className={`ml-auto text-xs ${run.status === "passed" ? "text-green-500" : run.status === "failed" ? "text-red-500" : "text-muted-foreground"}`}>
+                  <span className={`ml-auto text-xs ${runStatusTextClass(run.status)}`}>
                     {run.status}
                   </span>
                 </CommandItem>
@@ -347,58 +341,23 @@ export function CommandPalette() {
           </>
         )}
 
-        {searchResults.memoryProducts.length > 0 && (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Memory">
-              {searchResults.memoryProducts.map((product) => {
-                const targetSummary = summarizeTargetReferences(product.targetReferences)
-                return (
-                  <CommandItem
-                    key={product.productKey}
-                    value={`memory-${product.productKey}-${product.targetReferences.join(" ")}`}
-                    onSelect={() => handleSelect(routes.memoryProduct(product.productKey))}
-                  >
-                    <BrainCircuit />
-                    <span className="truncate">{product.productKey}</span>
-                    {targetSummary && (
-                      <span
-                        className="ml-auto max-w-[45%] truncate text-xs text-muted-foreground"
-                        title={product.targetReferences.join(", ")}
-                      >
-                        {targetSummary}
-                      </span>
-                    )}
-                  </CommandItem>
-                )
-              })}
-            </CommandGroup>
-          </>
-        )}
-
         {configResults.length > 0 && (
           <>
             <CommandSeparator />
             <CommandGroup heading="Config">
-              {configResults.map((item) => (
+              {configResults.map(({ tab, section }) => (
                 <CommandItem
-                  key={`${item.bucket}-${item.item}`}
+                  key={`${tab}-${section}`}
                   value={buildCommandValue(
                     "config",
-                    item.bucket,
-                    item.bucketLabel,
-                    item.item,
-                    item.itemLabel,
-                    item.title,
-                    item.description,
-                    item.aliases,
-                    item.fieldPaths,
-                    getConfigCommandLabel(item),
+                    configCommandLabel(tab, section),
+                    CONFIG_SECTION_LABELS[section],
+                    [...CONFIG_SECTION_ALIASES[section]],
                   )}
-                  onSelect={() => handleSelect(routes.configItem(item.bucket, item.item))}
+                  onSelect={() => handleSelect(routes.configTab(tab, section))}
                 >
                   <SlidersHorizontal />
-                  <span>{getConfigCommandLabel(item)}</span>
+                  <span>{configCommandLabel(tab, section)}</span>
                 </CommandItem>
               ))}
             </CommandGroup>

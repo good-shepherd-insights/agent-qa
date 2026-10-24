@@ -4,8 +4,11 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import pc from 'picocolors'
 import { loadConfigFile } from '../config.js'
-import { loadAuthPluginsForRawConfig, type LLMModelAdapter } from '../llm-utils.js'
+import { HARD_CUT_STEPS, INVALID_CONFIG_FIX, isRetiredKeyIssue } from '../hard-cut.js'
+import { loadAuthPluginsForRawConfig, toModelProfileAndAuth, type LLMModelAdapter } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
+import { NODE_FLOOR_INSTALL_LINE, NODE_FLOOR_MAJOR, nodeFloorRefusal } from '../node-floor.js'
+import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 import {
   discoverWorkspaceFiles,
   formatAppiumInstallGuidance,
@@ -14,15 +17,29 @@ import {
   type AgentQaConfig,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
+import { createModel, getProvider } from '@vostride/agent-qa-model'
+import { createKnowledgeChecks } from './doctor-knowledge-checks.js'
+// 407-30 (REVIEW IN-06): the row renderer lives in its own module now. This command imports the
+// five symbols its emit loop prints with, and re-exports NOTHING — this file's surface is the
+// check contract below plus `createDoctorCommand`.
+import {
+  composeRow,
+  formatCheckRow,
+  formatFixLines,
+  formatStatus,
+  resolveTerminalWidth,
+} from './doctor-row.js'
 
-type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
+// 407 D-18: exported so `doctor-knowledge-checks.ts` can build rows this printer prints without
+// restating the row contract. The three types are the whole of what a row is.
+export type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
 
-interface CheckResult {
+export interface CheckResult {
   status: CheckStatus
   message: string
 }
 
-interface DoctorCheck {
+export interface DoctorCheck {
   name: string
   check: () => Promise<CheckResult>
   fixInstructions: string
@@ -58,9 +75,6 @@ type ResolvedDoctorAuth =
   | { kind: 'auth-fetch'; fetch: typeof globalThis.fetch; modelAdapter: LLMModelAdapter }
   | { kind: 'unauthenticated'; message: string }
   | { kind: 'missing'; message: string }
-
-const COMPATIBLE_PROVIDERS = new Set(['openai-compatible', 'anthropic-compatible'])
-const SUBSCRIPTION_PROVIDERS = new Set(['openai-subscription', 'anthropic-subscription'])
 
 interface ActiveLLMConfig {
   name: string
@@ -107,48 +121,19 @@ async function resolveActiveLLMAuth(llm: ActiveLLMConfig): Promise<ResolvedDocto
   }) as ResolvedDoctorAuth
 }
 
-function applyResolvedAuth(llm: ActiveLLMConfig, auth: ResolvedDoctorAuth): Record<string, unknown> {
-  switch (auth.kind) {
-    case 'api-key':
-      return { ...llm, apiKey: auth.apiKey }
-    case 'bearer-token':
-      return { ...llm, authToken: auth.token }
-    case 'auth-fetch':
-      return { ...llm, fetch: auth.fetch, modelAdapter: auth.modelAdapter }
-    case 'unauthenticated':
-      return { ...llm }
-    case 'missing':
-      throw new Error(auth.message)
-  }
-}
-
-function formatStatus(status: CheckStatus): string {
-  switch (status) {
-    case 'pass': return pc.green('PASS')
-    case 'warn': return pc.yellow('WARN')
-    case 'fail': return pc.red('FAIL')
-    case 'skip': return pc.dim('SKIP')
-  }
-}
-
-function padDots(name: string, message: string): string {
-  const totalWidth = 60
-  const used = name.length + message.length
-  const dots = Math.max(2, totalWidth - used)
-  return pc.dim('.'.repeat(dots))
-}
-
 function checkNodeVersion(): DoctorCheck {
   return {
     name: 'Node.js',
-    fixInstructions: 'Install Node.js 24+ from https://nodejs.org/',
+    fixInstructions: NODE_FLOOR_INSTALL_LINE,
     check: async () => {
       const version = process.version
-      const major = parseInt(version.slice(1).split('.')[0], 10)
-      if (major >= 24) {
+      if (nodeFloorRefusal(version) === undefined) {
         return { status: 'pass', message: version }
       }
-      return { status: 'fail', message: `${version} (requires 24+)` }
+      return {
+        status: 'fail',
+        message: `${version} (requires Node.js ${NODE_FLOOR_MAJOR} or newer)`,
+      }
     },
   }
 }
@@ -166,10 +151,31 @@ function checkConfigFile(configPath: string): DoctorCheck {
   }
 }
 
-function checkConfigValidation(config: Record<string, unknown> | null): DoctorCheck {
+function checkLegacyV1MemoryData(configPath: string): DoctorCheck {
+  const legacyMemoryDir = resolve(dirname(resolve(configPath)), 'agent-qa-memory')
+
   return {
+    name: 'Legacy v1 memory data',
+    fixInstructions: `Remove ${legacyMemoryDir} manually if you no longer need the retired v1 data.`,
+    check: async () => {
+      if (existsSync(legacyMemoryDir)) {
+        return {
+          status: 'warn',
+          message: `v1 memory data found at ${legacyMemoryDir} — no longer used by agent-qa; safe to delete`,
+        }
+      }
+      return { status: 'pass', message: `no v1 memory data found at ${legacyMemoryDir}` }
+    },
+  }
+}
+
+function checkConfigValidation(
+  config: Record<string, unknown> | null,
+  configPath: string,
+): DoctorCheck {
+  const row: DoctorCheck = {
     name: 'Config validation',
-    fixInstructions: 'Fix the config errors above, or delete agent-qa.config.yaml and re-run `agent-qa init`',
+    fixInstructions: INVALID_CONFIG_FIX(configPath),
     check: async () => {
       if (!config) {
         return { status: 'skip', message: 'no config to validate' }
@@ -182,6 +188,10 @@ function checkConfigValidation(config: Record<string, unknown> | null): DoctorCh
           return { status: 'pass', message: 'config schema valid' }
         }
 
+        // 2026-10-19 (445-07, D-23): the printed fix is read after this check returns.
+        row.fixInstructions = result.error.issues.some(isRetiredKeyIssue)
+          ? HARD_CUT_STEPS
+          : INVALID_CONFIG_FIX(configPath)
         const issues = result.error.issues.slice(0, 3)
         const errors = issues.map((i: { path: PropertyKey[]; message: string }) =>
           `${i.path.map(String).join('.')}: ${i.message}`
@@ -192,6 +202,7 @@ function checkConfigValidation(config: Record<string, unknown> | null): DoctorCh
       }
     },
   }
+  return row
 }
 
 function checkSecretsFile(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
@@ -220,7 +231,7 @@ function checkSecretsFile(config: Record<string, unknown> | null, configPath: st
 function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
   return {
     name: 'Workspace files',
-    fixInstructions: 'Create the files configured by workspace.hooksFile, workspace.agentRules, and workspace.envFile.',
+    fixInstructions: 'Create the files configured by workspace.hooksFile and workspace.envFile.',
     check: async () => {
       if (!config) {
         return { status: 'skip', message: 'no config' }
@@ -233,7 +244,6 @@ function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, conf
 
       const missing = [
         ['workspace.hooksFile', resolved.workspace.hooksFile],
-        ['workspace.agentRules', resolved.workspace.agentRules],
         ['workspace.envFile', resolved.workspace.envFile],
       ] as const
       const missingFiles = missing.filter(([, file]) => !existsSync(file.absolutePath))
@@ -245,7 +255,7 @@ function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, conf
         }
       }
 
-      return { status: 'pass', message: 'hooks, agent rules, and env file found' }
+      return { status: 'pass', message: 'hooks and env file found' }
     },
   }
 }
@@ -256,7 +266,7 @@ function checkDocker(): DoctorCheck {
     fixInstructions: 'Install Docker Desktop from https://docker.com/ and ensure the daemon is running',
     check: async () => {
       try {
-        const { checkDockerAvailable } = await import('@vostride/agent-qa-core')
+        const { checkDockerAvailable } = await import('@vostride/agent-qa-runner-local')
         const available = await checkDockerAvailable()
         if (available) {
           return { status: 'pass', message: 'Docker daemon running' }
@@ -269,10 +279,18 @@ function checkDocker(): DoctorCheck {
   }
 }
 
+function configuredLLMName(config: Record<string, unknown> | null): string {
+  const registry = config?.registry as { llms?: ActiveLLMConfig[] } | undefined
+  const use = config?.use as { llm?: string } | undefined
+  const llms = registry?.llms ?? []
+  return (llms.find(llm => llm.name === use?.llm) ?? llms[0])?.name ?? '<name>'
+}
+
 function checkLLMApiKey(config: Record<string, unknown> | null): DoctorCheck {
+  const name = configuredLLMName(config)
   return {
     name: 'LLM credential',
-    fixInstructions: 'Run `agent-qa auth set --config <name> --type api-key` for API modes, or declare a subscription auth plugin and authenticate from `agent-qa dashboard`.',
+    fixInstructions: `Run \`agent-qa auth set --config ${name} --type api-key\` (it asks for the key), or for a subscription run \`agent-qa auth login --config ${name}\``,
     check: async () => {
       const llm = getActiveLLMConfig(config)
       try {
@@ -297,12 +315,13 @@ function checkLLMApiKey(config: Record<string, unknown> | null): DoctorCheck {
 }
 
 function checkSubscriptionAuth(config: Record<string, unknown> | null): DoctorCheck {
+  const name = configuredLLMName(config)
   return {
     name: 'Subscription Auth',
-    fixInstructions: 'Install `@vostride/agent-qa-subscription-auth`, declare it in plugins.auth, and authenticate from `agent-qa dashboard`.',
+    fixInstructions: `Install \`@vostride/agent-qa-subscription-auth\` (\`npm install -D @vostride/agent-qa-subscription-auth\`), declare it in plugins.auth, then run \`agent-qa auth login --config ${name}\``,
     check: async () => {
       const llm = getActiveLLMConfig(config)
-      if (!SUBSCRIPTION_PROVIDERS.has(llm.provider)) {
+      if (getProvider(llm.provider)?.subscription !== true) {
         return { status: 'skip', message: `subscription not used for ${llm.provider}` }
       }
 
@@ -335,7 +354,7 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
       const provider = llm.provider
       const baseURL = llm.baseURL
 
-      if (COMPATIBLE_PROVIDERS.has(provider) && (!baseURL || baseURL.trim() === '')) {
+      if (getProvider(provider)?.needsBaseURL && (!baseURL || baseURL.trim() === '')) {
         return { status: 'fail', message: `baseURL required for ${provider}` }
       }
 
@@ -344,11 +363,10 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
         if (auth.kind === 'missing') {
           return { status: 'fail', message: auth.message }
         }
-        const { createModel, getProviderOptions } = await import('@vostride/agent-qa-core')
         const { generateText } = await import('ai')
-        const modelConfig = applyResolvedAuth(llm, auth)
-        const testModel = await createModel(modelConfig as any)
-        const providerOptions = getProviderOptions(modelConfig as any)
+        const { profile, auth: modelAuth } = toModelProfileAndAuth(llm, auth as any)
+        // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+        const testModel = createModel(profile, modelAuth, (text) => text)
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 10000)
         try {
@@ -356,7 +374,6 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
             model: testModel,
             prompt: 'Say "ok"',
             abortSignal: controller.signal,
-            ...(providerOptions ? { providerOptions } : {}),
           })
         } finally {
           clearTimeout(timeout)
@@ -617,6 +634,7 @@ export function createDoctorCommand(): Command {
         if (loaded && typeof loaded === 'object') {
           config = loaded as Record<string, unknown>
           await loadAuthPluginsForRawConfig(config, configPath)
+          await loadProviderPluginsForRawConfig(config, configPath)
         }
       } catch {
         // Config load failed — doctor will report it
@@ -625,7 +643,12 @@ export function createDoctorCommand(): Command {
       const checks: DoctorCheck[] = [
         checkNodeVersion(),
         checkConfigFile(configPath),
-        checkConfigValidation(config),
+        checkLegacyV1MemoryData(configPath),
+        // 407 D-18: the knowledge substrate's three rows sit here — directly after the legacy v1
+        // memory row, because they are the same subject — and before config validation, so the
+        // rung reads as the conclusion of the store and embedder rows above it.
+        ...createKnowledgeChecks({ config, configPath }),
+        checkConfigValidation(config, configPath),
         checkSecretsFile(config, configPath),
         checkWorkspaceSupportFiles(config, configPath),
         checkDocker(),
@@ -648,16 +671,25 @@ export function createDoctorCommand(): Command {
       let hasFailure = false
       const results: { check: DoctorCheck; result: CheckResult }[] = []
 
+      // 407-24 (G-407-3): every line below goes through the width budget. Colour is applied HERE
+      // and only here, by handing named decorators to the same `composeRow` the formatter used to
+      // derive its plain line — so the printed line and the pinned one are one recipe run twice.
+      //
+      // THIS CHANGE IS CONFINED TO ROW RENDERING. No probe, no capability discovery and no
+      // registration cleanup is touched by it: the checks above still answer exactly what they
+      // answered before, and doctor still only reads.
+      const width = resolveTerminalWidth()
+
       for (const check of checks) {
         const result = await check.check()
         results.push({ check, result })
 
-        const dots = padDots(check.name, result.message)
-        const status = formatStatus(result.status)
-        console.log(`    ${check.name}  ${dots}  ${result.message}  ${status}`)
+        const row = formatCheckRow(check.name, result.message, result.status, width)
+        console.log(composeRow(row, { dots: pc.dim, status: formatStatus }))
+        for (const line of row.continuations) console.log(line)
 
         if (result.status === 'fail') {
-          console.log(pc.dim(`      Fix: ${check.fixInstructions}`))
+          for (const line of formatFixLines(check.fixInstructions, width)) console.log(pc.dim(line))
           hasFailure = true
         }
       }

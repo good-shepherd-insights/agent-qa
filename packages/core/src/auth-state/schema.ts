@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const AUTH_STATE_SCHEMA_VERSION = 1
+export const AUTH_STATE_SCHEMA_VERSION = 2
 export const AUTH_STATE_SLUG_PATTERN = /^[a-z][a-z0-9-]*[a-z0-9]$/
 
 export const AuthStateNameSchema = z.string().regex(

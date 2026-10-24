@@ -1,0 +1,95 @@
+import { z } from 'zod'
+
+// D-07/D-11: refusals for config keys removed in v2. This scan is a zod pipe PRE-stage in front
+// of the strict root schema — a superRefine chained after .strict() never runs when strict rejects
+// a value (verified on zod 4.6.7), so these messages must fire first. The scan only ADDS issues; the
+// strict stage-B parse remains the acceptance authority. 2026-10-19 (445-07, D-23): every issue
+// carries params.retired so the CLI closes the error with the hard-cut steps.
+const RETIRED_MEMORY_KEY_MESSAGES: Record<string, string> = {
+  dir: 'services.memory.dir was removed in v2 — use knowledge.dir (default agent-qa-knowledge)',
+  enabled: 'services.memory.enabled was removed in v2 — memory is always on; delete this key (no disable switch)',
+  provider: 'services.memory.provider was removed in v2 — internalized — delete this key',
+  minTrust: 'services.memory.minTrust was removed in v2 — internalized — delete this key',
+  maxInjections: 'services.memory.maxInjections was removed in v2 — internalized — delete this key',
+  curatorEnabled: 'services.memory.curatorEnabled was removed in v2 — internalized — delete this key',
+  curatorLockTimeout: 'services.memory.curatorLockTimeout was removed in v2 — internalized — delete this key',
+  trustConfirmDelta: 'services.memory.trustConfirmDelta was removed in v2 — internalized — delete this key',
+  trustContradictDelta: 'services.memory.trustContradictDelta was removed in v2 — internalized — delete this key',
+  ablationEnabled: 'services.memory.ablationEnabled was removed — no ablation exists',
+  circuitBreakerEnabled: 'services.memory.circuitBreakerEnabled was removed — no circuit breaker exists',
+  circuitBreakerWindowSize: 'services.memory.circuitBreakerWindowSize was removed — no circuit breaker exists',
+  circuitBreakerBaselineSize: 'services.memory.circuitBreakerBaselineSize was removed — no circuit breaker exists',
+  circuitBreakerThreshold: 'services.memory.circuitBreakerThreshold was removed — no circuit breaker exists',
+}
+
+// 2026-10-07 (436-08, D-05): the old refilling planner key is cut with no alias, migration or
+// fallback. The same message fires for the project config and for test and suite `use` overrides.
+export const RETIRED_MAX_SUB_ACTIONS_MESSAGE =
+  'use.planner.maxSubActions was removed in v2 — it was a refilling iteration count; set use.planner.maxActions (default 30) and use.planner.maxPlanningTurns (default 30)'
+
+const RETIRED_PLANNER_KEY = 'maxSubActions'
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasRetiredPlannerKey(use: unknown): boolean {
+  return isPlainObject(use) && isPlainObject(use.planner) && Object.hasOwn(use.planner, RETIRED_PLANNER_KEY)
+}
+
+export const retiredKeyScan = z.any().superRefine((value, ctx) => {
+  if (!isPlainObject(value)) return
+
+  if (isPlainObject(value.services) && value.services.memory !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      params: { retired: true },
+      path: ['services', 'memory'],
+      message: 'services.memory was removed in v2 — the memory config surface collapsed into the top-level knowledge block',
+    })
+    const memory = value.services.memory
+    if (isPlainObject(memory)) {
+      for (const key of Object.keys(memory)) {
+        const message = RETIRED_MEMORY_KEY_MESSAGES[key]
+        if (message) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            params: { retired: true },
+            path: ['services', 'memory', key],
+            message,
+          })
+        }
+      }
+    }
+  }
+
+  if (isPlainObject(value.workspace) && value.workspace.agentRules !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      params: { retired: true },
+      path: ['workspace', 'agentRules'],
+      message: 'workspace.agentRules was removed in v2 — rules dissolve into agent-qa-knowledge/policies/<scope>.md files',
+    })
+  }
+
+  if (hasRetiredPlannerKey(value.use)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      params: { retired: true },
+      path: ['use', 'planner', RETIRED_PLANNER_KEY],
+      message: RETIRED_MAX_SUB_ACTIONS_MESSAGE,
+    })
+  }
+})
+
+// The pre-stage for a test or suite `use` override, for the same strict-parse reason as above.
+export const retiredUseKeyScan = z.any().superRefine((value, ctx) => {
+  if (hasRetiredPlannerKey(value)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      params: { retired: true },
+      path: ['planner', RETIRED_PLANNER_KEY],
+      message: RETIRED_MAX_SUB_ACTIONS_MESSAGE,
+    })
+  }
+})

@@ -2,11 +2,13 @@ export {
   AgentQaConfigSchema,
   WorkspaceSchema,
   ServicesSchema,
+  KnowledgeConfigSchema,
   RegistrySchema,
   UseSchema,
   AuthStateUseSchema,
   PluginsSchema,
   AuthPluginDeclarationSchema,
+  ProviderPluginDeclarationSchema,
   MobileAppStateSchema,
   MobileUseSchema,
   MobileUseOverrideSchema,
@@ -14,7 +16,7 @@ export {
   type NormalizedAuthStateUse,
   ModelConfigSchema,
   NamedLLMConfigSchema,
-  HealingConfigSchema,
+  NameSlugSchema,
   TimeoutConfigSchema,
   BrowserConfigSchema,
   PlannerConfigSchema,
@@ -32,6 +34,8 @@ export {
   RecordingConfigSchema,
   AccessibilityConfigSchema,
   AuthStateConfigSchema,
+  LOOPBACK_HOSTS,
+  isLoopbackHost,
 } from './services-schema.js'
 
 export { TargetSchema, DeviceProfileSchema, ProviderConfigSchema } from './registry-schema.js'
@@ -47,6 +51,7 @@ export {
 
 export { ActionPlanSchema } from './action-schema.js'
 export type { ActionPlan } from './action-schema.js'
+export { resolveKnowledgeRoot } from './resolve-knowledge-root.js'
 
 export { SuiteDefinitionSchema, SuiteTestEntrySchema } from './suite-schema.js'
 

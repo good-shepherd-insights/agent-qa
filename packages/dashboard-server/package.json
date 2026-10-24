@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-dashboard",
-  "version": "0.1.21",
+  "version": "0.2.1",
   "private": false,
   "description": "agent-qa local dashboard server, APIs, run queue, and artifact services.",
   "keywords": [
@@ -43,7 +43,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
@@ -52,21 +52,24 @@
     "@vostride/agent-qa-core": "workspace:*",
     "@vostride/agent-qa-ids": "workspace:*",
     "@vostride/agent-qa-ios": "workspace:*",
-    "@vostride/agent-qa-mcp": "workspace:*",
+    "@vostride/agent-qa-model": "workspace:*",
+    "@vostride/agent-qa-runner": "workspace:*",
+    "@vostride/agent-qa-runner-local": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*",
     "@vostride/agent-qa-web": "workspace:*",
     "ai": "6.0.174",
-    "better-sqlite3": "12.9.0",
-    "id-agent": "1.0.3",
     "picocolors": "1.1.1",
     "tree-kill": "1.2.2",
-    "ws": "8.20.0",
+    "ws": "8.21.0",
     "yaml": "2.8.4",
-    "zod": "4.4.2"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "~7.6.13",
     "@types/node": "~24.12.2",
     "@types/ws": "~8.18.1",
+    "@vostride/agent-qa-agent": "workspace:*",
+    "@vostride/agent-qa-agent-local": "workspace:*",
+    "@vostride/agent-qa-arch": "workspace:*",
     "tsup": "~8.5.1",
     "typescript": "~6.0.3"
   }

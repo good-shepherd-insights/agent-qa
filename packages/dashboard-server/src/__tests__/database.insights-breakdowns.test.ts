@@ -40,13 +40,21 @@ function insertRun(overrides: Record<string, unknown> = {}) {
   })
 }
 
+// 2026-08-27 (405-07, D-02): a healed run is one with a projected step the runner reported a
+// self-heal on. The v1 wide step table this used to write — and the `'healed'` status word it
+// wrote there — had no producer left and went with the census; `selfHealOccurred` is the bus
+// payload's own boolean and is what the flake rate reads now.
 function insertHealedStep(runId: string) {
-  db.insertStep({
+  db.insertRunStep({
     runId,
-    name: 'Retry tap',
-    status: 'healed',
-    duration: 50,
-    stepOrder: 0,
+    testIndex: 0,
+    stepIndex: 0,
+    cacheStatus: 'miss',
+    verifierVerdict: { pass: true, reasoning: 'ok' },
+    selfHealOccurred: true,
+    briefDigest: 'retry tap',
+    status: 'passed',
+    durationMs: 50,
   })
 }
 
@@ -68,7 +76,7 @@ async function getBreakdown(
 describe('DashboardDatabase insights breakdown aggregates', () => {
   it('keeps overview stats aligned with the same success, flake, and duration semantics', () => {
     insertRun({ name: 'Checkout flow', status: 'passed', duration: 1000, startedAt: '2026-04-01T10:00:00Z' })
-    insertRun({ name: 'Checkout flow', status: 'flaky', duration: 3000, startedAt: '2026-04-01T11:00:00Z' })
+    insertRun({ name: 'Checkout flow', status: 'healed', duration: 3000, startedAt: '2026-04-01T11:00:00Z' })
     const healedRunId = insertRun({ name: 'Checkout flow', status: 'passed', duration: 2000, startedAt: '2026-04-01T12:00:00Z' })
     insertHealedStep(healedRunId)
 
@@ -88,7 +96,7 @@ describe('DashboardDatabase insights breakdown aggregates', () => {
 
   it('ranks test rows and normalizes pass rate, flake rate, and avg duration semantics', async () => {
     insertRun({ name: 'Checkout flow', status: 'passed', duration: 1000 })
-    insertRun({ name: 'Checkout flow', status: 'flaky', duration: 3000 })
+    insertRun({ name: 'Checkout flow', status: 'healed', duration: 3000 })
     const healedRunId = insertRun({ name: 'Checkout flow', status: 'passed', duration: 2000 })
     insertHealedStep(healedRunId)
     insertRun({ name: 'Login flow', status: 'failed', duration: 4000 })

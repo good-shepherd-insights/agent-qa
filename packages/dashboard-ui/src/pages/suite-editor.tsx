@@ -168,9 +168,11 @@ export default function SuiteEditorPage() {
     tests: liveTests,
     setupHooks: liveHookConfig.setup,
     teardownHooks: liveHookConfig.teardown,
-    allowReconnect: false,
+    // The server detaches a dropped session for its idle window, so a drop resumes it (428 D-09).
+    allowReconnect: true,
   })
   const terminateLiveSession = liveEditor.terminateSession
+  const liveSessionGone = liveEditor.sessionGone
   liveSessionIdRef.current = liveSessionId
   terminateLiveSessionRef.current = terminateLiveSession
 
@@ -237,7 +239,7 @@ export default function SuiteEditorPage() {
       return {
         reason: "disconnected" as const,
         title: "Live session disconnected",
-        description: "The connection dropped and the disposable session was terminated. Start a fresh session to reconnect.",
+        description: "The connection dropped and could not be restored. Start a fresh session to continue.",
       }
     }
     return null
@@ -573,9 +575,11 @@ export default function SuiteEditorPage() {
   }, [])
 
   // Terminal transition: reflect server-driven disconnect
+  // A session the server no longer holds stays on the pane, whose preview names it (428 D-09).
   useEffect(() => {
     if (!liveSessionId) return
     if (liveConnectionState !== "disconnected") return
+    if (liveSessionGone) return
     logLiveDebug("page", "live session moved to terminal state", {
       liveSessionId,
       liveConnectionState,
@@ -589,7 +593,7 @@ export default function SuiteEditorPage() {
     lastAutoFailedTestRef.current = null
     setLiveHookConfig({ setup: [], teardown: [] })
     setLiveModeOpen(true)
-  }, [liveConnectionState, liveSessionId])
+  }, [liveConnectionState, liveSessionGone, liveSessionId])
 
   useEffect(() => {
     if (!liveModeOpen) return
@@ -758,7 +762,8 @@ export default function SuiteEditorPage() {
       targetLabel={liveEditor.currentUrl || "Configured start URL"}
       liveSessionNumber={liveSessionNumber}
       platform={liveEditor.platform}
-      screenshot={liveEditor.screenshot}
+      liveSessionId={liveSessionId}
+      sessionGone={liveEditor.sessionGone}
       currentUrl={liveEditor.currentUrl}
       pendingNavigation={liveEditor.pendingNavigation}
       steps={liveEditor.steps}
@@ -787,7 +792,7 @@ export default function SuiteEditorPage() {
       onRestartSession={setupHooksStale ? () => void handleRestartLiveSession() : undefined}
       showEndSessionAction={isMobile}
       onCloseLiveMode={closeLiveMode}
-      onStartFreshSession={() => void handleConnectLiveSession()}
+      onStartFreshSession={() => void (liveSessionGone ? handleRestartLiveSession() : handleConnectLiveSession())}
       onBack={liveEditor.goBack}
       onForward={liveEditor.goForward}
       onRefresh={liveEditor.refreshPage}
@@ -805,7 +810,7 @@ export default function SuiteEditorPage() {
   )
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <SuiteNavbar
         suiteName={suiteName}
         suiteId={suiteId}

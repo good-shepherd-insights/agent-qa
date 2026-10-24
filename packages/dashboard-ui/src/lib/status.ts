@@ -3,7 +3,6 @@ export type NormalizedRunStatus =
   | 'failed'
   | 'timeout'
   | 'cancelled'
-  | 'flaky'
   | 'healed'
   | 'skipped'
   | 'running'
@@ -60,8 +59,6 @@ export function normalizeRunStatus(status: string | null | undefined): Normalize
     case 'cancelled':
     case 'canceled':
       return 'cancelled'
-    case 'flaky':
-      return 'flaky'
     case 'healed':
       return 'healed'
     case 'skipped':
@@ -87,11 +84,9 @@ export function getRunStatusDescriptor(status: string | null | undefined): RunSt
     case 'failed':
       return { raw, normalized, label: 'Failed', tone: 'danger', terminal: true }
     case 'timeout':
-      return { raw, normalized, label: 'Timed Out', tone: 'danger', terminal: true }
+      return { raw, normalized, label: 'Timed out', tone: 'danger', terminal: true }
     case 'cancelled':
       return { raw, normalized, label: 'Cancelled', tone: 'muted', terminal: true }
-    case 'flaky':
-      return { raw, normalized, label: 'Flaky', tone: 'warning', terminal: true }
     case 'healed':
       return { raw, normalized, label: 'Healed', tone: 'warning', terminal: true }
     case 'skipped':
@@ -113,6 +108,28 @@ export function getRunStatusDescriptor(status: string | null | undefined): RunSt
   }
 }
 
+export type RunStatusClass = 'pass' | 'fail' | 'cancelled' | 'live'
+
+// 2026-10-17 (444-15, D-03): mirrors the server's runStatusClass; other words have no class.
+const RUN_STATUS_CLASS: Record<string, RunStatusClass> = {
+  pending: 'live',
+  running: 'live',
+  passed: 'pass',
+  healed: 'pass',
+  failed: 'fail',
+  timeout: 'fail',
+  cancelled: 'cancelled',
+}
+
+export function runStatusClass(status: string): RunStatusClass | undefined {
+  return Object.hasOwn(RUN_STATUS_CLASS, status) ? RUN_STATUS_CLASS[status] : undefined
+}
+
+// 2026-10-17 (444-15, D-09): a member with no outcome reads as its run only while the run is running.
+export function memberStatus(runStatus: string, outcome: string | null | undefined): string | null {
+  return outcome ?? (runStatus === 'running' ? 'running' : null)
+}
+
 export function isTerminalRunStatus(status: string | null | undefined): boolean {
   return getRunStatusDescriptor(status).terminal
 }
@@ -122,13 +139,12 @@ export function shouldRouteRunToLive(status: string | null | undefined): boolean
 }
 
 export function normalizeStepStatus(status: string | null | undefined): NormalizedStepStatus {
+  if (canonicalizeStatus(status) === 'flaky') return 'flaky'
   switch (normalizeRunStatus(status)) {
     case 'passed':
       return 'passed'
     case 'cancelled':
       return 'cancelled'
-    case 'flaky':
-      return 'flaky'
     case 'healed':
       return 'healed'
     case 'skipped':
@@ -153,8 +169,6 @@ export function finalStepStatusForRun(status: string | null | undefined): Normal
       return 'passed'
     case 'cancelled':
       return 'cancelled'
-    case 'flaky':
-      return 'flaky'
     case 'healed':
       return 'healed'
     case 'skipped':
@@ -202,5 +216,56 @@ export function getStatusTextClassName(tone: StatusTone): string {
       return 'text-blue-500'
     case 'outline':
       return 'text-muted-foreground'
+  }
+}
+
+// ------------------------------ the one badge palette ------------------------------
+//
+// ONE DEFINITION FOR THE RUN'S VERDICT BADGE AND EVERY MEMBER'S (406-06 · D-07).
+//
+// This switch was the navbar's private helper until 406 D-07 put an outcome badge on every member
+// header. Two copies of it would be two palettes: the aggregate saying `Cancelled` in muted grey
+// while a member said it in something else, on one screen, about one run. It is lifted here rather
+// than exported from the navbar because `lib/` is where this page's pure descriptors already live,
+// and because a component importing a component for a lookup table is a dependency neither of them
+// needs. NOTHING ABOUT WHAT IS PAINTED CHANGED — the arms are the navbar's own, verbatim.
+//
+// THE TYPE IS STRUCTURAL, not `ComponentProps<typeof Badge>`. This module is pure and imports no
+// React, which is what lets the projection cells run without a DOM; naming the component here to
+// borrow its prop type would drag the whole component graph in for two field names.
+
+/** The `Badge` variants this palette selects from — a subset, spelled to stay assignable. */
+export type StatusBadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline'
+
+/** What one status word paints: its title-cased label, and the look that carries it. */
+export interface StatusBadgeLook {
+  label: string
+  variant?: StatusBadgeVariant
+  className?: string
+}
+
+/** The closed switch, as data. One arm per word, unchanged in what it paints. */
+export function statusBadgeLook(status: string): StatusBadgeLook {
+  switch (status) {
+    case 'passed':
+      return { label: 'Passed', className: 'bg-emerald-500/15 text-emerald-500 border-emerald-500/20' }
+    case 'failed':
+      return { label: 'Failed', variant: 'destructive' }
+    case 'healed':
+      return { label: 'Healed', className: 'bg-amber-500/15 text-amber-500 border-amber-500/20' }
+    case 'flaky':
+      return { label: 'Flaky', className: 'bg-amber-500/15 text-amber-500 border-amber-500/20' }
+    case 'skipped':
+      return { label: 'Skipped', variant: 'secondary' }
+    case 'cancelled':
+      return { label: 'Cancelled', className: 'bg-muted text-muted-foreground border-border' }
+    case 'timeout':
+      return { label: 'Timed out', variant: 'destructive' }
+    case 'running':
+      return { label: 'Running', className: 'bg-blue-500/15 text-blue-500 border-blue-500/20 animate-pulse' }
+    case 'pending':
+      return { label: 'Pending', variant: 'outline' }
+    default:
+      return { label: status, variant: 'outline' }
   }
 }

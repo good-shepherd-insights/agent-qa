@@ -4,6 +4,7 @@ import { routes } from "@/lib/routes"
 import { toast } from "sonner"
 import { FileCode, Zap } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { RunStatusBadge } from "@/components/run-status-badge"
 import { Button } from "@/components/ui/button"
 import {
   Table,
@@ -25,7 +26,6 @@ import { EmptyState } from "@/components/empty-state"
 import { MonacoEditor } from "@/components/monaco-editor"
 import { SuiteVisualBuilder } from "@/components/suite-visual-builder"
 import { SuiteNavbar } from "@/components/suite-navbar"
-import { SharedScopeMemoryReader } from "@/components/memory-reader/shared-scope-memory-reader"
 import {
   InsightsLineCell,
   InsightsLineGrid,
@@ -53,7 +53,7 @@ import {
   normalizeTimestamp,
 } from "@/lib/utils"
 
-const VALID_SUITE_VIEWS = ["builder", "yaml", "memory"] as const
+const VALID_SUITE_VIEWS = ["builder", "yaml"] as const
 type SuiteViewerView = (typeof VALID_SUITE_VIEWS)[number]
 type MetricScopeMode = "scoped" | "all"
 
@@ -78,11 +78,15 @@ function createEmptySuiteAnalytics(suiteId: string): SuiteAnalyticsDetail {
     runs: [],
     trends: {
       daily: [],
-      passRate: 0,
+      passRate: null,
       totalRuns: 0,
       avgDuration: 0,
     },
   }
+}
+
+function formatPassRate(rate: number | null): string {
+  return rate === null ? "\u2014" : `${Math.round(rate * 100)}%`
 }
 
 function formatRelativeCompact(iso: string): string {
@@ -98,45 +102,6 @@ function formatRelativeCompact(iso: string): string {
   const diffDay = Math.floor(diffHr / 24)
   if (diffDay < 7) return `${diffDay}d ago`
   return formatDate(iso)
-}
-
-function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "passed":
-      return (
-        <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
-          Passed
-        </Badge>
-      )
-    case "failed":
-      return <Badge variant="destructive">Failed</Badge>
-    case "healed":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Healed
-        </Badge>
-      )
-    case "flaky":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Flaky
-        </Badge>
-      )
-    case "running":
-      return (
-        <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 animate-pulse">
-          Running
-        </Badge>
-      )
-    case "cancelled":
-      return (
-        <Badge className="bg-muted text-muted-foreground border-border">
-          Cancelled
-        </Badge>
-      )
-    default:
-      return <Badge variant="outline">{status}</Badge>
-  }
 }
 
 function MetricScopeControl({
@@ -216,7 +181,7 @@ function RunHistoryTable({
                 className="absolute inset-0"
                 tabIndex={-1}
               />
-              <StatusBadge status={run.status} />
+              <RunStatusBadge status={run.status} />
             </TableCell>
             <TableCell>
               {run.status === "running" ? (
@@ -300,10 +265,12 @@ export default function SuiteViewerPage() {
     : analyticsData.runs
 
   const passRateData = useMemo(() => {
-    return selectedTrends.daily.map((day) => ({
-      date: day.date,
-      passRate: day.total > 0 ? Math.round((day.passed / day.total) * 1000) / 10 : 0,
-    }))
+    return selectedTrends.daily
+      .filter((day) => day.passed + day.failed > 0)
+      .map((day) => ({
+        date: day.date,
+        passRate: Math.round((day.passed / (day.passed + day.failed)) * 1000) / 10,
+      }))
   }, [selectedTrends])
 
   const durationData = useMemo(() => {
@@ -466,7 +433,7 @@ export default function SuiteViewerPage() {
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Pass Rate</span>
           <span className="text-xl font-semibold text-foreground">
-            {Math.round(selectedTrends.passRate * 100)}%
+            {formatPassRate(selectedTrends.passRate)}
           </span>
         </InsightsLineCell>
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
@@ -502,7 +469,7 @@ export default function SuiteViewerPage() {
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-screen">
+      <div className="flex h-full min-h-0 flex-col">
         <SuiteNavbar
           suiteName={suiteName || "Suite"}
           suiteId={suiteId}
@@ -561,11 +528,10 @@ export default function SuiteViewerPage() {
                 <div className="border-b border-border">
                   <TabsList
                     variant="line"
-                    className="w-full grid grid-cols-3 px-4 md:w-fit md:inline-flex"
+                    className="w-full grid grid-cols-2 px-4 md:w-fit md:inline-flex"
                   >
                     <TabsTrigger value="builder">Builder</TabsTrigger>
                     <TabsTrigger value="yaml">YAML</TabsTrigger>
-                    <TabsTrigger value="memory">Memory</TabsTrigger>
                   </TabsList>
                 </div>
                 <div className="relative flex-1 min-h-0">
@@ -580,17 +546,6 @@ export default function SuiteViewerPage() {
                     className="absolute inset-0 data-[state=inactive]:hidden"
                   >
                     {monacoPanel}
-                  </TabsContent>
-                  <TabsContent
-                    value="memory"
-                    className="absolute inset-0 overflow-y-auto data-[state=inactive]:hidden"
-                  >
-                    <SharedScopeMemoryReader
-                      scope="suite"
-                      scopeId={suiteId}
-                      emptyTitle="No suite memory yet"
-                      emptyDescription="This suite doesn't have cataloged observations in this workspace yet. Run the suite with memory enabled, then reopen this tab."
-                    />
                   </TabsContent>
                 </div>
               </Tabs>
@@ -617,7 +572,7 @@ export default function SuiteViewerPage() {
                 <InsightsLineCell className="border-b border-border md:border-b-0 md:border-r">
                   <div>
                     <p className="text-sm text-muted-foreground">Pass Rate</p>
-                    <p className="mt-0.5 text-2xl font-semibold">{Math.round(selectedTrends.passRate * 100)}%</p>
+                    <p className="mt-0.5 text-2xl font-semibold">{formatPassRate(selectedTrends.passRate)}</p>
                   </div>
                 </InsightsLineCell>
                 <InsightsLineCell>

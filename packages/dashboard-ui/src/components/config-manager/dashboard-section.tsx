@@ -1,103 +1,59 @@
-import { useState } from "react"
-import { toast } from "sonner"
-import { Loader2 } from "lucide-react"
-import {
-  ConfigSectionBody,
-  ConfigSectionHeader,
-  ConfigSectionShell,
-} from "@/components/config-manager/config-section-shell"
-import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { parseConfigNumberInput } from "@/components/config-manager/numeric-input"
-import { updateSettings } from "@/lib/api"
+import { ConfigField } from "@/components/config-manager/config-field"
+import { DataPathField } from "@/components/config-manager/data-path-field"
+import { DASHBOARD_FIELD_HELP, DASHBOARD_FIELD_LABELS, PORT_RESTART_HELP } from "@/lib/config-copy"
 
-interface DashboardSectionProps {
-  config: Record<string, unknown>
-  onConfigChange: () => void
-}
-
-export function DashboardSection({ config, onConfigChange }: DashboardSectionProps) {
-  const dashboard = ((config.services as any)?.dashboard ?? {}) as {
-    port?: number
-    dbPath?: string
-    artifactsDir?: string
-  }
-  const [port, setPort] = useState(String(dashboard.port ?? 4173))
-  const [dbPath, setDbPath] = useState(dashboard.dbPath ?? "")
-  const [artifactsDir, setArtifactsDir] = useState(dashboard.artifactsDir ?? "")
-  const [saving, setSaving] = useState(false)
-
-  async function handleSave() {
-    const parsedPort = parseConfigNumberInput(port, {
-      label: "Port",
-      min: 1,
-      max: 65535,
-      integer: true,
-    })
-    if (parsedPort.error) {
-      toast.error(parsedPort.error)
-      return
-    }
-
-    setSaving(true)
-    try {
-      await updateSettings({
-        'services.dashboard': { port: parsedPort.value, dbPath, artifactsDir },
-      })
-      onConfigChange()
-      toast.success("Changes saved")
-    } catch {
-      toast.error("Failed to save configuration")
-    } finally {
-      setSaving(false)
-    }
-  }
-
+// Every services.dashboard leaf. 2026-10-01 (432-22, D-12): run-service tokens are deleted with their key.
+export function DashboardSection() {
   return (
-    <ConfigSectionShell>
-      <ConfigSectionHeader>
-        <h2 className="text-base font-semibold">Dashboard</h2>
-        <p className="text-sm text-muted-foreground">Configure dashboard server and storage paths</p>
-      </ConfigSectionHeader>
-      <ConfigSectionBody>
-        <div className="space-y-2">
-          <Label htmlFor="dashboard-port">Port</Label>
-          <Input
-            id="dashboard-port"
-            type="number"
-            min={1}
-            max={65535}
-            step={1}
-            value={port}
-            onChange={(e) => setPort(e.target.value)}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="dashboard-db-path">Database Path</Label>
-          <Input
-            id="dashboard-db-path"
-            placeholder=".agent-qa/runs.db"
-            value={dbPath}
-            onChange={(e) => setDbPath(e.target.value)}
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="dashboard-artifacts-dir">Artifacts Directory</Label>
-          <Input
-            id="dashboard-artifacts-dir"
-            placeholder=".agent-qa/artifacts"
-            value={artifactsDir}
-            onChange={(e) => setArtifactsDir(e.target.value)}
-          />
-        </div>
-
-        <Button size="sm" onClick={handleSave} disabled={saving}>
-          {saving ? <Loader2 className="size-4 animate-spin" /> : "Save Changes"}
-        </Button>
-      </ConfigSectionBody>
-    </ConfigSectionShell>
+    <>
+      <ConfigField
+        field={{ segments: ["services", "dashboard", "port"], tab: "project", pattern: "services.dashboard.port" }}
+        label={DASHBOARD_FIELD_LABELS.port}
+        kind="number"
+        help={PORT_RESTART_HELP}
+        placeholder="3470"
+        number={{ min: 1, max: 65535, integer: true }}
+      />
+      <ConfigField
+        field={{ segments: ["services", "dashboard", "host"], tab: "project", pattern: "services.dashboard.host" }}
+        label={DASHBOARD_FIELD_LABELS.host}
+        kind="text"
+        help={DASHBOARD_FIELD_HELP.host}
+        placeholder="127.0.0.1"
+      />
+      <DataPathField
+        field={{ segments: ["services", "dashboard", "dbPath"], tab: "project", pattern: "services.dashboard.dbPath" }}
+        label={DASHBOARD_FIELD_LABELS.dbPath}
+        explicitKind="change-db-path"
+        placeholder=".agent-qa/runs.db"
+      />
+      <DataPathField
+        field={{
+          segments: ["services", "dashboard", "artifactsDir"],
+          tab: "project",
+          pattern: "services.dashboard.artifactsDir",
+        }}
+        label={DASHBOARD_FIELD_LABELS.artifactsDir}
+        explicitKind="change-artifacts-dir"
+        placeholder=".agent-qa/artifacts"
+      />
+      <ConfigField
+        field={{ segments: ["services", "dashboard", "baseUrl"], tab: "project", pattern: "services.dashboard.baseUrl" }}
+        label={DASHBOARD_FIELD_LABELS.baseUrl}
+        kind="text"
+        help={DASHBOARD_FIELD_HELP.baseUrl}
+        placeholder="http://localhost:3470"
+      />
+      <ConfigField
+        field={{
+          segments: ["services", "dashboard", "workspace"],
+          tab: "project",
+          pattern: "services.dashboard.workspace",
+        }}
+        label={DASHBOARD_FIELD_LABELS.workspace}
+        kind="text"
+        help={DASHBOARD_FIELD_HELP.workspace}
+      />
+    </>
   )
 }

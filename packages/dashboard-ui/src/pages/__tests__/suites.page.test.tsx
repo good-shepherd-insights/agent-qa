@@ -13,6 +13,7 @@ const {
   LONG_SUITE_NAME,
   fetchSuiteFilesMock,
   fetchRunsMock,
+  fetchSuiteSummariesMock,
   deleteSuiteFileMock,
   triggerRunMock,
   latestBatchActionBarProps,
@@ -21,6 +22,7 @@ const {
     "This suite name is intentionally long enough to prove the suites list keeps the primary column wrap-friendly instead of widening the whole page",
   fetchSuiteFilesMock: vi.fn(),
   fetchRunsMock: vi.fn(),
+  fetchSuiteSummariesMock: vi.fn(),
   deleteSuiteFileMock: vi.fn(),
   triggerRunMock: vi.fn(),
   latestBatchActionBarProps: {
@@ -132,6 +134,7 @@ vi.mock("@tanstack/react-table", () => {
 vi.mock("@/lib/api", () => ({
   fetchSuiteFiles: fetchSuiteFilesMock,
   fetchRuns: fetchRunsMock,
+  fetchSuiteSummaries: fetchSuiteSummariesMock,
   deleteSuiteFile: deleteSuiteFileMock,
   triggerRun: triggerRunMock,
 }))
@@ -306,6 +309,7 @@ beforeEach(() => {
   latestBatchActionBarProps.current = null
   fetchSuiteFilesMock.mockReset()
   fetchRunsMock.mockReset()
+  fetchSuiteSummariesMock.mockReset()
   deleteSuiteFileMock.mockReset()
   triggerRunMock.mockReset()
 
@@ -322,6 +326,11 @@ beforeEach(() => {
     ],
   })
   fetchRunsMock.mockResolvedValue({ runs: [] })
+  fetchSuiteSummariesMock.mockResolvedValue({
+    suites: [
+      { path: "long-suite.suite.yaml", suiteId: "s_long-suite", passRate: null, passed: 0, decided: 0, lastRun: null, platform: null, targetName: null },
+    ],
+  })
   deleteSuiteFileMock.mockResolvedValue({ deleted: true })
   triggerRunMock.mockResolvedValue({ runId: "run_suite" })
 })

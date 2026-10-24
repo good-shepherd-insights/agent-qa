@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   CircleDashed,
+  CircleSlash,
 } from 'lucide-react'
 import {
   AlertDialog,
@@ -31,7 +32,8 @@ import { Switch } from '@/components/ui/switch'
 import { StepPillPreview, hasTemplateVars } from '@/components/step-pill-preview'
 import { useStepAutocomplete } from '@/components/step-autocomplete'
 import type { VariableSuggestion } from '@/hooks/use-variable-suggestions'
-import type { SubActionData } from '@/lib/api'
+import type { LiveSubAction } from '@/hooks/use-live-editor'
+import { RESULT_WORDS } from '@/lib/action-vocabulary'
 import type { StepOverrides } from '@/lib/test-yaml-serializer'
 import { cn } from '@/lib/utils'
 
@@ -62,7 +64,7 @@ interface StepCardEditorProps {
   onToggleSettings?: (stepId: string) => void
   isSelected?: boolean
   onSelectStep?: (stepId: string) => void
-  subActions?: SubActionData[] | null
+  subActions?: LiveSubAction[] | null
   selectedSubActionIndex?: number | null
   onSelectSubAction?: (stepId: string, subIndex: number) => void
   suggestions?: VariableSuggestion[]
@@ -102,7 +104,6 @@ function formatOverrideSummary(overrides: StepOverrides): string | null {
   if (overrides.timeout) parts.push(`TIMEOUT: ${overrides.timeout.toUpperCase()}`)
   if (overrides.retries != null) parts.push(`RETRIES: ${overrides.retries}`)
   if (overrides.screenshot != null) parts.push(`SCREENSHOT: ${overrides.screenshot ? 'ON' : 'OFF'}`)
-  if (overrides.maxAttempts != null) parts.push(`MAX ATTEMPTS: ${overrides.maxAttempts}`)
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
@@ -111,12 +112,18 @@ function isInteractiveTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('button, textarea, input, select, label, [role="switch"]'))
 }
 
-function SubActionStatusIcon({ result }: { result: SubActionData['result'] }) {
+export function SubActionStatusIcon({ result }: { result: LiveSubAction['result'] }) {
   switch (result) {
     case 'success':
       return <CheckCircle2 className="size-3.5 text-emerald-500" />
     case 'failure':
       return <AlertTriangle className="size-3.5 text-destructive" />
+    case 'no-input':
+      return (
+        <CircleSlash className="size-3.5 text-muted-foreground" aria-label={RESULT_WORDS['no-input']}>
+          <title>{RESULT_WORDS['no-input']}</title>
+        </CircleSlash>
+      )
     default:
       return <CircleDashed className="size-3.5 text-muted-foreground" />
   }
@@ -137,7 +144,7 @@ function LiveStatusIcon({ status }: { status: Exclude<StepCardLiveStatus, 'idle'
   }
 }
 
-function formatSubActionLabel(subAction: SubActionData): string {
+function formatSubActionLabel(subAction: LiveSubAction): string {
   if (!subAction.plannedAction) return `Sub-action ${subAction.index + 1}`
 
   try {
@@ -452,22 +459,6 @@ export function StepCardEditor({
                 value={overrides.retries ?? ''}
                 onChange={(event) => onOverrideChange(index, 'retries', event.target.value ? Number(event.target.value) : undefined)}
                 placeholder="0"
-                disabled={disabled}
-                className="h-8 text-xs"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <Label htmlFor={`step-${index}-maxAttempts`} className="text-[11px] text-muted-foreground">
-                Max Attempts
-              </Label>
-              <Input
-                id={`step-${index}-maxAttempts`}
-                type="number"
-                min={1}
-                value={overrides.maxAttempts ?? ''}
-                onChange={(event) => onOverrideChange(index, 'maxAttempts', event.target.value ? Number(event.target.value) : undefined)}
-                placeholder="1"
                 disabled={disabled}
                 className="h-8 text-xs"
               />

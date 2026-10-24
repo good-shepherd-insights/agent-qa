@@ -1,0 +1,297 @@
+// The on-demand digest verb, driven as a person drives it (Phase 391 plan 06).
+//
+// `agent-qa digest` is a THIN WRAPPER: it resolves a project, builds the registry at the
+// composition root, calls `invokeFunction` with the CLI's own caller mint, and prints what comes
+// back. This file proves exactly that and nothing more generous — the whole path is real (no
+// stubbed gate, no stubbed registry), and the verb's output is asserted BYTE FOR BYTE against the
+// op result obtained through a second composition.
+//
+// The second composition is what makes the byte claim non-circular. If the printed lines were
+// built from anything the command held in memory, the value compared here — read out of a cold
+// registry over the same directories — would be free to disagree with it.
+//
+// 2026-10-01 (432-17, D-05/D-22): `agent-qa proposals` — list, show, accept, reject and the
+// `grants` subcommands it hosted — is deleted with the inbox, so the cells that drove it are
+// deleted too. Their claims transfer: the verb's absence is C432-NO-PROPOSAL-CLI
+// (conformance/help-census.test.ts), the ops' absence is C432-NO-PROPOSAL-OPS, and a pre-432
+// proposal file on disk is never read (C432-PROPOSAL-FILES-UNREAD; the digest cell below keeps
+// planting one beside the run it digests). 432-18 deleted the grant ledger and `grants.list`; an old
+// `grants.jsonl` is never read (C432-GRANTS-UNREAD-WRITER-ABSENT, agent-local grant-ledger-damage).
+
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { invokeFunction, RUNS_DIGEST_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
+import type { BundleStoreConfig } from '@vostride/agent-qa-knowledge-local'
+import { HANDOFF_FILE, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
+import { asRecordId, asRunId, CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import type { Anchor, CompletedRunHandoff, RunDigest, Verdict } from '@vostride/agent-qa-schema'
+import { Command } from 'commander'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { createDigestCommand } from '../commands/digest.js'
+import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
+import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
+
+const OLDER_RUN = 'run-391-06-cmd-older'
+const NEWER_RUN = 'run-391-06-cmd-newer'
+
+const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
+
+const roots: string[] = []
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+function rootCause(perTest: number): Verdict {
+  return {
+    class: 'app_bug',
+    producer: 'deterministic-classifier',
+    confidence: 0.9,
+    evidence: {
+      citedSteps: [0],
+      citedAnchors: [],
+      citedArtifacts: [],
+      rationale: 'the submit control is gone from the checkout DOM',
+    },
+    memoryMisdirectionRuledOut: true,
+    perTest,
+  } as Verdict
+}
+
+function handoff(runId: string, endedAt: number): CompletedRunHandoff {
+  return {
+    schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
+    runId: asRunId(runId),
+    scope: { tier: 'product', key: 'digest-cmd-storefront' },
+    buildOrdinal: 2,
+    executionContext: 'local-headless',
+    aggregateVerdict: 'failed',
+    configDigests: { suiteConfigDigest: 'suite-digest', testConfigDigest: 'test-digest' },
+    startedAt: 1,
+    endedAt,
+    tests: [
+      {
+        testId: 'TST-501',
+        testName: 'checks out',
+        filePath: 'tests/checkout.yaml',
+        testIndex: 0,
+        outcome: 'failed',
+        steps: [],
+        rootCause: rootCause(0),
+      },
+    ],
+  } as unknown as CompletedRunHandoff
+}
+
+interface Workspace {
+  root: string
+  configPath: string
+  agentQaRoot: string
+  knowledgeRoot: string
+}
+
+function workspace(): Workspace {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-391-06-cmd-'))
+  roots.push(root)
+  const configPath = join(root, 'agent-qa.config.yaml')
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      workspace: {
+        testMatch: ['tests/**/*.yaml'],
+        testPathIgnore: [],
+        suiteMatch: ['suites/**/*.suite.yaml'],
+        hooksFile: 'hooks.yaml',
+        envFile: '.env',
+        secretsFile: '.env.secrets.local',
+      },
+      use: { mobile: { appState: 'preserve' } },
+    }, null, 2)}\n`,
+    'utf8',
+  )
+  // 2026-10-14 (441-16, E3): `runs.list` refuses without a readable secrets file.
+  writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
+  const agentQaRoot = join(root, '.agent-qa')
+  mkdirSync(agentQaRoot, { recursive: true })
+  // Two completed runs, the newer one ending later, so "most recent" is a claim about
+  // chronology rather than about whichever id sorts last.
+  for (const [runId, endedAt] of [[OLDER_RUN, 100], [NEWER_RUN, 900]] as const) {
+    const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(runId))
+    mkdirSync(runDir, { recursive: true })
+    writeFileSync(join(runDir, HANDOFF_FILE), `${JSON.stringify(handoff(runId, endedAt))}\n`, 'utf8')
+  }
+  return { root, configPath, agentQaRoot, knowledgeRoot: join(root, 'agent-qa-knowledge') }
+}
+
+function storeConfig(ws: Workspace): BundleStoreConfig {
+  return {
+    knowledgeRoot: ws.knowledgeRoot,
+    productKey: 'Digest Command Product',
+    commitArtifacts: 'none',
+  }
+}
+
+/** A real record, then a pre-432 proposal file about it planted beside it, attributed to a run. */
+async function plantPre432Proposal(ws: Workspace, runId: string, summary: string, ordinal: number): Promise<string> {
+  const published = publishBundleForTest(storeConfig(ws), {
+    draft: {
+      kind: 'fact',
+      subtype: 'selector',
+      anchors: [ANCHOR],
+      scope: { tier: 'product', key: 'digest-cmd' },
+      summary,
+      body: `Selecting ${summary} advances to the payment page.`,
+      distilledEvidenceRef: { id: `cmd-${summary}`, sha: 'a'.repeat(64) },
+      originStage: 'run-curation',
+    },
+    discriminant: {
+      kind: 'fact',
+      subtype: 'selector',
+      elementRef: { role: 'Button', name: summary },
+    },
+    originClass: 'agent-verified',
+    createdAtOrdinal: ordinal,
+    screenStates: [],
+    initialEvents: [],
+    relations: [],
+    provenance: { mode: 'run-linked', runId: 'digest-cmd', testId: 't', stepIndex: 0 },
+    artifacts: [],
+  })
+  if (published.kind !== 'published') throw new Error(`fixture publish failed: ${published.kind}`)
+  return await filePre432KnowledgeProposal({
+    agentQaRoot: ws.agentQaRoot,
+    verb: 'forget',
+    target: { grain: 'record', recordId: asRecordId(published.id) },
+    runId,
+  })
+}
+
+interface Invocation {
+  stdout: string
+  stderr: string
+  exitCode: number | string | undefined
+}
+
+async function run(ws: Workspace, args: readonly string[]): Promise<Invocation> {
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const log = vi.spyOn(console, 'log').mockImplementation((...values: unknown[]) => {
+    stdout.push(values.map(String).join(' '))
+  })
+  const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
+    stderr.push(values.map(String).join(' '))
+  })
+  const priorExit = process.exitCode
+  process.exitCode = undefined
+  try {
+    const program = new Command()
+      .option('--config <path>', 'config file path')
+      .addCommand(createDigestCommand())
+    program.exitOverride()
+    await program.parseAsync(['node', 'agent-qa', '--config', ws.configPath, ...args])
+    return { stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode: process.exitCode }
+  } finally {
+    process.exitCode = priorExit
+    log.mockRestore()
+    error.mockRestore()
+  }
+}
+
+/** The op result, read through a SECOND cold composition over the same directories. */
+async function digestThroughTheOp(ws: Workspace, runId: string): Promise<RunDigest> {
+  const host = composeCliLocalAgent({ agentQaRoot: ws.agentQaRoot, configPath: ws.configPath })
+  try {
+    return await invokeFunction(
+      host.registry,
+      RUNS_DIGEST_FUNCTION_ID,
+      { runId },
+      CLI_FUNCTION_CALLER,
+    ) as RunDigest
+  } finally {
+    await host.close()
+  }
+}
+
+describe('agent-qa digest (D-17, the on-demand channel)', () => {
+  it('prints the op result\'s lines, byte for byte, and composes nothing of its own', async () => {
+    const ws = workspace()
+    await plantPre432Proposal(ws, NEWER_RUN, 'checkout button', 11)
+
+    const invocation = await run(ws, ['digest', NEWER_RUN])
+    const digest = await digestThroughTheOp(ws, NEWER_RUN)
+
+    expect(invocation.stderr).toBe('')
+    expect(invocation.exitCode).toBeUndefined()
+    // The whole claim, as one comparison: the printed bytes ARE the op's lines.
+    expect(invocation.stdout).toBe(digest.lines.join('\n'))
+    // Non-vacuity — the digest has real sections to have printed. 432-09 (D-05/D-25): the
+    // proposal this fixture minted through the shipped seam is listed and counted nowhere; the
+    // marks section reads this run's own (empty) ledger. 432-17: the fixture is now planted bytes,
+    // since nothing can mint one, and it is still read nowhere.
+    expect(digest.lines.length).toBeGreaterThan(3)
+    expect(invocation.stdout).toContain('marks — no changes applied')
+    expect(invocation.stdout).not.toMatch(/proposal|minted/)
+  })
+
+  it('digests the most recently FINISHED run when none is named', async () => {
+    const ws = workspace()
+
+    const invocation = await run(ws, ['digest'])
+
+    // `${OLDER_RUN}` sorts AFTER `${NEWER_RUN}` by id — so an implementation that picked by
+    // runId rather than by completion would answer the older run here. The chronology is what
+    // is being pinned.
+    expect(OLDER_RUN > NEWER_RUN).toBe(true)
+    expect(invocation.stdout).toContain(`digest — ${NEWER_RUN}`)
+    expect(invocation.stdout).not.toContain(`digest — ${OLDER_RUN}`)
+  })
+
+  it('emits the structured sections under --json, not the rendered lines', async () => {
+    const ws = workspace()
+    const invocation = await run(ws, ['digest', NEWER_RUN, '--json'])
+
+    const parsed = JSON.parse(invocation.stdout) as RunDigest
+    expect(parsed.runId).toBe(NEWER_RUN)
+    expect(parsed.chain).toEqual({ analysis: 'pending', curation: 'pending' })
+    expect(parsed.markChanges).toEqual([])
+    expect(parsed).not.toHaveProperty('pendingProposalCount')
+  })
+
+  it('reports a run that never happened as an error, and sets a non-zero exit code', async () => {
+    const ws = workspace()
+    const invocation = await run(ws, ['digest', 'run-that-never-happened'])
+
+    expect(invocation.stdout).toBe('')
+    expect(invocation.stderr).toContain('RunNotFoundError')
+    expect(invocation.exitCode).toBe(1)
+  })
+})
+
+describe('the surfaces own no capability of their own (L10)', () => {
+  it('dispatches through invokeFunction with the CLI caller mint, and holds no gate', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { fileURLToPath } = await import('node:url')
+    for (const file of ['digest.ts']) {
+      const source = readFileSync(
+        fileURLToPath(new URL(`../commands/${file}`, import.meta.url)),
+        'utf8',
+      )
+      // The ONE dispatch path, and the ONE caller. A hand-rolled caller literal here would be
+      // a surface deciding its own origin, which is the fact the whole self-grant rule turns
+      // on (D-06) — so `origin:` must not appear in it at all.
+      expect(source).toContain('invokeFunction')
+      expect(source).toContain('CLI_FUNCTION_CALLER')
+      expect(source).not.toMatch(/origin:\s*'(human|agent)'/u)
+      // No gate, no registry construction, no store: a surface that could reach any of these
+      // would have a path around the pipeline (T-384-01).
+      expect(source).not.toContain('evaluate')
+      expect(source).not.toContain('createRegistryFromSpecs')
+      expect(source).not.toContain('agent-qa-knowledge-local')
+      expect(source).not.toContain('agent-qa-safety')
+    }
+  })
+})

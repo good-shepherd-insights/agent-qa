@@ -90,12 +90,9 @@ async function renderPanels() {
           name: "Open login",
           status: "passed",
           duration: 1000,
-          subActionsData: null,
+          liveSubActions: null,
           originalStepName: null,
           variableSnapshot: null,
-          screenshotPath: null,
-          screenshotBeforePath: null,
-          annotationData: null,
           observation: null,
           reasoning: null,
           plannedAction: null,
@@ -106,9 +103,6 @@ async function renderPanels() {
           stepOrder: 0,
           consoleLogs: null,
           networkLogs: null,
-          healingAttempts: null,
-          screenContextBefore: null,
-          screenContextAfter: null,
           rawRunId: "run-1",
           rawStepOrder: 0,
           displayStepOrder: 1,
@@ -117,6 +111,7 @@ async function renderPanels() {
         subAction={null}
         runId="run-1"
         allSteps={[]}
+        onSelectStep={() => {}}
       />,
     )
   })
@@ -181,6 +176,8 @@ describe("TabPanels", () => {
             },
           }}
           executionLogs={[]}
+          runId={null}
+          selection="step"
         />,
       )
     })

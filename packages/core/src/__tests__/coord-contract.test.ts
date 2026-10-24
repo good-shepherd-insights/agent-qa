@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import type { PlatformAdapter, ScreenStateMetadata } from '../types/platform.js'
-import type { CompressResult } from '../screenshot/compress.js'
+import type { PlatformAdapter } from '@vostride/agent-qa-runner'
+import type { ScreenStateMetadata } from '@vostride/agent-qa-schema'
+// 363 D-08/Q10: the compress pipeline moved to runner-local; CompressedScreenshot is the runner
+// port's identical v1 CompressResult shape (core already depends on runner — no backwards dep).
+import type { CompressedScreenshot as CompressResult } from '@vostride/agent-qa-runner'
 import { warnIfOutOfBounds } from '../validation/coord-bounds.js'
 
 describe('viewport-space coordinate contract', () => {
@@ -37,9 +40,11 @@ describe('viewport-space coordinate contract', () => {
   describe('ScreenStateMetadata', () => {
     it('requires coordSpace to be the literal viewport', () => {
       const metadata: ScreenStateMetadata = {
+        captureMode: 'textOnly',
         coordSpace: 'viewport',
         viewportWidth: 1280,
         viewportHeight: 720,
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 1280, contentHeight: 720 },
       }
       expect(metadata.coordSpace).toBe('viewport')
     })
@@ -52,9 +57,11 @@ describe('viewport-space coordinate contract', () => {
 
     it('requires viewportWidth and viewportHeight', () => {
       const metadata: ScreenStateMetadata = {
+        captureMode: 'textOnly',
         coordSpace: 'viewport',
         viewportWidth: 393,
         viewportHeight: 852,
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 393, contentHeight: 852 },
       }
       expect(metadata.viewportWidth).toBe(393)
       expect(metadata.viewportHeight).toBe(852)

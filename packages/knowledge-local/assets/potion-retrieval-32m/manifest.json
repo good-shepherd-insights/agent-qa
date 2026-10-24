@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "format": "potion-static-int8",
+  "modelId": "minishlab/potion-retrieval-32M",
+  "revision": "6fc8051fab2a1e0ee76689cf08c853792ac285e7",
+  "source": {
+    "model": "https://huggingface.co/minishlab/potion-retrieval-32M/resolve/6fc8051fab2a1e0ee76689cf08c853792ac285e7/model.safetensors?download=true",
+    "tokenizer": "https://huggingface.co/minishlab/potion-retrieval-32M/resolve/6fc8051fab2a1e0ee76689cf08c853792ac285e7/tokenizer.json?download=true",
+    "tensorName": "embeddings",
+    "tensorDtype": "F32",
+    "tensorShape": [
+      63091,
+      512
+    ]
+  },
+  "artifact": {
+    "magic": "PTNF",
+    "version": 1,
+    "vocabularySize": 63091,
+    "dimension": 512,
+    "quantization": "symmetric-per-row-int8"
+  },
+  "files": {
+    "potion-retrieval-32m.i8bin": {
+      "bytes": 32554972,
+      "sha256": "108669cd5bd174ffdd015678970ea02e8d00d925f087459beae5cb509982ef17"
+    },
+    "tokenizer.json": {
+      "bytes": 1493150,
+      "sha256": "7d75cbc54318138807c401b0f0c9721117c628b39de8e8e0edb6cb17e0ee7d18"
+    },
+    "golden-vectors.json": {
+      "bytes": 123931,
+      "sha256": "7aa31420a8b474065de327431decd253d01a4e1e7baaeab509c2743a82bafac5"
+    }
+  }
+}

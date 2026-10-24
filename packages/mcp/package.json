@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-mcp",
-  "version": "0.1.21",
+  "version": "0.2.1",
   "private": false,
   "description": "Model Context Protocol server and tools for agent-qa authoring and triage.",
   "keywords": [
@@ -48,15 +48,16 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "@vostride/agent-qa-core": "workspace:*",
-    "@vostride/agent-qa-ids": "workspace:*",
-    "glob": "13.0.6",
-    "yaml": "2.8.4",
-    "zod": "4.4.2"
+    "@modelcontextprotocol/node": "2.1.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@vostride/agent-qa-agent": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
     "@types/node": "~24.12.2",
+    "@vostride/agent-qa-arch": "workspace:*",
     "tsup": "~8.5.1",
     "typescript": "~6.0.3",
     "vitest": "~4.1.5"

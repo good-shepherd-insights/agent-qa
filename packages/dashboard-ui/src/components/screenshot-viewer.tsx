@@ -3,24 +3,43 @@ import { Camera, Crosshair, Maximize2, Search, X } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import type { StepAnnotation } from "@/lib/api"
-import { resolveScreenshotSrc } from "@/lib/artifact-media"
+import { MediaAnnotationOverlay } from "./media-annotation-overlay"
+import { MediaViewport } from './media-viewport'
 import { cn } from "@/lib/utils"
 
+// THE VIEWER TAKES A MINTED URL, NOT A PATH (405-11 · D-14).
+//
+// It used to take a filesystem-ish path and build a serving URL out of it by splitting on slashes
+// and guessing which segment was the run. Refs are the only artifact addressing now, and the ONE
+// minter is the route map: the caller resolves a ref to a `src` and hands it down. So this
+// component builds no URL at all, which is the property 405-13 greps the source tree for.
 interface ScreenshotViewerProps {
-  screenshotPath: string
+  /** An already-minted, same-origin URL. Never a path, never anything this file assembles. */
+  src: string
   annotation?: StepAnnotation | null
   refLabel?: string
   className?: string
+  /**
+   * Told when the image request FAILED (D-15).
+   *
+   * A blob that was garbage-collected or never written answers 404, and the owner of the pane needs
+   * to say "screenshot unavailable" in its own words rather than leave a broken image element on
+   * the page. The viewer still paints its own fallback when nobody is listening, so a caller that
+   * does not pass this cannot produce a broken `img` by omission.
+   */
+  onUnavailable?: () => void
+  embedded?: { magnifier: boolean; annotationsVisible: boolean; fullscreen: boolean; onAvailability?: (available: boolean) => void }
 }
 
 export function ScreenshotViewer({
-  screenshotPath,
+  src,
   annotation,
   refLabel,
   className,
+  onUnavailable,
+  embedded,
 }: ScreenshotViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [instanceId] = useState(() => Math.random().toString(36).slice(2, 8))
   const [imageLoaded, setImageLoaded] = useState(false)
   const [imageError, setImageError] = useState(false)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
@@ -31,7 +50,13 @@ export function ScreenshotViewer({
   const [fullscreen, setFullscreen] = useState(false)
   const [annotationsVisible, setAnnotationsVisible] = useState(true)
 
-  const src = resolveScreenshotSrc(screenshotPath)
+  // A NEW `src` IS A NEW QUESTION (405-11). The load and error flags describe ONE request; carrying
+  // them across a swap would leave the previous image's failure painted over a blob that was never
+  // asked for, which reads as "this evidence is gone" about the wrong sub-action.
+  useEffect(() => {
+    setImageLoaded(false)
+    setImageError(false)
+  }, [src])
 
   useEffect(() => {
     const container = containerRef.current
@@ -64,8 +89,9 @@ export function ScreenshotViewer({
       const img = e.currentTarget
       setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight })
       setImageLoaded(true)
+      embedded?.onAvailability?.(true)
     },
-    [],
+    [embedded?.onAvailability],
   )
 
   const handleMouseMove = useCallback(
@@ -78,11 +104,6 @@ export function ScreenshotViewer({
     },
     [],
   )
-
-  const viewportWidth =
-    annotation?.viewport?.width || naturalSize.width || 1
-  const viewportHeight =
-    annotation?.viewport?.height || naturalSize.height || 1
 
   const containerW = containerSize.width
   const containerH = containerSize.height
@@ -106,8 +127,6 @@ export function ScreenshotViewer({
     }
   }
 
-  const scaleX = renderedW / viewportWidth
-  const scaleY = renderedH / viewportHeight
 
   const zoomSize = 150
   const zoomScale = 2.5
@@ -143,175 +162,14 @@ export function ScreenshotViewer({
   }
 
   const hasAnnotations = !!(annotation?.clickPoint || annotation?.boundingBox || annotation?.failureHighlight || annotation?.startPoint || annotation?.endPoint || annotation?.direction || annotation?.pinchScale)
-  const annotationOverlays = imageLoaded && annotation && annotationsVisible && (
-    <>
-      {annotation.failureHighlight && (
-        <div
-          className="absolute border-2 border-red-500/70 rounded-sm bg-red-500/15 animate-pulse pointer-events-none"
-          style={{
-            left: offsetX + annotation.failureHighlight.x * scaleX,
-            top: offsetY + annotation.failureHighlight.y * scaleY,
-            width: annotation.failureHighlight.width * scaleX,
-            height: annotation.failureHighlight.height * scaleY,
-          }}
-        />
-      )}
-      {annotation.boundingBox && (
-        <>
-          <div
-            className="absolute border-2 border-emerald-500/70 rounded-sm bg-emerald-500/10 pointer-events-none"
-            style={{
-              left: offsetX + annotation.boundingBox.x * scaleX,
-              top: offsetY + annotation.boundingBox.y * scaleY,
-              width: annotation.boundingBox.width * scaleX,
-              height: annotation.boundingBox.height * scaleY,
-            }}
-          />
-          {refLabel && (
-            <div
-              className="absolute text-[10px] font-mono font-bold text-white bg-emerald-600/90 px-1 rounded-sm pointer-events-none leading-tight"
-              style={{
-                left: offsetX + annotation.boundingBox.x * scaleX,
-                top: offsetY + annotation.boundingBox.y * scaleY - 14,
-              }}
-            >
-              {refLabel}
-            </div>
-          )}
-        </>
-      )}
-      {annotation.clickPoint && (
-        <div
-          className="absolute pointer-events-none"
-          style={{
-            left: offsetX + annotation.clickPoint.x * scaleX,
-            top: offsetY + annotation.clickPoint.y * scaleY,
-            transform: "translate(-50%, -50%)",
-            zIndex: 1,
-          }}
-        >
-          <div className="relative">
-            <div className="w-2.5 h-2.5 rounded-full bg-turquoise-500 border-[1.5px] border-black/60 shadow-[0_0_0_1px_rgba(255,255,255,0.4)]" />
-            <div className="absolute rounded-full border-2 border-turquoise-500/50 animate-ping" style={{ width: 22, height: 22, left: -8.5, top: -8.5 }} />
-          </div>
-        </div>
-      )}
-      {/* Gesture annotations — animated indicators */}
-      {/* Swipe/Drag: start dot + trailing dots along path + end dot with ping */}
-      {annotation.startPoint && annotation.endPoint && (() => {
-        const color = annotation.type === 'drag' ? 'oklch(0.65 0.19 150)' : 'oklch(0.65 0.19 210)'
-        const colorFaded = annotation.type === 'drag' ? 'oklch(0.65 0.19 150 / 0.4)' : 'oklch(0.65 0.19 210 / 0.4)'
-        const sx = offsetX + annotation.startPoint!.x * scaleX
-        const sy = offsetY + annotation.startPoint!.y * scaleY
-        const ex = offsetX + annotation.endPoint!.x * scaleX
-        const ey = offsetY + annotation.endPoint!.y * scaleY
-        const trailCount = 4
-        return (
-          <>
-            {/* Trail dots — staggered fade animation along path */}
-            {Array.from({ length: trailCount }, (_, i) => {
-              const t = (i + 1) / (trailCount + 1)
-              const x = sx + (ex - sx) * t
-              const y = sy + (ey - sy) * t
-              return (
-                <div key={`trail-${i}`} className="absolute pointer-events-none animate-gesture-trail" style={{
-                  left: x, top: y, transform: 'translate(-50%, -50%)', zIndex: 1,
-                  animationDelay: `${i * 0.15}s`,
-                }}>
-                  <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: colorFaded }} />
-                </div>
-              )
-            })}
-            {/* Start dot */}
-            <div className="absolute pointer-events-none" style={{ left: sx, top: sy, transform: 'translate(-50%, -50%)', zIndex: 1 }}>
-              <div className="w-2.5 h-2.5 rounded-full border-[1.5px] border-black/50 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" style={{ backgroundColor: color }} />
-            </div>
-            {/* End dot with ping */}
-            <div className="absolute pointer-events-none" style={{ left: ex, top: ey, transform: 'translate(-50%, -50%)', zIndex: 1 }}>
-              <div className="relative">
-                <div className="w-2 h-2 rounded-full border-[1.5px] border-black/50 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" style={{ backgroundColor: color }} />
-                <div className="absolute rounded-full border-[1.5px] animate-ping" style={{ borderColor: colorFaded, width: 18, height: 18, left: -7, top: -7 }} />
-              </div>
-            </div>
-          </>
-        )
-      })()}
-      {/* Scroll: center dot with ripple + long thin arrow in scroll direction */}
-      {annotation.direction && !annotation.startPoint && (() => {
-        const cx = annotation.clickPoint
-          ? offsetX + annotation.clickPoint.x * scaleX
-          : offsetX + renderedW / 2
-        const cy = annotation.clickPoint
-          ? offsetY + annotation.clickPoint.y * scaleY
-          : offsetY + renderedH / 2
-        const arrowLen = Math.min(renderedH, renderedW) * 0.35
-        const offsets: Record<string, [number, number]> = {
-          up: [0, -arrowLen], down: [0, arrowLen], left: [-arrowLen, 0], right: [arrowLen, 0],
-        }
-        const [dx, dy] = offsets[annotation.direction!] || [0, 0]
-        return (
-          <>
-            {/* Arrow line + small arrowhead via SVG */}
-            <svg className="absolute pointer-events-none" style={{ left: offsetX, top: offsetY, zIndex: 1 }} width={renderedW} height={renderedH}>
-              <defs>
-                <marker id={`scroll-arrow-border-${instanceId}`} markerWidth="16" markerHeight="14" refX="14" refY="7" orient="auto" markerUnits="userSpaceOnUse">
-                  <path d="M1 1 L14 7 L1 13" fill="none" stroke="oklch(0 0 0 / 0.5)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-                </marker>
-                <marker id={`scroll-arrow-${instanceId}`} markerWidth="16" markerHeight="14" refX="14" refY="7" orient="auto" markerUnits="userSpaceOnUse">
-                  <path d="M1 1 L14 7 L1 13" fill="none" stroke="oklch(0.719 0.119 209.8)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-                </marker>
-              </defs>
-              {/* Black border stroke */}
-              <line
-                x1={cx - offsetX} y1={cy - offsetY}
-                x2={cx - offsetX + dx} y2={cy - offsetY + dy}
-                stroke="oklch(0 0 0 / 0.5)" strokeWidth={4} strokeLinecap="round"
-                markerEnd={`url(#scroll-arrow-border-${instanceId})`}
-              />
-              {/* Colored body line — matches tap dot blue */}
-              <line
-                x1={cx - offsetX} y1={cy - offsetY}
-                x2={cx - offsetX + dx} y2={cy - offsetY + dy}
-                stroke="oklch(0.719 0.119 209.8 / 0.8)" strokeWidth={2.5} strokeLinecap="round"
-                markerEnd={`url(#scroll-arrow-${instanceId})`}
-              />
-            </svg>
-            {/* Center dot with ripple — identical to tap click dot */}
-            <div className="absolute pointer-events-none" style={{ left: cx, top: cy, transform: 'translate(-50%, -50%)', zIndex: 2 }}>
-              <div className="relative flex items-center justify-center" style={{ width: 22, height: 22 }}>
-                <div className="w-2.5 h-2.5 rounded-full bg-turquoise-500 border-[1.5px] border-black/60 shadow-[0_0_0_1px_rgba(255,255,255,0.4)]" />
-                <div className="absolute inset-0 rounded-full border-2 border-turquoise-500/50 animate-ping" />
-              </div>
-            </div>
-          </>
-        )
-      })()}
-      {/* Pinch: two dots that pulse outward/inward */}
-      {annotation.pinchScale && (() => {
-        const cx = annotation.startPoint ? offsetX + annotation.startPoint.x * scaleX : offsetX + renderedW / 2
-        const cy = annotation.startPoint ? offsetY + annotation.startPoint.y * scaleY : offsetY + renderedH / 2
-        const spread = 24
-        const isOut = annotation.pinchScale === 'out'
-        const animClass = isOut ? 'animate-gesture-pinch-out' : 'animate-gesture-pinch-in'
-        return (
-          <>
-            <div className={`absolute pointer-events-none ${animClass}`} style={{ left: cx - spread, top: cy, transform: 'translate(-50%, -50%)', zIndex: 1 }}>
-              <div className="relative">
-                <div className="w-2.5 h-2.5 rounded-full bg-turquoise-500 border-[1.5px] border-black/50 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
-                <div className="absolute rounded-full border-[1.5px] border-turquoise-500/40 animate-ping" style={{ width: 18, height: 18, left: -6.5, top: -6.5 }} />
-              </div>
-            </div>
-            <div className={`absolute pointer-events-none ${animClass}`} style={{ left: cx + spread, top: cy, transform: 'translate(-50%, -50%)', zIndex: 1, animationDirection: 'reverse' }}>
-              <div className="relative">
-                <div className="w-2.5 h-2.5 rounded-full bg-turquoise-500 border-[1.5px] border-black/50 shadow-[0_0_0_1px_rgba(255,255,255,0.3)]" />
-                <div className="absolute rounded-full border-[1.5px] border-turquoise-500/40 animate-ping" style={{ width: 18, height: 18, left: -6.5, top: -6.5 }} />
-              </div>
-            </div>
-          </>
-        )
-      })()}
-    </>
-  )
+  const annotationOverlays = imageLoaded && annotation && annotationsVisible && <MediaAnnotationOverlay annotation={annotation} refLabel={refLabel} renderedW={renderedW} renderedH={renderedH} offsetX={offsetX} offsetY={offsetY} />
+
+  if (embedded) return <MediaViewport width={naturalSize.width} height={naturalSize.height}
+    magnifier={embedded.magnifier} fullscreen={embedded.fullscreen} mediaKey={src}
+    annotation={imageLoaded && embedded.annotationsVisible ? annotation ?? undefined : undefined}>
+    <img src={src} alt='Step screenshot' className='h-full w-full object-contain'
+      onLoad={handleImageLoad} onError={() => { setImageError(true); embedded.onAvailability?.(false); onUnavailable?.() }} />
+  </MediaViewport>
 
   return (
     <>
@@ -343,7 +201,10 @@ export function ScreenshotViewer({
             !imageLoaded && "opacity-0",
           )}
           onLoad={handleImageLoad}
-          onError={() => setImageError(true)}
+          onError={() => {
+            setImageError(true)
+            onUnavailable?.()
+          }}
         />
 
         {annotationOverlays}

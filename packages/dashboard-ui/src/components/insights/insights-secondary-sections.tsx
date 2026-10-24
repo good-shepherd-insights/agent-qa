@@ -1,5 +1,8 @@
-import type { Stats, TokenEventStats } from "@/lib/api"
+import type { ReactNode } from "react"
+
+import type { InsightsKnowledgeChanges, TokenEventStats } from "@/lib/api"
 import { formatTokens } from "@/lib/format"
+import { LEARNED_CHANGE_KINDS, type LearnedChangeKind } from "@/lib/knowledge-view"
 import { TokenUsageChart } from "@/components/token-usage-chart"
 import {
   InsightsLineCell,
@@ -26,10 +29,163 @@ function QuietSectionEmpty({
 function hasTokenUsage(tokenStats: TokenEventStats | null) {
   if (!tokenStats) return false
   return tokenStats.byModel.some((row) => row.promptTokens > 0 || row.completionTokens > 0)
+    || (tokenStats.testRunUnmeasuredSteps ?? 0) > 0
 }
 
-function formatPercent(value: number) {
-  return `${Math.round(value * 100)}%`
+const CHANGE_KINDS = {
+  added: { label: "Added", color: "bg-[var(--chart-1)]" },
+  confirmed: { label: "Confirmed", color: "bg-[var(--chart-2)]" },
+  promoted: { label: "Promoted", color: "bg-[var(--chart-3)]" },
+  superseded: { label: "Superseded", color: "bg-[var(--chart-4)]" },
+  deprecated: { label: "Deprecated", color: "bg-[var(--chart-5)]" },
+} as const satisfies Record<LearnedChangeKind, { label: string; color: string }>
+
+function plural(count: number, noun: string) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`
+}
+
+function unavailableSentence(reason: string) {
+  if (reason === "agent_host_unavailable") {
+    return "Curation changes could not be read: this dashboard was started without an agent host."
+  }
+  return "Curation changes could not be read for this window. Refresh the page to try again."
+}
+
+function MemoryCell({ children }: { children: ReactNode }) {
+  return (
+    <InsightsLineCell data-insights-memory className="flex h-full flex-col p-0">
+      <div className="border-b border-border px-5 py-5">
+        <h2 className="text-base font-semibold">Memory Curator</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Knowledge changes curation recorded for the runs in the selected window.
+        </p>
+      </div>
+      <div className="flex h-full flex-col">{children}</div>
+    </InsightsLineCell>
+  )
+}
+
+function MemorySection({ knowledgeChanges }: { knowledgeChanges: InsightsKnowledgeChanges | null }) {
+  if (knowledgeChanges === null) {
+    return (
+      <MemoryCell>
+        <p className="px-5 py-4 text-sm text-muted-foreground">Reading curation changes for this window.</p>
+      </MemoryCell>
+    )
+  }
+
+  if (knowledgeChanges.status === "unavailable") {
+    return (
+      <MemoryCell>
+        <p className="px-5 py-4 text-sm text-muted-foreground">{unavailableSentence(knowledgeChanges.reason)}</p>
+      </MemoryCell>
+    )
+  }
+
+  const {
+    runsInWindow,
+    runsRead,
+    runsUnreadable,
+    runsCurationFailed,
+    runsCurationUnfinished,
+    runsInFlight,
+    truncated,
+    byKind,
+  } = knowledgeChanges
+  const rows = LEARNED_CHANGE_KINDS
+    .map((kind) => ({ kind, ...CHANGE_KINDS[kind], value: byKind[kind] ?? 0 }))
+    .filter((row) => row.value > 0)
+  const totalChanges = rows.reduce((sum, row) => sum + row.value, 0)
+  const runsAttempted = truncated?.read ?? runsInWindow
+
+  // The empty claim is made only when every run in the window settled, was read with its curation
+  // finished, and none changed anything. A missing count never yields the claim.
+  if (
+    totalChanges === 0
+    && runsUnreadable === 0
+    && runsCurationFailed === 0
+    && runsCurationUnfinished === 0
+    && runsInFlight === 0
+    && truncated === undefined
+  ) {
+    return (
+      <QuietSectionEmpty
+        title="No memory-curator activity in this window"
+        description="Memory metrics appear after runs create or confirm observations."
+      />
+    )
+  }
+
+  const notes = [
+    truncated
+      ? `Counted the latest ${truncated.read} of ${truncated.total} runs in this window; older runs were not read.`
+      : undefined,
+    runsUnreadable > 0
+      ? `Could not read curation for ${runsUnreadable} of ${plural(runsAttempted, "run")}; their changes are not counted.`
+      : undefined,
+    runsCurationFailed > 0
+      ? `Curation failed for ${runsCurationFailed} of ${plural(runsAttempted, "run")}; their changes are not counted.`
+      : undefined,
+    runsCurationUnfinished > 0
+      ? `Curation has not finished for ${runsCurationUnfinished} of ${plural(runsAttempted, "run")}; their changes are not counted yet.`
+      : undefined,
+    runsInFlight > 0
+      ? runsInFlight === 1
+        ? "1 run in this window has not finished yet and is not counted."
+        : `${runsInFlight} runs in this window have not finished yet and are not counted.`
+      : undefined,
+  ].filter((note): note is string => note !== undefined)
+
+  return (
+    <MemoryCell>
+      {totalChanges > 0 ? (
+        <>
+          <div className="grid gap-0 divide-y divide-border border-b border-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+            <div className="px-4 py-3">
+              <p className="text-xs text-muted-foreground">Changes</p>
+              <p className="mt-1 text-xl font-semibold">{totalChanges}</p>
+            </div>
+            <div className="px-4 py-3">
+              <p className="text-xs text-muted-foreground">Runs Read</p>
+              <p className="mt-1 text-xl font-semibold">{runsRead} of {runsAttempted}</p>
+            </div>
+          </div>
+          <div className="px-4 py-4">
+            <p className="text-sm font-medium">Change Mix</p>
+            <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-muted">
+              {rows.map((row) => (
+                <div key={row.kind} className={row.color} style={{ width: `${(row.value / totalChanges) * 100}%` }} />
+              ))}
+            </div>
+            <div className="mt-4 space-y-2">
+              {rows.map((row) => (
+                <div key={row.kind} data-change-kind={row.kind} className="flex items-center justify-between gap-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className={`size-2 rounded-full ${row.color}`} />
+                    <span className="text-muted-foreground">{row.label}</span>
+                  </div>
+                  <span data-change-count className="font-mono tabular-nums">{row.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      ) : (
+        <p className="px-5 pt-4 text-sm text-muted-foreground">
+          {runsRead > 0
+            ? `No changes found in the ${plural(runsRead, "run")} whose curation finished.`
+            : "No run in this window has a finished curation to count."}
+        </p>
+      )}
+      {notes.length > 0 ? (
+        <div className="space-y-1 px-5 py-4">
+          {notes.map((note) => (
+            <p key={note} className="text-sm text-muted-foreground">{note}</p>
+          ))}
+        </div>
+      ) : null}
+    </MemoryCell>
+  )
 }
 
 function getModelTotals(tokenStats: TokenEventStats | null) {
@@ -57,32 +213,28 @@ function getModelTotals(tokenStats: TokenEventStats | null) {
 }
 
 export function InsightsSecondarySections({
-  stats,
   tokenStats,
+  knowledgeChanges,
 }: {
-  stats: Stats
   tokenStats: TokenEventStats | null
+  knowledgeChanges: InsightsKnowledgeChanges | null
 }) {
-  const memory = stats.memory
   const showTokenUsage = hasTokenUsage(tokenStats)
-  const showMemory = Boolean(memory && memory.runs > 0)
   const modelTotals = getModelTotals(tokenStats)
   const totalTokens = (tokenStats?.totals.promptTokens ?? 0) + (tokenStats?.totals.completionTokens ?? 0)
-  const totalObservations = memory ? memory.added + memory.confirmed + memory.deprecated : 0
-  const observationMix = totalObservations > 0
-    ? [
-        { label: "Added", value: memory!.added, color: "bg-[var(--chart-1)]" },
-        { label: "Confirmed", value: memory!.confirmed, color: "bg-[var(--chart-2)]" },
-        { label: "Deprecated", value: memory!.deprecated, color: "bg-[var(--chart-5)]" },
-      ]
-    : []
   const runSource = tokenStats?.bySource["test-run"]
   const liveSource = tokenStats?.bySource["live-editor"]
+  const unmeasuredSteps = tokenStats?.testRunUnmeasuredSteps ?? 0
+  const testRunTokens = runSource
+    ? formatTokens(runSource.promptTokens + runSource.completionTokens)
+    : unmeasuredSteps > 0
+      ? "Not recorded"
+      : formatTokens(0)
 
   return (
     <InsightsLineGrid className="xl:grid-cols-2 xl:divide-x xl:divide-y-0 xl:items-stretch">
       {showTokenUsage && tokenStats ? (
-        <InsightsLineCell className="flex h-full flex-col p-0">
+        <InsightsLineCell data-insights-token-usage className="flex h-full flex-col p-0">
           <div className="border-b border-border px-5 py-5">
             <h2 className="text-base font-semibold">Token Usage</h2>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -118,9 +270,7 @@ export function InsightsSecondarySections({
             <div className="grid gap-0 divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
               <div className="px-4 py-3">
                 <p className="text-xs text-muted-foreground">Test Runs</p>
-                <p className="mt-1 text-xl font-semibold">
-                  {formatTokens((runSource?.promptTokens ?? 0) + (runSource?.completionTokens ?? 0))}
-                </p>
+                <p className="mt-1 text-xl font-semibold">{testRunTokens}</p>
               </div>
               <div className="px-4 py-3">
                 <p className="text-xs text-muted-foreground">Live Editor</p>
@@ -129,6 +279,11 @@ export function InsightsSecondarySections({
                 </p>
               </div>
             </div>
+            {unmeasuredSteps > 0 ? (
+              <p className="border-t border-border px-4 py-3 text-sm text-muted-foreground">
+                {plural(unmeasuredSteps, "test-run step")} recorded no token usage and {unmeasuredSteps === 1 ? "is" : "are"} not counted.
+              </p>
+            ) : null}
           </div>
         </InsightsLineCell>
       ) : (
@@ -138,97 +293,7 @@ export function InsightsSecondarySections({
         />
       )}
 
-      {showMemory && memory ? (
-        <InsightsLineCell className="flex h-full flex-col p-0">
-          <div className="border-b border-border px-5 py-5">
-            <h2 className="text-base font-semibold">Memory Curator</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Observation activity and curator usage across the selected window.
-            </p>
-          </div>
-          <div className="flex h-full flex-col">
-            <div className="grid gap-0 divide-y divide-border border-b border-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-              <div className="px-4 py-3">
-                <p className="text-xs text-muted-foreground">Runs With Memory</p>
-                <p className="mt-1 text-xl font-semibold">{memory.runs}</p>
-              </div>
-              <div className="px-4 py-3">
-                <p className="text-xs text-muted-foreground">Observations</p>
-                <p className="mt-1 text-xl font-semibold">{totalObservations}</p>
-              </div>
-              <div className="px-4 py-3">
-                <p className="text-xs text-muted-foreground">Curator Tokens</p>
-                <p className="mt-1 text-xl font-semibold">{formatTokens(memory.curatorTokens)}</p>
-              </div>
-            </div>
-
-            <div className="grid flex-1 gap-0 divide-y divide-border lg:grid-cols-2 lg:divide-x lg:divide-y-0">
-              <div className="px-4 py-4">
-                <p className="text-sm font-medium">Observation Mix</p>
-                {observationMix.length > 0 ? (
-                  <>
-                    <div className="mt-4 flex h-3 overflow-hidden rounded-full bg-muted">
-                      {observationMix.map((item) => (
-                        <div
-                          key={item.label}
-                          className={item.color}
-                          style={{ width: `${item.value === 0 ? 0 : (item.value / totalObservations) * 100}%` }}
-                        />
-                      ))}
-                    </div>
-                    <div className="mt-4 space-y-2">
-                      {observationMix.map((item) => (
-                        <div key={item.label} className="flex items-center justify-between gap-3 text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className={`size-2 rounded-full ${item.color}`} />
-                            <span className="text-muted-foreground">{item.label}</span>
-                          </div>
-                          <span className="font-mono tabular-nums">{item.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    No observation mix is available in this window yet.
-                  </p>
-                )}
-              </div>
-
-              <div className="px-4 py-4">
-                <p className="text-sm font-medium">Curator Snapshot</p>
-                <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Added Share</p>
-                    <p className="mt-1 text-xl font-semibold">
-                      {totalObservations > 0 ? formatPercent(memory.added / totalObservations) : "0%"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Tokens / Run</p>
-                    <p className="mt-1 text-xl font-semibold">
-                      {memory.runs > 0 ? formatTokens(Math.round(memory.curatorTokens / memory.runs)) : "0"}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Confirmed</p>
-                    <p className="mt-1 text-xl font-semibold">{memory.confirmed}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Deprecated</p>
-                    <p className="mt-1 text-xl font-semibold">{memory.deprecated}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </InsightsLineCell>
-      ) : (
-        <QuietSectionEmpty
-          title="No memory-curator activity in this window"
-          description="Memory metrics appear after runs create or confirm observations."
-        />
-      )}
+      <MemorySection knowledgeChanges={knowledgeChanges} />
     </InsightsLineGrid>
   )
 }

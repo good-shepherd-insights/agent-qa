@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { cn } from '@/lib/utils'
-import type { LivePhase } from '@/hooks/use-execution-events'
+import type { LivePhase } from '@/lib/display-step'
 
 export interface EditableStep {
   id: string

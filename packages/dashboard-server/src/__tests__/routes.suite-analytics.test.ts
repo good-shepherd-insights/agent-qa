@@ -28,8 +28,9 @@ let suiteFileManager: SuiteFileManager
 let testFileManager: TestFileManager
 let workspacePaths: ResolvedWorkspacePaths
 
+// 2026-10-17 (444-05, D-41): a suite's history reads member suite ids, so each suite run seeds its member.
 function insertSuiteRun(overrides: Record<string, unknown> = {}) {
-  return db.insertRun({
+  const run = {
     name: 'Alpha Suite',
     filePath: 'suites/alpha.suite.yaml',
     status: 'passed',
@@ -39,7 +40,10 @@ function insertSuiteRun(overrides: Record<string, unknown> = {}) {
     platform: 'web',
     suiteId: 's_alpha',
     ...overrides,
-  })
+  }
+  const runId = db.insertRun(run)
+  db.upsertRunMember({ runId, testIndex: 0, testId: 't_alpha', name: 'Alpha Test', suiteId: run.suiteId, outcome: run.status })
+  return runId
 }
 
 function seedSuiteAnalyticsRuns() {
@@ -65,19 +69,10 @@ function seedSuiteAnalyticsRuns() {
     endedAt: '2026-03-03T10:00:03Z',
   })
 
-  db.insertRun({
-    id: 'suite-alpha-child',
-    name: 'Child Attempt',
-    filePath: 'tests/alpha-child.yaml',
-    status: 'failed',
-    duration: 600,
-    startedAt: '2026-03-02T09:30:00Z',
-    endedAt: '2026-03-02T09:30:01Z',
-    platform: 'web',
-    suiteId: 's_alpha',
-    parentRunId: secondRunId,
-    testId: 't_alpha-child',
-  })
+  // 2026-08-27 (405-07, D-02): the child row this fixture seeded is gone with the parent link it
+  // carried. It existed to prove the suite readers filtered it out; nothing has written such a row
+  // since 402-09, so the filter it exercised had no input on any real database. The standalone-test
+  // and other-suite rows below still make the real claim: these readers answer for ONE suite id.
 
   db.insertRun({
     id: 'suite-alpha-standalone-test',
@@ -91,7 +86,7 @@ function seedSuiteAnalyticsRuns() {
     testId: 't_alpha-standalone',
   })
 
-  db.insertRun({
+  insertSuiteRun({
     id: 'suite-beta-1',
     name: 'Beta Suite',
     filePath: 'suites/beta.suite.yaml',
@@ -225,10 +220,10 @@ async function createSuiteWorkspace(): Promise<{
         testMatch: ['tests/*.yaml'],
         suiteMatch: ['suites/*.suite.yaml'],
         hooksFile: 'hooks.yaml',
-        agentRules: 'agent-rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
     },
     configPath: join(dir, 'agent-qa.config.yaml'),
   })
@@ -249,7 +244,6 @@ async function applyAnalyticsScopeConfig(content: string): Promise<void> {
     '  suiteMatch:',
     '    - suites/*.suite.yaml',
     '  hooksFile: hooks.yaml',
-    '  agentRules: agent-rules.md',
     '  envFile: .env',
     '  secretsFile: .env.secrets.local',
     'use:',
@@ -262,7 +256,7 @@ async function applyAnalyticsScopeConfig(content: string): Promise<void> {
     suiteFileManager,
     testFileManager,
     workspacePaths,
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
   })
 }
 
@@ -296,7 +290,7 @@ describe('GET /api/analytics/suites/:suiteId', () => {
       total: 0,
       trends: {
         daily: [],
-        passRate: 0,
+        passRate: null,
         totalRuns: 0,
         avgDuration: 0,
       },

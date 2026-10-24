@@ -1,6 +1,8 @@
+import { DEFAULT_PLANNER_LIMITS } from '@vostride/agent-qa-schema'
 import { useYamlDocument } from '@/hooks/use-yaml-document'
 import { useTargetDetails } from '@/hooks/use-target-details'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
+import { parseConfigNumberInput } from '@/components/config-manager/numeric-input'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -104,6 +106,60 @@ function serializeAuthStateUse(name: string, load: boolean, capture: boolean): s
   }
 }
 
+interface PlannerLimitInputProps {
+  label: string
+  value: number | undefined
+  placeholder: string
+  onCommit: (value: number | undefined) => void
+}
+
+// 436 D-02/D-03: a limit reaches the YAML only as a positive whole number, the value the CLI
+// accepts. Anything else stays in the box with an inline error and the YAML is left alone.
+function PlannerLimitInput({ label, value, placeholder, onCommit }: PlannerLimitInputProps) {
+  const errorId = useId()
+  const [text, setText] = useState(value === undefined ? '' : String(value))
+  const [error, setError] = useState<string | null>(null)
+  const [syncedValue, setSyncedValue] = useState(value)
+
+  const parse = (raw: string) => parseConfigNumberInput(raw, { label, min: 1, integer: true, allowEmpty: true })
+
+  // The YAML changed from outside (not by this box's own commit): show the new value.
+  if (syncedValue !== value) {
+    setSyncedValue(value)
+    const current = parse(text)
+    if (current.error !== null || current.value !== value) {
+      setText(value === undefined ? '' : String(value))
+      setError(null)
+    }
+  }
+
+  function edit(raw: string) {
+    setText(raw)
+    const parsed = parse(raw)
+    setError(parsed.error)
+    if (parsed.error === null) onCommit(parsed.value)
+  }
+
+  return (
+    <div className="space-y-0.5">
+      <Label className="text-[11px] text-muted-foreground">{label}</Label>
+      <Input
+        type="text"
+        inputMode="numeric"
+        value={text}
+        onChange={(e) => edit(e.target.value)}
+        placeholder={placeholder}
+        aria-invalid={error === null ? undefined : true}
+        aria-describedby={error === null ? undefined : errorId}
+        className="h-7 text-xs"
+      />
+      {error !== null && (
+        <p id={errorId} className="text-[11px] text-destructive break-words">{error}</p>
+      )}
+    </div>
+  )
+}
+
 export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta = true }: TestSettingsPanelProps) {
   const { doc, getIn, setIn, deleteIn } = useYamlDocument(content)
 
@@ -134,8 +190,8 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
   const stepTimeout = getIn(['use', 'timeout', 'step']) as string | undefined
   const testTimeout = getIn(['use', 'timeout', 'test']) as string | undefined
   const navTimeout = getIn(['use', 'timeout', 'navigation']) as string | undefined
-  const healingMaxAttempts = getIn(['use', 'healing', 'maxAttempts']) as number | undefined
-  const plannerMaxSubActions = getIn(['use', 'planner', 'maxSubActions']) as number | undefined
+  const plannerMaxActions = getIn(['use', 'planner', 'maxActions']) as number | undefined
+  const plannerMaxPlanningTurns = getIn(['use', 'planner', 'maxPlanningTurns']) as number | undefined
   const plannerPrevStepCount = getIn(['use', 'planner', 'previousStepCount']) as number | undefined
   const logConsole = getIn(['use', 'logCapture', 'console']) as boolean | undefined
   const logNetwork = getIn(['use', 'logCapture', 'network']) as boolean | undefined
@@ -406,28 +462,18 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
       <div className="space-y-2">
         <span className="text-sm font-semibold text-foreground tracking-tight">Agent</span>
         <div className="grid grid-cols-3 gap-2">
-          <div className="space-y-0.5">
-            <Label className="text-[11px] text-muted-foreground">Heal Attempts</Label>
-            <Input
-              type="number"
-              min={0}
-              value={healingMaxAttempts ?? ''}
-              onChange={(e) => handleSet(['use', 'healing', 'maxAttempts'], e.target.value ? Number(e.target.value) : undefined)}
-              placeholder={ih(g?.healing?.maxAttempts ?? 3)}
-              className="h-7 text-xs"
-            />
-          </div>
-          <div className="space-y-0.5">
-            <Label className="text-[11px] text-muted-foreground">Sub-Actions</Label>
-            <Input
-              type="number"
-              min={1}
-              value={plannerMaxSubActions ?? ''}
-              onChange={(e) => handleSet(['use', 'planner', 'maxSubActions'], e.target.value ? Number(e.target.value) : undefined)}
-              placeholder={ih(g?.planner?.maxSubActions ?? 5)}
-              className="h-7 text-xs"
-            />
-          </div>
+          <PlannerLimitInput
+            label="Max Actions"
+            value={plannerMaxActions}
+            onCommit={(value) => handleSet(['use', 'planner', 'maxActions'], value)}
+            placeholder={ih(g?.planner?.maxActions ?? DEFAULT_PLANNER_LIMITS.maxActions)}
+          />
+          <PlannerLimitInput
+            label="Planner Calls"
+            value={plannerMaxPlanningTurns}
+            onCommit={(value) => handleSet(['use', 'planner', 'maxPlanningTurns'], value)}
+            placeholder={ih(g?.planner?.maxPlanningTurns ?? DEFAULT_PLANNER_LIMITS.maxPlanningTurns)}
+          />
           <div className="space-y-0.5">
             <Label className="text-[11px] text-muted-foreground">Prev Steps</Label>
             <Input

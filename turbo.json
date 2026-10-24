@@ -11,6 +11,28 @@
     "test": {
       "dependsOn": ["build"]
     },
+    "@vostride/agent-qa-arch#test": {
+      "dependsOn": [
+        "^build",
+        "build",
+        "@vostride/agent-qa-schema#build",
+        "@vostride/agent-qa-agent#build",
+        "@vostride/agent-qa-tools-local#build",
+        "@vostride/agent-qa-core#build",
+        "agent-qa#build"
+      ],
+      "cache": false
+    },
+    "@vostride/agent-qa-arch#typecheck": {
+      "dependsOn": [
+        "^build",
+        "@vostride/agent-qa-schema#build",
+        "@vostride/agent-qa-agent#build",
+        "@vostride/agent-qa-tools-local#build",
+        "@vostride/agent-qa-core#build",
+        "agent-qa#build"
+      ]
+    },
     "lint": {},
     "lint:namespace": {
       "cache": false

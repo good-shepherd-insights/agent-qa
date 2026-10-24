@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
 import { MobileElementResolver } from '../element-resolver.js'
 import type { MobileRefMap } from '../types.js'
-import type { Action } from '../../types/platform.js'
+import type { Action } from '@vostride/agent-qa-runner'
 
 const sampleRefs: MobileRefMap = {
   e1: { role: 'textbox', name: 'Email', bounds: { x: 100, y: 200, width: 50, height: 30 } },
@@ -56,28 +57,28 @@ describe('MobileElementResolver', () => {
   describe('resolveAction', () => {
     it('returns null for navigate action', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'navigate', url: 'https://example.com' }
+      const action: Action = { type: 'navigate', to: 'url', url: 'https://example.com' }
 
       expect(resolver.resolveAction(action)).toBeNull()
     })
 
     it('returns null for waitFor action', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'waitFor', condition: 'visible' }
+      const action: Action = { type: 'waitFor', on: 'text', text: 'visible', timeoutMs: 5000 }
 
       expect(resolver.resolveAction(action)).toBeNull()
     })
 
-    it('returns null for assert action', () => {
+    it('returns null for assertValue action', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'assert', condition: 'text equals "hello"' }
+      const action: Action = { type: 'assertValue', source: 'url', op: 'equals', expected: 'hello' }
 
       expect(resolver.resolveAction(action)).toBeNull()
     })
 
     it('returns coordinates for tap action', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'tap', ref: 'e2' }
+      const action: Action = { type: 'tap', ref: asRef('e2') }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()
@@ -87,7 +88,7 @@ describe('MobileElementResolver', () => {
 
     it('returns coordinates for fill action', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'fill', ref: 'e1', value: 'test@example.com' }
+      const action: Action = { type: 'fill', ref: asRef('e1'), text: 'test@example.com', clearMode: 'replace', submit: false }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()
@@ -96,7 +97,7 @@ describe('MobileElementResolver', () => {
 
     it('returns coordinates for longpress action', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'longpress', ref: 'e2', duration: 1000 }
+      const action: Action = { type: 'longpress', ref: asRef('e2'), duration: 1000 }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()
@@ -105,14 +106,14 @@ describe('MobileElementResolver', () => {
 
     it('returns null for scroll without ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'scroll', scrollType: 'vertical', value: -500 }
+      const action: Action = { type: 'scroll', mode: 'direction', direction: 'up', amount: 'page', retryOpposite: true }
 
       expect(resolver.resolveAction(action)).toBeNull()
     })
 
     it('returns coordinates for scroll with ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'scroll', scrollType: 'vertical', value: -500, ref: 'e2' }
+      const action: Action = { type: 'scroll', mode: 'direction', direction: 'up', amount: 'page', retryOpposite: true, ref: asRef('e2') }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()
@@ -121,14 +122,14 @@ describe('MobileElementResolver', () => {
 
     it('returns null for pinch without ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'pinch', scale: 2.0 }
+      const action: Action = { type: 'pinch', scale: 2.0, x: 10, y: 10, coordSpace: 'viewport' }
 
       expect(resolver.resolveAction(action)).toBeNull()
     })
 
     it('returns coordinates for pinch with ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'pinch', scale: 2.0, ref: 'e2' }
+      const action: Action = { type: 'pinch', scale: 2.0, ref: asRef('e2') }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()
@@ -137,14 +138,14 @@ describe('MobileElementResolver', () => {
 
     it('returns null for multiTap without ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'multiTap', fingers: 2 }
+      const action: Action = { type: 'multiTap', fingers: 2, x: 10, y: 10, coordSpace: 'viewport' }
 
       expect(resolver.resolveAction(action)).toBeNull()
     })
 
     it('returns coordinates for multiTap with ref', () => {
       const resolver = new MobileElementResolver(sampleRefs)
-      const action: Action = { type: 'multiTap', fingers: 3, ref: 'e2' }
+      const action: Action = { type: 'multiTap', fingers: 3, ref: asRef('e2') }
 
       const result = resolver.resolveAction(action)
       expect(result).not.toBeNull()

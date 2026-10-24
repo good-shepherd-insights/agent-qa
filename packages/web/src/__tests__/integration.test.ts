@@ -1,27 +1,36 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { asRef } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
 
+// The fill compound (Phase 359) re-reads via inputValue() after typing — the mock echoes the
+// last filled value back so replace-mode fills verify green.
+let lastFilledValue = ''
 const mockClickFn = vi.fn().mockResolvedValue(undefined)
-const mockFillFn = vi.fn().mockResolvedValue(undefined)
+const mockFillFn = vi.fn().mockImplementation((v: string) => { lastFilledValue = v; return Promise.resolve() })
+const mockInputValueFn = vi.fn().mockImplementation(() => Promise.resolve(lastFilledValue))
+const mockGetAttributeFn = vi.fn().mockResolvedValue(null)
+const mockPressFn = vi.fn().mockResolvedValue(undefined)
+const mockPressSequentiallyFn = vi.fn().mockImplementation((v: string) => { lastFilledValue += v; return Promise.resolve() })
 const mockSelectOptionFn = vi.fn().mockResolvedValue(undefined)
 const mockHoverFn = vi.fn().mockResolvedValue(undefined)
 const mockLocatorEvaluateFn = vi.fn().mockResolvedValue(undefined)
 const mockNthFn = vi.fn().mockReturnThis()
 
+// An ai-mode snapshot: every line carries Playwright's native [ref=eN] (438 D-06).
 const REALISTIC_ARIA_TREE = [
-  '- navigation "Main Nav"',
-  '  - link "Home"',
-  '  - link "About"',
-  '  - link "Contact"',
-  '- heading "Welcome to Example" [level=1]',
-  '- region "Content"',
-  '  - textbox "Email"',
-  '  - textbox "Password"',
-  '  - button "Sign In"',
-  '  - link "Forgot password?"',
-  '- heading "Features" [level=2]',
-  '  - listitem "Fast performance"',
-  '  - listitem "Easy to use"',
+  '- navigation "Main Nav" [ref=e1]',
+  '  - link "Home" [ref=e2]',
+  '  - link "About" [ref=e3]',
+  '  - link "Contact" [ref=e4]',
+  '- heading "Welcome to Example" [level=1] [ref=e5]',
+  '- region "Content" [ref=e6]',
+  '  - textbox "Email" [ref=e7]',
+  '  - textbox "Password" [ref=e8]',
+  '  - button "Sign In" [ref=e9]',
+  '  - link "Forgot password?" [ref=e10]',
+  '- heading "Features" [level=2] [ref=e11]',
+  '  - listitem "Fast performance" [ref=e12]',
+  '  - listitem "Easy to use" [ref=e13]',
 ].join('\n')
 
 const mockLocatorBoundingBoxFn = vi.fn().mockResolvedValue(null)
@@ -30,6 +39,10 @@ function createMockLocator() {
   return {
     click: mockClickFn,
     fill: mockFillFn,
+    inputValue: mockInputValueFn,
+    getAttribute: mockGetAttributeFn,
+    press: mockPressFn,
+    pressSequentially: mockPressSequentiallyFn,
     selectOption: mockSelectOptionFn,
     hover: mockHoverFn,
     evaluate: mockLocatorEvaluateFn,
@@ -46,7 +59,19 @@ const mockScreenshotFn = vi.fn().mockResolvedValue(Buffer.from('fake-screenshot'
 const mockWaitForLoadStateFn = vi.fn().mockResolvedValue(undefined)
 const mockPageCloseFn = vi.fn().mockResolvedValue(undefined)
 const mockAriaSnapshotFn = vi.fn().mockResolvedValue(REALISTIC_ARIA_TREE)
-const mockGetByRoleFn = vi.fn().mockReturnValue(createMockLocator())
+// page.locator('aria-ref=eN'): the observed element's locator.
+const mockAriaRefLocatorFn = vi.fn().mockReturnValue(createMockLocator())
+
+// ':root' answers the ai snapshot (observe and the pre-dispatch binding check); any other
+// selector is an aria-ref locator.
+function pageLocator(selector: string) {
+  return selector === ':root' ? { ariaSnapshot: mockAriaSnapshotFn } : mockAriaRefLocatorFn(selector)
+}
+
+// The observation's document handle: still the page's document, disposable.
+function documentHandle() {
+  return { evaluate: vi.fn().mockResolvedValue(true), dispose: vi.fn().mockResolvedValue(undefined) }
+}
 
 const mockMouseMoveFn = vi.fn().mockResolvedValue(undefined)
 const mockMouseWheelFn = vi.fn().mockResolvedValue(undefined)
@@ -63,13 +88,14 @@ const mockPage = {
   video: vi.fn().mockReturnValue(null),
   waitForLoadState: mockWaitForLoadStateFn,
   close: mockPageCloseFn,
-  locator: vi.fn().mockReturnValue({
-    ariaSnapshot: mockAriaSnapshotFn,
-  }),
+  locator: vi.fn(pageLocator),
+  evaluateHandle: vi.fn(async () => documentHandle()),
   on: vi.fn(),
   url: vi.fn().mockReturnValue('https://example.com'),
   viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-  getByRole: mockGetByRoleFn,
+  getByText: vi.fn().mockReturnValue({
+    first: () => ({ scrollIntoViewIfNeeded: vi.fn().mockResolvedValue(undefined) }),
+  }),
 }
 
 const mockContext = {
@@ -78,6 +104,8 @@ const mockContext = {
   addInitScript: vi.fn().mockResolvedValue(undefined),
   pages: vi.fn().mockReturnValue([mockPage]),
   grantPermissions: vi.fn().mockResolvedValue(undefined),
+  exposeBinding: vi.fn().mockResolvedValue(undefined),
+  on: vi.fn(),
 }
 
 const mockBrowserCloseFn = vi.fn().mockResolvedValue(undefined)
@@ -105,9 +133,9 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     vi.clearAllMocks()
     // Re-wire mocks after clearAllMocks
     mockAriaSnapshotFn.mockResolvedValue(REALISTIC_ARIA_TREE)
-    mockPage.locator.mockReturnValue({ ariaSnapshot: mockAriaSnapshotFn })
+    mockPage.locator.mockImplementation(pageLocator)
     mockPage.url.mockReturnValue('https://example.com')
-    mockGetByRoleFn.mockReturnValue(createMockLocator())
+    mockAriaRefLocatorFn.mockReturnValue(createMockLocator())
     mockNthFn.mockReturnThis()
     mockChromiumLaunch.mockResolvedValue(mockBrowser)
     mockFirefoxLaunch.mockResolvedValue(mockBrowser)
@@ -118,7 +146,12 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     mockGotoFn.mockResolvedValue(undefined)
     mockKeyPressFn.mockResolvedValue(undefined)
     mockClickFn.mockResolvedValue(undefined)
-    mockFillFn.mockResolvedValue(undefined)
+    lastFilledValue = ''
+    mockFillFn.mockImplementation((v: string) => { lastFilledValue = v; return Promise.resolve() })
+    mockInputValueFn.mockImplementation(() => Promise.resolve(lastFilledValue))
+    mockGetAttributeFn.mockResolvedValue(null)
+    mockPressFn.mockResolvedValue(undefined)
+    mockPressSequentiallyFn.mockImplementation((v: string) => { lastFilledValue += v; return Promise.resolve() })
     mockSelectOptionFn.mockResolvedValue(undefined)
     mockHoverFn.mockResolvedValue(undefined)
     mockScreenshotFn.mockResolvedValue(Buffer.from('fake-screenshot'))
@@ -199,10 +232,20 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     // timestamp is a number
     expect(typeof state.timestamp).toBe('number')
 
-    // metadata.refMap exists
-    expect(state.metadata.refMap).toBeDefined()
-    const refMap = state.metadata.refMap as Record<string, any>
-    expect(Object.keys(refMap).length).toBeGreaterThan(0)
+    // schema v2 refMap lives at state.refMap (geometry only); it is present but empty
+    // here because the mocked aria-ref locators answer no element handle to enrich into bounds.
+    expect(state.refMap).toBeDefined()
+
+    // The native binding — one entry per observed element, keyed by the minted ref, holding
+    // the snapshot's native ref and the observed role and exact name (438 D-06).
+    const lastRefs = adapter['lastRefs']
+    expect(Object.keys(lastRefs).length).toBe(state.elements.length)
+    for (const el of state.elements) {
+      expect(lastRefs[el.ref]).toBeDefined()
+      expect(lastRefs[el.ref].role).toBe(el.role)
+      expect(lastRefs[el.ref].name).toBe(el.name)
+      expect(lastRefs[el.ref].nativeRef).toMatch(/^e\d+$/)
+    }
   })
 
   it('execute fill action calls locator.fill()', async () => {
@@ -213,7 +256,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     const textbox = state.elements.find(e => e.role === 'textbox')
     expect(textbox).toBeDefined()
 
-    const result = await adapter.execute({ type: 'fill', ref: textbox!.ref, value: 'test@example.com' })
+    const result = await adapter.execute({ type: 'fill', ref: textbox!.ref, text: 'test@example.com', clearMode: 'replace', submit: false })
     expect(result.success).toBe(true)
     expect(mockFillFn).toHaveBeenCalledWith('test@example.com')
   })
@@ -221,184 +264,84 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
   it('execute navigate action calls page.goto()', async () => {
     await adapter.setup({ platform: 'web' })
 
-    const result = await adapter.execute({ type: 'navigate', url: 'https://other.com' })
+    const result = await adapter.execute({ type: 'navigate', to: 'url', url: 'https://other.com' })
     expect(result.success).toBe(true)
     expect(mockGotoFn).toHaveBeenCalledWith('https://other.com', { waitUntil: 'domcontentloaded' })
   })
 
-  it('execute scroll action without ref calls page.mouse.wheel()', async () => {
+  it('direction scroll without ref wheel-scrolls a page-sized step and rides scrollUntilVisible metadata', async () => {
     await adapter.setup({ platform: 'web' })
 
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300 })
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
     expect(result.success).toBe(true)
-    expect(mockMouseWheelFn).toHaveBeenCalledWith(0, 300)
-    expect(result.coordinates).toBeUndefined()
-    expect(result.boundingBox).toBeUndefined()
+    // page-sized vertical step = viewport height (720 in the mock); down = positive dy
+    expect(mockMouseWheelFn).toHaveBeenCalledWith(0, 720)
+    expect(result.metadata?.scrollUntilVisible).toBeDefined()
   })
 
-  it('scroll with ref uses page.evaluate with ancestor walking', async () => {
+  it('direction scroll with a container ref scrolls inside the resolver\'s role locator, not mouse.wheel', async () => {
     await adapter.setup({ platform: 'web' })
     await adapter.observe()
 
-    mockPageEvaluateFn.mockClear()
     mockMouseMoveFn.mockClear()
     mockMouseWheelFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
+    mockAriaRefLocatorFn.mockClear()
+    mockLocatorEvaluateFn.mockClear()
+    const located = { ...createMockLocator(), count: vi.fn().mockResolvedValue(1) }
+    located.nth = vi.fn().mockReturnValue(located)
+    mockAriaRefLocatorFn.mockReturnValue(located)
+    mockLocatorEvaluateFn.mockResolvedValue({ bounds: null, scrolledContainer: 'element', scrolled: true, offsets: { before: 0, after: 720, max: 2000 } })
+    adapter['lastRefs']['e1'] = { nativeRef: 'e12', role: 'listitem', name: 'Item 1' }
 
-    const firstRef = Object.keys(adapter['lastRefs'])[0]
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: firstRef })
-
-    expect(result.success).toBe(true)
-    expect(mockPageEvaluateFn).toHaveBeenCalled()
-    expect(mockMouseMoveFn).not.toHaveBeenCalled()
-    expect(mockMouseWheelFn).not.toHaveBeenCalled()
-  })
-
-  it('scroll with ref always uses page.evaluate regardless of cached bounds', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockLocatorBoundingBoxFn.mockResolvedValue(null)
-    adapter['lastRefs']['e1'] = { role: 'region', name: 'Content', bounds: { x: 10, y: 20, width: 100, height: 200 } }
-    mockMouseMoveFn.mockClear()
-    mockMouseWheelFn.mockClear()
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300, ref: 'e1' })
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false, ref: asRef('e1') })
 
     expect(result.success).toBe(true)
-    expect(mockPageEvaluateFn).toHaveBeenCalled()
-    expect(mockMouseMoveFn).not.toHaveBeenCalled()
-    expect(mockMouseWheelFn).not.toHaveBeenCalled()
-  })
-
-  it('scroll with ref when refData has no bounds still uses page.evaluate', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockLocatorBoundingBoxFn.mockResolvedValue(null)
-    adapter['lastRefs']['e1'] = { role: 'region', name: 'Content' }
-    mockMouseMoveFn.mockClear()
-    mockMouseWheelFn.mockClear()
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 400, ref: 'e1' })
-
-    expect(result.success).toBe(true)
-    expect(mockPageEvaluateFn).toHaveBeenCalled()
-    expect(mockMouseWheelFn).not.toHaveBeenCalled()
-    expect(result.coordinates).toBeUndefined()
-  })
-
-  it('scroll with ref passes correct arguments to page.evaluate for ancestor walking', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1', nth: 0 }
-
-    await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 600, ref: 'e1' })
-
-    const evaluateCall = mockPageEvaluateFn.mock.calls.find(
-      (call: unknown[]) => typeof call[0] === 'function' && Array.isArray(call[1])
-    )
-    expect(evaluateCall).toBeDefined()
-    const args = evaluateCall![1] as unknown[]
-    expect(args[0]).toBe('listitem')
-    expect(args[1]).toBe('Item 1')
-    expect(args[2]).toBe(0)
-    expect(args[3]).toBe(0)
-    expect(args[4]).toBe(600)
-    expect(args[5]).toBe('vertical')
-  })
-
-  it('scroll with ref returns bounds from page.evaluate result', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    const fakeBounds = { x: 50, y: 100, width: 200, height: 40 }
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: fakeBounds, scrolledContainer: 'ancestor', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1' }
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: 'e1' })
-
-    expect(result.success).toBe(true)
-    expect(result.coordinates).toEqual({ x: 150, y: 120 })
-    expect(result.boundingBox).toEqual(fakeBounds)
-  })
-
-  it('scroll with ref returns diagnostic scrolledContainer field', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Nonexistent' }
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300, ref: 'e1' })
-
-    expect(result.success).toBe(true)
-    expect(result.coordinates).toBeUndefined()
-    expect(result.boundingBox).toBeUndefined()
-  })
-
-  it('scroll with ref uses function-argument evaluate, not string template', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockClear()
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: null, scrolledContainer: 'notFound', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'button', name: 'Submit' }
-
-    await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 200, ref: 'e1' })
-
-    const scrollCall = mockPageEvaluateFn.mock.calls.find(
-      (call: unknown[]) => Array.isArray(call[1])
-    )
+    // container scroll resolves the ref through ElementResolver to the observed element's
+    // aria-ref locator, never a position, and runs inside that element (438 D-06)
+    expect(mockAriaRefLocatorFn).toHaveBeenCalledWith('aria-ref=e12')
+    expect(located.nth).not.toHaveBeenCalled()
+    const scrollCall = mockLocatorEvaluateFn.mock.calls.find((call: unknown[]) => typeof call[0] === 'function')
     expect(scrollCall).toBeDefined()
-    expect(typeof scrollCall![0]).toBe('function')
+    expect(scrollCall![1]).toEqual([0, 720, 'vertical'])
+    expect(mockMouseMoveFn).not.toHaveBeenCalled()
+    expect(mockMouseWheelFn).not.toHaveBeenCalled()
   })
 
-  it('scroll with ref surfaces scrolled and scrolledContainer in ActionResult.data', async () => {
+  it('halfPage direction scroll wheel-scrolls a half-viewport step', async () => {
+    await adapter.setup({ platform: 'web' })
+    mockMouseWheelFn.mockClear()
+
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'up', amount: 'halfPage', retryOpposite: false })
+    expect(result.success).toBe(true)
+    // up = negative dy; half of viewport height 720 = 360
+    expect(mockMouseWheelFn).toHaveBeenCalledWith(0, -360)
+  })
+
+  it('untilVisible scroll rides scrollUntilVisible metadata with the D-04 key set and leaves lastRefs untouched', async () => {
     await adapter.setup({ platform: 'web' })
     await adapter.observe()
+    const refsBefore = { ...adapter['lastRefs'] }
 
-    const fakeBounds = { x: 50, y: 100, width: 200, height: 40 }
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: fakeBounds, scrolledContainer: 'ancestor', scrolled: true })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1' }
+    const result = await adapter.execute({
+      type: 'scroll', mode: 'untilVisible', text: 'Nonexistent Target', direction: 'down', maxSwipes: 2, retryOpposite: true,
+    })
 
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: 'e1' })
-
-    expect(result.data).toEqual({ scrolled: true, scrolledContainer: 'ancestor' })
+    expect(result.success).toBe(true)
+    const meta = result.metadata?.scrollUntilVisible as { swipes: number; reversedOnce: boolean; outcome: string; endedBy: string } | undefined
+    expect(meta).toBeDefined()
+    expect(typeof meta!.swipes).toBe('number')
+    expect(typeof meta!.reversedOnce).toBe('boolean')
+    // The mock page reports no offsets, so nothing proves movement or a boundary: both directions
+    // use their budget and the search stays unresolved.
+    expect(meta).toEqual({ swipes: 4, reversedOnce: true, outcome: 'unresolved', endedBy: 'max-swipes' })
+    // the light probe never re-mints refs (D-03)
+    expect(adapter['lastRefs']).toEqual(refsBefore)
   })
 
-  it('scroll with ref at boundary returns scrolled false in ActionResult.data', async () => {
-    await adapter.setup({ platform: 'web' })
-    await adapter.observe()
-
-    mockPageEvaluateFn.mockResolvedValueOnce({ bounds: { x: 10, y: -50, width: 100, height: 30 }, scrolledContainer: 'ancestor', scrolled: false })
-    mockPageEvaluateFn.mockResolvedValueOnce('raf')
-    adapter['lastRefs']['e1'] = { role: 'listitem', name: 'Item 1' }
-
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500, ref: 'e1' })
-
-    expect(result.data).toEqual({ scrolled: false, scrolledContainer: 'ancestor' })
-  })
-
-  it('scroll without ref does not include scroll data in ActionResult', async () => {
+  it('direction scroll without ref does not surface a legacy data block', async () => {
     await adapter.setup({ platform: 'web' })
 
-    const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 300 })
+    const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
     expect(result.data).toBeUndefined()
   })
 
@@ -411,33 +354,9 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
 
     const signIn = adapter['lastRefs']
     const firstRef = Object.keys(signIn)[0]
-    const result = await adapter.execute({ type: 'click', ref: firstRef })
+    const result = await adapter.execute({ type: 'click', ref: asRef(firstRef) })
     expect(result.success).toBe(false)
     expect(result.error).toContain('Element detached')
-  })
-
-  it('execute mobile actions returns rejection', async () => {
-    await adapter.setup({ platform: 'web' })
-
-    const tapResult = await adapter.execute({ type: 'tap', ref: 'e1' })
-    expect(tapResult.success).toBe(false)
-    expect(tapResult.error).toContain('mobile-only gesture')
-
-    const swipeResult = await adapter.execute({ type: 'swipe', direction: 'up' })
-    expect(swipeResult.success).toBe(false)
-    expect(swipeResult.error).toContain('mobile-only gesture')
-
-    const longpressResult = await adapter.execute({ type: 'longpress', ref: 'e1' })
-    expect(longpressResult.success).toBe(false)
-    expect(longpressResult.error).toContain('mobile-only gesture')
-
-    const pinchResult = await adapter.execute({ type: 'pinch', scale: 0.5 })
-    expect(pinchResult.success).toBe(false)
-    expect(pinchResult.error).toContain('mobile-only gesture')
-
-    const multiTapResult = await adapter.execute({ type: 'multiTap', fingers: 2 })
-    expect(multiTapResult.success).toBe(false)
-    expect(multiTapResult.error).toContain('mobile-only gesture')
   })
 
   it('action validation: fill on button returns validation error', async () => {
@@ -448,7 +367,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     const button = (await adapter.observe()).elements.find(e => e.role === 'button')
     expect(button).toBeDefined()
 
-    const result = await adapter.execute({ type: 'fill', ref: button!.ref, value: 'text' })
+    const result = await adapter.execute({ type: 'fill', ref: button!.ref, text: 'text', clearMode: 'replace', submit: false })
     expect(result.success).toBe(false)
     expect(result.error).toContain('not fillable')
   })
@@ -462,14 +381,14 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     expect(textbox1).toBeDefined()
 
     // Execute fill on first observation's ref
-    const fillResult = await adapter.execute({ type: 'fill', ref: textbox1!.ref, value: 'hello' })
+    const fillResult = await adapter.execute({ type: 'fill', ref: textbox1!.ref, text: 'hello', clearMode: 'replace', submit: false })
     expect(fillResult.success).toBe(true)
 
-    // Change ARIA tree for second observation
-    mockAriaSnapshotFn.mockResolvedValueOnce([
-      '- heading "Updated Page" [level=1]',
-      '- button "Submit"',
-      '- textbox "Search"',
+    // Change ARIA tree for second observation (and the binding check that follows it)
+    mockAriaSnapshotFn.mockResolvedValue([
+      '- heading "Updated Page" [level=1] [ref=e14]',
+      '- button "Submit" [ref=e15]',
+      '- textbox "Search" [ref=e16]',
     ].join('\n'))
 
     // Second observation — refs regenerated
@@ -497,7 +416,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
       platform: 'web',
       browser: { name: 'chromium' },
       authState: {
-        version: 1,
+        version: 2,
         kind: 'web',
         targetName: 'staging-web',
         stateName: 'admin',
@@ -523,7 +442,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
 
     it('presses a single key from keys array', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledTimes(1)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Enter')
@@ -531,7 +450,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
 
     it('iterates multiple keys in order', async () => {
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledTimes(2)
       expect(mockKeyPressFn).toHaveBeenNthCalledWith(1, 'Tab')
@@ -541,7 +460,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('converts Meta → Control on non-Mac when convertPlatformKeys is default (undefined/true)', async () => {
       Object.defineProperty(process, 'platform', { value: 'linux' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Control+k')
     })
@@ -549,7 +468,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('leaves Meta alone on Mac', async () => {
       Object.defineProperty(process, 'platform', { value: 'darwin' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Meta+k')
     })
@@ -557,7 +476,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('leaves Meta alone on non-Mac when convertPlatformKeys=false', async () => {
       Object.defineProperty(process, 'platform', { value: 'linux' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], convertPlatformKeys: false })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k'], mode: 'press', convertPlatformKeys: false })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledWith('Meta+k')
     })
@@ -565,7 +484,7 @@ describe('Integration: WebPlatformAdapter lifecycle', () => {
     it('applies conversion to each entry in a multi-key array', async () => {
       Object.defineProperty(process, 'platform', { value: 'win32' })
       await adapter.setup({ platform: 'web' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k', 'Enter', 'Shift+Meta+T'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Meta+k', 'Enter', 'Shift+Meta+T'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockKeyPressFn).toHaveBeenCalledTimes(3)
       expect(mockKeyPressFn).toHaveBeenNthCalledWith(1, 'Control+k')

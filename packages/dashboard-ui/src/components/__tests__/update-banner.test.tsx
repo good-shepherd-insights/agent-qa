@@ -20,10 +20,6 @@ vi.mock('@/lib/api', () => ({
   fetchAppMetadata: apiMock.fetchAppMetadata,
 }))
 
-vi.mock('@/lib/analytics', () => ({
-  trackDashboardOpenedOnce: vi.fn(),
-}))
-
 vi.mock('@/pages/runs', () => ({ default: () => <div data-testid="runs-page">Runs Page</div> }))
 vi.mock('@/pages/run-detail', () => ({
   default: () => <div data-testid="run-detail-page">Run Detail Page</div>,
@@ -58,12 +54,6 @@ vi.mock('@/pages/suite-editor', () => ({
 vi.mock('@/pages/suite-viewer', () => ({
   default: () => <div data-testid="suite-viewer-page">Suite Viewer Page</div>,
 }))
-vi.mock('@/pages/memory', () => ({
-  default: () => <div data-testid="memory-page">Memory Page</div>,
-}))
-vi.mock('@/pages/memory-product', () => ({
-  default: () => <div data-testid="memory-product-page">Memory Product Page</div>,
-}))
 
 vi.mock('@/components/theme-provider', () => ({
   ThemeProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -79,6 +69,7 @@ vi.mock('@/components/ui/sidebar', () => ({
 vi.mock('@/components/app-sidebar', () => ({
   AppSidebar: () => <div data-testid="app-sidebar" />,
 }))
+vi.mock('@/components/mobile-navigation-trigger', () => ({ MobileNavigationTrigger: () => null }))
 vi.mock('@/components/ui/sonner', () => ({
   Toaster: () => <div data-testid="toaster" />,
 }))
@@ -126,8 +117,9 @@ const eligibleRoutes = [
   ['/tests', 'tests-page'],
   ['/hooks', 'hooks-page'],
   ['/suites', 'suites-page'],
-  ['/memory', 'memory-page'],
   ['/config', 'config-page'],
+  ['/config/models', 'config-page'],
+  ['/config/advanced', 'config-page'],
 ] as const
 
 const excludedRoutes = [
@@ -143,7 +135,6 @@ const excludedRoutes = [
   '/suites/new',
   '/suite/s_1',
   '/suite/s_1/edit',
-  '/memory/product-1',
 ] as const
 
 let container: HTMLDivElement | null = null
@@ -337,7 +328,7 @@ describe('isUpdateBannerDismissed', () => {
 })
 
 describe('app shell update banner route gate', () => {
-  it('mounts the product tour provider around shell content and passes route state', async () => {
+  it('SHELL-CHILDREN-EXACT: mounts the product tour provider around shell content and passes route state', async () => {
     apiMock.fetchAppMetadata.mockResolvedValue(updateMetadata)
 
     await renderAppAt('/runs')
@@ -346,11 +337,18 @@ describe('app shell update banner route gate', () => {
     expect(provider).not.toBeNull()
     expect(provider?.getAttribute('data-pathname')).toBe('/runs')
     expect(provider?.getAttribute('data-hide-header')).toBe('false')
+    // 430 (2026-09-28, D-04): the shell holds no conversation mount. Exact equality, so a mount
+    // that returns reds wherever it is inserted.
     expect(
       Array.from(provider?.children ?? []).map((element) =>
         element.getAttribute('data-testid'),
       ),
-    ).toEqual(['app-sidebar', 'sidebar-inset', 'product-tour-overlay', 'command-palette'])
+    ).toEqual([
+      'app-sidebar',
+      'sidebar-inset',
+      'product-tour-overlay',
+      'command-palette',
+    ])
 
     cleanupRoot()
     vi.resetModules()
@@ -361,6 +359,15 @@ describe('app shell update banner route gate', () => {
     const editorProvider = container?.querySelector('[data-testid="product-tour-provider"]')
     expect(editorProvider?.getAttribute('data-pathname')).toBe('/tests/new')
     expect(editorProvider?.getAttribute('data-hide-header')).toBe('true')
+  })
+
+  it('NO-CHAT-ROUTE: /chat is not a route and falls through the catch-all to Runs', async () => {
+    apiMock.fetchAppMetadata.mockResolvedValue(updateMetadata)
+
+    await renderAppAt('/chat')
+
+    expect(container?.querySelector('[data-testid="runs-page"]')).not.toBeNull()
+    expect(window.location.pathname).toBe('/runs')
   })
 
   it.each(eligibleRoutes)('renders the update banner on %s', async (path, pageTestId) => {

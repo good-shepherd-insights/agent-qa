@@ -12,7 +12,6 @@ import {
 } from "@tanstack/react-table"
 import { useTestsSearchParams } from "@/hooks/use-tests-search-params"
 import { Plus, FileText, ArrowUpDown, Keyboard, X } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { SelectionCheckboxCell } from "@/components/table-selection-checkbox"
 import { Input } from "@/components/ui/input"
@@ -38,6 +37,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+import { RunStatusBadge } from "@/components/run-status-badge"
 import { TableSkeleton } from "@/components/page-skeleton"
 import { EmptyState } from "@/components/empty-state"
 import { BatchActionBar } from "@/components/batch-action-bar"
@@ -51,7 +51,8 @@ import {
   SHARED_TESTS_SUITES_COLUMN_IDS,
 } from "@/pages/tests-suites-table-widths"
 import { ShortcutLegend } from "@/components/shortcut-hints"
-import { deleteTestFile, fetchTestFiles, fetchRuns, purgeCache, triggerRun, type TestFileInfo, type RunRow } from "@/lib/api"
+import { deleteTestFile, deniedRunSentences, fetchTestFiles, fetchTestSummaries, purgeCache, triggerRun, type TestFileInfo, type TestSummary } from "@/lib/api"
+import { memberStatus, runStatusClass } from "@/lib/status"
 import { cn, formatDate } from "@/lib/utils"
 
 interface TestRow {
@@ -60,54 +61,15 @@ interface TestRow {
   testId: string | null
   targetName: string | null
   platform: string | null
+  // 2026-10-18 (444-31, D-64): false while the batch read has not named this file; its rate and
+  // last-run cells stay empty and no status filter lists it.
+  historyKnown: boolean
   lastRunStatus: string | null
-  lastRun: RunRow | null
+  lastRun: TestSummary["lastRun"]
   passRate: number | null
   passCount: number
   completedRunCount: number
 }
-
-function StatusBadge({ status }: { status: string }) {
-  switch (status) {
-    case "passed":
-      return (
-        <Badge className="bg-emerald-500/15 text-emerald-500 border-emerald-500/20">
-          Passed
-        </Badge>
-      )
-    case "failed":
-      return <Badge variant="destructive">Failed</Badge>
-    case "healed":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Healed
-        </Badge>
-      )
-    case "flaky":
-      return (
-        <Badge className="bg-amber-500/15 text-amber-500 border-amber-500/20">
-          Flaky
-        </Badge>
-      )
-    case "running":
-      return (
-        <Badge className="bg-blue-500/15 text-blue-500 border-blue-500/20 animate-pulse">
-          Running
-        </Badge>
-      )
-    case "cancelled":
-      return (
-        <Badge className="bg-muted text-muted-foreground border-border">
-          Cancelled
-        </Badge>
-      )
-    default:
-      return <Badge variant="outline">{status}</Badge>
-  }
-}
-
-const PASS_STATUSES = new Set(["passed", "healed"])
-const COMPLETED_RUN_STATUSES = new Set(["passed", "healed", "failed", "flaky", "cancelled"])
 
 function formatPlatformLabel(platform: string | null): string {
   if (!platform) return "\u2014"
@@ -123,8 +85,8 @@ function stripDisplayPrefix(path: string): string {
   return parts.length > 1 ? parts.slice(1).join("/") : parts[0] ?? path
 }
 
-function getRunTimestamp(run: RunRow): string {
-  return run.createdAt || run.startedAt || run.endedAt || ""
+function getRunTimestamp(run: TestSummary["lastRun"]): string {
+  return run?.createdAt || run?.startedAt || ""
 }
 
 function getHeaderClassName(columnId: string) {
@@ -240,10 +202,11 @@ const columns: ColumnDef<TestRow>[] = [
       </Button>
     ),
     cell: ({ row }) => {
+      if (!row.original.historyKnown) return null
       if (row.original.passRate === null) {
         return (
           <div className="space-y-0.5 text-right">
-            <div className="text-sm font-medium text-foreground">No runs</div>
+            <div className="text-sm font-medium text-foreground">{"\u2014"}</div>
             <div className="text-xs tabular-nums text-muted-foreground">0 completed</div>
           </div>
         )
@@ -262,7 +225,7 @@ const columns: ColumnDef<TestRow>[] = [
   },
   {
     id: "lastRun",
-    accessorFn: (row) => row.lastRun?.createdAt ?? row.lastRun?.startedAt ?? row.lastRun?.endedAt ?? "",
+    accessorFn: (row) => getRunTimestamp(row.lastRun),
     header: ({ column }) => (
       <div className="flex items-center justify-end">
         <Button
@@ -276,6 +239,7 @@ const columns: ColumnDef<TestRow>[] = [
       </div>
     ),
     cell: ({ row }) => {
+      if (!row.original.historyKnown) return null
       if (!row.original.lastRun) {
         return <span className="block text-sm text-muted-foreground">No runs</span>
       }
@@ -286,43 +250,47 @@ const columns: ColumnDef<TestRow>[] = [
           className="relative z-10 flex w-full flex-col items-end gap-1 rounded-sm text-right focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           onClick={(event) => event.stopPropagation()}
         >
-          <StatusBadge status={row.original.lastRun.status} />
+          {row.original.lastRunStatus === null
+            ? <span className="text-muted-foreground">{"\u2014"}</span>
+            : <RunStatusBadge status={row.original.lastRunStatus} />}
           <span className="whitespace-normal break-words text-xs leading-snug text-muted-foreground">
             {formatDate(getRunTimestamp(row.original.lastRun))}
           </span>
         </Link>
       )
     },
-    sortingFn: (rowA, rowB) => {
-      const a = getRunTimestamp(rowA.original.lastRun ?? { createdAt: "", startedAt: null, endedAt: null } as RunRow)
-      const b = getRunTimestamp(rowB.original.lastRun ?? { createdAt: "", startedAt: null, endedAt: null } as RunRow)
-      return a.localeCompare(b)
-    },
+    sortingFn: (rowA, rowB) => getRunTimestamp(rowA.original.lastRun).localeCompare(getRunTimestamp(rowB.original.lastRun)),
   },
 ]
 
 export default function TestsPage() {
   usePageTitle("Tests")
   const [files, setFiles] = useState<TestFileInfo[]>([])
-  const [runs, setRuns] = useState<RunRow[]>([])
+  const [summaries, setSummaries] = useState<Map<string, TestSummary> | null>(null)
   const [targetOptions, setTargetOptions] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [batchLoading, setBatchLoading] = useState(false)
   const [runOptionsOpen, setRunOptionsOpen] = useState(false)
   const [useCache, setUseCache] = useState(true)
-  const [useMemory, setUseMemory] = useState(true)
   const navigate = useNavigate()
   const { hasFarm, isLoading: isRunConfigLoading } = useRunConfig()
 
   useEffect(() => {
     let cancelled = false
 
-    Promise.all([fetchTestFiles(), fetchRuns({ limit: 200 })])
-      .then(([filesData, runsData]) => {
+    const summaryRead = fetchTestSummaries()
+      .then((answer) => (Array.isArray(answer?.tests) ? answer.tests : null))
+      .catch(() => null)
+
+    Promise.all([fetchTestFiles(), summaryRead])
+      .then(([filesData, summaryRows]) => {
         if (!cancelled) {
           setFiles(filesData.files)
           setTargetOptions(filesData.targets ?? [])
-          setRuns(runsData.runs)
+          setSummaries(summaryRows === null
+            ? null
+            : new Map(summaryRows.map((summary) => [normalizeTestPath(summary.path), summary])))
+          if (summaryRows === null) toast.error("Failed to load run history")
         }
       })
       .catch(() => {
@@ -356,56 +324,24 @@ export default function TestsPage() {
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const rowRefs = useRef<Array<HTMLTableRowElement | null>>([])
 
-  const data: TestRow[] = useMemo(() => {
-    const runsByExactPath = new Map<string, RunRow[]>()
-    const runsByStrippedPath = new Map<string, RunRow[]>()
-
-    const appendRun = (map: Map<string, RunRow[]>, key: string, run: RunRow) => {
-      if (!key) return
-      const current = map.get(key)
-      if (current) {
-        current.push(run)
-      } else {
-        map.set(key, [run])
-      }
+  // 2026-10-18 (444-31, D-64): every per-row figure is the server's, over the row's viewer reference.
+  const data: TestRow[] = useMemo(() => files.map((file) => {
+    const summary = summaries?.get(normalizeTestPath(file.path))
+    const lastRun = summary?.lastRun ?? null
+    return {
+      path: file.path,
+      name: file.name,
+      testId: file.testId,
+      targetName: file.targetName,
+      platform: file.platform,
+      historyKnown: summary !== undefined,
+      lastRunStatus: lastRun ? memberStatus(lastRun.status, lastRun.memberOutcome) : null,
+      lastRun,
+      passRate: summary && summary.passRate !== null ? Math.round(summary.passRate * 100) : null,
+      passCount: summary?.passed ?? 0,
+      completedRunCount: summary?.decided ?? 0,
     }
-
-    for (const run of runs) {
-      if (!run.filePath) continue
-      const exactPath = normalizeTestPath(run.filePath)
-      appendRun(runsByExactPath, exactPath, run)
-      appendRun(runsByStrippedPath, stripDisplayPrefix(exactPath), run)
-    }
-
-    return files.map((file) => {
-      const exactPath = normalizeTestPath(file.path)
-      const matchingRuns = runsByExactPath.get(exactPath)
-        ?? runsByStrippedPath.get(stripDisplayPrefix(exactPath))
-        ?? []
-      const sortedRuns = [...matchingRuns].sort((left, right) =>
-        getRunTimestamp(right).localeCompare(getRunTimestamp(left)),
-      )
-      const completedRuns = sortedRuns.filter((run) => COMPLETED_RUN_STATUSES.has(run.status))
-      const passCount = completedRuns.filter((run) => PASS_STATUSES.has(run.status)).length
-      const passRate = completedRuns.length > 0
-        ? Math.round((passCount / completedRuns.length) * 100)
-        : null
-      const lastRun = sortedRuns[0] ?? null
-
-      return {
-        path: file.path,
-        name: file.name,
-        testId: file.testId,
-        targetName: file.targetName,
-        platform: file.platform,
-        lastRunStatus: lastRun?.status ?? null,
-        lastRun,
-        passRate,
-        passCount,
-        completedRunCount: completedRuns.length,
-      }
-    })
-  }, [files, runs])
+  }), [files, summaries])
 
   const filteredData = useMemo(() => {
     let result = data
@@ -418,10 +354,11 @@ export default function TestsPage() {
           || targetName.includes(query)
       })
     }
-    if (status) {
-      result = status === "no-runs"
-        ? result.filter((row) => !row.lastRunStatus)
-        : result.filter((row) => row.lastRunStatus === status)
+    if (status === "no-runs") {
+      result = result.filter((row) => row.historyKnown && row.lastRun === null)
+    } else if (status) {
+      const chosen = runStatusClass(status)
+      result = result.filter((row) => row.historyKnown && chosen !== undefined && runStatusClass(row.lastRunStatus ?? "") === chosen)
     }
     if (platform) {
       result = result.filter((row) => row.platform === platform)
@@ -479,7 +416,6 @@ export default function TestsPage() {
     selectionQueue.clearSelection()
     setRunOptionsOpen(false)
     setUseCache(true)
-    setUseMemory(true)
   }, [selectionQueue])
 
   const handleRunDestination = useCallback(async (local: boolean) => {
@@ -491,13 +427,13 @@ export default function TestsPage() {
           file: path,
           local,
           noCache: !useCache,
-          noMemory: !useMemory,
         })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
       const failed = results.length - succeeded
       if (failed > 0) {
-        toast.error(`${succeeded} runs queued, ${failed} failed`)
+        const denied = deniedRunSentences(results)
+        toast.error(`${succeeded} runs queued, ${failed} failed${denied === undefined ? "" : `. ${denied}`}`)
       } else {
         toast.success(`${succeeded} runs queued`)
       }
@@ -505,7 +441,7 @@ export default function TestsPage() {
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedPaths, useCache, useMemory])
+  }, [selectedPaths, useCache])
 
   const handleBatchPurgeCache = useCallback(async () => {
     if (selectedPaths.length === 0) return
@@ -853,12 +789,10 @@ export default function TestsPage() {
                 selectedCount={selectionQueue.selectedCount}
                 hiddenCount={hiddenCount}
                 useCache={useCache}
-                useMemory={useMemory}
                 browserStackAvailable={!isRunConfigLoading && hasFarm}
                 open={runOptionsOpen}
                 onOpenChange={setRunOptionsOpen}
                 onUseCacheChange={setUseCache}
-                onUseMemoryChange={setUseMemory}
                 onRunLocal={() => handleRunDestination(true)}
                 onRunBrowserStack={() => handleRunDestination(false)}
                 disabled={batchLoading}

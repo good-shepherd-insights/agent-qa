@@ -4,6 +4,13 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  CONFIG_SCHEMA_LEAVES,
+  CONFIG_WRITE_DENIED_ROOTS,
+  configLeafOwner,
+  isPageWritableConfigPath,
+  type ConfigPathSegment,
+} from '@vostride/agent-qa-schema'
 
 vi.mock('monaco-editor', () => ({
   languages: {
@@ -22,11 +29,33 @@ vi.mock('monaco-editor', () => ({
 }))
 
 import ConfigPage from '@/pages/config'
-import { CONFIG_NAVIGATION_ITEMS } from '@/lib/config-navigation'
+import {
+  CONFIG_SECTIONS,
+  CONFIG_TABS,
+  CONNECTION_CHOICES,
+  CONNECTION_CHOICE_PROVIDERS,
+  LEGACY_CONFIG_PAIRS,
+  type ConfigTab,
+  type ConnectionChoice,
+} from '@/lib/config-tabs'
 import { DEVICE_TRANSPORT_OPTIONS } from '@/components/config-manager/devices-section'
-import { LLM_PROVIDER_OPTIONS } from '@/components/config-manager/llm-section'
-import { fetchAuthStatus, saveCredential } from '@/lib/api'
+import { connectLLM, deleteAuthCredential, fetchAuthStatus, saveCredential, type AuthCredentialInfo } from '@/lib/api'
 import { LLM_PROVIDER_COMPLETION_VALUES } from '@/lib/yaml-completions'
+import {
+  ADD_FLOW_FIELD_LABELS,
+  ADD_HEADER_LABEL,
+  ADD_MODEL_LABEL,
+  CONFIG_SECTION_LABELS,
+  DEFAULT_BADGE,
+  KEY_TYPE_LABELS,
+  PLANNER_FIELD_LABELS,
+  PROVIDER_FALLBACK_LABELS,
+  REMOVE_KEY_LABEL,
+  REPLACE_KEY_LABEL,
+  SAVE_KEY_AND_TEST_LABEL,
+  VISION_FIELD_LABELS,
+  undoLine,
+} from '@/lib/config-copy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -39,17 +68,118 @@ if (!Element.prototype.setPointerCapture) {
 if (!Element.prototype.releasePointerCapture) {
   Element.prototype.releasePointerCapture = () => {}
 }
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
 
-const { sampleConfig } = vi.hoisted(() => ({
+const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
+  page: { config: undefined as Record<string, unknown> | undefined },
+  // Every record and list holds at least one entry, so each list renders its rows (D-06).
+  fullConfig: {
+    workspace: {
+      testMatch: ['tests/**/*.yaml'],
+      suiteMatch: ['tests/**/*.suite.yaml'],
+      testPathIgnore: ['**/draft/**'],
+      hooksFile: 'tests/hooks.ts',
+      envFile: '.env.local',
+      secretsFile: '.env.secrets.local',
+    },
+    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none', contextBudgetTokens: 4000 },
+    services: {
+      dashboard: {
+        port: 4173,
+        host: '127.0.0.1',
+        baseUrl: 'http://127.0.0.1:4173',
+        dbPath: '.agent-qa/runs.db',
+        artifactsDir: '.agent-qa/artifacts',
+        workspace: '.',
+      },
+      authState: { dir: '.agent-qa/auth' },
+      cache: { dir: '.agent-qa/cache', ttl: '7d' },
+      logging: { level: 'info' },
+      recording: { enabled: true, keepFailuresOnly: false },
+      accessibility: {
+        enabled: true,
+        standard: 'wcag2aa',
+        runAfter: 'test-end',
+        failOnViolation: false,
+        disableRules: ['color-contrast'],
+        exclude: ['#cookie-banner'],
+      },
+      vision: { screenshotSize: '256k', effectiveResolution: 768 },
+      mcp: {
+        enabled: true,
+        transport: 'http',
+        host: '127.0.0.1',
+        port: 4174,
+        path: '/mcp',
+      },
+    },
+    registry: {
+      llms: [
+        {
+          name: 'claude-proxy',
+          provider: 'anthropic-compatible',
+          model: 'claude-remote',
+          baseURL: 'https://anthropic-proxy.example/messages',
+          vision: true,
+          contextWindow: '200k',
+          providerHeaders: { 'X-Team': 'qa' },
+        },
+        { name: 'gemini-fast', provider: 'gemini', model: 'gemini-2.5-flash' },
+      ],
+      targets: {
+        staging: { platform: 'web', url: 'https://example.com', product: 'example', environment: 'staging' },
+        shop: {
+          platform: 'android',
+          appPackage: 'com.example.shop',
+          appActivity: '.MainActivity',
+          app: { path: 'apps/shop.apk', browserstack: 'bs://shop' },
+        },
+      },
+      devices: { iosLocal: { platform: 'ios', transport: 'local', match: { udid: 'abc' } } },
+      providers: { browserstack: { username: 'qa-team' } },
+    },
+    use: {
+      browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
+      timeout: { step: '30s', test: '10m', navigation: '10s' },
+      planner: { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 },
+      logCapture: { console: true, network: true },
+      mobile: { appState: 'reset' },
+      llm: 'claude-proxy',
+      parallel: true,
+      workers: 2,
+      buildTag: 'nightly',
+      cache: true,
+    },
+    allowProduction: true,
+    analytics: {
+      privacy: true,
+      passRateScope: { attributes: { 'git.branch': 'master', 'user.email': { regex: '^ci@' } } },
+    },
+    eval: {
+      k: 3,
+      seed: 7,
+      judges: ['claude-proxy', 'gemini-fast'],
+      judgeAllowSameFamily: false,
+      gate1: { maxPerJob: 4, maxScreens: 12 },
+      gate2: { canaryHorizonBuilds: 3, maxAblations: 2, maxLowerTrustPerScope: 1 },
+      adversarial: { maxProbeCalls: 20, maxSeedsPerRefresh: 5 },
+      seeding: { silverPerTestCap: 2 },
+    },
+  },
   sampleConfig: {
   workspace: {
     testMatch: ['tests/**/*.yaml'],
     suiteMatch: ['tests/**/*.suite.yaml'],
     testPathIgnore: ['**/draft/**'],
     hooksFile: 'tests/hooks.ts',
-    agentRules: 'AGENT_RULES.md',
     envFile: '.env.local',
     secretsFile: '.env.secrets.local',
+  },
+  knowledge: {
+    dir: 'agent-qa-knowledge',
+    commitArtifacts: 'none',
   },
   services: {
     dashboard: {
@@ -66,21 +196,9 @@ const { sampleConfig } = vi.hoisted(() => ({
       runAfter: 'test-end',
       failOnViolation: false,
     },
-    memory: {
-      enabled: true,
-      provider: 'local',
-      dir: 'agent-qa-memory',
-      minTrust: 0.3,
-      maxInjections: 3,
-      curatorEnabled: true,
-      curatorLockTimeout: 120000,
-      trustConfirmDelta: 0.05,
-      trustContradictDelta: 0.1,
-      ablationEnabled: true,
-      circuitBreakerEnabled: true,
-      circuitBreakerWindowSize: 20,
-      circuitBreakerBaselineSize: 3,
-      circuitBreakerThreshold: 0.15,
+    vision: {
+      screenshotSize: '256k',
+      effectiveResolution: 768,
     },
   },
   registry: {
@@ -109,8 +227,7 @@ const { sampleConfig } = vi.hoisted(() => ({
   use: {
     browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
     timeout: { step: '30s', test: '10m', navigation: '10s' },
-    healing: { maxAttempts: 3 },
-    planner: { maxSubActions: 20, previousStepCount: 5 },
+    planner: { maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 },
     logCapture: { console: true, network: true },
     llm: 'anthropic-compatible',
     device: 'iosLocal',
@@ -131,33 +248,43 @@ const mockFetchAuthStatus = vi.mocked(fetchAuthStatus)
 const mockSaveCredential = vi.mocked(saveCredential)
 
 vi.mock('@/lib/api', () => ({
-  fetchConfig: vi.fn().mockResolvedValue({
-    config: sampleConfig,
-  }),
-  updateSettings: vi.fn().mockResolvedValue({ updated: true }),
+  fetchAppMetadata: vi.fn().mockResolvedValue({ version: '0.1.13' }),
+  fetchConfig: vi.fn(async () => ({
+    config: page.config ?? sampleConfig,
+    provider: null,
+    revision: 'rev-1',
+    file: { path: '/work/agent-qa.config.yaml', lines: [] },
+  })),
+  fetchConfigRevision: vi.fn().mockResolvedValue({ revision: 'rev-1' }),
+  applyConfigChanges: vi.fn().mockResolvedValue({ revision: 'rev-2' }),
+  undoConfigAction: vi.fn().mockResolvedValue({ restored: true, revision: 'rev-3' }),
   fetchAuthStates: vi.fn().mockResolvedValue({ authStates: [] }),
   fetchAuthStatus: vi.fn().mockResolvedValue({ credentials: [] }),
   fetchLLMProviders: vi.fn().mockResolvedValue({
     providers: [
-      { id: 'openai-compatible', label: 'OpenAI-compatible', auth: { kind: 'api-key', credentialTypes: ['api-key'], optional: true } },
-      { id: 'anthropic-compatible', label: 'Anthropic-compatible', auth: { kind: 'api-key', credentialTypes: ['api-key', 'bearer-token'], optional: true } },
+      { id: 'openai-compatible', label: 'OpenAI-compatible', auth: { kind: 'api-key', credentialTypes: ['api-key'], optional: true }, needsBaseURL: true, authModes: ['api-key'], baseURLPlaceholder: 'https://openrouter.ai/api/v1' },
+      { id: 'anthropic-compatible', label: 'Anthropic-compatible', auth: { kind: 'api-key', credentialTypes: ['api-key', 'bearer-token'], optional: true }, needsBaseURL: true, authModes: ['api-key', 'bearer-token'], baseURLPlaceholder: 'https://anthropic-proxy.example/messages' },
       { id: 'openai-subscription', label: 'OpenAI subscription', auth: { kind: 'oauth-plugin', mode: 'browser-poll', buttonLabel: 'Login with OpenAI subscription' } },
       { id: 'anthropic-subscription', label: 'Anthropic subscription', auth: { kind: 'oauth-plugin', mode: 'manual-code', buttonLabel: 'Login with Anthropic subscription' } },
-      { id: 'gemini', label: 'Gemini', auth: { kind: 'api-key', credentialTypes: ['api-key'] } },
+      { id: 'gemini', label: 'Gemini', auth: { kind: 'api-key', credentialTypes: ['api-key'] }, needsBaseURL: false, authModes: ['api-key'] },
     ],
   }),
+  fetchModelCatalog: vi.fn().mockResolvedValue({
+    catalog: {
+      'openai-compatible': [{ id: 'openrouter/auto', label: 'OpenRouter Auto', vision: true }],
+      'anthropic-compatible': [{ id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', vision: true }],
+      gemini: [{ id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', vision: true }],
+    },
+  }),
+  fetchLiveModelCatalog: vi.fn().mockResolvedValue({ models: [] }),
   testLLMConnection: vi.fn(),
   saveCredential: vi.fn().mockResolvedValue({ saved: true }),
   startPluginAuth: vi.fn(),
   pollPluginAuthResult: vi.fn(),
   exchangePluginAuthCode: vi.fn(),
   deleteAuthCredential: vi.fn(),
-  fetchAgentRules: vi.fn().mockResolvedValue({
-    filePath: 'AGENT_RULES.md',
-    content: '# Rules',
-  }),
-  updateAgentRules: vi.fn(),
-  createAgentRulesFile: vi.fn(),
+  connectLLM: vi.fn(),
+  moveCredential: vi.fn(),
 }))
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -166,21 +293,20 @@ vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
 const EXPECTED_DESTINATIONS = [
   'workspace:discovery',
   'workspace:files',
-  'workspace:agent-rules',
+  'knowledge:store',
   'services:dashboard',
   'services:cache',
   'services:auth-states',
   'services:logging',
   'services:recording',
   'services:accessibility',
-  'services:memory',
+  'services:vision',
   'registry:llms',
   'registry:targets',
   'registry:devices',
   'registry:providers',
   'use:browser',
   'use:timeouts',
-  'use:healing',
   'use:planner',
   'use:log-capture',
   'use:mobile',
@@ -189,28 +315,27 @@ const EXPECTED_DESTINATIONS = [
 ]
 
 const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
-  'workspace:discovery': { title: 'Discovery', marker: 'Test Match Patterns' },
-  'workspace:files': { title: 'Files', marker: 'Hooks File' },
-  'workspace:agent-rules': { title: 'Agent Rules', marker: 'Change Path' },
-  'services:dashboard': { title: 'Dashboard', marker: 'Database Path' },
-  'services:cache': { title: 'Cache', marker: 'Cache Directory' },
-  'services:auth-states': { title: 'Auth States', marker: 'No auth states saved' },
-  'services:logging': { title: 'Logging', marker: 'Log Level' },
-  'services:recording': { title: 'Recording', marker: 'Record video of test execution' },
-  'services:accessibility': { title: 'Accessibility', marker: 'Run After' },
-  'services:memory': { title: 'Memory', marker: 'Memory Directory' },
-  'registry:llms': { title: 'LLMs', marker: 'Add Configuration' },
-  'registry:targets': { title: 'Targets', marker: 'Add Target' },
-  'registry:devices': { title: 'Devices', marker: 'Add Device' },
-  'registry:providers': { title: 'Providers', marker: 'BrowserStack' },
-  'use:browser': { title: 'Browser', marker: 'Viewport Width' },
-  'use:timeouts': { title: 'Timeouts', marker: 'Step Timeout' },
-  'use:healing': { title: 'Healing', marker: 'Max Healing Attempts' },
-  'use:planner': { title: 'Planner', marker: 'Max Sub-Actions' },
-  'use:log-capture': { title: 'Log Capture', marker: 'Capture network logs' },
+  'workspace:discovery': { title: 'Test discovery', marker: 'Test files' },
+  'workspace:files': { title: 'Hooks, env and secrets files', marker: 'Hooks file' },
+  'knowledge:store': { title: 'Knowledge', marker: 'Knowledge folder' },
+  'services:dashboard': { title: 'Dashboard', marker: 'Database file' },
+  'services:cache': { title: 'Cache', marker: 'Cache folder' },
+  'services:auth-states': { title: 'Saved login states', marker: 'No saved login states yet.' },
+  'services:logging': { title: 'Logging', marker: 'Log level' },
+  'services:recording': { title: 'Recording', marker: 'Record video of each test. Recordings stay on this machine.' },
+  'services:accessibility': { title: 'Accessibility', marker: 'Run checks after' },
+  'services:vision': { title: 'Screenshot size', marker: VISION_FIELD_LABELS.screenshotSize },
+  'registry:llms': { title: 'Models', marker: ADD_MODEL_LABEL },
+  'registry:targets': { title: 'Targets', marker: 'Add target' },
+  'registry:devices': { title: 'Devices', marker: 'Add device' },
+  'registry:providers': { title: 'Device farms', marker: 'Add device farm' },
+  'use:browser': { title: 'Browser', marker: 'Viewport width' },
+  'use:timeouts': { title: 'Timeouts', marker: 'Step timeout' },
+  'use:planner': { title: 'Planner limits', marker: PLANNER_FIELD_LABELS.maxActions },
+  'use:log-capture': { title: 'Log capture', marker: 'Capture network logs' },
   'use:mobile': { title: 'Mobile', marker: 'App state' },
-  'use:execution-defaults': { title: 'Execution Defaults', marker: 'Parallel Execution' },
-  'analytics:pass-rate-scope': { title: 'Pass Rate Scope', marker: 'Add Attribute' },
+  'use:execution-defaults': { title: 'Models', marker: DEFAULT_BADGE },
+  'analytics:pass-rate-scope': { title: 'Pass-rate scope', marker: 'Add attribute' },
 }
 
 let container: HTMLDivElement | null = null
@@ -234,6 +359,7 @@ async function renderAt(url: string) {
       <MemoryRouter initialEntries={[url]}>
         <Routes>
           <Route path="/config" element={<ConfigPage />} />
+          <Route path="/config/:tab" element={<ConfigPage />} />
         </Routes>
       </MemoryRouter>,
     )
@@ -243,32 +369,49 @@ async function renderAt(url: string) {
   return container
 }
 
-async function openEditModalForConfig(view: HTMLDivElement, name: string) {
-  const row = Array.from(view.querySelectorAll('tr')).find((item) => item.textContent?.includes(name))
-  expect(row, `row for ${name}`).toBeDefined()
-  const button = row!.querySelector('button[title="Edit configuration"]') as HTMLButtonElement | null
-  expect(button, `edit button for ${name}`).not.toBeNull()
+// The model modal is gone (429-30 · D-10): its cells here drive the saved rows and the add row.
+function modelRow(name: string) {
+  return container?.querySelector(`[data-model-row][data-model-name="${name}"]`) as HTMLElement | null
+}
 
+function addRow() {
+  return container?.querySelector('[data-model-draft]') as HTMLElement | null
+}
+
+function buttonIn(scope: ParentNode | null | undefined, label: string) {
+  const buttons = Array.from(scope?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
+  return buttons.find((button) => button.textContent?.trim() === label) ?? null
+}
+
+async function press(element: Element | null | undefined) {
+  expect(element).toBeTruthy()
   await act(async () => {
-    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    ;(element as HTMLElement).focus()
+    ;(element as HTMLElement).click()
   })
   await flushRender()
 }
 
-async function renderLlmEditorForConfig(name: string) {
-  const view = await renderAt('/config?bucket=registry&item=llms')
-  await openEditModalForConfig(view, name)
-  return view
+async function openModelRow(name: string) {
+  const header = modelRow(name)?.querySelector('[data-model-row-toggle]')
+  expect(header, `the ${name} row header`).toBeTruthy()
+  if (header!.getAttribute('aria-expanded') !== 'true') await press(header)
+  return modelRow(name)!.querySelector('[data-model-panel]') as HTMLElement
 }
 
-async function openAddLlmModal(view: HTMLDivElement) {
-  const button = Array.from(view.querySelectorAll('button')).find((item) => item.textContent?.includes('Add Configuration'))
-  expect(button).toBeDefined()
+/** The Models tab with the add row open on a connection choice, its reads and catalog settled. */
+async function renderAddRow(choice: ConnectionChoice) {
+  await renderAt(`/config/models?add=${choice}`)
+  for (let pass = 0; pass < 3; pass++) await flushRender()
+  expect(addRow(), 'the add row').not.toBeNull()
+}
 
-  await act(async () => {
-    button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-  })
-  await flushRender()
+async function chooseConnection(choice: ConnectionChoice) {
+  await press(addRow()?.querySelector(`[data-connection-choice="${choice}"] [role="radio"]`))
+}
+
+function bearerCredential(): AuthCredentialInfo {
+  return { configName: 'anthropic-compatible', provider: 'anthropic-compatible', type: 'bearer', expires: null, source: 'auth-store' }
 }
 
 function setInputValue(input: HTMLInputElement, value: string) {
@@ -297,25 +440,229 @@ async function assertConfigSectionShells(destinations: string[]) {
     expect(view.textContent).toContain(contract.title)
     expect(view.textContent).toContain(contract.marker)
     expect(view.textContent).not.toContain('Missing config surface')
-    expect(view.querySelector('[data-config-section-shell]')).not.toBeNull()
+    // A section rebuilt on ConfigField or as a record list has field rows in place of the shipped shell.
+    expect(view.querySelector('[data-config-section-shell], [data-config-field], [data-field-list]')).not.toBeNull()
     expect(view.querySelector('[data-config-section-shell] [data-slot="card"]')).toBeNull()
 
     cleanupRender()
   }
 }
 
+// plugins.* is a file edit by decision; every other leaf of the published schema has a field on
+// the page (D-06). 429-44: the page's write door refuses the same roots, so both read one constant.
+// 2026-10-01 (432-22): safety.* left the schema and the denied roots; allowProduction has its owner.
+const DENIED_ROOTS: readonly string[] = CONFIG_WRITE_DENIED_ROOTS
+const PAGE_LEAVES = CONFIG_SCHEMA_LEAVES.filter(
+  (pattern) => !DENIED_ROOTS.includes(pattern.split('.')[0]!),
+)
+
+/** A concrete path for a leaf pattern or list owner: each '*' becomes 'k' and each '[]' index 0. */
+function concretePath(pattern: string): ConfigPathSegment[] {
+  return pattern.split('.').flatMap((token) => {
+    let key = token
+    const items: number[] = []
+    while (key.endsWith('[]')) {
+      key = key.slice(0, -2)
+      items.push(0)
+    }
+    return [key === '*' ? 'k' : key, ...items]
+  })
+}
+
+interface FieldMark {
+  kind: 'path' | 'list'
+  value: string
+  where: string
+}
+
+function fieldMarks(tab: ConfigTab): FieldMark[] {
+  const panel = container!.querySelector(`[data-config-panel="${tab}"]`)!
+  return (Array.from(panel.querySelectorAll('[data-field-path], [data-field-list]')) as HTMLElement[]).flatMap((element) => {
+    const where = `${tab}/${element.closest('[data-config-section]')?.getAttribute('data-config-section') ?? '?'}`
+    const path = element.getAttribute('data-field-path')
+    const list = element.getAttribute('data-field-list')
+    return [
+      ...(path === null ? [] : [{ kind: 'path' as const, value: path, where }]),
+      ...(list === null ? [] : [{ kind: 'list' as const, value: list, where }]),
+    ]
+  })
+}
+
+async function activateTab(tab: ConfigTab) {
+  const trigger = container!.querySelector(`[role="tab"][data-config-tab="${tab}"]`)
+  expect(trigger, tab).not.toBeNull()
+  await act(async () => {
+    trigger!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }))
+  })
+  await flushRender()
+}
+
+/** Every field mark on every tab, with each row of each list opened in turn (Radix unmounts inactive panels). */
+async function collectFieldMarks(): Promise<FieldMark[]> {
+  const marks: FieldMark[] = []
+  for (const tab of CONFIG_TABS) {
+    await activateTab(tab)
+    marks.push(...fieldMarks(tab))
+    const panel = container!.querySelector(`[data-config-panel="${tab}"]`)!
+    const headers = Array.from(panel.querySelectorAll('[data-model-row-toggle], [data-row-header]')) as HTMLElement[]
+    for (const header of headers) {
+      await act(async () => {
+        header.click()
+      })
+      await flushRender()
+      marks.push(...fieldMarks(tab))
+    }
+  }
+  return marks
+}
+
+/**
+ * The marks that can stand for a leaf: a field whose path is the pattern, a list whose owner is
+ * the pattern's owner, or, for a list of plain values (`a.b[]`), the one field that edits the
+ * whole list at its owner path.
+ */
+function coversLeaf(mark: FieldMark, pattern: string): boolean {
+  const owner = configLeafOwner(pattern)
+  if (mark.kind === 'list') return mark.value === owner
+  return mark.value === pattern || (pattern === `${owner}[]` && mark.value === owner)
+}
+
 afterEach(() => {
   cleanupRender()
+  page.config = undefined
   vi.clearAllMocks()
+  // A stored add-row draft would re-open the add row on the next render.
+  localStorage.clear()
 })
 
 describe('ConfigPage schema coverage', () => {
+  it('SCHEMA-COVERAGE-EVERY-LEAF: every schema leaf but plugins has a field or list owner on some tab', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    expect(PAGE_LEAVES.length, 'the witness: the schema walk found the leaves').toBeGreaterThanOrEqual(88)
+    const marks = await collectFieldMarks()
+    const uncovered = PAGE_LEAVES.filter((pattern) => !marks.some((mark) => coversLeaf(mark, pattern)))
+    // 432-02 left allowProduction awaiting its owner; 432-22 adds it, so no leaf is pending.
+    expect(uncovered, `schema leaves with no field on the page: ${uncovered.join(', ')}`).toEqual([])
+    for (const pattern of ['use.workers', 'use.buildTag', 'eval.gate2.canaryHorizonBuilds', 'allowProduction']) {
+      expect(marks.some((mark) => mark.kind === 'path' && mark.value === pattern), pattern).toBe(true)
+    }
+  })
+
+  // 432-22 (D-12/D-18/D-22): the final page-writable count, spelled by hand. The strict leaves less
+  // the four plugin leaves; each has exactly one rendered owner and the write door admits it.
+  // 2026-10-07 (436-07, D-05): the two planner limits add two leaves (94 strict, 90 page-writable);
+  // the cell name no longer carries the count, so a later leaf change moves only the number.
+  // 2026-10-07 (436-08, D-05): the old refilling planner key's leaf is cut (93 strict, 89 page-writable).
+  it('C432-CONFIG-WRITABLE: exactly the page-writable leaves, each owned on the page, and only the four plugin leaves excluded', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(93)
+    expect(PAGE_LEAVES).toHaveLength(89)
+    expect(PAGE_LEAVES).toEqual(expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']))
+    expect(CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins'])
+    expect(CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))).toEqual([
+      'plugins.auth[].package',
+      'plugins.auth[].path',
+      'plugins.providers[].package',
+      'plugins.providers[].path',
+    ])
+    const marks = await collectFieldMarks()
+    const owned = PAGE_LEAVES.filter((pattern) => marks.some((mark) => coversLeaf(mark, pattern)))
+    expect(owned).toHaveLength(89)
+    for (const leaf of ['use.planner.maxActions', 'use.planner.maxPlanningTurns']) {
+      expect(
+        [...new Set(marks.filter((mark) => mark.kind === 'path' && mark.value === leaf).map((mark) => mark.where))],
+        leaf,
+      ).toEqual(['models/planner-limits'])
+    }
+    expect(owned.filter((pattern) => !isPageWritableConfigPath(concretePath(pattern)))).toEqual([])
+    const production = marks.filter((mark) => mark.kind === 'path' && mark.value === 'allowProduction')
+    expect(production.map((mark) => mark.where)).toEqual(['execution/runs'])
+  })
+
+  it('SCHEMA-COVERAGE-EXACTLY-ONCE: each leaf is owned by exactly one section, and no field or list renders in two sections', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    const marks = await collectFieldMarks()
+    const twice = PAGE_LEAVES.flatMap((pattern) => {
+      const sections = new Set(marks.filter((mark) => coversLeaf(mark, pattern)).map((mark) => mark.where))
+      return sections.size > 1 ? [`${pattern} (${[...sections].join(', ')})`] : []
+    })
+    expect(twice, `schema leaves rendered by more than one section: ${twice.join('; ')}`).toEqual([])
+
+    const sectionsByMark = new Map<string, Set<string>>()
+    for (const mark of marks) {
+      const key = `${mark.kind}=${mark.value}`
+      sectionsByMark.set(key, (sectionsByMark.get(key) ?? new Set()).add(mark.where))
+    }
+    const shared = [...sectionsByMark].filter(([, sections]) => sections.size > 1).map(([key, sections]) => `${key} (${[...sections].join(', ')})`)
+    expect(shared, `fields rendered by more than one section: ${shared.join('; ')}`).toEqual([])
+  })
+
+  it('WRITE-POLICY-MATCHES-COVERAGE: every field and list the page renders is writable through its door, and every leaf it leaves out is refused', async () => {
+    page.config = fullConfig
+    await renderAt('/config/models')
+
+    const marks = await collectFieldMarks()
+    expect(marks.length, 'the witness: the walk found fields').toBeGreaterThan(0)
+    const refused = [...new Set(marks.map((mark) => mark.value))]
+      .filter((value) => !isPageWritableConfigPath(concretePath(value)))
+    expect(refused, `fields the page renders but its door refuses: ${refused.join(', ')}`).toEqual([])
+
+    const excluded = CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))
+    expect(excluded.length, 'the witness: plugins leaves exist').toBeGreaterThan(0)
+    const admitted = excluded.filter((pattern) => isPageWritableConfigPath(concretePath(pattern)))
+    expect(admitted, `leaves without a field that the door still admits: ${admitted.join(', ')}`).toEqual([])
+  })
+
+  it('EVERY-SECTION-RENDERS-EMPTY: with an empty config all five tabs and every section heading render, unset leaves show defaults only as placeholders, and Models shows its empty state', async () => {
+    page.config = {}
+    const view = await renderAt('/config/models')
+
+    const tabs = Array.from(view.querySelectorAll('[role="tab"]')) as HTMLElement[]
+    expect(tabs.map((tab) => tab.getAttribute('data-config-tab'))).toEqual([...CONFIG_TABS])
+    for (const tab of tabs) {
+      expect(tab.hasAttribute('disabled'), tab.getAttribute('data-config-tab')!).toBe(false)
+      expect(tab.getAttribute('aria-disabled'), tab.getAttribute('data-config-tab')!).not.toBe('true')
+      expect(tab.hidden, tab.getAttribute('data-config-tab')!).toBe(false)
+    }
+    expect(view.querySelector('[data-config-section="models"] [data-models-empty]')).not.toBeNull()
+
+    for (const tab of CONFIG_TABS) {
+      await activateTab(tab)
+      const panel = view.querySelector(`[data-config-panel="${tab}"]`) as HTMLElement
+      expect(panel, tab).not.toBeNull()
+      for (const id of CONFIG_SECTIONS[tab]) {
+        const heading = panel.querySelector(`[data-config-section="${id}"] > h2`)
+        expect(heading?.textContent, `${tab}/${id}`).toBe(CONFIG_SECTION_LABELS[id])
+      }
+      const filled = (
+        Array.from(panel.querySelectorAll('[data-config-field] input, [data-config-field] textarea')) as (
+          | HTMLInputElement
+          | HTMLTextAreaElement
+        )[]
+      )
+        .filter((control) => !['checkbox', 'radio', 'hidden'].includes(control.getAttribute('type') ?? ''))
+        .filter((control) => control.value !== '')
+        .map((control) => control.closest('[data-field-path]')?.getAttribute('data-field-path'))
+      expect(filled, `${tab}: unset leaves showing a value instead of a placeholder`).toEqual([])
+    }
+  })
+
   it('matches the final UI-SPEC inventory exactly', () => {
-    expect(CONFIG_NAVIGATION_ITEMS.map((item) => `${item.bucket}:${item.item}`)).toEqual(EXPECTED_DESTINATIONS)
+    expect([...LEGACY_CONFIG_PAIRS]).toEqual(EXPECTED_DESTINATIONS)
   })
 
   it('exposes only the current LLM provider contract in UI fixtures', () => {
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).toEqual([
+    // The built-in key providers are the add row's key choices; the sign-in ones come from the plugin.
+    const keyProviders = CONNECTION_CHOICES.filter((choice) => choice.endsWith('-key')).map(
+      (choice) => CONNECTION_CHOICE_PROVIDERS[choice],
+    )
+    expect(keyProviders).toEqual([
       'openai-compatible',
       'anthropic-compatible',
       'gemini',
@@ -327,112 +674,141 @@ describe('ConfigPage schema coverage', () => {
       'anthropic-subscription',
       'gemini',
     ])
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.label)).toEqual([
+    expect(keyProviders.map((provider) => PROVIDER_FALLBACK_LABELS[provider])).toEqual([
       'OpenAI-compatible',
       'Anthropic-compatible',
       'Gemini',
     ])
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('anthropic')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('openai')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('google')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('authMethod')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('ollama')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('lmstudio')
-    expect(LLM_PROVIDER_OPTIONS.map((option) => option.value)).not.toContain('custom')
+    const choiceProviders: string[] = Object.values(CONNECTION_CHOICE_PROVIDERS)
+    expect(new Set(choiceProviders)).toEqual(new Set(LLM_PROVIDER_COMPLETION_VALUES))
+    for (const retired of ['anthropic', 'openai', 'google', 'authMethod', 'ollama', 'lmstudio', 'custom']) {
+      expect(choiceProviders).not.toContain(retired)
+    }
   })
 
   it('renders provider header rows only for anthropic-compatible', async () => {
-    await renderLlmEditorForConfig('anthropic-compatible')
-    expect(document.body.textContent).toContain('Provider Headers')
-    expect(document.body.querySelector('input[placeholder="header-name"]')).not.toBeNull()
-    expect(document.body.querySelector('input[placeholder="header-value"]')).not.toBeNull()
+    await renderAt('/config/models')
+    const proxy = await openModelRow('anthropic-compatible')
+    expect(proxy.querySelector('[data-model-headers] legend')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.headers)
+    expect(buttonIn(proxy, ADD_HEADER_LABEL)).not.toBeNull()
+    for (const name of ['openai-compatible', 'gemini-fast', 'codex', 'claude-subscription']) {
+      const panel = await openModelRow(name)
+      expect(panel.querySelector('[data-model-headers]'), name).toBeNull()
+    }
     cleanupRender()
 
-    for (const name of ['openai-compatible', 'gemini-fast', 'codex', 'claude-subscription']) {
-      await renderLlmEditorForConfig(name)
-      expect(document.body.textContent).not.toContain('Provider Headers')
-      expect(document.body.querySelector('input[placeholder="header-name"]')).toBeNull()
-      expect(document.body.querySelector('input[placeholder="header-value"]')).toBeNull()
-      cleanupRender()
+    await renderAddRow('anthropic-compatible-key')
+    expect(addRow()?.querySelector('[data-add-headers]')).not.toBeNull()
+    for (const choice of ['openai-compatible-key', 'gemini-key', 'chatgpt-sign-in', 'claude-sign-in'] as const) {
+      await chooseConnection(choice)
+      expect(addRow()?.querySelector('[data-add-headers]'), choice).toBeNull()
     }
   })
 
   it('allows bearer-token credential selection for anthropic-compatible', async () => {
-    await renderLlmEditorForConfig('anthropic-compatible')
+    await renderAddRow('anthropic-compatible-key')
+    const keyType = addRow()?.querySelector('[data-add-field="keyType"]')
+    expect(keyType?.textContent).toContain(KEY_TYPE_LABELS['api-key'])
+    expect(keyType?.textContent).toContain(KEY_TYPE_LABELS['bearer-token'])
+    await press(keyType?.querySelector('[role="radio"][value="bearer-token"]'))
+    expect(addRow()?.querySelector('[data-add-field="key"] label')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.token)
+    // The key goes with Connect; the modal's separate Save Credential button is gone.
+    expect(document.body.textContent).not.toContain('Save Credential')
 
-    expect(document.body.textContent).toContain('API key')
-    expect(document.body.textContent).toContain('Bearer token')
-    expect(document.body.textContent).toContain('Save Credential')
+    await chooseConnection('openai-compatible-key')
+    expect(addRow()?.querySelector('[data-add-field="keyType"]')).toBeNull()
   })
 
   it('saves anthropic-compatible bearer tokens through the typed credential API', async () => {
-    await renderLlmEditorForConfig('anthropic-compatible')
+    mockFetchAuthStatus.mockResolvedValue({ credentials: [bearerCredential()] })
+    try {
+      await renderAt('/config/models')
+      const panel = await openModelRow('anthropic-compatible')
+      await press(buttonIn(panel, REPLACE_KEY_LABEL))
+      const secretInput = modelRow('anthropic-compatible')!.querySelector('[data-replace-key] input[type="password"]') as HTMLInputElement | null
+      expect(secretInput).not.toBeNull()
+      await act(async () => {
+        setInputValue(secretInput!, 'bearer-secret')
+      })
+      await press(buttonIn(modelRow('anthropic-compatible'), SAVE_KEY_AND_TEST_LABEL))
 
-    const secretInput = document.body.querySelector('input[type="password"][placeholder="secret-value"]') as HTMLInputElement | null
-    expect(secretInput).not.toBeNull()
-    await act(async () => {
-      setInputValue(secretInput!, 'bearer-secret')
-    })
+      expect(mockSaveCredential).toHaveBeenCalledWith(
+        'anthropic-compatible',
+        'anthropic-compatible',
+        'bearer-token',
+        'bearer-secret',
+      )
+      expect(container!.innerHTML).not.toContain('bearer-secret')
+      cleanupRender()
 
-    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('Save Credential'),
-    ) as HTMLButtonElement | undefined
-    expect(saveButton).toBeDefined()
+      vi.mocked(connectLLM).mockResolvedValueOnce({ success: false, errorClass: 'auth_error', message: 'Refused.' })
+      await renderAddRow('anthropic-compatible-key')
+      await press(addRow()?.querySelector('[data-add-field="keyType"] [role="radio"][value="bearer-token"]'))
+      for (const [field, value] of [['baseURL', 'https://anthropic-proxy.example/messages'], ['model', 'claude-remote'], ['key', 'draft-bearer'], ['name', 'claude-draft']] as const) {
+        await act(async () => {
+          setInputValue(addRow()!.querySelector(`[data-add-field="${field}"] input`) as HTMLInputElement, value)
+        })
+      }
+      await flushRender()
+      await press(addRow()?.querySelector('[data-add-connect]'))
+      expect(vi.mocked(connectLLM).mock.calls[0]?.[0].credential).toEqual({ type: 'bearer-token', secret: 'draft-bearer' })
+    } finally {
+      mockFetchAuthStatus.mockResolvedValue({ credentials: [] })
+    }
+  })
+
+  it('credential deletion no longer asks first: Remove key acts at once and offers Undo', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockFetchAuthStatus.mockResolvedValue({ credentials: [bearerCredential()] })
+    vi.mocked(deleteAuthCredential).mockResolvedValueOnce({
+      deleted: true,
+      undo: { token: 'undo-key', expiresAt: Date.now() + 30_000 },
+    } as never)
+    try {
+      await renderAt('/config/models')
+      const panel = await openModelRow('anthropic-compatible')
+      await press(buttonIn(panel, REMOVE_KEY_LABEL))
+
+      expect(deleteAuthCredential).toHaveBeenCalledWith('anthropic-compatible')
+      expect(document.body.querySelector('[role="dialog"], [role="alertdialog"]')).toBeNull()
+      expect(confirmSpy).not.toHaveBeenCalled()
+      expect(document.body.textContent).not.toContain('Delete saved credential for')
+      expect(document.body.textContent).not.toContain('Keep Credential')
+      expect(document.body.textContent).not.toContain('Delete Credential')
+      expect(container!.textContent).toContain(undoLine('remove-key', 'anthropic-compatible'))
+    } finally {
+      mockFetchAuthStatus.mockResolvedValue({ credentials: [] })
+      confirmSpy.mockRestore()
+    }
+  })
+
+  it('uses a free text model input with datalist suggestions', async () => {
+    await renderAt('/config/models')
+    const panel = await openModelRow('openai-compatible')
+    const saved = panel.querySelector('[data-field-path="registry.llms[].model"] input') as HTMLInputElement | null
+    expect(saved?.type).toBe('text')
+    expect(saved?.value).toBe('openrouter/auto')
+    cleanupRender()
+
+    await renderAddRow('openai-compatible-key')
+    const input = addRow()?.querySelector('[data-add-field="model"] input') as HTMLInputElement | null
+    expect(input?.type).toBe('text')
+    const listId = input?.getAttribute('list')
+    expect(listId).toBeTruthy()
+    expect(document.getElementById(listId!)?.tagName).toBe('DATALIST')
+  })
+
+  it('renders maintained model suggestions without replacing free text entry', async () => {
+    await renderAddRow('openai-compatible-key')
+    const input = addRow()?.querySelector('[data-add-field="model"] input') as HTMLInputElement | null
+
+    expect(document.body.innerHTML).toContain('<datalist')
+    expect(document.getElementById(input!.getAttribute('list')!)?.querySelector('option[value="openrouter/auto"]')).not.toBeNull()
     await act(async () => {
-      saveButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      setInputValue(input!, 'my-own/model-id')
     })
     await flushRender()
-
-    expect(mockSaveCredential).toHaveBeenCalledWith(
-      'anthropic-compatible',
-      'anthropic-compatible',
-      'bearer-token',
-      'bearer-secret',
-    )
-  })
-
-  it('confirms credential deletion before deleting', async () => {
-    mockFetchAuthStatus.mockResolvedValueOnce({
-      credentials: [{
-        configName: 'anthropic-compatible',
-        provider: 'anthropic-compatible',
-        type: 'bearer',
-        expires: null,
-        source: 'auth-store',
-      }],
-    })
-    await renderLlmEditorForConfig('anthropic-compatible')
-
-    const deleteButton = Array.from(document.body.querySelectorAll('button')).find(
-      (button) => button.textContent === 'Delete' || button.getAttribute('aria-label') === 'Delete credential',
-    ) as HTMLButtonElement | undefined
-    expect(deleteButton).toBeDefined()
-
-    await act(async () => {
-      deleteButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    })
-    await flushRender()
-
-    expect(document.body.textContent).toContain(
-      'Delete saved credential for anthropic-compatible? Tests using this config may fail until a new credential is saved.',
-    )
-    expect(document.body.textContent).toContain('Keep Credential')
-    expect(document.body.textContent).toContain('Delete Credential')
-  })
-
-  it('uses a free text model input without datalist', async () => {
-    await renderLlmEditorForConfig('openai-compatible')
-
-    const input = document.body.querySelector('input[placeholder="model-name"]')
-    expect(input).not.toBeNull()
-    expect(input?.getAttribute('list')).toBeNull()
-  })
-
-  it('does not render maintained model suggestions', async () => {
-    const view = await renderAt('/config?bucket=registry&item=llms')
-    await openAddLlmModal(view)
-
-    expect(document.body.innerHTML).not.toContain('<datalist')
+    expect(input!.value).toBe('my-own/model-id')
     expect(document.body.textContent).not.toContain('PROVIDER_MODELS')
     expect(document.body.textContent).not.toContain('SUBSCRIPTION_MODELS')
     expect(document.body.textContent).not.toContain('Gemini 2.0 Flash')
@@ -459,8 +835,8 @@ describe('ConfigPage schema coverage', () => {
     }
   })
 
-  it('Config section shells: all 21 destinations', async () => {
-    const destinations = CONFIG_NAVIGATION_ITEMS.map((item) => `${item.bucket}:${item.item}`)
+  it('Config section shells: all 21 legacy destinations', async () => {
+    const destinations: string[] = [...LEGACY_CONFIG_PAIRS]
 
     expect(destinations).toEqual(EXPECTED_DESTINATIONS)
     await assertConfigSectionShells(destinations)
@@ -488,7 +864,6 @@ describe('ConfigPage schema coverage', () => {
     await assertConfigSectionShells([
       'use:browser',
       'use:timeouts',
-      'use:healing',
       'use:planner',
       'use:log-capture',
     ])
@@ -506,10 +881,9 @@ describe('ConfigPage schema coverage', () => {
     ])
   })
 
-  it('Config section shells: Agent Rules and Memory sections', async () => {
+  it('Config section shells: Knowledge section', async () => {
     await assertConfigSectionShells([
-      'workspace:agent-rules',
-      'services:memory',
+      'knowledge:store',
     ])
   })
 

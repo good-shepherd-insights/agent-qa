@@ -1,9 +1,24 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { readFile, stat, rm, mkdtemp } from 'node:fs/promises'
-import { join } from 'node:path'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import {
+  readFile,
+  stat,
+  lstat,
+  rm,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rename,
+  symlink,
+} from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { readAuth, writeAuth, removeAuth, getCredential } from '../auth/store.js'
 import type { AuthCredential } from '../auth/types.js'
+
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rename: vi.fn(actual.rename) }
+})
 
 describe('auth store', () => {
   let tempDir: string
@@ -101,5 +116,92 @@ describe('auth store', () => {
     await writeAuth('openai', cred, deepPath)
     const data = await readFile(deepPath, 'utf-8')
     expect(JSON.parse(data)['openai']).toEqual(cred)
+  })
+
+  it('WRITE-AUTH-ATOMIC: writeAuth and removeAuth rename a same-directory temp file onto auth.json', async () => {
+    const renameSpy = vi.mocked(rename)
+    renameSpy.mockClear()
+    const cred: AuthCredential = { type: 'api', provider: 'openai-compatible', key: 'k' }
+    await writeAuth('gpt-5.6', cred, authPath)
+
+    expect(renameSpy).toHaveBeenCalledTimes(1)
+    const [from, to] = renameSpy.mock.calls[0] as [string, string]
+    expect(to).toBe(authPath)
+    expect(dirname(from)).toBe(dirname(authPath))
+    expect(from).not.toBe(authPath)
+    expect((await stat(authPath)).mode & 0o777).toBe(0o600)
+    expect((await readAuth(authPath))['gpt-5.6']).toEqual(cred)
+
+    await writeAuth('other', { type: 'api', provider: 'openai', key: 'o' }, authPath)
+    renameSpy.mockClear()
+    await removeAuth('other', authPath)
+    expect(renameSpy).toHaveBeenCalledTimes(1)
+    expect((renameSpy.mock.calls[0] as [string, string])[1]).toBe(authPath)
+    expect(await readAuth(authPath)).toEqual({ 'gpt-5.6': cred })
+    expect((await readdir(tempDir)).filter(name => name.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('WRITE-AUTH-ATOMIC: readAuth still swallows an unreadable store', async () => {
+    await writeAuth('gpt-5.6', { type: 'api', provider: 'openai-compatible', key: 'k' }, authPath)
+    await rm(authPath)
+    await (await import('node:fs/promises')).writeFile(authPath, '{"trunc', 'utf-8')
+    expect(await readAuth(authPath)).toEqual({})
+  })
+
+  describe('symlinked auth.json', () => {
+    const credA: AuthCredential = { type: 'api', provider: 'openai', key: 'sk-a' }
+    const credB: AuthCredential = { type: 'api', provider: 'openai-compatible', key: 'sk-b' }
+    let realDir: string
+    let linkDir: string
+    let realPath: string
+    let linkPath: string
+    const isSymlink = (path: string) =>
+      lstat(path).then(
+        stats => stats.isSymbolicLink(),
+        () => false,
+      )
+
+    beforeEach(async () => {
+      realDir = join(tempDir, 'real')
+      linkDir = join(tempDir, 'link')
+      realPath = join(realDir, 'auth.json')
+      linkPath = join(linkDir, 'auth.json')
+      await mkdir(realDir, { recursive: true })
+      await mkdir(linkDir, { recursive: true })
+    })
+
+    it('AUTH-SYMLINK-KEPT: writeAuth through a link keeps the link and writes its target 0600', async () => {
+      await writeAuth('a', credA, realPath)
+      await symlink(realPath, linkPath)
+
+      await writeAuth('b', credB, linkPath)
+
+      expect(await isSymlink(linkPath)).toBe(true)
+      expect(await readAuth(realPath)).toEqual({ a: credA, b: credB })
+      expect((await stat(realPath)).mode & 0o777).toBe(0o600)
+      const stray = [...(await readdir(realDir)), ...(await readdir(linkDir))].filter(name =>
+        name.endsWith('.tmp'),
+      )
+      expect(stray).toEqual([])
+    })
+
+    it('AUTH-SYMLINK-REMOVE-KEEPS-LINK: removing the last credential keeps the link and clears the target', async () => {
+      await writeAuth('a', credA, realPath)
+      await symlink(realPath, linkPath)
+
+      await removeAuth('a', linkPath)
+
+      expect(await isSymlink(linkPath)).toBe(true)
+      expect(await readAuth(realPath)).not.toHaveProperty('a')
+    })
+
+    it('AUTH-SYMLINK-DANGLING-CREATES-TARGET: a dangling relative link has its target created', async () => {
+      await symlink(join('..', 'real', 'auth.json'), linkPath)
+
+      await writeAuth('a', credA, linkPath)
+
+      expect(await isSymlink(linkPath)).toBe(true)
+      expect(await readAuth(realPath)).toEqual({ a: credA })
+    })
   })
 })

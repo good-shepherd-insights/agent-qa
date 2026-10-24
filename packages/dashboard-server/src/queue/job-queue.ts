@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events'
 import { cpus } from 'node:os'
-import type { RunArtifactKind, RunAttributes } from '@vostride/agent-qa-core'
+import type { RunAttributes } from '@vostride/agent-qa-core'
+import type { RunArtifactKind } from '@vostride/agent-qa-schema'
 import type { DashboardDatabase, RunRow } from '../db/database.js'
+import { classifyRunOwner, orphanSummary, ownedElsewhere } from '../db/run-owner.js'
 
 interface EnqueueOptions {
   name: string
@@ -17,6 +19,17 @@ interface EnqueueOptions {
   parallel?: boolean
 }
 
+export type RunCancelOutcome =
+  | { kind: 'cancelled' }
+  | { kind: 'stop-requested' }
+  | { kind: 'not-stoppable-here' }
+  | { kind: 'finished'; status: string }
+  | { kind: 'orphan-finalized'; message: string }
+  | { kind: 'owned-elsewhere'; message: string; ownerPid: number }
+  | { kind: 'not-cancellable' }
+
+const NOT_CANCELLABLE: RunCancelOutcome = { kind: 'not-cancellable' }
+
 export class JobQueue extends EventEmitter {
   private db: DashboardDatabase
   private pollInterval: ReturnType<typeof setInterval> | null = null
@@ -25,19 +38,31 @@ export class JobQueue extends EventEmitter {
   private activeCount = 0
   private activePlatforms = new Set<string>()
   private activeRuns = new Map<string, { platform: string }>()
+  private requestStop: ((runId: string) => boolean) | undefined
+  private stopped = false
 
-  constructor(opts: { db: DashboardDatabase; concurrency?: number }) {
+  constructor(opts: {
+    db: DashboardDatabase
+    concurrency?: number
+    requestStop?: (runId: string) => boolean
+  }) {
     super()
     this.db = opts.db
     this.concurrency = opts.concurrency ?? cpus().length
+    this.requestStop = opts.requestStop
   }
 
   start(intervalMs = 1000): void {
-    this.pollInterval = setInterval(() => this.processNext(), intervalMs)
-    this.on('enqueued', () => this.processNext())
+    this.stopped = false
+    this.pollInterval = setInterval(() => this.dispatchReported('a poll'), intervalMs)
+    // 2026-10-18 (444-27, D-62 IN-06): a dispatch that fails here never escapes enqueue().
+    this.on('enqueued', () => this.dispatchReported('an enqueue'))
   }
 
+  // 2026-10-17 (444-16, D-50): the server closes the database after this; a run that settles later
+  // still frees its slot, and nothing reads the closed database.
   stop(): void {
+    this.stopped = true
     if (this.pollInterval) {
       clearInterval(this.pollInterval)
       this.pollInterval = null
@@ -46,6 +71,10 @@ export class JobQueue extends EventEmitter {
   }
 
   enqueue(opts: EnqueueOptions): string {
+    // 2026-10-01 (432-14, D-14): the belt that refused an unminted confirm scope here is deleted
+    // with the run-confirm pair. A confirm scope addressed a browser's dialog; there is no dialog and
+    // no reader of the key, so the queue attaches no meaning to it. The allowlist at
+    // `/api/queue/enqueue` still refuses every client-supplied metadata key.
     const runId = this.db.insertPendingRun({
       name: opts.name,
       filePath: opts.filePath,
@@ -82,7 +111,7 @@ export class JobQueue extends EventEmitter {
   }
 
   processNext(): void {
-    if (this.isProcessing) return
+    if (this.stopped || this.isProcessing) return
     this.isProcessing = true
     try {
       while (true) {
@@ -97,7 +126,13 @@ export class JobQueue extends EventEmitter {
         if (isMobile) this.activePlatforms.add(platform)
         this.activeRuns.set(next.id, { platform })
 
-        this.db.updateRunStatus(next.id, 'running')
+        // 2026-10-17 (443-02, D-07): a row that left pending before the flip is not dispatched.
+        if (!this.db.updateRunStatus(next.id, 'running')) {
+          this.activeCount--
+          if (isMobile) this.activePlatforms.delete(platform)
+          this.activeRuns.delete(next.id)
+          continue
+        }
         this.db.updateRun(next.id, { startedAt: new Date().toISOString() })
         this.emit('execute', next)
 
@@ -117,7 +152,16 @@ export class JobQueue extends EventEmitter {
       this.activePlatforms.delete(info.platform)
     }
     this.activeRuns.delete(runId)
-    this.processNext()
+    this.dispatchReported(`run ${runId} finished`)
+  }
+
+  private dispatchReported(trigger: string): void {
+    try {
+      this.processNext()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`Queue could not dispatch the next run after ${trigger}: ${message}`)
+    }
   }
 
   getActiveCount(): number {
@@ -128,56 +172,61 @@ export class JobQueue extends EventEmitter {
     return this.concurrency
   }
 
-  cancel(runId: string): boolean {
+  // 2026-10-16 (442-05, D-06 to D-08): only the owner cancels a running row; gone is an orphan.
+  // 442-15 (GAP-D2): own is the stamp this handle wrote, or equal non-null start times.
+  // 2026-10-17 (444-06, D-11): a running row is never written here; the run answers with its verdict.
+  cancel(runId: string): RunCancelOutcome {
     const run = this.db.getRun(runId)
-    if (!run) return false
-    const now = new Date().toISOString()
+    if (!run) return NOT_CANCELLABLE
     if (run.status === 'pending') {
-      this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
-      this.cancelChildRuns(runId, now)
+      this.db.updateRun(runId, { status: 'cancelled', endedAt: new Date().toISOString() })
       this.db.finalizeRunArtifact(runId, {
         errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancelled before execution' }],
         runtime: { status: 'cancelled' },
       })
-      return true
+      return { kind: 'cancelled' }
     }
-    if (run.status === 'running') {
-      this.db.updateRun(runId, { status: 'cancelled', endedAt: now })
-      this.cancelChildRuns(runId, now)
-      try {
-        const artifact = this.db.getRunArtifact(runId)
-        if (artifact && !artifact.finalizedAt) {
-          this.db.finalizeRunArtifact(runId, {
-            errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancellation requested' }],
-            runtime: { status: 'cancelled' },
-          })
-        }
-      } catch { /* cancellation still proceeds */ }
-      this.emit('cancel-running', runId)
-      return true
+    if (run.status !== 'running') return { kind: 'finished', status: run.status }
+    const owner = this.db.readRunOwner(runId)
+    if (owner === undefined) return NOT_CANCELLABLE
+    const own = this.db.isOwnStamp(runId, owner)
+    switch (own ? 'self' : classifyRunOwner(owner, this.db.runOwnership)) {
+      case 'self':
+        return this.requestStop?.(runId) === true
+          ? { kind: 'stop-requested' }
+          : { kind: 'not-stoppable-here' }
+      case 'gone':
+        return this.db.finalizeOrphanRun(runId, owner)
+          ? { kind: 'orphan-finalized', message: orphanSummary(owner.pid) }
+          : this.finishedOrMissing(runId)
+      case 'alive':
+      case 'unknown':
+        return { kind: 'owned-elsewhere', message: ownedElsewhere(owner.pid), ownerPid: owner.pid }
     }
-    return false
   }
 
-  private cancelChildRuns(parentRunId: string, endedAt: string): void {
-    for (const child of this.db.getRunsByParent(parentRunId)) {
-      if (child.status !== 'running' && child.status !== 'pending') continue
-      this.db.updateRun(child.id, {
-        status: 'cancelled',
-        endedAt,
-        failureSummary: 'Run cancelled by user',
-      })
-      try {
-        const artifact = this.db.getRunArtifact(child.id)
-        if (artifact && !artifact.finalizedAt) {
-          this.db.finalizeRunArtifact(child.id, {
-            errors: [{ code: 'cancelled', phase: 'queue', message: 'Run cancelled by user' }],
-            runtime: { status: 'cancelled' },
-          })
-        }
-      } catch { /* best-effort child cancellation */ }
-    }
+  private finishedOrMissing(runId: string): RunCancelOutcome {
+    const run = this.db.getRun(runId)
+    return run && run.status !== 'running' && run.status !== 'pending'
+      ? { kind: 'finished', status: run.status }
+      : NOT_CANCELLABLE
   }
+
+  // 2026-08-24 (Phase 402 plan 09, D-11): THE CHILD-RUN CANCELLATION FAN-OUT IS DELETED WITH THE
+  // MODEL THAT MINTED ITS CHILDREN.
+  //
+  // ~19 lines stood here walking the run's child rows and cancelling each member row. Under
+  // the one-run model a parallel suite is ONE run row with member handles (402-04) — nothing writes
+  // the run row's parent-link column any more (405-07 then deleted the column outright), so the
+  // walk could only ever have read an empty list while reading as live cancellation policy.
+  // Cancelling the run cancels the run.
+  //
+  // WHAT THIS DOES NOT TOUCH: `parallel` below. D-11 keeps the queue's parallel flag as CROSS-RUN
+  // concurrency of INDEPENDENT jobs, which is what `findNextEligible` has always used it for. What
+  // was deleted is parallel-SUITE semantics, not the queue's ability to run two unrelated jobs.
+  //
+  // HISTORICAL ROWS: a pre-402 suite run still lists its members on the read side; cancelling
+  // such a run now leaves those member rows in whatever state their own process left them.
 
   private findNextEligible(): RunRow | undefined {
     if (this.activeCount >= this.concurrency) return undefined

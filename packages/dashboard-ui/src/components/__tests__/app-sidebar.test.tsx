@@ -20,6 +20,7 @@ function icon(name: string) {
 
 vi.mock("lucide-react", () => ({
   Play: icon("Play"),
+  MessageSquare: icon("MessageSquare"),
   FileText: icon("FileText"),
   Webhook: icon("Webhook"),
   Wrench: icon("Wrench"),
@@ -237,15 +238,6 @@ describe("AppSidebar", () => {
     expect(hooksLink?.querySelector('[data-icon="Wrench"]')).toBeNull()
   })
 
-  it("renders the Memory nav item with the BrainCircuit icon", async () => {
-    await renderSidebar("/memory")
-
-    const memoryLink = container.querySelector('a[href="/memory"]')
-    expect(memoryLink).not.toBeNull()
-    expect(memoryLink?.textContent).toContain("Memory")
-    expect(memoryLink?.querySelector('[data-icon="BrainCircuit"]')).not.toBeNull()
-  })
-
   it("renders footer support links with exact outbound targets and grouped help control", async () => {
     await renderSidebar()
 
@@ -325,7 +317,6 @@ describe("AppSidebar", () => {
       { href: "/tests", title: "Tests", tourId: "tour-nav-tests" },
       { href: "/hooks", title: "Hooks", tourId: "tour-nav-hooks" },
       { href: "/suites", title: "Suites", tourId: "tour-nav-suites" },
-      { href: "/memory", title: "Memory", tourId: "tour-nav-memory" },
       { href: "/config", title: "Config", tourId: "tour-nav-config" },
     ]
 
@@ -337,6 +328,34 @@ describe("AppSidebar", () => {
     }
 
     expect(container.querySelector('a[href="/insights"]')?.getAttribute("data-tour-id")).toBeNull()
+    expect(container.querySelector('a[href="/chat"]')).toBeNull()
+  })
+
+  it("SIDEBAR-NAV-EXACT: the primary nav is exactly Runs, Tests, Hooks, Suites, Insights, Config", async () => {
+    await renderSidebar()
+
+    const label = Array.from(container.querySelectorAll("div")).find(
+      (element) => element.childElementCount === 0 && element.textContent === "Navigation",
+    )
+    const group = label?.parentElement
+    expect(group, "the Navigation group was not found").toBeTruthy()
+
+    // 430 (2026-09-28, D-04): exact equality in DOM order, so an item that returns reds wherever
+    // it is inserted.
+    expect(
+      Array.from(group?.querySelectorAll("a") ?? []).map((link) => [
+        link.getAttribute("href"),
+        link.textContent?.trim(),
+      ]),
+    ).toEqual([
+      ["/runs", "Runs"],
+      ["/tests", "Tests"],
+      ["/hooks", "Hooks"],
+      ["/suites", "Suites"],
+      ["/insights", "Insights"],
+      ["/config", "Config"],
+    ])
+    expect(container.querySelector('a[href="/chat"]')).toBeNull()
   })
 
   it("uses a safe grouped feedback mailto body", async () => {

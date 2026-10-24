@@ -20,7 +20,7 @@ const {
   mockVariableStoreInstance,
 } = vi.hoisted(() => ({
   mockCleanup: vi.fn().mockResolvedValue(undefined),
-  mockCreateModel: vi.fn().mockResolvedValue({ modelId: 'test-model' }),
+  mockCreateModel: vi.fn().mockReturnValue({ modelId: 'test-model' }),
   mockDrainConsole: vi.fn(() => []),
   mockDrainNetwork: vi.fn(() => []),
   mockExecute: vi.fn().mockResolvedValue({ success: true }),
@@ -57,24 +57,45 @@ vi.mock('@vostride/agent-qa-web', () => ({
   }),
 }))
 
+// runHooks + DockerHookExecutor moved to runner / runner-local in Phase 363 D-06.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner')>()),
+  runHooks: (...args: unknown[]) => mockRunHooks(...args),
+  // Variables subsystem moved to runner in Phase 363 D-07.
+  VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
+  interpolateVariables: vi.fn((instruction: string) => instruction),
+  findUnresolvedTemplates: vi.fn(() => []),
+  // Inline hook parsing moved to runner in Phase 363-11; live-session imports it from runner.
+  parseHookInline: vi.fn(() => []),
+  stripHookInline: vi.fn((text: string) => text),
+}))
+vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
+  DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
+}))
+
 vi.mock('@vostride/agent-qa-core', async () => {
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
   return {
     ...actual,
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
-    createModel: (...args: unknown[]) => mockCreateModel(...args),
-    getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
-    VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
-    interpolateVariables: vi.fn((instruction: string) => instruction),
-    findUnresolvedTemplates: vi.fn(() => []),
     redactSecretValue: vi.fn((value: unknown) => value),
     parseHookInline: vi.fn(() => []),
     stripHookInline: vi.fn((text: string) => text),
     runHooks: (...args: unknown[]) => mockRunHooks(...args),
     runHookInSandbox: (...args: unknown[]) => mockRunHookInSandbox(...args),
     resolveSecretTemplatesInValue: vi.fn((value: unknown) => value),
+  }
+})
+
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: (...args: unknown[]) => mockCreateModel(...args),
+    getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
   }
 })
 
@@ -176,7 +197,7 @@ describe('LiveSession.captureWebAuthState', () => {
 
     tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-live-auth-state-'))
     configPath = join(tempDir, 'agent-qa.config.yaml')
-    configManager = new ConfigManager(configPath)
+    configManager = new ConfigManager(configPath, (text) => text)
     await writeFile(configPath, [
       'services:',
       '  authState:',

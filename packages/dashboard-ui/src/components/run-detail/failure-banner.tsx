@@ -1,0 +1,166 @@
+// The run's failure summary, as stored (405-14 · DETL-02; 441 D-28): a declared value reads as the
+// `[secret:<name>]` the run wrote, as plain text.
+//
+// The clipboard carries what was rendered and nothing else (T-405-43): the preview while the banner
+// is collapsed, the whole summary once it has been expanded.
+//
+// Text nodes, never markup (T-405-42): there is no `dangerouslySetInnerHTML` here, and a jsdom cell
+// feeds this component markup and asserts no element.
+
+import { useState } from "react"
+import { AlertCircle, Check, ChevronRight, Copy } from "lucide-react"
+
+import { truncateText } from "@/lib/display-text"
+import { cn } from "@/lib/utils"
+
+/**
+ * How much of the summary the collapsed banner shows.
+ *
+ * TWENTY, WHICH IS THE SHIPPED NUMBER — the page-local helper's own budget, moved rather than
+ * re-chosen.
+ *
+ * IT IS EXPORTED BECAUSE TWO THINGS READ IT, AND THE LIST IS NAMED SO IT STAYS TRUE (WINDOWS #292).
+ * The justification that stood here — "the failing-run fixture's word arithmetic is written against
+ * it" — described a PROSE reference and no import at all, so the budget could move here while every
+ * fixture went on asserting the old number. Its consumers:
+ *
+ *   1. `__tests__/failure-banner.test.tsx`, which IMPORTS it and derives its fixture's word
+ *      ordinals from it — the marker inside the budget, the marker past it, and the summary's last
+ *      word are all `FAILURE_BANNER_PREVIEW_WORDS` plus an offset, so a change here moves the cells.
+ *   2. `cli/src/__tests__/conformance/populated-run-fixture.ts`, which cannot import across the
+ *      package boundary and names it in PROSE instead, beside the word-by-word arithmetic its
+ *      failing-run sentences are written to.
+ *
+ * A drift that pushes the marker past the budget is fixed in the FIXTURE, never by widening this
+ * number to make a cell go green.
+ */
+export const FAILURE_BANNER_PREVIEW_WORDS = 20
+
+/** What the last copy attempt did — `idle` until one is made, and back to `idle` after a moment. */
+type CopyStatus = "idle" | "copied" | "failed"
+
+/**
+ * What the live region says, per outcome.
+ *
+ * A CHECK MARK IS NOT AN ANNOUNCEMENT. The tick is the only confirmation this button has ever
+ * given, and it is invisible to a screen reader: the button carried a `title` and no accessible
+ * name, and the outcome was a swapped icon inside a `polite`-less subtree. Sighted feedback and
+ * announced feedback are the same fact in two media, so they are derived from the same state.
+ */
+const COPY_ANNOUNCEMENT: Record<CopyStatus, string> = {
+  idle: "",
+  copied: "Failure summary copied to the clipboard",
+  failed: "Could not copy the failure summary to the clipboard",
+}
+
+export function FailureBanner({ summary }: { summary: string }) {
+  const [open, setOpen] = useState(false)
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle")
+  const preview = truncateText(summary, FAILURE_BANNER_PREVIEW_WORDS)
+
+  // WHAT IS RENDERED, NOT WHAT WAS PRESSED. `data-failure-banner-state` is the attribute every DOM
+  // cell reads to say which of the two claims it is making, so it has to describe the TEXT on the
+  // page. Derived from `open` alone it was a constant on mount — `truncated` for every input,
+  // including a summary that was never over the budget and a summary whose truncation had stopped
+  // running entirely — and a cell that asserted `truncated` there was asserting `useState(false)`.
+  // A banner showing all of its summary is `full` whether the reader got there by pressing the
+  // chevron or by the sentence being short enough not to need one.
+  const showingFull = open || !preview.isTruncated
+
+  const announce = (outcome: Exclude<CopyStatus, "idle">) => {
+    setCopyStatus(outcome)
+    setTimeout(() => setCopyStatus("idle"), 2000)
+  }
+
+  // THE SAME EXPRESSION AS THE RENDER, SPELLED OUT RATHER THAN HOISTED, so the clipboard carries
+  // exactly what the page renders and a change to one site that the other does not mirror shows in
+  // review.
+  //
+  // THE CHECK MARK MEANS THE WRITE RESOLVED, AND NOTHING ELSE. `writeText` returns a promise that
+  // rejects with `NotAllowedError` whenever the document is not focused or the permission was
+  // denied — a routine condition, not an exotic one — and the previous spelling neither awaited nor
+  // caught it: an unhandled rejection, plus a green tick telling a reader the failure summary was
+  // on their clipboard when it was not. `navigator.clipboard` is also `undefined` outside a secure
+  // context, which the repo's Docker release reaches over any non-loopback hostname, and the bare
+  // property access threw a `TypeError` inside the click handler. Optional-chained, awaited and
+  // caught — `artifact-drawer.tsx`'s `copyText` idiom, with the outcome kept rather than dropped.
+  const handleCopy = () => {
+    const written = navigator.clipboard?.writeText(open ? summary : preview.text)
+    if (written === undefined) {
+      announce("failed")
+      return
+    }
+    void written.then(() => { announce("copied") }, () => { announce("failed") })
+  }
+
+  return (
+    <div
+      data-failure-banner
+      data-failure-banner-state={showingFull ? 'full' : 'truncated'}
+      className="mx-2 mt-2 rounded-[2px] border border-red-500/20 bg-red-500/5 px-3 py-2 shrink-0"
+    >
+      <div className="flex items-start gap-2">
+        <AlertCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
+        <span
+          data-failure-banner-text
+          className="flex-1 text-sm text-foreground/80 select-text"
+        >
+          {open ? summary : preview.text}
+        </span>
+        <button
+          data-failure-banner-copy
+          data-copy-status={copyStatus}
+          onClick={handleCopy}
+          className="shrink-0 mt-0.5 p-0.5 rounded-sm hover:bg-red-500/10 transition-colors"
+          aria-label="Copy failure summary"
+          title="Copy failure summary"
+        >
+          {copyStatus === "copied"
+            ? <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+            : <Copy
+                className={cn(
+                  "h-3.5 w-3.5",
+                  copyStatus === "failed" ? "text-red-400" : "text-muted-foreground",
+                )}
+                aria-hidden="true"
+              />
+          }
+        </button>
+        {/*
+          THE OUTCOME, SAID OUT LOUD. `role="status"` is an implicit `aria-live="polite"`; both are
+          written because the pair is what assistive technology has historically needed, and an
+          empty node that is present from first paint is what makes the announcement fire — a region
+          inserted at the same moment its text appears is frequently not announced at all.
+
+          OUTSIDE `[data-failure-banner-text]` DELIBERATELY. That element's `textContent` is the
+          sentence the clipboard is measured against by the conformance cell (3g); a confirmation
+          message inside it would make the page's own text disagree with the copy of it.
+        */}
+        <span
+          data-failure-banner-copy-status
+          role="status"
+          aria-live="polite"
+          className="sr-only"
+        >
+          {COPY_ANNOUNCEMENT[copyStatus]}
+        </span>
+        {preview.isTruncated && (
+          <button
+            data-failure-banner-toggle
+            aria-label={open ? "Show less" : "Show full failure summary"}
+            onClick={() => setOpen(o => !o)}
+            className="shrink-0 mt-0.5 p-0.5 rounded-sm hover:bg-red-500/10 transition-colors"
+          >
+            <ChevronRight
+              aria-hidden="true"
+              className={cn(
+                "h-3.5 w-3.5 text-muted-foreground transition-transform",
+                open && "rotate-90"
+              )}
+            />
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}

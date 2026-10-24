@@ -1,0 +1,8 @@
+# Three steps, deliberately distinguishable by text, so a mis-resolved second pointer is visible.
+name: Sign in on the local account form
+test-id: t_hot-augh-had-bucket-more-hein-shed-shirt-appear-encode
+target: local-form
+steps:
+  - Type "{{env:PROBE_USER}}" into the Username field
+  - Click the Submit button
+  - Verify the page says "Received!"

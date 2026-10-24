@@ -13,6 +13,7 @@ import { FaGithub } from 'react-icons/fa'
 
 import { Button } from '@/components/ui/button'
 import { fetchTestFiles } from '@/lib/api'
+import { routes } from '@/lib/routes'
 import {
   PRODUCT_TOUR_AUTO_START_PATHS,
   getFirstProductTourStep,
@@ -216,7 +217,7 @@ export function ProductTourProvider({ children, pathname, hideHeader }: ProductT
       return
     }
 
-    if (hideHeader || !PRODUCT_TOUR_AUTO_START_PATHS.includes(pathname as never)) return
+    if (hideHeader || !isProductTourAutoStartPath(pathname)) return
 
     persistActiveStep(getFirstProductTourStep(runtimeContext), new Date().toISOString())
     setAutoStartChecked(true)
@@ -461,6 +462,12 @@ const productTourCardStyle: CSSProperties = {
   right: 16,
   bottom: 16,
   width: 'min(360px, calc(100vw - 32px))',
+}
+
+/** Config lives at /config/{tab}, so it matches by prefix; the other pages match exactly. */
+function isProductTourAutoStartPath(pathname: string): boolean {
+  if (pathname === routes.config || pathname.startsWith(`${routes.config}/`)) return true
+  return (PRODUCT_TOUR_AUTO_START_PATHS as readonly string[]).includes(pathname)
 }
 
 function shouldPersistProductTourRoute(step: ProductTourStep): boolean {

@@ -14,12 +14,10 @@ interface TestRunOptionsPopoverProps {
   selectedCount: number
   hiddenCount: number
   useCache: boolean
-  useMemory: boolean
   browserStackAvailable: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
   onUseCacheChange: (checked: boolean) => void
-  onUseMemoryChange: (checked: boolean) => void
   onRunLocal: () => void
   onRunBrowserStack: () => void
   disabled?: boolean
@@ -29,12 +27,10 @@ export function TestRunOptionsPopover({
   selectedCount,
   hiddenCount,
   useCache,
-  useMemory,
   browserStackAvailable,
   open,
   onOpenChange,
   onUseCacheChange,
-  onUseMemoryChange,
   onRunLocal,
   onRunBrowserStack,
   disabled = false,
@@ -78,14 +74,6 @@ export function TestRunOptionsPopover({
             <Checkbox
               checked={useCache}
               onCheckedChange={(checked) => onUseCacheChange(checked === true)}
-              disabled={disabled}
-            />
-          </label>
-          <label className="flex items-center justify-between gap-3 text-sm">
-            <span>Use memory</span>
-            <Checkbox
-              checked={useMemory}
-              onCheckedChange={(checked) => onUseMemoryChange(checked === true)}
               disabled={disabled}
             />
           </label>

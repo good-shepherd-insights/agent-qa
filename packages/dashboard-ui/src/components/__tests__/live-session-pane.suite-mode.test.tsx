@@ -23,10 +23,6 @@ vi.mock('@/components/editor/aria-panel', () => ({
   EditorAriaPanel: () => <div data-testid="aria-panel" />,
 }))
 
-vi.mock('@/components/editor/screencast-viewer', () => ({
-  ScreencastViewer: () => <div data-testid="screencast-viewer" />,
-}))
-
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children }: { children: ReactElement | ReactElement[] }) => <div>{children}</div>,
   ResizablePanel: ({ children }: { children: ReactElement | ReactElement[] }) => <div>{children}</div>,
@@ -82,7 +78,7 @@ const selectedTest: EditorTest = {
       networkLogs: [],
       variableSnapshot: null,
       originalStepName: null,
-      subActionsData: null,
+      liveSubActions: null,
       executionLogs: [],
       executionGeneration: 0,
     },
@@ -100,14 +96,12 @@ const selectedTest: EditorTest = {
       networkLogs: [],
       variableSnapshot: null,
       originalStepName: null,
-      subActionsData: [{
+      liveSubActions: [{
         index: 0,
         observation: 'Checkout dialog visible',
         reasoning: 'Confirmation control is available',
         plannedAction: null,
         result: 'success',
-        screenStateBefore: '',
-        cached: false,
       }],
       executionLogs: [],
       executionGeneration: 0,
@@ -131,7 +125,7 @@ function renderPane(overrides: Partial<React.ComponentProps<typeof LiveSessionPa
       targetName="web"
       targetLabel="https://example.com"
       platform="web"
-      screenshot={null}
+      liveSessionId={null}
       currentUrl="https://example.com"
       pendingNavigation={null}
       steps={[]}
@@ -241,3 +235,20 @@ describe('LiveSessionPane suite mode', () => {
     expect(container.textContent).not.toContain('Run All Tests')
   })
 })
+
+describe('LiveSessionPane suite-mode live header (428 D-05)', () => {
+  it('EDITOR-HEADER-MINIMAL: no "Running {test}" label and no session number in suite mode', () => {
+    renderPane({
+      tests: [{ ...selectedTest, status: 'running' }],
+      liveSessionNumber: 4,
+    })
+
+    const header = container.querySelector('[data-live-header]')
+    expect(header).not.toBeNull()
+    const text = header?.textContent ?? ''
+    expect(text).toContain('web')
+    expect(text).not.toContain('Running Checkout flow')
+    expect(text).not.toContain('Session #')
+  })
+})
+

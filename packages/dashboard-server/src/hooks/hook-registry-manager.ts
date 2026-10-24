@@ -6,7 +6,7 @@ import type { AgentQaConfig, HooksFileConfig } from '@vostride/agent-qa-core'
 import { generateHookId } from '@vostride/agent-qa-ids'
 import { parse as parseYaml, parseDocument } from 'yaml'
 
-import type { ConfigManager } from '../config/config-manager.js'
+import { readConfigValues, type ConfigManager } from '../config/config-manager.js'
 import type {
   HookCatalogResponse,
   HookCatalogRow,
@@ -796,7 +796,7 @@ export class HookRegistryManager {
   }
 
   private async resolveRegistryLocation(): Promise<HookRegistryLocation> {
-    const config = await this.configManager.read() as AgentQaConfig
+    const config = await readConfigValues(this.configManager) as AgentQaConfig
     const workspacePaths = resolveWorkspacePaths({ config, configPath: this.configPath })
     const configuredPath = workspacePaths.hooksFile.configuredPath
     const resolvedFilePath = workspacePaths.hooksFile.absolutePath

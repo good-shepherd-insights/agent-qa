@@ -18,6 +18,15 @@ import {
   writeProductTourStateCookie,
   type ProductTourState,
 } from '@/lib/product-tour-state'
+import { TOUR_LLM_SETUP_BODY } from '@/lib/config-copy'
+import { CONFIG_TABS } from '@/lib/config-tabs'
+import {
+  foundationProductTourSteps,
+  getKnownProductTourStepIds,
+  getProductTourStep,
+  resolveProductTourStepRoute,
+} from '@/lib/product-tour-steps'
+import { routes } from '@/lib/routes'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -32,10 +41,6 @@ const appHarness = vi.hoisted(() => ({
 vi.mock('@/lib/api', () => ({
   fetchAppMetadata: appHarness.fetchAppMetadata,
   fetchTestFiles: appHarness.fetchTestFiles,
-}))
-
-vi.mock('@/lib/analytics', () => ({
-  trackDashboardOpenedOnce: vi.fn(),
 }))
 
 vi.mock('@/pages/runs', () => ({
@@ -63,13 +68,6 @@ vi.mock('@/pages/suites', () => ({
   default: () => (
     <div data-testid="suites-page">
       <div data-tour-id="tour-suites-table">Suites table</div>
-    </div>
-  ),
-}))
-vi.mock('@/pages/memory', () => ({
-  default: () => (
-    <div data-testid="memory-page">
-      <div data-tour-id="tour-memory-table">Memory table</div>
     </div>
   ),
 }))
@@ -104,9 +102,6 @@ vi.mock('@/pages/suite-editor', () => ({
 vi.mock('@/pages/suite-viewer', () => ({
   default: () => <div data-testid="suite-viewer-page">Suite Viewer Page</div>,
 }))
-vi.mock('@/pages/memory-product', () => ({
-  default: () => <div data-testid="memory-product-page">Memory Product Page</div>,
-}))
 vi.mock('@/pages/insights', () => ({
   default: () => <div data-testid="insights-page">Insights Page</div>,
 }))
@@ -122,6 +117,7 @@ vi.mock('@/components/ui/sidebar', () => ({
     </section>
   ),
 }))
+vi.mock('@/components/mobile-navigation-trigger', () => ({ MobileNavigationTrigger: () => null }))
 vi.mock('@/components/app-sidebar', () => ({
   AppSidebar: () => (
     <aside data-testid="app-sidebar">
@@ -156,7 +152,7 @@ vi.mock('@/components/page-skeleton', () => ({
   EditorSkeleton: () => <div data-testid="editor-skeleton" />,
 }))
 
-const allowedRoutes = ['/runs', '/tests', '/hooks', '/suites', '/memory', '/config'] as const
+const allowedRoutes = ['/runs', '/tests', '/hooks', '/suites', '/config'] as const
 const excludedRoutes = [
   '/runs/r_123',
   '/runs/r_123/live',
@@ -525,6 +521,19 @@ async function advanceTourToRunDetail() {
   await clickButton('Next')
 }
 
+describe('product tour step roster', () => {
+  it('TOUR-HAS-NO-CHAT-STEP: no product-tour step routes to or names a chat surface', () => {
+    const contexts = [{}, { exampleTestId: 't_example' }]
+
+    for (const context of contexts) {
+      for (const step of foundationProductTourSteps) {
+        expect(resolveProductTourStepRoute(step, context), `${step.id} under ${JSON.stringify(context)}`).not.toBe('/chat')
+      }
+    }
+    expect(getKnownProductTourStepIds().filter((id) => id.toLowerCase().includes('chat'))).toEqual([])
+  })
+})
+
 describe('AppLayout product tour integration', () => {
   it('auto-starts the intro card on /runs with no cookie', async () => {
     await renderAppAt('/runs')
@@ -547,13 +556,31 @@ describe('AppLayout product tour integration', () => {
 
     await clickButton('Start tour')
 
-    expect(window.location.pathname).toBe('/config')
-    expect(window.location.search).toBe('?bucket=registry&item=llms')
+    expect(window.location.pathname).toBe('/config/models')
+    expect(window.location.search).toBe('')
     expect(container?.querySelector('[data-testid="config-page"]')).not.toBeNull()
     expect(readProductTourStateCookie()).toMatchObject({
       activeStepId: 'llm-setup',
-      activeRoute: '/config?bucket=registry&item=llms',
+      activeRoute: '/config/models',
     })
+  })
+
+  it('TOUR-CONFIG-STEP-ON-MODELS: the config step lands on /config/models without a redirect bounce', async () => {
+    await renderAppAt('/tests')
+
+    for (let index = 0; index < 6; index += 1) {
+      await clickButton(index === 0 ? 'Start tour' : 'Next')
+    }
+
+    expect(textContent()).toContain('Config controls local setup')
+    expect(window.location.pathname).toBe('/config/models')
+    expect(window.location.search).toBe('')
+    expect(container?.querySelector('[data-testid="config-page"]')).not.toBeNull()
+    expect(readProductTourStateCookie()).toMatchObject({
+      activeStepId: 'config',
+      activeRoute: '/config/models',
+    })
+    expect(resolveProductTourStepRoute(getProductTourStep('config')!)).toBe(routes.configTab('models'))
   })
 
   it('renders bottom-right step controls when a routed anchor target is missing', async () => {
@@ -598,6 +625,23 @@ describe('ProductTourProvider auto-start behavior', () => {
 
   it('does not auto-start when hideHeader is true', async () => {
     await renderTour({ path: '/runs', hideHeader: true })
+
+    expectNoDialog()
+  })
+
+  it.each(CONFIG_TABS.map((tab) => `/config/${tab}`))(
+    'TOUR-AUTO-START-CONFIG-TABS: auto-starts the intro step on %s',
+    async (path) => {
+      await renderTour({ path })
+
+      expect(dialog()).not.toBeNull()
+      expect(textContent()).toContain('Welcome to agent-qa')
+      expect(container?.querySelector('[data-testid="active-step"]')?.textContent).toBe('intro')
+    },
+  )
+
+  it('TOUR-AUTO-START-CONFIG-TABS: only /config and /config/* match, not a path that merely starts with config', async () => {
+    await renderTour({ path: '/configuration' })
 
     expectNoDialog()
   })
@@ -735,10 +779,10 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
 
     await clickButton('Start tour')
 
-    expect(container?.querySelector('[data-testid="location"]')?.textContent).toBe('/config')
+    expect(container?.querySelector('[data-testid="location"]')?.textContent).toBe('/config/models')
     expect(readProductTourStateCookie()).toMatchObject({
       activeStepId: 'llm-setup',
-      activeRoute: '/config?bucket=registry&item=llms',
+      activeRoute: '/config/models',
     })
 
     await clickButton('Next')
@@ -753,8 +797,20 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
 
     expect(readProductTourStateCookie()).toMatchObject({
       activeStepId: 'llm-setup',
-      activeRoute: '/config?bucket=registry&item=llms',
+      activeRoute: '/config/models',
     })
+  })
+
+  it('TOUR-LLM-SETUP-ON-MODELS: the LLM step lands on Models with the no-save copy', async () => {
+    await renderTour({ path: '/tests' })
+
+    await clickButton('Start tour')
+
+    expect(container?.querySelector('[data-testid="location"]')?.textContent).toBe('/config/models')
+    expect(textContent()).toContain('Configure your LLM first')
+    expect(textContent()).toContain(TOUR_LLM_SETUP_BODY)
+    expect(textContent()).not.toContain('save the config')
+    expect(resolveProductTourStepRoute(getProductTourStep('llm-setup')!)).toBe(routes.configTab('models'))
   })
 
   it('renders bottom-right step copy for missing anchors', async () => {
@@ -881,7 +937,6 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
       ),
     })
     await clickButton('Start tour')
-    await clickButton('Next')
     await clickButton('Next')
     await clickButton('Next')
     await clickButton('Next')
@@ -1257,7 +1312,6 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
       ),
     })
     await clickButton('Start tour')
-    await clickButton('Next')
     await clickButton('Next')
     await clickButton('Next')
     await clickButton('Next')

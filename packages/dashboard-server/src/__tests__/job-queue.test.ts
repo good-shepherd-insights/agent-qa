@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { cpus } from 'node:os'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { cpus, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { isCanonicalRunId } from '@vostride/agent-qa-ids'
 import { DashboardDatabase } from '../db/database.js'
 import { JobQueue } from '../queue/job-queue.js'
@@ -129,7 +131,7 @@ describe('JobQueue', () => {
     it('cancels a pending run and sets status to cancelled', () => {
       const runId = queue.enqueue({ name: 'Cancel Me' })
       const result = queue.cancel(runId)
-      expect(result).toBe(true)
+      expect(result).toEqual({ kind: 'cancelled' })
 
       const run = db.getRun(runId)
       expect(run!.status).toBe('cancelled')
@@ -142,55 +144,58 @@ describe('JobQueue', () => {
       })
     })
 
-    it('cancels a running run and emits cancel-running event', () => {
-      const runId = queue.enqueue({ name: 'Running Job' })
-      queue.processNext() // transition to running
+    // 2026-10-17 (444-06, D-01, D-11): the cell that pinned the `cancel-running` event is deleted
+    // with the event; C444-CANCEL-REQUEST in 444-cancel-request.test.ts pins the stop request.
 
-      const cancelSpy = vi.fn()
-      queue.on('cancel-running', cancelSpy)
-
-      const result = queue.cancel(runId)
-      expect(result).toBe(true)
-
-      const run = db.getRun(runId)
-      expect(run!.status).toBe('cancelled')
-      expect(cancelSpy).toHaveBeenCalledWith(runId)
-    })
-
-    it('cancels pending and running children when a running parent is cancelled', () => {
-      const parentId = queue.enqueue({ name: 'Retry Parent' })
+    // 2026-08-24 (402-09, D-11): the cell that stood here asserted the child-cancellation fan-out.
+    // The fan-out is deleted with the model that minted its children; this is the same claim with
+    // the opposite sign.
+    //
+    // 2026-08-27 (405-07, D-02): and it no longer seeds LINKED rows, because the link is gone. The
+    // 402-09 version wrote two rows carrying the cancelled run's id in a parent column, to prove
+    // the cancel reached neither. That column and its reader were deleted by this plan's census —
+    // an operator's historical database is refused by version now, not carried — so the claim is
+    // made over two unrelated in-flight rows: a cancel reaches the run it names and nothing else.
+    it('leaves every other in-flight run alone when one run is cancelled', () => {
+      const asked: string[] = []
+      queue.stop()
+      queue = new JobQueue({
+        db,
+        requestStop: (runId) => {
+          asked.push(runId)
+          return true
+        },
+      })
+      const parentId = queue.enqueue({ name: 'Historical Suite' })
       queue.processNext()
       const startedAt = '2026-05-02T10:00:00.000Z'
       const runningChildId = db.insertRun({
-        name: 'Attempt 1',
+        name: 'Member 1',
         status: 'running',
         duration: 0,
         startedAt,
         endedAt: startedAt,
-        parentRunId: parentId,
-        attemptNumber: 1,
-        maxRetries: 2,
       })
       const pendingChildId = db.insertRun({
-        name: 'Attempt 2',
+        name: 'Member 2',
         status: 'pending',
         duration: 0,
         startedAt,
         endedAt: startedAt,
-        parentRunId: parentId,
-        attemptNumber: 2,
-        maxRetries: 2,
       })
       db.insertRunArtifact({ runId: runningChildId, kind: 'test', payload: { runtime: { status: 'running' } } })
       db.insertRunArtifact({ runId: pendingChildId, kind: 'test', payload: { runtime: { status: 'pending' } } })
 
-      expect(queue.cancel(parentId)).toBe(true)
+      expect(queue.cancel(parentId)).toEqual({ kind: 'stop-requested' })
 
-      expect(db.getRun(parentId)?.status).toBe('cancelled')
-      expect(db.getRun(runningChildId)?.status).toBe('cancelled')
-      expect(db.getRun(pendingChildId)?.status).toBe('cancelled')
-      expect(db.getRunArtifact(runningChildId)?.finalizedAt).toBeTruthy()
-      expect(db.getRunArtifact(pendingChildId)?.finalizedAt).toBeTruthy()
+      // The stop request reaches the run it names, which keeps its row until its own verdict...
+      expect(asked).toEqual([parentId])
+      expect(db.getRun(parentId)?.status).toBe('running')
+      // ...and reaches nothing else. The rows are still there, unchanged and still readable.
+      expect(db.getRun(runningChildId)?.status).toBe('running')
+      expect(db.getRun(pendingChildId)?.status).toBe('pending')
+      expect(db.getRunArtifact(runningChildId)?.finalizedAt).toBeNull()
+      expect(db.getRunArtifact(pendingChildId)?.finalizedAt).toBeNull()
     })
 
     it('returns false for a completed run', () => {
@@ -199,12 +204,13 @@ describe('JobQueue', () => {
       db.updateRunStatus(runId, 'passed') // transition to completed
 
       const result = queue.cancel(runId)
-      expect(result).toBe(false)
+      expect(result).toEqual({ kind: 'finished', status: 'passed' })
+      expect(db.getRun(runId)?.status).toBe('passed')
     })
 
     it('returns false for a non-existent run', () => {
       const result = queue.cancel('non-existent-id')
-      expect(result).toBe(false)
+      expect(result).toEqual({ kind: 'not-cancellable' })
     })
   })
 
@@ -398,5 +404,145 @@ describe('JobQueue', () => {
 
       expect(cQueue.getActiveCount()).toBe(0)
     })
+  })
+})
+
+// ---- G-401-18-CR01 (401-23, T-401-G24): the belt at the one writer both doors go through -------
+//
+// The PRIMARY control is the `/api/queue/enqueue` allowlist, which does not admit `confirmScope` as
+// a client-writable key at all. Until 432-14 the queue also refused a confirm scope this server did
+// not mint, because a scope named which browser a run's question was delivered to.
+//
+// RE-SPELLED 2026-10-01 (432-14, D-14): the question, the dialog and every reader of the scope are
+// deleted, so the queue attaches no meaning to the key. The belt's surviving claims are carried
+// where the value could still leave or be planted: the enqueue route refuses every client-supplied
+// metadata key (`routes.test.ts`), and every run-reading response strips it off a row written
+// before 432-14 (`routes.runs.test.ts`). What is pinned here is that the queue no longer interprets
+// it: the row is written once, whole, with no throw.
+
+// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-30): was 'JobQueue refuses a confirm scope this
+// server did not mint'.
+describe('JobQueue no longer interprets a retired confirm-scope key', () => {
+  it('a retired confirm-scope key no longer throws: the row and its artifact are written once', () => {
+    const before = db.getRuns({ limit: 100 }).length
+    for (const value of ['chat-1730000000-abc', { toString: () => 'run-trigger:x' }, 'run-trigger:2f1d0f2a-6f1e-4a2b-9c3d-5e6f70819200']) {
+      const runId = queue.enqueue({ name: 'retired', metadata: { ['confirm' + 'Scope']: value } })
+      expect(db.getRun(runId)).toBeDefined()
+      expect(db.getRunArtifact(runId)).not.toBeNull()
+    }
+    expect(db.getRuns({ limit: 100 })).toHaveLength(before + 3)
+  })
+
+  it('a run with no confirmScope at all is unaffected — the no-op control', () => {
+    const runId = queue.enqueue({ name: 'plain', metadata: { args: ['/w/tests/plain.yaml'] } })
+    expect(db.getRun(runId)?.metadata).toEqual({ args: ['/w/tests/plain.yaml'] })
+  })
+})
+
+describe('C443-QUEUE-FLIP', () => {
+  const SELF = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
+  const OTHER = { pid: 5151, incarnation: 'proc-starttime:9', host: 'h' }
+  const inertProbe = { isAlive: () => true, incarnationOf: () => undefined }
+  let dir: string
+  let own: DashboardDatabase
+  let other: DashboardDatabase
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'agent-qa-443-queue-flip-'))
+    const dbPath = join(dir, 'runs.db')
+    own = new DashboardDatabase({ dbPath, runOwnership: { self: SELF, probe: inertProbe } })
+    other = new DashboardDatabase({ dbPath, runOwnership: { self: OTHER, probe: inertProbe } })
+  })
+
+  afterEach(() => {
+    own.close()
+    other.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function statusAndOwner(id: string): string {
+    return JSON.stringify(own['db'].prepare(
+      'SELECT status, owner_pid, owner_incarnation, owner_host FROM runs WHERE id = ?',
+    ).all(id))
+  }
+
+  function flipRefusedFor(victim: string): DashboardDatabase {
+    return new Proxy(own, {
+      get(target, prop) {
+        if (prop === 'updateRunStatus') {
+          return (id: string, status: string) => {
+            if (id === victim && status === 'running') other.updateRunStatus(id, 'cancelled')
+            return target.updateRunStatus(id, status)
+          }
+        }
+        const value = Reflect.get(target, prop, target)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+  }
+
+  it('the flip moves a pending row to running and stamps it', () => {
+    const id = own.insertPendingRun({ name: 'Queued' })
+    expect(own.readRunOwner(id)).toBeUndefined()
+
+    expect(own.updateRunStatus(id, 'running')).toBe(true)
+
+    expect(own.getRun(id)?.status).toBe('running')
+    expect(own.readRunOwner(id)).toEqual(SELF)
+    expect(own.isOwnStamp(id, SELF)).toBe(true)
+  })
+
+  it('the flip refuses a row that is not pending', () => {
+    const startedAt = '2026-10-17T00:00:00.000Z'
+    const finished = { duration: 1, startedAt, endedAt: startedAt }
+    const rows = [
+      other.insertRun({ name: 'Owned elsewhere', status: 'running', duration: 0, startedAt, endedAt: startedAt }),
+      own.insertRun({ name: 'Passed', status: 'passed', ...finished }),
+      own.insertRun({ name: 'Cancelled', status: 'cancelled', ...finished }),
+    ]
+    for (const id of rows) {
+      const before = statusAndOwner(id)
+      expect(JSON.parse(before)).toHaveLength(1)
+
+      expect(own.updateRunStatus(id, 'running')).toBe(false)
+
+      expect(statusAndOwner(id)).toBe(before)
+      expect(own.isOwnStamp(id, SELF)).toBe(false)
+    }
+    expect(own.readRunOwner(rows[0])).toEqual(OTHER)
+  })
+
+  it('the queue does not dispatch a row it could not flip', () => {
+    const victim = own.insertPendingRun({ name: 'Cancelled before the flip' })
+    const queue = new JobQueue({ db: flipRefusedFor(victim), concurrency: 2 })
+    const execute = vi.fn()
+    queue.on('execute', execute)
+
+    queue.processNext()
+
+    expect(execute).not.toHaveBeenCalled()
+    expect(queue.getActiveCount()).toBe(0)
+    expect(own.getRun(victim)?.status).toBe('cancelled')
+    expect(own.readRunOwner(victim)).toBeUndefined()
+    queue.stop()
+  })
+
+  it('the slot a refused flip reserved is free for the next row', () => {
+    const victim = own.insertPendingRun({ name: 'Refused', platform: 'android', priority: 5 })
+    const next = own.insertPendingRun({ name: 'Next', platform: 'android' })
+    const queue = new JobQueue({ db: flipRefusedFor(victim), concurrency: 2 })
+    const executed: string[] = []
+    queue.on('execute', (run) => executed.push(run.id))
+
+    queue.processNext()
+
+    expect(executed).toEqual([next])
+    expect(queue.getActiveCount()).toBe(1)
+    expect(own.getRun(next)?.status).toBe('running')
+    queue.onSlotFreed(victim)
+    expect(queue.getActiveCount()).toBe(1)
+    queue.onSlotFreed(next)
+    expect(queue.getActiveCount()).toBe(0)
+    queue.stop()
   })
 })

@@ -7,7 +7,6 @@ export type AgentQaUpdateNoticeReporterSelection = {
   console: boolean
   stdoutLive: boolean
   junit?: boolean
-  dashboard?: boolean
 }
 
 export type AgentQaUpdateNoticeContext = {

@@ -5,12 +5,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { ExecutionLogEntry, LiveExecutionLogEntry } from "@/lib/api"
 import type { DisplayStep } from "@/lib/display-step"
 import { cn } from "@/lib/utils"
+import { useEvidenceRecords } from '@/hooks/use-evidence-records'
+import { EVIDENCE_COPY, resolveEvidenceView } from '@/lib/evidence-state-view'
+import { EvidenceLoading, EvidenceState } from './evidence-state'
 
 interface TabConsoleProps {
-  step: Pick<DisplayStep, "stepOrder" | "displayStepOrder" | "consoleLogs">
+  step: Pick<DisplayStep, 'stepOrder' | 'displayStepOrder' | 'consoleLogs' | 'testIndex' | 'stepIndex' | 'evidence'> | null
   allSteps: Array<Pick<DisplayStep, "stepOrder" | "displayStepOrder" | "consoleLogs">>
   executionLogs?: Array<ExecutionLogEntry | LiveExecutionLogEntry>
   isHookStep?: boolean
+  runId?: string | null
+  selection?: Parameters<typeof resolveEvidenceView>[0]['selection']
+  evidenceSteps?: DisplayStep[]
+  onSelectStep?: (stepId: string) => void
 }
 
 function levelTextColor(level: string): string {
@@ -35,8 +42,7 @@ function phaseColor(phase: string): string {
 const LOG_LEVELS = ['error', 'warn', 'info', 'log', 'debug'] as const
 
 function HighlightMatch({ text, query }: { text: string; query: string }) {
-  if (!query) return <>{text}</>
-  const idx = text.toLowerCase().indexOf(query.toLowerCase())
+  const idx = query ? text.toLowerCase().indexOf(query.toLowerCase()) : -1
   if (idx === -1) return <>{text}</>
   return (
     <>
@@ -47,7 +53,32 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
   )
 }
 
-export function TabConsole({ step, allSteps, executionLogs, isHookStep }: TabConsoleProps) {
+export function TabConsole({ step, allSteps, executionLogs, isHookStep, runId, selection = step ? 'step' : 'none', evidenceSteps = [], onSelectStep }: TabConsoleProps) {
+  const hasHookOutput = Boolean(isHookStep && executionLogs?.length)
+  const entry = step?.evidence?.console
+  const { read, retry } = useEvidenceRecords(step?.testIndex !== undefined && step.stepIndex !== undefined
+    ? { runId: runId ?? '', testIndex: step.testIndex, stepIndex: step.stepIndex, kind: 'console' } : null,
+  !hasHookOutput && entry?.state === 'present' && !entry.ref.evidenceIncomplete && (selection === 'step' || selection === 'sub-action'))
+  if (hasHookOutput) return <ConsoleRecords step={{ stepOrder: 0, displayStepOrder: 0 }} allSteps={[]} executionLogs={executionLogs} isHookStep />
+  if (step && step.testIndex === undefined && (selection === 'step' || selection === 'sub-action')) return <ConsoleRecords step={step} allSteps={allSteps} />
+  const memberSteps = evidenceSteps.filter(s => s.testIndex === step?.testIndex && s.stepIndex !== undefined)
+    .map(s => ({ ...s, stepIndex: s.stepIndex! }))
+  const view = resolveEvidenceView({ kind: 'console', selection, entry, read,
+    elsewhere: step?.stepIndex === undefined ? undefined : { steps: memberSteps, currentStepIndex: step.stepIndex } })
+  if (view.kind === 'loading') return <EvidenceLoading kind="console" />
+  if (view.kind === 'state') {
+    const action = view.action
+    return <EvidenceState {...view} kind="console"
+      explanation={action?.type === 'step' ? `${view.explanation} ${action.description}` : view.explanation}
+      actionLabel={action?.label} onAction={action?.type === 'retry' ? retry : action?.type === 'step' && onSelectStep
+        ? () => { const target = memberSteps.find(s => s.stepIndex === action.stepIndex); if (target) onSelectStep(target.id) } : undefined} />
+  }
+  if (view.document.kind !== 'console' || !step) return null
+  const selected = { ...step, consoleLogs: view.document.records }
+  return <ConsoleRecords key={`${runId}:${step.testIndex}:${step.stepIndex}`} step={selected} allSteps={[selected]} />
+}
+
+function ConsoleRecords({ step, allSteps, executionLogs, isHookStep }: Omit<TabConsoleProps, 'step'> & { step: NonNullable<TabConsoleProps['step']> }) {
   const accumulatedLogs = useMemo(() => {
     const currentOrder = step.displayStepOrder ?? step.stepOrder
     const logs: Array<{ level: string; text: string; location?: { url: string; lineNumber: number; columnNumber: number }; timestamp: number; isCurrent: boolean }> = []
@@ -91,11 +122,7 @@ export function TabConsole({ step, allSteps, executionLogs, isHookStep }: TabCon
   const hasConsoleLogs = accumulatedLogs.length > 0
 
   if (!hasHookOutput && !hasConsoleLogs) {
-    return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm py-12">
-        No console output captured for this step
-      </div>
-    )
+    return <EvidenceState kind="console" state="empty" {...EVIDENCE_COPY.console.empty} />
   }
 
   return (

@@ -1,0 +1,72 @@
+{
+  "name": "@vostride/agent-qa-knowledge-local",
+  "version": "0.2.1",
+  "private": false,
+  "description": "StorageImplementation shell for the future local memidex knowledge store in agent-qa.",
+  "keywords": [
+    "agent-qa",
+    "testing",
+    "agent",
+    "ports"
+  ],
+  "license": "SEE LICENSE IN LICENSE.md",
+  "homepage": "https://github.com/vostride/agent-qa#readme",
+  "bugs": {
+    "url": "https://github.com/vostride/agent-qa/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vostride/agent-qa.git",
+    "directory": "packages/knowledge-local"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./reader": {
+      "types": "./dist/reader.d.ts",
+      "import": "./dist/reader.js",
+      "require": "./dist/reader.cjs"
+    }
+  },
+  "files": [
+    "assets",
+    "dist",
+    "LICENSE.md",
+    "NOTICE.md"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@huggingface/tokenizers": "0.1.3",
+    "@huggingface/transformers": "4.2.0",
+    "@vostride/agent-qa-agent": "workspace:*",
+    "@vostride/agent-qa-runner": "workspace:*",
+    "@vostride/agent-qa-safety": "workspace:*",
+    "@vostride/agent-qa-schema": "workspace:*",
+    "sqlite-vec": "0.1.9",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "~24.12.2",
+    "@vostride/agent-qa-arch": "workspace:*",
+    "tsup": "~8.5.1",
+    "typescript": "~6.0.3",
+    "vitest": "~4.1.5"
+  }
+}

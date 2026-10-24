@@ -1,0 +1,284 @@
+name: CI
+
+# Continuous verification on every push and PR.
+#
+# Why this file exists: until 2026-08-02 every workflow in this repo was
+# `workflow_dispatch:` only, so nothing ran automatically and `Release` — the only
+# workflow containing `pnpm test` — had never been run once. Every "suite green"
+# claim rested on a local developer run. That also quietly weakened the phase
+# prohibition sets, where a `test`-tier statement asserts "a suite enforces this",
+# which is only true if something runs the suite. (WINDOWS #50.)
+
+on:
+  push:
+    branches: [main, version-0.2]
+  pull_request:
+    branches: [main, version-0.2]
+
+permissions:
+  contents: read
+
+# A newer push to the same ref supersedes an in-flight run. Release workflows are
+# deliberately NOT in this group — they use their own non-cancelling concurrency.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  workspace:
+    name: Full workspace (ubuntu, ${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: cli-1
+            filter: --filter=agent-qa
+            vitest: -- --shard=1/3
+          - group: cli-2
+            filter: --filter=agent-qa
+            vitest: -- --shard=2/3
+          - group: cli-3
+            filter: --filter=agent-qa
+            vitest: -- --shard=3/3
+          - group: knowledge-local-1
+            filter: --filter=@vostride/agent-qa-knowledge-local
+            vitest: -- --shard=1/2
+          - group: knowledge-local-2
+            filter: --filter=@vostride/agent-qa-knowledge-local
+            vitest: -- --shard=2/2
+          - group: web
+            filter: --filter=@vostride/agent-qa-web
+          - group: dashboard-ui
+            filter: --filter=@vostride/agent-qa-dashboard-ui
+          - group: eval-local-dashboard
+            filter: --filter=@vostride/agent-qa-eval-local --filter=@vostride/agent-qa-dashboard
+          - group: agent-local-runner
+            filter: --filter=@vostride/agent-qa-agent-local --filter=@vostride/agent-qa-runner
+          - group: agent-eval-mcp
+            filter: --filter=@vostride/agent-qa-agent --filter=@vostride/agent-qa-eval --filter=@vostride/agent-qa-mcp
+          - group: rest
+            filter: --filter=!agent-qa --filter=!@vostride/agent-qa-knowledge-local --filter=!@vostride/agent-qa-web --filter=!@vostride/agent-qa-dashboard-ui --filter=!@vostride/agent-qa-eval-local --filter=!@vostride/agent-qa-dashboard --filter=!@vostride/agent-qa-agent-local --filter=!@vostride/agent-qa-runner --filter=!@vostride/agent-qa-agent --filter=!@vostride/agent-qa-eval --filter=!@vostride/agent-qa-mcp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      # pnpm version comes from package.json `packageManager` (pnpm@10.6.1).
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Test step runs with `--only`, which skips the `build` tasks `test` depends on, so it
+      # relies on this step having built every package.
+      - name: Build
+        run: pnpm build
+
+      # `432-external-callers.test.ts` drives the 394 pty drivers through `expect`, which a stock
+      # ubuntu runner lacks. This job checks out agent-qa alone, so that file's cells over callers in
+      # the super-repository (`demo/`) and the owner's miniwob checkout skip with a reason it prints;
+      # its cells over agent-qa's own scripts and the built CLI run.
+      - name: Install expect
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends expect
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter agent-qa exec playwright-core install --with-deps chromium
+
+      # Each leg runs one package at a time, so that package's vitest pool owns the runner.
+      - name: Test
+        env:
+          TURBO_CONCURRENCY: '1'
+        run: pnpm exec turbo test ${{ matrix.filter }} --only --continue ${{ matrix.vitest }}
+
+  checks:
+    name: Typecheck and validators (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Validate skills
+        run: pnpm run validate:skills
+
+      - name: Validate agent instructions
+        run: pnpm run validate:agents
+
+      - name: Validate publish surface
+        run: pnpm run validate:publish
+
+      # packages/arch's C-CI-MATRIX cells run the same check in the rest leg; running it here too
+      # keeps it in force even if a matrix edit stops the rest leg from reaching packages/arch.
+      - name: Check CI matrix coverage
+        run: node scripts/check-ci-matrix.mjs
+
+  mcp-conformance:
+    name: MCP conformance (ubuntu)
+    runs-on: ubuntu-latest
+
+    # Generous on purpose. The 395 lesson: a CI timeout tuned to a local stopwatch
+    # turns a slow cold runner into a red build with nothing wrong in it. The run
+    # itself is ~13s of suite plus an npm fetch and a workspace build; twenty-five
+    # minutes leaves room for a cold cache, a slow registry and a busy runner
+    # without ever leaving a hung server wedged (the script's own readiness bound
+    # and EXIT trap are the inner guards — T-396-23).
+    timeout-minutes: 25
+
+    # A JOB OF ITS OWN RATHER THAN A STEP IN `workspace`, deliberately. This gate
+    # measures the external suite's verdict on the shipped MCP server; the
+    # workspace job measures this repository's own suites. Keeping them separate
+    # means a conformance regression names itself in the checks list instead of
+    # arriving as "Full workspace failed", and a red here never obscures a red
+    # there.
+    #
+    # WHAT GATES: the conformance tool's OWN exit code, which is exactly D-18 —
+    # a failure listed in `packages/mcp/conformance-baseline.yaml` is expected and
+    # exits 0; a NEW failure exits 1; a baselined entry that has started passing
+    # exits 1 as a stale entry. The SCORE never gates. There is no threshold in
+    # this workflow, none in the script, and none in the baseline — adding one is
+    # the thing D-18 forbids, and this job deliberately contains no arithmetic
+    # over the counts it publishes.
+    #
+    # WHAT GETS PUBLISHED: the script writes the raw passed/total counts into
+    # `$GITHUB_STEP_SUMMARY` on every run, so the number is visible on a green
+    # build and not only on a red one (D-19). Nothing here commits: the baseline
+    # is edited by a human in a reviewed change, never by CI.
+    #
+    # THE PIN IS EXACT (`@modelcontextprotocol/conformance@0.2.0-alpha.11`,
+    # `--requirements 2026-07-28`) and lives in the script, invoked directly
+    # rather than through the project's composite action — the action tag lags the
+    # npm alphas, so routing through it would float the version this job's whole
+    # premise depends on being frozen (RESEARCH A5).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The script builds too (its subject is `packages/cli/dist/cli.js`, and a
+      # conformance run against a stale dist measures the previous implementation).
+      # Building here as well costs a turbo cache hit and keeps a compile break
+      # visible as its own step, matching this file's other jobs.
+      - name: Build
+        run: pnpm build
+
+      # RUN FIRST, ON THIS PLATFORM, BEFORE THE GATE IT GUARDS. The four proofs
+      # take ~10s and each one requires a deliberate failure: a dead port, a
+      # truncated one-scenario run, the ratchet boundary in both directions, and a
+      # baseline entry that matches no check. They run HERE rather than only on a
+      # developer's machine because this project has already shipped a guard that
+      # held on macOS and was defeatable on Linux; a vacuity gate that only fires
+      # on the author's laptop protects nothing in CI.
+      - name: Conformance runner self-test
+        run: bash scripts/396-conformance.sh --selftest
+
+      - name: MCP conformance
+        run: bash scripts/396-conformance.sh
+
+  ps-hosts:
+    name: ps-host legs (macos, ${{ matrix.group }})
+    runs-on: macos-latest
+    timeout-minutes: 40
+
+    # Scoped deliberately to the two daemon/lease packages rather than the full
+    # workspace: macOS runner minutes bill at 10x on private repos, and the legs
+    # that CANNOT run on ubuntu are concentrated here.
+    #
+    # `resolveProcessIncarnation` reads /proc/<pid>/stat on Linux and forks `ps`
+    # everywhere else POSIX (D-44-04), so every leg gated on
+    # `platform !== 'win32' && platform !== 'linux'` is `it.skip` on ubuntu — and
+    # `it.skip` reports green. That is currently all three of 386-47's round-6
+    # regression legs plus 386-44's WR-04 legs, in
+    # knowledge-local/src/__tests__/writer-lease.test.ts. (WINDOWS #51.)
+    #
+    # `agent-qa` (the cli package) is included because the daemon suites exercise
+    # UDS sockets, process signalling and fs semantics that differ meaningfully
+    # between Linux and BSD — the exact surfaces this project's lease/fencing work
+    # depends on.
+    #
+    # The legs split agent-qa so no leg nears the timeout; 36 of 40 minutes were used on run 40022673226.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: knowledge-local
+            filter: --filter=@vostride/agent-qa-knowledge-local
+          - group: cli-1
+            filter: --filter=agent-qa
+            vitest: -- --shard=1/3
+          - group: cli-2
+            filter: --filter=agent-qa
+            vitest: -- --shard=2/3
+          - group: cli-3
+            filter: --filter=agent-qa
+            vitest: -- --shard=3/3
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter agent-qa exec playwright-core install --with-deps chromium
+
+      # `--only` skips the `build` tasks `test` depends on, so this relies on the Build step above;
+      # each leg runs one package at a time, so its vitest pool owns the runner.
+      - name: Test daemon and lease packages
+        env:
+          TURBO_CONCURRENCY: '1'
+        run: pnpm exec turbo test ${{ matrix.filter }} --only --continue ${{ matrix.vitest }}
+
+      - name: Typecheck daemon and lease packages
+        if: matrix.group == 'knowledge-local'
+        run: >-
+          pnpm exec turbo typecheck
+          --filter=@vostride/agent-qa-knowledge-local
+          --filter=agent-qa

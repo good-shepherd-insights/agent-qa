@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import { parseAriaSnapshot, observePage } from '../observer.js'
+import { parseAriaSnapshot, enrichWebNodes, captureWebScroll, observePage } from '../observer.js'
+import type { InterimNode } from '@vostride/agent-qa-runner'
 
-describe('parseAriaSnapshot', () => {
-  it('assigns refs to interactive elements', () => {
+describe('parseAriaSnapshot — interim node emission', () => {
+  it('emits nodes in document order with role/name, no ref or tree in the result', () => {
     const ariaTree = [
       '- navigation "Main"',
       '  - link "Home"',
@@ -10,36 +11,52 @@ describe('parseAriaSnapshot', () => {
       '  - button "Login"',
     ].join('\n')
 
-    const { elements, refs } = parseAriaSnapshot(ariaTree)
+    const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
 
-    // navigation is content role, 3 interactive + 1 content = 4 refs
-    expect(Object.keys(refs)).toHaveLength(4)
-    expect(elements).toHaveLength(4)
+    // navigation is a content role; 3 interactive + 1 content = 4 nodes
+    expect(nodes).toHaveLength(4)
+    expect(nodes.map(n => n.role)).toEqual(['navigation', 'link', 'link', 'button'])
+    expect(nodes.map(n => n.name)).toEqual(['Main', 'Home', 'About', 'Login'])
 
-    const roles = elements.map(e => e.role)
-    expect(roles).toContain('link')
-    expect(roles).toContain('button')
-    expect(roles).toContain('navigation')
+    // No ref field is ever written onto a node.
+    for (const node of nodes) {
+      expect(node).not.toHaveProperty('ref')
+    }
+    // Default-mode text carries no native refs.
+    expect(nativeRefs).toEqual([undefined, undefined, undefined, undefined])
   })
 
-  it('assigns refs to content elements (headings)', () => {
+  it('derives parentIndex from indentation depth', () => {
     const ariaTree = [
-      '- heading "Welcome" [level=1]',
-      '- paragraph: Some text',
-      '- heading "Features" [level=2]',
+      '- navigation "Main"',
+      '  - link "Home"',
+      '  - button "Login"',
     ].join('\n')
 
-    const { elements, refs } = parseAriaSnapshot(ariaTree)
+    const { nodes } = parseAriaSnapshot(ariaTree)
 
-    // 2 headings get refs, paragraph does not
-    expect(elements).toHaveLength(2)
-    expect(elements[0].role).toBe('heading')
-    expect(elements[0].name).toBe('Welcome')
-    expect(elements[1].role).toBe('heading')
-    expect(elements[1].name).toBe('Features')
+    expect(nodes[0].parentIndex).toBeUndefined() // top level
+    expect(nodes[1].parentIndex).toBe(0) // child of navigation
+    expect(nodes[2].parentIndex).toBe(0)
   })
 
-  it('does NOT assign refs to structural elements', () => {
+  it('collapses skipped structural ancestors to the nearest SURVIVING ancestor', () => {
+    const ariaTree = [
+      '- navigation "Main"', // survives (content role) → index 0
+      '  - list', // structural → skipped
+      '    - listitem "Item 1"', // survives → parent should be navigation (index 0)
+      '    - link "Deep"', // survives → parent should be navigation (index 0)
+    ].join('\n')
+
+    const { nodes } = parseAriaSnapshot(ariaTree)
+
+    expect(nodes.map(n => n.role)).toEqual(['navigation', 'listitem', 'link'])
+    // The intervening `list` row was skipped; children reattach to navigation.
+    expect(nodes[1].parentIndex).toBe(0)
+    expect(nodes[2].parentIndex).toBe(0)
+  })
+
+  it('does not emit nodes for structural roles', () => {
     const ariaTree = [
       '- group',
       '  - list',
@@ -47,119 +64,199 @@ describe('parseAriaSnapshot', () => {
       '  - generic',
     ].join('\n')
 
-    const { elements, refs } = parseAriaSnapshot(ariaTree)
+    const { nodes } = parseAriaSnapshot(ariaTree)
 
-    // Only listitem gets a ref (content role); group, list, generic are structural
-    expect(elements).toHaveLength(1)
-    expect(elements[0].role).toBe('listitem')
-    expect(elements[0].ref).toBe('e1')
-    // Verify no refs for structural roles
-    const refRoles = Object.values(refs).map(r => r.role)
-    expect(refRoles).not.toContain('group')
-    expect(refRoles).not.toContain('list')
-    expect(refRoles).not.toContain('generic')
+    expect(nodes).toHaveLength(1)
+    expect(nodes[0].role).toBe('listitem')
+    expect(nodes[0].parentIndex).toBeUndefined() // no surviving ancestor
   })
 
-  it('disambiguates duplicate role+name with nth', () => {
+  it('captures ai-mode [ref=eN] annotations into index-aligned nativeRefs, never onto the node', () => {
     const ariaTree = [
-      '- button "Submit"',
-      '- button "Submit"',
-      '- button "Cancel"',
+      '- button "Submit" [ref=e5]',
+      '- link "Home" [ref=e12]',
+      '- heading "Title" [level=1] [ref=e20]',
     ].join('\n')
 
-    const { refs } = parseAriaSnapshot(ariaTree)
+    const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
 
-    // Two "Submit" buttons should have nth for disambiguation
-    const submitRefs = Object.entries(refs).filter(([, v]) => v.name === 'Submit')
-    expect(submitRefs).toHaveLength(2)
-    expect(submitRefs[0][1].nth).toBe(0)
-    expect(submitRefs[1][1].nth).toBe(1)
+    expect(nodes).toHaveLength(3)
+    expect(nativeRefs).toEqual(['e5', 'e12', 'e20'])
 
-    // "Cancel" is unique, no nth
-    const cancelRef = Object.entries(refs).find(([, v]) => v.name === 'Cancel')
-    expect(cancelRef).toBeDefined()
-    expect(cancelRef![1].nth).toBeUndefined()
+    // ref never leaks into attributes or the name.
+    for (const node of nodes) {
+      expect(node.attributes ?? {}).not.toHaveProperty('ref')
+      expect(node.name ?? '').not.toContain('ref=')
+    }
+    // Non-ref attributes still parse.
+    expect(nodes[2].attributes?.level).toBe('1')
   })
 
-  it('extracts attributes from suffixes like [level=1]', () => {
-    const ariaTree = '- heading "Title" [level=1]'
-    const { elements } = parseAriaSnapshot(ariaTree)
-
-    expect(elements[0].attributes.level).toBe('1')
-  })
-
-  it('extracts boolean attributes like [checked]', () => {
-    const ariaTree = '- checkbox "Agree" [checked]'
-    const { elements } = parseAriaSnapshot(ariaTree)
-
-    expect(elements[0].attributes.checked).toBe('true')
-  })
-
-  it('embeds [ref=eN] annotations in the enhanced tree', () => {
+  it('keeps parsing default-mode (unannotated) fixtures — dual-format tolerance', () => {
     const ariaTree = [
-      '- button "Click me"',
-      '- link "Home"',
+      '- button "Submit"',
+      '- button "Cancel" [ref=e2]',
     ].join('\n')
 
-    const { tree } = parseAriaSnapshot(ariaTree)
+    const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
 
-    expect(tree).toContain('[ref=e1]')
-    expect(tree).toContain('[ref=e2]')
+    expect(nodes).toHaveLength(2)
+    expect(nativeRefs).toEqual([undefined, 'e2'])
   })
 
-  it('assigns refs to single-quoted ARIA entries (colon in name)', () => {
+  it('maps [disabled] annotations to state.enabled=false; plain rows carry no state', () => {
+    const ariaTree = [
+      '- button "On"',
+      '- button "Off" [disabled]',
+    ].join('\n')
+
+    const { nodes } = parseAriaSnapshot(ariaTree)
+
+    expect(nodes[0].state).toBeUndefined()
+    expect(nodes[1].state).toEqual({ enabled: false })
+  })
+
+  it('parses single-quoted ARIA entries (colon in name) including ref annotations', () => {
     const ariaTree = [
       '- group:',
-      '  - \'button "Spoken Language: Any"\'',
-      '- group:',
-      '  - \'button "Language: Any"\'',
+      '  - \'button "Spoken Language: Any" [ref=e3]\'',
       '- group:',
       '  - \'button "Date range: Today"\'',
     ].join('\n')
 
-    const { elements, refs, tree } = parseAriaSnapshot(ariaTree)
+    const { nodes, nativeRefs } = parseAriaSnapshot(ariaTree)
 
-    expect(elements).toHaveLength(3)
-    expect(elements[0].role).toBe('button')
-    expect(elements[0].name).toBe('Spoken Language: Any')
-    expect(elements[1].name).toBe('Language: Any')
-    expect(elements[2].name).toBe('Date range: Today')
-
-    // All three should have refs assigned
-    expect(Object.keys(refs)).toHaveLength(3)
-    expect(tree).toContain('[ref=e1]')
-    expect(tree).toContain('[ref=e2]')
-    expect(tree).toContain('[ref=e3]')
+    expect(nodes).toHaveLength(2)
+    expect(nodes[0].name).toBe('Spoken Language: Any')
+    expect(nodes[1].name).toBe('Date range: Today')
+    expect(nativeRefs).toEqual(['e3', undefined])
   })
 
-  it('handles quoted entries mixed with normal entries', () => {
-    const ariaTree = [
-      '- button "Submit"',
-      '- \'button "Status: Active"\'',
-      '- link "Home"',
-    ].join('\n')
+  it('extracts boolean attributes like [checked]', () => {
+    const { nodes } = parseAriaSnapshot('- checkbox "Agree" [checked]')
+    expect(nodes[0].attributes?.checked).toBe('true')
+  })
+})
 
-    const { elements, refs, tree } = parseAriaSnapshot(ariaTree)
+describe('captureWebScroll', () => {
+  it('returns exact window scroll + viewport from the page evaluate', async () => {
+    const mockPage = {
+      viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
+      evaluate: vi.fn().mockResolvedValue({
+        width: 1280, height: 720,
+        offsetX: 40, offsetY: 200,
+        contentWidth: 1280, contentHeight: 4000,
+      }),
+    }
 
-    expect(elements).toHaveLength(3)
-    expect(elements[0].name).toBe('Submit')
-    expect(elements[1].name).toBe('Status: Active')
-    expect(elements[2].name).toBe('Home')
-    expect(Object.keys(refs)).toHaveLength(3)
-    // The quoted entry should have its ref in the tree
-    expect(tree).toContain('button "Status: Active" [ref=e2]')
+    const result = await captureWebScroll(mockPage as any)
+
+    expect(result.viewport).toEqual({ width: 1280, height: 720 })
+    expect(result.scroll).toEqual({
+      offsetX: 40, offsetY: 200, contentWidth: 1280, contentHeight: 4000,
+    })
   })
 
-  it('preserves lines that do not match the role pattern', () => {
-    const ariaTree = [
-      '- document:',
-      '  - heading "Hi" [level=1]',
-      '  some text content',
-    ].join('\n')
+  it('degrades to viewport size + zero scroll when evaluate fails', async () => {
+    const mockPage = {
+      viewportSize: vi.fn().mockReturnValue({ width: 800, height: 600 }),
+      evaluate: vi.fn().mockRejectedValue(new Error('evaluate failed')),
+    }
 
-    const { tree } = parseAriaSnapshot(ariaTree)
+    const result = await captureWebScroll(mockPage as any)
 
-    expect(tree).toContain('some text content')
+    expect(result.viewport).toEqual({ width: 800, height: 600 })
+    expect(result.scroll).toEqual({ offsetX: 0, offsetY: 0, contentWidth: 0, contentHeight: 0 })
+  })
+})
+
+describe('enrichWebNodes — aria-ref locator enrichment', () => {
+  function nodesFrom(): InterimNode[] {
+    return [
+      { role: 'button', name: 'Submit' },
+      { role: 'link', name: 'Home' },
+    ]
+  }
+
+  it('fills bounds/state/labels for resolvable refs via aria-ref locators', async () => {
+    const locatorCalls: string[] = []
+    const mockPage = {
+      locator: vi.fn().mockImplementation((sel: string) => {
+        locatorCalls.push(sel)
+        return { elementHandle: vi.fn().mockResolvedValue({ __handle: sel }) }
+      }),
+      evaluate: vi.fn().mockResolvedValue([
+        {
+          bounds: { x: 10, y: 20, width: 100, height: 40 },
+          enabled: true, focused: false, visible: true,
+          testId: 'submit-btn', ariaLabel: null, placeholder: null, title: null,
+        },
+        {
+          bounds: { x: 10, y: 80, width: 200, height: 30 },
+          enabled: true, focused: true, visible: true,
+          testId: null, ariaLabel: 'Go home', placeholder: null, title: 'Home',
+        },
+      ]),
+    }
+
+    const nodes = nodesFrom()
+    await enrichWebNodes(mockPage as any, nodes, ['e5', 'e12'])
+
+    // Resolution went through aria-ref locators.
+    expect(locatorCalls).toEqual(['aria-ref=e5', 'aria-ref=e12'])
+
+    expect(nodes[0].bounds).toEqual({ x: 10, y: 20, width: 100, height: 40 })
+    expect(nodes[0].state).toMatchObject({ enabled: true, focused: false, visible: true })
+    expect(nodes[0].labels).toEqual({ testId: 'submit-btn' })
+
+    expect(nodes[1].bounds).toEqual({ x: 10, y: 80, width: 200, height: 30 })
+    expect(nodes[1].state).toMatchObject({ focused: true })
+    expect(nodes[1].labels).toEqual({ ariaLabel: 'Go home', title: 'Home' })
+  })
+
+  it('leaves bounds absent (honest absence) for a null boundingBox — no zero geometry', async () => {
+    const mockPage = {
+      locator: vi.fn().mockReturnValue({
+        elementHandle: vi.fn().mockResolvedValue({ __handle: true }),
+      }),
+      evaluate: vi.fn().mockResolvedValue([
+        { bounds: null, enabled: true, focused: false, visible: false,
+          testId: null, ariaLabel: null, placeholder: null, title: null },
+      ]),
+    }
+
+    const nodes: InterimNode[] = [{ role: 'button', name: 'Hidden' }]
+    await enrichWebNodes(mockPage as any, nodes, ['e1'])
+
+    expect(nodes[0].bounds).toBeUndefined()
+    expect(nodes[0].state).toMatchObject({ visible: false })
+  })
+
+  it('skips nodes with no native ref and never resolves a locator for them', async () => {
+    const mockPage = {
+      locator: vi.fn(),
+      evaluate: vi.fn(),
+    }
+
+    const nodes = nodesFrom()
+    await enrichWebNodes(mockPage as any, nodes, [undefined, undefined])
+
+    expect(mockPage.locator).not.toHaveBeenCalled()
+    expect(mockPage.evaluate).not.toHaveBeenCalled()
+    expect(nodes[0].bounds).toBeUndefined()
+  })
+
+  it('degrades to unenriched nodes when the batched evaluate throws (never throws out)', async () => {
+    const mockPage = {
+      locator: vi.fn().mockReturnValue({
+        elementHandle: vi.fn().mockResolvedValue({ __handle: true }),
+      }),
+      evaluate: vi.fn().mockRejectedValue(new Error('evaluate failed')),
+    }
+
+    const nodes: InterimNode[] = [{ role: 'button', name: 'Submit' }]
+    await expect(enrichWebNodes(mockPage as any, nodes, ['e1'])).resolves.toBeUndefined()
+    expect(nodes[0].bounds).toBeUndefined()
   })
 })
 
@@ -175,31 +272,31 @@ describe('observePage', () => {
     }
   }
 
-  it('returns ScreenState from mock page', async () => {
+  it('returns a schema v2 ScreenState built from interim nodes', async () => {
     const mockAriaTree = [
       '- heading "Test Page" [level=1]',
       '- button "Submit"',
     ].join('\n')
 
-    const mockPage = createMockPage(mockAriaTree)
+    const state = await observePage(createMockPage(mockAriaTree) as any)
 
-    const state = await observePage(mockPage as any)
-
+    expect(state.platform).toBe('web')
     expect(state.url).toBe('https://example.com')
     expect(state.elements).toHaveLength(2)
+    // Builder mints the refs — they land on elements, never in the parser.
+    expect(state.elements.map(e => e.ref)).toEqual(['e1', 'e2'])
     expect(state.tree).toContain('[ref=e1]')
     expect(state.tree).toContain('[ref=e2]')
-    expect(state.metadata.refMap).toBeDefined()
+    expect(state.metadata.captureMode).toBe('textOnly')
+    expect(state.metadata.scroll).toBeDefined()
     expect(typeof state.timestamp).toBe('number')
   })
 
-  it('handles empty ARIA tree', async () => {
-    const mockPage = createMockPage('', 'about:blank')
+  it('handles an empty ARIA tree (zero elements)', async () => {
+    const state = await observePage(createMockPage('', 'about:blank') as any)
 
-    const state = await observePage(mockPage as any)
-
-    expect(state.tree).toBe('(empty)')
     expect(state.elements).toHaveLength(0)
+    expect(state.tree).toContain('[0 elements]')
   })
 
   it('uses filterSelector when provided', async () => {
@@ -210,31 +307,7 @@ describe('observePage', () => {
     expect(mockPage.locator).toHaveBeenCalledWith('#app')
   })
 
-  it('includes domContext in metadata when extractDom is true', async () => {
-    const mockAriaTree = '- button "OK"'
-    const mockPage = createMockPage(mockAriaTree)
-
-    // Mock the extractDom call via page.evaluate — extractDom calls page.evaluate internally
-    // We need to mock the module-level extractDom function
-    const { observePage: observePageFn } = await import('../observer.js')
-    // Since extractDom is imported at module level, we test through observePage options
-    const state = await observePageFn(mockPage as any, { extractDom: true })
-
-    // domContext may or may not be present depending on extractDom implementation,
-    // but the option should be accepted without error
-    expect(state.metadata.refMap).toBeDefined()
-  })
-
-  it('does not extract DOM when extractDom is false or omitted', async () => {
-    const mockPage = createMockPage('- button "OK"')
-
-    const state = await observePage(mockPage as any)
-
-    expect(state.metadata.domContext).toBeUndefined()
-  })
-
-  it('calls page.evaluate to hide data-agent-qa-internal elements before snapshot', async () => {
-    const mockAriaSnapshot = vi.fn().mockResolvedValue('- button "OK"')
+  it('hides data-agent-qa-internal elements before the snapshot and restores after', async () => {
     const evaluateCalls: number[] = []
     let snapshotCallOrder = 0
     let callCounter = 0
@@ -256,22 +329,9 @@ describe('observePage', () => {
 
     await observePage(mockPage as any)
 
-    // page.evaluate called 3 times: hide before snapshot, restore after, bulk bounding box
-    expect(mockPage.evaluate).toHaveBeenCalledTimes(3)
-    // First evaluate (hide) should be before ariaSnapshot
+    // hide (before snapshot), restore (after snapshot), scroll capture.
     expect(evaluateCalls[0]).toBeLessThan(snapshotCallOrder)
-    // Second evaluate (restore) should be after ariaSnapshot
     expect(evaluateCalls[1]).toBeGreaterThan(snapshotCallOrder)
-  })
-
-  it('restores elements after snapshot (page.evaluate called for restore)', async () => {
-    const mockPage = createMockPage('- button "OK"')
-
-    await observePage(mockPage as any)
-
-    // 3 evaluate calls: hide + restore + bulk bounding box
-    expect(mockPage.evaluate).toHaveBeenCalledTimes(3)
-    // First two calls pass functions (hide + restore)
     expect(typeof mockPage.evaluate.mock.calls[0][0]).toBe('function')
     expect(typeof mockPage.evaluate.mock.calls[1][0]).toBe('function')
   })
@@ -288,90 +348,12 @@ describe('observePage', () => {
 
     await expect(observePage(mockPage as any)).rejects.toThrow('Snapshot failed')
 
-    // Restore evaluate should still have been called (2 calls: hide + restore)
+    // hide + restore both ran; scroll capture is never reached.
     expect(mockPage.evaluate).toHaveBeenCalledTimes(2)
   })
 
-  describe('bounding box enrichment', () => {
-    it('populates bounds on refs via bulk page.evaluate', async () => {
-      const mockAriaTree = [
-        '- button "Submit"',
-        '- link "Home"',
-      ].join('\n')
-
-      let evaluateCallCount = 0
-      const mockPage = {
-        locator: vi.fn().mockReturnValue({
-          ariaSnapshot: vi.fn().mockResolvedValue(mockAriaTree),
-        }),
-        url: vi.fn().mockReturnValue('https://example.com'),
-        evaluate: vi.fn().mockImplementation((fn: any, arg?: any) => {
-          evaluateCallCount++
-          // 3rd evaluate call is the bulk bounding box collection (after hide + restore)
-          if (evaluateCallCount === 3 && arg) {
-            return Promise.resolve([
-              ['e1', { x: 10, y: 20, width: 100, height: 40 }],
-              ['e2', { x: 10, y: 80, width: 200, height: 30 }],
-            ])
-          }
-          return Promise.resolve(undefined)
-        }),
-        viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-      }
-
-      const state = await observePage(mockPage as any)
-      const refMap = state.metadata.refMap as Record<string, { bounds?: { x: number; y: number; width: number; height: number } }>
-
-      expect(refMap.e1.bounds).toEqual({ x: 10, y: 20, width: 100, height: 40 })
-      expect(refMap.e2.bounds).toEqual({ x: 10, y: 80, width: 200, height: 30 })
-      // 3 evaluate calls: hide, restore, bulk bounding box
-      expect(mockPage.evaluate).toHaveBeenCalledTimes(3)
-    })
-
-    it('handles page.evaluate failure gracefully (bounds remain undefined)', async () => {
-      const mockAriaTree = '- button "Submit"'
-
-      let evaluateCallCount = 0
-      const mockPage = {
-        locator: vi.fn().mockReturnValue({
-          ariaSnapshot: vi.fn().mockResolvedValue(mockAriaTree),
-        }),
-        url: vi.fn().mockReturnValue('https://example.com'),
-        evaluate: vi.fn().mockImplementation((fn: any, arg?: any) => {
-          evaluateCallCount++
-          if (evaluateCallCount === 3) {
-            return Promise.reject(new Error('evaluate failed'))
-          }
-          return Promise.resolve(undefined)
-        }),
-        viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-      }
-
-      const state = await observePage(mockPage as any)
-      const refMap = state.metadata.refMap as Record<string, { bounds?: { x: number; y: number; width: number; height: number } }>
-
-      // Should not crash, bounds just undefined
-      expect(refMap.e1.bounds).toBeUndefined()
-      expect(state.elements).toHaveLength(1)
-    })
-
-    it('skips bounding box evaluate when no refs exist', async () => {
-      // Use only structural elements that don't get refs
-      const mockAriaTree = '- group'
-
-      const mockPage = {
-        locator: vi.fn().mockReturnValue({
-          ariaSnapshot: vi.fn().mockResolvedValue(mockAriaTree),
-        }),
-        url: vi.fn().mockReturnValue('https://example.com'),
-        evaluate: vi.fn().mockResolvedValue(undefined),
-        viewportSize: vi.fn().mockReturnValue({ width: 1280, height: 720 }),
-      }
-
-      await observePage(mockPage as any)
-
-      // Only 2 evaluate calls: hide + restore; NO bounding box evaluate
-      expect(mockPage.evaluate).toHaveBeenCalledTimes(2)
-    })
+  it('does not extract DOM when extractDom is omitted', async () => {
+    const state = await observePage(createMockPage('- button "OK"') as any)
+    expect(state.metadata.domContext).toBeUndefined()
   })
 })

@@ -90,7 +90,6 @@ describe('readProductTourStateCookie', () => {
     const invalidValues = [
       '%7Bbad-json',
       JSON.stringify([]),
-      JSON.stringify(rawState({ schemaVersion: 2 })),
       JSON.stringify(rawState({ tourVersion: 'old-tour' })),
       JSON.stringify(rawState({ completedAt: 'not-a-date' })),
       JSON.stringify(rawState({ skippedAt: '2026-99-99T00:00:00.000Z' })),
@@ -106,6 +105,12 @@ describe('readProductTourStateCookie', () => {
 
       clearCookie()
     }
+  })
+
+  it.each([1, 3])('returns null for a cookie stamped %i', (schemaVersion) => {
+    writeRawCookie(rawState({ schemaVersion }))
+
+    expect(readProductTourStateCookie()).toBeNull()
   })
 
   it('returns only the compact schema fields for a valid cookie', () => {
@@ -139,6 +144,7 @@ describe('writeProductTourStateCookie and clearProductTourStateCookie', () => {
         JSON.stringify(state),
       )}; path=/; max-age=31536000; samesite=lax`,
     )
+    expect(state.schemaVersion).toBe(2)
   })
 
   it('clears the tour cookie with path and max-age=0', () => {
@@ -177,7 +183,6 @@ describe('foundation product tour step contracts', () => {
       '/tests',
       '/hooks',
       '/suites',
-      '/memory',
       '/config',
     ])
   })
@@ -192,13 +197,12 @@ describe('foundation product tour step contracts', () => {
       })),
     ).toEqual([
       { id: 'intro', route: null },
-      { id: 'llm-setup', route: '/config?bucket=registry&item=llms' },
+      { id: 'llm-setup', route: '/config/models' },
       { id: 'runs', route: '/runs' },
       { id: 'tests', route: '/tests' },
       { id: 'suites', route: '/suites' },
       { id: 'hooks', route: '/hooks' },
-      { id: 'memory', route: '/memory' },
-      { id: 'config', route: '/config' },
+      { id: 'config', route: '/config/models' },
       { id: 'example-test', route: null },
       { id: 'example-missing', route: '/tests' },
       { id: 'run-action', route: '/tests' },
@@ -215,7 +219,6 @@ describe('foundation product tour step contracts', () => {
       'tests',
       'suites',
       'hooks',
-      'memory',
       'config',
       'example-test',
       'example-missing',

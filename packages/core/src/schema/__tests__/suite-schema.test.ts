@@ -101,7 +101,7 @@ describe('SuiteDefinitionSchema', () => {
       expect(result.data?.use?.llm).toBe('claude-main')
     })
 
-    it('accepts suite with healing in use block', () => {
+    it('rejects the deleted healing key in the use block (Phase 353 D-10 breaking change)', () => {
       const result = SuiteDefinitionSchema.safeParse(makeSuite({
         name: 'healing suite',
         tests: [{ test: 'test.yaml', id: VALID_TEST_ID }],
@@ -109,7 +109,7 @@ describe('SuiteDefinitionSchema', () => {
           healing: { maxAttempts: 3 },
         },
       }))
-      expect(result.success).toBe(true)
+      expect(result.success).toBe(false)
     })
 
     it('accepts suite with explicit mobile device and app-state override', () => {

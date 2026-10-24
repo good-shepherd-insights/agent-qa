@@ -1,55 +1,64 @@
 import { describe, it, expect } from 'vitest'
 import { z } from 'zod'
-import { formatAction } from '../prompts.js'
-import type { Action } from '../../types/platform.js'
+import type { Action } from '@vostride/agent-qa-runner'
 
 // Get the assert schema from the registry
-import { defaultRegistry } from '../../tools/index.js'
+import { defaultRegistry, formatAction } from '@vostride/agent-qa-runner'
 
 function getAssertSchema(): z.ZodObject<any> {
-  const tools = (defaultRegistry as any).tools as Map<string, any>
-  const assertTool = tools.get('assert')
-  return assertTool.schema
+  return defaultRegistry.getSchema('common_assertAI') as z.ZodObject<any>
 }
 
-describe('assert visual field', () => {
+describe('assert evidence field', () => {
   describe('schema parsing', () => {
-    it('accepts visual: false', () => {
+    it('defaults to multimodal medium-effort assertions', () => {
       const schema = getAssertSchema()
-      const result = schema.safeParse({ condition: 'check', visual: false })
+      const result = schema.safeParse({ claim: 'banner visible' })
       expect(result.success).toBe(true)
-      expect(result.data!.visual).toBe(false)
+      expect(result.data!.mode).toBe('multimodal')
+      expect(result.data!.effort).toBe('medium')
+      expect(result.data!.consensus).toBe(1)
     })
 
-    it('defaults visual to true when omitted', () => {
+    it('accepts explicit visual assertion knobs', () => {
       const schema = getAssertSchema()
-      const result = schema.safeParse({ condition: 'check' })
+      const result = schema.safeParse({
+        claim: 'x',
+        mode: 'visual',
+        effort: 'high',
+        consensus: 3,
+        video: true,
+      })
       expect(result.success).toBe(true)
-      expect(result.data!.visual).toBe(true)
+      expect(result.data!.mode).toBe('visual')
+      expect(result.data!.effort).toBe('high')
+      expect(result.data!.consensus).toBe(3)
+      expect(result.data!.video).toBe(true)
     })
 
-    it('accepts visual: true explicitly', () => {
+    it('rejects unknown assertion modes', () => {
       const schema = getAssertSchema()
-      const result = schema.safeParse({ condition: 'check', visual: true })
-      expect(result.success).toBe(true)
-      expect(result.data!.visual).toBe(true)
+      const result = schema.safeParse({ claim: 'x', mode: 'bogus' })
+      expect(result.success).toBe(false)
     })
   })
 
   describe('formatAction', () => {
-    it('includes [non-visual] suffix when visual is false', () => {
-      const action: Action = { type: 'assert', condition: '42 equals 42', visual: false }
-      expect(formatAction(action)).toBe('assert "42 equals 42" [non-visual]')
+    // Phase 360 D-19: the retired `assert` verb rendering is gone; formatAction now renders the
+    // §12.2 assertion split verbs (assertValue / assertAI) and the reportValue answer channel.
+    it('renders assertValue with its source, op and expected', () => {
+      const action: Action = { type: 'assertValue', source: 'url', op: 'equals', expected: '42' }
+      expect(formatAction(action)).toBe('assertValue url equals "42"')
     })
 
-    it('has no suffix when visual is true', () => {
-      const action: Action = { type: 'assert', condition: 'button says Submit', visual: true }
-      expect(formatAction(action)).toBe('assert "button says Submit"')
+    it('renders assertAI with its claim and mode', () => {
+      const action: Action = { type: 'assertAI', claim: 'button says Submit', mode: 'visual', effort: 'low', consensus: 1 }
+      expect(formatAction(action)).toBe('assertAI "button says Submit" (visual)')
     })
 
-    it('has no suffix when visual is undefined', () => {
-      const action: Action = { type: 'assert', condition: 'title is Dashboard' }
-      expect(formatAction(action)).toBe('assert "title is Dashboard"')
+    it('renders reportValue with its value', () => {
+      const action: Action = { type: 'reportValue', value: 'title is Dashboard' }
+      expect(formatAction(action)).toBe('reportValue "title is Dashboard"')
     })
   })
 })

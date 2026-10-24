@@ -1,22 +1,101 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile, stat, readdir, rm } from 'node:fs/promises'
-import { createReadStream } from 'node:fs'
-import { join, isAbsolute, basename, resolve, dirname, relative } from 'node:path'
+import { join, isAbsolute, basename, resolve, dirname } from 'node:path'
 
-import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow, StepRow } from '../db/database.js'
-import type { TestRunner } from '../execution/test-runner.js'
+import type { AttributePredicate, DashboardDatabase, InsightsBreakdownDimension, RunArtifactRow, RunRow } from '../db/database.js'
+import { isRunStatusWord, memberOutcomeClass, runStatusClass, type RunStatusClass } from '../db/run-status-class.js'
+import type { ExecutionBackend } from '../execution/execution-backend.js'
 import type { JobQueue } from '../queue/job-queue.js'
-import { MemoryCatalogManager, isValidMemoryScopeId, type MemoryScope } from '../memory/memory-catalog-manager.js'
-import { extractTestFileMetadata, type SupportedPlatform, type TestFileManager } from '../tests/test-file-manager.js'
+import {
+  extractTestFileMetadata,
+  targetsForMarkerCheck,
+  type SupportedPlatform,
+  type TestFileManager,
+} from '../tests/test-file-manager.js'
 import type { SuiteFileManager } from '../tests/suite-file-manager.js'
-import type { ConfigManager } from '../config/index.js'
+import { readConfigValues, type ConfigManager } from '../config/index.js'
+import { holdsShownMarker } from '../config/config-manager.js'
+import { createUndoStore, UNDO_RETENTION_MS } from '../config/undo-store.js'
 import { HookRegistryManager, isHookRegistryMutationError } from '../hooks/hook-registry-manager.js'
 import { readJsonBody } from './body-parser.js'
-import type { AnalyticsServiceConfig, LLMAuthProviderPlugin, ModelConfig, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildAnalyticsEvent, buildInternalRunAttributes, captureAnalytics, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getProviderOptions, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NamedLLMConfigSchema, WorkspaceSchema, ServicesSchema, RegistrySchema, UseSchema, MobileAppStateSchema, hashStepInstruction, TimeoutConfigSchema, CacheConfigSchema, HealingConfigSchema, PlannerConfigSchema, LoggingConfigSchema, LogCaptureConfigSchema, AccessibilityConfigSchema, DashboardConfigSchema, McpConfigSchema, RecordingConfigSchema, BrowserConfigSchema, AnalyticsSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, runHookInSandbox, RUNTIME_IMAGE_MAP, SecretStore, SecretRedactor, redactAuthStateValue, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveAnalyticsStandardProperties, resolveMemoryRoot, resolveWorkspaceFileTarget } from '@vostride/agent-qa-core'
+import {
+  LivePlannerLimitsRefusedError,
+  LiveProductionRefusedError,
+  liveProductionRefusal,
+  resolveLivePlannerLimits,
+  resolveLiveTargetProduction,
+} from '../live-editor/live-session.js'
+import { refuseCrossSiteRequest } from './cross-site.js'
+import { tryParseRequestUrl } from './request-url.js'
+import type { AgentHost } from '../chat/host.js'
+import {
+  classifyProviderError,
+  extractProviderError,
+  LlmCredentialMoveRequestSchema,
+  MARKER_WRITTEN_BACK_SENTENCE,
+  maskPayloadStrings,
+  maskPayloadTree,
+  parseHandleParam,
+  providerErrorSentence,
+  RecordChangeSchema,
+  RunsPostProcessingInputSchema,
+} from '@vostride/agent-qa-schema'
+import type {
+  EditorLiveUrlResult,
+  MaskFn,
+  PostProcessingStatus,
+  RunServiceReadiness,
+  RunSession,
+  RunsLiveUrlResult,
+} from '@vostride/agent-qa-schema'
+import {
+  handleParamOf,
+  lastEventIdParamOf,
+  resumePointOf,
+  runDenialOf,
+  serveRunEventStream,
+} from '../run-service/run-service-routes.js'
+// 404-05 (D-16/D-18): the post-processing pair — the read a page polls and the dedicated live
+// channel. Two arms below, both above the `/api/runs/:id` catch-all, both formatting nothing.
+import {
+  servePostProcessingRead,
+  servePostProcessingStream,
+} from '../run-service/post-processing-routes.js'
+// 405-05 (D-12/D-13): the ref-resolving artifact read, on the arm below's own footing — the bytes
+// cross the function layer and this file constructs no evidence store.
+// 405-01 (D-03): the durable run-detail read. One arm below, above the `/api/runs/:id` catch-all,
+// formatting nothing and opening no database.
+import {
+  serveRunArtifact,
+  serveRunDetailRead,
+  serveRunEvidenceRead,
+  serveRunMarkPreviewRead,
+  serveRunMarksHistoryRead,
+} from '../run-service/run-detail-routes.js'
+// 406-01 (D-04): the failure view's read. One arm below, beside the detail arm and above the
+// `/api/runs/:id` catch-all, formatting nothing and opening no database.
+import { serveRunAnalysisRead } from '../run-service/run-analysis-routes.js'
+// 407-01 (D-05): the Knowledge panel's read — what a run used and learned. One arm below, beside
+// the analysis arm and above the `/api/runs/:id` catch-all, formatting nothing and opening no
+// database.
+import { readRunKnowledge, serveRunKnowledgeRead } from '../run-service/run-knowledge-routes.js'
+import { registerRunMarkRoute } from '../run-service/run-mark-routes.js'
+import {
+  registerConfigRevisionRoute,
+  registerConfigUndoRoute,
+  registerConfigWriteRoute,
+} from './config-routes.js'
+import { createConnectInFlight, registerLlmConnectRoute } from './llm-connect-route.js'
+import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
+import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
+import { AuthStateNameSchema, buildInternalRunAttributes, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NameSlugSchema, TimeoutConfigSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, RUNTIME_IMAGE_MAP, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
+import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
+import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
+import { createModel, fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
 import { parse as parseYaml } from 'yaml'
+import { toModelProfileAndAuth, type DashboardLLMConfig } from '../llm-model-mapping.js'
 
 const LLM_PROVIDER_MODES = new Set([
   'openai-compatible',
@@ -28,37 +107,23 @@ const API_KEY_CREDENTIAL_PROVIDERS = new Set([
   'anthropic-compatible',
   'gemini',
 ])
-const LLM_TEST_UNAUTHENTICATED_MESSAGE = 'Testing without a saved credential.'
-const LLM_TEST_AUTH_ERROR_MESSAGE = 'Authentication failed. Check the saved credential for this config.'
-const LLM_TEST_MODEL_NOT_FOUND_MESSAGE = 'Model not found. Check the model name.'
-const LLM_TEST_NETWORK_ERROR_MESSAGE = 'Network error. Check the exact base URL and try again.'
 const DASHBOARD_EXECUTION_TIMEOUT_BUFFER_MS = 60_000
 const REMOTE_LLM_CONNECTION_TEST_TIMEOUT_MS = 10_000
 const LOCAL_COMPATIBLE_LLM_CONNECTION_TEST_TIMEOUT_MS = 120_000
 const LOCAL_COMPATIBLE_LLM_PROVIDERS = new Set(['openai-compatible', 'anthropic-compatible'])
 const PLUGIN_OAUTH_SESSION_TTL_MS = 10 * 60 * 1000
-const DASHBOARD_PRODUCT_EVENT_NAMES = [
-  'agent-qa.dashboard.opened',
-  'agent-qa.dashboard.live_mode.started',
-  'agent-qa.dashboard.entity.created',
-] as const
-type DashboardProductEventName = typeof DASHBOARD_PRODUCT_EVENT_NAMES[number]
-const DASHBOARD_PRODUCT_EVENT_NAME_SET = new Set<DashboardProductEventName>(DASHBOARD_PRODUCT_EVENT_NAMES)
-const DASHBOARD_PRODUCT_EVENT_PROPERTY_KEYS = {
-  'agent-qa.dashboard.opened': [],
-  'agent-qa.dashboard.live_mode.started': ['platform', 'entity_type'],
-  'agent-qa.dashboard.entity.created': ['entity_type', 'outcome'],
-} as const satisfies Record<DashboardProductEventName, readonly string[]>
+// 2026-08-17 (Phase 398 plan 11, D-18/D-20): the three v33 dashboard product events, the
+// `POST /api/analytics/events` ingest route that took them and the core-analytics bridge it
+// captured through are all GONE. `routes.analytics-events.test.ts` holds the drop: the path 404s
+// and this file is pinned against the capture vocabulary returning. The dashboard's own run-history
+// reporting under `/api/analytics/tests|suites|breakdowns` is unrelated and stays. M5's dashboard
+// rebuild decides what it wants to emit, against the new `AnalyticsPort`.
 
 type DashboardExecutionTimeoutSource =
   | 'test.use.timeout.test'
   | 'suite.use.timeout.test'
   | 'config.use.timeout.test'
   | 'none'
-
-type ConfigSectionValidationResult =
-  | { success: true }
-  | { success: false; error: { issues: { message: string; path: PropertyKey[] }[] } }
 
 interface DashboardExecutionTimeout {
   timeoutMs?: number
@@ -77,71 +142,221 @@ function isKnownLLMProvider(provider: string): boolean {
   return LLM_PROVIDER_MODES.has(provider) || Boolean(getLLMAuthProviderPlugin(provider))
 }
 
+type CredentialTarget =
+  | { ok: true; configName: string; created: boolean }
+  | { ok: false; status: number; error: string; message?: string }
+
+type CredentialNameCheck =
+  | { ok: true; name: string }
+  | { ok: false; status: number; error: string; message?: string }
+
+// 429-09 D-15/D-16: auth.json is machine-wide and keyed by name, so every name passes core's
+// name rule before the store is read or written.
+function checkCredentialName(configName: unknown): CredentialNameCheck {
+  const name = typeof configName === 'string' ? configName.trim() : ''
+  if (!name) return { ok: false, status: 400, error: 'configName is required' }
+  const parsed = NameSlugSchema.safeParse(name)
+  if (!parsed.success) {
+    return { ok: false, status: 400, error: 'name_invalid', message: parsed.error.issues[0]?.message ?? 'Invalid name' }
+  }
+  return { ok: true, name }
+}
+
+async function findRegistryLlm(
+  configManager: ConfigManager,
+  name: string,
+): Promise<SavedRegistryLlm | undefined> {
+  const config = await readConfigValues(configManager) as { registry?: { llms?: unknown[] } }
+  const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
+  return llms.find((item) => {
+    return Boolean(item)
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && (item as { name?: unknown }).name === name
+  }) as SavedRegistryLlm | undefined
+}
+
+type SavedRegistryLlm = { provider?: unknown; baseURL?: unknown; providerHeaders?: unknown }
+
+const TEST_REDACTED = '[redacted]'
+const MIN_REDACTED_HEADER_LENGTH = 4
+
+function trimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+// 429-43: a saved model's header values are read from the file on the server, and only for the
+// endpoint the saved model names; a read failure means no saved headers.
+async function savedHeadersFor(
+  configManager: ConfigManager | undefined,
+  configName: string,
+  provider: string,
+  baseURL: string,
+): Promise<Record<string, string>> {
+  if (!configManager || !configName) return {}
+  let saved: SavedRegistryLlm | undefined
+  try {
+    saved = await findRegistryLlm(configManager, configName)
+  } catch {
+    return {}
+  }
+  if (!saved || saved.provider !== provider || trimmedString(saved.baseURL) !== baseURL) return {}
+  const headers = saved.providerHeaders
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return {}
+  const kept: Record<string, string> = {}
+  for (const [name, value] of Object.entries(headers)) {
+    if (typeof value === 'string') kept[name] = value
+  }
+  return kept
+}
+
+// Body headers override their saved namesake (HTTP names compare case-insensitively). The model row
+// leaves out a header it showed as a marker, so the saved value is the one sent.
+function mergeTestHeaders(
+  saved: Record<string, string>,
+  body: Record<string, unknown>,
+): { headers: Record<string, unknown>; savedValues: string[] } {
+  const headers: Record<string, unknown> = { ...saved }
+  for (const [name, value] of Object.entries(body)) {
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === name.toLowerCase()) delete headers[key]
+    }
+    headers[name] = value
+  }
+  const savedValues = Object.entries(saved)
+    .filter(([name, value]) => headers[name] === value)
+    .map(([, value]) => value)
+  return { headers, savedValues }
+}
+
+function withoutSavedValues(text: string, savedValues: readonly string[]): string {
+  return [...savedValues]
+    .filter((value) => value.length >= MIN_REDACTED_HEADER_LENGTH)
+    .sort((a, b) => b.length - a.length)
+    .reduce((redacted, value) => redacted.split(value).join(TEST_REDACTED), text)
+}
+
+// 441 GAP-D5: undefined when no declared mask is bound or it throws, so a caller leaves the text out.
+function withDeclaredMask<T>(mask: MaskFn | undefined, build: (mask: MaskFn) => T): T | undefined {
+  if (mask === undefined) return undefined
+  try {
+    return build(mask)
+  } catch {
+    return undefined
+  }
+}
+
+// 441 GAP2-D5 (WR-G03): the target list answers masked names, so a save whose target holds one
+// would write the marker into the file. A suite that does not parse is left to validation.
+function suiteFileTarget(content: string): unknown {
+  try {
+    const parsed: unknown = parseYaml(content)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+    return (parsed as Record<string, unknown>).target
+  } catch {
+    return undefined
+  }
+}
+
+function refusedShownMarkerTarget(res: ServerResponse, target: unknown): boolean {
+  if (!holdsShownMarker(target)) return false
+  json(res, {
+    error: 'marker_written_back',
+    message: MARKER_WRITTEN_BACK_SENTENCE,
+    issues: [{ path: ['target'], message: MARKER_WRITTEN_BACK_SENTENCE }],
+  }, 422)
+  return true
+}
+
+// The product provider an auth.json entry belongs to, mapped the way GET /api/auth/status maps it.
+function credentialProductProvider(key: string, credential: DashboardAuthCredential): string {
+  if (credential.type === 'oauth') return toProductProviderLabel(credential.provider ?? key)
+  if (credential.type === 'bearer') return credential.provider
+  return credential.provider ?? key
+}
+
+function ownAuthEntry(
+  store: Record<string, DashboardAuthCredential | undefined>,
+  name: string,
+): DashboardAuthCredential | undefined {
+  return Object.prototype.hasOwnProperty.call(store, name) ? store[name] : undefined
+}
+
+async function readAuthEntry(name: string): Promise<DashboardAuthCredential | undefined> {
+  return ownAuthEntry(await readAuth() as Record<string, DashboardAuthCredential | undefined>, name)
+}
+
+const CREDENTIAL_PROVIDER_CONFLICT = {
+  status: 409,
+  error: 'credential_provider_conflict',
+  message: 'A saved credential under this name belongs to a different provider.',
+} as const
+
+async function requireCredentialTarget(
+  configManager: ConfigManager,
+  name: string,
+  provider: string,
+): Promise<CredentialTarget> {
+  const match = await findRegistryLlm(configManager, name)
+  if (match && match.provider !== provider) {
+    return { ok: false, status: 400, error: `LLM config "${name}" uses ${String(match.provider)}, not ${provider}` }
+  }
+  const existing = await readAuthEntry(name)
+  if (existing && credentialProductProvider(name, existing) !== provider) {
+    return { ok: false, ...CREDENTIAL_PROVIDER_CONFLICT }
+  }
+  return { ok: true, configName: name, created: existing === undefined }
+}
+
 async function requirePluginAuthConfig(
   configManager: ConfigManager | undefined,
   configName: unknown,
   plugin: LLMAuthProviderPlugin,
-): Promise<{ ok: true; configName: string } | { ok: false; error: string }> {
-  const targetConfigName = typeof configName === 'string' ? configName.trim() : ''
-  if (!targetConfigName) {
-    return { ok: false, error: 'configName is required' }
-  }
+): Promise<CredentialTarget> {
+  const name = checkCredentialName(configName)
+  if (!name.ok) return name
   if (!configManager) {
-    return { ok: false, error: 'Config manager is required to save OAuth credentials' }
+    return { ok: false, status: 400, error: 'Config manager is required to save OAuth credentials' }
   }
-
-  const config = await configManager.read() as { registry?: { llms?: unknown[] } }
-  const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
-  const match = llms.find((item) => {
-    return Boolean(item)
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && (item as { name?: unknown }).name === targetConfigName
-  }) as { provider?: unknown } | undefined
-
-  if (!match) {
-    return { ok: false, error: `LLM config "${targetConfigName}" not found` }
-  }
-  if (match.provider !== plugin.providerId) {
-    return { ok: false, error: `LLM config "${targetConfigName}" uses ${String(match.provider)}, not ${plugin.providerId}` }
-  }
-
-  return { ok: true, configName: targetConfigName }
+  return requireCredentialTarget(configManager, name.name, plugin.providerId)
 }
 
 async function requireCredentialConfig(
   configManager: ConfigManager | undefined,
   configName: unknown,
   provider: string,
-): Promise<{ ok: true; configName: string } | { ok: false; error: string }> {
-  const targetConfigName = typeof configName === 'string' ? configName.trim() : ''
-  if (!targetConfigName) {
-    return { ok: false, error: 'configName is required' }
-  }
+): Promise<CredentialTarget> {
+  const name = checkCredentialName(configName)
+  if (!name.ok) return name
   if (!API_KEY_CREDENTIAL_PROVIDERS.has(provider)) {
-    return { ok: false, error: 'provider must support typed credentials' }
+    return { ok: false, status: 400, error: 'provider must support typed credentials' }
   }
   if (!configManager) {
-    return { ok: false, error: 'Config manager is required to save credentials' }
+    return { ok: false, status: 400, error: 'Config manager is required to save credentials' }
   }
+  return requireCredentialTarget(configManager, name.name, provider)
+}
 
-  const config = await configManager.read() as { registry?: { llms?: unknown[] } }
-  const llms = Array.isArray(config.registry?.llms) ? config.registry.llms : []
-  const match = llms.find((item) => {
-    return Boolean(item)
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && (item as { name?: unknown }).name === targetConfigName
-  }) as { provider?: unknown } | undefined
+function credentialRefusalBody(refusal: { error: string; message?: string }): { error: string; message?: string } {
+  return refusal.message === undefined ? { error: refusal.error } : { error: refusal.error, message: refusal.message }
+}
 
-  if (!match) {
-    return { ok: false, error: `LLM config "${targetConfigName}" not found` }
+async function credentialConflictAt(name: string, provider: string): Promise<boolean> {
+  const existing = await readAuthEntry(name)
+  return existing !== undefined && credentialProductProvider(name, existing) !== provider
+}
+
+export type CredentialLock = <T>(work: () => Promise<T>) => Promise<T>
+
+// 429-09: one queue per router for every auth.json write and removal, so a save, a move, a delete
+// and a sign-in completion never interleave their read-modify-write of the machine-wide store.
+export function createCredentialLock(): CredentialLock {
+  let tail: Promise<unknown> = Promise.resolve()
+  return <T>(work: () => Promise<T>): Promise<T> => {
+    const run = tail.then(work)
+    tail = run.catch(() => undefined)
+    return run
   }
-  if (match.provider !== provider) {
-    return { ok: false, error: `LLM config "${targetConfigName}" uses ${String(match.provider)}, not ${provider}` }
-  }
-
-  return { ok: true, configName: targetConfigName }
 }
 
 type DashboardAuthCredential =
@@ -156,6 +371,11 @@ interface DashboardLLMProviderMetadata {
     | { kind: 'api-key'; credentialTypes: Array<'api-key' | 'bearer-token'>; optional?: boolean }
     | { kind: 'oauth-plugin'; mode: 'browser-poll' | 'manual-code'; buttonLabel?: string }
   modelAdapter?: 'openai-responses' | 'anthropic-messages'
+  needsBaseURL?: boolean
+  authModes?: Array<'api-key' | 'bearer-token' | 'subscription' | 'none'>
+  subscription?: boolean
+  baseURLPlaceholder?: string
+  defaultModel?: string
 }
 
 interface PluginOAuthSession {
@@ -169,26 +389,30 @@ interface PluginOAuthSession {
   error?: string
 }
 
+function serializeProviderDescriptor(descriptor: ProviderDescriptor): DashboardLLMProviderMetadata {
+  return {
+    id: descriptor.id,
+    label: descriptor.label,
+    auth: {
+      kind: 'api-key',
+      credentialTypes: descriptor.authModes.filter(
+        mode => mode === 'api-key' || mode === 'bearer-token',
+      ),
+      ...(descriptor.credentialOptional ? { optional: true } : {}),
+    },
+    ...(descriptor.modelAdapter ? { modelAdapter: descriptor.modelAdapter } : {}),
+    needsBaseURL: descriptor.needsBaseURL,
+    authModes: descriptor.authModes,
+    ...(descriptor.subscription ? { subscription: true } : {}),
+    ...(descriptor.baseURLPlaceholder ? { baseURLPlaceholder: descriptor.baseURLPlaceholder } : {}),
+    ...(descriptor.defaultModel ? { defaultModel: descriptor.defaultModel } : {}),
+  }
+}
+
 function builtinLLMProviderMetadata(): DashboardLLMProviderMetadata[] {
-  return [
-    {
-      id: 'openai-compatible',
-      label: 'OpenAI-compatible',
-      auth: { kind: 'api-key', credentialTypes: ['api-key'], optional: true },
-      modelAdapter: 'openai-responses',
-    },
-    {
-      id: 'anthropic-compatible',
-      label: 'Anthropic-compatible',
-      auth: { kind: 'api-key', credentialTypes: ['api-key', 'bearer-token'], optional: true },
-      modelAdapter: 'anthropic-messages',
-    },
-    {
-      id: 'gemini',
-      label: 'Gemini',
-      auth: { kind: 'api-key', credentialTypes: ['api-key'] },
-    },
-  ]
+  return listProviders()
+    .filter(descriptor => !descriptor.subscription)
+    .map(serializeProviderDescriptor)
 }
 
 function serializeAuthProviderPlugin(plugin: LLMAuthProviderPlugin): DashboardLLMProviderMetadata {
@@ -204,13 +428,14 @@ function serializeAuthProviderPlugin(plugin: LLMAuthProviderPlugin): DashboardLL
   }
 }
 
-type DashboardRuntimeLLMConfig = Pick<
-  ModelConfig,
-  'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
-> & {
+type DashboardRuntimeLLMConfig = DashboardLLMConfig & {
+  vision?: DashboardVisionConfig
+  modelVision?: boolean
+}
+
+type DashboardVisionConfig = {
   screenshotSize?: number
   effectiveResolution?: number
-  modelAdapter?: 'openai-responses' | 'anthropic-messages'
 }
 
 const writeDashboardAuth = writeAuth as unknown as (
@@ -240,10 +465,24 @@ function normalizeRuntimeLLMConfig(raw: unknown): { configName: string; config: 
     }
     config.providerHeaders = headers
   }
-  if (typeof raw.screenshotSize === 'number') config.screenshotSize = raw.screenshotSize
-  if (typeof raw.effectiveResolution === 'number') config.effectiveResolution = raw.effectiveResolution
+  if (typeof raw.vision === 'boolean') config.modelVision = raw.vision
 
   return { configName: raw.name, config }
+}
+
+function normalizeDashboardVisionConfig(raw: unknown): DashboardVisionConfig | undefined {
+  if (!isPlainRecord(raw)) return undefined
+  const config: DashboardVisionConfig = {}
+  if (typeof raw.screenshotSize === 'number') {
+    config.screenshotSize = raw.screenshotSize
+  } else if (typeof raw.screenshotSize === 'string') {
+    const parsedSize = SizeString.safeParse(raw.screenshotSize)
+    if (parsedSize.success) config.screenshotSize = parsedSize.data
+  }
+  if (typeof raw.effectiveResolution === 'number' && Number.isInteger(raw.effectiveResolution) && raw.effectiveResolution > 0) {
+    config.effectiveResolution = raw.effectiveResolution
+  }
+  return config.screenshotSize !== undefined || config.effectiveResolution !== undefined ? config : undefined
 }
 
 async function resolveDashboardRuntimeLLM(
@@ -258,7 +497,7 @@ async function resolveDashboardRuntimeLLM(
     return { ok: true, llmConfig: fallbackLLMConfig, authFetch: fallbackAuthFetch }
   }
 
-  const rawConfig = await configManager.read()
+  const rawConfig = await readConfigValues(configManager)
   const registry = isPlainRecord(rawConfig.registry) ? rawConfig.registry : {}
   const use = isPlainRecord(rawConfig.use) ? rawConfig.use : {}
   const llms = Array.isArray(registry.llms) ? registry.llms : []
@@ -292,7 +531,13 @@ async function resolveDashboardRuntimeLLM(
     return { ok: false, error: auth.message }
   }
 
-  const runtimeConfig: DashboardRuntimeLLMConfig = { ...normalized.config }
+  const servicesVision = isPlainRecord(rawConfig.services)
+    ? normalizeDashboardVisionConfig(rawConfig.services.vision)
+    : undefined
+  const runtimeConfig: DashboardRuntimeLLMConfig = {
+    ...normalized.config,
+    vision: resolveVisionConfig(servicesVision),
+  }
   let resolvedAuthFetch: typeof globalThis.fetch | undefined
   if (auth.kind === 'api-key') {
     runtimeConfig.apiKey = auth.apiKey
@@ -326,67 +571,6 @@ function pruneExpiredPluginOAuthSessions(sessions: Map<string, PluginOAuthSessio
   }
 }
 
-function extractProviderErrorMessage(err: unknown): { message: string; statusCode?: number } {
-  const errObj = err as Record<string, unknown>
-  const statusCode = errObj?.statusCode as number | undefined
-  const responseBody = errObj?.responseBody as string | undefined
-  const data = errObj?.data as Record<string, unknown> | undefined
-  const apiError = data?.error as Record<string, string> | undefined
-
-  let message = err instanceof Error ? err.message : String(err)
-
-  if (apiError?.message && apiError.message !== 'Error') {
-    message = apiError.message
-  } else if (data?.detail && typeof data.detail === 'string') {
-    message = data.detail
-  } else if (responseBody) {
-    try {
-      const body = JSON.parse(responseBody)
-      if (body?.detail) message = body.detail
-      else if (body?.error?.message && body.error.message !== 'Error') message = body.error.message
-    } catch {
-      // response body was not JSON
-    }
-  }
-
-  return { message, statusCode }
-}
-
-function classifyProviderError(message: string, statusCode?: number): string {
-  const fullContext = `${message} ${statusCode ?? ''}`
-  if (/auth|unauthorized|401|invalid.*key|permission/i.test(fullContext)) {
-    return 'auth_error'
-  }
-  if (/model.*not.*support|model.*not.*found|not found|404|does not exist/i.test(fullContext)) {
-    return 'model_not_found'
-  }
-  if (/ECONNREFUSED|ENOTFOUND|timeout|abort|fetch failed|network/i.test(fullContext)) {
-    return 'network_error'
-  }
-  if (/rate|429|quota|limit/i.test(fullContext)) {
-    return 'rate_limit'
-  }
-  if (/invalid_request|400|bad request/i.test(fullContext)) {
-    return 'invalid_request'
-  }
-  return 'provider_error'
-}
-
-function publicLLMTestMessage(category: string, providerMessage: string): string {
-  switch (category) {
-    case 'auth_error':
-      return LLM_TEST_AUTH_ERROR_MESSAGE
-    case 'model_not_found':
-      return LLM_TEST_MODEL_NOT_FOUND_MESSAGE
-    case 'network_error':
-      return LLM_TEST_NETWORK_ERROR_MESSAGE
-    case 'provider_error':
-      return `Connection failed. ${providerMessage}`
-    default:
-      return providerMessage
-  }
-}
-
 function isLocalLLMBaseURL(baseURL: unknown): boolean {
   if (typeof baseURL !== 'string' || !baseURL.trim()) return false
   try {
@@ -412,10 +596,6 @@ function llmConnectionTestTimeoutMs(config: { provider?: unknown; baseURL?: unkn
   return REMOTE_LLM_CONNECTION_TEST_TIMEOUT_MS
 }
 
-function parseUrl(req: IncomingMessage): URL {
-  return new URL(req.url ?? '/', 'http://localhost')
-}
-
 function json(res: ServerResponse, data: unknown, status = 200): void {
   const body = JSON.stringify(data)
   res.writeHead(status, {
@@ -425,6 +605,162 @@ function json(res: ServerResponse, data: unknown, status = 200): void {
     'Access-Control-Allow-Headers': 'Content-Type',
   })
   res.end(body)
+}
+
+/**
+ * An answer that carries NO cross-origin read grant.
+ *
+ * ADDITIVE, and `json()` above is untouched on purpose: its wildcard posture serves the legacy
+ * read routes and re-platforming those is Phase 402's question, not this one's. What this writer
+ * exists for is the narrow class of answers that hand out a CAPABILITY. `Access-Control-Allow-Origin: *`
+ * on such an answer means a document on any origin may READ the token out of the response — the
+ * refusal beside it would be worthless if the body were still readable through a redirect or a
+ * misconfigured proxy. No wildcard, no allow-methods: the dashboard's own page is same-origin and
+ * needs neither, and every non-browser client ignores both.
+ */
+function jsonNoCors(res: ServerResponse, data: unknown, status = 200): void {
+  const body = JSON.stringify(data)
+  res.writeHead(status, { 'Content-Type': 'application/json' })
+  res.end(body)
+}
+
+/**
+ * Refuse a cross-site driver on a run-text read, and refuse it with NO cross-origin grant on the
+ * refusal either.
+ *
+ * WHY THESE ARMS AND NOT THE OTHERS (405 CR-01). They answer a run's stored text, served as it
+ * was stored (441 D-07), and they keep the no-grant posture CR-01 gave them.
+ *
+ * WHY THE REFUSAL AND NOT ONLY THE MISSING HEADER. Dropping the wildcard stops a page on another
+ * ORIGIN from READING the body. It does not stop DNS rebinding, where the attacker's own name
+ * resolves to a loopback address and the browser therefore treats the read as same-origin and asks
+ * for no grant at all. `refuseCrossSiteRequest` carries the Host check that closes that, and it
+ * ADMITS the caller that sends no `Origin` — the CLI, `curl`, the conformance harness — which is
+ * the local drive these arms exist for.
+ *
+ * SCOPE, DELIBERATELY NARROW. Only the run-text arms. `json()` above keeps its wildcard
+ * for the legacy read routes, whose whole-server posture is the re-platform question its own
+ * docstring defers; widening it here would change the posture of routes this fix does not own.
+ *
+ * THE SHARED PREFLIGHT ARM IS LEFT ALONE, and that is a decision rather than an oversight. `cors()`
+ * still answers every OPTIONS with the wildcard. All four arms here are SIMPLE GETs, so a browser
+ * needs no preflight to send them and a preflight grant confers no read; what confers the read is
+ * the grant on the ACTUAL response, and that is the one removed. A preflighted variant now gets a
+ * permissive OPTIONS followed by a response the browser refuses to hand to the page — it fails
+ * closed. Excluding these paths from `cors()` would mean claiming the `/api/runs/` prefix ahead of
+ * the shared arm the way the run-confirm prefix used to claim its own (deleted in 432-14), which
+ * would capture the trigger, cancel, delete, live-url, detail and post-processing routes too: the
+ * whole-server posture change this fix is deliberately not making.
+ */
+function refuseCrossSiteDisplayRead(req: IncomingMessage, res: ServerResponse): boolean {
+  if (refuseCrossSiteRequest(req) === undefined) return false
+  jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+  return true
+}
+
+const INSIGHTS_KNOWLEDGE_RUN_CAP = 200
+const INSIGHTS_KNOWLEDGE_CONCURRENCY = 4
+
+type KnowledgeChangeKind = (typeof RecordChangeSchema.shape.change.options)[number]
+
+interface InsightsKnowledgeChanges {
+  status: 'read'
+  /** The window's settled runs: started, and neither queued nor running. */
+  runsInWindow: number
+  runsRead: number
+  runsUnreadable: number
+  runsCurationFailed: number
+  runsCurationUnfinished: number
+  /** The window's runs still queued or running; they are not read. */
+  runsInFlight: number
+  truncated?: { read: number; total: number }
+  byKind: Record<KnowledgeChangeKind, number>
+}
+
+type InsightsRunCuration = 'read' | 'unreadable' | 'failed' | 'unfinished'
+
+/**
+ * `pending` is ambiguous: the chain may be queued, or it was never enqueued because the run was
+ * skipped by design (a gate run, an excluded outcome). Only the post-processing read can tell,
+ * and only its `skipped` fact is used.
+ */
+async function isPostProcessingSkipped(host: AgentHost, runId: string): Promise<boolean> {
+  const parsed = RunsPostProcessingInputSchema.safeParse({ runId })
+  if (!parsed.success) return false
+  try {
+    const status = await host.invokeFunction(
+      host.registry,
+      host.runsPostProcessingFunctionId,
+      parsed.data,
+      host.caller,
+    ) as PostProcessingStatus
+    return status?.skipped !== undefined
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Tally the window's knowledge changes by kind, one `runs.knowledge` read per settled run
+ * (433-30, 433-42).
+ *
+ * A run is read only when its curation finished (`complete`), or when its curation reads `pending`
+ * because the run's post-processing was skipped by design, so there was nothing to curate.
+ * Only read runs' changes are counted. Every other run is counted apart and never as a run that
+ * changed nothing:
+ * - unreadable: the read was refused or threw, the handoff is gone (`evidence-incomplete`), or the
+ *   store scan behind its changes was incomplete;
+ * - curation failed: `failed`;
+ * - curation unfinished: `running`, or `pending` with no skipped fact (or an unreadable one).
+ * Runs still queued or running are not read at all; they are counted as in flight. The latest
+ * {@link INSIGHTS_KNOWLEDGE_RUN_CAP} settled runs are read; a larger window says so.
+ */
+async function readInsightsKnowledgeChanges(
+  host: AgentHost,
+  db: DashboardDatabase,
+  window: { from?: string; to?: string },
+): Promise<InsightsKnowledgeChanges> {
+  const { runIds, total, inFlight } = db.listInsightsWindowRunIds({ ...window, limit: INSIGHTS_KNOWLEDGE_RUN_CAP })
+  const byKind = Object.fromEntries(
+    RecordChangeSchema.shape.change.options.map((kind) => [kind, 0]),
+  ) as Record<KnowledgeChangeKind, number>
+  const tally: Record<InsightsRunCuration, number> = { read: 0, unreadable: 0, failed: 0, unfinished: 0 }
+  const classify = async (runId: string): Promise<InsightsRunCuration> => {
+    const outcome = await readRunKnowledge(host, runId).catch(() => undefined)
+    if (outcome?.kind !== 'ok' || outcome.body.kind !== 'ready' || outcome.body.learned.scanIncomplete) {
+      return 'unreadable'
+    }
+    const curation = outcome.body.curation.status
+    let state: InsightsRunCuration
+    if (curation === 'complete') state = 'read'
+    else if (curation === 'failed') state = 'failed'
+    else if (curation === 'pending' && await isPostProcessingSkipped(host, runId)) state = 'read'
+    else state = 'unfinished'
+    if (state === 'read') {
+      for (const change of outcome.body.learned.changes) {
+        if (Object.hasOwn(byKind, change.change)) byKind[change.change] += 1
+      }
+    }
+    return state
+  }
+  let next = 0
+  const worker = async (): Promise<void> => {
+    while (next < runIds.length) {
+      tally[await classify(runIds[next++])] += 1
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(INSIGHTS_KNOWLEDGE_CONCURRENCY, runIds.length) }, worker))
+  return {
+    status: 'read',
+    runsInWindow: total,
+    runsRead: tally.read,
+    runsUnreadable: tally.unreadable,
+    runsCurationFailed: tally.failed,
+    runsCurationUnfinished: tally.unfinished,
+    runsInFlight: inFlight,
+    ...(total > runIds.length ? { truncated: { read: runIds.length, total } } : {}),
+    byKind,
+  }
 }
 
 function notFound(res: ServerResponse, message = 'Not found'): void {
@@ -489,56 +825,10 @@ function buildAuthStateSaveErrorMessage(
   }
 }
 
-function isDashboardProductEventName(value: unknown): value is DashboardProductEventName {
-  return typeof value === 'string' && DASHBOARD_PRODUCT_EVENT_NAME_SET.has(value as DashboardProductEventName)
-}
-
-function filterDashboardProductEventProperties(
-  name: DashboardProductEventName,
-  properties: Record<string, unknown>,
-): Record<string, unknown> {
-  const allowedKeys = DASHBOARD_PRODUCT_EVENT_PROPERTY_KEYS[name]
-  const filtered: Record<string, unknown> = {}
-  for (const key of allowedKeys) {
-    if (Object.prototype.hasOwnProperty.call(properties, key)) {
-      filtered[key] = properties[key]
-    }
-  }
-  return filtered
-}
-
-async function readAnalyticsServiceConfig(configManager: ConfigManager | undefined): Promise<AnalyticsServiceConfig> {
-  if (!configManager) return {}
-
-  try {
-    const config = await configManager.read() as { analytics?: { privacy?: unknown } } | undefined
-    if (config?.analytics?.privacy === true) {
-      return { analytics: { privacy: true } }
-    }
-  } catch {
-    // Fail closed for telemetry while keeping the HTTP route non-blocking.
-    return { analytics: { privacy: true } }
-  }
-  return {}
-}
-
-function getPathInsideDir(candidatePath: string, rootDir: string): string | null {
-  const relativePath = relative(rootDir, candidatePath)
-  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
-    return null
-  }
-  return relativePath
-}
-
-function isPlainFileName(value: string): boolean {
-  const fileName = value.trim()
-  return fileName.length > 0
-    && fileName !== '.'
-    && fileName !== '..'
-    && !isAbsolute(fileName)
-    && fileName === basename(fileName)
-    && !/[\\/\0]/.test(fileName)
-}
+// 2026-08-27 (405-07, D-14): a containment predicate and a plain-filename predicate stood here.
+// Both existed for the deleted path-serving routes and the deleted run-deletion sweep, which were
+// their only callers. The containment rule for artifact bytes is the evidence store's own now,
+// reached through the `runs.artifact` op — one rule, in the place that owns the layout.
 
 function createHookRegistryManager(configManager?: ConfigManager, configPath?: string): HookRegistryManager | null {
   if (!configManager || !configPath) {
@@ -627,23 +917,9 @@ function parseAnalyticsScopePredicates(config: Record<string, unknown> | undefin
   return { ok: true, predicates }
 }
 
-function validateAnalyticsPassRateScope(value: unknown): ConfigSectionValidationResult {
-  const result = AnalyticsSchema.shape.passRateScope.safeParse(value)
-  if (result.success) return { success: true }
-  return {
-    success: false,
-    error: {
-      issues: result.error.issues.map((issue) => ({
-        message: issue.message,
-        path: issue.path,
-      })),
-    },
-  }
-}
-
 async function readAnalyticsScopePredicates(configManager: ConfigManager | undefined): Promise<{ ok: true; predicates: AttributePredicate[] } | { ok: false; error: string }> {
   if (!configManager) return { ok: true, predicates: [] }
-  const config = await configManager.read()
+  const config = await readConfigValues(configManager)
   const parsedConfig = AgentQaConfigSchema.safeParse(config)
   if (!parsedConfig.success) {
     return { ok: true, predicates: [] }
@@ -651,10 +927,8 @@ async function readAnalyticsScopePredicates(configManager: ConfigManager | undef
   return parseAnalyticsScopePredicates(parsedConfig.data as Record<string, unknown>)
 }
 
-function calculateFlakyMetrics(runs: RunRow[]): { score: number; statusCount: number } {
-  const statuses = runs
-    .filter(r => r.status === 'passed' || r.status === 'failed')
-    .map(r => r.status)
+function calculateFlakyMetrics(classes: ReadonlyArray<RunStatusClass | 'skipped' | undefined>): { score: number; statusCount: number } {
+  const statuses = classes.filter(c => c === 'pass' || c === 'fail')
   let alternations = 0
   for (let i = 1; i < statuses.length; i++) {
     if (statuses[i] !== statuses[i - 1]) alternations++
@@ -663,6 +937,30 @@ function calculateFlakyMetrics(runs: RunRow[]): { score: number; statusCount: nu
     score: statuses.length > 1 ? alternations / (statuses.length - 1) : 0,
     statusCount: statuses.length,
   }
+}
+
+// 2026-10-18 (444-31, D-64): a list row's rate is its viewer's own fold; passed and decided are
+// that fold's pass and pass-or-fail counts.
+function passRateOf(trends: {
+  passRate: number | null
+  daily: ReadonlyArray<{ passed: number; failed: number }>
+}): { passRate: number | null; passed: number; decided: number } {
+  return {
+    passRate: trends.passRate,
+    passed: trends.daily.reduce((sum, day) => sum + day.passed, 0),
+    decided: trends.daily.reduce((sum, day) => sum + day.passed + day.failed, 0),
+  }
+}
+
+function lastRunOf(run: RunRow | undefined): {
+  id: string
+  status: string
+  startedAt: string | null
+  createdAt: string
+  duration: number
+} | null {
+  if (!run) return null
+  return { id: run.id, status: run.status, startedAt: run.startedAt, createdAt: run.createdAt, duration: run.duration }
 }
 
 function normalizeSupportedPlatform(value: unknown): SupportedPlatform | null {
@@ -714,7 +1012,7 @@ function getTargetPlatformMap(config: unknown): Map<string, SupportedPlatform> {
 async function readTargetPlatformMap(configManager?: ConfigManager): Promise<Map<string, SupportedPlatform>> {
   if (!configManager) return new Map()
   try {
-    const config = await configManager.read()
+    const config = await readConfigValues(configManager)
     return getTargetPlatformMap(config)
   } catch {
     return new Map()
@@ -744,7 +1042,7 @@ function parseUseTestTimeoutMs(useConfig: unknown): number | undefined {
 async function readConfigTestTimeoutMs(configManager?: ConfigManager): Promise<number | undefined> {
   if (!configManager) return undefined
   try {
-    const config = await configManager.read()
+    const config = await readConfigValues(configManager)
     const parsed = AgentQaConfigSchema.safeParse(config)
     if (parsed.success) {
       return parseUseTestTimeoutMs(parsed.data.use)
@@ -789,7 +1087,7 @@ function parseUseParallel(useConfig: unknown): boolean | undefined {
 async function readConfigUseParallel(configManager?: ConfigManager): Promise<boolean | undefined> {
   if (!configManager) return undefined
   try {
-    const config = await configManager.read()
+    const config = await readConfigValues(configManager)
     const parsed = AgentQaConfigSchema.safeParse(config)
     if (parsed.success) {
       return parseUseParallel(parsed.data.use)
@@ -944,6 +1242,23 @@ function enrichRunRow(
   }
 }
 
+// 2026-10-18 (444-31, D-64): a suite row's target and platform come from its own history, newest
+// first: the newest run with a target names both, else its last run does.
+function suiteTargetOf(
+  runs: readonly RunRow[],
+  targetPlatforms: Map<string, SupportedPlatform>,
+): { platform: string | null; targetName: string | null } {
+  let last: EnrichedRunRow | undefined
+  for (const run of runs) {
+    const enriched = enrichRunRow(run, targetPlatforms)
+    last ??= enriched
+    const targetName = enriched.targetName?.trim()
+    if (targetName) return { platform: enriched.platform, targetName }
+  }
+  if (!last) return { platform: null, targetName: null }
+  return { platform: last.platform, targetName: last.targetName?.trim() || null }
+}
+
 function matchesTargetFilter(run: EnrichedRunRow, filterValue: string | null): boolean {
   if (!filterValue) return true
   if (normalizeRunFilterValue(run.targetName) === filterValue) return true
@@ -962,7 +1277,6 @@ function getArtifactMissingSections(artifact: RunArtifactRow | null): string[] {
   const payload = artifact.payload
   if (!('config' in payload)) missing.push('config')
   if (!('source' in payload)) missing.push('source')
-  if (!('memory' in payload)) missing.push('memory')
   return missing
 }
 
@@ -1001,12 +1315,16 @@ function sanitizeSecretsFileMetadata(value: unknown): unknown {
 }
 
 function sanitizeArtifactPayloadForResponse(payload: RunArtifactRow['payload']): RunArtifactRow['payload'] {
-  const sanitized = redactAuthStateValue(sanitizeSecretTemplates(payload))
+  const sanitized = sanitizeSecretTemplates(payload)
   if (!isRecord(sanitized)) return payload
-  const config = sanitized.config
-  if (!isRecord(config) || !('secretsFile' in config)) return sanitized as unknown as RunArtifactRow['payload']
+  // G-401-18-CR01: the SEVENTH door. `JobQueue.enqueue` writes the caller's `metadata` object into
+  // `run_artifacts.payload.metadata` as well as `runs.metadata`, and this response is what serves
+  // it. The strip is the SAME allowlist the run rows go through — see `sanitizeRunMetadataForResponse`.
+  const withSafeMetadata = sanitizeArtifactPayloadMetadata(sanitized)
+  const config = withSafeMetadata.config
+  if (!isRecord(config) || !('secretsFile' in config)) return withSafeMetadata as unknown as RunArtifactRow['payload']
   return {
-    ...sanitized,
+    ...withSafeMetadata,
     config: {
       ...config,
       secretsFile: sanitizeSecretsFileMetadata(config.secretsFile),
@@ -1020,10 +1338,6 @@ function sanitizeArtifactForResponse(artifact: RunArtifactRow | null): RunArtifa
     ...artifact,
     payload: sanitizeArtifactPayloadForResponse(artifact.payload),
   }
-}
-
-function sanitizeAuthStateForResponse<T>(value: T): T {
-  return redactAuthStateValue(value)
 }
 
 async function normalizeDashboardWorkspacePath(
@@ -1095,66 +1409,430 @@ async function normalizeDashboardSuitePath(
   return suiteFileManager.resolvePath(filePath)
 }
 
-function sanitizeQueuedRunMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
-  const { args: _args, target: _target, isSuite: _isSuite, ...safeMetadata } = metadata ?? {}
-  return safeMetadata
+/**
+ * The `metadata` keys a CLIENT may write through `POST /api/queue/enqueue` (401-23, G-401-18-CR01).
+ *
+ * IT IS EMPTY, AND THE EMPTINESS IS THE DERIVATION'S ANSWER, not a placeholder. Every key that ever
+ * appears in a run's `metadata` is written by this server: `args`/`isSuite` by the enqueue routes,
+ * `timeout`/`timeoutSource`/`timeoutBaseMs`/`timeoutBufferMs` by `toExecutionTimeoutMetadata`,
+ * `confirmScope` by `/api/runs/trigger` until 432-14 deleted the run-confirm pair (a row written
+ * before then may still carry it), and `suiteIndex`/`farmSessionUrl`/`runDevice` by the CLI runner. A caller's OWN labels have their own
+ * first-class door on this route — `attributes`, validated by `buildRunRequestAttributes` and
+ * persisted in its own column. There is nothing left for a client to legitimately put here.
+ *
+ * WHAT IT REPLACED, AND WHY THE SHAPE MATTERS. It was a three-key DENYLIST (`args`/`target`/
+ * `isSuite`), which is why `POST /api/queue/enqueue { metadata: { confirmScope } }` planted an
+ * arbitrary confirm scope on a persisted run row with none of the validation `/api/runs/trigger`
+ * applies. Paired with the artifact-payload leak this plan also closes, that bought an attacker the
+ * whole escalation: read one browser's scope off `/artifact`, plant it on a run of your choosing,
+ * and the confirm for that run is raised in the victim's own dialog. A read-side strip with an open
+ * write door is half a fix, and this project has measured one-sided hardening minting regressions
+ * three times (388/390/392).
+ *
+ * IF THIS SET EVER GAINS A KEY, `routes.runs.test.ts` holds the invariant it must satisfy: a
+ * client-writable key must also be response-safe (or it is write-only dead weight nobody can read
+ * back) and must not be one the server itself writes (or the client can overwrite the server).
+ */
+export const CLIENT_WRITABLE_QUEUED_RUN_METADATA_KEYS: ReadonlySet<string> = new Set<string>([])
+
+/**
+ * The `metadata` keys this SERVER writes onto a run row — never a client.
+ *
+ * `confirmScope` stays on the list after 432-14 (D-14, D-22): nothing writes it now, but a row this
+ * server wrote before then can still hold it, and it is still the server's key rather than one a
+ * client may claim.
+ */
+export const SERVER_OWNED_RUN_METADATA_KEYS: ReadonlySet<string> = new Set<string>([
+  'args',
+  'confirmScope',
+  'farmSessionUrl',
+  'isSuite',
+  'runDevice',
+  'suiteIndex',
+  'target',
+  'timeout',
+  'timeoutBaseMs',
+  'timeoutBufferMs',
+  'timeoutSource',
+])
+
+type QueuedRunMetadataResult =
+  | { readonly ok: true; readonly metadata: Record<string, unknown> }
+  | { readonly ok: false; readonly rejected: readonly string[] }
+
+/**
+ * The write door's allowlist, and it REFUSES rather than silently dropping.
+ *
+ * ONE MECHANISM, NOT TWO. A filter that quietly deletes what it will not accept and a validator
+ * that rejects it are the same decision made twice, and the version that keeps both is the version
+ * where one of them stops being reached. This is the validator; the admitted subset it returns is
+ * what reaches `enqueue`. A caller that sends a key the server owns learns so.
+ */
+function sanitizeQueuedRunMetadata(metadata: unknown): QueuedRunMetadataResult {
+  if (metadata === undefined || metadata === null) return { ok: true, metadata: {} }
+  if (!isRecord(metadata)) return { ok: false, rejected: ['metadata'] }
+  const rejected = Object.keys(metadata)
+    .filter((key) => !CLIENT_WRITABLE_QUEUED_RUN_METADATA_KEYS.has(key))
+    .sort()
+  if (rejected.length > 0) return { ok: false, rejected }
+  return { ok: true, metadata: { ...metadata } }
 }
 
-function resolveArtifactPath(
-  candidatePath: string,
-  rootDir: string,
-  apiPrefix: '/api/screenshots/' | '/api/videos/',
-): string | null {
-  const normalizedCandidate = candidatePath.trim()
-  if (!normalizedCandidate) return null
-  const resolvedRootDir = resolve(rootDir)
+/**
+ * The largest execution timeout a persisted run row may carry into `executionBackend.execute`.
+ *
+ * THE CEILING IS NOT THE POINT; THE FLOOR IS. `in-process-backend.ts:211` reads
+ * `opts.timeout ?? this.options.defaultTimeout` and then validates — so ANY non-nullish nonsense
+ * (`-1`, `NaN`, `'soon'`) skips the default and leaves the run with no reclamation timer at all. A
+ * client that could write that key could pin a queue slot open forever. The ceiling closes the same
+ * hole from the other side, where a finite but absurd value is a timer that will never fire; a day
+ * is well past any dashboard-queued test (the largest the server itself computes is a YAML timeout
+ * plus `DASHBOARD_EXECUTION_TIMEOUT_BUFFER_MS`), and the point is to keep reclamation reachable,
+ * not to second-guess a long suite.
+ */
+export const MAX_QUEUED_EXECUTION_TIMEOUT_MS = 24 * 60 * 60 * 1000
 
-  if (isAbsolute(normalizedCandidate)) {
-    const resolvedAbsolute = resolve(normalizedCandidate)
-    return getPathInsideDir(resolvedAbsolute, resolvedRootDir) ? resolvedAbsolute : null
-  }
-
-  const relativePath = normalizedCandidate.startsWith(apiPrefix)
-    ? normalizedCandidate.slice(apiPrefix.length)
-    : normalizedCandidate
-  const resolvedPath = resolve(resolvedRootDir, relativePath)
-  return getPathInsideDir(resolvedPath, resolvedRootDir) ? resolvedPath : null
+/**
+ * Validate a persisted row's `metadata.timeout` at the seam that consumes it (401-23, T-401-G26).
+ *
+ * FALLS BACK, NEVER CLAMPS. An unusable value means "this row says nothing about the timeout", and
+ * the honest answer to that is the backend's own default — not a number this function invented.
+ */
+export function sanitizeQueuedExecutionTimeout(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  if (value <= 0 || value > MAX_QUEUED_EXECUTION_TIMEOUT_MS) return undefined
+  return value
 }
 
-async function cleanupDeletedRunArtifacts(
-  deletedRunIds: string[],
-  screenshotPaths: string[],
-  videoPaths: string[],
-  dirs: {
-    screenshotsDir?: string
-    videosDir?: string
-  },
-): Promise<void> {
-  const cleanupTargets = new Set<string>()
+// ---- CR-02 (401-18): the confirm scope stops leaving on the READ path ---------------------------
 
-  for (const runId of deletedRunIds) {
-    if (dirs.screenshotsDir) cleanupTargets.add(join(dirs.screenshotsDir, runId))
-    if (dirs.videosDir) cleanupTargets.add(join(dirs.videosDir, runId))
+/**
+ * The `runs.metadata` keys a RESPONSE may carry.
+ *
+ * AN ALLOWLIST, NOT A KEYED REMOVAL, and the choice is the whole point of the repair. `confirmScope`
+ * is the field that was measured leaving, but a `delete metadata.confirmScope` is one future
+ * `metadata.<anything> = <a capability>` away from the identical defect — and this phase has spent
+ * four rounds on precisely that class of half-fix. An allowlist fails CLOSED: a field nobody has
+ * invented yet does not leave, and adding it here is a deliberate act with this comment attached.
+ *
+ * WHAT IS ON IT, and why each one:
+ *   - `args`, `isSuite`, `target` — what the queue was asked to run. Already published on every
+ *     run-reading response since v1; the write path's `sanitizeQueuedRunMetadata` refuses them from
+ *     a CLIENT, which is a different question from whether a reader may see the server's own.
+ *   - `timeout`, `timeoutSource`, `timeoutBaseMs`, `timeoutBufferMs` — the resolved execution
+ *     budget and where it came from, written by `toExecutionTimeoutMetadata`.
+ *   - `suiteIndex` — which member of a suite this run's queued row belongs to. (2026-08-27,
+ *     405-07: this line used to name the run-detail timeline module that read it, which 405-03
+ *     deleted; that plan's scope boundary kept it out of server code, so the dangling reference
+ *     was carried here as a deferred item and is scrubbed with the rest of the retired feed.)
+ *   - `farmSessionUrl`, `runDevice` — read by the run navbar for a device-farm run.
+ *
+ * WHAT IS DELIBERATELY OFF IT: `confirmScope`, the leak this closes — and everything a caller
+ * stuffed into `POST /api/queue/enqueue`'s free-form `metadata`, which used to round-trip verbatim
+ * to any cross-origin reader. A queue API that accepts arbitrary keys and a run API that hands them
+ * back is a self-service exfiltration channel; that it never carried anything sensitive in practice
+ * is not a property anything checks.
+ */
+export const RESPONSE_SAFE_RUN_METADATA_KEYS: ReadonlySet<string> = new Set([
+  'args',
+  'isSuite',
+  'target',
+  'timeout',
+  'timeoutSource',
+  'timeoutBaseMs',
+  'timeoutBufferMs',
+  'suiteIndex',
+  'farmSessionUrl',
+  'runDevice',
+])
+
+/**
+ * `sanitizeQueuedRunMetadata`'s READ-PATH counterpart (401-18, CR-02).
+ *
+ * Built in its shape and pointed the other way: that one refuses fields a CLIENT may WRITE, this
+ * one refuses fields a RESPONSE may CARRY. `null` and absence round-trip unchanged, so a run with no
+ * metadata is serialized exactly as it was.
+ */
+function sanitizeRunMetadataForResponse(
+  metadata: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  if (metadata === null || metadata === undefined) return metadata ?? null
+  const safe: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(metadata)) {
+    if (RESPONSE_SAFE_RUN_METADATA_KEYS.has(key)) safe[key] = value
   }
+  return safe
+}
 
-  if (dirs.screenshotsDir) {
-    for (const screenshotPath of screenshotPaths) {
-      const resolvedPath = resolveArtifactPath(screenshotPath, dirs.screenshotsDir, '/api/screenshots/')
-      if (resolvedPath) cleanupTargets.add(resolvedPath)
+/**
+ * The artifact payload's own copy of the caller's run metadata (G-401-18-CR01).
+ *
+ * ONE ALLOWLIST, APPLIED AT A SECOND SERIALIZATION SITE — not a second allowlist. `JobQueue.enqueue`
+ * writes the SAME `opts.metadata` object into two places (`job-queue.ts:75-78`): the run row, and
+ * `run_artifacts.payload.metadata`. 401-18 scrubbed the first and missed the second, and two
+ * parallel allowlists is precisely the shape that would let them drift apart again — so this reuses
+ * `sanitizeRunMetadataForResponse` rather than declaring keys of its own.
+ *
+ * `attributes` IS CARRIED THROUGH, and it is the one key that is: the queue MINTS it beside the
+ * caller's keys (`job-queue.ts:77`) rather than accepting it, and the run-detail drawer reads it.
+ * A blanket delete of `payload.metadata` would close the leak by deleting a shipped field.
+ */
+function sanitizeArtifactPayloadMetadata(payload: Record<string, unknown>): Record<string, unknown> {
+  const metadata = payload.metadata
+  if (!isRecord(metadata)) return payload
+  const safe = sanitizeRunMetadataForResponse(metadata) ?? {}
+  return {
+    ...payload,
+    metadata: 'attributes' in metadata ? { ...safe, attributes: metadata.attributes } : safe,
+  }
+}
+
+/**
+ * Every `DashboardDatabase` read that hands this router a run row or a run artifact row.
+ *
+ * EXPORTED SO THE CENSUS CAN SCORE IT. `routes.runs.test.ts` parses `database.ts` for the public
+ * READS whose return annotation names `RunRow`, `RunArtifactBundle` or `RunArtifactRow` and asserts
+ * SET EQUALITY with this list — so a run-row read added to the database, or one dropped from here,
+ * reds rather than quietly opening another door.
+ *
+ * `getRunArtifact` JOINED IN 401-23, AND WHY THE CENSUS HAD TO WIDEN TO SEE IT. The 401-18
+ * predicate keyed on `RunRow|RunArtifactBundle` alone, and `getRunArtifact(runId): RunArtifactRow |
+ * null` structurally cannot match either name — which is exactly how the artifact payload became
+ * the door nobody wrote the strip into. The predicate's SHAPE was the gap, not its diligence.
+ */
+export const RESPONSE_SAFE_RUN_READ_METHODS = [
+  'getNextPendingRun',
+  'getPendingRuns',
+  'getRun',
+  'getRunArtifact',
+  'getRunArtifactBundle',
+  'getRuns',
+  'getRunsBySuiteId',
+  'getRunsByTest',
+] as const
+
+/**
+ * Run-NAMED database members that hand the response layer no run metadata at all (401-23, WR-08).
+ *
+ * THE OTHER HALF OF A TOTAL FUNCTION. `withResponseSafeRunReads` asserts at CONSTRUCTION that every
+ * `/run/i`-named method on the database it is given is accounted for — either wrapped above, or
+ * named here with the reason it needs no wrapping. Anything else throws. Before this the wrapper
+ * was `Object.create(db, {…overrides…})`, transparent by default, so an unlisted or FUTURE
+ * run-reading method reached the response layer through the prototype and returned raw rows.
+ *
+ * Each name and why it carries no run metadata to a reader:
+ *   - `insertRun`, `insertPendingRun`, `insertRunArtifact`, `updateRun`, `updateRunMetadata`,
+ *     `updateRunStatus`, `deleteRun` — WRITES. They return an id, a delete tally, a boolean, or
+ *     nothing.
+ *   - `stageRunArtifact`, `finalizeRunArtifact` — writes that ECHO the row they just wrote, to the
+ *     writer that supplied it (`server.ts`, on the raw handle). This router never calls them;
+ *     `routes.runs.test.ts` pins that absence, because the echo would otherwise be a door.
+ *   - `getRunsByTestCount`, `getRunsBySuiteIdCount` — a `number`.
+ *   - `listRunAttributeKeys`, `listRunAttributeValues` — attribute-name/value suggestions built by
+ *     the database from the `attributes` column; they never touch `metadata`.
+ */
+const RUN_READS_WITHOUT_ROWS: ReadonlySet<string> = new Set([
+  // 2026-08-27 (405-01, D-01/D-03): the v2 projection's six members.
+  //
+  // The five WRITES return nothing; they are here for the same reason `insertRun` is.
+  //
+  // `readRunDetailRows` IS A READ AND IS STILL HERE, and that is the judgement this set exists to
+  // make explicit rather than to hide. It returns members, steps and sub-actions — the bus
+  // payloads as the subscriber MASKED them (T-363-05) — and NO `RunRow` and no
+  // `RunArtifactRow`. It therefore carries none of the run metadata the 401-23 scrub law exists
+  // to strip, so wrapping it would be wrapping a shape that has nothing to strip. This router
+  // does not call it either: the detail arm dispatches through the injected host, which is the
+  // whole of D-03.
+  'deleteMemberProjection',
+  'incrementRunMemberAttempts',
+  'insertRunStep',
+  'insertRunSubAction',
+  'readRunDetailRows',
+  'upsertRunMember',
+  'deleteRun',
+  'finalizeRunArtifact',
+  'getRunsBySuiteIdCount',
+  'getRunsByTestCount',
+  // 433-30: run ids and a count, no row; each id is dispatched through the agent host.
+  'listInsightsWindowRunIds',
+  'insertPendingRun',
+  'insertRun',
+  'insertRunArtifact',
+  'listRunAttributeKeys',
+  'listRunAttributeValues',
+  // 2026-10-16 (442-01, D-01): an owner (pid, incarnation, host), no run metadata.
+  'readRunOwner',
+  // 2026-10-16 (442-01, D-04): ids and owners only, no run metadata.
+  'listRunningRunOwners',
+  // 2026-10-16 (442-01, D-04): compare-and-set writes that return a boolean.
+  'finalizeOrphanRun',
+  'finalizeOwnRun',
+  // 2026-10-17 (443-13, GAP-D1): a compare-and-set write that returns a boolean, no run metadata.
+  'closeOwnRun',
+  // 2026-10-17 (443-02, D-07): a compare-and-set write that returns a boolean, no run metadata.
+  'claimRunningRow',
+  'stageRunArtifact',
+  'updateRun',
+  'updateRunMetadata',
+  'updateRunStatus',
+])
+
+/**
+ * Run-named members that are not on `DashboardDatabase`'s TYPE at all (401-23, WR-08).
+ *
+ * WHY THIS SET HAS TO EXIST. TypeScript's `private` is erased at emit, so every private helper is
+ * a live own-property of the prototype and the runtime census below sees all of them. They are not
+ * response-layer doors — nothing typed as a `DashboardDatabase` can name them — but a census that
+ * ranges the live surface has to say so out loud rather than quietly skipping a shape it does not
+ * like. Skipping is how 401-18's predicate came to be blind.
+ *
+ * A NEW PRIVATE HELPER WITH `run` IN ITS NAME WILL RED THE BUILD until it is added here. That is
+ * the intended cost: the alternative is a filter that guesses which names are internal, and a
+ * guess is what this whole class of census keeps getting wrong.
+ */
+const RUN_MEMBERS_NOT_ON_THE_TYPE: ReadonlySet<string> = new Set([
+  'buildTrendsFromRuns',
+  'getHealedRunIds',
+  'getRunAccessibilityEnabled',
+  'listRunsForInsights',
+  'mapRunArtifactRow',
+  'mapRunRow',
+  'parseRunAttributes',
+  'queryRunsWithAttributePredicates',
+  'runMigrations',
+  'summarizeAnalyticsRuns',
+])
+
+/**
+ * Refuse to build a response-layer projection over a database with an unaccounted run-named read.
+ *
+ * IT RANGES THE LIVE OBJECT, not a source file — the axis the 401-18 census could not reach. A
+ * return-annotation grep can only see what an annotation spells; this sees what the router will
+ * actually be able to call, including a method inherited from a prototype or attached at runtime.
+ */
+function assertRunReadsAccountedFor(db: DashboardDatabase, wrapped: ReadonlySet<string>): void {
+  const surface = new Set<string>()
+  let layer: object | null = db as unknown as object
+  while (layer !== null && layer !== Object.prototype) {
+    for (const name of Object.getOwnPropertyNames(layer)) {
+      if (name === 'constructor' || !/run/i.test(name)) continue
+      const descriptor = Object.getOwnPropertyDescriptor(layer, name)
+      if (descriptor === undefined || typeof descriptor.value !== 'function') continue
+      surface.add(name)
+    }
+    layer = Object.getPrototypeOf(layer) as object | null
+  }
+  const unaccounted = [...surface]
+    .filter((name) => !wrapped.has(name)
+      && !RUN_READS_WITHOUT_ROWS.has(name)
+      && !RUN_MEMBERS_NOT_ON_THE_TYPE.has(name))
+    .sort()
+  if (unaccounted.length > 0) {
+    throw new Error(
+      'withResponseSafeRunReads: unaccounted run-named database method(s): '
+      + `${unaccounted.join(', ')}. Add each to RESPONSE_SAFE_RUN_READ_METHODS with a scrubbing `
+      + 'override, to RUN_READS_WITHOUT_ROWS with the reason it hands out no run metadata, or to '
+      + 'RUN_MEMBERS_NOT_ON_THE_TYPE if it is a private helper no typed caller can reach.',
+    )
+  }
+}
+
+/**
+ * The database as the RESPONSE LAYER may read it (401-18, CR-02).
+ *
+ * WHY A WRAPPER AT THE ROUTER AND NOT A STRIP AT EACH DOOR. The re-derived census found SIX
+ * run-serializing responses, not the two the ruling named — the run list, the run detail, the
+ * artifact bundle's `run` and `children[].run`, queue status's `pending`/`running`/`recent`, and
+ * both analytics run lists. Six doors is a strong argument that the seventh is the one nobody
+ * writes the strip into. This is the choke point they all pass through, so a door added next phase
+ * is covered by construction rather than by remembering.
+ *
+ * AND WHY NOT `mapRunRow`, WHICH IS THE OTHER CHOKE POINT. The queue consumer reads the
+ * persisted row's own metadata to dispatch the run (`server.ts`); stripping at the DB→row boundary
+ * would take from that reader what only a RESPONSE must not carry. `server.ts` and `job-queue.ts`
+ * hold the RAW handle and are untouched — this projection exists only inside `createRouter`, which
+ * is exactly the layer that serializes.
+ *
+ * THE PERSISTED VALUE IS NEVER TOUCHED. This is a read projection. 2026-10-01 (432-14, D-14/D-22):
+ * the trigger no longer writes a confirm scope and the queue consumer no longer reads one; a row
+ * written before then may still hold it, and this projection keeps it from leaving.
+ *
+ * AND IT FAILS LOUDLY RATHER THAN TRANSPARENTLY (401-23, WR-08). `Object.create(db, {…})` forwards
+ * everything it does not override, so before this an unlisted — or merely NEW — run-reading method
+ * reached the response layer through the prototype and returned raw rows. That is the structural
+ * root of G-401-18-CR01, not a footnote to it: the artifact payload leaked for exactly as long as
+ * nobody remembered to write a strip for a door the wrapper was happy to forward. The construction
+ * assertion below makes forgetting a build error instead of a leak.
+ */
+function withResponseSafeRunReads(db: DashboardDatabase): DashboardDatabase {
+  const scrubRow = <T>(row: T): T => {
+    if (row === null || row === undefined || typeof row !== 'object') return row
+    const record = row as unknown as { metadata?: Record<string, unknown> | null }
+    if (!('metadata' in record)) return row
+    return { ...record, metadata: sanitizeRunMetadataForResponse(record.metadata) } as unknown as T
+  }
+  const scrubRows = <T>(rows: readonly T[]): T[] => rows.map(scrubRow)
+  // ONE artifact scrub, named once and reached by both artifact reads below, so the bare-row door
+  // and the bundle door cannot drift into two allowlists.
+  const scrubArtifact = (artifact: RunArtifactRow | null): RunArtifactRow | null => {
+    if (artifact === null || !isRecord(artifact.payload)) return artifact
+    return {
+      ...artifact,
+      payload: sanitizeArtifactPayloadMetadata(artifact.payload) as unknown as RunArtifactRow['payload'],
     }
   }
-
-  if (dirs.videosDir) {
-    for (const videoPath of videoPaths) {
-      const resolvedPath = resolveArtifactPath(videoPath, dirs.videosDir, '/api/videos/')
-      if (resolvedPath) cleanupTargets.add(resolvedPath)
-    }
+  const overrides: Record<string, PropertyDescriptor> = {
+    getNextPendingRun: { value: () => scrubRow(db.getNextPendingRun()) },
+    getPendingRuns: { value: () => scrubRows(db.getPendingRuns()) },
+    getRun: { value: (id: string) => scrubRow(db.getRun(id)) },
+    getRuns: {
+      value: (...args: Parameters<DashboardDatabase['getRuns']>) => scrubRows(db.getRuns(...args)),
+    },
+    getRunsBySuiteId: {
+      value: (...args: Parameters<DashboardDatabase['getRunsBySuiteId']>) =>
+        scrubRows(db.getRunsBySuiteId(...args)),
+    },
+    getRunsByTest: {
+      value: (...args: Parameters<DashboardDatabase['getRunsByTest']>) =>
+        scrubRows(db.getRunsByTest(...args)),
+    },
+    // THE ROUTER HAS NO SERIALIZER OF ITS OWN FOR THIS ONE. `GET /api/runs/:id/artifact` reaches
+    // the payload through `getRunArtifactBundle` and serializes it with
+    // `sanitizeArtifactForResponse`; a caller reaching for the bare row has no such step, so the
+    // projection is its only choke point. Same allowlist, so the two cannot drift.
+    getRunArtifact: { value: (runId: string) => scrubArtifact(db.getRunArtifact(runId)) },
+    // 405-07 (D-02): the bundle is ONE artifact now. It used to carry the child runs of a suite
+    // parent, whose `run` rows this override scrubbed; nothing has written a child row since
+    // 402-09, and the shape went with the column. `getRunArtifact` above remains the choke point
+    // for the payload itself, and this wrapper delegates to it.
+    getRunArtifactBundle: {
+      value: (runId: string) => ({ artifact: scrubArtifact(db.getRunArtifactBundle(runId).artifact) }),
+    },
   }
-
-  await Promise.allSettled(
-    [...cleanupTargets].map((targetPath) => rm(targetPath, { recursive: true, force: true })),
-  )
+  // OVERRIDE ONLY WHAT THE GIVEN DATABASE ACTUALLY HAS. Defining a descriptor for an absent method
+  // would MINT one that throws on call — a projection that adds doors is not a projection.
+  const present: Record<string, PropertyDescriptor> = {}
+  for (const [name, descriptor] of Object.entries(overrides)) {
+    if (typeof (db as unknown as Record<string, unknown>)[name] === 'function') present[name] = descriptor
+  }
+  assertRunReadsAccountedFor(db, new Set(RESPONSE_SAFE_RUN_READ_METHODS))
+  return Object.create(db, present) as DashboardDatabase
 }
+
+// 2026-08-27 (405-07, D-14) — THE PATH-BASED ARTIFACT MACHINERY IS DELETED.
+//
+// Four functions and a cleanup routine stood here: a containment resolver, a three-door serving
+// verdict over an encoded `:runId/:filename` pair, its fixed-shape refusal, and the filesystem
+// sweep a run deletion performed. All five existed to serve or remove artifacts ADDRESSED BY PATH.
+//
+// Refs are the only artifact addressing now (D-14). A sub-action carries `artifactRefs`, the page
+// mints `\`/api/runs/<runId>/artifacts/<sha>\`` from one total route map, and the bytes are reached
+// through the `runs.artifact` op — whose containment rule is the evidence store's own, written
+// once, rather than a second path assembly in this file that is free to be the weaker one.
+//
+// AND THE DELETION SWEEP IS NOT REPLACED. `DELETE /api/runs/:id` removes rows and touches nothing
+// under the run directory: the event log and the content-addressed blobs there are the run's own
+// record, which this server projects and does not own (T-405-27).
 
 async function readWorkspaceHooks(
   configManager: ConfigManager | undefined,
@@ -1323,50 +2001,208 @@ function summarizeHookNetworkLogs(
 
 interface RouterDeps {
   db: DashboardDatabase
-  artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
-  testRunner?: TestRunner
+  /**
+   * The injected run backend (401-07, D-09).
+   *
+   * TYPED AGAINST THE INTERFACE, AND NOW ACTUALLY SEPARABLE. It always meant to be, and was not:
+   * the retired live-event route reached past the interface for a per-run replay buffer only the
+   * concrete class declared, so the seam had exactly one possible implementation. That route and
+   * that buffer are gone (405-07, D-19); what this router asks of a backend is the interface.
+   */
+  executionBackend?: ExecutionBackend
   jobQueue?: JobQueue
   testFileManager?: TestFileManager
   suiteFileManager?: SuiteFileManager
   configManager?: ConfigManager
   configPath?: string
+  // 441 GAP-D5: hook output, provider error text and target names leave through this mask. Absent,
+  // the router uses the config manager's; with neither, those answers carry no such text.
+  declaredSecretMask?: MaskFn
 
   llmConfig?: DashboardRuntimeLLMConfig
   authFetch?: typeof globalThis.fetch
   sessionManager?: import('../live-editor/session-manager.js').SessionManager
-  analyticsBridge?: {
-    buildAnalyticsEvent: typeof buildAnalyticsEvent
-    captureAnalytics: typeof captureAnalytics
-    resolveAnalyticsStandardProperties: typeof resolveAnalyticsStandardProperties
-  }
+  /**
+   * The composed agent host (400-01, D-01). It serves run detail, marks, analysis, knowledge and
+   * post-processing. (The run-confirm pair it also served is deleted, 432-14.)
+   *
+   * INJECTED, and optional because a router built the legacy two-argument way
+   * (`createRouter(db)`) has none. Each arm that needs it then answers by name rather than 404 —
+   * the route exists, this server was started without a host. See `chat/host.ts` for why the
+   * composition happens in the CLI command that starts this server rather than here.
+   */
+  agentHost?: AgentHost
+  /**
+   * The run service's readiness predicate, served on the LOCAL door (402-05, D-15).
+   *
+   * THE SAME FUNCTION THE RUN SERVICE'S `/ok` SERVES — one readiness spelling behind two doors,
+   * which is the whole of D-15. It is passed in rather than computed here for the reason `agentHost`
+   * is: every fact in it (is a host composed) is known only to the process that composed it, and a
+   * copy made here is how the run service and the dashboard start disagreeing about whether this
+   * process can run anything.
+   *
+   * ABSENT IS THE LEGACY MOUNT, NOT AN UNCONFIGURED SERVICE. `agent-qa dashboard` ALWAYS supplies
+   * this, because the browser preflight needs an honest answer and a 404 is not one. A router built the legacy
+   * two-argument way has none, and that arm answers 503 by name on `agentHost`'s idiom.
+   */
+  runServiceReadiness?: () => RunServiceReadiness
+  /**
+   * The started run's session, or nothing — the LOCAL door's attach port (402-08, D-01).
+   *
+   * THE SAME PORT THE AUTHED DOOR USES, and `server.ts` supplies it by reading
+   * `runService.attach` rather than by composing a second lookup: one session registry serves both
+   * doors, so a run the remote door can attach to is a run this door can attach to, and there is
+   * no second retention window to disagree about.
+   *
+   * ABSENT MEANS NO RUN SERVICE WAS MOUNTED, which is the same fact as "this process composed no
+   * session registry" — unlike `runServiceReadiness` above, whose absence is a legacy mount rather
+   * than an unconfigured service. The route then answers 503 BY NAME on the execution routes' own
+   * degradation idiom, never a 404 (the route exists) and never an empty stream (which would look
+   * like a run that emitted nothing).
+   */
+  runServiceAttach?: (runId: string) => RunSession | undefined
+  /**
+   * The `runs.liveurl` mint, DISPATCHED THROUGH THE REGISTRY by the composition root (403 D-03).
+   *
+   * A FUNCTION, not a signer: this router holds no key and mints nothing. What it does is turn one
+   * HTTP shape into one op call and the op's refusals into status codes — which is the whole of a
+   * thin client over the function layer.
+   *
+   * ABSENT MEANS THIS HOST SERVES NO LIVE VIEW, and the route answers 503 BY NAME on
+   * `runServiceReadiness`'s idiom — never a 404 (the route exists) and never a URL to nowhere.
+   */
+  mintLiveUrl?: (runId: string, handle: number) => Promise<RunsLiveUrlResult>
+  /**
+   * The `editor.liveurl` mint, dispatched through the registry by the composition root (428 D-07).
+   * The editor counterpart of `mintLiveUrl`: a function, never a signer. ABSENT MEANS THIS HOST
+   * MINTS NO EDITOR VIEW, and the route answers 503 by name.
+   */
+  mintEditorLiveUrl?: (sessionId: string) => Promise<EditorLiveUrlResult>
+  /**
+   * The in-process chip sink the post-processing stream relays from (404-05, D-16).
+   *
+   * INJECTED ON `agentHost`'s OWN IDIOM. The publisher is the CLI's post-run chip emitter — a
+   * package this one may not import — so `agent-qa dashboard` creates the relay, hands
+   * `relay.publish` to the run door's bridge and hands the relay itself here. One object, two
+   * halves of the same process; a relay composed here instead would be a registry the emitter
+   * never reaches, and the stream would heartbeat forever at a page whose chips do move.
+   *
+   * ABSENT MEANS THIS SERVER HAS NO PUSH CHANNEL and the stream arm answers 503 BY NAME — never a
+   * 404 (the route exists) and never an empty stream, which would look like a chain that never
+   * ticked. The READ route is unaffected: polling works with no relay at all.
+   */
+  postProcessingRelay?: PostProcessingRelay
 }
 
 export function createRouter(deps: RouterDeps): (req: IncomingMessage, res: ServerResponse) => void
-export function createRouter(db: DashboardDatabase, artifactsDir?: string): (req: IncomingMessage, res: ServerResponse) => void
-export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifactsDir?: string): (req: IncomingMessage, res: ServerResponse) => void {
+export function createRouter(db: DashboardDatabase): (req: IncomingMessage, res: ServerResponse) => void
+export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: IncomingMessage, res: ServerResponse) => void {
   const deps: RouterDeps = 'db' in dbOrDeps && typeof (dbOrDeps as RouterDeps).db === 'object' && 'getRuns' in ((dbOrDeps as RouterDeps).db ?? {})
     ? dbOrDeps as RouterDeps
-    : { db: dbOrDeps as DashboardDatabase, artifactsDir }
-  const { db, testRunner, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
+    : { db: dbOrDeps as DashboardDatabase }
+  const { executionBackend, jobQueue, testFileManager, suiteFileManager, configManager, workspacePaths, llmConfig, authFetch, sessionManager } = deps
+  const declaredMask = deps.declaredSecretMask ?? configManager?.mask
+  // CR-02 (401-18): the response layer reads run rows through the projection, never raw. The host's
+  // own reconciliation and the queue keep `deps.db` — see `withResponseSafeRunReads`.
+  const db = withResponseSafeRunReads(deps.db)
   const pluginOAuthSessions = new Map<string, PluginOAuthSession>()
-  const analyticsBridge = deps.analyticsBridge ?? {
-    buildAnalyticsEvent,
-    captureAnalytics,
-    resolveAnalyticsStandardProperties,
-  }
-  const ssDir = deps.artifactsDir ? join(deps.artifactsDir, 'screenshots') : undefined
-  const vidDir = deps.artifactsDir ? join(deps.artifactsDir, 'videos') : undefined
-  const memoryCatalogManager = new MemoryCatalogManager({ configManager, configPath: deps.configPath })
+  const withCredentialLock = createCredentialLock()
+  const connectsInFlight = createConnectInFlight()
+  const undoStore = createUndoStore({ retentionMs: UNDO_RETENTION_MS })
 
   return (req: IncomingMessage, res: ServerResponse) => {
+    // 400-16 (gap 7): the SAME guarded parse `server.ts`'s listener uses, not a second copy. In the
+    // shipped process the listener has already refused an unparseable request line, so this arm is
+    // defence in depth — but this router is EXPORTED and mounted directly (the conformance suite
+    // stands it up on its own `node:http` server), and on that mount an unguarded parse is a live
+    // throw. The refusal is answered before every route, so no frame below ever sees a URL that
+    // could not be parsed.
+    const url = tryParseRequestUrl(req)
+    if (url === undefined) {
+      json(res, { error: 'Bad Request' }, 400)
+      return
+    }
+    const path = url.pathname
+
+    // 2026-10-01 (432-14, D-14): the run-confirm prefix is no longer dispatched. It was mounted
+    // here, ahead of the shared OPTIONS arm, so its answers carried no wildcard grant. Its two paths
+    // now fall to the same arms as any path this server does not serve — the shared preflight and
+    // the generic 404 — not redirected and not stubbed.
+
+    // 429-01 D-19: the field-merge config write, ahead of the shared OPTIONS arm so its answers
+    // never pass through the wildcard grant.
+    if (path === '/api/config' && req.method === 'PATCH') {
+      if (!configManager) {
+        jsonNoCors(res, { error: 'config_unavailable' }, 503)
+        return
+      }
+      registerConfigWriteRoute(req, res, { configManager, undoStore })
+      return
+    }
+
+    // 429-11 D-24: the Undo door answers every method itself, so no preflight grant reaches it.
+    if (path === '/api/config/undo') {
+      registerConfigUndoRoute(req, res, {
+        configManager,
+        undoStore,
+        restoreCredential: (name, credential) => withCredentialLock(async () => {
+          if (await readAuthEntry(name) !== undefined) return false
+          await writeDashboardAuth(name, credential as DashboardAuthCredential)
+          return true
+        }),
+      })
+      return
+    }
+
+    // 429-06 D-22: the cheap revision read the page polls to notice an outside edit.
+    if (path === '/api/config/revision' && req.method === 'GET') {
+      if (!configManager) {
+        jsonNoCors(res, { error: 'config_unavailable' }, 503)
+        return
+      }
+      registerConfigRevisionRoute(req, res, { configManager })
+      return
+    }
+
+    // 429-10 D-15/D-17: the draft connect transaction, ahead of the shared OPTIONS arm so its
+    // answers never pass through the wildcard grant.
+    if (path === '/api/llm/connect' && req.method === 'POST') {
+      if (!configManager) {
+        jsonNoCors(res, { error: 'config_unavailable' }, 503)
+        return
+      }
+      registerLlmConnectRoute(req, res, {
+        configManager,
+        withCredentialLock,
+        credentialProvider: (name, credential) => credentialProductProvider(name, credential as DashboardAuthCredential),
+        connectionTimeoutMs: llmConnectionTestTimeoutMs,
+        inFlight: connectsInFlight,
+      })
+      return
+    }
+
+    // 2026-10-01 (432-21, owner decision recorded in 432-14 #4): THE RUN TRIGGER AND THE QUEUE
+    // ENQUEUE ARE SAME-SITE ONLY, AHEAD OF THE SHARED OPTIONS ARM. With the run approval gone
+    // (432-13/14), a page on another origin could start any non-production run with a simple
+    // cross-site POST to either path; these two never had the refusal the mark, config-write,
+    // live-editor and credential doors carry. The guard runs for every method on exactly these two
+    // paths, so a cross-site preflight is refused too and gets no wildcard grant, and it runs before
+    // the queue is consulted or a body is read, so a refused request queues and starts nothing.
+    // The dashboard's own Run (same origin) and a local client that sends no `Origin` — the CLI,
+    // `curl`, the conformance harness, `dashboard-smoke.mjs` — are admitted. The whole-server CORS
+    // posture (WINDOWS CR-01) is unchanged.
+    if (path === '/api/runs/trigger' || path === '/api/queue/enqueue') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
+    }
+
     if (req.method === 'OPTIONS') {
       cors(res)
       return
     }
-
-    const url = parseUrl(req)
-    const path = url.pathname
 
     // GET /api/auth-states — list safe auth-state metadata only
     if (path === '/api/auth-states' && req.method === 'GET') {
@@ -1376,7 +2212,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       }
       ;(async () => {
         try {
-          const config = await configManager.read()
+          const config = await readConfigValues(configManager)
           const targetName = url.searchParams.get('target') ?? undefined
           const authStates = await listAuthStateMetadata({
             configDir: dirname(resolve(deps.configPath!)),
@@ -1391,55 +2227,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // POST /api/analytics/events — best-effort dashboard product analytics bridge
-    if (path === '/api/analytics/events' && req.method === 'POST') {
-      readJsonBody<{ name?: unknown; properties?: unknown }>(req)
-        .then((body) => {
-          if (
-            !isPlainRecord(body)
-            || !isDashboardProductEventName(body.name)
-            || (
-              Object.prototype.hasOwnProperty.call(body, 'properties')
-              && body.properties !== undefined
-              && !isPlainRecord(body.properties)
-            )
-          ) {
-            json(res, { error: 'Invalid analytics event' }, 400)
-            return
-          }
-
-          const name = body.name
-          const browserProperties = isPlainRecord(body.properties) ? body.properties : {}
-          json(res, { accepted: true }, 202)
-
-          void (async () => {
-            try {
-              const config = await readAnalyticsServiceConfig(configManager)
-              if (config.analytics?.privacy === true) {
-                return
-              }
-
-              const standardProperties = await analyticsBridge.resolveAnalyticsStandardProperties({ surface: 'dashboard-ui' })
-              const event = analyticsBridge.buildAnalyticsEvent({
-                name,
-                properties: {
-                  ...filterDashboardProductEventProperties(name, browserProperties),
-                  ...standardProperties,
-                },
-              })
-              await analyticsBridge.captureAnalytics(event, { config })
-            } catch {
-              // Analytics is intentionally best-effort and invisible to dashboard users.
-            }
-          })()
-        })
-        .catch(() => json(res, { error: 'Invalid analytics event' }, 400))
-      return
-    }
-
     // GET /api/runs
     if (path === '/api/runs' && req.method === 'GET') {
-      const status = url.searchParams.get('status') ?? undefined
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`.
+      if (refuseCrossSiteDisplayRead(req, res)) return
+      const statuses = url.searchParams.getAll('status')
+      const unknownStatus = statuses.find((word) => !isRunStatusWord(word))
+      if (unknownStatus !== undefined) {
+        jsonNoCors(res, { error: `Unknown run status: ${unknownStatus}.` }, 400)
+        return
+      }
       const name = url.searchParams.get('name') ?? undefined
       const platform = url.searchParams.get('platform') ?? undefined
       const target = normalizeRunFilterValue(url.searchParams.get('target'))
@@ -1456,19 +2253,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       void readTargetPlatformMap(configManager)
         .then((targetPlatforms) => {
           const allRuns = db.getRuns({
-            status,
+            statuses,
             name,
             from,
             to,
             attributePredicates: attributePredicatesResult.predicates,
           })
-          const enrichedRuns = allRuns.map(run => {
-            if (run.suiteId && !run.parentRunId) {
-              const tests = db.getRunsByParent(run.id).map(test => enrichRunRow(test, targetPlatforms))
-              return enrichRunRow(run, targetPlatforms, tests)
-            }
-            return enrichRunRow(run, targetPlatforms)
-          })
+          // 405-07 (D-02): a suite row used to be enriched with its child runs as `tests`. Nothing
+          // has written a child run row since 402-09 — the members of a suite run are `run_members`
+          // on the one row — so this branch could only ever attach an empty array.
+          const enrichedRuns = allRuns.map(run => enrichRunRow(run, targetPlatforms))
           const platformFilteredRuns = enrichedRuns.filter(run =>
             matchesPlatformFilter(run, normalizeSupportedPlatform(platform)),
           )
@@ -1480,9 +2274,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const filtered = platformFilteredRuns.filter(run => matchesTargetFilter(run, target))
 
           const runs = filtered.slice(offset, offset + limit)
-          json(res, { runs, total: filtered.length, targets: targetOptions })
+          jsonNoCors(res, {
+            runs,
+            total: filtered.length,
+            targets: targetOptions,
+          })
         })
-        .catch(() => json(res, { error: 'Failed to list runs' }, 500))
+        .catch(() => jsonNoCors(res, { error: 'Failed to list runs' }, 500))
       return
     }
 
@@ -1526,6 +2324,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
     // GET /api/runs/:id/artifact
     const runArtifactMatch = path.match(/^\/api\/runs\/([^/]+)\/artifact$/)
     if (runArtifactMatch && req.method === 'GET') {
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       const runId = decodeURIComponent(runArtifactMatch[1])
       const run = db.getRun(runId)
       if (!run) {
@@ -1533,75 +2333,30 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         return
       }
       const bundle = db.getRunArtifactBundle(runId)
-      json(res, sanitizeAuthStateForResponse({
+      jsonNoCors(res, {
         run,
         artifact: sanitizeArtifactForResponse(bundle.artifact),
-        children: bundle.children.map((child) => ({
-          ...child,
-          artifact: sanitizeArtifactForResponse(child.artifact),
-        })),
         missingSections: getArtifactMissingSections(bundle.artifact),
-      }))
+      })
       return
     }
 
-    // GET /api/runs/:id/accessibility
-    if (path.startsWith('/api/runs/') && path.endsWith('/accessibility') && req.method === 'GET') {
-      const segments = path.split('/')
-      const id = segments[3]
-      const run = db.getRun(id)
-      if (!run) {
-        notFound(res, 'Run not found')
-        return
-      }
-      const summary = db.getAccessibilitySummary(id)
-      json(res, summary)
-      return
-    }
-
-    // GET /api/runs/:id/steps/:n/reasoning — structured reasoning trace for a step
-    const reasoningMatch = path.match(/^\/api\/runs\/([^/]+)\/steps\/(\d+)\/reasoning$/)
-    if (reasoningMatch && req.method === 'GET') {
-      const [, runId, stepOrderStr] = reasoningMatch
-      const run = db.getRun(runId)
-      if (!run) { notFound(res, 'Run not found'); return }
-      const stepOrder = parseInt(stepOrderStr, 10)
-      const trace = db.getReasoningTrace(runId, stepOrder)
-      if (trace) {
-        json(res, sanitizeAuthStateForResponse({ trace }))
-        return
-      }
-      // Fallback: construct legacy trace from step data for backward compatibility
-      const steps = db.getSteps(runId)
-      const step = steps.find(s => s.stepOrder === stepOrder)
-      if (!step) { notFound(res, 'Step not found'); return }
-      json(res, sanitizeAuthStateForResponse({
-        trace: {
-          id: null,
-          stepId: step.id,
-          observeText: step.observation,
-          observeDuration: null,
-          planReasoning: step.reasoning,
-          planConfidence: step.confidence,
-          planAction: step.plannedAction,
-          planDuration: null,
-          executeAction: step.action,
-          executeDuration: null,
-          verifyReasoning: null,
-          verifySuccess: step.result === 'success' ? true : step.result === 'failure' ? false : null,
-          verifyDuration: null,
-          healAttempts: step.healingAttempts,
-          totalDuration: step.duration,
-          screenStateBefore: null,
-          screenStateAfter: null,
-          createdAt: step.createdAt,
-        },
-      }))
-      return
-    }
+    // 2026-08-27 (405-07, D-03/D-19) — FOUR READ ARMS WERE DELETED FROM THIS BLOCK.
+    //
+    // The accessibility summary, the per-step reasoning trace, the log page and the step list each
+    // answered off a v1 projection table with no producer left. `runs.detail` supersedes them: it is ONE read,
+    // through the function layer, over the bus-shaped projection the subscriber actually writes —
+    // which is D-03's whole point, that the page's read is a read the CLI, MCP and chat can make
+    // too. Keeping these beside it would have kept a second, private read path the function layer
+    // cannot see, answering from tables nothing fills.
+    //
+    // They are not redirected and not stubbed. The router's generic 404 answers them, because a
+    // route that no longer exists is the honest thing for a client to discover.
 
     // GET /api/runs/:id/execution-logs
     if (path.startsWith('/api/runs/') && path.endsWith('/execution-logs') && req.method === 'GET') {
+      // THE SAME-SITE GUARD, FIRST (405 CR-01) — see `refuseCrossSiteDisplayRead`.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       const segments = path.split('/')
       const id = segments[3]
       const run = db.getRun(id)
@@ -1612,52 +2367,46 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       const stepId = url.searchParams.get('stepId') ?? undefined
       const type = url.searchParams.get('type') ?? undefined
 
-      if (run.suiteId && !run.parentRunId) {
-        const childRuns = db.getRunsByParent(id)
-        const allRunIds = [id, ...childRuns.map((c: any) => c.id)]
-        let allLogs: any[] = []
-        for (const rid of allRunIds) {
-          allLogs.push(...db.getExecutionLogs({ runId: rid, stepId, type }))
-        }
-        json(res, sanitizeAuthStateForResponse({ logs: allLogs }))
-        return
-      }
-
+      // 405-07 (D-02): a suite run's logs used to be gathered across its child run rows. There are
+      // no child rows — one `runs` row per run since 402-09 — and a suite's hook logs are written
+      // against that one id, carrying `test_index`/`step_index` to say where in the run they ran.
       const logs = db.getExecutionLogs({ runId: id, stepId, type })
-      json(res, sanitizeAuthStateForResponse({ logs }))
+      jsonNoCors(res, { logs })
       return
     }
 
-    // GET /api/runs/:id/logs
-    if (path.startsWith('/api/runs/') && path.endsWith('/logs') && req.method === 'GET') {
-      const segments = path.split('/')
-      const id = segments[3]
-      const run = db.getRun(id)
-      if (!run) {
-        notFound(res, 'Run not found')
+    // 419 D-13: register before the run catch-all; no private feedback implementation here.
+    if (path.startsWith('/api/runs/') && path.endsWith('/mark') && req.method === 'POST') {
+      if (deps.agentHost === undefined) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
         return
       }
-      const stepId = url.searchParams.get('stepId') ?? undefined
-      const level = url.searchParams.get('level') ?? undefined
-      const source = url.searchParams.get('source') ?? undefined
-      const limit = url.searchParams.has('limit') ? parseInt(url.searchParams.get('limit')!, 10) : 500
-      const offset = url.searchParams.has('offset') ? parseInt(url.searchParams.get('offset')!, 10) : 0
-      const logs = db.getLogs({ runId: id, stepId, level, source, limit, offset })
-      json(res, sanitizeAuthStateForResponse({ logs, total: logs.length }))
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/mark'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_mark_input' }, 400)
+        return
+      }
+      registerRunMarkRoute(req, res, { host: deps.agentHost, runId, boundary: 'human' })
       return
     }
 
-    // GET /api/runs/:id/steps
-    if (path.startsWith('/api/runs/') && path.endsWith('/steps') && req.method === 'GET') {
-      const segments = path.split('/')
-      const id = segments[3]
-      const run = db.getRun(id)
-      if (!run) {
-        notFound(res, 'Run not found')
+    // 423-21 D-18: the read-tier consequence preview. POST carries runs.mark's exact input; the
+    // adapter guards, parses and dispatches the registered op, and this arm owns no feedback logic.
+    if (req.method === 'POST' && /^\/api\/runs\/[^/]+\/mark-preview$/.test(path)) {
+      if (deps.agentHost === undefined) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
         return
       }
-      const steps = db.getSteps(id)
-      json(res, sanitizeAuthStateForResponse({ steps }))
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/mark-preview'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      serveRunMarkPreviewRead(req, res, { runId, host: deps.agentHost, boundary: 'human' })
       return
     }
 
@@ -1667,30 +2416,57 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         json(res, { error: 'Queue not available' }, 503)
         return
       }
-      const runId = path.slice('/api/runs/'.length, path.length - '/cancel'.length)
-      const cancelled = jobQueue.cancel(runId)
-      if (cancelled) {
-        // For pending jobs, JobQueue already set status='cancelled'.
-        // For running jobs, JobQueue emits 'cancel-running' which triggers executionManager.kill().
-        // Update DB with cancel metadata for running jobs.
-        try {
-          const run = db.getRun(runId)
-          if (run && run.status === 'cancelled') {
-            const duration = run.startedAt
-              ? Date.now() - new Date(run.startedAt).getTime()
-              : 0
-            db.updateRun(runId, {
-              duration,
-              endedAt: new Date().toISOString(),
-              failureSummary: 'Test cancelled by user',
-            })
-          }
-        } catch { /* best-effort */ }
-        json(res, { cancelled: true })
-      } else {
-        json(res, { error: 'Run not found or not cancellable' }, 404)
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, path.length - '/cancel'.length))
+      } catch {
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
       }
-      return
+      // 2026-10-17 (444-06, D-31): each answer in plain words; the route writes nothing.
+      const outcome = jobQueue.cancel(runId)
+      switch (outcome.kind) {
+        case 'cancelled':
+          json(res, { outcome: 'cancelled', message: 'Run cancelled before it started.' })
+          return
+        case 'stop-requested':
+          json(
+            res,
+            { outcome: 'stop-requested', message: 'Stop requested. The run will end with its own verdict.' },
+            202,
+          )
+          return
+        case 'not-stoppable-here':
+          json(
+            res,
+            {
+              error: "This run can't be stopped from the dashboard. Stop it where it was started.",
+              reason: 'not-stoppable-here',
+            },
+            409,
+          )
+          return
+        case 'finished':
+          json(res, {
+            outcome: 'finished',
+            status: outcome.status,
+            message: `This run already finished: ${outcome.status}.`,
+          })
+          return
+        case 'orphan-finalized':
+          json(res, { cancelled: false, message: outcome.message })
+          return
+        case 'owned-elsewhere':
+          json(
+            res,
+            { error: outcome.message, reason: 'owned-by-live-process', ownerPid: outcome.ownerPid },
+            409,
+          )
+          return
+        case 'not-cancellable':
+          json(res, { error: 'Run not found or not cancellable' }, 404)
+          return
+      }
     }
 
     // DELETE /api/runs/:id
@@ -1710,20 +2486,312 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           return
         }
 
-        void cleanupDeletedRunArtifacts(
-          deletedRun.deletedRunIds,
-          deletedRun.screenshotPaths,
-          deletedRun.videoPaths,
-          {
-            screenshotsDir: ssDir,
-            videosDir: vidDir,
-          },
-        ).finally(() => {
-          json(res, { deleted: true, deletedRunIds: deletedRun.deletedRunIds })
-        })
+        // 405-07 (D-14 · T-405-27): ROWS ONLY. A filesystem sweep ran here first, removing the
+        // run's screenshot and video directories and every path the step rows named. Both the
+        // paths and the sweep are gone: what lives under the run directory is the event log and
+        // the content-addressed blobs — the run's own record, which this server projects and does
+        // not own. A dashboard delete removes the dashboard's projection of a run, nothing more.
+        json(res, { deleted: true, deletedRunIds: deletedRun.deletedRunIds })
       } catch {
         json(res, { error: 'Failed to delete run' }, 500)
       }
+      return
+    }
+
+    // GET /api/runs/:runId/live-url — the LOCAL door onto the mint (403 D-03).
+    //
+    // ABOVE THE `GET /api/runs/:id` ARM BELOW, and the order is the mechanism: that arm claims
+    // every GET under the prefix and answers `Not found` for anything that is not exactly four
+    // segments. A live-url route registered after it is a route that never runs — measured, not
+    // assumed (the tracer cell's first run answered 404 from precisely that arm).
+    //
+    // IT DISPATCHES THE OP AND FORMATS NOTHING. The body is the op's result verbatim: a second
+    // shaping here would be a second contract for what a `liveUrl` is, free to disagree with the
+    // one the function layer published. The refusals are the op's own, mapped by ERROR NAME rather
+    // than by matching a message — a message is prose and prose gets rewritten.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/live-url$/.test(path)) {
+      // THE SAME-SITE GUARD, FIRST — before the door decides anything else about this request.
+      //
+      // 403 gap round 1 (SC-2, T-403-20). This route hands out the frame socket's ONLY credential,
+      // so it is the choke point: a page that cannot obtain a token cannot open the socket. Before
+      // this check, a page on any origin open in the developer's own browser could `fetch` a view
+      // token and stream the app under test. The loopback bind is not a defence against that — it
+      // stops a remote HOST, and the attacker here is the developer's own browser reaching another
+      // ORIGIN. The predicate is the chat door's, shared rather than re-derived, and it ADMITS the
+      // caller that sends no `Origin` at all (the CLI, `curl`, the conformance harness), which is
+      // the local drive this door exists for.
+      const crossSite = refuseCrossSiteRequest(req)
+      if (crossSite !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
+      if (!deps.mintLiveUrl) {
+        jsonNoCors(res, { error: 'live_view_unavailable' }, 503)
+        return
+      }
+      let liveUrlRunId: string
+      try {
+        liveUrlRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/live-url'.length))
+      } catch {
+        jsonNoCors(res, { error: 'unknown_run' }, 404)
+        return
+      }
+      // THE RAW `handle` PARAMETER THROUGH THE SCHEMA'S OWN READER, on the run-stream door's
+      // reasoning one route up: `url.searchParams` resolves `?handle=1&handle=2` to `1`, which is
+      // the one answer that reader exists to refuse.
+      const rawHandle = handleParamOf(req)
+      const parsedHandle = parseHandleParam(rawHandle)
+      if (parsedHandle.kind === 'invalid') {
+        jsonNoCors(res, { error: 'invalid_handle' }, 400)
+        return
+      }
+      const handle = parsedHandle.kind === 'absent' ? 0 : parsedHandle.index
+      // EVERY ARM THROUGH `jsonNoCors`, the success one most of all: the success body IS the token.
+      // The refusals go the same way so that the door has one posture rather than a posture per
+      // outcome — an arm left on `json()` would be the one a later reader copies.
+      void deps.mintLiveUrl(liveUrlRunId, handle).then(
+        (result) => { jsonNoCors(res, result) },
+        (error: unknown) => {
+          const name = error instanceof Error ? error.name : ''
+          if (name === 'UnknownRunError') { jsonNoCors(res, { error: 'unknown_run' }, 404); return }
+          if (name === 'LiveViewUnavailableError') { jsonNoCors(res, { error: 'live_view_unavailable' }, 503); return }
+          jsonNoCors(res, { error: 'live_url_mint_failed' }, 500)
+        },
+      )
+      return
+    }
+
+    // GET /api/runs/:runId/artifacts/:sha — a minted ref, resolved to bytes (405-05, D-12/D-13).
+    //
+    // ABOVE THE DETAIL ARM AND THEREFORE ABOVE THE `/api/runs/:id` CATCH-ALL, on the same
+    // measured precedent (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix.
+    //
+    // AN ANCHORED TWO-CAPTURE REGEX, and `[^/]+` on both segments so a path with an extra
+    // separator matches nothing here rather than being reassembled into something that does.
+    //
+    // THE RUN ID IS DECODED AND THE SHA IS NOT. A content address is 64 characters drawn from
+    // `[0-9a-f]`, none of which percent-encoding can represent differently — so a sha segment that
+    // needed decoding is already not a sha, and decoding it would turn `%2e%2e%2f` into a string
+    // the contract has to refuse a second time. It is passed RAW to a schema whose regex refuses
+    // everything that is not a content address.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. The concrete evidence store is not imported by this file
+    // and must never be — a source cell in `run-detail-routes.test.ts` asserts that its NAME does
+    // not occur here at all, which is why this comment does not spell it either. The containment
+    // rule for these bytes is the store's own, reached through the op; a second path assembly here
+    // would be a second rule, free to be the weaker one.
+    if (req.method === 'GET') {
+      const artifactMatch = /^\/api\/runs\/([^/]+)\/artifacts\/([^/]+)$/.exec(path)
+      if (artifactMatch) {
+        if (!deps.agentHost) {
+          json(res, { error: 'agent_host_unavailable' }, 503)
+          return
+        }
+        let artifactRunId: string
+        try {
+          artifactRunId = decodeURIComponent(artifactMatch[1] ?? '')
+        } catch {
+          // An undecodable segment names no run, and the honest answer is the one the op's own
+          // input schema gives for an id it refuses.
+          json(res, { error: 'invalid_run_id' }, 400)
+          return
+        }
+        serveRunArtifact(req, res, {
+          runId: artifactRunId,
+          sha: artifactMatch[2] ?? '',
+          host: deps.agentHost,
+        })
+        return
+      }
+    }
+
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/evidence$/.test(path)) {
+      if (!deps.agentHost) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/evidence'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      serveRunEvidenceRead(req, res, { runId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
+    // 423-21 D-18: marks history, above the `/api/runs/:id` catch-all like its read siblings.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/marks$/.test(path)) {
+      if (!deps.agentHost) {
+        jsonNoCors(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/runs/'.length, -'/marks'.length))
+      } catch {
+        jsonNoCors(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      serveRunMarksHistoryRead(req, res, { runId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
+    // GET /api/runs/:id/detail — the durable run-detail projection (405-01, D-03).
+    //
+    // ABOVE THE `GET /api/runs/:id` CATCH-ALL BELOW, on the live-url and post-processing arms'
+    // measured precedent (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix and
+    // answers `Not found` for anything that is not exactly four segments — and
+    // `/api/runs/<id>/detail` is four segments, so registered after it this route would be looked
+    // up as a run id and refused.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. No `db.` call appears in this arm, deliberately: the
+    // whole point of D-03 is that the page's read crosses the function layer, where it can be
+    // audited and where the CLI and MCP can reach the same answer. Everything below the 503 is
+    // `serveRunDetailRead`'s — the op call, the refusal vocabulary, the body.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/detail$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let detailRunId: string
+      try {
+        detailRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/detail'.length))
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the op's own
+        // input schema gives for an id it refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      // THE LOCAL HUMAN DOOR (405-10, D-09): `boundary: 'human'` turns on the same-site guard. The
+      // authed REMOTE door's `/run/:runId/detail` passes nothing; both serve the body as stored.
+      serveRunDetailRead(req, res, { runId: detailRunId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
+    // GET /api/runs/:id/analysis — one run's resolved verdicts, sentences and clusters (406-01, D-04).
+    //
+    // ABOVE THE `GET /api/runs/:id` CATCH-ALL BELOW, on the detail arm's measured precedent
+    // (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix and answers `Not found` for
+    // anything that is not exactly four segments — and `/api/runs/<id>/analysis` is four segments,
+    // so registered after it this route would be looked up as a run id and refused.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. `analysis.get` is THE single producer of a run's verdicts
+    // and sentences (389 D-11); everything below the 503 is `serveRunAnalysisRead`'s.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/analysis$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let analysisRunId: string
+      try {
+        analysisRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/analysis'.length))
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the op's own
+        // input schema gives for an id it refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      // THE HUMAN DOOR (D-04): `boundary: 'human'` turns on the same-site guard. The authed REMOTE
+      // row passes no `boundary`; both serve the body as stored (441 D-07).
+      serveRunAnalysisRead(req, res, { runId: analysisRunId, host: deps.agentHost, boundary: 'human' })
+      return
+    }
+
+    // GET /api/runs/:id/knowledge — what this run used and learned (407-01, D-05/D-06).
+    //
+    // ABOVE THE `GET /api/runs/:id` CATCH-ALL BELOW, on the detail and analysis arms' measured
+    // precedent (RESEARCH Pitfall 2): that arm claims EVERY GET under the prefix and answers
+    // `Not found` for anything that is not exactly four segments — and `/api/runs/<id>/knowledge`
+    // is four segments, so registered after it this route would be looked up as a run id and
+    // refused.
+    //
+    // IT DISPATCHES AND FORMATS NOTHING. `runs.knowledge` is THE single producer of the Knowledge
+    // tab's whole view (407 D-05) — served brief channels, serve-time traces, procedure use, the
+    // recorded rung, curator deltas — and everything below the 503 is `serveRunKnowledgeRead`'s.
+    // A run whose handoff has been pruned comes back 200 with `kind: 'evidence-incomplete'`, not
+    // a 404: D-06 makes that a state the page renders rather than a refusal it has to catch.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/knowledge$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let knowledgeRunId: string
+      try {
+        knowledgeRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/knowledge'.length))
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the op's own
+        // input schema gives for an id it refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      // THE HUMAN DOOR (405-10 D-09): `boundary: 'human'` turns on the same-site guard, as on its
+      // two neighbours. The body is served as stored (441 D-07).
+      serveRunKnowledgeRead(req, res, {
+        runId: knowledgeRunId,
+        host: deps.agentHost,
+        boundary: 'human',
+      })
+      return
+    }
+
+    // GET /api/runs/:id/post-processing[/stream] — chip truth and its live channel (404-05).
+    //
+    // ABOVE THE `GET /api/runs/:id` ARM BELOW, on the live-url arm's measured precedent: that arm
+    // claims EVERY GET under the prefix and answers `Not found` for anything that is not exactly
+    // four segments — and `/api/runs/<id>/post-processing` is four segments, so it would be looked
+    // up as a run id and refused. Registered after it, these two routes would never run.
+    //
+    // THE STREAM ARM IS FIRST, because `/post-processing/stream` also ends with nothing the read
+    // arm's own regex would reject if the read arm were written loosely. Both are anchored regexes
+    // over a single segment, so neither can claim the other's path whatever the order.
+    //
+    // THEY DISPATCH AND FORMAT NOTHING. Everything below the 503 arms is
+    // `servePostProcessingRead`/`servePostProcessingStream`'s: the op calls, the join, the framing,
+    // the 204 and the refusal vocabulary. A second spelling here would be a second answer to what a
+    // chip is, which is exactly what D-16/D-17 exist to prevent.
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/post-processing\/stream$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      if (!deps.postProcessingRelay) {
+        json(res, { error: 'post_processing_relay_unavailable' }, 503)
+        return
+      }
+      let streamRunId: string
+      try {
+        streamRunId = decodeURIComponent(
+          path.slice('/api/runs/'.length, -'/post-processing/stream'.length),
+        )
+      } catch {
+        // An undecodable segment names no run, and the honest answer is the one the core gives for
+        // an id the op's own input schema refuses.
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      servePostProcessingStream(req, res, {
+        runId: streamRunId,
+        host: deps.agentHost,
+        relay: deps.postProcessingRelay,
+      })
+      return
+    }
+
+    if (req.method === 'GET' && /^\/api\/runs\/[^/]+\/post-processing$/.test(path)) {
+      if (!deps.agentHost) {
+        json(res, { error: 'agent_host_unavailable' }, 503)
+        return
+      }
+      let readRunId: string
+      try {
+        readRunId = decodeURIComponent(path.slice('/api/runs/'.length, -'/post-processing'.length))
+      } catch {
+        json(res, { error: 'invalid_run_id' }, 400)
+        return
+      }
+      servePostProcessingRead(req, res, { runId: readRunId, host: deps.agentHost })
       return
     }
 
@@ -1734,20 +2802,25 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         notFound(res)
         return
       }
+      // THE SAME-SITE GUARD (405 CR-01) — see `refuseCrossSiteDisplayRead`. It sits AFTER the shape
+      // check and not above it because this arm is the `/api/runs/` catch-all: the length test is
+      // what decides whether this request is the single-run door at all, and a path that is not
+      // that door should keep answering the generic 404 rather than a refusal about a door it
+      // never reached.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       const id = segments[3]
       const run = db.getRun(id)
       if (!run) {
         notFound(res, 'Run not found')
         return
       }
-      const steps = db.getSteps(id)
-      const attempts = db.getRunsByParent(id)
-      if (run.suiteId && !run.parentRunId) {
-        const tests = db.getRunsByParent(id)
-        json(res, sanitizeAuthStateForResponse({ run, steps, attempts, tests }))
-      } else {
-        json(res, sanitizeAuthStateForResponse({ run, steps, attempts }))
-      }
+      // 405-07 (D-03/D-02): `{ run }` AND NOTHING ELSE. This body carried three more keys —
+      // `steps` off a v1 projection with no producer, and `attempts`/`tests` off a child-run walk
+      // over a column nothing writes. Every one of them was structurally empty on a run this build
+      // produced, so a page rendering them rendered an empty tree that looked like a bug rather
+      // than like an absence. The run's members, steps and sub-actions are `GET /api/runs/:id/detail`'s,
+      // through `runs.detail`.
+      jsonNoCors(res, { run })
       return
     }
 
@@ -1757,6 +2830,24 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       const to = url.searchParams.get('to') ?? undefined
       const costStats = db.getCostStats({ from, to })
       json(res, costStats)
+      return
+    }
+
+    // GET /api/insights/knowledge-changes — what curation changed across the window's runs (433-30,
+    // F-433-26). Each run is read through `runs.knowledge`, the op the Knowledge tab reads, on the
+    // machine boundary: only counts leave this arm.
+    if (path === '/api/insights/knowledge-changes' && req.method === 'GET') {
+      if (refuseCrossSiteDisplayRead(req, res)) return
+      if (!deps.agentHost) {
+        jsonNoCors(res, { status: 'unavailable', reason: 'agent_host_unavailable' }, 503)
+        return
+      }
+      const from = url.searchParams.get('from') ?? undefined
+      const to = url.searchParams.get('to') ?? undefined
+      void readInsightsKnowledgeChanges(deps.agentHost, db, { from, to }).then(
+        (body) => { jsonNoCors(res, body) },
+        () => { jsonNoCors(res, { status: 'unavailable', reason: 'read_failed' }, 500) },
+      )
       return
     }
 
@@ -1808,107 +2899,78 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // GET /api/screenshots/:runId/:filename
-    if (path.startsWith('/api/screenshots/') && req.method === 'GET') {
-      const segments = path.split('/')
-      if (segments.length !== 5 || !ssDir) {
-        notFound(res)
+    // 2026-08-27 (405-07, D-14) — THE TWO PATH-SERVING ARMS ARE DELETED.
+    //
+    // They served bytes addressed as `<runId>/<filename>` under a screenshots or a videos root.
+    // Refs are the only artifact addressing now: `GET /api/runs/:runId/artifacts/:sha` above
+    // resolves a content address through the `runs.artifact` op, and the store's own containment
+    // rule is the one rule those bytes are reached through. There is no video surface at all,
+    // because no producer mints a recording ref — an honest absence rather than a surviving path
+    // (T-405-28).
+
+    // GET /api/run-readiness — the LOCAL half of D-15's one-predicate-two-doors.
+    //
+    // NO TOKEN, DELIBERATELY, and that is not a hole in D-06's no-anonymous law: that law governs
+    // the SERVICE routes, whose whole premise is a caller from another machine. This is the local
+    // dashboard API, and what keeps it local is the 402-05 bind guard — an unauthenticated surface
+    // structurally cannot be remote, so the browser preflight does not need a credential to ask
+    // whether the run service is configured. The answer carries readiness FACTS and no secret: no
+    // token, no count, no entry name.
+    if (path === '/api/run-readiness' && req.method === 'GET') {
+      if (!deps.runServiceReadiness) {
+        json(res, { error: 'This server was started without a run-service readiness predicate' }, 503)
         return
       }
-      const runId = segments[3]
-      const filename = segments[4]
-
-      if (runId.includes('..') || filename.includes('..') || runId.includes('/') || filename.includes('/')) {
-        notFound(res, 'Invalid path')
-        return
-      }
-
-      const filePath = join(ssDir, runId, filename)
-      const resolvedPath = resolve(filePath)
-      if (!resolvedPath.startsWith(resolve(ssDir))) {
-        notFound(res, 'Invalid path')
-        return
-      }
-
-      stat(filePath).then(s => {
-        if (!s.isFile()) {
-          notFound(res, 'Screenshot not found')
-          return
-        }
-        readFile(filePath).then(buffer => {
-          res.writeHead(200, {
-            'Content-Type': 'image/png',
-            'Content-Length': buffer.length,
-            'Access-Control-Allow-Origin': '*',
-          })
-          res.end(buffer)
-        }).catch(() => notFound(res, 'Screenshot not found'))
-      }).catch(() => notFound(res, 'Screenshot not found'))
+      json(res, deps.runServiceReadiness())
       return
     }
 
-    // GET /api/videos/:runId/:filename
-    if (path.startsWith('/api/videos/') && req.method === 'GET') {
-      const segments = path.split('/')
-      if (segments.length !== 5 || !vidDir) {
-        notFound(res)
+    // GET /api/run-stream/:runId — the LOCAL door onto the run event stream (402-08, D-01/D-13).
+    //
+    // ONE STREAM CORE BEHIND TWO DOORS. Everything below the 503 arm is `serveRunEventStream`'s:
+    // the attach, the handle validation, the filter, the framing, the heartbeat and the close.
+    // This handler formats no frame and reads no envelope, deliberately — a second spelling here
+    // would agree with the authed door on the day it was written and drift the first time either
+    // moves, and the drift would be invisible until somebody diffed them (T-402-27). The parity is
+    // measured rather than asserted: `routes.run-stream.test.ts` drives one planted session
+    // through BOTH doors over a corpus that includes every refusal class and compares the bytes.
+    //
+    // NO TOKEN, ON `/api/run-readiness`'s EXACT ARGUMENT (402-05). This is the local dashboard API
+    // and what keeps it local is the bind guard, not a credential. The routes that assume a caller
+    // from another machine live behind `ownsRunServicePath`, above this router entirely.
+    //
+    // THE RAW `handle` PARAMETER IS READ BY THE CORE'S OWN READER, not by `url.searchParams`,
+    // which resolves `?handle=1&handle=2` to `1` — the one answer that reader exists to refuse.
+    if (req.method === 'GET' && path.startsWith('/api/run-stream/')) {
+      if (!deps.runServiceAttach) {
+        json(res, { error: 'This server was started without a run service to stream from' }, 503)
         return
       }
-      const runId = segments[3]
-      const filename = segments[4]
-
-      if (runId.includes('..') || filename.includes('..') || runId.includes('/') || filename.includes('/')) {
-        notFound(res, 'Invalid path')
+      let runId: string
+      try {
+        runId = decodeURIComponent(path.slice('/api/run-stream/'.length))
+      } catch {
+        // An undecodable id names no run, and the honest answer is the one the core gives for a
+        // run this process never started.
+        json(res, { error: 'unknown_run' }, 404)
         return
       }
-
-      const videoPath = join(vidDir, runId, filename)
-      const resolvedVideo = resolve(videoPath)
-      const resolvedVidDir = resolve(vidDir)
-      if (!getPathInsideDir(resolvedVideo, resolvedVidDir)) {
-        notFound(res, 'Invalid path')
-        return
-      }
-
-      const tryServe = (filePath: string) => stat(filePath).then(s => {
-        if (!s.isFile()) {
-          notFound(res, 'Video not found')
-          return
-        }
-
-        const contentType = filePath.endsWith('.mp4') ? 'video/mp4' : 'video/webm'
-        const range = req.headers.range
-        if (range) {
-          const parts = range.replace(/bytes=/, '').split('-')
-          const start = parseInt(parts[0], 10)
-          const end = parts[1] ? parseInt(parts[1], 10) : s.size - 1
-          const chunkSize = end - start + 1
-
-          res.writeHead(206, {
-            'Content-Range': `bytes ${start}-${end}/${s.size}`,
-            'Accept-Ranges': 'bytes',
-            'Content-Length': chunkSize,
-            'Content-Type': contentType,
-            'Access-Control-Allow-Origin': '*',
-          })
-          createReadStream(filePath, { start, end }).pipe(res)
-        } else {
-          res.writeHead(200, {
-            'Content-Type': contentType,
-            'Content-Length': s.size,
-            'Accept-Ranges': 'bytes',
-            'Access-Control-Allow-Origin': '*',
-          })
-          createReadStream(filePath).pipe(res)
-        }
+      serveRunEventStream(req, res, {
+        runId,
+        handleParam: handleParamOf(req),
+        // 403-03 (D-13 · INVK-05): the resume point, read from the SAME pair the authed door reads
+        // it from. `url.searchParams.get('lastEventId')` would resolve a repeated parameter to its
+        // first value — the one answer `lastEventIdParamOf` exists to refuse — and a second
+        // header/query precedence rule here would be a second contract for where a client resumes.
+        resume: resumePointOf(req.headers['last-event-id'], lastEventIdParamOf(req)),
+        attach: deps.runServiceAttach,
       })
-      tryServe(videoPath).catch(() => notFound(res, 'Video not found'))
       return
     }
 
     // GET /api/execution/active — list currently running tests
     if (path === '/api/execution/active' && req.method === 'GET') {
-      const active = testRunner ? testRunner.getActiveExecutions() : []
+      const active = executionBackend ? executionBackend.getActiveExecutions() : []
       json(res, { executions: active })
       return
     }
@@ -1923,6 +2985,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         .then(async (body) => {
           if (!body.name || typeof body.name !== 'string') {
             json(res, { error: 'name is required' }, 400)
+            return
+          }
+          // G-401-18-CR01 (write half): `metadata` is SERVER-DERIVED. Refused before any path is
+          // normalized or any attribute built, because the only thing a client can achieve by
+          // sending it is overwriting a decision this server already made.
+          const queuedMetadata = sanitizeQueuedRunMetadata(body.metadata)
+          if (!queuedMetadata.ok) {
+            json(res, {
+              error: 'metadata is server-derived; these keys are not client-writable: '
+                + `${queuedMetadata.rejected.join(', ')}. Use \`attributes\` for caller-supplied labels.`,
+            }, 400)
             return
           }
           let normalizedFileTarget: { storagePath: string; executionPath: string } | null = null
@@ -1948,17 +3021,35 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             json(res, { error: err instanceof Error ? err.message : String(err) }, 400)
             return
           }
+          const args = normalizedFileTarget ? [normalizedFileTarget.executionPath] : []
+          const source = isSuiteFile ? 'suite' : 'dashboard'
+          // 2026-10-16 (442 D-12, WINDOWS #550): the trigger's preflight, before anything queues.
+          try {
+            await executionBackend?.preflight?.({ args, source })
+          } catch (error) {
+            const denial = runDenialOf(error)
+            if (denial !== undefined) {
+              json(res, denial, 403)
+              return
+            }
+            json(res, { error: error instanceof Error ? error.message : String(error) }, 400)
+            return
+          }
           const runId = jobQueue.enqueue({
             name: body.name,
             filePath: normalizedFileTarget?.storagePath,
-            kind: isSuiteFile ? 'suite-parent' : 'test',
+            // 2026-08-24 (402-09, D-11): NO PARENT KIND IS MINTED. A suite run is ONE run row
+            // with member handles, so a parent artifact kind would claim parenthood over rows
+            // nothing creates. `isSuiteFile` still travels in `metadata.isSuite` below, and the run's
+            // own `suite_id` plus the artifact's `source.kind` snapshot still say it is a suite.
+            kind: 'test',
             attributes,
             priority: body.priority,
             platform: body.platform,
             parallel: body.parallel,
             metadata: {
-              ...sanitizeQueuedRunMetadata(body.metadata),
-              args: normalizedFileTarget ? [normalizedFileTarget.executionPath] : [],
+              ...queuedMetadata.metadata,
+              args,
               ...(isSuiteFile ? { isSuite: true } : {}),
             },
           })
@@ -2001,12 +3092,15 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         json(res, { error: 'Queue not available' }, 503)
         return
       }
-      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; noMemory?: boolean; local?: boolean; triggerSource?: unknown }>(req)
+      readJsonBody<{ file?: string; patterns?: string[]; tags?: unknown; noCache?: boolean; local?: boolean; triggerSource?: unknown }>(req)
         .then(async (body) => {
           if (body.tags !== undefined) {
             json(res, { error: 'tags are not supported for dashboard-triggered runs' }, 400)
             return
           }
+          // 2026-10-01 (432-14, D-14): the click is the whole request. The confirm scope this body
+          // used to name, and the validation and persistence that went with it, are deleted with the
+          // run-confirm pair; nothing on this road asks a browser anything.
           const triggerSource = parseDashboardRunTriggerSource(body.triggerSource)
           if (!triggerSource.ok) {
             json(res, { error: triggerSource.error }, 400)
@@ -2045,12 +3139,26 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             ? normalizedFileTarget
             : null
           if (body.noCache) {
-            args.push('--no-cache')
-          }
-          if (body.noMemory) {
-            args.push('--no-memory')
+            args.push('--disable-cache')
           }
           const isSuite = Boolean(isSuiteFile)
+
+          // 2026-10-04 (433-34, G-433-10): the run core's own refusal, asked BEFORE anything is
+          // recorded. A production target the config has not opted into used to be enqueued here,
+          // minting a row the core then refused, so the click read "Run started" and the refusal was
+          // recorded as a failed run. The composing host answers with the core's rule; this route
+          // only renders the denial in the run service door's shape.
+          try {
+            await executionBackend?.preflight?.({ args, source: isSuite ? 'suite' : 'dashboard' })
+          } catch (error) {
+            const denial = runDenialOf(error)
+            if (denial !== undefined) {
+              json(res, denial, 403)
+              return
+            }
+            json(res, { error: error instanceof Error ? error.message : String(error) }, 400)
+            return
+          }
 
           let testName = body.file
             ? basename(normalizedFileTarget?.storagePath ?? body.file, '.yaml')
@@ -2100,7 +3208,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const runId = jobQueue.enqueue({
             name: testName,
             filePath: normalizedFileTarget?.storagePath ?? body.file,
-            kind: isSuite ? 'suite-parent' : 'test',
+            // 2026-08-24 (402-09, D-11): no parent kind minted — see the enqueue route above.
+            kind: 'test',
             attributes: buildRunRequestAttributes({
               trigger: triggerSource.trigger,
               runner: body.local === false ? 'browserstack' : 'local',
@@ -2121,58 +3230,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // GET /api/execution/events — SSE stream for live execution events
-    if (path === '/api/execution/events' && req.method === 'GET') {
-      if (!testRunner) {
-        json(res, { error: 'Execution not available' }, 503)
-        return
-      }
-
-      const runId = url.searchParams.get('runId') ?? undefined
-      const lastEventId = req.headers['last-event-id'] as string | undefined
-
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-      })
-      res.write(':ok\n\n')
-
-      // Replay buffered events for reconnection
-      if (lastEventId && runId) {
-        const lastId = parseInt(lastEventId, 10)
-        const buffered = testRunner.getBufferedEvents(runId)
-        for (const evt of buffered) {
-          if (evt.id > lastId) {
-            res.write(`id: ${evt.id}\nevent: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`)
-          }
-        }
-      } else if (runId) {
-        // New connection — replay all buffered events
-        const buffered = testRunner.getBufferedEvents(runId)
-        for (const evt of buffered) {
-          res.write(`id: ${evt.id}\nevent: ${evt.type}\ndata: ${JSON.stringify(evt)}\n\n`)
-        }
-      }
-
-      const onEvent = (evtRunId: string, event: { id: number; type: string; [key: string]: unknown }) => {
-        if (runId && evtRunId !== runId) return
-        res.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-      }
-
-      testRunner.on('execution-event', onEvent)
-
-      const heartbeat = setInterval(() => {
-        res.write(':\n\n')
-      }, 15_000)
-
-      req.on('close', () => {
-        clearInterval(heartbeat)
-        testRunner.removeListener('execution-event', onEvent)
-      })
-      return
-    }
+    // 2026-08-27 (405-07, D-19) — THE LEGACY LIVE-EVENT SSE ARM IS DELETED.
+    //
+    // It streamed a re-minted frame shape out of the backend's per-run replay buffer, with a
+    // `Last-Event-ID` replay and a heartbeat. 405-03 removed the browser half; this removes the
+    // route, the buffer and the emission behind it. A live reader attaches to
+    // `GET /api/run-stream/:runId`, which frames the run's OWN frozen envelopes; a finished run is
+    // read durably through `runs.detail`. One live wire, one durable read — and no second spelling
+    // of the wire to drift from the first.
 
     // POST /api/suites/validate — validate suite YAML content
     if (path === '/api/suites/validate' && req.method === 'POST') {
@@ -2213,6 +3278,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             json(res, { error: 'Both path and content are required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, suiteFileTarget(body.content))) return
           const validation = await suiteFileManager.validate(body.content)
           if (!validation.valid) {
             json(res, {
@@ -2265,6 +3331,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             json(res, { error: 'Content is required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, suiteFileTarget(body.content))) return
           const found = await suiteFileManager.findBySuiteId(sId)
           if (!found) {
             notFound(res, 'Suite not found')
@@ -2368,6 +3435,12 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             json(res, { error: 'Both path and content are required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, targetsForMarkerCheck(body.content))) return
+          const validation = await testFileManager.validate(body.content)
+          if (!validation.valid) {
+            json(res, { error: 'invalid_test_file', errors: validation.errors }, 400)
+            return
+          }
           try {
             await testFileManager.write(body.path, body.content)
             json(res, { path: body.path, created: true }, 201)
@@ -2419,9 +3492,15 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             json(res, { error: 'Content is required' }, 400)
             return
           }
+          if (refusedShownMarkerTarget(res, targetsForMarkerCheck(body.content))) return
           const found = await testFileManager.findByTestId(tId)
           if (!found) {
             notFound(res, 'Test not found')
+            return
+          }
+          const validation = await testFileManager.validate(body.content)
+          if (!validation.valid) {
+            json(res, { error: 'invalid_test_file', errors: validation.errors }, 400)
             return
           }
           try {
@@ -2466,12 +3545,83 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
+    // GET /api/analytics/test-summaries — each listed test's rate and last run, as its viewer reads them
+    if (path === '/api/analytics/test-summaries' && req.method === 'GET') {
+      if (!testFileManager) {
+        json(res, { error: 'Test file management not configured' }, 501)
+        return
+      }
+      Promise.all([testFileManager.list(), readAnalyticsScopePredicates(configManager)])
+        .then(([files, scopeResult]) => {
+          if (!scopeResult.ok) {
+            json(res, { error: scopeResult.error }, 400)
+            return
+          }
+          // The rate is the figure the viewer opens on; the last run stays unscoped, as its run list is.
+          const scope = scopeResult.predicates.length > 0 ? { attributePredicates: scopeResult.predicates } : undefined
+          const tests = files.map((file) => {
+            const test = { ...(file.testId ? { testId: file.testId } : {}), filePath: file.path }
+            const [last] = db.getRunsByTest(test, { limit: 1 })
+            const lastRun = lastRunOf(last)
+            return {
+              path: file.path,
+              testId: file.testId,
+              ...passRateOf(db.getTestTrends(test, scope)),
+              lastRun: lastRun ? { ...lastRun, memberOutcome: last?.memberOutcome ?? null } : null,
+            }
+          })
+          json(res, { tests })
+        })
+        .catch(() => json(res, { error: 'Failed to read run summaries' }, 500))
+      return
+    }
+
+    // GET /api/analytics/suite-summaries — each listed suite's rate, last run, target and platform
+    if (path === '/api/analytics/suite-summaries' && req.method === 'GET') {
+      if (!suiteFileManager) {
+        json(res, { error: 'Suite file management not configured' }, 501)
+        return
+      }
+      Promise.all([suiteFileManager.list(), readTargetPlatformMap(configManager), readAnalyticsScopePredicates(configManager)])
+        .then(([files, targetPlatforms, scopeResult]) => {
+          if (!scopeResult.ok) {
+            json(res, { error: scopeResult.error }, 400)
+            return
+          }
+          const scope = scopeResult.predicates.length > 0 ? { attributePredicates: scopeResult.predicates } : undefined
+          const suites = files.map((file) => {
+            if (!file.suiteId) {
+              return { path: file.path, suiteId: null, passRate: null, passed: 0, decided: 0, lastRun: null, platform: null, targetName: null }
+            }
+            const runs = db.getRunsBySuiteId(file.suiteId)
+            return {
+              path: file.path,
+              suiteId: file.suiteId,
+              ...passRateOf(db.getSuiteTrends(file.suiteId, scope)),
+              lastRun: lastRunOf(runs[0]),
+              ...suiteTargetOf(runs, targetPlatforms),
+            }
+          })
+          json(res, { suites })
+        })
+        .catch(() => json(res, { error: 'Failed to read run summaries' }, 500))
+      return
+    }
+
     // GET /api/analytics/tests/:name
     if (path.startsWith('/api/analytics/tests/') && req.method === 'GET') {
       const name = decodeURIComponent(path.slice('/api/analytics/tests/'.length))
       const limit = url.searchParams.has('limit') ? parseInt(url.searchParams.get('limit')!, 10) : 50
       const offset = url.searchParams.has('offset') ? parseInt(url.searchParams.get('offset')!, 10) : 0
       const from = url.searchParams.get('from') ?? undefined
+      const testId = url.searchParams.get('testId') || undefined
+      const filePath = url.searchParams.get('filePath') || undefined
+      if (!testId && !filePath) {
+        json(res, { error: 'testId or filePath is required' }, 400)
+        return
+      }
+      const test = { ...(testId ? { testId } : {}), ...(filePath ? { filePath } : {}) }
+      const memberClasses = (runs: RunRow[]) => runs.map(r => memberOutcomeClass(r.memberOutcome ?? null))
       void readAnalyticsScopePredicates(configManager)
         .then((scopeResult) => {
           if (!scopeResult.ok) {
@@ -2479,26 +3629,26 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             return
           }
 
-          const runs = db.getRunsByTestName(name, { limit, offset })
-          const total = db.getRunsByTestNameCount(name)
-          const trends = db.getTestTrends(name, { from })
-          const allRunsForFlakiness = db.getRunsByTestName(name, { limit: 100 })
-          const flakyMetrics = calculateFlakyMetrics(allRunsForFlakiness)
+          const runs = db.getRunsByTest(test, { limit, offset })
+          const total = db.getRunsByTestCount(test)
+          const trends = db.getTestTrends(test, { from })
+          const allRunsForFlakiness = db.getRunsByTest(test, { limit: 100 })
+          const flakyMetrics = calculateFlakyMetrics(memberClasses(allRunsForFlakiness))
           const flakyScore = flakyMetrics.score
           const configured = scopeResult.predicates.length > 0
           const scopedRuns = configured
-            ? db.getRunsByTestName(name, { limit, offset, attributePredicates: scopeResult.predicates })
+            ? db.getRunsByTest(test, { limit, offset, attributePredicates: scopeResult.predicates })
             : runs
           const scopedTotal = configured
-            ? db.getRunsByTestNameCount(name, { attributePredicates: scopeResult.predicates })
+            ? db.getRunsByTestCount(test, { attributePredicates: scopeResult.predicates })
             : total
           const scopedTrends = configured
-            ? db.getTestTrends(name, { from, attributePredicates: scopeResult.predicates })
+            ? db.getTestTrends(test, { from, attributePredicates: scopeResult.predicates })
             : trends
           const scopedRunsForFlakiness = configured
-            ? db.getRunsByTestName(name, { limit: 100, attributePredicates: scopeResult.predicates })
+            ? db.getRunsByTest(test, { limit: 100, attributePredicates: scopeResult.predicates })
             : allRunsForFlakiness
-          const scopedFlakyScore = calculateFlakyMetrics(scopedRunsForFlakiness).score
+          const scopedFlakyScore = calculateFlakyMetrics(memberClasses(scopedRunsForFlakiness)).score
 
           json(res, {
             name,
@@ -2551,7 +3701,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const total = db.getRunsBySuiteIdCount(suiteId)
           const trends = db.getSuiteTrends(suiteId, { from })
           const allRunsForFlakiness = db.getRunsBySuiteId(suiteId, { limit: 100 })
-          const flakyMetrics = calculateFlakyMetrics(allRunsForFlakiness)
+          const flakyMetrics = calculateFlakyMetrics(allRunsForFlakiness.map(r => runStatusClass(r.status)))
           const flakyScore = flakyMetrics.score
           const configured = scopeResult.predicates.length > 0
           const scopedRuns = configured
@@ -2566,7 +3716,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const scopedRunsForFlakiness = configured
             ? db.getRunsBySuiteId(suiteId, { limit: 100, attributePredicates: scopeResult.predicates })
             : allRunsForFlakiness
-          const scopedFlakyScore = calculateFlakyMetrics(scopedRunsForFlakiness).score
+          const scopedFlakyScore = calculateFlakyMetrics(scopedRunsForFlakiness.map(r => runStatusClass(r.status))).score
 
           json(res, {
             suiteId,
@@ -2721,14 +3871,22 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       }
       ;(async () => {
         try {
-          const config = await configManager.read()
+          const config = await readConfigValues(configManager)
           const configObj = config as Record<string, unknown>
           const registry = configObj.registry as Record<string, unknown> | undefined
           const targets = registry?.targets as Record<string, unknown> | undefined
           const names = targets ? Object.keys(targets) : []
-          json(res, { targets: names })
+          const shown = withDeclaredMask(declaredMask, (mask) => names.map((name) => mask(name)))
+          if (shown === undefined) {
+            json(res, { error: 'masking_unavailable' }, 500)
+            return
+          }
+          json(res, { targets: shown })
         } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read targets' }, 500)
+          const message = err instanceof Error
+            ? withDeclaredMask(declaredMask, (mask) => mask(err.message))
+            : undefined
+          json(res, { error: message ?? 'Failed to read targets' }, 500)
         }
       })()
       return
@@ -2736,108 +3894,40 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
 
     // GET /api/config — return masked config with active provider info
     if (path === '/api/config' && req.method === 'GET') {
+      // 429-41 (CR-02): the answer carries file text and the file's absolute path, so it is read
+      // same-site only and no outcome grants a cross-origin read.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
+        jsonNoCors(res, { error: 'Config management not available' }, 501)
         return
       }
       ;(async () => {
         try {
-          const config = await configManager.readMasked()
-          const configObj = config as Record<string, unknown>
-          const registry = configObj.registry as Record<string, unknown> | undefined
-          const llms = (registry?.llms ?? configObj.llms) as Array<Record<string, unknown>> | undefined
-          const use = configObj.use as Record<string, unknown> | undefined
-          const activeLlm = (use?.llm ?? configObj.defaultLLM) as string | undefined
-          const defaultCfg = llms?.find((c) => c.name === activeLlm)
+          const read = await configManager.readMasked()
+          if (read.kind === 'file_invalid') {
+            jsonNoCors(res, { error: 'file_invalid', message: read.message }, 409)
+            return
+          }
+          const { config, revision, lines, fileIssues } = read
+          const registry = config.registry as Record<string, unknown> | undefined
+          const llms = (registry?.llms ?? config.llms) as Array<Record<string, unknown>> | undefined
+          const use = config.use as Record<string, unknown> | undefined
+          const activeLlm = (use?.llm ?? config.defaultLLM) as string | undefined
+          const defaultCfg = Array.isArray(llms)
+            ? llms.find((c) => c?.name === activeLlm)
+            : undefined
           const provider = (defaultCfg?.provider as string) ?? null
-          json(res, { config, provider })
+          jsonNoCors(res, {
+            config,
+            provider,
+            revision,
+            file: { path: deps.configPath ?? null, lines },
+            ...(fileIssues.length > 0 ? { fileIssues } : {}),
+          })
         } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read config' }, 500)
+          jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to read config' }, 500)
         }
       })()
-      return
-    }
-
-    // PUT /api/config/llms — update registry.llms array + use.llm
-    if (path === '/api/config/llms' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<{ llms: unknown[]; defaultLLM?: string; activeLlm?: string }>(req)
-        .then(async (body) => {
-          try {
-            if (!Array.isArray(body.llms) || body.llms.length === 0) {
-              json(res, { error: 'llms array is required and must not be empty' }, 400)
-              return
-            }
-            const selectedLlm = body.activeLlm ?? body.defaultLLM
-            const errors: string[] = []
-            const names: string[] = []
-            const sanitizedArray: Array<ReturnType<typeof NamedLLMConfigSchema.parse>> = []
-            for (const item of body.llms) {
-              const result = NamedLLMConfigSchema.safeParse(item)
-              if (!result.success) {
-                for (const issue of result.error.issues) {
-                  errors.push(`${issue.path.join('.')}: ${issue.message}`)
-                }
-              } else {
-                names.push(result.data.name)
-                sanitizedArray.push(result.data)
-              }
-            }
-            const dupes = names.filter((n, i) => names.indexOf(n) !== i)
-            if (dupes.length > 0) {
-              errors.push(`Duplicate config names: ${[...new Set(dupes)].join(', ')}`)
-            }
-            if (!selectedLlm || !names.includes(selectedLlm)) {
-              errors.push(`use.llm "${selectedLlm}" does not match any name in registry.llms`)
-            }
-            if (errors.length > 0) {
-              json(res, { error: 'Validation failed', details: errors }, 400)
-              return
-            }
-            await configManager.replaceSectionRaw('registry.llms', sanitizedArray)
-            await configManager.replaceSectionRaw('use.llm', selectedLlm)
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to update LLM config' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
-    // PUT /api/config/default-llm — switch active LLM (use.llm)
-    if (path === '/api/config/default-llm' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<{ defaultLLM?: string; llm?: string }>(req)
-        .then(async (body) => {
-          try {
-            const llmName = body.llm ?? body.defaultLLM
-            if (!llmName || typeof llmName !== 'string') {
-              json(res, { error: 'use.llm string is required' }, 400)
-              return
-            }
-            const config = await configManager.readMasked()
-            const configObj = config as Record<string, unknown>
-            const registry = configObj.registry as Record<string, unknown> | undefined
-            const llms = (registry?.llms ?? configObj.llms) as Array<Record<string, unknown>> | undefined
-            const names = (llms ?? []).map((c) => c.name as string)
-            if (!names.includes(llmName)) {
-              json(res, { error: `use.llm "${llmName}" does not match any name in registry.llms` }, 400)
-              return
-            }
-            await configManager.replaceSectionRaw('use.llm', llmName)
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to update use.llm' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
       return
     }
 
@@ -2869,163 +3959,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // PUT /api/config/settings — update config sections
-    if (path === '/api/config/settings' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<Record<string, unknown>>(req)
-        .then(async (body) => {
-          try {
-            const sectionValidators: Record<string, { safeParse: (v: unknown) => ConfigSectionValidationResult }> = {
-              'use.timeout': TimeoutConfigSchema,
-              'use.healing': HealingConfigSchema,
-              'use.planner': PlannerConfigSchema,
-              'use.logCapture': LogCaptureConfigSchema,
-              'use.browser': BrowserConfigSchema,
-              'use.browser.headless': BrowserConfigSchema.shape.headless,
-              'services.memory': ServicesSchema.shape.memory,
-              'services.cache': CacheConfigSchema,
-              'services.logging': LoggingConfigSchema,
-              'services.recording': RecordingConfigSchema,
-              'services.accessibility': AccessibilityConfigSchema,
-              'services.dashboard': DashboardConfigSchema,
-              'services.mcp': McpConfigSchema,
-              'registry.targets': RegistrySchema.shape.targets,
-              'registry.devices': RegistrySchema.shape.devices,
-              'registry.providers': RegistrySchema.shape.providers,
-              'analytics.passRateScope': { safeParse: validateAnalyticsPassRateScope },
-              'workspace.testMatch': WorkspaceSchema.shape.testMatch,
-              'workspace.suiteMatch': WorkspaceSchema.shape.suiteMatch,
-              'workspace.hooksFile': WorkspaceSchema.shape.hooksFile,
-              'workspace.agentRules': WorkspaceSchema.shape.agentRules,
-              'workspace.envFile': WorkspaceSchema.shape.envFile,
-              'workspace.secretsFile': WorkspaceSchema.shape.secretsFile,
-              'use.mobile': UseSchema.shape.mobile,
-              'use.mobile.appState': MobileAppStateSchema,
-              'use.parallel': UseSchema.shape.parallel,
-            }
-            const objectSections = [
-              'use.timeout',
-              'use.healing',
-              'use.planner',
-              'use.logCapture',
-              'use.browser',
-              'use.mobile',
-              'services.memory',
-              'services.cache',
-              'services.logging',
-              'services.recording',
-              'services.accessibility',
-              'services.dashboard',
-              'services.mcp',
-              'registry.targets',
-              'registry.devices',
-              'registry.providers',
-              'analytics.passRateScope',
-            ] as const
-            const arraySections = ['workspace.testMatch', 'workspace.testPathIgnore', 'workspace.suiteMatch', 'registry.llms'] as const
-            const scalarSections = [
-              'workspace.agentRules',
-              'workspace.hooksFile',
-              'workspace.envFile',
-              'workspace.secretsFile',
-              'use.llm',
-              'use.mobile.appState',
-              'use.browser.headless',
-              'use.parallel',
-            ] as const
-
-            const currentConfig = await configManager.read()
-            const currentUse = isRecord(currentConfig.use) ? currentConfig.use : {}
-            const currentBrowser = isRecord(currentUse.browser) ? currentUse.browser : {}
-            const currentHasRootHeadless = typeof currentUse.headless === 'boolean'
-            const currentHasBrowserHeadless = typeof currentBrowser.headless === 'boolean'
-            const requestHasRootHeadless = Object.prototype.hasOwnProperty.call(body, 'use.headless')
-            const requestHasBrowserHeadlessScalar = Object.prototype.hasOwnProperty.call(body, 'use.browser.headless')
-            const requestBrowserBlock = body['use.browser']
-            const requestHasBrowserHeadlessObject = isRecord(requestBrowserBlock) && typeof requestBrowserBlock.headless === 'boolean'
-            if (
-              currentHasRootHeadless
-              && !currentHasBrowserHeadless
-              && !requestHasBrowserHeadlessScalar
-              && !requestHasBrowserHeadlessObject
-            ) {
-              body['use.browser.headless'] = currentUse.headless
-            }
-
-            const allowedSettingsPaths = new Set<string>([
-              ...Object.keys(sectionValidators),
-              ...objectSections,
-              ...arraySections,
-              ...scalarSections,
-              'use.headless',
-            ])
-            const unsupportedKeys = Object.keys(body).filter((key) => !allowedSettingsPaths.has(key))
-            if (unsupportedKeys.length > 0) {
-              json(res, { error: 'Unsupported setting path', details: unsupportedKeys }, 400)
-              return
-            }
-
-            const errors: string[] = []
-            for (const [section, validator] of Object.entries(sectionValidators)) {
-              const value = body[section]
-              if (value !== undefined) {
-                const result = validator.safeParse(value)
-                if (!result.success) {
-                  for (const issue of result.error!.issues) {
-                    const path = issue.path.length ? `${section}.${issue.path.map(String).join('.')}` : section
-                    errors.push(`${path}: ${issue.message}`)
-                  }
-                }
-              }
-            }
-
-            if (Array.isArray(body['registry.llms'])) {
-              for (const [idx, item] of (body['registry.llms'] as unknown[]).entries()) {
-                const result = NamedLLMConfigSchema.safeParse(item)
-                if (!result.success) {
-                  for (const issue of result.error!.issues) {
-                    const p = issue.path.length ? `registry.llms[${idx}].${issue.path.join('.')}` : `registry.llms[${idx}]`
-                    errors.push(`${p}: ${issue.message}`)
-                  }
-                }
-              }
-            }
-
-            if (errors.length > 0) {
-              json(res, { error: 'Validation failed', details: errors }, 400)
-              return
-            }
-
-            for (const section of objectSections) {
-              if (body[section] && typeof body[section] === 'object') {
-                await configManager.replaceSection(section, body[section] as Record<string, unknown>)
-              }
-            }
-            for (const section of arraySections) {
-              if (body[section] !== undefined) {
-                await configManager.replaceSectionRaw(section, body[section])
-              }
-            }
-            for (const section of scalarSections) {
-              if (body[section] !== undefined) {
-                await configManager.replaceSectionRaw(section, body[section])
-              }
-            }
-            if (currentHasRootHeadless || requestHasRootHeadless) {
-              await configManager.deleteSectionRaw('use.headless')
-            }
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to update settings' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
     // DELETE /api/auth/:configName — remove stored credential
     if (path.startsWith('/api/auth/') && req.method === 'DELETE') {
       const segments = path.split('/')
@@ -3034,12 +3967,27 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         if (providerName === 'status' || providerName === 'credential' || providerName === 'oauth') {
           // Fall through to other handlers
         } else {
+          if (refuseCrossSiteRequest(req) !== undefined) {
+            jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+            return
+          }
+          // 429-11 D-24: the removed entry is held server-side for Undo; the answer never carries it.
           ;(async () => {
             try {
-              await removeAuth(providerName)
-              json(res, { deleted: true })
+              const removed = await withCredentialLock(async () => {
+                const credential = await readAuthEntry(providerName)
+                if (credential === undefined) return undefined
+                await removeAuth(providerName)
+                return credential
+              })
+              if (removed === undefined) {
+                jsonNoCors(res, { deleted: false })
+                return
+              }
+              const undo = undoStore.put({ kind: 'credential', name: providerName, credential: removed }, Date.now())
+              jsonNoCors(res, { deleted: true, undo })
             } catch (err: unknown) {
-              json(res, { error: err instanceof Error ? err.message : 'Failed to delete credential' }, 500)
+              jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to delete credential' }, 500)
             }
           })()
           return
@@ -3095,15 +4043,105 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
+    if (path === '/api/llm/catalog' && req.method === 'GET') {
+      json(res, { catalog: getModelCatalog() })
+      return
+    }
+
+    if (path === '/api/llm/catalog/live' && req.method === 'POST') {
+      readJsonBody<{
+        configName?: string
+        baseURL?: string
+        providerHeaders?: Record<string, string>
+      }>(req)
+        .then(async (body) => {
+          const rawBody = body as Record<string, unknown>
+          if ('apiKey' in rawBody) {
+            json(res, {
+              error: 'invalid_request',
+              message: 'apiKey is not accepted; save credentials for the named config instead.',
+            }, 400)
+            return
+          }
+
+          const staticOpenAI = getModelCatalog()['openai-compatible']
+          const baseURL = typeof body.baseURL === 'string' ? body.baseURL.trim() : ''
+          if (!baseURL) {
+            json(res, { models: staticOpenAI })
+            return
+          }
+
+          const headers: Record<string, string> = {}
+          if (body.providerHeaders !== undefined) {
+            for (const [key, value] of Object.entries(body.providerHeaders)) {
+              if (typeof value === 'string') headers[key] = value
+            }
+          }
+
+          const llmCandidate: Record<string, unknown> = {
+            provider: 'openai-compatible',
+            model: 'catalog-live-probe',
+            baseURL,
+          }
+          if (Object.keys(headers).length > 0) {
+            llmCandidate.providerHeaders = headers
+          }
+
+          const parsedConfig = ModelConfigSchema.safeParse(llmCandidate)
+          if (!parsedConfig.success) {
+            json(res, {
+              error: 'invalid_request',
+              message: parsedConfig.error.issues
+                .map((issue: { path: PropertyKey[]; message: string }) => `${issue.path.map(String).join('.') || 'config'}: ${issue.message}`)
+                .join('; '),
+            }, 400)
+            return
+          }
+
+          const configName = typeof body.configName === 'string' ? body.configName.trim() : ''
+          const llmConfig = parsedConfig.data
+          const coreAuth = await import('@vostride/agent-qa-core') as typeof import('@vostride/agent-qa-core') & {
+            resolveLLMAuth: (name: string, config: typeof llmConfig) => Promise<
+              | { kind: 'api-key'; apiKey: string }
+              | { kind: 'bearer-token'; token: string }
+              | { kind: 'auth-fetch'; fetch: typeof globalThis.fetch; modelAdapter: 'openai-responses' | 'anthropic-messages' }
+              | { kind: 'unauthenticated'; message: string }
+              | { kind: 'missing'; message: string }
+            >
+          }
+          const resolvedAuth = await coreAuth.resolveLLMAuth(configName, llmConfig)
+          if (resolvedAuth.kind === 'api-key') {
+            headers.Authorization ??= `Bearer ${resolvedAuth.apiKey}`
+          } else if (resolvedAuth.kind === 'bearer-token') {
+            headers.Authorization ??= `Bearer ${resolvedAuth.token}`
+          }
+
+          const live = await fetchLiveModels({
+            baseURL,
+            headers: Object.keys(headers).length > 0 ? headers : undefined,
+          })
+          json(res, { models: mergeCatalog(staticOpenAI, live) })
+        })
+        .catch(() => json(res, { error: 'invalid_request' }, 400))
+      return
+    }
+
     if (path.startsWith('/api/auth/plugin/')) {
       pruneExpiredPluginOAuthSessions(pluginOAuthSessions)
       const segments = path.split('/')
       const provider = segments.length >= 6 ? decodeURIComponent(segments[4] ?? '') : ''
       const action = segments.length >= 6 ? segments[5] : ''
+      // 429-09: start and code exchange plant a machine-wide credential, so both are same-site only
+      // and no answer on them carries a cross-origin grant.
+      const authDoor = req.method === 'POST' && (action === 'start' || action === 'exchange')
+      if (authDoor && refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       const plugin = provider ? getLLMAuthProviderPlugin(provider) : undefined
 
       if (!plugin) {
-        json(res, { error: `Auth plugin provider "${provider}" is not registered` }, 404)
+        ;(authDoor ? jsonNoCors : json)(res, { error: `Auth plugin provider "${provider}" is not registered` }, 404)
         return
       }
 
@@ -3111,14 +4149,14 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         readJsonBody<{ configName?: string; callbackUrl?: string }>(req)
           .then(async (body) => {
             if (!plugin.startAuth) {
-              json(res, { error: `Provider "${provider}" does not support dashboard auth start` }, 400)
+              jsonNoCors(res, { error: `Provider "${provider}" does not support dashboard auth start` }, 400)
               return
             }
 
             try {
               const target = await requirePluginAuthConfig(configManager, body.configName, plugin)
               if (!target.ok) {
-                json(res, { error: target.error }, 400)
+                jsonNoCors(res, credentialRefusalBody(target), target.status)
                 return
               }
               const started = await plugin.startAuth({
@@ -3140,11 +4178,16 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               if (started.waitForTokens) {
                 started.waitForTokens
                   .then(async (tokens: OAuthTokens) => {
-                    await writeDashboardAuth(target.configName, {
-                      type: 'oauth',
-                      provider: plugin.credentialProviderId,
-                      tokens,
+                    const conflict = await withCredentialLock(async () => {
+                      if (await credentialConflictAt(target.configName, plugin.providerId)) return true
+                      await writeDashboardAuth(target.configName, {
+                        type: 'oauth',
+                        provider: plugin.credentialProviderId,
+                        tokens,
+                      })
+                      return false
                     })
+                    if (conflict) throw new Error(CREDENTIAL_PROVIDER_CONFLICT.message)
                     session.status = 'completed'
                   })
                   .catch((err: unknown) => {
@@ -3154,16 +4197,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
                   .finally(() => cleanupPluginOAuthSession(session))
               }
 
-              json(res, {
+              jsonNoCors(res, {
                 authorizeUrl: started.authorizeUrl,
                 sessionId,
                 mode: plugin.dashboardAuth.mode,
+                created: target.created,
               })
             } catch (err: unknown) {
-              json(res, { error: err instanceof Error ? err.message : 'Failed to start auth plugin flow' }, 500)
+              jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to start auth plugin flow' }, 500)
             }
           })
-          .catch(() => json(res, { error: 'Invalid request body' }, 400))
+          .catch(() => jsonNoCors(res, { error: 'Invalid request body' }, 400))
         return
       }
 
@@ -3194,22 +4238,22 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         readJsonBody<{ sessionId?: string; code?: string }>(req)
           .then(async (body) => {
             if (!plugin.exchangeCode) {
-              json(res, { error: `Provider "${provider}" does not support code exchange` }, 400)
+              jsonNoCors(res, { error: `Provider "${provider}" does not support code exchange` }, 400)
               return
             }
             const sessionId = typeof body.sessionId === 'string' ? body.sessionId.trim() : ''
             const code = typeof body.code === 'string' ? body.code.trim() : ''
             if (!sessionId || !code) {
-              json(res, { error: 'sessionId and code are required' }, 400)
+              jsonNoCors(res, { error: 'sessionId and code are required' }, 400)
               return
             }
             const session = pluginOAuthSessions.get(sessionId)
             if (!session || session.providerId !== provider) {
-              json(res, { error: 'Auth session not found' }, 404)
+              jsonNoCors(res, { error: 'Auth session not found' }, 404)
               return
             }
             if (session.status !== 'pending') {
-              json(res, { error: 'Auth session is no longer pending' }, 409)
+              jsonNoCors(res, { error: 'Auth session is no longer pending' }, 409)
               return
             }
 
@@ -3218,24 +4262,36 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
                 code,
                 sessionState: session.sessionState,
               })
-              await writeDashboardAuth(session.configName, {
-                type: 'oauth',
-                provider: session.credentialProviderId,
-                tokens,
+              const conflict = await withCredentialLock(async () => {
+                if (await credentialConflictAt(session.configName, session.providerId)) return true
+                await writeDashboardAuth(session.configName, {
+                  type: 'oauth',
+                  provider: session.credentialProviderId,
+                  tokens,
+                })
+                return false
               })
+              if (conflict) {
+                session.status = 'error'
+                session.error = CREDENTIAL_PROVIDER_CONFLICT.message
+                cleanupPluginOAuthSession(session)
+                pluginOAuthSessions.delete(sessionId)
+                jsonNoCors(res, credentialRefusalBody(CREDENTIAL_PROVIDER_CONFLICT), CREDENTIAL_PROVIDER_CONFLICT.status)
+                return
+              }
               session.status = 'completed'
               cleanupPluginOAuthSession(session)
               pluginOAuthSessions.delete(sessionId)
-              json(res, { status: 'completed', saved: true })
+              jsonNoCors(res, { status: 'completed', saved: true })
             } catch (err: unknown) {
               session.status = 'error'
               session.error = err instanceof Error ? err.message : 'Token exchange failed'
               cleanupPluginOAuthSession(session)
               pluginOAuthSessions.delete(sessionId)
-              json(res, { error: session.error }, 500)
+              jsonNoCors(res, { error: session.error }, 500)
             }
           })
-          .catch(() => json(res, { error: 'Invalid request body' }, 400))
+          .catch(() => jsonNoCors(res, { error: 'Invalid request body' }, 400))
         return
       }
 
@@ -3245,6 +4301,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
 
     // POST /api/auth/credential — store typed credentials from dashboard
     if (path === '/api/auth/credential' && req.method === 'POST') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       readJsonBody<{
         configName?: string
         provider?: string
@@ -3257,60 +4317,121 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const secret = typeof body.secret === 'string' ? body.secret.trim() : ''
 
           if (typeof body.configName !== 'string' || body.configName.trim() === '') {
-            json(res, { error: 'configName is required' }, 400)
+            jsonNoCors(res, { error: 'configName is required' }, 400)
             return
           }
           if (!provider || !isKnownLLMProvider(provider)) {
-            json(res, { error: 'valid provider is required' }, 400)
+            jsonNoCors(res, { error: 'valid provider is required' }, 400)
             return
           }
           if (credentialType !== 'api-key' && credentialType !== 'bearer-token') {
-            json(res, { error: 'type must be api-key or bearer-token' }, 400)
+            jsonNoCors(res, { error: 'type must be api-key or bearer-token' }, 400)
             return
           }
           if (!secret) {
-            json(res, { error: 'secret is required' }, 400)
+            jsonNoCors(res, { error: 'secret is required' }, 400)
             return
           }
 
           if (getLLMAuthProviderPlugin(provider)) {
-            json(res, { error: 'Subscription providers use OAuth login' }, 400)
+            jsonNoCors(res, { error: 'Subscription providers use OAuth login' }, 400)
             return
           }
 
           if (credentialType === 'bearer-token' && provider !== 'anthropic-compatible') {
-            json(res, { error: 'bearer-token credentials are only supported for anthropic-compatible configs' }, 400)
+            jsonNoCors(res, { error: 'bearer-token credentials are only supported for anthropic-compatible configs' }, 400)
             return
           }
 
           if (credentialType === 'api-key' && !API_KEY_CREDENTIAL_PROVIDERS.has(provider)) {
-            json(res, { error: 'api-key credentials are not supported for this provider' }, 400)
+            jsonNoCors(res, { error: 'api-key credentials are not supported for this provider' }, 400)
             return
           }
 
           try {
-            const target = await requireCredentialConfig(configManager, body.configName, provider)
+            const target = await withCredentialLock(async () => {
+              const checked = await requireCredentialConfig(configManager, body.configName, provider)
+              if (!checked.ok) return checked
+              if (credentialType === 'bearer-token') {
+                await writeDashboardAuth(checked.configName, { type: 'bearer', provider, token: secret })
+              } else {
+                await writeDashboardAuth(checked.configName, { type: 'api', provider, key: secret })
+              }
+              return checked
+            })
             if (!target.ok) {
-              json(res, { error: target.error }, 400)
+              jsonNoCors(res, credentialRefusalBody(target), target.status)
               return
             }
-
-            if (credentialType === 'bearer-token') {
-              await writeDashboardAuth(target.configName, { type: 'bearer', provider, token: secret })
-            } else {
-              await writeDashboardAuth(target.configName, { type: 'api', provider, key: secret })
-            }
-            json(res, { saved: true })
+            jsonNoCors(res, { saved: true, created: target.created })
           } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to save credential' }, 500)
+            jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to save credential' }, 500)
           }
         })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
+        .catch(() => jsonNoCors(res, { error: 'Invalid request body' }, 400))
+      return
+    }
+
+    // POST /api/auth/credential/move — 429-09 D-15: a draft's credential follows its name while the
+    // name is still editable. Only between names that are not in registry.llms, and never onto a
+    // name that already holds a credential.
+    if (path === '/api/auth/credential/move' && req.method === 'POST') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
+      readJsonBody<unknown>(req)
+        .then(async (raw) => {
+          const parsed = LlmCredentialMoveRequestSchema.safeParse(raw)
+          if (!parsed.success) {
+            jsonNoCors(res, { error: 'invalid_setup_input' }, 400)
+            return
+          }
+          const from = checkCredentialName(parsed.data.from)
+          const to = checkCredentialName(parsed.data.to)
+          if (!from.ok || !to.ok) {
+            jsonNoCors(res, { error: 'name_invalid' }, 400)
+            return
+          }
+          if (!configManager) {
+            jsonNoCors(res, { error: 'Config manager is required to move credentials' }, 400)
+            return
+          }
+          try {
+            const refusal = await withCredentialLock(async (): Promise<{ status: number; error: string; message?: string } | undefined> => {
+              if (await findRegistryLlm(configManager, from.name) || await findRegistryLlm(configManager, to.name)) {
+                return { status: 409, error: 'name_taken' }
+              }
+              const store = await readAuth() as Record<string, DashboardAuthCredential | undefined>
+              const entry = ownAuthEntry(store, from.name)
+              if (!entry) return { status: 404, error: 'credential_missing' }
+              if (credentialProductProvider(from.name, entry) !== parsed.data.provider) return CREDENTIAL_PROVIDER_CONFLICT
+              if (ownAuthEntry(store, to.name)) return { status: 409, error: 'credential_exists' }
+              await writeDashboardAuth(to.name, entry)
+              await removeAuth(from.name)
+              return undefined
+            })
+            if (refusal) {
+              jsonNoCors(res, credentialRefusalBody(refusal), refusal.status)
+              return
+            }
+            jsonNoCors(res, { moved: true })
+          } catch (err: unknown) {
+            jsonNoCors(res, { error: err instanceof Error ? err.message : 'Failed to move credential' }, 500)
+          }
+        })
+        .catch(() => jsonNoCors(res, { error: 'invalid_setup_input' }, 400))
       return
     }
 
     // POST /api/llm/test — test LLM connection
+    // Same-site only and no wildcard grant on any answer: this arm spends a saved credential
+    // against a provider, so a page on another origin must not be able to drive it.
     if (path === '/api/llm/test' && req.method === 'POST') {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
       readJsonBody<{
         configName?: string
         provider?: string
@@ -3321,7 +4442,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
         .then(async (body) => {
           const rawBody = body as Record<string, unknown>
           if ('apiKey' in rawBody) {
-            json(res, {
+            jsonNoCors(res, {
               success: false,
               error: 'invalid_request',
               message: 'apiKey is not accepted in LLM test requests. Save credentials for the named config instead.',
@@ -3331,7 +4452,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const providerName = typeof body.provider === 'string' ? body.provider.trim() : ''
           const modelName = typeof body.model === 'string' ? body.model.trim() : ''
           if (!providerName || !modelName) {
-            json(res, { success: false, error: 'invalid_request', message: 'provider and model are required' }, 400)
+            jsonNoCors(res, { success: false, error: 'invalid_request', message: 'provider and model are required' }, 400)
             return
           }
           const configName = typeof body.configName === 'string' ? body.configName.trim() : ''
@@ -3343,13 +4464,24 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           if (typeof body.baseURL === 'string') {
             llmCandidate.baseURL = body.baseURL
           }
-          if (body.providerHeaders !== undefined) {
-            llmCandidate.providerHeaders = body.providerHeaders
+          let savedHeaderValues: string[] = []
+          const bodyHeaders: unknown = body.providerHeaders
+          const headerRecord = bodyHeaders !== null
+            && typeof bodyHeaders === 'object'
+            && !Array.isArray(bodyHeaders)
+          if (bodyHeaders === undefined || headerRecord) {
+            const baseURL = trimmedString(body.baseURL)
+            const saved = await savedHeadersFor(configManager, configName, providerName, baseURL)
+            const merged = mergeTestHeaders(saved, (bodyHeaders ?? {}) as Record<string, unknown>)
+            savedHeaderValues = merged.savedValues
+            if (Object.keys(merged.headers).length > 0) llmCandidate.providerHeaders = merged.headers
+          } else {
+            llmCandidate.providerHeaders = bodyHeaders
           }
 
           const parsedConfig = ModelConfigSchema.safeParse(llmCandidate)
           if (!parsedConfig.success) {
-            json(res, {
+            jsonNoCors(res, {
               success: false,
               error: 'invalid_request',
               message: parsedConfig.error.issues
@@ -3372,7 +4504,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           }
           const resolvedAuth = await coreAuth.resolveLLMAuth(configName, llmConfig)
           if (resolvedAuth.kind === 'missing') {
-            json(res, {
+            jsonNoCors(res, {
               success: false,
               error: 'missing_credential',
               message: resolvedAuth.message,
@@ -3380,27 +4512,17 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             return
           }
 
-          const modelConfig: Record<string, unknown> = { ...llmConfig }
           let unauthenticated = false
           let authMessage: string | undefined
-
-          if (resolvedAuth.kind === 'api-key') {
-            modelConfig.apiKey = resolvedAuth.apiKey
-          } else if (resolvedAuth.kind === 'bearer-token') {
-            modelConfig.authToken = resolvedAuth.token
-          } else if (resolvedAuth.kind === 'auth-fetch') {
-            modelConfig.fetch = resolvedAuth.fetch
-            modelConfig.modelAdapter = resolvedAuth.modelAdapter
-          } else if (resolvedAuth.kind === 'unauthenticated') {
+          if (resolvedAuth.kind === 'unauthenticated') {
             unauthenticated = true
             authMessage = resolvedAuth.message
           }
 
           try {
-            const { createModel } = await import('@vostride/agent-qa-core')
-            const model = await createModel(modelConfig as unknown as Parameters<typeof createModel>[0])
-
-            const testProviderOpts = getProviderOptions(modelConfig as unknown as Parameters<typeof getProviderOptions>[0])
+            const { profile, auth } = toModelProfileAndAuth(llmConfig, resolvedAuth)
+            // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+            const model = createModel(profile, auth, (text) => text)
             const connectionTimeoutMs = llmConnectionTestTimeoutMs(llmConfig)
 
             const controller = new AbortController()
@@ -3411,38 +4533,41 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
                 model,
                 prompt: 'Say "ok"',
                 abortSignal: controller.signal,
-                providerOptions: testProviderOpts,
               })
             } finally {
               clearTimeout(timeout)
             }
 
-            json(res, {
+            jsonNoCors(res, {
               success: true,
               model: modelName,
               provider: providerName,
               timeoutMs: connectionTimeoutMs,
               responseTime: Date.now() - start,
-              ...(unauthenticated ? { unauthenticated: true, message: authMessage ?? LLM_TEST_UNAUTHENTICATED_MESSAGE } : {}),
+              ...(unauthenticated ? { unauthenticated: true, message: authMessage } : {}),
             })
           } catch (err: unknown) {
             const connectionTimeoutMs = llmConnectionTestTimeoutMs(llmConfig)
-            const { message: providerMessage, statusCode } = extractProviderErrorMessage(err)
-            const errorCategory = classifyProviderError(providerMessage, statusCode)
-            const message = publicLLMTestMessage(errorCategory, providerMessage)
+            const { message: rawProviderMessage, statusCode } = extractProviderError(err)
+            const unsavedMessage = withoutSavedValues(rawProviderMessage, savedHeaderValues)
+            const providerMessage = withDeclaredMask(declaredMask, (mask) => mask(unsavedMessage))
+            const errorClass = classifyProviderError(providerMessage ?? unsavedMessage, statusCode)
+            const message = providerMessage === undefined
+              ? providerErrorSentence(errorClass, '').trimEnd()
+              : providerErrorSentence(errorClass, providerMessage)
 
-            json(res, {
+            jsonNoCors(res, {
               success: false,
-              error: errorCategory,
+              error: errorClass,
               message,
               timeoutMs: connectionTimeoutMs,
               ...(statusCode ? { statusCode } : {}),
-              ...(message !== providerMessage ? { details: providerMessage } : {}),
-              ...(unauthenticated ? { unauthenticated: true, authMessage: authMessage ?? LLM_TEST_UNAUTHENTICATED_MESSAGE } : {}),
+              ...(providerMessage !== undefined && message !== providerMessage ? { details: providerMessage } : {}),
+              ...(unauthenticated ? { unauthenticated: true, authMessage } : {}),
             })
           }
         })
-        .catch(() => json(res, { success: false, error: 'invalid_request', message: 'Invalid request body' }, 400))
+        .catch(() => jsonNoCors(res, { success: false, error: 'invalid_request', message: 'Invalid request body' }, 400))
       return
     }
 
@@ -3459,8 +4584,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             return
           }
           try {
-            const cfg = await configManager.read()
-            const targetPlatforms = getTargetPlatformMap(cfg)
+            const cfg = await readConfigValues(configManager)
             const cacheDir = (cfg as {
               services?: { cache?: { dir?: string } }
               cache?: { dir?: string }
@@ -3470,58 +4594,51 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               json(res, { error: 'Cache directory not configured' }, 400)
               return
             }
-            if (body.file) {
-              // Read raw config file content for cache key scoping
-              let configContent = ''
-              if (deps.configPath) {
-                try { configContent = await readFile(deps.configPath, 'utf-8') } catch { /* best-effort */ }
+            // Redesigned cache layout (Phase 356): <cacheRoot>/<branch-slug>/<cacheKey>.json.
+            // The 16-hex cacheKey is opaque and content-addressed over masked step text + a
+            // runtime screenIdentityHash, carrying no raw step text on disk (D-06). Per-test
+            // targeting can no longer be recomputed statically, so a `file` purge clears the
+            // whole branch-namespaced cache — the requested test's stale plans are guaranteed
+            // gone. Both `file` and `all` therefore remove all `<branch-slug>/*.json` entries.
+            const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
+            const resolvedCacheDir = resolve(configDir, cacheDir)
+            let branchDirs: string[]
+            try {
+              branchDirs = await readdir(resolvedCacheDir)
+            } catch (err: unknown) {
+              if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                json(res, { purged: 0 })
+                return
               }
-              const resolvedPath = (await normalizeDashboardWorkspacePath(body.file, workspacePaths, 'test')).executionPath
-              const content = await readFile(resolvedPath, 'utf-8')
-              const doc = parseYaml(content)
-              const metadata = extractTestFileMetadata(content)
-              const platform = resolveEffectivePlatform(
-                metadata.platform,
-                metadata.targetName,
-                targetPlatforms,
-                'web',
-              ) ?? 'web'
-              const steps: string[] = (doc.steps ?? []).map((s: unknown) =>
-                typeof s === 'string' ? s : (s as Record<string, string>).step,
-              )
-              const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
-              const resolvedCacheDir = resolve(configDir, cacheDir)
-              let purged = 0
-              for (const step of steps) {
-                const stepHash = hashStepInstruction(step, platform, configContent, content)
-                const dirPath = join(resolvedCacheDir, stepHash)
-                try {
-                  await stat(dirPath)
-                  await rm(dirPath, { recursive: true, force: true })
-                  purged++
-                } catch {
-                  // directory doesn't exist — skip
-                }
-              }
-              json(res, { purged })
-            } else {
-              const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
-              const resolvedDir = resolve(configDir, cacheDir)
-              let entries: string[]
-              try {
-                entries = await readdir(resolvedDir)
-              } catch (err: unknown) {
-                if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-                  json(res, { purged: 0 })
-                  return
-                }
-                throw err
-              }
-              for (const entry of entries) {
-                await rm(join(resolvedDir, entry), { recursive: true, force: true })
-              }
-              json(res, { purged: entries.length })
+              throw err
             }
+            let purged = 0
+            for (const branch of branchDirs) {
+              const branchPath = join(resolvedCacheDir, branch)
+              let entryStat
+              try {
+                entryStat = await stat(branchPath)
+              } catch {
+                continue
+              }
+              if (!entryStat.isDirectory()) {
+                await rm(branchPath, { force: true })
+                continue
+              }
+              let files: string[]
+              try {
+                files = await readdir(branchPath)
+              } catch {
+                continue
+              }
+              for (const file of files) {
+                if (!file.endsWith('.json')) continue
+                await rm(join(branchPath, file), { force: true })
+                purged++
+              }
+              await rm(branchPath, { recursive: true, force: true }).catch(() => {})
+            }
+            json(res, { purged })
           } catch (err: unknown) {
             json(res, { error: err instanceof Error ? err.message : 'Cache purge failed' }, 500)
           }
@@ -3530,35 +4647,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // Agent Rules API
-    if (path === '/api/agent-rules' && req.method === 'GET') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      ;(async () => {
-        try {
-          if (!workspacePaths) {
-            json(res, { error: 'Workspace path resolution not available' }, 503)
-            return
-          }
-          let content: string
-          try {
-            content = await readFile(workspacePaths.agentRules.absolutePath, 'utf-8')
-          } catch (err: unknown) {
-            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-              json(res, { content: null, filePath: workspacePaths.agentRules.workspaceRelativePath, error: 'workspace.agentRules file_not_found' }, 500)
-              return
-            }
-            throw err
-          }
-          json(res, { content, filePath: workspacePaths.agentRules.workspaceRelativePath })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read agent rules' }, 500)
-        }
-      })()
-      return
-    }
+    // Agent Rules API removed: the workspace agent-rules config surface was retired in
+    // Phase 373 (KDIR-03); policy serving returns via Reader L0 policies in Phase 380.
 
     // Hooks API
     if (path === '/api/hooks' && req.method === 'GET') {
@@ -3641,38 +4731,60 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               return
             }
 
+            if (declaredMask === undefined) {
+              json(res, { error: 'masking_unavailable' }, 503)
+              return
+            }
             const workspaceEnv = await readWorkspaceEnvVars(workspacePaths)
-            const result = await runHookInSandbox(resolvedHook, {
-              envVars: {
+            const result = await new DockerHookExecutor().execute(resolvedHook, {
+              env: {
                 ...workspaceEnv,
                 ...validation.overrides,
               },
+              secretEnv: {},
             })
             const networkLogs = summarizeHookNetworkLogs(
               (result as { networkLogs?: Array<{ url: string; method: string; status: number; startTime: number; endTime: number }> }).networkLogs,
             )
+            const shown = withDeclaredMask(declaredMask, (mask) => ({
+              ...maskPayloadStrings({
+                output: result.output,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                error: result.error ?? null,
+              }, mask),
+              variables: maskPayloadTree(result.variables, mask),
+              networkLogs: networkLogs.map((entry) => ({ ...entry, url: mask(entry.url) })),
+            }))
+            if (shown === undefined) {
+              json(res, { error: 'masking_unavailable' }, 503)
+              return
+            }
 
-            json(res, sanitizeAuthStateForResponse({
+            json(res, {
               success: result.success,
               status: result.success ? 'passed' : 'failed',
               executedAt: new Date().toISOString(),
               duration: result.duration,
-              output: result.output,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              error: result.error ?? null,
-              variables: result.variables,
+              output: shown.output,
+              stdout: shown.stdout,
+              stderr: shown.stderr,
+              error: shown.error,
+              variables: shown.variables,
               sandbox: {
                 runtime: resolvedHook.runtime,
                 image: RUNTIME_IMAGE_MAP[resolvedHook.runtime],
                 networkMode: resolvedHook.network ? 'enabled' : 'disabled',
                 dockerVersion: null,
-                networkLogsAvailable: networkLogs.length > 0,
-                networkLogs,
+                networkLogsAvailable: shown.networkLogs.length > 0,
+                networkLogs: shown.networkLogs,
               },
-            } satisfies import('../hooks/hook-registry-types.js').HookRunResponse))
+            } satisfies import('../hooks/hook-registry-types.js').HookRunResponse)
           } catch (err: unknown) {
-            json(res, sanitizeAuthStateForResponse({ error: err instanceof Error ? err.message : 'Failed to run hook' }), 500)
+            const message = err instanceof Error
+              ? withDeclaredMask(declaredMask, (mask) => mask(err.message))
+              : undefined
+            json(res, { error: message ?? 'Failed to run hook' }, 500)
           }
         })
         .catch(() => json(res, { error: 'Invalid request body' }, 400))
@@ -3760,71 +4872,6 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           json(res, { error: err instanceof Error ? err.message : 'Failed to delete hook' }, 500)
         }
       })()
-      return
-    }
-
-    if (path === '/api/agent-rules' && req.method === 'PUT') {
-      if (!configManager) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      readJsonBody<{ content: string }>(req)
-        .then(async (body) => {
-          try {
-            if (typeof body.content !== 'string') {
-              json(res, { error: 'Missing required field: content' }, 400)
-              return
-            }
-            if (!workspacePaths) {
-              json(res, { error: 'Workspace path resolution not available' }, 503)
-              return
-            }
-            await writeFile(workspacePaths.agentRules.absolutePath, body.content, 'utf-8')
-            json(res, { updated: true })
-          } catch (err: unknown) {
-            json(res, { error: err instanceof Error ? err.message : 'Failed to save agent rules' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
-      return
-    }
-
-    if (path === '/api/agent-rules/create' && req.method === 'POST') {
-      if (!configManager || !deps.configPath) {
-        json(res, { error: 'Config management not available' }, 501)
-        return
-      }
-      const configPath = deps.configPath
-      readJsonBody<{ fileName?: string }>(req)
-        .then(async (body) => {
-          try {
-            const fileName = typeof body.fileName === 'string' && body.fileName.trim()
-              ? body.fileName.trim()
-              : 'agent-rules.md'
-            if (!isPlainFileName(fileName)) {
-              json(res, { error: 'fileName must be a plain file name' }, 400)
-              return
-            }
-
-            const configDir = dirname(configPath)
-            const resolvedPath = resolve(configDir, fileName)
-            if (!getPathInsideDir(resolvedPath, configDir)) {
-              json(res, { error: 'Invalid agent rules path' }, 400)
-              return
-            }
-
-            await writeFile(resolvedPath, '', { encoding: 'utf-8', flag: 'wx' })
-            await configManager!.replaceSectionRaw('workspace.agentRules', `./${fileName}`)
-            json(res, { created: true, filePath: `./${fileName}` })
-          } catch (err: unknown) {
-            if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-              json(res, { error: 'Agent rules file already exists' }, 409)
-              return
-            }
-            json(res, { error: err instanceof Error ? err.message : 'Failed to create agent rules file' }, 500)
-          }
-        })
-        .catch(() => json(res, { error: 'Invalid request body' }, 400))
       return
     }
 
@@ -3940,11 +4987,54 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
+    // GET /api/live-editor/sessions/:id/live-url — the editor mint door (428 D-07).
+    //
+    // A copy of the run mint door above, arm for arm: the same-site guard first, 503 when unbound,
+    // the op's result verbatim and its refusals mapped by error name. Every arm answers through
+    // `jsonNoCors`, because the success body is the token. The DELETE arm below matches one path
+    // segment after the id, so it never sees a `/live-url` suffix.
+    if (req.method === 'GET' && /^\/api\/live-editor\/sessions\/[^/]+\/live-url$/.test(path)) {
+      if (refuseCrossSiteRequest(req) !== undefined) {
+        jsonNoCors(res, { error: 'cross_site_refused' }, 403)
+        return
+      }
+      if (!deps.mintEditorLiveUrl) {
+        jsonNoCors(res, { error: 'live_view_unavailable' }, 503)
+        return
+      }
+      let editorSessionId: string
+      try {
+        editorSessionId = decodeURIComponent(
+          path.slice('/api/live-editor/sessions/'.length, -'/live-url'.length),
+        )
+      } catch {
+        jsonNoCors(res, { error: 'unknown_session' }, 404)
+        return
+      }
+      void deps.mintEditorLiveUrl(editorSessionId).then(
+        (result) => { jsonNoCors(res, result) },
+        (error: unknown) => {
+          const name = error instanceof Error ? error.name : ''
+          if (name === 'UnknownLiveEditorSessionError') { jsonNoCors(res, { error: 'unknown_session' }, 404); return }
+          if (name === 'LiveViewUnavailableError') { jsonNoCors(res, { error: 'live_view_unavailable' }, 503); return }
+          jsonNoCors(res, { error: 'live_url_mint_failed' }, 500)
+        },
+      )
+      return
+    }
+
+    // THE LIVE-EDITOR DOORS (428 D-08 — WINDOWS #275). These four arms create, list, end and read
+    // auth state out of sessions that drive a real browser, which is more than the live-url grants.
+    // Each runs the one same-site predicate first and answers every arm, success and refusal alike,
+    // through `jsonNoCors`: a wildcard grant on an admitted answer would leave a readable session
+    // list behind for any origin (RESEARCH P6). The rest of this router keeps its posture.
     // POST /api/live-editor/sessions/:id/auth-state — save auth state from active web Live Mode context
     const liveEditorAuthStateMatch = path.match(/^\/api\/live-editor\/sessions\/([^/]+)\/auth-state$/)
     if (liveEditorAuthStateMatch && req.method === 'POST') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
       ;(async () => {
@@ -3954,30 +5044,30 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
           const body = await readJsonBody<{ name?: unknown; replace?: unknown }>(req)
           const parsedName = AuthStateNameSchema.safeParse(typeof body?.name === 'string' ? body.name : '')
           if (!parsedName.success) {
-            json(res, { error: 'Auth state name must be a lowercase slug.' }, 400)
+            jsonNoCors(res, { error: 'Auth state name must be a lowercase slug.' }, 400)
             return
           }
 
           stateName = parsedName.data
           session = sessionManager.getSession(decodeURIComponent(liveEditorAuthStateMatch[1]))
           if (!session) {
-            notFound(res, 'Session not found')
+            jsonNoCors(res, { error: 'Session not found' }, 404)
             return
           }
 
           if (typeof session.captureWebAuthState !== 'function') {
-            json(res, {
+            jsonNoCors(res, {
               error: `Could not save auth state "${stateName}" for target "${getSessionTargetNameForAuthState(session)}".`,
             }, 500)
             return
           }
 
           const authState = await session.captureWebAuthState(stateName, { replace: body?.replace === true })
-          json(res, { authState })
+          jsonNoCors(res, { authState })
         } catch (err: unknown) {
           const targetName = getSessionTargetNameForAuthState(session)
           const response = buildAuthStateSaveErrorMessage(stateName || 'unknown', targetName, err)
-          json(res, { error: response.message }, response.status)
+          jsonNoCors(res, { error: response.message }, response.status)
         }
       })()
       return
@@ -3985,8 +5075,10 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
 
     // POST /api/live-editor/sessions — create a new live editor session
     if (path === '/api/live-editor/sessions' && req.method === 'POST') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
       ;(async () => {
@@ -4006,10 +5098,20 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             teardownHooks?: unknown
             entity?: { type?: string; id?: string }
           }>(req)
+          const targetName = typeof body?.targetName === 'string' ? body.targetName : undefined
+          // 432 D-18: a production target is refused here, before the session and any of its
+          // setup. The request names the target; the environment and the opt-in are read from
+          // the current config, never from the request.
+          const production = await resolveLiveTargetProduction(configManager, targetName)
+          const productionRefusal = liveProductionRefusal(production)
+          if (productionRefusal !== undefined) {
+            jsonNoCors(res, { error: productionRefusal.message }, 403)
+            return
+          }
           const platform = body?.platform ?? 'web'
           const runtimeLLM = await resolveDashboardRuntimeLLM(configManager, llmConfig, authFetch)
           if (!runtimeLLM.ok) {
-            json(res, { error: runtimeLLM.error }, 400)
+            jsonNoCors(res, { error: runtimeLLM.error }, 400)
             return
           }
           const setupHooks = Array.isArray(body?.setupHooks)
@@ -4030,21 +5132,13 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
               entityRef = { type: t, id }
             }
           }
-          let agentRules: string | undefined
           let envVars: Record<string, string> | undefined
           let secretStore: SecretStore | undefined
           let secretRedactor: SecretRedactor | undefined
           let resolvedHooks = new Map<string, import('@vostride/agent-qa-core').HookDefinition>()
           let hookRegistryError: string | undefined
           if (!workspacePaths) {
-            json(res, { error: 'Workspace path resolution not available' }, 500)
-            return
-          }
-
-          try {
-            agentRules = await readFile(workspacePaths.agentRules.absolutePath, 'utf-8')
-          } catch {
-            json(res, { error: `workspace.agentRules file could not be loaded: ${workspacePaths.agentRules.workspaceRelativePath}` }, 400)
+            jsonNoCors(res, { error: 'Workspace path resolution not available' }, 500)
             return
           }
 
@@ -4052,7 +5146,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             const envContent = await readFile(workspacePaths.envFile.absolutePath, 'utf-8')
             envVars = parseEnvFile(envContent)
           } catch {
-            json(res, { error: `workspace.envFile file could not be loaded: ${workspacePaths.envFile.workspaceRelativePath}` }, 400)
+            jsonNoCors(res, { error: `workspace.envFile file could not be loaded: ${workspacePaths.envFile.workspaceRelativePath}` }, 400)
             return
           }
 
@@ -4061,20 +5155,40 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             secretStore = SecretStore.fromEnvContent(secretsContent)
             secretRedactor = new SecretRedactor(secretStore)
           } catch {
-            json(res, { error: `workspace.secretsFile file could not be loaded: ${workspacePaths.secretsFile.workspaceRelativePath}` }, 400)
+            jsonNoCors(res, { error: `workspace.secretsFile file could not be loaded: ${workspacePaths.secretsFile.workspaceRelativePath}` }, 400)
             return
           }
 
           const hookCatalog = await readWorkspaceHooks(configManager, deps.configPath)
           resolvedHooks = hookCatalog.resolvedHooks
           hookRegistryError = hookCatalog.hookRegistryError
+          // 436 D-03: the limits come from the project config and the edited entity's own `use`,
+          // read through the workspace managers by canonical id; never from the request.
+          const entityReaders = {
+            ...(testFileManager === undefined ? {} : { findTest: (id: string) => testFileManager.findByTestId(id) }),
+            ...(suiteFileManager === undefined ? {} : { findSuite: (id: string) => suiteFileManager.findBySuiteId(id) }),
+          }
+          const plannerLimits = await resolveLivePlannerLimits(configManager, entityRef, entityReaders)
+          // Each test a session runs gets project, then the session's suite, then its own `use`:
+          // the chain the CLI suite producer resolves per member.
+          const sessionSuiteRef = entityRef?.type === 'suite' ? entityRef : undefined
+          const plannerLimitsForTest = (testId: string) =>
+            resolveLivePlannerLimits(
+              configManager,
+              sessionSuiteRef === undefined
+                ? [{ type: 'test', id: testId }]
+                : [sessionSuiteRef, { type: 'test', id: testId }],
+              entityReaders,
+            )
           const { sessionId, sessionNumber } = await sessionManager.createSession(
             {
               platform: platform as 'web' | 'android' | 'ios',
-              targetName: typeof body?.targetName === 'string' ? body.targetName : undefined,
+              targetName,
+              production: { productionTargetNames: production.productionTargetNames },
+              plannerLimits,
+              plannerLimitsForTest,
               llmConfig: runtimeLLM.llmConfig,
               authFetch: runtimeLLM.authFetch,
-              agentRules,
               envVars,
               secretStore,
               secretRedactor,
@@ -4093,10 +5207,15 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
             },
             entityRef,
           )
-          json(res, { sessionId, sessionNumber }, 201)
+          jsonNoCors(res, { sessionId, sessionNumber }, 201)
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err)
-          json(res, { error: message }, 500)
+          // The config changed between the door's read and `initialize`'s: the same refusal.
+          // 436 D-03: a limit the CLI refuses is refused here, before any session exists.
+          const status = err instanceof LiveProductionRefusedError
+            ? 403
+            : err instanceof LivePlannerLimitsRefusedError ? 400 : 500
+          jsonNoCors(res, { error: message }, status)
         }
       })()
       return
@@ -4104,28 +5223,32 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
 
     // GET /api/live-editor/sessions — list all active live editor sessions
     if (path === '/api/live-editor/sessions' && req.method === 'GET') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
-      json(res, { sessions: sessionManager.listSessions() })
+      jsonNoCors(res, { sessions: sessionManager.listSessions() })
       return
     }
 
     // DELETE /api/live-editor/sessions/:id — terminate a live editor session
     const liveEditorSessionMatch = path.match(/^\/api\/live-editor\/sessions\/([^/]+)$/)
     if (liveEditorSessionMatch && req.method === 'DELETE') {
+      // 428 D-08 (WINDOWS #275): the same-site guard first, and no wildcard grant on any answer.
+      if (refuseCrossSiteDisplayRead(req, res)) return
       if (!sessionManager) {
-        json(res, { error: 'Live editor not available' }, 503)
+        jsonNoCors(res, { error: 'Live editor not available' }, 503)
         return
       }
       const sessionId = liveEditorSessionMatch[1]
       ;(async () => {
         const terminated = await sessionManager.terminateSession(sessionId)
         if (terminated) {
-          json(res, { ok: true })
+          jsonNoCors(res, { ok: true })
         } else {
-          notFound(res, 'Session not found')
+          jsonNoCors(res, { error: 'Session not found' }, 404)
         }
       })()
       return
@@ -4166,132 +5289,11 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
       return
     }
 
-    // Variable suggestions: captured variable names from prior runs
-    const capturedMatch = path.match(/^\/api\/variables\/captured\/([^/]+)$/)
-    if (capturedMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const testId = decodeURIComponent(capturedMatch[1])
-          const names = db.getCapturedVariableNames(testId)
-          json(res, { names })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read captured variables' }, 500)
-        }
-      })()
-      return
-    }
-
-    if (path === '/api/memory/catalog' && req.method === 'GET') {
-      ;(async () => {
-        try {
-          json(res, await memoryCatalogManager.readCatalog())
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read memory catalog' }, 500)
-        }
-      })()
-      return
-    }
-
-    const memoryProductMatch = path.match(/^\/api\/memory\/products\/([^/]+)$/)
-    if (memoryProductMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const productKey = decodeURIComponent(memoryProductMatch[1])
-          if (!isValidMemoryScopeId(productKey)) {
-            json(res, { error: 'Invalid memory product id' }, 400)
-            return
-          }
-          const product = await memoryCatalogManager.readProductDetail(productKey)
-          if (!product) {
-            json(res, { error: 'Memory product not found' }, 404)
-            return
-          }
-          json(res, { product })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read memory product' }, 500)
-        }
-      })()
-      return
-    }
-
-    const memoryScopeMatch = path.match(/^\/api\/memory\/scopes\/([^/]+)\/([^/]+)$/)
-    if (memoryScopeMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const scope = decodeURIComponent(memoryScopeMatch[1])
-          const scopeId = decodeURIComponent(memoryScopeMatch[2])
-          if (!isMemoryScope(scope)) {
-            json(res, { error: 'Invalid memory scope' }, 400)
-            return
-          }
-          if (!isValidMemoryScopeId(scopeId)) {
-            json(res, { error: 'Invalid memory scope id' }, 400)
-            return
-          }
-          const payload = await memoryCatalogManager.readScopedObservations(scope, scopeId)
-          if (!payload) {
-            json(res, { error: 'Memory scope not found' }, 404)
-            return
-          }
-          json(res, payload)
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read memory scope' }, 500)
-        }
-      })()
-      return
-    }
-
-    // Memory observations: list for a test
-    const obsListMatch = path.match(/^\/api\/memory\/observations\/([^/]+)$/)
-    if (obsListMatch && req.method === 'GET') {
-      ;(async () => {
-        try {
-          const testId = decodeURIComponent(obsListMatch[1])
-          const payload = await memoryCatalogManager.readScopedObservations('test', testId)
-          json(res, {
-            observations: payload?.observations ?? [],
-            invalidFiles: payload?.invalidFiles ?? [],
-          })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to read observations' }, 500)
-        }
-      })()
-      return
-    }
-
-    // Memory observations: delete
-    const obsDeleteMatch = path.match(/^\/api\/memory\/observations\/([^/]+)\/([^/]+)$/)
-    if (obsDeleteMatch && req.method === 'DELETE') {
-      ;(async () => {
-        try {
-          const testId = decodeURIComponent(obsDeleteMatch[1])
-          const obsId = decodeURIComponent(obsDeleteMatch[2])
-          if (!isValidMemoryScopeId(testId) || !isValidMemoryScopeId(obsId)) {
-            json(res, { error: 'Invalid memory observation id' }, 400)
-            return
-          }
-
-          const configDir = deps.configPath ? dirname(resolve(deps.configPath)) : process.cwd()
-          const cfg = configManager ? await configManager.read().catch(() => undefined) : undefined
-          const parsedConfig = AgentQaConfigSchema.safeParse(cfg ?? {})
-          const memoryRoot = parsedConfig.success
-            ? resolveMemoryRoot(parsedConfig.data, configDir)
-            : resolveMemoryRoot(undefined, configDir)
-          const testsRoot = join(memoryRoot, 'tests')
-          const resolved = resolve(testsRoot, testId, `${obsId}.md`)
-          if (!getPathInsideDir(resolved, testsRoot)) {
-            json(res, { error: 'Invalid path' }, 400)
-            return
-          }
-
-          await rm(resolved, { force: true })
-          json(res, { deleted: true })
-        } catch (err: unknown) {
-          json(res, { error: err instanceof Error ? err.message : 'Failed to delete observation' }, 500)
-        }
-      })()
-      return
-    }
+    // 2026-08-27 (405-07, D-02): the captured-variable-name suggestion arm was deleted with its
+    // reader. It scanned a `captured_variables` column on the v1 projection, which no producer has
+    // filled since the subscriber was rebuilt on the bus payloads — so the endpoint answered an
+    // empty list on every real workspace while looking like a working suggestion source. The hook
+    // and workspace suggestion arms above are unaffected: their producers are live.
 
     // Unknown API route
     if (path.startsWith('/api/')) {
@@ -4302,8 +5304,4 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps, artifacts
     // Non-API routes handled by server.ts (static files)
     notFound(res)
   }
-}
-
-function isMemoryScope(value: string): value is MemoryScope {
-  return value === 'product' || value === 'suite' || value === 'test'
 }

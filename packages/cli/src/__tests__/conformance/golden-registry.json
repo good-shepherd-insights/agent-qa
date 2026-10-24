@@ -1,0 +1,764 @@
+{
+  "$note": [
+    "GENERATED — the capability ledger for Phase 397 (FUNC-05 leg 6, D-05/D-07).",
+    "One row per registered capability. A lowered risk tier, a changed schema",
+    "digest or a moved MCP partition lands here as a one-line reviewable diff.",
+    "DO NOT EDIT BY HAND: regenerate with \"bash scripts/397-regen-golden.sh --write\" and commit the result",
+    "as a deliberate, reviewed change. The script refuses to run while any other leg of the",
+    "conformance suite is red, so a regeneration cannot launder an unrelated failure, and no",
+    "test-runner update flag reaches this file."
+  ],
+  "opCount": 44,
+  "rows": [
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "agent.ask",
+      "inputSchemaDigest": "4263d0037103be319312c3933a8c3bc17f441fe2a8852ac4afd917e78db43f8d",
+      "outputSchemaDigest": "f7953727cfb05167d27ea29cc5bacc98b1fa8416f55cf6b0503c4da20ce57e9a",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "agent-ask-delegation-deferral"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:agent.ask",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "agent.explain",
+      "inputSchemaDigest": "3169adbc23aa82b15b5afa7e561ce900346fad48d88469a6ffc4e5279f5cce1e",
+      "outputSchemaDigest": "aab03329c1e8662651224ab1d8a8ecf3e9409a03758c70011ce6d9d380743692",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "discovery-answered-by-protocol"
+      },
+      "rendersResult": true,
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:agent.explain",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "analysis.get",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "8e5b97b8e9bb0f2cbd4611b8a405e2c48814e1fae93d6b8cb7bb31e3fb7049d9",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:analysis.get",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "authoring.draft.edit",
+      "inputSchemaDigest": "b5bc4308dc584cb69cd94b97ff8ff3bec0975bdbcc9004c7d96f28e5cd562c7a",
+      "outputSchemaDigest": "d6aa990ce2cf9d833d1b5a95b18d21bbab68604db588bfd6f1ecdd52969b7f13",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_refine_test"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "declaredTier": "mutating-local",
+        "name": "fn:authoring.draft.edit",
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "authoring.draft.verify",
+      "inputSchemaDigest": "a87fe76bba6e49a0c00ce791d945233a40a20dd8da8578e5c5d2878d127b60cc",
+      "outputSchemaDigest": "e96d1c6dfbdf16be50efa2df43e0ea17e2497b1a9f9276d96e4d6e3c87830577",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_refine_test"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "declaredTier": "mutating-local",
+        "name": "fn:authoring.draft.verify",
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "authoring.draft.write",
+      "inputSchemaDigest": "2d98bde1d977b1e9928d3613fa0fa97b7e3d765a6e9b1c43bf23214e8adf03ed",
+      "outputSchemaDigest": "db06173898b13d01e944151d97f5079c874363bc94a9e3a8e1b8d39726f0c26c",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_write_test"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "declaredTier": "mutating-shared",
+        "name": "fn:authoring.draft.write",
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "authoring.funnel.get",
+      "inputSchemaDigest": "cc347d50015ae652d1ee0c6b32e14745bff5afaab2ec7be8631d7d059baffb12",
+      "outputSchemaDigest": "a0a975ecb0003f48a0b8eff670c16bbafdfafc228cf376e94dad4eb4371cffa6",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:authoring.funnel.get",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "config.auth.set",
+      "inputSchemaDigest": "22688bc1bc1e0b88762e2bb31d8e3dcd4fbc38b14b5b071a61fdb2147055b3d9",
+      "outputSchemaDigest": "4397bf67b751c74e3035c0cf7888073f1d3db6e2a941d7eaeefd4253b3dd92b6",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_config"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:config.auth.set",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "config.field.set",
+      "inputSchemaDigest": "c19a817d7086b9d9fbd66aa2dcdc3d6d0e3ffcad978f682bfdb93eb192345838",
+      "outputSchemaDigest": "4397bf67b751c74e3035c0cf7888073f1d3db6e2a941d7eaeefd4253b3dd92b6",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_config"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:config.field.set",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "config.get",
+      "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
+      "outputSchemaDigest": "f55c72bdc23fda9d72556fc4090d2d633d588bc74ef629a2ea50f792ba1b0bf8",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:config.get",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "config.hook.add",
+      "inputSchemaDigest": "779411d4f0c10d810988139bc61dbeb86eb61bfa87c0f755083ed6f4e779ab20",
+      "outputSchemaDigest": "4397bf67b751c74e3035c0cf7888073f1d3db6e2a941d7eaeefd4253b3dd92b6",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_config"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:config.hook.add",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "config.project.scaffold",
+      "inputSchemaDigest": "8ec9d2f71f8ef9484af79da67891ce91c528a83bba56332812ae2a98de368890",
+      "outputSchemaDigest": "4397bf67b751c74e3035c0cf7888073f1d3db6e2a941d7eaeefd4253b3dd92b6",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_config"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:config.project.scaffold",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "config.target.create",
+      "inputSchemaDigest": "f9c5267c9d204e262849352eef61957e89177eb9bdb6f2bc7c54e4ce890278d0",
+      "outputSchemaDigest": "4397bf67b751c74e3035c0cf7888073f1d3db6e2a941d7eaeefd4253b3dd92b6",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_config"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:config.target.create",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "config.target.edit",
+      "inputSchemaDigest": "0a578596cc17aaf8d76b0db8ec313cc885b5400b7f075b733f307f6f95a35090",
+      "outputSchemaDigest": "4397bf67b751c74e3035c0cf7888073f1d3db6e2a941d7eaeefd4253b3dd92b6",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_config"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:config.target.edit",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "unbound",
+      "classifies": true,
+      "id": "editor.liveurl",
+      "inputSchemaDigest": "27fb8ddfe3b3dff5b644909b7f9459ec6bc13efaf8ccc548ed3597135ab7be11",
+      "outputSchemaDigest": "aea12ee396e215bf9f6fb4a0fd9fa467fa1513061273f02df6e1c16f31d7913c",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "credential-mint-deferral"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:editor.liveurl",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "entities.get",
+      "inputSchemaDigest": "d97dc198a21fe0bd3427bda11364557d7470da65643813c469b940fd1539f819",
+      "outputSchemaDigest": "f6a642c4eb4fc3c9a9e22e4aa6cde994874f5d20e13c53a6e892b3f8585e07cc",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_entity"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:entities.get",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "entities.resolve",
+      "inputSchemaDigest": "d97dc198a21fe0bd3427bda11364557d7470da65643813c469b940fd1539f819",
+      "outputSchemaDigest": "a5fef2a144f2b19de0ec966abb9b9b10db9471ee44e7d48a9abb44d87729a052",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_entity"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:entities.resolve",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.accept",
+      "inputSchemaDigest": "ece244ec807fe3ea186fe1326ec14fe4dc93d54c719cbd1fb35244e43caada32",
+      "outputSchemaDigest": "07c5fff4b1cd92b97e1073dbc7b01bbb25de150a7b877d63ffef59603fdafade",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_knowledge"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.accept",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.brief.why",
+      "inputSchemaDigest": "a7c3ebe968b988c12628029b8918a57799f5dca5392f68fa04ae2136861275f8",
+      "outputSchemaDigest": "ba14b43dfe5ec14c5a096cff91faf1f583fbac2f124772d1ef014eb6d85ddf0b",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_explain_brief"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.brief.why",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.bundles.list",
+      "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
+      "outputSchemaDigest": "21ae68036dfd820d4a3950318400eebcfdb83189df3db3861e9ac70a2f018ad3",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_list_knowledge_bundles"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.bundles.list",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.forget",
+      "inputSchemaDigest": "ece244ec807fe3ea186fe1326ec14fe4dc93d54c719cbd1fb35244e43caada32",
+      "outputSchemaDigest": "07c5fff4b1cd92b97e1073dbc7b01bbb25de150a7b877d63ffef59603fdafade",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_knowledge"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.forget",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.gates.list",
+      "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
+      "outputSchemaDigest": "b0cf22d5028633224c8eaf52302dbf35ab94f3d35ab194b3987dce22436aaf32",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_list_knowledge_gates"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.gates.list",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.record.show",
+      "inputSchemaDigest": "3d7f0e0bc33415cdda6cbc7996e50d2c130d39fdc01d75982faa529d72cf3a29",
+      "outputSchemaDigest": "6311c2623381db540658fde12bd08b1c50c3ab4a6371a81f03b48fa4a88a14cc",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_show_knowledge_record"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.record.show",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.records.diff",
+      "inputSchemaDigest": "13ef772cfc51debbcf88c19eb55fd9cf10405f1de55eae4f51dd4d1060ed4780",
+      "outputSchemaDigest": "952da8585d7c17cbcdd6345da924a92eda55ef7ff773416973b5f7e274dcb2f5",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_diff_knowledge_records"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.records.diff",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.records.inspect",
+      "inputSchemaDigest": "7f51b9afa837665f8dab866e966cf466604c3a6928c3ce714a6a98812f84028e",
+      "outputSchemaDigest": "37917e02a34b98c39ea7f9991f2dac5e62cd38d50218990d07f5e7549f78bbba",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_inspect_knowledge_records"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.records.inspect",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "knowledge.reject",
+      "inputSchemaDigest": "d374a11362776bc2d78a55dd618c4e60ed64bbaf0f8913ebee51716daaabf35b",
+      "outputSchemaDigest": "07c5fff4b1cd92b97e1073dbc7b01bbb25de150a7b877d63ffef59603fdafade",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_change_knowledge"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:knowledge.reject",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "quarantine.add",
+      "inputSchemaDigest": "dfd1793872e347ccb7128d06b202729b028577855cc38645853914140483aa31",
+      "outputSchemaDigest": "ada249e9ca91811e7d37a9ea57dc5a188cdad89efe1dffb56011730953cd7943",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-write"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:quarantine.add",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "quarantine.list",
+      "inputSchemaDigest": "71fc596a20f27da3dec80050e5d1f553eba34aea24c2853b853488a811e6b892",
+      "outputSchemaDigest": "0fe5b0fe74ecaf7105a30d4092f3dd78341e5dddbc2982ec7cbca3bdd881848a",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:quarantine.list",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "quarantine.release",
+      "inputSchemaDigest": "568a1b45ba3367477be4503b6235125a96452f2bdde6535d45c1b65a13220352",
+      "outputSchemaDigest": "d11f1f91ab7727ce00b13bba032bd7d095acc13d1bf52621862578ebebedb935",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-write"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:quarantine.release",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.artifact",
+      "inputSchemaDigest": "c8d3f0cdc343b2002a8f54c3511bc03e5e10e86a54638aee1fcf9c9c8d363ac3",
+      "outputSchemaDigest": "0944092aae02aab146daf5901b6b41f7b7e844832e4da179aadf999f30d3119a",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_run_evidence"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.artifact",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.detail",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "0bf0766130704d707476f4e5a0d4870af6972398705f7d183f8f1fb1c01fc402",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.detail",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.digest",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "affa60a8cfc13dc8e71b050d2eacfe7d22c5319237f7d3e3c23ea79409ea2430",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_run_digest"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.digest",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.events",
+      "inputSchemaDigest": "673158dacd01df7d44f83fa974746da4305048063dd0261603d2bf14410fbd2b",
+      "outputSchemaDigest": "5c95563c2afcb63d5f53adfe6fe7683e1f717a1e9074f4b54ed5fcd4a29775dc",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "stream",
+      "risk": {
+        "name": "fn:runs.events",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.evidence",
+      "inputSchemaDigest": "f93fb418e51869c67457b37b03d4af0a9b55621d81bac733aa239b599426bb9a",
+      "outputSchemaDigest": "c30a7be0670302df09a53d46105ee6505916fa4441fc97add041d2c385060e90",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_run_evidence"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.evidence",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.get",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "4e8588260037b0fa4a86bb3ad0cf99a02fee1391b46f915c8a984287679fa228",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.get",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.knowledge",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "bb298ce81ef393ea4802e4cdbf9d563ef0370b0591db7044129c2db7b5684445",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_run_knowledge"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.knowledge",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.list",
+      "inputSchemaDigest": "d26bda8be5961bb706fc307fde53b4fbc7982a6351a6220b7be83981964e2263",
+      "outputSchemaDigest": "2c6f469c4a3fefa2a35a506ecd548d580f86a31b17f5eb07757bb2c42674ba9e",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_list_runs"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.list",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "unbound",
+      "classifies": true,
+      "id": "runs.liveurl",
+      "inputSchemaDigest": "7ddcdc4b2077bfbc93e0692945020570dc6b9edbbcab6764b4fcf540526f0f83",
+      "outputSchemaDigest": "549a1d878bd7c5c5324cfbbafe7321d40d5e971782c68de57d26dc49988995b8",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "credential-mint-deferral"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.liveurl",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.mark",
+      "inputSchemaDigest": "3fa17032140c1c9aafa71645f8d29436b18698e1039d5696327e04763f382e1e",
+      "outputSchemaDigest": "0dbad17573762c583ee387f7dc5a7ad3d24edd8a02446e7ee274a66e6bc630c4",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_mark_run"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "declaredTier": "mutating-shared",
+        "name": "fn:runs.mark",
+        "readOnly": false,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.mark.preview",
+      "inputSchemaDigest": "3fa17032140c1c9aafa71645f8d29436b18698e1039d5696327e04763f382e1e",
+      "outputSchemaDigest": "d881aa351ce0ae42aa203735861d6cadefd43924f05ad0717b1605ef80c43b7b",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_preview_run_mark"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.mark.preview",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.marks.history",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "5de5cc9365ac8c982410a3760f5f4e9c22ceae35cd0cf6dde8a0fd0e0e937bad",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_run_marks"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.marks.history",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.overview",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "3648932bea79ddabaab27a38cb9b65d8eec038c8af06e8da1b37fed7944f965a",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_get_run_overview"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.overview",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.postprocessing",
+      "inputSchemaDigest": "55df3bfd3c544e0140548637d1539243fb285899b52998dc36a6dbe1989aee6d",
+      "outputSchemaDigest": "17e23b2bd7604f2b405c989f8e9e4ce47a6d5456f52573fec1c40697d8cc715d",
+      "partition": {
+        "kind": "unprojected",
+        "reason": "not-mid-flight-read"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "name": "fn:runs.postprocessing",
+        "readOnly": true,
+        "recognized": true
+      }
+    },
+    {
+      "bindingStatusAtRoot": "bound",
+      "classifies": true,
+      "id": "runs.start",
+      "inputSchemaDigest": "a1d47c889b37bab978687bc7bf5cb67d840e3d64854ca0d5b488da191b5fd172",
+      "outputSchemaDigest": "9c339a01ae6a999449165c24202c49d8f237f6fd09ddc333c72c4cb5844e755a",
+      "partition": {
+        "kind": "projected",
+        "tool": "agent_qa_start_run"
+      },
+      "resultKind": "unary",
+      "risk": {
+        "declaredTier": "mutating-local",
+        "name": "fn:runs.start",
+        "recognized": true
+      }
+    }
+  ]
+}

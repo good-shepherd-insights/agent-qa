@@ -14,6 +14,7 @@ const LONG_TEST_NAME = "This is a deliberately long test name that should wrap a
 const {
   fetchTestFilesMock,
   fetchRunsMock,
+  fetchTestSummariesMock,
   triggerRunMock,
   purgeCacheMock,
   deleteTestFileMock,
@@ -22,6 +23,7 @@ const {
 } = vi.hoisted(() => ({
   fetchTestFilesMock: vi.fn(),
   fetchRunsMock: vi.fn(),
+  fetchTestSummariesMock: vi.fn(),
   triggerRunMock: vi.fn(),
   purgeCacheMock: vi.fn(),
   deleteTestFileMock: vi.fn(),
@@ -32,6 +34,7 @@ const {
 vi.mock("@/lib/api", () => ({
   fetchTestFiles: fetchTestFilesMock,
   fetchRuns: fetchRunsMock,
+  fetchTestSummaries: fetchTestSummariesMock,
   triggerRun: triggerRunMock,
   purgeCache: purgeCacheMock,
   deleteTestFile: deleteTestFileMock,
@@ -235,11 +238,9 @@ vi.mock("@/components/test-run-options-popover", () => ({
     onRunBrowserStack,
     onRunLocal,
     onUseCacheChange,
-    onUseMemoryChange,
     open,
     selectedCount,
     useCache,
-    useMemory,
   }: {
     browserStackAvailable: boolean
     disabled?: boolean
@@ -248,11 +249,9 @@ vi.mock("@/components/test-run-options-popover", () => ({
     onRunBrowserStack: () => void
     onRunLocal: () => void
     onUseCacheChange: (checked: boolean) => void
-    onUseMemoryChange: (checked: boolean) => void
     open: boolean
     selectedCount: number
     useCache: boolean
-    useMemory: boolean
   }) => (
     <div data-testid="run-options-popover">
       <button type="button" disabled={disabled} onClick={() => onOpenChange(!open)}>
@@ -269,14 +268,6 @@ vi.mock("@/components/test-run-options-popover", () => ({
               onChange={(event) => onUseCacheChange(event.currentTarget.checked)}
             />
             <span>Use cache</span>
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={useMemory}
-              onChange={(event) => onUseMemoryChange(event.currentTarget.checked)}
-            />
-            <span>Use memory</span>
           </label>
           <button type="button" disabled={disabled} onClick={onRunLocal}>
             Run Local
@@ -303,6 +294,29 @@ function LocationProbe() {
       data-search={location.search}
     />
   )
+}
+
+function singleMember(filePath: string, outcome: string) {
+  return { testIndex: 0, testId: null, filePath, suiteId: null, name: filePath, outcome }
+}
+
+// The batch read's row for a test file, with the figures the server gives for its seeded runs.
+function testSummary(
+  path: string,
+  testId: string,
+  passRate: number | null,
+  passed: number,
+  decided: number,
+  lastRun: { id: string; status: string; createdAt: string; memberOutcome: string } | null,
+) {
+  return {
+    path,
+    testId,
+    passRate,
+    passed,
+    decided,
+    lastRun: lastRun === null ? null : { startedAt: null, duration: 0, ...lastRun },
+  }
 }
 
 let container: HTMLDivElement | null = null
@@ -420,6 +434,7 @@ async function clickSelectValue(value: string) {
 beforeEach(() => {
   fetchTestFilesMock.mockReset()
   fetchRunsMock.mockReset()
+  fetchTestSummariesMock.mockReset()
   triggerRunMock.mockReset()
   purgeCacheMock.mockReset()
   deleteTestFileMock.mockReset()
@@ -435,6 +450,14 @@ beforeEach(() => {
     platform: "web",
   }))
 
+  fetchTestSummariesMock.mockResolvedValue({
+    tests: [
+      testSummary("tests/web/login.yaml", "test_login", 0.5, 1, 2, { id: "run_login_latest", status: "failed", createdAt: "2026-04-18T04:00:00.000Z", memberOutcome: "failed" }),
+      testSummary("tests/android/signup.yaml", "test_signup", 1, 1, 1, { id: "run_signup_latest", status: "passed", createdAt: "2026-04-18T03:00:00.000Z", memberOutcome: "passed" }),
+      testSummary("tests/web/very-long-name.yaml", "test_long_name", null, 0, 0, null),
+      ...files.map((file) => testSummary(file.path, file.testId, null, 0, 0, null)),
+    ],
+  })
   fetchTestFilesMock.mockResolvedValue({
     files: [
       {
@@ -467,9 +490,9 @@ beforeEach(() => {
   })
   fetchRunsMock.mockResolvedValue({
     runs: [
-      { id: "run_login_latest", filePath: "tests/web/login.yaml", status: "failed", createdAt: "2026-04-18T04:00:00.000Z" },
-      { id: "run_login_old", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-17T04:00:00.000Z" },
-      { id: "run_signup_latest", filePath: "tests/android/signup.yaml", status: "passed", createdAt: "2026-04-18T03:00:00.000Z" },
+      { id: "run_login_latest", filePath: "tests/web/login.yaml", status: "failed", createdAt: "2026-04-18T04:00:00.000Z", members: [singleMember("tests/web/login.yaml", "failed")] },
+      { id: "run_login_old", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-17T04:00:00.000Z", members: [singleMember("tests/web/login.yaml", "passed")] },
+      { id: "run_signup_latest", filePath: "tests/android/signup.yaml", status: "passed", createdAt: "2026-04-18T03:00:00.000Z", members: [singleMember("tests/android/signup.yaml", "passed")] },
     ],
   })
   triggerRunMock.mockResolvedValue({ runId: "run_1" })
@@ -667,7 +690,13 @@ describe("TestsPage", () => {
     })
     fetchRunsMock.mockResolvedValueOnce({
       runs: [
-        { id: "run_web_login_latest", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-18T04:00:00.000Z" },
+        { id: "run_web_login_latest", filePath: "tests/web/login.yaml", status: "passed", createdAt: "2026-04-18T04:00:00.000Z", members: [singleMember("tests/web/login.yaml", "passed")] },
+      ],
+    })
+    fetchTestSummariesMock.mockResolvedValueOnce({
+      tests: [
+        testSummary("tests/web/login.yaml", "test_web_login", 1, 1, 1, { id: "run_web_login_latest", status: "passed", createdAt: "2026-04-18T04:00:00.000Z", memberOutcome: "passed" }),
+        testSummary("tests/mobile/login.yaml", "test_mobile_login", null, 0, 0, null),
       ],
     })
 
@@ -695,7 +724,7 @@ describe("TestsPage", () => {
     expect(nameLabel?.className).not.toContain("truncate")
   })
 
-  it("remembers toggle changes for the current page session, launches local runs with runtime overrides, and only clears the queue on the close button", async () => {
+  it("remembers cache changes for the current page session, launches local runs with runtime overrides, and only clears the queue on the close button", async () => {
     await renderAt()
 
     await click(findRow("Login flow")?.querySelector('input[aria-label="Select row"]') as HTMLInputElement | null)
@@ -704,26 +733,22 @@ describe("TestsPage", () => {
     await click(findBatchButton("Run"))
 
     const useCache = findCheckboxByLabel("Use cache")
-    const useMemory = findCheckboxByLabel("Use memory")
     expect(useCache?.checked).toBe(true)
-    expect(useMemory?.checked).toBe(true)
 
     await click(useCache)
-    await click(useMemory)
 
     await click(findBatchButton("Run"))
     await click(findBatchButton("Run"))
 
     expect(findCheckboxByLabel("Use cache")?.checked).toBe(false)
-    expect(findCheckboxByLabel("Use memory")?.checked).toBe(false)
 
     await click(findBatchButton("Run Local"))
 
     const payloads = triggerRunMock.mock.calls.map(([payload]) => payload)
     expect(payloads).toHaveLength(2)
     expect(payloads).toEqual(expect.arrayContaining([
-      { file: "tests/web/login.yaml", local: true, noCache: true, noMemory: true },
-      { file: "tests/android/signup.yaml", local: true, noCache: true, noMemory: true },
+      { file: "tests/web/login.yaml", local: true, noCache: true },
+      { file: "tests/android/signup.yaml", local: true, noCache: true },
     ]))
     expect(findBatchButton("Run Local")).toBeUndefined()
     expect(container?.textContent).toContain("2 selected")

@@ -1,0 +1,49 @@
+import { expect, test } from 'vitest'
+import * as api from '../index'
+
+test('C428-LIVE-STREAM-KINDS-EXACT', () => {
+  expect(api.LIVE_STREAM_KINDS).toEqual(['cdp-screencast', 'snapshot', 'mjpeg', 'webrtc'])
+  for (const kind of [...api.LIVE_STREAM_KINDS, 'none']) {
+    expect(api.LiveStreamDeclarationSchema.parse({ kind })).toEqual({ kind })
+  }
+  expect(api.LiveStreamDeclarationSchema.safeParse({ kind: 'jpeg-poll' }).success).toBe(false)
+  expect(api.LiveStreamDeclarationSchema.safeParse({ kind: 'snapshot', extra: 1 }).success).toBe(false)
+})
+
+// G-428-2 (owner decision 2026-09-26 (2)): stepTexts is additive. A testStarted with it and one
+// without both parse as the frozen envelope and survive a JSON round trip unchanged.
+test('C428-TEST-STARTED-STEP-TEXTS-ADDITIVE', () => {
+  const bare: api.TestStartedPayload = { testId: 't1', testIndex: 0, name: 'a test', totalSteps: 2 }
+  const withTexts: api.TestStartedPayload = { ...bare, stepTexts: ['Open the page', 'Type <SECRET_1> into Password'] }
+  for (const payload of [bare, withTexts]) {
+    const envelope = { seq: 2, ts: 1_000, runId: 'r1', type: 'testStarted', payload }
+    const parsed = api.RunEventEnvelopeSchema.parse(envelope)
+    expect(parsed).toEqual(envelope)
+    expect(api.RunEventEnvelopeSchema.parse(JSON.parse(JSON.stringify(envelope)))).toEqual(envelope)
+    expect(JSON.parse(JSON.stringify(parsed))).toEqual(envelope)
+  }
+  expect(api.RunEventEnvelopeSchema.parse({ seq: 2, ts: 1_000, runId: 'r1', type: 'testStarted', payload: bare }).payload)
+    .not.toHaveProperty('stepTexts')
+})
+
+test('C428-FRAME-END-REASONS-EXACT', () => {
+  expect(api.LIVE_FRAME_END_REASONS).toEqual(['withdrawn', 'closed'])
+})
+
+test('EDITOR-LIVE-URL-DTOS-STRICT', () => {
+  const input = api.EditorLiveUrlInputSchema
+  expect(input.parse({ sessionId: 's1' })).toEqual({ sessionId: 's1' })
+  expect(input.safeParse({ sessionId: '' }).success).toBe(false)
+  expect(input.safeParse({ sessionId: 's1', runId: 'r' }).success).toBe(false)
+  const result = {
+    liveUrl: 'http://127.0.0.1:1/live/s1#v2.a.b',
+    expiresAt: 1,
+    stream: { kind: 'snapshot' },
+  }
+  expect(api.EditorLiveUrlResultSchema.parse(result)).toEqual(result)
+  expect(api.EditorLiveUrlResultSchema.safeParse({ ...result, handle: 0 }).success).toBe(false)
+})
+
+test('C428-LIVE-VIEW-SUBJECT-KINDS-EXACT', () => {
+  expect(api.LIVE_VIEW_SUBJECT_KINDS).toEqual(['run', 'editor'])
+})

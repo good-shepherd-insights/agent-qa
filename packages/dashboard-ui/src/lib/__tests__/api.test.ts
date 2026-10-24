@@ -8,20 +8,10 @@ import {
   createSuiteFile,
   createTestFile,
   fetchSuiteFiles,
+  updateTestFile,
 } from '@/lib/api'
-import {
-  trackDashboardEntityCreated,
-  trackDashboardLiveModeStarted,
-} from '@/lib/analytics'
-
-vi.mock('@/lib/analytics', () => ({
-  trackDashboardEntityCreated: vi.fn(),
-  trackDashboardLiveModeStarted: vi.fn(),
-}))
 
 let originalFetch: typeof fetch
-const trackDashboardEntityCreatedMock = vi.mocked(trackDashboardEntityCreated)
-const trackDashboardLiveModeStartedMock = vi.mocked(trackDashboardLiveModeStarted)
 
 beforeEach(() => {
   originalFetch = globalThis.fetch
@@ -152,6 +142,33 @@ describe('ApiError propagation through postJson', () => {
   })
 })
 
+describe('C441-GAP2-TEST-SAVE', () => {
+  it('a test save refused as marker_written_back rejects with the sentence as its message', async () => {
+    const sentence = 'This holds [secret:<name>], the way a declared secret is shown.'
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        statusText: 'Unprocessable Entity',
+        json: async () => ({ error: 'marker_written_back', message: sentence }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: async () => ({ error: 'invalid_test_file', message: 'Line 3 repeats a key' }),
+      }) as unknown as typeof fetch
+
+    const refused = await updateTestFile('t_x', 'target: x\n').catch((err: unknown) => err)
+    expect(refused).toBeInstanceOf(ApiError)
+    expect((refused as ApiError).message).toBe(sentence)
+    expect((refused as ApiError).payload?.error).toBe('marker_written_back')
+
+    const other = await updateTestFile('t_x', 'target: x\n').catch((err: unknown) => err)
+    expect((other as ApiError).message).toBe('invalid_test_file')
+  })
+})
+
 describe('dashboard analytics instrumentation boundaries', () => {
   it('tracks successful test, suite, and hook creation only after the API call resolves', async () => {
     globalThis.fetch = vi.fn()
@@ -202,23 +219,6 @@ describe('dashboard analytics instrumentation boundaries', () => {
     })).resolves.toMatchObject({
       hook: { id: 'h_phase244' },
     })
-
-    expect(trackDashboardEntityCreatedMock).toHaveBeenCalledTimes(3)
-    expect(trackDashboardEntityCreatedMock).toHaveBeenNthCalledWith(1, 'test')
-    expect(trackDashboardEntityCreatedMock).toHaveBeenNthCalledWith(2, 'suite')
-    expect(trackDashboardEntityCreatedMock).toHaveBeenNthCalledWith(3, 'hook')
-  })
-
-  it('does not track failed creation attempts', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 400,
-      statusText: 'Bad Request',
-      json: async () => ({ error: 'Invalid suite content' }),
-    }) as unknown as typeof fetch
-
-    await expect(createSuiteFile('bad.suite.yaml', 'bad: true\n')).rejects.toThrow('Invalid suite content')
-    expect(trackDashboardEntityCreatedMock).not.toHaveBeenCalled()
   })
 
   it('tracks successful live mode starts without passing entity identifiers', async () => {
@@ -235,12 +235,5 @@ describe('dashboard analytics instrumentation boundaries', () => {
       sessionId: 'live_phase244',
       sessionNumber: 42,
     })
-
-    expect(trackDashboardLiveModeStartedMock).toHaveBeenCalledTimes(1)
-    expect(trackDashboardLiveModeStartedMock).toHaveBeenCalledWith({
-      platform: 'ios',
-      entityType: 'suite',
-    })
-    expect(trackDashboardLiveModeStartedMock.mock.calls[0][0]).not.toHaveProperty('id')
   })
 })

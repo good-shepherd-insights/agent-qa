@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
+import pc from 'picocolors'
 
 vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(() => Promise.reject({ code: 'ENOENT' })),
@@ -22,8 +23,6 @@ vi.mock('@inquirer/select', () => ({
 }))
 
 vi.mock('@vostride/agent-qa-core', () => ({
-  createModel: vi.fn(() => ({})),
-  getProviderOptions: vi.fn(() => undefined),
   getCredential: vi.fn(() => null),
   getLLMAuthProviderPlugin: vi.fn(() => undefined),
   readAuth: vi.fn(() => ({})),
@@ -31,12 +30,46 @@ vi.mock('@vostride/agent-qa-core', () => ({
   writeAuth: vi.fn(() => Promise.resolve()),
 }))
 
+vi.mock('@vostride/agent-qa-model', () => ({
+  createModel: vi.fn(() => ({})),
+}))
+
 vi.mock('ai', () => ({
   generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
 }))
 
+function mockToModelProfileAndAuth(llmConfig: any, resolved: any) {
+  const profile = {
+    provider: llmConfig.provider,
+    model: llmConfig.model,
+    ...(llmConfig.baseURL !== undefined ? { baseURL: llmConfig.baseURL } : {}),
+    ...(llmConfig.providerHeaders !== undefined ? { headers: llmConfig.providerHeaders } : {}),
+    auth: resolved.kind === 'api-key'
+      ? { mode: 'api-key' }
+      : resolved.kind === 'bearer-token'
+        ? { mode: 'bearer-token' }
+        : resolved.kind === 'auth-fetch'
+          ? { mode: 'subscription', plugin: resolved.provider }
+          : { mode: 'none' },
+  }
+
+  switch (resolved.kind) {
+    case 'api-key':
+      return { profile, auth: { kind: 'api-key', apiKey: resolved.apiKey } }
+    case 'bearer-token':
+      return { profile, auth: { kind: 'bearer-token', token: resolved.token } }
+    case 'auth-fetch':
+      return { profile, auth: { kind: 'auth-fetch', modelAdapter: resolved.modelAdapter, fetch: resolved.fetch } }
+    case 'unauthenticated':
+      return { profile, auth: { kind: 'none' } }
+    case 'missing':
+      throw new Error(resolved.message)
+  }
+}
+
 vi.mock('../llm-utils.js', () => ({
   loadAuthPluginsForRawConfig: vi.fn(() => Promise.resolve()),
+  loadProviderPluginsForRawConfig: vi.fn(() => Promise.resolve()),
   resolveCredentials: vi.fn(() => Promise.resolve({ apiKey: 'test-key' })),
   resolveModelAuth: vi.fn(() => Promise.resolve({
     kind: 'api-key',
@@ -64,6 +97,7 @@ vi.mock('../llm-utils.js', () => ({
     }],
     defaultName: 'default',
   })),
+  toModelProfileAndAuth: vi.fn(mockToModelProfileAndAuth),
 }))
 
 vi.mock('../config.js', () => ({
@@ -92,8 +126,8 @@ vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
 
 import { createAuthCommand } from '../commands/auth.js'
 import { generateText } from 'ai'
+import { createModel } from '@vostride/agent-qa-model'
 import {
-  createModel,
   getLLMAuthProviderPlugin,
   removeAuth,
   writeAuth,
@@ -484,10 +518,15 @@ describe('auth provider mode contract', () => {
     await runAuthTest(['--config', 'remote-anthropic'])
 
     expect(getOutput()).toContain('Testing without a saved credential.')
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'anthropic-compatible',
-      baseURL: 'https://remote.example/messages',
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        baseURL: 'https://remote.example/messages',
+        auth: { mode: 'none' },
+      }),
+      { kind: 'none' },
+      expect.any(Function),
+    )
     expect(mockGenerateText).toHaveBeenCalled()
   })
 
@@ -651,7 +690,7 @@ describe('auth set', () => {
 
     await runAuthCommand(['set', '--config', 'claude-subscription', '--type', 'api-key', 'sk-not-allowed'])
 
-    expect(getOutput()).toContain('Subscription providers use OAuth login')
+    expect(getOutput()).toContain('claude-subscription uses a subscription; sign in with: agent-qa auth login --config claude-subscription')
     expect(mockWriteAuth).not.toHaveBeenCalled()
   })
 })
@@ -703,13 +742,17 @@ describe('auth test', () => {
       provider: 'anthropic-compatible',
       providerHeaders: { 'x-workspace': 'agent-qa' },
     }))
-    expect(mockCreateModel).toHaveBeenCalledWith({
-      provider: 'anthropic-compatible',
-      model: 'claude-remote',
-      baseURL: 'https://anthropic.example/messages',
-      providerHeaders: { 'x-workspace': 'agent-qa' },
-      authToken: 'bearer-default',
-    })
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'anthropic-compatible',
+        model: 'claude-remote',
+        baseURL: 'https://anthropic.example/messages',
+        headers: { 'x-workspace': 'agent-qa' },
+        auth: { mode: 'bearer-token' },
+      }),
+      { kind: 'bearer-token', token: 'bearer-default' },
+      expect.any(Function),
+    )
   })
 
   it('blocks subscription tests when resolver reports missing OAuth', async () => {
@@ -747,10 +790,180 @@ describe('auth test', () => {
       provider: 'gemini',
       model: 'gemini-2.5-flash',
     }))
-    expect(mockCreateModel).toHaveBeenCalledWith(expect.objectContaining({
-      provider: 'gemini',
-      model: 'gemini-2.5-flash',
-    }))
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'gemini',
+        model: 'gemini-2.5-flash',
+        auth: { mode: 'api-key' },
+      }),
+      { kind: 'api-key', apiKey: 'test-key' },
+      expect.any(Function),
+    )
+  })
+})
+
+describe('auth test exit code (429-08)', () => {
+  const CREDENTIAL = 'sk-fixture-credential-429-08'
+
+  // Each rejection lands on exactly one class in the classifier's first-match order; the printed
+  // sentence is spelled out here, not derived, so the lines stay pinned byte for byte.
+  const FAILURE_ARMS = [
+    {
+      cell: 'AUTH-TEST-EXIT-AUTH-ERROR',
+      rejection: Object.assign(new Error('invalid API key'), { statusCode: 401 }),
+      message: 'invalid API key',
+      sentence: 'Authentication failed. Check the saved credential for this config.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-MODEL-NOT-FOUND',
+      rejection: Object.assign(new Error('Not Found'), { statusCode: 404 }),
+      message: 'Not Found',
+      sentence: 'Model not found. Check the model name.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-RATE-LIMIT',
+      rejection: Object.assign(new Error('Too many requests, slow down'), { statusCode: 429 }),
+      message: 'Too many requests, slow down',
+      sentence: 'Rate limited. Try again later.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-NETWORK-ERROR',
+      rejection: new Error('fetch failed'),
+      message: 'fetch failed',
+      sentence: 'Network error. Check the exact base URL and try again.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-INVALID-REQUEST',
+      rejection: Object.assign(new Error('bad request: messages must be non-empty'), { statusCode: 400 }),
+      message: 'bad request: messages must be non-empty',
+      sentence: 'Invalid request. Check model and provider settings.',
+    },
+    {
+      cell: 'AUTH-TEST-EXIT-PROVIDER-ERROR',
+      rejection: Object.assign(new Error('upstream exploded'), { statusCode: 500 }),
+      message: 'upstream exploded',
+      sentence: 'Connection failed. upstream exploded',
+    },
+  ] as const
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    consoleLogs.length = 0
+    process.exitCode = undefined
+    mockCreateModel.mockReturnValue({} as any)
+    mockGenerateText.mockResolvedValue({ text: 'ok' } as any)
+    setNamedConfig({
+      name: 'default',
+      provider: 'openai-compatible',
+      model: 'model-name',
+      baseURL: 'https://remote.example/v1',
+    })
+    mockResolveModelAuth.mockResolvedValue({
+      kind: 'api-key',
+      credentialKey: 'default',
+      provider: 'openai-compatible',
+      apiKey: CREDENTIAL,
+    })
+  })
+
+  afterEach(() => {
+    process.exitCode = undefined
+  })
+
+  it('AUTH-TEST-EXIT-CONFIG-UNRESOLVED: an unresolved config prints its red line and exits 1', async () => {
+    mockResolveNamedConfig.mockRejectedValueOnce(new Error('No LLM config named "nope".'))
+
+    await runAuthTest(['--config', 'nope'])
+
+    expect(consoleLogs).toEqual([pc.red('No LLM config named "nope".')])
+    expect(process.exitCode).toBe(1)
+    expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
+  it('AUTH-TEST-EXIT-MISSING-CREDENTIAL: a missing credential prints its message and exits 1', async () => {
+    mockResolveModelAuth.mockResolvedValueOnce({
+      kind: 'missing',
+      credentialKey: 'default',
+      provider: 'openai-compatible',
+      required: true,
+      message: 'Save an API key for this config before testing.',
+    } as any)
+
+    await runAuthTest()
+
+    expect(consoleLogs).toEqual([
+      pc.dim('Testing config: default...'),
+      pc.red('Save an API key for this config before testing.'),
+    ])
+    expect(process.exitCode).toBe(1)
+    expect(mockCreateModel).not.toHaveBeenCalled()
+  })
+
+  it('AUTH-TEST-EXIT-CONSTRUCTION-THROW: a model that cannot be built prints red and exits 1', async () => {
+    mockCreateModel.mockImplementationOnce(() => {
+      throw new Error('Unknown provider "nope".')
+    })
+
+    await expect(runAuthTest()).resolves.toBeUndefined()
+
+    expect(consoleLogs).toEqual([
+      pc.dim('Testing config: default...'),
+      pc.red('Unknown provider "nope".'),
+    ])
+    expect(process.exitCode).toBe(1)
+    expect(mockGenerateText).not.toHaveBeenCalled()
+  })
+
+  for (const arm of FAILURE_ARMS) {
+    it(`${arm.cell}: prints the class sentence and the provider message, and exits 1`, async () => {
+      mockGenerateText.mockRejectedValueOnce(arm.rejection)
+
+      await runAuthTest()
+
+      expect(consoleLogs).toEqual([
+        pc.dim('Testing config: default...'),
+        pc.red(arm.sentence),
+        pc.dim(arm.message),
+      ])
+      expect(process.exitCode).toBe(1)
+      expect(getOutput()).not.toContain(CREDENTIAL)
+    })
+  }
+
+  it('AUTH-TEST-EXIT-ZERO-ONLY-CONNECTED: only a passing test leaves the exit code unset', async () => {
+    await runAuthTest()
+
+    expect(consoleLogs).toHaveLength(2)
+    expect(consoleLogs[1]).toMatch(/^.*Connected to openai-compatible\/model-name \(\d+ms\).*$/u)
+    expect(consoleLogs[1]).toBe(pc.green(consoleLogs[1]!.replace(/\u001b\[\d+m/gu, '')))
+    expect(process.exitCode).toBeUndefined()
+  })
+
+  it('AUTH-TEST-UNAUTHENTICATED-DECIDED-BY-TEST: the test that follows the dim line decides', async () => {
+    const unauthenticated = {
+      kind: 'unauthenticated',
+      credentialKey: 'default',
+      provider: 'openai-compatible',
+      optional: true,
+      message: 'Testing without a saved credential.',
+    } as any
+
+    mockResolveModelAuth.mockResolvedValueOnce(unauthenticated)
+    await runAuthTest()
+    expect(consoleLogs[1]).toBe(pc.dim('Testing without a saved credential.'))
+    expect(consoleLogs[2]).toContain('Connected to openai-compatible/model-name')
+    expect(process.exitCode).toBeUndefined()
+
+    mockResolveModelAuth.mockResolvedValueOnce(unauthenticated)
+    mockGenerateText.mockRejectedValueOnce(new Error('fetch failed'))
+    await runAuthTest()
+    expect(consoleLogs).toEqual([
+      pc.dim('Testing config: default...'),
+      pc.dim('Testing without a saved credential.'),
+      pc.red('Network error. Check the exact base URL and try again.'),
+      pc.dim('fetch failed'),
+    ])
+    expect(process.exitCode).toBe(1)
   })
 })
 

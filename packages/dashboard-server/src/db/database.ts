@@ -1,23 +1,55 @@
 import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { MIGRATIONS, SCHEMA_VERSION, type DashboardMigration } from './schema.js'
 import {
-  createBetterSqlite3Database,
+  completeRunOwnership,
+  defaultRunOwnership,
+  orphanSummary,
+  type RunOwner,
+  type RunOwnership,
+  type RunOwnershipInput,
+} from './run-owner.js'
+import {
   DEFAULT_AGENT_QA_RUNS_DB_PATH,
   generateRunId,
+  type RunAttributes,
+} from '@vostride/agent-qa-core'
+import {
+  createDashboardSqliteDatabase,
+  type DashboardSqliteDatabase,
+} from './sqlite.js'
+import { memberOutcomeClass, runStatusClass, type RunStatusClass } from './run-status-class.js'
+import {
   RUN_ARTIFACT_SCHEMA_VERSION,
-  type BetterSqlite3Database,
-  type LogEntry,
-  type LogStorage,
+  ModelUsageSchema,
+  type ModelUsage,
+  RunStepTokenUsageSchema,
+  type RunDetailMember,
+  type RunDetailRows,
+  type RunDetailStep,
+  type RunDetailSubAction,
   type RunArtifactFinalizeInput,
   type RunArtifactKind,
   type RunArtifactPayload,
   type RunArtifactStageInput,
-  type RunAttributes,
-} from '@vostride/agent-qa-core'
+  type RunStatus,
+} from '@vostride/agent-qa-schema'
 
 const DASHBOARD_DB_PATH_FALLBACK = DEFAULT_AGENT_QA_RUNS_DB_PATH || '.agent-qa/runs.db'
+
+// 2026-10-17 (444-05, D-41): a suite's history is every run with a member in that suite.
+const MEMBER_SUITE_CONDITION = 'id IN (SELECT run_id FROM run_members WHERE suite_id = ?)'
+
+// 2026-10-17 (444-05, D-35): a test's history is every run with a member of that test id or path.
+function memberTestMatch(test: TestRef): { sql: string; params: string[] } {
+  const clauses: string[] = []
+  const params: string[] = []
+  if (test.testId) { clauses.push('test_id = ?'); params.push(test.testId) }
+  if (test.filePath) { clauses.push('file_path = ?'); params.push(test.filePath) }
+  if (clauses.length === 0) throw new Error('A test is named by its testId or filePath')
+  return { sql: `(${clauses.join(' OR ')})`, params }
+}
 
 export interface RunRow {
   id: string
@@ -31,7 +63,6 @@ export interface RunRow {
   metadata: Record<string, unknown> | null
   startedAt: string | null
   endedAt: string | null
-  videoPath: string | null
   failureSummary: string | null
   errorLog: string | null
   memoryLog: string | null
@@ -42,11 +73,23 @@ export interface RunRow {
   modelName: string | null
   llmProvider: string | null
   parallel: boolean
-  parentRunId: string | null
-  attemptNumber: number
-  retryCount: number
-  maxRetries: number
   createdAt: string
+  members?: RunMemberSummary[]
+  memberOutcome?: string | null
+}
+
+export interface TestRef {
+  testId?: string
+  filePath?: string
+}
+
+export interface RunMemberSummary {
+  testIndex: number
+  testId: string | null
+  filePath: string | null
+  suiteId: string | null
+  name: string | null
+  outcome: string | null
 }
 
 export interface RunArtifactRow {
@@ -59,71 +102,29 @@ export interface RunArtifactRow {
   updatedAt: string
 }
 
+/**
+ * ONE RUN'S ARTIFACT, AND NOTHING ELSE (405-07, D-02).
+ *
+ * `children` stood here and is gone. It walked the run row's now-deleted parent link for the child
+ * rows of a suite parent — a shape nothing has written since 402-09 put ONE `runs` row per run and moved member
+ * identity onto `run_members`. A structurally-always-empty array on a response is worse than an
+ * absent one: a reader cannot tell "this run has no children" from "children stopped being a fact
+ * this product records", so the page renders an empty section forever and nobody notices.
+ */
 export interface RunArtifactBundle {
   artifact: RunArtifactRow | null
-  children: Array<{ run: RunRow; artifact: RunArtifactRow | null }>
-}
-
-export interface StepRow {
-  id: string
-  runId: string
-  name: string
-  status: string
-  duration: number
-  action: unknown | null
-  observation: string | null
-  reasoning: string | null
-  plannedAction: unknown | null
-  result: string | null
-  error: string | null
-  screenshotPath: string | null
-  screenshotBeforePath: string | null
-  healingAttempts: unknown[] | null
-  retryCount: number
-  capturedVariables: Record<string, string> | null
-  stepOrder: number
-  annotationData: unknown | null
-  healingScreenshotPaths: string[] | null
-  accessibilityViolations: unknown[] | null
-  confidence: number | null
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  subActionsData: unknown[] | null
-  consoleLogs: unknown[] | null
-  networkLogs: unknown[] | null
-  variableSnapshot: Record<string, { value: string; source: string }> | null
-  originalStepName: string | null
-  screenContextBefore: string | null
-  screenContextAfter: string | null
-  createdAt: string
-}
-
-interface ReasoningTraceRow {
-  id: string
-  stepId: string
-  observeText: string | null
-  observeDuration: number | null
-  planReasoning: string | null
-  planConfidence: number | null
-  planAction: unknown | null
-  planDuration: number | null
-  executeAction: unknown | null
-  executeDuration: number | null
-  verifyReasoning: string | null
-  verifySuccess: boolean | null
-  verifyDuration: number | null
-  healAttempts: unknown[] | null
-  totalDuration: number | null
-  screenStateBefore: string | null
-  screenStateAfter: string | null
-  createdAt: string
 }
 
 interface ExecutionLogRow {
   id: string
   runId: string
   stepId: string | null
+  /**
+   * 405 D-01: where in the run tree this hook ran, from `HookFinishedPayload`'s own optional
+   * fields. `null` means a RUN-SCOPED hook — a real state, not a missing value.
+   */
+  testIndex: number | null
+  stepIndex: number | null
   type: 'hook' | 'appium-script' | 'runjs'
   name: string
   hookId: string | null
@@ -141,6 +142,9 @@ interface InsertExecutionLogInput {
   id: string
   runId: string
   stepId?: string | null
+  /** 405 D-01: the handle and step this hook belongs to; absent means run-scoped. */
+  testIndex?: number | null
+  stepIndex?: number | null
   type: 'hook' | 'appium-script' | 'runjs'
   name: string
   hookId?: string | null
@@ -154,7 +158,7 @@ interface InsertExecutionLogInput {
 }
 
 interface RunsFilter {
-  status?: string
+  statuses?: readonly string[]
   name?: string
   platform?: string
   from?: string
@@ -198,7 +202,7 @@ export interface InsightsBreakdownRow {
   key: string
   label: string
   runs: number
-  passRate: number
+  passRate: number | null
   flakeRate: number
   avgDuration: number
   passed: number
@@ -207,11 +211,18 @@ export interface InsightsBreakdownRow {
   suiteId?: string
 }
 
+/**
+ * What a run deletion removed (405-07, D-14 · T-405-27).
+ *
+ * ROWS ONLY. The two path arrays that stood here fed the router's filesystem cleanup, and both the
+ * cleanup and the columns it read are gone: refs are the only artifact addressing now, and the run
+ * directory under `.agent-qa/runs/` is the run's own record — the event log and the blobs — which
+ * the dashboard never owned and must not delete. `deletedRunIds` survives as a one-element list
+ * rather than collapsing to a boolean, because it is the shape the response already publishes.
+ */
 export interface DeleteRunResult {
   deleted: boolean
   deletedRunIds: string[]
-  screenshotPaths: string[]
-  videoPaths: string[]
 }
 
 export interface AttributePredicate {
@@ -230,58 +241,254 @@ export interface AttributeValueSuggestion {
   count: number
 }
 
+// ---- v2 projection row mappers (Phase 405 plan 01, D-01) -------------------------------------
+//
+// THE INVERSE OF THE WRITE AND NOTHING MORE. A column that is NULL becomes an ABSENT key, never a
+// `null` and never a substituted default — a reader that had to tell `null` from missing would be
+// learning a distinction the bus never made, and the token columns' whole point (D-05) is that
+// unmeasured is absent rather than zero.
+
+const optionalText = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value : undefined
+
+const optionalInt = (value: unknown): number | undefined =>
+  typeof value === 'number' ? value : undefined
+
+/** JSON columns are read back with the same permissiveness they were written with. */
+function parseJsonColumn(value: unknown): unknown {
+  if (typeof value !== 'string') return undefined
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function mapRunMemberRow(row: Record<string, unknown>): RunDetailMember {
+  const outcome = optionalText(row.outcome)
+  const recording = parseJsonColumn(row.recording_json)
+  return {
+    testIndex: row.test_index as number,
+    ...(optionalText(row.test_id) === undefined ? {} : { testId: row.test_id as string }),
+    ...(optionalText(row.name) === undefined ? {} : { name: row.name as string }),
+    ...(optionalText(row.file_path) === undefined ? {} : { filePath: row.file_path as string }),
+    ...(optionalText(row.suite_id) === undefined ? {} : { suiteId: row.suite_id as string }),
+    ...(optionalText(row.suite_name) === undefined ? {} : { suiteName: row.suite_name as string }),
+    ...(optionalInt(row.suite_index) === undefined ? {} : { suiteIndex: row.suite_index as number }),
+    ...(optionalInt(row.total_steps) === undefined ? {} : { totalSteps: row.total_steps as number }),
+    ...(outcome === undefined ? {} : { outcome: outcome as RunDetailMember['outcome'] }),
+    ...(optionalInt(row.duration_ms) === undefined ? {} : { durationMs: row.duration_ms as number }),
+    ...(optionalText(row.failure_summary) === undefined
+      ? {}
+      : { failureSummary: row.failure_summary as string }),
+    ...(optionalInt(row.retry_count) === undefined ? {} : { retryCount: row.retry_count as number }),
+    attempts: (optionalInt(row.attempts) ?? 1),
+    ...(recording === undefined ? {} : { recording: recording as RunDetailMember['recording'] }),
+  }
+}
+
+// One step's spend carries no per-role split, so a step answered by two models is named by both.
+function stepModelName(usage: ModelUsage): string | undefined {
+  const roles = [usage.roles.planner, usage.roles.verifier]
+  const responding = roles.flatMap((role) => role?.respondingModelIds ?? [])
+  const declared = roles.flatMap((role) => (role?.declared === undefined ? [] : [role.declared.modelId]))
+  const names = [...new Set(responding.length > 0 ? responding : declared)].sort()
+  return names.length > 0 ? names.join(' + ') : undefined
+}
+
+function mapRunStepRow(row: Record<string, unknown>): RunDetailStep {
+  const evidence = parseJsonColumn(row.evidence_json)
+  const variableSnapshot = parseJsonColumn(row.variable_snapshot_json)
+  // The model_usage_json column mirrors both optional bus fields, independently.
+  // A present envelope owns absence too; malformed JSON must never revive legacy scalar spend.
+  const usageEnvelope = parseJsonColumn(row.model_usage_json)
+  const modelUsage = isPlainObject(usageEnvelope)
+    ? ModelUsageSchema.safeParse(usageEnvelope.modelUsage) : undefined
+  const extendedTokens = isPlainObject(usageEnvelope)
+    ? RunStepTokenUsageSchema.safeParse(usageEnvelope.tokenUsage) : undefined
+  // ALL THREE OR NONE. A row with a total but no prompt count is a write nobody makes; reading it
+  // as a partial usage object would let a page render a sum whose parts are missing.
+  const totalTokens = optionalInt(row.total_tokens)
+  const tokenUsage = row.model_usage_json !== null && row.model_usage_json !== undefined
+    ? extendedTokens?.success ? extendedTokens.data : undefined
+    : totalTokens === undefined
+    ? undefined
+    : {
+      promptTokens: optionalInt(row.prompt_tokens) ?? 0,
+      completionTokens: optionalInt(row.completion_tokens) ?? 0,
+      totalTokens,
+    }
+  return {
+    testIndex: row.test_index as number,
+    stepIndex: row.step_index as number,
+    ...(optionalText(row.step_text) === undefined ? {} : { stepText: row.step_text as string }),
+    cacheStatus: row.cache_status as RunDetailStep['cacheStatus'],
+    verifierVerdict: (parseJsonColumn(row.verifier_verdict) ?? { pass: false, reasoning: '' }) as RunDetailStep['verifierVerdict'],
+    selfHealOccurred: row.self_heal_occurred === 1,
+    briefDigest: (optionalText(row.brief_digest) ?? ''),
+    ...(optionalText(row.status) === undefined ? {} : { status: row.status as RunDetailStep['status'] }),
+    ...(optionalInt(row.duration_ms) === undefined ? {} : { durationMs: row.duration_ms as number }),
+    ...(optionalText(row.error) === undefined ? {} : { error: row.error as string }),
+    ...(tokenUsage === undefined ? {} : { tokenUsage }),
+    ...(modelUsage?.success ? { modelUsage: modelUsage.data } : {}),
+    ...(evidence === undefined ? {} : { evidence: evidence as RunDetailStep['evidence'] }),
+    ...(variableSnapshot === undefined
+      ? {}
+      : { variableSnapshot: variableSnapshot as RunDetailStep['variableSnapshot'] }),
+  }
+}
+
+function mapRunSubActionRow(row: Record<string, unknown>): RunDetailSubAction {
+  const grounding = parseJsonColumn(row.grounding)
+  const artifactRefs = parseJsonColumn(row.artifact_refs)
+  const ariaEvidence = parseJsonColumn(row.evidence_state_json)
+  return {
+    testIndex: row.test_index as number,
+    stepIndex: row.step_index as number,
+    subActionIndex: row.sub_action_index as number,
+    plan: (optionalText(row.plan) ?? ''),
+    plannedAction: parseJsonColumn(row.planned_action) as RunDetailSubAction['plannedAction'],
+    ...(grounding === undefined ? {} : { grounding: grounding as RunDetailSubAction['grounding'] }),
+    result: parseJsonColumn(row.result) as RunDetailSubAction['result'],
+    screenStateHash: (optionalText(row.screen_state_hash) ?? ''),
+    ...(optionalText(row.screen_state_hash_after) === undefined
+      ? {}
+      : { screenStateHashAfter: row.screen_state_hash_after as string }),
+    ...(Array.isArray(artifactRefs)
+      ? { artifactRefs: artifactRefs as RunDetailSubAction['artifactRefs'] }
+      : {}),
+    ...(ariaEvidence === undefined
+      ? {}
+      : { ariaEvidence: ariaEvidence as RunDetailSubAction['ariaEvidence'] }),
+    ...(optionalInt(row.recording_offset_ms) === undefined
+      ? {}
+      : { recordingOffsetMs: row.recording_offset_ms as number }),
+  }
+}
+
 export function runSqliteMigrations(
-  db: BetterSqlite3Database,
+  db: DashboardSqliteDatabase,
   migrations: readonly DashboardMigration[],
   schemaVersion: number,
 ): void {
-  const currentVersion = db.pragma('user_version', { simple: true }) as number
-  if (currentVersion > schemaVersion) {
-    throw new Error(
-      `SQLite database user_version ${currentVersion} is not compatible with schema version ${schemaVersion}. `
-      + 'Remove the dashboard database or use a compatible agent-qa version.',
-    )
-  }
-  if (currentVersion === schemaVersion) return
+  if (assertSupportedUserVersion(db, schemaVersion) === schemaVersion) return
 
   const runnableMigrations = migrations.filter(migration => migration.version <= schemaVersion)
-  if (runnableMigrations.length !== schemaVersion) {
-    throw new Error(`Expected ${schemaVersion} SQLite migration(s), found ${runnableMigrations.length}`)
+  const terminal = runnableMigrations.length === 1 ? runnableMigrations[0] : undefined
+  if (terminal === undefined || terminal.version !== schemaVersion) {
+    const found = runnableMigrations.map(migration => migration.version).join(', ')
+    throw new Error(
+      `Expected exactly 1 SQLite migration at version ${schemaVersion}, `
+      + `found ${runnableMigrations.length} at [${found}]`,
+    )
   }
-  runnableMigrations.forEach((migration, index) => {
-    const expectedVersion = index + 1
-    if (migration.version !== expectedVersion) {
-      throw new Error(`SQLite migrations must be contiguous and sorted: expected version ${expectedVersion}, got ${migration.version}`)
-    }
-  })
 
   db.pragma('foreign_keys = OFF')
   try {
-    for (const migration of runnableMigrations) {
-      if (migration.version > currentVersion) {
-        const runAll = db.transaction(() => {
-          for (const sql of migration.sql) {
-            db.exec(sql)
-          }
-          db.pragma(`user_version = ${migration.version}`)
-        })
-        runAll()
+    // 2026-10-17 (443-03, D-23): another opener may have stamped the file since the read above.
+    const runAll = db.transaction(() => {
+      if (assertSupportedUserVersion(db, schemaVersion) === schemaVersion) return
+      for (const sql of terminal.sql) {
+        db.exec(sql)
       }
-    }
+      db.pragma(`user_version = ${terminal.version}`)
+    }, { immediate: true })
+    runAll()
   } finally {
     db.pragma('foreign_keys = ON')
   }
 }
 
-export class DashboardDatabase {
-  private db: BetterSqlite3Database
+class UnsupportedUserVersionError extends Error {
+  constructor(
+    readonly version: number,
+    readonly schemaVersion: number,
+  ) {
+    super(
+      version > schemaVersion
+        ? `SQLite database user_version ${version} is not compatible with schema version ${schemaVersion}. `
+          + 'Remove the dashboard database or use a compatible agent-qa version.'
+        : `SQLite database user_version ${version} predates schema version ${schemaVersion}, `
+          + 'and this build performs no migration for that version. '
+          + 'Remove the dashboard database or use a compatible agent-qa version.',
+    )
+    this.name = 'UnsupportedUserVersionError'
+  }
+}
 
-  constructor({ dbPath = DASHBOARD_DB_PATH_FALLBACK }: { dbPath?: string } = {}) {
+function assertSupportedUserVersion(db: DashboardSqliteDatabase, schemaVersion: number): number {
+  const currentVersion = db.pragma('user_version', { simple: true }) as number
+  if (currentVersion !== 0 && currentVersion !== schemaVersion) {
+    throw new UnsupportedUserVersionError(currentVersion, schemaVersion)
+  }
+  return currentVersion
+}
+
+const SQLITE_BUSY = 5
+const WAL_RETRY_STEP_MS = 25
+const WAL_RETRY_LIMIT_MS = 5000
+
+// 2026-10-17 (443-03, D-23): on a fresh file the WAL switch can return SQLITE_BUSY that
+// busy_timeout does not absorb; the constructor is synchronous, so the wait is Atomics.wait.
+function enableWalMode(db: DashboardSqliteDatabase): void {
+  const pause = new Int32Array(new SharedArrayBuffer(4))
+  for (let waited = 0; ; waited += WAL_RETRY_STEP_MS) {
+    try {
+      db.pragma('journal_mode = WAL')
+      return
+    } catch (error) {
+      const errcode = (error as { errcode?: unknown } | null)?.errcode
+      const busy = typeof errcode === 'number' && (errcode & 0xff) === SQLITE_BUSY
+      if (!busy || waited >= WAL_RETRY_LIMIT_MS) throw error
+      Atomics.wait(pause, 0, 0, WAL_RETRY_STEP_MS)
+    }
+  }
+}
+
+export class RunsDatabaseVersionRefusedError extends Error {
+  readonly dbPath: string
+  readonly version: number
+
+  constructor(dbPath: string, refusal: UnsupportedUserVersionError) {
+    super(
+      refusal.version < refusal.schemaVersion
+        ? `${dbPath} was written by an older agent-qa (runs database version ${refusal.version}). `
+          + 'Delete it and run again; agent-qa creates a new one.'
+        : `${dbPath}: ${refusal.message}`,
+    )
+    this.name = 'RunsDatabaseVersionRefusedError'
+    this.dbPath = dbPath
+    this.version = refusal.version
+  }
+}
+
+export class DashboardDatabase {
+  private db: DashboardSqliteDatabase
+  readonly runOwnership: RunOwnership
+  readonly dbPath: string
+  private readonly ownStamps = new Map<string, RunOwner>()
+
+  constructor({
+    dbPath = DASHBOARD_DB_PATH_FALLBACK,
+    runOwnership = defaultRunOwnership(),
+  }: { dbPath?: string; runOwnership?: RunOwnershipInput } = {}) {
+    this.runOwnership = completeRunOwnership(runOwnership)
+    this.dbPath = dbPath === ':memory:' ? dbPath : resolve(dbPath)
     mkdirSync(dirname(dbPath), { recursive: true })
-    this.db = createBetterSqlite3Database(dbPath)
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('busy_timeout = 5000')
-    this.runMigrations()
+    this.db = createDashboardSqliteDatabase(dbPath)
+    try {
+      this.db.pragma('busy_timeout = 5000')
+      // 2026-10-16 (442-01, D-03): refuse before WAL mode rewrites the file header.
+      assertSupportedUserVersion(this.db, SCHEMA_VERSION)
+      enableWalMode(this.db)
+      this.runMigrations()
+    } catch (error) {
+      this.db.close()
+      if (error instanceof UnsupportedUserVersionError) {
+        throw new RunsDatabaseVersionRefusedError(resolve(dbPath), error)
+      }
+      throw error
+    }
   }
 
   private runMigrations(): void {
@@ -299,23 +506,19 @@ export class DashboardDatabase {
     metadata?: Record<string, unknown>
     startedAt: string
     endedAt: string
-    videoPath?: string
     failureSummary?: string
     platform?: string
     testFileContent?: string
     modelName?: string
     llmProvider?: string
-    parentRunId?: string
-    attemptNumber?: number
-    retryCount?: number
-    maxRetries?: number
     testId?: string
     suiteId?: string
   }): string {
     const id = run.id || generateRunId()
+    const owner = run.status === 'running' ? this.readOwnStamp() : undefined
     const stmt = this.db.prepare(`
-      INSERT INTO runs (id, name, file_path, status, duration, attributes, environment, metadata, started_at, ended_at, video_path, failure_summary, platform, test_file_content, model_name, llm_provider, parent_run_id, attempt_number, retry_count, max_retries, test_id, suite_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, name, file_path, status, duration, attributes, environment, metadata, started_at, ended_at, failure_summary, platform, test_file_content, model_name, llm_provider, test_id, suite_id, owner_pid, owner_incarnation, owner_host)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       id,
@@ -328,20 +531,65 @@ export class DashboardDatabase {
       run.metadata ? JSON.stringify(run.metadata) : null,
       run.startedAt,
       run.endedAt,
-      run.videoPath ?? null,
       run.failureSummary ?? null,
       run.platform ?? 'web',
       run.testFileContent ?? null,
       run.modelName ?? null,
       run.llmProvider ?? null,
-      run.parentRunId ?? null,
-      run.attemptNumber ?? 0,
-      run.retryCount ?? 0,
-      run.maxRetries ?? 0,
       run.testId ?? null,
       run.suiteId ?? null,
+      owner?.pid ?? null,
+      owner?.incarnation ?? null,
+      owner?.host ?? null,
     )
+    if (owner) this.ownStamps.set(id, owner)
     return id
+  }
+
+  // 2026-10-17 (443-02, D-07): one statement that inserts a fresh row or adopts this handle's own
+  // running row; any other row is refused and left untouched. An adopt that names no name or
+  // attributes keeps the row's own (443-04).
+  claimRunningRow(id: string, fields: {
+    name?: string
+    filePath?: string
+    attributes?: RunAttributes
+    startedAt: string
+    platform?: string
+    testId?: string
+    suiteId?: string
+  }): boolean {
+    const stamp = this.ownStamps.get(id) ?? this.readOwnStamp()
+    const result = this.db.prepare(`
+      INSERT INTO runs (id, name, file_path, status, duration, attributes, started_at, ended_at, platform, test_id, suite_id, owner_pid, owner_incarnation, owner_host)
+      VALUES (?1, COALESCE(?2, 'run'), ?3, 'running', 0, COALESCE(?4, '{}'), ?5, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+      ON CONFLICT(id) DO UPDATE SET
+        started_at = excluded.started_at,
+        ended_at = excluded.ended_at,
+        name = COALESCE(?2, runs.name),
+        attributes = COALESCE(?4, runs.attributes),
+        platform = excluded.platform,
+        test_id = COALESCE(excluded.test_id, runs.test_id),
+        suite_id = COALESCE(excluded.suite_id, runs.suite_id)
+      WHERE runs.status = 'running'
+        AND runs.owner_pid = excluded.owner_pid
+        AND runs.owner_incarnation IS excluded.owner_incarnation
+        AND runs.owner_host = excluded.owner_host
+    `).run(
+      id,
+      fields.name ?? null,
+      fields.filePath ?? null,
+      fields.attributes === undefined ? null : JSON.stringify(fields.attributes),
+      fields.startedAt,
+      fields.platform ?? 'web',
+      fields.testId ?? null,
+      fields.suiteId ?? null,
+      stamp.pid,
+      stamp.incarnation,
+      stamp.host,
+    )
+    if (Number(result.changes) !== 1) return false
+    this.ownStamps.set(id, stamp)
+    return true
   }
 
   updateRun(id: string, updates: {
@@ -353,12 +601,14 @@ export class DashboardDatabase {
     failureSummary?: string
     errorLog?: string
     memoryLog?: string
-    videoPath?: string
     attributes?: RunAttributes
     platform?: string
     testId?: string
     suiteId?: string
   }): void {
+    if (updates.status === 'running') {
+      throw new Error('updateRun cannot write status running; claim the row with claimRunningRow')
+    }
     const fields: string[] = []
     const values: unknown[] = []
     if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name) }
@@ -368,8 +618,8 @@ export class DashboardDatabase {
     if (updates.endedAt !== undefined) { fields.push('ended_at = ?'); values.push(updates.endedAt) }
     if (updates.failureSummary !== undefined) { fields.push('failure_summary = ?'); values.push(updates.failureSummary) }
     if (updates.errorLog !== undefined) { fields.push('error_log = ?'); values.push(updates.errorLog) }
+    // HISTORICAL-ONLY: no production caller passes `memoryLog` — see the marker on `memorySummary`.
     if (updates.memoryLog !== undefined) { fields.push('memory_log = ?'); values.push(updates.memoryLog) }
-    if (updates.videoPath !== undefined) { fields.push('video_path = ?'); values.push(updates.videoPath) }
     if (updates.attributes !== undefined) { fields.push('attributes = ?'); values.push(JSON.stringify(updates.attributes)) }
     if (updates.platform !== undefined) { fields.push('platform = ?'); values.push(updates.platform) }
     if (updates.testId !== undefined) { fields.push('test_id = ?'); values.push(updates.testId) }
@@ -377,6 +627,7 @@ export class DashboardDatabase {
     if (fields.length === 0) return
     values.push(id)
     this.db.prepare(`UPDATE runs SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+    if (updates.status !== undefined) this.ownStamps.delete(id)
   }
 
   updateRunMetadata(id: string, updates: {
@@ -417,12 +668,11 @@ export class DashboardDatabase {
     llmProvider?: string
     metadata?: Record<string, unknown>
     parallel?: boolean
-    maxRetries?: number
   }): string {
     const id = run.id || generateRunId()
     const stmt = this.db.prepare(`
-      INSERT INTO runs (id, name, file_path, status, priority, duration, attributes, started_at, ended_at, platform, test_file_content, model_name, llm_provider, metadata, parallel, max_retries)
-      VALUES (?, ?, ?, 'pending', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO runs (id, name, file_path, status, priority, duration, attributes, started_at, ended_at, platform, test_file_content, model_name, llm_provider, metadata, parallel)
+      VALUES (?, ?, ?, 'pending', ?, 0, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       id,
@@ -436,7 +686,6 @@ export class DashboardDatabase {
       run.llmProvider ?? null,
       run.metadata ? JSON.stringify(run.metadata) : null,
       run.parallel ? 1 : 0,
-      run.maxRetries ?? 0,
     )
     return id
   }
@@ -455,82 +704,250 @@ export class DashboardDatabase {
     return rows.map(r => this.mapRunRow(r))
   }
 
-  updateRunStatus(id: string, status: string): void {
-    this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
+  updateRunStatus(id: string, status: string): boolean {
+    if (status !== 'running') {
+      const result = this.db.prepare('UPDATE runs SET status = ? WHERE id = ?').run(status, id)
+      this.ownStamps.delete(id)
+      return Number(result.changes) === 1
+    }
+    // 2026-10-17 (443-02, D-07): the queue flip moves only a pending row to running.
+    const stamp = this.readOwnStamp()
+    const result = this.db.prepare(
+      "UPDATE runs SET status = 'running', owner_pid = ?, owner_incarnation = ?, owner_host = ? WHERE id = ? AND status = 'pending'",
+    ).run(stamp.pid, stamp.incarnation, stamp.host, id)
+    if (Number(result.changes) !== 1) return false
+    this.ownStamps.set(id, stamp)
+    return true
   }
 
-  insertStep(step: {
-    id?: string
+  // ---- The v2 bus-shaped projection (Phase 405 plan 01, D-01) ---------------------------------
+  //
+  // SIX MEMBERS, AND EVERY ONE OF THEM MIRRORS. The columns are the bus payload's own names; the
+  // nested objects are `JSON.stringify` of the field verbatim. Nothing in this block decides what
+  // a status means, re-derives a duration or fills a token count — a projection that interpreted
+  // would be a second opinion about a run the event log already settled.
+
+  /**
+   * Write or refresh ONE member row, keyed by the handle `(run_id, test_index)`.
+   *
+   * AN UPSERT AND NOT TWO WRITES, because the member row is fed by two events at two times:
+   * `testStarted` knows the identity fields and `testFinished` knows the outcome — and D-18
+   * requires a member whose stream begins with a terminal event to render anyway, so the second
+   * one alone has to be able to create the row.
+   *
+   * ONLY SUPPLIED FIELDS MOVE. `COALESCE(excluded.x, run_members.x)` on every optional column, so
+   * a `testFinished` that carries no name cannot blank the name `testStarted` wrote. `attempts` is
+   * excluded from the update entirely: it is the D-17 retry ordinal, owned by
+   * `incrementRunMemberAttempts`, and an upsert that reset it would erase the fact the header
+   * renders.
+   */
+  upsertRunMember(member: {
     runId: string
-    name: string
-    status: string
-    duration: number
-    action?: unknown
-    observation?: string
-    reasoning?: string
-    plannedAction?: unknown
-    result?: string
-    error?: string
-    screenshotPath?: string
-    screenshotBeforePath?: string
-    healingAttempts?: unknown[]
+    testIndex: number
+    testId?: string
+    name?: string
+    filePath?: string
+    suiteId?: string
+    suiteName?: string
+    suiteIndex?: number
+    totalSteps?: number
+    outcome?: string
+    durationMs?: number
+    failureSummary?: string
     retryCount?: number
-    capturedVariables?: Record<string, string>
-    stepOrder: number
-    annotationData?: unknown
-    healingScreenshotPaths?: string[]
-    accessibilityViolations?: unknown[]
-    confidence?: number
-    promptTokens?: number
-    completionTokens?: number
-    totalTokens?: number
-    subActionsData?: unknown[]
-    consoleLogs?: unknown[]
-    networkLogs?: unknown[]
-    variableSnapshot?: Record<string, unknown>
-    originalStepName?: string
-    screenContextBefore?: string
-    screenContextAfter?: string
-  }): string {
-    const id = step.id || randomUUID()
-    const stmt = this.db.prepare(`
-      INSERT INTO steps (id, run_id, name, status, duration, action, observation, reasoning, planned_action, result, error, screenshot_path, screenshot_before_path, healing_attempts, retry_count, captured_variables, step_order, annotation_data, healing_screenshot_paths, accessibility_violations, confidence, prompt_tokens, completion_tokens, total_tokens, sub_actions_data, console_logs, network_logs, variable_snapshot, original_step_name, screen_context_before, screen_context_after)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    stmt.run(
-      id,
-      step.runId,
-      step.name,
-      step.status,
-      step.duration,
-      step.action ? JSON.stringify(step.action) : null,
-      step.observation ?? null,
-      step.reasoning ?? null,
-      step.plannedAction ? JSON.stringify(step.plannedAction) : null,
-      step.result ?? null,
-      step.error ?? null,
-      step.screenshotPath ?? null,
-      step.screenshotBeforePath ?? null,
-      step.healingAttempts ? JSON.stringify(step.healingAttempts) : null,
-      step.retryCount ?? 0,
-      step.capturedVariables ? JSON.stringify(step.capturedVariables) : null,
-      step.stepOrder,
-      step.annotationData ? JSON.stringify(step.annotationData) : null,
-      step.healingScreenshotPaths ? JSON.stringify(step.healingScreenshotPaths) : null,
-      step.accessibilityViolations ? JSON.stringify(step.accessibilityViolations) : null,
-      step.confidence ?? null,
-      step.promptTokens ?? 0,
-      step.completionTokens ?? 0,
-      step.totalTokens ?? 0,
-      step.subActionsData ? JSON.stringify(step.subActionsData) : null,
-      step.consoleLogs ? JSON.stringify(step.consoleLogs) : null,
-      step.networkLogs ? JSON.stringify(step.networkLogs) : null,
-      step.variableSnapshot ? JSON.stringify(step.variableSnapshot) : null,
-      step.originalStepName ?? null,
-      step.screenContextBefore ?? null,
-      step.screenContextAfter ?? null,
+    recording?: RunDetailMember['recording']
+  }): void {
+    this.db.prepare(`
+      INSERT INTO run_members (
+        run_id, test_index, test_id, name, file_path, suite_id, suite_name, suite_index,
+        total_steps, outcome, duration_ms, failure_summary, retry_count, recording_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(run_id, test_index) DO UPDATE SET
+        test_id = COALESCE(excluded.test_id, run_members.test_id),
+        name = COALESCE(excluded.name, run_members.name),
+        file_path = COALESCE(excluded.file_path, run_members.file_path),
+        suite_id = COALESCE(excluded.suite_id, run_members.suite_id),
+        suite_name = COALESCE(excluded.suite_name, run_members.suite_name),
+        suite_index = COALESCE(excluded.suite_index, run_members.suite_index),
+        total_steps = COALESCE(excluded.total_steps, run_members.total_steps),
+        outcome = COALESCE(excluded.outcome, run_members.outcome),
+        duration_ms = COALESCE(excluded.duration_ms, run_members.duration_ms),
+        failure_summary = COALESCE(excluded.failure_summary, run_members.failure_summary),
+        retry_count = COALESCE(excluded.retry_count, run_members.retry_count),
+        recording_json = COALESCE(excluded.recording_json, run_members.recording_json)
+    `).run(
+      member.runId,
+      member.testIndex,
+      member.testId ?? null,
+      member.name ?? null,
+      member.filePath ?? null,
+      member.suiteId ?? null,
+      member.suiteName ?? null,
+      member.suiteIndex ?? null,
+      member.totalSteps ?? null,
+      member.outcome ?? null,
+      member.durationMs ?? null,
+      member.failureSummary ?? null,
+      member.retryCount ?? null,
+      member.recording === undefined ? null : JSON.stringify(member.recording),
     )
-    return id
+  }
+
+  /**
+   * Raise ONE member's attempt ordinal (D-17). A no-op when the member row does not exist yet —
+   * a retry scheduled before any identity event is a real ordering, and inventing a row here
+   * would put a member on the page that nothing has said anything about.
+   */
+  incrementRunMemberAttempts(runId: string, testIndex: number): void {
+    this.db.prepare(
+      'UPDATE run_members SET attempts = attempts + 1 WHERE run_id = ? AND test_index = ?',
+    ).run(runId, testIndex)
+  }
+
+  /**
+   * Drop ONE HANDLE's projected step and sub-action rows (D-17).
+   *
+   * SCOPED TO THE HANDLE, which was the whole change from the v1 run-wide step delete this
+   * replaced (deleted outright by 405-07's census): that member wiped every step of the RUN on any
+   * member's retry, so in a suite the abandoned attempt of test 3 deleted the completed history of
+   * tests 0-2. The member row itself survives — its outcome and its attempt count are facts about
+   * the member, not about the attempt. So do its setup and teardown hook rows, which run once per
+   * member outside the retry loop; only the attempt's `inline` hook rows go (433-41, CR-01).
+   */
+  deleteMemberProjection(runId: string, testIndex: number): void {
+    this.db.prepare('DELETE FROM run_steps WHERE run_id = ? AND test_index = ?').run(runId, testIndex)
+    this.db.prepare('DELETE FROM run_sub_actions WHERE run_id = ? AND test_index = ?').run(runId, testIndex)
+    this.db.prepare(
+      "DELETE FROM execution_logs WHERE run_id = ? AND test_index = ? AND phase = 'inline'",
+    ).run(runId, testIndex)
+  }
+
+  /**
+   * Write ONE finalized step row. `INSERT OR REPLACE` because a re-run of the same handle re-emits
+   * the same `(test_index, step_index)` and the LAST attempt is the one the page renders (D-17).
+   *
+   * The three token columns stay NULL when `tokenUsage` is absent — never 0 (D-05).
+   */
+  insertRunStep(step: {
+    runId: string
+    testIndex: number
+    stepIndex: number
+    stepText?: string
+    cacheStatus: string
+    verifierVerdict: unknown
+    selfHealOccurred: boolean
+    briefDigest: string
+    status?: string
+    durationMs?: number
+    error?: string
+    tokenUsage?: RunDetailStep['tokenUsage']
+    modelUsage?: RunDetailStep['modelUsage']
+    evidence?: RunDetailStep['evidence']
+    variableSnapshot?: RunDetailStep['variableSnapshot']
+  }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO run_steps (
+        run_id, test_index, step_index, step_text, cache_status, verifier_verdict,
+        self_heal_occurred, brief_digest, status, duration_ms, error,
+        prompt_tokens, completion_tokens, total_tokens, evidence_json, variable_snapshot_json, model_usage_json
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      step.runId,
+      step.testIndex,
+      step.stepIndex,
+      step.stepText ?? null,
+      step.cacheStatus,
+      JSON.stringify(step.verifierVerdict ?? null),
+      step.selfHealOccurred ? 1 : 0,
+      step.briefDigest,
+      step.status ?? null,
+      step.durationMs ?? null,
+      step.error ?? null,
+      step.tokenUsage?.promptTokens ?? null,
+      step.tokenUsage?.completionTokens ?? null,
+      step.tokenUsage?.totalTokens ?? null,
+      step.evidence === undefined ? null : JSON.stringify(step.evidence),
+      step.variableSnapshot === undefined ? null : JSON.stringify(step.variableSnapshot),
+      step.modelUsage === undefined && step.tokenUsage === undefined ? null : JSON.stringify({
+        ...(step.modelUsage === undefined ? {} : { modelUsage: step.modelUsage }),
+        ...(step.tokenUsage === undefined ? {} : { tokenUsage: step.tokenUsage }),
+      } satisfies Pick<RunDetailStep, 'modelUsage' | 'tokenUsage'>),
+    )
+  }
+
+  /**
+   * Write ONE sub-action row. The four nested payload fields are stringified VERBATIM — this
+   * method never reaches inside `plannedAction`, `grounding`, `result` or `artifactRefs`.
+   */
+  insertRunSubAction(subAction: {
+    runId: string
+    testIndex: number
+    stepIndex: number
+    subActionIndex: number
+    plan: string
+    plannedAction: unknown
+    grounding?: unknown
+    result: unknown
+    screenStateHash: string
+    screenStateHashAfter?: string
+    artifactRefs?: readonly unknown[]
+    ariaEvidence?: RunDetailSubAction['ariaEvidence']
+    recordingOffsetMs?: RunDetailSubAction['recordingOffsetMs']
+  }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO run_sub_actions (
+        run_id, test_index, step_index, sub_action_index, plan, planned_action, grounding,
+        result, screen_state_hash, screen_state_hash_after, artifact_refs, evidence_state_json,
+        recording_offset_ms
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      subAction.runId,
+      subAction.testIndex,
+      subAction.stepIndex,
+      subAction.subActionIndex,
+      subAction.plan,
+      JSON.stringify(subAction.plannedAction ?? null),
+      subAction.grounding === undefined ? null : JSON.stringify(subAction.grounding),
+      JSON.stringify(subAction.result ?? null),
+      subAction.screenStateHash,
+      subAction.screenStateHashAfter ?? null,
+      subAction.artifactRefs === undefined ? null : JSON.stringify(subAction.artifactRefs),
+      subAction.ariaEvidence === undefined ? null : JSON.stringify(subAction.ariaEvidence),
+      subAction.recordingOffsetMs ?? null,
+    )
+  }
+
+  /**
+   * THE run-detail read (D-03). `undefined` when no `runs` row exists — absence is a RESULT here,
+   * and turning it into a typed refusal is the `runs.detail` op's job, so the "not found"
+   * vocabulary lives in the function layer rather than in this store.
+   *
+   * A run that exists and projected nothing answers three empty arrays, which is a DIFFERENT fact
+   * and stays a different answer.
+   */
+  readRunDetailRows(runId: string): RunDetailRows | undefined {
+    const run = this.db.prepare('SELECT id FROM runs WHERE id = ?').get(runId) as { id: string } | undefined
+    if (run === undefined) return undefined
+
+    const memberRows = this.db.prepare(
+      'SELECT * FROM run_members WHERE run_id = ? ORDER BY test_index',
+    ).all(runId) as Record<string, unknown>[]
+    const stepRows = this.db.prepare(
+      'SELECT * FROM run_steps WHERE run_id = ? ORDER BY test_index, step_index',
+    ).all(runId) as Record<string, unknown>[]
+    const subActionRows = this.db.prepare(
+      'SELECT * FROM run_sub_actions WHERE run_id = ? ORDER BY test_index, step_index, sub_action_index',
+    ).all(runId) as Record<string, unknown>[]
+
+    return {
+      runId,
+      members: memberRows.map(row => mapRunMemberRow(row)),
+      steps: stepRows.map(row => mapRunStepRow(row)),
+      subActions: subActionRows.map(row => mapRunSubActionRow(row)),
+    }
   }
 
   private appendAttributePredicateConditions(
@@ -603,21 +1020,29 @@ export class DashboardDatabase {
 
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[]
     const runs = this.applyRegexAttributePredicates(rows.map(r => this.mapRunRow(r)), input.attributePredicates)
-    if (!hasRegex) return runs
+    if (!hasRegex) return this.withMemberExecutionDuration(runs)
 
     const start = input.offset ?? 0
     const end = input.limit !== undefined ? start + input.limit : undefined
-    return runs.slice(start, end)
+    return this.withMemberExecutionDuration(runs.slice(start, end))
   }
 
-  private buildTrendsFromRuns(runs: RunRow[]): {
+  private buildTrendsFromRuns(
+    runs: RunRow[],
+    classOf: (run: RunRow) => RunStatusClass | 'skipped' | undefined = (run) => runStatusClass(run.status),
+  ): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
-    passRate: number
+    passRate: number | null
     totalRuns: number
     avgDuration: number
   } {
     const totalRuns = runs.length
-    const passedTotal = runs.filter((run) => this.isSuccessfulRunStatus(run.status)).length
+    // 2026-10-18 (444-24, D-59): the rate is pass ÷ (pass + fail); no pass or fail outcome is no rate.
+    const decided = runs.filter((run) => {
+      const runClass = classOf(run)
+      return runClass === 'pass' || runClass === 'fail'
+    })
+    const passedTotal = decided.filter((run) => classOf(run) === 'pass').length
     const avgDuration = totalRuns > 0
       ? runs.reduce((sum, run) => sum + run.duration, 0) / totalRuns
       : 0
@@ -636,25 +1061,25 @@ export class DashboardDatabase {
           const total = dayRuns.length
           return {
             date,
-            passed: dayRuns.filter((run) => this.isSuccessfulRunStatus(run.status)).length,
-            failed: dayRuns.filter((run) => run.status === 'failed').length,
+            passed: dayRuns.filter((run) => classOf(run) === 'pass').length,
+            failed: dayRuns.filter((run) => classOf(run) === 'fail').length,
             total,
             avgDuration: total > 0 ? dayRuns.reduce((sum, run) => sum + run.duration, 0) / total : 0,
           }
         }),
-      passRate: totalRuns > 0 ? passedTotal / totalRuns : 0,
+      passRate: decided.length > 0 ? passedTotal / decided.length : null,
       totalRuns,
       avgDuration,
     }
   }
 
   getRuns(opts: RunsFilter = {}): RunRow[] {
-    const conditions: string[] = ['parent_run_id IS NULL']
+    const conditions: string[] = []
     const params: unknown[] = []
 
-    if (opts.status) {
-      conditions.push('status = ?')
-      params.push(opts.status)
+    if (opts.statuses && opts.statuses.length > 0) {
+      conditions.push(`status IN (${opts.statuses.map(() => '?').join(', ')})`)
+      params.push(...opts.statuses)
     }
     if (opts.name) {
       conditions.push('(name LIKE ? OR id LIKE ?)')
@@ -673,19 +1098,184 @@ export class DashboardDatabase {
       params.push(opts.to)
     }
 
-    return this.queryRunsWithAttributePredicates({
+    return this.withMemberSummaries(this.queryRunsWithAttributePredicates({
       conditions,
       params,
       attributePredicates: opts.attributePredicates,
       orderBy: 'ORDER BY created_at DESC',
       limit: opts.limit,
       offset: opts.offset,
-    })
+    }))
+  }
+
+  // 2026-10-17 (444-05, D-09): one batched member read per 400 returned rows, after pagination.
+  private withMemberSummaries(runs: RunRow[]): RunRow[] {
+    for (let offset = 0; offset < runs.length; offset += 400) {
+      const batch = runs.slice(offset, offset + 400)
+      const rows = this.db.prepare(`
+        SELECT run_id, test_index, test_id, file_path, suite_id, name, outcome FROM run_members
+        WHERE run_id IN (${batch.map(() => '?').join(',')})
+        ORDER BY run_id, test_index
+      `).all(...batch.map(run => run.id)) as Array<{
+        run_id: string
+        test_index: number
+        test_id: string | null
+        file_path: string | null
+        suite_id: string | null
+        name: string | null
+        outcome: string | null
+      }>
+      const byId = new Map<string, RunMemberSummary[]>()
+      for (const row of rows) {
+        const members = byId.get(row.run_id) ?? []
+        members.push({
+          testIndex: row.test_index,
+          testId: row.test_id,
+          filePath: row.file_path,
+          suiteId: row.suite_id,
+          name: row.name,
+          outcome: row.outcome,
+        })
+        byId.set(row.run_id, members)
+      }
+      for (const run of batch) run.members = byId.get(run.id) ?? []
+    }
+    return runs
+  }
+
+  readRunOwner(id: string): RunOwner | undefined {
+    const row = this.db.prepare(
+      'SELECT owner_pid, owner_incarnation, owner_host FROM runs WHERE id = ? AND owner_pid IS NOT NULL',
+    ).get(id) as { owner_pid: number; owner_incarnation: string | null; owner_host: string | null } | undefined
+    if (row === undefined) return undefined
+    return { pid: row.owner_pid, incarnation: row.owner_incarnation, host: row.owner_host ?? '' }
+  }
+
+  listRunningRunOwners(): Array<{ id: string; startedAt?: string; owner: RunOwner }> {
+    const rows = this.db.prepare(
+      "SELECT id, started_at, owner_pid, owner_incarnation, owner_host FROM runs WHERE status = 'running' ORDER BY rowid",
+    ).all() as Array<{
+      id: string
+      started_at: string | null
+      owner_pid: number
+      owner_incarnation: string | null
+      owner_host: string | null
+    }>
+    return rows.map(row => ({
+      id: row.id,
+      ...(row.started_at ? { startedAt: row.started_at } : {}),
+      owner: { pid: row.owner_pid, incarnation: row.owner_incarnation, host: row.owner_host ?? '' },
+    }))
+  }
+
+  // 2026-10-16 (442-01, D-04): one compare-and-set on the stamped owner; never read-then-write.
+  finalizeOwnRun(id: string, updates: {
+    status: RunStatus
+    endedAt: string
+    duration?: number
+    failureSummary?: string
+  }): boolean {
+    const fields = ['status = ?', 'ended_at = ?']
+    const values: unknown[] = [updates.status, updates.endedAt]
+    if (updates.duration !== undefined) { fields.push('duration = ?'); values.push(updates.duration) }
+    if (updates.failureSummary !== undefined) {
+      fields.push('failure_summary = ?')
+      values.push(updates.failureSummary)
+    }
+    const stamp = this.ownStamps.get(id)
+    if (stamp === undefined) return false
+    const result = this.db.prepare(`
+      UPDATE runs SET ${fields.join(', ')}
+      WHERE id = ? AND status = 'running' AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?
+    `).run(...values, id, stamp.pid, stamp.incarnation, stamp.host)
+    if (Number(result.changes) !== 1) return false
+    this.ownStamps.delete(id)
+    return true
+  }
+
+  // 2026-10-17 (443-13, GAP-D1; 444-04): no status condition, because the verdict may already have
+  // moved the row off running; the owner columns alone decide whose row it is.
+  closeOwnRun(id: string, updates: {
+    status: RunStatus
+    endedAt: string
+  }): boolean {
+    const stamp = this.ownStamps.get(id) ?? this.readOwnStamp()
+    const result = this.db.prepare(`
+      UPDATE runs SET status = ?, ended_at = ?
+      WHERE id = ? AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?
+    `).run(updates.status, updates.endedAt, id, stamp.pid, stamp.incarnation, stamp.host)
+    if (Number(result.changes) !== 1) return false
+    this.ownStamps.delete(id)
+    return true
+  }
+
+  // 2026-10-16 (442-15, GAP-D2): own is the stamp this handle wrote, so a NULL start time here is
+  // this handle's own write, never an inference about another process.
+  isOwnStamp(id: string, owner: RunOwner): boolean {
+    const stamp = this.ownStamps.get(id)
+    return stamp !== undefined
+      && stamp.pid === owner.pid
+      && stamp.incarnation === owner.incarnation
+      && stamp.host === owner.host
+  }
+
+  private readOwnStamp(): RunOwner {
+    const { pid, incarnation, host } = this.runOwnership.self
+    return { pid, incarnation, host }
+  }
+
+  finalizeOrphanRun(id: string, owner: RunOwner): boolean {
+    const summary = orphanSummary(owner.pid)
+    const endedAt = new Date().toISOString()
+    const result = this.db.prepare(`
+      UPDATE runs SET status = 'failed', failure_summary = ?, ended_at = ?,
+        duration = COALESCE(
+          MAX(0, CAST(ROUND((julianday(?) - julianday(started_at)) * 86400000) AS INTEGER)),
+          duration
+        )
+      WHERE id = ? AND status = 'running' AND owner_pid = ? AND owner_incarnation IS ? AND owner_host = ?
+    `).run(summary, endedAt, endedAt, id, owner.pid, owner.incarnation, owner.host)
+    if (Number(result.changes) !== 1) return false
+    try {
+      const duration = (this.db.prepare('SELECT duration FROM runs WHERE id = ?').get(id) as
+        { duration: number } | undefined)?.duration ?? 0
+      const artifact = this.getRunArtifact(id)
+      if (artifact && !artifact.finalizedAt) {
+        this.finalizeRunArtifact(id, {
+          errors: [{ code: 'owner-gone', phase: 'orphan-cleanup', message: summary }],
+          runtime: { status: 'failed', duration },
+        })
+      }
+    } catch { /* the row is final; the artifact write is best-effort */ }
+    return true
   }
 
   getRun(id: string): RunRow | undefined {
     const row = this.db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as Record<string, unknown> | undefined
-    return row ? this.mapRunRow(row) : undefined
+    return row ? this.withMemberExecutionDuration([this.mapRunRow(row)])[0] : undefined
+  }
+
+  /** Read-only repair for old last-member totals. Complete measured member work is cumulative,
+   * including parallel members; it is neither recording length nor run wall-clock time.
+   * Incomplete legacy projections retain their stored fallback. Bound queries to returned rows,
+   * after pagination, with one aggregate per batch rather than a lookup for every list row.
+   */
+  private withMemberExecutionDuration(runs: RunRow[]): RunRow[] {
+    for (let offset = 0; offset < runs.length; offset += 400) {
+      const batch = runs.slice(offset, offset + 400)
+      const totals = this.db.prepare(`
+        SELECT run_id, SUM(duration_ms) AS duration FROM run_members
+        WHERE run_id IN (${batch.map(() => '?').join(',')})
+        GROUP BY run_id
+        HAVING COUNT(*) = COUNT(duration_ms) AND MIN(duration_ms) >= 0
+      `).all(...batch.map(run => run.id)) as Array<{ run_id: string; duration: number }>
+      const byId = new Map(totals.map(row => [row.run_id, row.duration]))
+      for (const run of batch) {
+        const duration = byId.get(run.id)
+        if (duration !== undefined && Number.isFinite(duration)) run.duration = duration
+      }
+    }
+    return runs
   }
 
   listRunAttributeKeys(opts: { limit?: number; q?: string } = {}): AttributeKeySuggestion[] {
@@ -731,124 +1321,27 @@ export class DashboardDatabase {
     return rows.map((row) => ({ value: row.value, count: row.count }))
   }
 
+  /**
+   * Delete ONE run and everything the schema hangs off it (405-07, D-02/D-14 · T-405-27).
+   *
+   * ONE ID, AND THE CASCADE DOES THE REST. This used to open with a recursive `run_tree` CTE that
+   * walked the child rows of a suite parent, then hand-delete their step and trace rows in a
+   * transaction. Nothing has written a child row since 402-09 — one `runs` row per run, member
+   * identity on `run_members` — so the walk could only ever return the one row it was seeded with,
+   * and the hand-deletes named tables this schema no longer has. Every table that references a run
+   * declares `ON DELETE CASCADE`, so the single statement below is the whole deletion.
+   *
+   * AND IT TOUCHES NO FILE. The two path arrays it used to collect fed the router's artifact
+   * cleanup; both are gone. The run's directory under `.agent-qa/runs/` — its event log and its
+   * content-addressed blobs — is the run's own record and is not the dashboard's to remove.
+   */
   deleteRun(id: string): DeleteRunResult {
-    const runRows = this.db.prepare(`
-      WITH RECURSIVE run_tree(id) AS (
-        SELECT id FROM runs WHERE id = ?
-        UNION ALL
-        SELECT runs.id
-        FROM runs
-        INNER JOIN run_tree ON runs.parent_run_id = run_tree.id
-      )
-      SELECT *
-      FROM runs
-      WHERE id IN (SELECT id FROM run_tree)
-      ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END, created_at ASC
-    `).all(id, id) as Record<string, unknown>[]
-
-    if (runRows.length === 0) {
-      return {
-        deleted: false,
-        deletedRunIds: [],
-        screenshotPaths: [],
-        videoPaths: [],
-      }
-    }
-
-    const deletedRunIds = runRows.map((row) => row.id as string)
-    const runPlaceholders = deletedRunIds.map(() => '?').join(', ')
-    const stepRows = this.db.prepare(`
-      SELECT id, screenshot_path, screenshot_before_path, healing_screenshot_paths
-      FROM steps
-      WHERE run_id IN (${runPlaceholders})
-    `).all(...deletedRunIds) as Array<{
-      id: string
-      screenshot_path: string | null
-      screenshot_before_path: string | null
-      healing_screenshot_paths: string | null
-    }>
-    const deletedStepIds = stepRows.map((row) => row.id)
-    const screenshotPaths = stepRows.flatMap((row) => {
-      const healingPaths = (() => {
-        if (!row.healing_screenshot_paths) return []
-        try {
-          const parsed = JSON.parse(row.healing_screenshot_paths) as unknown
-          return Array.isArray(parsed)
-            ? parsed.filter((value): value is string => typeof value === 'string' && value.length > 0)
-            : []
-        } catch {
-          return []
-        }
-      })()
-
-      return [
-        row.screenshot_path,
-        row.screenshot_before_path,
-        ...healingPaths,
-      ].filter((value): value is string => typeof value === 'string' && value.length > 0)
-    })
-    const videoPaths = runRows
-      .map((row) => row.video_path)
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
-
-    const deleteAll = this.db.transaction(() => {
-      if (deletedStepIds.length > 0) {
-        const stepPlaceholders = deletedStepIds.map(() => '?').join(', ')
-        this.db.prepare(`
-          DELETE FROM reasoning_traces
-          WHERE step_id IN (${stepPlaceholders})
-        `).run(...deletedStepIds)
-      }
-
-      this.db.prepare(`
-        DELETE FROM steps
-        WHERE run_id IN (${runPlaceholders})
-      `).run(...deletedRunIds)
-
-      this.db.prepare(`
-        DELETE FROM runs
-        WHERE id IN (${runPlaceholders})
-      `).run(...deletedRunIds)
-    })
-
-    deleteAll()
-
+    const changes = this.db.prepare('DELETE FROM runs WHERE id = ?').run(id)
+    const deleted = Number(changes.changes ?? 0) > 0
     return {
-      deleted: true,
-      deletedRunIds,
-      screenshotPaths,
-      videoPaths,
+      deleted,
+      deletedRunIds: deleted ? [id] : [],
     }
-  }
-
-  getSteps(runId: string): StepRow[] {
-    const rows = this.db.prepare('SELECT * FROM steps WHERE run_id = ? ORDER BY step_order').all(runId) as Record<string, unknown>[]
-    return rows.map(r => this.mapStepRow(r))
-  }
-
-  getCapturedVariableNames(testId: string): string[] {
-    const rows = this.db.prepare(`
-      SELECT DISTINCT captured_variables FROM steps
-      WHERE run_id IN (SELECT id FROM runs WHERE test_id = ?)
-      AND captured_variables IS NOT NULL
-      LIMIT 100
-    `).all(testId) as Array<{ captured_variables: string }>
-
-    const nameSet = new Set<string>()
-    for (const row of rows) {
-      try {
-        const parsed = JSON.parse(row.captured_variables) as Record<string, string>
-        for (const key of Object.keys(parsed)) nameSet.add(key)
-      } catch { /* skip malformed */ }
-    }
-    return [...nameSet].sort()
-  }
-
-  getRunsByParent(parentRunId: string): RunRow[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM runs WHERE parent_run_id = ? ORDER BY created_at ASC'
-    ).all(parentRunId) as Record<string, unknown>[]
-    return rows.map(r => this.mapRunRow(r))
   }
 
   insertRunArtifact(input: {
@@ -941,33 +1434,26 @@ export class DashboardDatabase {
   }
 
   getRunArtifactBundle(runId: string): RunArtifactBundle {
-    const children = this.getRunsByParent(runId).map((run) => ({
-      run,
-      artifact: this.getRunArtifact(run.id),
-    }))
-    return {
-      artifact: this.getRunArtifact(runId),
-      children,
-    }
+    return { artifact: this.getRunArtifact(runId) }
   }
 
-  updateRunRetryInfo(id: string, info: { retryCount: number; maxRetries: number }): void {
-    this.db.prepare('UPDATE runs SET retry_count = ?, max_retries = ? WHERE id = ?')
-      .run(info.retryCount, info.maxRetries, id)
-  }
-
-  private isSuccessfulRunStatus(status: string): boolean {
-    return status === 'passed' || status === 'flaky'
-  }
-
+  /**
+   * The runs a self-heal happened on (405-07, D-02).
+   *
+   * READ OFF `run_steps.self_heal_occurred`, WHICH IS THE SURVIVING HEALING FACT. This scanned the
+   * v1 wide step table for `status = 'healed'`; that table had no producer left and its readers
+   * went with it. `selfHealOccurred` is the bus payload's own boolean, projected verbatim by the
+   * subscriber — so the flake rate below is now computed from what the runner actually reported
+   * rather than from a status word a retired projection wrote.
+   */
   private getHealedRunIds(runIds: string[]): Set<string> {
     if (runIds.length === 0) return new Set()
 
     const placeholders = runIds.map(() => '?').join(', ')
     const rows = this.db.prepare(`
       SELECT DISTINCT run_id
-      FROM steps
-      WHERE status = 'healed'
+      FROM run_steps
+      WHERE self_heal_occurred = 1
         AND run_id IN (${placeholders})
     `).all(...runIds) as Array<{ run_id: string }>
 
@@ -979,9 +1465,9 @@ export class DashboardDatabase {
     healedRunIds: Set<string>,
   ) {
     const totalRuns = runs.length
-    const passed = runs.filter((run) => this.isSuccessfulRunStatus(run.status)).length
-    const failed = runs.filter((run) => run.status === 'failed').length
-    const flaky = runs.filter((run) => run.status === 'flaky' || healedRunIds.has(run.id)).length
+    const passed = runs.filter((run) => runStatusClass(run.status) === 'pass').length
+    const failed = runs.filter((run) => runStatusClass(run.status) === 'fail').length
+    const flaky = runs.filter((run) => run.status === 'healed' || healedRunIds.has(run.id)).length
     const totalDuration = runs.reduce((sum, run) => sum + run.duration, 0)
 
     return {
@@ -989,7 +1475,8 @@ export class DashboardDatabase {
       passed,
       failed,
       flaky,
-      passRate: totalRuns > 0 ? passed / totalRuns : 0,
+      // 2026-10-18 (444-24, D-59): a group's rate is passed ÷ (passed + failed); neither is no rate.
+      passRate: passed + failed > 0 ? passed / (passed + failed) : null,
       flakeRate: totalRuns > 0 ? flaky / totalRuns : 0,
       avgDuration: totalRuns > 0 ? totalDuration / totalRuns : 0,
     }
@@ -1002,13 +1489,15 @@ export class DashboardDatabase {
     const conditions: string[] = []
     const params: unknown[] = []
 
+    // 2026-08-27 (405-07, D-02): the parent-link predicate is gone from all three arms because the
+    // column is. Each arm used it to mean "top-level rows only", and since 402-09 EVERY row is
+    // top-level — one `runs` row per run — so the clause was already a no-op on the `suite` and
+    // `platform` arms. The `test` arm's clause meant something else: exclude the suite PARENT rows,
+    // whose `name` is a suite's and not a test's. That exclusion is preserved verbatim below.
     if (dimension === 'suite') {
-      conditions.push('parent_run_id IS NULL')
       conditions.push('suite_id IS NOT NULL')
-    } else if (dimension === 'platform') {
-      conditions.push('parent_run_id IS NULL')
-    } else {
-      conditions.push('NOT (suite_id IS NOT NULL AND parent_run_id IS NULL)')
+    } else if (dimension !== 'platform') {
+      conditions.push('suite_id IS NULL')
     }
 
     if (opts.from) {
@@ -1075,7 +1564,7 @@ export class DashboardDatabase {
           date,
           passed: daySummary.passed,
           failed: daySummary.failed,
-          healed: dayHealedRunIds.size,
+          healed: daySummary.flaky,
           duration: daySummary.avgDuration,
         }
       })
@@ -1084,11 +1573,30 @@ export class DashboardDatabase {
     const totalTokens = runIds.length > 0
       ? ((this.db.prepare(`
           SELECT COALESCE(SUM(total_tokens), 0) as total_tokens
-          FROM steps
+          FROM run_steps
           WHERE run_id IN (${runIds.map(() => '?').join(',')})
         `).get(...runIds) as Record<string, unknown>).total_tokens as number) || 0
       : 0
 
+    /*
+     * HISTORICAL-ONLY (407-16, REVIEW WR-04).
+     *
+     * `runs.memory_log` has NO production writer. 407-05 (`92773959`) deleted the last one along
+     * with the artifact drawer's v1 memory tab, and 407-16 deleted the run-detail collapsible that
+     * was still parsing the raw column inside a render function. This aggregate therefore reads
+     * LEGACY ROWS ONLY: on every install created since 407-05 it reports `runs: 0` and six zeroes,
+     * and it is retained solely so a database that predates the deletion keeps reporting what it
+     * actually recorded rather than silently losing it.
+     *
+     * The `memoryLog` setter on `updateRun` is retained for the same reason — historical-row tests
+     * need a way to plant such a row. Neither is a live path.
+     *
+     * RETIREMENT TRAVELS WITH THE INSIGHTS V1 SWEEP, not with this gap. Since 433-30 (F-433-26) the
+     * insights page's "Memory Curator" section no longer reads this value: it reads each window
+     * run's knowledge changes through `GET /api/insights/knowledge-changes`. Deleting the column,
+     * its setter and this aggregate is the pending todo STATE.md already carries for `memory_log`
+     * and `RunArtifactConfigSnapshot.memory`.
+     */
     const memorySummary = {
       runs: 0,
       added: 0,
@@ -1147,7 +1655,7 @@ export class DashboardDatabase {
         COALESCE(SUM(s.completion_tokens), 0) as completion_tokens,
         COALESCE(SUM(s.total_tokens), 0) as total_tokens
       FROM runs r
-      LEFT JOIN steps s ON s.run_id = r.id
+      LEFT JOIN run_steps s ON s.run_id = r.id
       ${where}
       GROUP BY r.id
       ORDER BY r.started_at DESC
@@ -1199,14 +1707,19 @@ export class DashboardDatabase {
     byModel: { date: string; model: string; promptTokens: number; completionTokens: number }[]
     bySource: Record<string, { promptTokens: number; completionTokens: number }>
     totals: { promptTokens: number; completionTokens: number }
+    testRunUnmeasuredSteps: number
   } {
+    // 433-30 (F-433-26): test-run usage is the window's run-step tokens plus any legacy `test-run`
+    // token event. The two never describe the same step: the last writer of a `test-run` event (the
+    // v1 reporter) was deleted in 363-11, before `run_steps` existed (405-01), and v1 step rows were
+    // never migrated into it. Adding both counts each recorded token once.
     const conditions: string[] = []
     const params: unknown[] = []
     if (opts.from) { conditions.push('created_at >= ?'); params.push(opts.from) }
     if (opts.to) { conditions.push('created_at <= ?'); params.push(opts.to) }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-    const byModel = this.db.prepare(`
+    const eventByModel = this.db.prepare(`
       SELECT
         DATE(created_at) as date,
         model_name as model,
@@ -1241,55 +1754,172 @@ export class DashboardDatabase {
       ${where}
     `).get(...params) as { promptTokens: number; completionTokens: number }
 
+    // The window selects runs by `started_at`, as `getStats` and the breakdowns do.
+    const stepConditions: string[] = []
+    const stepParams: unknown[] = []
+    if (opts.from) { stepConditions.push('r.started_at >= ?'); stepParams.push(opts.from) }
+    if (opts.to) { stepConditions.push('r.started_at <= ?'); stepParams.push(opts.to) }
+    const stepWhere = stepConditions.length > 0 ? `WHERE ${stepConditions.join(' AND ')}` : ''
+    const stepRows = this.db.prepare(`
+      SELECT
+        DATE(COALESCE(r.started_at, r.created_at)) as date,
+        r.model_name as runModel,
+        s.prompt_tokens as promptTokens,
+        s.completion_tokens as completionTokens,
+        s.total_tokens as totalTokens,
+        s.model_usage_json as usageJson
+      FROM run_steps s
+      JOIN runs r ON r.id = s.run_id
+      ${stepWhere}
+    `).all(...stepParams) as {
+      date: string | null
+      runModel: string | null
+      promptTokens: number | null
+      completionTokens: number | null
+      totalTokens: number | null
+      usageJson: string | null
+    }[]
+
+    const byModelKey = new Map<string, { date: string; model: string; promptTokens: number; completionTokens: number }>()
+    for (const row of eventByModel) byModelKey.set(`${row.date}\u0000${row.model}`, { ...row })
+    let stepPrompt = 0
+    let stepCompletion = 0
+    let measuredSteps = 0
+    let unmeasuredSteps = 0
+    for (const row of stepRows) {
+      const envelope = parseJsonColumn(row.usageJson)
+      const modelUsage = isPlainObject(envelope) ? ModelUsageSchema.safeParse(envelope.modelUsage) : undefined
+      if (row.totalTokens === null || row.totalTokens === undefined) {
+        // A step whose model usage records no call made none: that zero was measured.
+        if (modelUsage?.success && modelUsage.data.calls.started === 0) {
+          measuredSteps += 1
+        } else {
+          unmeasuredSteps += 1
+        }
+        continue
+      }
+      measuredSteps += 1
+      const promptTokens = row.promptTokens ?? 0
+      const completionTokens = row.completionTokens ?? 0
+      stepPrompt += promptTokens
+      stepCompletion += completionTokens
+      const model = (modelUsage?.success ? stepModelName(modelUsage.data) : undefined)
+        ?? (row.runModel || undefined)
+        ?? 'unattributed'
+      const date = row.date ?? 'unknown'
+      const key = `${date}\u0000${model}`
+      const current = byModelKey.get(key) ?? { date, model, promptTokens: 0, completionTokens: 0 }
+      current.promptTokens += promptTokens
+      current.completionTokens += completionTokens
+      byModelKey.set(key, current)
+    }
+    if (measuredSteps > 0) {
+      const legacy = bySource['test-run'] ?? { promptTokens: 0, completionTokens: 0 }
+      bySource['test-run'] = {
+        promptTokens: legacy.promptTokens + stepPrompt,
+        completionTokens: legacy.completionTokens + stepCompletion,
+      }
+    }
+
     return {
-      byModel,
+      byModel: [...byModelKey.values()].sort((left, right) => left.date.localeCompare(right.date)),
       bySource,
-      totals: { promptTokens: totalsRow.promptTokens, completionTokens: totalsRow.completionTokens },
+      totals: {
+        promptTokens: totalsRow.promptTokens + stepPrompt,
+        completionTokens: totalsRow.completionTokens + stepCompletion,
+      },
+      testRunUnmeasuredSteps: unmeasuredSteps,
     }
   }
 
-  getRunsByTestName(name: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
-    return this.queryRunsWithAttributePredicates({
-      conditions: ['name = ?', 'parent_run_id IS NULL'],
-      params: [name],
+  /**
+   * The window's settled run ids, newest first, capped at `limit`, with their full count, and the
+   * count of the window's runs still in flight (433-30, 433-42). A settled run has started and is
+   * neither `pending` nor `running`; every other row in the window is in flight. Ids only: the
+   * Insights knowledge-change read dispatches each through the agent host.
+   */
+  listInsightsWindowRunIds(opts: { from?: string; to?: string; limit: number }): { runIds: string[]; total: number; inFlight: number } {
+    const conditions: string[] = []
+    const params: unknown[] = []
+    if (opts.from) { conditions.push('started_at >= ?'); params.push(opts.from) }
+    if (opts.to) { conditions.push('started_at <= ?'); params.push(opts.to) }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const settled = "status NOT IN ('pending', 'running') AND started_at IS NOT NULL"
+    const settledWhere = `WHERE ${[...conditions, settled].join(' AND ')}`
+    const counts = this.db.prepare(`
+      SELECT COUNT(*) as cnt, COALESCE(SUM(CASE WHEN ${settled} THEN 1 ELSE 0 END), 0) as settled FROM runs ${where}
+    `).get(...params) as { cnt: number; settled: number }
+    const rows = this.db.prepare(`
+      SELECT id FROM runs ${settledWhere} ORDER BY started_at DESC, id DESC LIMIT ?
+    `).all(...params, opts.limit) as { id: string }[]
+    return { runIds: rows.map((row) => row.id), total: counts.settled, inFlight: counts.cnt - counts.settled }
+  }
+
+  getRunsByTest(test: TestRef, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
+    const match = memberTestMatch(test)
+    return this.withMemberOutcome(this.queryRunsWithAttributePredicates({
+      conditions: [`id IN (SELECT run_id FROM run_members WHERE ${match.sql})`],
+      params: match.params,
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at DESC',
       limit: opts?.limit,
       offset: opts?.offset,
-    })
+    }), test)
   }
 
-  getRunsByTestNameCount(name: string, opts?: { attributePredicates?: AttributePredicate[] }): number {
+  getRunsByTestCount(test: TestRef, opts?: { attributePredicates?: AttributePredicate[] }): number {
     if (opts?.attributePredicates?.length) {
-      return this.getRunsByTestName(name, { attributePredicates: opts.attributePredicates }).length
+      return this.getRunsByTest(test, { attributePredicates: opts.attributePredicates }).length
     }
-    const row = this.db.prepare('SELECT COUNT(*) as cnt FROM runs WHERE name = ? AND parent_run_id IS NULL').get(name) as { cnt: number }
+    const match = memberTestMatch(test)
+    const row = this.db.prepare(
+      `SELECT COUNT(*) as cnt FROM runs WHERE id IN (SELECT run_id FROM run_members WHERE ${match.sql})`,
+    ).get(...match.params) as { cnt: number }
     return row.cnt
   }
 
-  getTestTrends(name: string, opts?: { from?: string; attributePredicates?: AttributePredicate[] }): {
+  getTestTrends(test: TestRef, opts?: { from?: string; attributePredicates?: AttributePredicate[] }): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
-    passRate: number
+    passRate: number | null
     totalRuns: number
     avgDuration: number
   } {
-    const conditions = ['name = ?', 'parent_run_id IS NULL']
-    const params: unknown[] = [name]
+    const match = memberTestMatch(test)
+    const conditions = [`id IN (SELECT run_id FROM run_members WHERE ${match.sql})`]
+    const params: unknown[] = [...match.params]
     if (opts?.from) {
       conditions.push('started_at >= ?')
       params.push(opts.from)
     }
-    return this.buildTrendsFromRuns(this.queryRunsWithAttributePredicates({
+    const runs = this.withMemberOutcome(this.queryRunsWithAttributePredicates({
       conditions,
       params,
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at ASC',
-    }))
+    }), test)
+    return this.buildTrendsFromRuns(runs, (run) => memberOutcomeClass(run.memberOutcome ?? null))
+  }
+
+  // The first matching member by test index names the run's outcome for this test.
+  private withMemberOutcome(runs: RunRow[], test: TestRef): RunRow[] {
+    const match = memberTestMatch(test)
+    for (let offset = 0; offset < runs.length; offset += 400) {
+      const batch = runs.slice(offset, offset + 400)
+      const rows = this.db.prepare(`
+        SELECT run_id, outcome FROM run_members
+        WHERE run_id IN (${batch.map(() => '?').join(',')}) AND ${match.sql}
+        ORDER BY run_id, test_index
+      `).all(...batch.map(run => run.id), ...match.params) as Array<{ run_id: string; outcome: string | null }>
+      const byId = new Map<string, string | null>()
+      for (const row of rows) if (!byId.has(row.run_id)) byId.set(row.run_id, row.outcome)
+      for (const run of batch) run.memberOutcome = byId.get(run.id) ?? null
+    }
+    return runs
   }
 
   getRunsBySuiteId(suiteId: string, opts?: { limit?: number; offset?: number; attributePredicates?: AttributePredicate[] }): RunRow[] {
     return this.queryRunsWithAttributePredicates({
-      conditions: ['suite_id = ?', 'parent_run_id IS NULL'],
+      conditions: [MEMBER_SUITE_CONDITION],
       params: [suiteId],
       attributePredicates: opts?.attributePredicates,
       orderBy: 'ORDER BY started_at DESC',
@@ -1305,19 +1935,18 @@ export class DashboardDatabase {
     const row = this.db.prepare(`
       SELECT COUNT(*) as cnt
       FROM runs
-      WHERE suite_id = ?
-        AND parent_run_id IS NULL
+      WHERE ${MEMBER_SUITE_CONDITION}
     `).get(suiteId) as { cnt: number }
     return row.cnt
   }
 
   getSuiteTrends(suiteId: string, opts?: { from?: string; attributePredicates?: AttributePredicate[] }): {
     daily: { date: string; passed: number; failed: number; total: number; avgDuration: number }[]
-    passRate: number
+    passRate: number | null
     totalRuns: number
     avgDuration: number
   } {
-    const conditions = ['suite_id = ?', 'parent_run_id IS NULL']
+    const conditions = [MEMBER_SUITE_CONDITION]
     const params: unknown[] = [suiteId]
     if (opts?.from) {
       conditions.push('started_at >= ?')
@@ -1391,7 +2020,7 @@ export class DashboardDatabase {
     rows.sort((left, right) =>
       right.runs - left.runs ||
       right.flakeRate - left.flakeRate ||
-      left.passRate - right.passRate ||
+      (left.passRate ?? Number.POSITIVE_INFINITY) - (right.passRate ?? Number.POSITIVE_INFINITY) ||
       left.label.localeCompare(right.label),
     )
 
@@ -1399,244 +2028,54 @@ export class DashboardDatabase {
     return rows.slice(0, limit)
   }
 
+  // 2026-10-17 (444-05, D-35): grouped by member file path; only pass- and fail-class outcomes count.
   getFlakyTests(opts?: { minRuns?: number; limit?: number }): {
     name: string; filePath: string | null; totalRuns: number; passRate: number; flakyScore: number
   }[] {
     const minRuns = opts?.minRuns ?? 3
     const limit = opts?.limit ?? 50
 
-    const tests = this.db.prepare(`
-      SELECT name,
-             MAX(file_path) as file_path,
-             COUNT(*) as total_runs,
-             SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) as passed,
-             GROUP_CONCAT(status, ',') as status_seq
-      FROM (
-        SELECT name, status, file_path FROM runs
-        WHERE status IN ('passed', 'failed')
-        ORDER BY name, started_at DESC
-      )
-      GROUP BY name
-      HAVING COUNT(*) >= ?
-      LIMIT ?
-    `).all(minRuns, limit) as Record<string, unknown>[]
+    const rows = this.db.prepare(`
+      SELECT m.file_path AS file_path, m.name AS name, m.outcome AS outcome
+      FROM run_members m JOIN runs r ON r.id = m.run_id
+      WHERE m.file_path IS NOT NULL AND m.outcome IS NOT NULL
+      ORDER BY m.file_path, r.started_at DESC, r.id DESC, m.test_index DESC
+    `).all() as Array<{ file_path: string; name: string | null; outcome: string }>
 
-    return tests.map(t => {
-      const statusSeq = (t.status_seq as string).split(',')
-      let alternations = 0
-      for (let i = 1; i < statusSeq.length; i++) {
-        if (statusSeq[i] !== statusSeq[i - 1]) alternations++
-      }
-      const flakyScore = statusSeq.length > 1 ? alternations / (statusSeq.length - 1) : 0
-      const totalRuns = t.total_runs as number
-      const passed = t.passed as number
+    const byPath = new Map<string, { name: string | null; classes: Array<'pass' | 'fail'> }>()
+    for (const row of rows) {
+      const outcomeClass = memberOutcomeClass(row.outcome)
+      if (outcomeClass !== 'pass' && outcomeClass !== 'fail') continue
+      const entry = byPath.get(row.file_path) ?? { name: null, classes: [] }
+      if (entry.name === null && row.name) entry.name = row.name
+      entry.classes.push(outcomeClass)
+      byPath.set(row.file_path, entry)
+    }
 
-      return {
-        name: t.name as string,
-        filePath: (t.file_path as string) ?? null,
-        totalRuns,
-        passRate: passed / totalRuns,
-        flakyScore,
-      }
-    }).sort((a, b) => b.flakyScore - a.flakyScore)
-  }
-
-  getAccessibilitySummary(runId: string) {
-    const steps = this.getSteps(runId)
-    const allViolations: any[] = []
-    let stepsWithViolations = 0
-    let scannedSteps = 0
-
-    for (const step of steps) {
-      if (Array.isArray(step.accessibilityViolations)) {
-        scannedSteps++
-        if ((step.accessibilityViolations as any[]).length > 0) {
-          stepsWithViolations++
-          allViolations.push(...(step.accessibilityViolations as any[]))
+    return [...byPath.entries()]
+      .filter(([, entry]) => entry.classes.length >= minRuns)
+      .map(([filePath, entry]) => {
+        let alternations = 0
+        for (let i = 1; i < entry.classes.length; i++) {
+          if (entry.classes[i] !== entry.classes[i - 1]) alternations++
         }
-      }
-    }
-
-    const bySeverity: Record<string, number> = { critical: 0, serious: 0, moderate: 0, minor: 0 }
-    const byRule: Record<string, { count: number; impact: string }> = {}
-
-    for (const v of allViolations) {
-      bySeverity[v.impact] = (bySeverity[v.impact] || 0) + 1
-      if (!byRule[v.ruleId]) byRule[v.ruleId] = { count: 0, impact: v.impact }
-      byRule[v.ruleId].count++
-    }
-
-    return {
-      enabled: this.getRunAccessibilityEnabled(runId),
-      total: allViolations.length,
-      bySeverity,
-      byRule: Object.entries(byRule)
-        .map(([ruleId, data]) => ({ ruleId, ...data }))
-        .sort((a, b) => b.count - a.count),
-      stepsWithViolations,
-      scannedSteps,
-      unscannedSteps: Math.max(0, steps.length - scannedSteps),
-      totalSteps: steps.length,
-    }
-  }
-
-  private getRunAccessibilityEnabled(runId: string): boolean | null {
-    const artifact = this.getRunArtifact(runId)
-    const payload = artifact?.payload
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
-    const config = (payload as unknown as Record<string, unknown>).config
-    if (!config || typeof config !== 'object' || Array.isArray(config)) return null
-
-    const configRecord = config as Record<string, unknown>
-    const candidates = [configRecord.effectiveConfig, configRecord.parsedConfig]
-    let sawConfig = false
-    let sawAccessibility = false
-
-    for (const candidate of candidates) {
-      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) continue
-      sawConfig = true
-      const services = (candidate as Record<string, unknown>).services
-      if (!services || typeof services !== 'object' || Array.isArray(services)) continue
-      const accessibility = (services as Record<string, unknown>).accessibility
-      if (!accessibility || typeof accessibility !== 'object' || Array.isArray(accessibility)) continue
-      sawAccessibility = true
-      const enabled = (accessibility as Record<string, unknown>).enabled
-      if (typeof enabled === 'boolean') return enabled
-    }
-
-    return sawConfig || sawAccessibility ? false : null
-  }
-
-  getStep(stepId: string): StepRow | undefined {
-    const row = this.db.prepare('SELECT * FROM steps WHERE id = ?').get(stepId) as Record<string, unknown> | undefined
-    return row ? this.mapStepRow(row) : undefined
-  }
-
-  insertReasoningTrace(trace: {
-    stepId: string
-    observeText?: string
-    observeDuration?: number
-    planReasoning?: string
-    planConfidence?: number
-    planAction?: unknown
-    planDuration?: number
-    executeAction?: unknown
-    executeDuration?: number
-    verifyReasoning?: string
-    verifySuccess?: boolean
-    verifyDuration?: number
-    healAttempts?: unknown[]
-    totalDuration?: number
-    screenStateBefore?: string
-    screenStateAfter?: string
-  }): string {
-    const id = randomUUID()
-    const stmt = this.db.prepare(`
-      INSERT INTO reasoning_traces (id, step_id, observe_text, observe_duration, plan_reasoning, plan_confidence, plan_action, plan_duration, execute_action, execute_duration, verify_reasoning, verify_success, verify_duration, heal_attempts, total_duration, screen_state_before, screen_state_after)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    stmt.run(
-      id,
-      trace.stepId,
-      trace.observeText ?? null,
-      trace.observeDuration ?? null,
-      trace.planReasoning ?? null,
-      trace.planConfidence ?? null,
-      trace.planAction ? JSON.stringify(trace.planAction) : null,
-      trace.planDuration ?? null,
-      trace.executeAction ? JSON.stringify(trace.executeAction) : null,
-      trace.executeDuration ?? null,
-      trace.verifyReasoning ?? null,
-      trace.verifySuccess !== undefined ? (trace.verifySuccess ? 1 : 0) : null,
-      trace.verifyDuration ?? null,
-      trace.healAttempts ? JSON.stringify(trace.healAttempts) : null,
-      trace.totalDuration ?? null,
-      trace.screenStateBefore ?? null,
-      trace.screenStateAfter ?? null,
-    )
-    return id
-  }
-
-  getReasoningTrace(runId: string, stepOrder: number): ReasoningTraceRow | undefined {
-    const row = this.db.prepare(`
-      SELECT rt.* FROM reasoning_traces rt
-      INNER JOIN steps s ON s.id = rt.step_id
-      WHERE s.run_id = ? AND s.step_order = ?
-    `).get(runId, stepOrder) as Record<string, unknown> | undefined
-    return row ? this.mapReasoningTraceRow(row) : undefined
-  }
-
-  // Satisfies LogStorage interface from @vostride/agent-qa-core (structural typing)
-  insertLogs(entries: LogEntry[]): void {
-    if (entries.length === 0) return
-    const stmt = this.db.prepare(
-      'INSERT INTO logs (id, step_id, run_id, level, source, message, data, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    )
-    const insertAll = this.db.transaction(() => {
-      for (const entry of entries) {
-        stmt.run(
-          entry.id,
-          entry.stepId,
-          entry.runId,
-          entry.level,
-          entry.source,
-          entry.message,
-          JSON.stringify(entry.data),
-          entry.timestamp,
-        )
-      }
-    })
-    try {
-      insertAll()
-    } catch {
-      // FK violations (e.g. run_id not yet in runs table) are non-fatal for logs
-    }
-  }
-
-  getLogs(opts: {
-    runId?: string
-    stepId?: string
-    level?: string
-    source?: string
-    limit?: number
-    offset?: number
-  } = {}): LogEntry[] {
-    const conditions: string[] = []
-    const params: unknown[] = []
-
-    if (opts.runId) {
-      conditions.push('run_id = ?')
-      params.push(opts.runId)
-    }
-    if (opts.stepId) {
-      conditions.push('step_id = ?')
-      params.push(opts.stepId)
-    }
-    if (opts.level) {
-      conditions.push('level = ?')
-      params.push(opts.level)
-    }
-    if (opts.source) {
-      conditions.push('source = ?')
-      params.push(opts.source)
-    }
-
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
-    const limit = opts.limit ?? 1000
-    const offset = opts.offset ?? 0
-    params.push(limit, offset)
-
-    const rows = this.db.prepare(
-      `SELECT * FROM logs ${where} ORDER BY timestamp ASC LIMIT ? OFFSET ?`,
-    ).all(...params) as Record<string, unknown>[]
-
-    return rows.map(r => this.mapLogRow(r))
+        const totalRuns = entry.classes.length
+        return {
+          name: entry.name ?? filePath,
+          filePath,
+          totalRuns,
+          passRate: entry.classes.filter((c) => c === 'pass').length / totalRuns,
+          flakyScore: totalRuns > 1 ? alternations / (totalRuns - 1) : 0,
+        }
+      })
+      .sort((a, b) => b.flakyScore - a.flakyScore || a.filePath.localeCompare(b.filePath))
+      .slice(0, limit)
   }
 
   insertExecutionLog(data: InsertExecutionLogInput): void {
     const stmt = this.db.prepare(`
-      INSERT INTO execution_logs (id, run_id, step_id, type, name, hook_id, phase, status, duration, stdout, stderr, return_data, variables)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO execution_logs (id, run_id, step_id, type, name, hook_id, phase, status, duration, stdout, stderr, return_data, variables, test_index, step_index)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       data.id,
@@ -1652,6 +2091,8 @@ export class DashboardDatabase {
       data.stderr ?? null,
       data.returnData != null ? JSON.stringify(data.returnData) : null,
       data.variables != null ? JSON.stringify(data.variables) : null,
+      data.testIndex ?? null,
+      data.stepIndex ?? null,
     )
   }
 
@@ -1667,6 +2108,8 @@ export class DashboardDatabase {
       id: r.id as string,
       runId: r.run_id as string,
       stepId: r.step_id as string | null,
+      testIndex: (r.test_index as number | null) ?? null,
+      stepIndex: (r.step_index as number | null) ?? null,
       type: r.type as 'hook' | 'appium-script' | 'runjs',
       name: r.name as string,
       hookId: r.hook_id as string | null,
@@ -1713,7 +2156,6 @@ export class DashboardDatabase {
       metadata: r.metadata ? JSON.parse(r.metadata as string) : null,
       startedAt: r.started_at as string | null,
       endedAt: r.ended_at as string | null,
-      videoPath: (r.video_path as string) ?? null,
       failureSummary: (r.failure_summary as string) ?? null,
       errorLog: (r.error_log as string) ?? null,
       memoryLog: (r.memory_log as string) ?? null,
@@ -1724,10 +2166,6 @@ export class DashboardDatabase {
       modelName: (r.model_name as string) ?? null,
       llmProvider: (r.llm_provider as string) ?? null,
       parallel: Boolean(r.parallel),
-      parentRunId: (r.parent_run_id as string) ?? null,
-      attemptNumber: (r.attempt_number as number) ?? 0,
-      retryCount: (r.retry_count as number) ?? 0,
-      maxRetries: (r.max_retries as number) ?? 0,
       createdAt: r.created_at as string,
     }
   }
@@ -1744,80 +2182,4 @@ export class DashboardDatabase {
     }
   }
 
-  private mapStepRow(r: Record<string, unknown>): StepRow {
-    return {
-      id: r.id as string,
-      runId: r.run_id as string,
-      name: r.name as string,
-      status: r.status as string,
-      duration: r.duration as number,
-      action: r.action ? JSON.parse(r.action as string) : null,
-      observation: r.observation as string | null,
-      reasoning: r.reasoning as string | null,
-      plannedAction: r.planned_action ? JSON.parse(r.planned_action as string) : null,
-      result: r.result as string | null,
-      error: r.error as string | null,
-      screenshotPath: r.screenshot_path as string | null,
-      screenshotBeforePath: (r.screenshot_before_path as string) ?? null,
-      healingAttempts: r.healing_attempts ? JSON.parse(r.healing_attempts as string) : null,
-      retryCount: r.retry_count as number,
-      capturedVariables: r.captured_variables ? JSON.parse(r.captured_variables as string) : null,
-      stepOrder: r.step_order as number,
-      annotationData: r.annotation_data ? JSON.parse(r.annotation_data as string) : null,
-      healingScreenshotPaths: r.healing_screenshot_paths ? JSON.parse(r.healing_screenshot_paths as string) : null,
-      accessibilityViolations: r.accessibility_violations ? JSON.parse(r.accessibility_violations as string) : null,
-      confidence: (r.confidence as number) ?? null,
-      promptTokens: (r.prompt_tokens as number) ?? 0,
-      completionTokens: (r.completion_tokens as number) ?? 0,
-      totalTokens: (r.total_tokens as number) ?? 0,
-      subActionsData: r.sub_actions_data ? JSON.parse(r.sub_actions_data as string) : null,
-      consoleLogs: r.console_logs ? JSON.parse(r.console_logs as string) : null,
-      networkLogs: r.network_logs ? JSON.parse(r.network_logs as string) : null,
-      variableSnapshot: r.variable_snapshot ? JSON.parse(r.variable_snapshot as string) : null,
-      originalStepName: (r.original_step_name as string) ?? null,
-      screenContextBefore: (r.screen_context_before as string) ?? null,
-      screenContextAfter: (r.screen_context_after as string) ?? null,
-      createdAt: r.created_at as string,
-    }
-  }
-
-  private mapLogRow(r: Record<string, unknown>): LogEntry {
-    let data: Record<string, unknown> = {}
-    if (r.data) {
-      try { data = JSON.parse(r.data as string) } catch { /* invalid JSON → empty */ }
-    }
-    return {
-      id: r.id as string,
-      stepId: (r.step_id as string) ?? null,
-      runId: r.run_id as string,
-      level: r.level as LogEntry['level'],
-      source: r.source as LogEntry['source'],
-      message: r.message as string,
-      data,
-      timestamp: r.timestamp as string,
-    }
-  }
-
-  private mapReasoningTraceRow(r: Record<string, unknown>): ReasoningTraceRow {
-    return {
-      id: r.id as string,
-      stepId: r.step_id as string,
-      observeText: r.observe_text as string | null,
-      observeDuration: r.observe_duration as number | null,
-      planReasoning: r.plan_reasoning as string | null,
-      planConfidence: r.plan_confidence as number | null,
-      planAction: r.plan_action ? JSON.parse(r.plan_action as string) : null,
-      planDuration: r.plan_duration as number | null,
-      executeAction: r.execute_action ? JSON.parse(r.execute_action as string) : null,
-      executeDuration: r.execute_duration as number | null,
-      verifyReasoning: r.verify_reasoning as string | null,
-      verifySuccess: r.verify_success !== null ? Boolean(r.verify_success) : null,
-      verifyDuration: r.verify_duration as number | null,
-      healAttempts: r.heal_attempts ? JSON.parse(r.heal_attempts as string) : null,
-      totalDuration: r.total_duration as number | null,
-      screenStateBefore: r.screen_state_before as string | null,
-      screenStateAfter: r.screen_state_after as string | null,
-      createdAt: r.created_at as string,
-    }
-  }
 }

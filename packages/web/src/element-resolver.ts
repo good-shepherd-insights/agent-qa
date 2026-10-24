@@ -1,9 +1,39 @@
 import type { Page, Locator } from 'playwright-core'
-import type { Action } from '@vostride/agent-qa-core'
+import type { Action, InterimNode, RefBinding } from '@vostride/agent-qa-runner'
+import { rowTextOf } from '@vostride/agent-qa-runner'
+import type { ElementInfo, Ref } from '@vostride/agent-qa-schema'
 import type { RefMap } from './types.js'
 
-const ACTIONS_WITHOUT_REF = new Set(['navigate', 'waitFor', 'delay', 'waitForUrl', 'assert'])
+const ACTIONS_WITHOUT_REF = new Set(['navigate', 'waitFor', 'delay', 'waitForUrl', 'assertValue'])
 
+/**
+ * The adapter-private native binding of an observation (438 D-06). Each builder ref whose node
+ * carried a Playwright ai-mode ref keeps that native ref plus the observed role, exact name and
+ * row text; a node without one gets no entry. `elements` is the built state's element list, index
+ * aligned with `nodes`.
+ */
+export function buildRefMap(
+  binding: Record<Ref, RefBinding>,
+  nodes: InterimNode[],
+  nativeRefs: (string | undefined)[],
+  elements: readonly ElementInfo[],
+): RefMap {
+  const refs: RefMap = {}
+  for (const [ref, bind] of Object.entries(binding)) {
+    const node = nodes[bind.index]
+    const nativeRef = nativeRefs[bind.index]
+    const element = elements[bind.index]
+    if (!node || nativeRef === undefined || !element) continue
+    const entry: RefMap[string] = { nativeRef, role: node.role, name: node.name ?? '' }
+    const rowText = rowTextOf(element, elements)
+    if (rowText !== undefined) entry.rowText = rowText
+    if (node.bounds !== undefined) entry.bounds = node.bounds
+    refs[ref] = entry
+  }
+  return refs
+}
+
+/** Resolves a ref to the aria-ref locator of the element observed under it; never by position. */
 export class ElementResolver {
   constructor(
     private page: Page,
@@ -15,19 +45,7 @@ export class ElementResolver {
     if (!data) {
       throw new Error(`Unknown ref "${ref}". Available refs: ${Object.keys(this.refs).join(', ') || 'none'}`)
     }
-
-    let locator: Locator
-    if (data.name) {
-      locator = this.page.getByRole(data.role as any, { name: data.name, exact: true })
-    } else {
-      locator = this.page.getByRole(data.role as any)
-    }
-
-    if (data.nth !== undefined) {
-      locator = locator.nth(data.nth)
-    }
-
-    return locator
+    return this.page.locator('aria-ref=' + data.nativeRef)
   }
 
   resolveAction(action: Action): Locator | null {

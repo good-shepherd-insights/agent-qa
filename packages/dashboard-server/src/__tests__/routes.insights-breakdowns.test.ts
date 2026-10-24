@@ -41,6 +41,13 @@ function insertRun(overrides: Record<string, unknown> = {}) {
   })
 }
 
+// A mock request that omits `Host` models no real client: HTTP/1.1 requires the header and every
+// browser, `curl`, `fetch` and the conformance harness sends it. The display-seam read arms
+// (405 CR-01) now refuse a request whose claimed Host is not a loopback name, so the default below
+// is what keeps these direct-invoke probes speaking the wire's own shape. An explicit `host` in
+// `options.headers` still wins, which is how the refusal itself is exercised.
+const LOOPBACK_HOST_HEADER = { host: '127.0.0.1:3470' } as const
+
 function createMockRequest(
   url: string,
   options: { method?: string; body?: string } = {},
@@ -48,6 +55,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
+  req.headers = { ...LOOPBACK_HOST_HEADER }
 
   process.nextTick(() => {
     if (options.body) {
@@ -110,7 +118,6 @@ async function applyAnalyticsScopeConfig(content: string): Promise<void> {
     '  suiteMatch:',
     '    - tests/**/*.suite.yaml',
     '  hooksFile: hooks.yaml',
-    '  agentRules: agent-rules.md',
     '  envFile: .env',
     '  secretsFile: .env.secrets.local',
     'use:',
@@ -123,7 +130,7 @@ async function applyAnalyticsScopeConfig(content: string): Promise<void> {
     workspacePaths,
     testFileManager,
     suiteFileManager,
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
   })
 }
 
@@ -161,10 +168,10 @@ beforeEach(async () => {
         testMatch: ['tests/**/*.yaml'],
         suiteMatch: ['tests/**/*.suite.yaml'],
         hooksFile: 'hooks.yaml',
-        agentRules: 'agent-rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
     },
     configPath: join(testsDir, 'agent-qa.config.yaml'),
   })
@@ -187,27 +194,17 @@ afterEach(async () => {
 
 describe('GET /api/analytics/tests/:name', () => {
   it('returns scoped test metrics without changing all-run metrics', async () => {
-    insertRun({
-      id: randomUUID(),
-      name: 'Checkout flow',
-      status: 'passed',
-      duration: 1000,
-      attributes: { 'git.branch': 'phase223-main' },
-    })
-    insertRun({
-      id: randomUUID(),
-      name: 'Checkout flow',
-      status: 'failed',
-      duration: 1000,
-      attributes: { 'git.branch': 'phase223-main' },
-    })
-    insertRun({
-      id: randomUUID(),
-      name: 'Checkout flow',
-      status: 'failed',
-      duration: 1000,
-      attributes: { 'git.branch': 'dev' },
-    })
+    // 2026-10-17 (444-05, D-35): the test viewer reads member rows, so each run seeds its member.
+    for (const [status, branch] of [['passed', 'phase223-main'], ['failed', 'phase223-main'], ['failed', 'dev']] as const) {
+      const runId = insertRun({
+        id: randomUUID(),
+        name: 'Checkout flow',
+        status,
+        duration: 1000,
+        attributes: { 'git.branch': branch },
+      })
+      db.upsertRunMember({ runId, testIndex: 0, testId: 't_checkout', name: 'Checkout flow', filePath: 'tests/checkout.yaml', outcome: status })
+    }
     await applyAnalyticsScopeConfig([
       'analytics:',
       '  passRateScope:',
@@ -216,7 +213,7 @@ describe('GET /api/analytics/tests/:name', () => {
       '',
     ].join('\n'))
 
-    const res = await invokeRoute('/api/analytics/tests/Checkout%20flow')
+    const res = await invokeRoute('/api/analytics/tests/Checkout%20flow?testId=t_checkout')
     expect(res.status).toBe(200)
     const data = JSON.parse(res.body) as any
     expect(data.trends.passRate).toBe(1 / 3)
@@ -281,7 +278,7 @@ describe('GET /api/stats', () => {
 describe('GET /api/analytics/breakdowns', () => {
   it('returns ranked summary rows for dimension=test instead of raw runs', async () => {
     insertRun({ id: randomUUID(), name: 'Checkout flow', status: 'passed', duration: 1200 })
-    insertRun({ id: randomUUID(), name: 'Checkout flow', status: 'flaky', duration: 1400 })
+    insertRun({ id: randomUUID(), name: 'Checkout flow', status: 'healed', duration: 1400 })
     insertRun({ id: randomUUID(), name: 'Login flow', status: 'failed', duration: 2200 })
 
     const res = await invokeRoute('/api/analytics/breakdowns?dimension=test&limit=1')

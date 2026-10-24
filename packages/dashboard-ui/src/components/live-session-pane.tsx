@@ -10,7 +10,6 @@ import {
   Loader2,
   PlayCircle,
   RefreshCw,
-  Smartphone,
   Square,
   Terminal,
   Webhook,
@@ -18,8 +17,8 @@ import {
 } from "lucide-react"
 import { EditorAriaPanel } from "@/components/editor/aria-panel"
 import { EditorStepDetail } from "@/components/editor/editor-step-detail"
-import { ScreencastViewer } from "@/components/editor/screencast-viewer"
 import { EmptyState } from "@/components/empty-state"
+import { LivePreview } from "@/components/live-preview/live-preview"
 import { LiveModeAuthStateControl, type LiveModeAuthStateCaptureConfig } from "@/components/live-mode-auth-state-control"
 import { TabConsole } from "@/components/run-detail/tab-console"
 import { TabEnv } from "@/components/run-detail/tab-env"
@@ -51,7 +50,10 @@ interface LiveSessionPaneProps {
   targetName: string | null
   targetLabel: string | null
   platform: "web" | "android" | "ios"
-  screenshot: string | null
+  /** The live editor session the preview mints its view for; null before one exists. */
+  liveSessionId: string | null
+  /** The session is gone on the server (Plan 20 feeds this from the hook). */
+  sessionGone?: boolean
   currentUrl: string | null
   pendingNavigation: PendingNavigationState | null
   steps: EditorStep[]
@@ -85,18 +87,10 @@ interface LiveSessionPaneProps {
   executionUnit?: "step" | "test"
   runAllLabel?: string
   stopAllLabel?: string
+  /** Kept for the page callers; the pane no longer renders it (428 D-05). */
   liveSessionNumber?: number | null
   unitRowsSlot?: ReactNode
   authStateCapture?: LiveModeAuthStateCaptureConfig | null
-}
-
-const STATUS_META: Record<ConnectionState, { label: string; tone: string }> = {
-  idle: { label: "Ready", tone: "bg-muted-foreground/35" },
-  connecting: { label: "Connecting", tone: "bg-primary animate-pulse" },
-  connected: { label: "Connected", tone: "bg-emerald-500" },
-  executing: { label: "Executing", tone: "bg-primary animate-pulse" },
-  disconnected: { label: "Disconnected", tone: "bg-amber-500" },
-  error: { label: "Error", tone: "bg-destructive" },
 }
 
 function draftBadgeMeta(draftState: LiveSessionPaneProps["draftState"]): { label: string; className: string } {
@@ -308,7 +302,7 @@ function SelectedTestSummary({
 }: {
   test: EditorTest
   selectedStep: DisplayStep | null
-  subAction: NonNullable<DisplayStep["subActionsData"]>[number] | null
+  subAction: NonNullable<DisplayStep["liveSubActions"]>[number] | null
 }) {
   const displaySteps = test.liveSteps.map((stepDetail) => fromEditorStep(stepDetail, stepDetail.stepIndex))
 
@@ -362,7 +356,7 @@ function SelectedTestSummary({
           <div className="space-y-3">
             {displaySteps.map((step) => {
               const isSelectedStep = selectedStep?.id === step.id
-              const subActions = step.subActionsData ?? []
+              const subActions = step.liveSubActions ?? []
               return (
                 <div
                   key={step.id}
@@ -422,7 +416,8 @@ export function LiveSessionPane({
   targetName,
   targetLabel,
   platform,
-  screenshot,
+  liveSessionId,
+  sessionGone = false,
   currentUrl,
   pendingNavigation,
   steps,
@@ -456,7 +451,6 @@ export function LiveSessionPane({
   executionUnit = "step",
   runAllLabel,
   stopAllLabel,
-  liveSessionNumber = null,
   unitRowsSlot,
   authStateCapture = null,
 }: LiveSessionPaneProps) {
@@ -465,12 +459,6 @@ export function LiveSessionPane({
   const [isEditingAddress, setIsEditingAddress] = useState(false)
 
   const effectiveState: ConnectionState = isLaunching ? "connecting" : connectionState
-  const statusMeta = terminalState
-    ? {
-        label: terminalState.reason === "ended" ? "Ended" : "Disconnected",
-        tone: terminalState.reason === "ended" ? "bg-muted-foreground/45" : "bg-amber-500",
-      }
-    : STATUS_META[effectiveState]
 
   const displaySteps = useMemo(
     () => steps.map((step, index) => fromEditorStep(step, index)),
@@ -500,7 +488,7 @@ export function LiveSessionPane({
 
   const selectedLegacySubAction = useMemo(() => {
     if (selection?.type !== "subaction" || !selectedLegacyStep) return null
-    return selectedLegacyStep.subActionsData?.[selection.subIndex] ?? null
+    return selectedLegacyStep.liveSubActions?.[selection.subIndex] ?? null
   }, [selection, selectedLegacyStep])
 
   const selectedLegacyEditorStep = useMemo(
@@ -557,7 +545,7 @@ export function LiveSessionPane({
 
   const selectedSuiteSubAction = useMemo(() => {
     if (selection?.type !== "subaction" || !selectedSuiteStep) return null
-    return selectedSuiteStep.subActionsData?.[selection.subIndex] ?? null
+    return selectedSuiteStep.liveSubActions?.[selection.subIndex] ?? null
   }, [selection, selectedSuiteStep])
 
   const selectedTestDisplaySteps = useMemo(
@@ -586,16 +574,6 @@ export function LiveSessionPane({
     }
   }, [browserLabel, isEditingAddress])
 
-  const runningLabel = useMemo(() => {
-    if (suiteMode) {
-      const runningTest = tests.find((test) => test.status === "running")
-      return runningTest ? `Running ${runningTest.name}` : null
-    }
-    if (!runningStepId) return null
-    const runningStep = displaySteps.find((step) => step.id === runningStepId)
-    return runningStep ? `Running step ${runningStep.stepOrder + 1}` : "Running current step"
-  }, [displaySteps, runningStepId, suiteMode, tests])
-
   const handleCopyUrl = async () => {
     if (!browserLabel) return
     await navigator.clipboard.writeText(browserLabel)
@@ -614,6 +592,95 @@ export function LiveSessionPane({
     onNavigate(nextUrl)
   }
 
+  // THE EDITOR'S CONTROLS ARE THE PREVIEW'S CHROME ROW (428 D-02). A mobile session has none of
+  // them, so it passes nothing and the preview renders no empty row.
+  const previewChrome = platform === "web" ? (
+    <div className="flex min-w-0 flex-1 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onBack}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          aria-label="Go back"
+        >
+          <ChevronLeft className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onForward}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          aria-label="Go forward"
+        >
+          <ChevronRight className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onRefresh}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          aria-label="Refresh page"
+        >
+          <RefreshCw className="size-3.5" />
+        </Button>
+      </div>
+
+      <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border bg-background px-3 py-1">
+        {pendingNavigation ? (
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+        ) : (
+          <Globe className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <input
+          value={addressValue}
+          title={browserLabel}
+          onFocus={() => setIsEditingAddress(true)}
+          onBlur={() => {
+            setIsEditingAddress(false)
+            setAddressValue(browserLabel)
+          }}
+          onChange={(event) => setAddressValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault()
+              handleNavigate()
+            }
+            if (event.key === "Escape") {
+              event.preventDefault()
+              setIsEditingAddress(false)
+              setAddressValue(browserLabel)
+            }
+          }}
+          disabled={effectiveState === "executing" || effectiveState === "idle"}
+          className={cn(
+            "min-w-0 flex-1 bg-transparent text-sm outline-none",
+            isEditingAddress ? "text-left" : "text-center",
+          )}
+        />
+      </div>
+
+      <div className="flex shrink-0 items-center justify-end gap-1">
+        {showAuthStateCapture && authStateCapture && (
+          <LiveModeAuthStateControl
+            capture={authStateCapture}
+            disabled={effectiveState === "executing"}
+          />
+        )}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={handleCopyUrl}
+          disabled={!browserLabel}
+          aria-label={copied ? "URL copied" : "Copy URL"}
+          title={copied ? "URL copied" : "Copy URL"}
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </Button>
+      </div>
+    </div>
+  ) : null
+
   const showSelectionEmptyState = !suiteMode && Boolean(
     selection
     && selection.type !== "hook"
@@ -622,41 +689,14 @@ export function LiveSessionPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-card/30">
-      <div className="border-b px-4 py-3">
+      {/* THE LIVE HEADER (428 D-05): the target, the draft badge and the actions. Health is the
+          preview dot's alone, so there is no connection badge, session number or running label. */}
+      <div data-live-header className="border-b px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium">
-                {targetName || "Live Session"}
-              </span>
-              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                {statusMeta.label}
-              </Badge>
-              {(connectionState === "connected" || connectionState === "executing") && typeof liveSessionNumber === "number" && (
-                <Badge
-                  variant="outline"
-                  aria-live="polite"
-                  className="text-[10px] tracking-wider font-medium text-muted-foreground bg-muted/50 border-border/50"
-                >
-                  Session #{liveSessionNumber}
-                </Badge>
-              )}
-              {runningLabel && (
-                <span className="text-xs text-muted-foreground">
-                  {runningLabel}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {platform === "web" ? (
-                <Globe className="size-3.5 shrink-0" />
-              ) : (
-                <Smartphone className="size-3.5 shrink-0" />
-              )}
-              <span className="truncate" title={browserLabel}>
-                {browserLabel}
-              </span>
-            </div>
+            <span className="text-sm font-medium">
+              {targetName || "Live Session"}
+            </span>
             {errorMessage && !terminalState && (
               <div className="min-w-0 max-w-2xl text-xs text-destructive [overflow-wrap:anywhere]">
                 {errorMessage}
@@ -669,11 +709,6 @@ export function LiveSessionPane({
               <Badge variant="outline" className={cn("text-[10px]", draftMeta.className)}>
                 {draftMeta.label}
               </Badge>
-              {setupHooksStale && (
-                <Badge className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                  Restart required
-                </Badge>
-              )}
               {showRunAllToolbar && (
                 isRunningAll ? (
                   <Button
@@ -727,103 +762,6 @@ export function LiveSessionPane({
           </div>
         )}
 
-        {!terminalState && (
-          platform === "web" ? (
-            <div className="mt-3 flex items-center gap-2">
-              <div className="flex shrink-0 items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onBack}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  aria-label="Go back"
-                >
-                  <ChevronLeft className="size-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onForward}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  aria-label="Go forward"
-                >
-                  <ChevronRight className="size-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onRefresh}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  aria-label="Refresh page"
-                >
-                  <RefreshCw className="size-3.5" />
-                </Button>
-              </div>
-
-              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border bg-background px-3 py-2">
-                {pendingNavigation ? (
-                  <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                ) : (
-                  <Globe className="size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <input
-                  value={addressValue}
-                  title={browserLabel}
-                  onFocus={() => setIsEditingAddress(true)}
-                  onBlur={() => {
-                    setIsEditingAddress(false)
-                    setAddressValue(browserLabel)
-                  }}
-                  onChange={(event) => setAddressValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault()
-                      handleNavigate()
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault()
-                      setIsEditingAddress(false)
-                      setAddressValue(browserLabel)
-                    }
-                  }}
-                  disabled={effectiveState === "executing" || effectiveState === "idle"}
-                  className={cn(
-                    "min-w-0 flex-1 bg-transparent text-sm outline-none",
-                    isEditingAddress ? "text-left" : "text-center",
-                  )}
-                />
-              </div>
-
-              <div className="flex shrink-0 items-center justify-end gap-1">
-                {showAuthStateCapture && authStateCapture && (
-                  <LiveModeAuthStateControl
-                    capture={authStateCapture}
-                    disabled={effectiveState === "executing"}
-                  />
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={handleCopyUrl}
-                  disabled={!browserLabel}
-                  aria-label={copied ? "URL copied" : "Copy URL"}
-                  title={copied ? "URL copied" : "Copy URL"}
-                >
-                  {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {showEndSessionAction && (
-                <Button variant="destructive" size="sm" onClick={onEndSession}>
-                  <Square className="size-3.5" />
-                  End Live Session
-                </Button>
-              )}
-            </div>
-          )
-        )}
       </div>
 
       {executionUnit === "test" && unitRowsSlot}
@@ -872,11 +810,21 @@ export function LiveSessionPane({
                 </div>
               </div>
             </div>
-          ) : (
-            <ScreencastViewer
-              screenshot={screenshot}
-              connectionState={effectiveState}
+          ) : liveSessionId ? (
+            <LivePreview
+              subject={{
+                kind: "editor",
+                sessionId: liveSessionId,
+                sessionGone,
+                onStartFresh: onStartFreshSession ?? onEndSession,
+              }}
+              chrome={previewChrome}
             />
+          ) : (
+            <div className="flex h-full items-center justify-center gap-3 text-sm text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+              Connecting to browser...
+            </div>
           )}
         </ResizablePanel>
 

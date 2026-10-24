@@ -9,7 +9,6 @@ type SuiteAnalyticsDatabase = DashboardDatabase & {
   ) => Array<{
     id: string
     suiteId: string | null
-    parentRunId: string | null
     status: string
     duration: number
   }>
@@ -30,8 +29,9 @@ type SuiteAnalyticsDatabase = DashboardDatabase & {
 
 let db: DashboardDatabase
 
+// 2026-10-17 (444-05, D-41): a suite's history reads member suite ids, so each suite run seeds its member.
 function insertSampleRun(overrides: Record<string, unknown> = {}) {
-  return db.insertRun({
+  const run = {
     name: 'Alpha Suite',
     filePath: 'suites/alpha.suite.yaml',
     status: 'passed',
@@ -41,7 +41,10 @@ function insertSampleRun(overrides: Record<string, unknown> = {}) {
     platform: 'web',
     suiteId: 's_alpha',
     ...overrides,
-  })
+  }
+  const runId = db.insertRun(run)
+  db.upsertRunMember({ runId, testIndex: 0, testId: 't_alpha', name: 'Alpha Test', suiteId: run.suiteId, outcome: run.status })
+  return runId
 }
 
 function seedSuiteAnalyticsFixture() {
@@ -67,19 +70,12 @@ function seedSuiteAnalyticsFixture() {
     endedAt: '2026-03-03T10:00:02Z',
   })
 
-  db.insertRun({
-    id: 'suite-alpha-child',
-    name: 'Alpha Child Test',
-    filePath: 'tests/alpha-child.yaml',
-    status: 'failed',
-    duration: 750,
-    startedAt: '2026-03-02T09:30:00Z',
-    endedAt: '2026-03-02T09:30:01Z',
-    platform: 'web',
-    suiteId: 's_alpha',
-    parentRunId: middleSuiteRunId,
-    testId: 't_alpha-child',
-  })
+  // 2026-08-27 (405-07, D-02): the suite CHILD row this fixture used to seed is gone. It existed
+  // to prove the three readers below filtered it out, and the filter was a predicate over the run
+  // row's parent link — a column nothing has written since 402-09 put one row per run. A fixture
+  // that has to insert an impossible row to exercise a filter is measuring the fixture. The
+  // standalone-test and other-suite rows below still do the real work: they prove these readers
+  // answer for ONE suite id and not for every run in the database.
 
   db.insertRun({
     id: 'suite-alpha-dashboard-top-level',
@@ -93,7 +89,7 @@ function seedSuiteAnalyticsFixture() {
     testId: 't_alpha-standalone',
   })
 
-  db.insertRun({
+  insertSampleRun({
     id: 'suite-beta-1',
     name: 'Beta Suite',
     filePath: 'suites/beta.suite.yaml',
@@ -146,7 +142,6 @@ describe('DashboardDatabase suite analytics helpers', () => {
     ])
     expect(runs).toHaveLength(3)
     expect(runs.every((run) => run.suiteId === 's_alpha')).toBe(true)
-    expect(runs.every((run) => run.parentRunId === null)).toBe(true)
   })
 
   it('counts only the filtered top-level suite runs', () => {

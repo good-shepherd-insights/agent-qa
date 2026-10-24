@@ -38,6 +38,19 @@ const IOS_TWO_PICKER_WHEELS_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </XCUIElementTypeApplication>
 </AppiumAUT>`
 
+const IOS_SHEET_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<AppiumAUT>
+  <XCUIElementTypeApplication type="XCUIElementTypeApplication" name="Bluesky" label="Bluesky" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0">
+    <XCUIElementTypeWindow type="XCUIElementTypeWindow" enabled="true" visible="true" accessible="false" x="0" y="0" width="402" height="874" index="0">
+      <XCUIElementTypeOther type="XCUIElementTypeOther" enabled="true" visible="true" accessible="false" x="0" y="474" width="402" height="400" index="0">
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownMuteBtn" label="Mute account" enabled="true" visible="true" accessible="true" x="31" y="715" width="340" height="43" index="4" traits=""/>
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownBlockBtn" label="Block account" enabled="true" visible="true" accessible="true" x="31" y="758" width="340" height="43" index="5" traits=""/>
+        <XCUIElementTypeOther type="XCUIElementTypeOther" name="profileHeaderDropdownReportBtn" label="Report account" enabled="true" visible="true" accessible="true" x="31" y="801" width="340" height="43" index="6" traits=""/>
+      </XCUIElementTypeOther>
+    </XCUIElementTypeWindow>
+  </XCUIElementTypeApplication>
+</AppiumAUT>`
+
 const SCREENSHOT_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 function createMockPointerAction() {
@@ -50,10 +63,13 @@ function createMockPointerAction() {
   return chain
 }
 
+const WDIO_DEEP_LINK_REJECTION =
+  'The provided link is not a valid deep link URL. If your url is a `universal deep link` then use the `url` command instead.'
+
 function createMockDriver() {
   const pointerAction = createMockPointerAction()
 
-  return {
+  const driver = {
     getPageSource: vi.fn().mockResolvedValue(IOS_XML),
     getWindowSize: vi.fn().mockResolvedValue({ width: 390, height: 844 }),
     takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
@@ -65,12 +81,20 @@ function createMockDriver() {
     activateApp: vi.fn().mockResolvedValue(undefined),
     terminateApp: vi.fn().mockResolvedValue(undefined),
     execute: vi.fn().mockResolvedValue(undefined),
-    deepLink: vi.fn().mockResolvedValue(undefined),
+    // WebdriverIO 9.24's built-in deepLink: rejects http(s) and scheme-less links on the client.
+    deepLink: vi.fn(async (link: string, appIdentifier?: string): Promise<unknown> => {
+      if (!/^(?!https?:\/\/)[a-zA-Z][\w+\-.]*:\/\//.test(link)) throw new Error(WDIO_DEEP_LINK_REJECTION)
+      if (!appIdentifier) {
+        throw new Error('When using a deep link URL for iOS, you need to provide the `bundleId` of the app that the deep link should open.')
+      }
+      return driver.execute('mobile:deepLink', { url: link, bundleId: appIdentifier })
+    }),
     url: vi.fn().mockRejectedValue(new Error('not supported')),
     $: vi.fn().mockResolvedValue({ clearValue: vi.fn(), setValue: vi.fn() }),
     $$: vi.fn().mockResolvedValue([]),
     _pointerAction: pointerAction,
   }
+  return driver
 }
 
 vi.mock('webdriverio', () => ({
@@ -78,7 +102,8 @@ vi.mock('webdriverio', () => ({
 }))
 
 import { IOSPlatformAdapter } from '../adapter.js'
-import type { PlatformConfig } from '@vostride/agent-qa-core'
+import type { PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
+import type { LiveFrame } from '@vostride/agent-qa-schema'
 import zlib from 'node:zlib'
 
 // --- PNG helpers (avoids adding sharp as ios dep per Pitfall 5) ---
@@ -311,17 +336,67 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
 
+      expect(state.platform).toBe('ios')
       expect(state.tree).toContain('text "Welcome"')
       expect(state.tree).toContain('textbox "Email"')
       expect(state.tree).toContain('textbox "Password"')
       expect(state.tree).toContain('button "Log In"')
       expect(state.elements.length).toBeGreaterThanOrEqual(5)
       expect(state.timestamp).toBeGreaterThan(0)
-      expect(state.metadata.refMap).toBeDefined()
+      expect(state.refMap).toBeDefined()
+      expect(state.metadata.captureMode).toBe('textOnly')
     })
 
     it('throws if adapter not initialized', async () => {
       await expect(adapter.observe()).rejects.toThrow('not initialized')
+    })
+  })
+
+  describe('C437-TREE-TOGGLE — adapter-level iOS tree', () => {
+    it('a switch with value "1" renders [checked] and one with value "0" does not', async () => {
+      mockDriver.getPageSource.mockResolvedValue(
+        IOS_XML.replace('label="Stay signed in" value="0"', 'label="Stay signed in" value="1"'),
+      )
+      await adapter.setup({ platform: 'ios' })
+      const on = await adapter.observe()
+      expect(on.tree).toContain('- switch "Stay signed in" [ref=e5] @(50,400 290x40) [checked]')
+
+      mockDriver.getPageSource.mockResolvedValue(IOS_XML)
+      const off = await adapter.observe()
+      expect(off.tree).toContain('- switch "Stay signed in" [ref=e5] @(50,400 290x40)\n')
+      expect(off.tree).not.toContain('[checked]')
+    })
+  })
+
+  describe('observe — accessible labelled Others (P4)', () => {
+    it('observes the Bluesky sheet row as a button and taps its centre', async () => {
+      mockDriver.getPageSource.mockResolvedValue(IOS_SHEET_XML)
+      mockDriver.getWindowSize.mockResolvedValue({ width: 402, height: 874 })
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+
+      expect(state.tree).toContain('button "Mute account" [ref=')
+      expect(state.tree).toContain('button "Block account" [ref=')
+      expect(state.tree).toContain('button "Report account" [ref=')
+
+      const mute = state.elements.find(e => e.name === 'Mute account')!
+      const result = await adapter.execute({ type: 'tap', ref: mute.ref })
+      expect(result.success).toBe(true)
+      // 31 + 340/2 = 201, 715 + 43/2 = 736.5 → 737
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 201, y: 737 })
+    })
+
+    it('leaves the login fixture (unflagged full-screen Other) unchanged', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+      expect(state.elements.map(e => e.name)).toEqual([
+        'Welcome',
+        'Email',
+        'Password',
+        'Log In',
+        'Stay signed in',
+        'Logo',
+      ])
     })
   })
 
@@ -346,20 +421,72 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
+  // C437-IOS-TAP-HOLD (437-09): a zero-duration touch flipped an iOS 27 Settings switch knob 2 of
+  // 11 times live; the same touch held 100 ms between down and up flipped it every time.
+  describe('C437-IOS-TAP-HOLD — single taps hold the touch between down and up', () => {
+    function chainSteps(): string[] {
+      const chain = mockDriver._pointerAction
+      const steps: Array<[number, string]> = []
+      for (const name of ['move', 'down', 'pause', 'up'] as const) {
+        const fn = chain[name] as ReturnType<typeof vi.fn>
+        fn.mock.calls.forEach((args: unknown[], i: number) => {
+          steps.push([fn.mock.invocationCallOrder[i], name === 'pause' ? `pause:${String(args[0])}` : name])
+        })
+      }
+      return steps.sort((a, b) => a[0] - b[0]).map(([, step]) => step)
+    }
+
+    it('a ref tap is move, down, pause 100, up', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+      const logIn = state.elements.find(e => e.name === 'Log In')
+      const result = await adapter.execute({ type: 'tap', ref: logIn!.ref })
+      expect(result.success).toBe(true)
+      expect(chainSteps()).toEqual(['move', 'down', 'pause:100', 'up'])
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 195, y: 345 })
+    })
+
+    it('a coordinate tap is move, down, pause 100, up', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
+      expect(result.success).toBe(true)
+      expect(chainSteps()).toEqual(['move', 'down', 'pause:100', 'up'])
+      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 100, y: 200 })
+    })
+
+    it('a double tap keeps its own unheld chain', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const state = await adapter.observe()
+      const logIn = state.elements.find(e => e.name === 'Log In')
+      const result = await adapter.execute({ type: 'doubleTap', ref: logIn!.ref })
+      expect(result.success).toBe(true)
+      expect(chainSteps()).toEqual(['move', 'down', 'up', 'pause:50', 'down', 'up'])
+    })
+  })
+
   describe('execute — fill', () => {
-    it('taps to focus then types via element setValue', async () => {
+    it('taps to focus then types the schema Fill compound via element setValue', async () => {
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
 
       const emailEl = state.elements.find(e => e.name === 'Email')
       expect(emailEl).toBeDefined()
 
-      // Mock the $() element finder that fill uses after tap-to-focus
-      const mockElement = { clearValue: vi.fn(), setValue: vi.fn() }
-      mockDriver.$ = vi.fn().mockResolvedValue(mockElement)
+      // Mock the own-element lookup ($$ by type + rect) and the keyboard-focus read the fill
+      // compound uses after tap-to-focus. The element has no getAttribute, so the re-read
+      // degrades to undefined ⇒ success with no fillReread, recorded unverified.
+      const mockElement = { elementId: 'email', isExisting: vi.fn().mockResolvedValue(true), clearValue: vi.fn(), setValue: vi.fn() }
+      mockDriver.$$ = vi.fn().mockImplementation((selector: string) =>
+        Promise.resolve(selector === '-ios class chain:**/XCUIElementTypeTextField' ? [mockElement] : []))
+      Object.assign(mockDriver, {
+        getElementRect: vi.fn().mockResolvedValue({ x: 50, y: 180, width: 290, height: 44 }),
+        getActiveElement: vi.fn().mockResolvedValue({ 'element-6066-11e4-a52e-4f735a1b0f2d': 'email' }),
+      })
 
-      const result = await adapter.execute({ type: 'fill', ref: emailEl!.ref, value: 'user@test.com' })
+      const result = await adapter.execute({ type: 'fill', ref: emailEl!.ref, text: 'user@test.com', clearMode: 'replace', submit: false })
       expect(result.success).toBe(true)
+      expect(mockElement.setValue).toHaveBeenCalledWith('user@test.com')
+      expect(result.metadata).toEqual({ fillVerdict: { verb: 'fill', verdict: 'unverified' } })
 
       // Tap to focus fires a pointer action
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
@@ -371,7 +498,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_PICKER_WHEEL_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const pickerWheelEl = state.elements.find(e => e.attributes.nativeType === 'XCUIElementTypePickerWheel')
+      const pickerWheelEl = state.elements.find(e => e.role === 'pickerwheel')
       expect(pickerWheelEl).toBeDefined()
 
       const pickerWheel = {
@@ -392,7 +519,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_TWO_PICKER_WHEELS_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const wheelRefs = state.elements.filter(e => e.attributes.nativeType === 'XCUIElementTypePickerWheel')
+      const wheelRefs = state.elements.filter(e => e.role === 'pickerwheel')
       expect(wheelRefs).toHaveLength(2)
 
       const firstWheel = {
@@ -416,7 +543,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_PICKER_CONTAINER_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const pickerEl = state.elements.find(e => e.attributes.nativeType === 'XCUIElementTypePicker')
+      const pickerEl = state.elements.find(e => e.role === 'combobox')
       expect(pickerEl).toBeDefined()
 
       const pickerWheel = {
@@ -436,7 +563,7 @@ describe('IOSPlatformAdapter', () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_PICKER_CONTAINER_XML)
       await adapter.setup({ platform: 'ios' })
       const state = await adapter.observe()
-      const pickerEl = state.elements.find(e => e.attributes.nativeType === 'XCUIElementTypePicker')
+      const pickerEl = state.elements.find(e => e.role === 'combobox')
 
       mockDriver.$$ = vi.fn().mockResolvedValue([
         { setValue: vi.fn() },
@@ -462,34 +589,23 @@ describe('IOSPlatformAdapter', () => {
       expect(result.error).toContain('tap, swipe, or tapCoordinate')
     })
 
-    it('keeps native select from reporting tap-only success', async () => {
-      mockDriver.getPageSource.mockResolvedValue(IOS_PICKER_WHEEL_XML)
-      await adapter.setup({ platform: 'ios' })
-      const state = await adapter.observe()
-      const pickerWheelEl = state.elements.find(e => e.attributes.nativeType === 'XCUIElementTypePickerWheel')
-
-      const result = await adapter.execute({ type: 'select', ref: pickerWheelEl!.ref, value: 'March' })
-
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('select is for HTML dropdowns')
-      expect(result.error).toContain('nativeSelect')
-    })
   })
 
   describe('execute — scroll', () => {
-    it('performs swipe gesture in the specified direction', async () => {
+    it('performs a schema-Scroll direction gesture and carries scrollUntilVisible metadata', async () => {
       await adapter.setup({ platform: 'ios' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: -500 })
+      const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'page', retryOpposite: false })
       expect(result.success).toBe(true)
 
+      // ONE ActionResult carries the compound outcome on metadata. iOS swipes prove nothing about
+      // movement, so a direction gesture is one swipe that stays unresolved.
+      expect(result.metadata?.scrollUntilVisible).toEqual({ swipes: 1, reversedOnce: false, outcome: 'unresolved', endedBy: 'max-swipes' })
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(1)
+      // A page-sized inverted-finger swipe fired via the pointer action.
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
-      // viewport: 390x844, center: 195,422
-      // scroll up (value=-500): startY=center=422, endY=center-(-500)=922
-      // finger swipes down (422→922) which scrolls content up
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 195, y: 422 })
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 195, y: 922, duration: 300 })
+      expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
     })
   })
 
@@ -519,90 +635,396 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('execute — unsupported actions', () => {
-    it('navigate returns error', async () => {
-      await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'navigate', url: 'https://example.com' })
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('not supported')
+  describe('execute — openUniversalLink (re-key of openLink, D-19)', () => {
+    const LINK = 'https://bsky.app/hashtag/caturday'
+    const APP = 'xyz.blueskyweb.app'
+    const OTHER = 'com.example.other'
+    const SAFARI = 'com.apple.mobilesafari'
+    const SPRINGBOARD = 'com.apple.springboard'
+
+    // Scripts the foreground: the first entry answers the read before the open, the rest answer
+    // the hand-off reads in order, and the last entry repeats. An Error entry makes that read throw.
+    function scriptForeground(
+      reads: Array<string | Error | Record<string, unknown>>,
+      opts: { deepLinkError?: Error } = {},
+    ) {
+      const queue = [...reads]
+      mockDriver.execute.mockImplementation(async (cmd: string) => {
+        if (cmd === 'mobile: deepLink' && opts.deepLinkError) throw opts.deepLinkError
+        if (cmd !== 'mobile: activeAppInfo') return undefined
+        const next = queue.length > 1 ? queue.shift()! : queue[0]
+        if (next instanceof Error) throw next
+        if (typeof next === 'string') {
+          return { bundleId: next, name: 'App', pid: 1, processArguments: { args: ['--token=PROCESS_SECRET'] } }
+        }
+        return next
+      })
+    }
+
+    const foregroundReads = () =>
+      mockDriver.execute.mock.calls.filter(c => c[0] === 'mobile: activeAppInfo').length
+    const deepLinkExecutes = () =>
+      mockDriver.execute.mock.calls.filter(c => c[0] === 'mobile: deepLink')
+
+    beforeEach(() => {
+      mockDriver.url.mockResolvedValue(undefined)
     })
 
-    it('hover returns error', async () => {
-      await adapter.setup({ platform: 'ios' })
-      const state = await adapter.observe()
-      const el = state.elements[0]
-      const result = await adapter.execute({ type: 'hover', ref: el.ref })
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('web-only')
+    afterEach(() => {
+      expect(mockDriver.deepLink).not.toHaveBeenCalled()
     })
-  })
 
-  describe('execute — openLink', () => {
-    it('passes explicit iOS bundle id to the deep-link helper', async () => {
-      await adapter.setup({ platform: 'ios' })
+    describe('explicit bundle id', () => {
+      it('opens an https link in the named app through mobile: deepLink, with no hand-off check', async () => {
+        await adapter.setup({ platform: 'ios' })
 
-      const result = await adapter.execute({
-        type: 'openLink',
-        url: 'wdio://forms',
-        bundleId: 'org.reactjs.native.example.wdiodemoapp',
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK, bundleId: APP })
+
+        expect(result).toEqual({ success: true })
+        expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', { url: LINK, bundleId: APP })
+        expect(foregroundReads()).toBe(0)
+        expect(mockDriver.url).not.toHaveBeenCalled()
+        expect(mockDriver.pause).not.toHaveBeenCalled()
       })
 
-      expect(result.success).toBe(true)
-      expect(mockDriver.deepLink).toHaveBeenCalledWith(
-        'wdio://forms',
-        'org.reactjs.native.example.wdiodemoapp',
-        true,
-      )
-    })
+      it.each([
+        ['wdio://forms', 'org.reactjs.native.example.wdiodemoapp'],
+        ['wdio://swipe', 'org.wdiodemoapp'],
+      ])('opens the custom-scheme link %s in %s through mobile: deepLink', async (url, bundleId) => {
+        await adapter.setup({ platform: 'ios' })
 
-    it('ignores empty appId and uses explicit iOS bundle id for deep links', async () => {
-      await adapter.setup({ platform: 'ios' })
+        const result = await adapter.execute({ type: 'openUniversalLink', url, bundleId })
 
-      const result = await adapter.execute({
-        type: 'openLink',
-        url: 'wdio://swipe',
-        appId: '',
-        bundleId: 'org.wdiodemoapp',
+        expect(result.success).toBe(true)
+        expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', { url, bundleId })
+        expect(foregroundReads()).toBe(0)
+        expect(mockDriver.url).not.toHaveBeenCalled()
       })
 
-      expect(result.success).toBe(true)
-      expect(mockDriver.deepLink).toHaveBeenCalledWith(
-        'wdio://swipe',
-        'org.wdiodemoapp',
-        true,
-      )
+      it('opens the link in Safari when com.apple.mobilesafari is named, with no hand-off check', async () => {
+        await adapter.setup({ platform: 'ios' })
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK, bundleId: SAFARI })
+
+        expect(result.success).toBe(true)
+        expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', { url: LINK, bundleId: SAFARI })
+        expect(foregroundReads()).toBe(0)
+        expect(mockDriver.url).not.toHaveBeenCalled()
+        expect(mockDriver.pause).not.toHaveBeenCalled()
+      })
+
+      it('reports the named app and the cause when the open fails, without falling back', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP], { deepLinkError: new Error('app is not installed') })
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK, bundleId: APP })
+
+        expect(result).toEqual({
+          success: false,
+          error: `Failed to open universal link ${LINK} in iOS app ${APP}: app is not installed`,
+        })
+        expect(mockDriver.url).not.toHaveBeenCalled()
+      })
     })
 
-    it('falls back to setup bundle id for deep links', async () => {
-      await adapter.setup({ platform: 'ios', bundleId: 'org.reactjs.native.example.wdiodemoapp' })
-      mockDriver.deepLink.mockClear()
+    describe('configured bundle id', () => {
+      it('opens an https link in the configured app through mobile: deepLink', async () => {
+        await adapter.setup({ platform: 'ios', bundleId: APP })
+        mockDriver.activateApp.mockClear()
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wdio://drag' })
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
 
-      expect(result.success).toBe(true)
-      expect(mockDriver.deepLink).toHaveBeenCalledWith(
-        'wdio://drag',
-        'org.reactjs.native.example.wdiodemoapp',
-        true,
-      )
+        expect(result.success).toBe(true)
+        expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', { url: LINK, bundleId: APP })
+        expect(mockDriver.url).not.toHaveBeenCalled()
+        expect(foregroundReads()).toBe(0)
+      })
+
+      it('falls back to system routing when the configured open fails, and checks the hand-off', async () => {
+        await adapter.setup({ platform: 'ios', bundleId: APP })
+        mockDriver.activateApp.mockClear()
+        scriptForeground([APP, APP], { deepLinkError: new Error('scoped open refused\nstack line') })
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(true)
+        expect(deepLinkExecutes()).toEqual([['mobile: deepLink', { url: LINK, bundleId: APP }]])
+        expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+        expect(foregroundReads()).toBeGreaterThanOrEqual(2)
+        expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      })
+
+      it('names the configured app and its error when the system open fails too', async () => {
+        await adapter.setup({ platform: 'ios', bundleId: APP })
+        scriptForeground([APP], { deepLinkError: new Error('scoped open refused\nstack line') })
+        mockDriver.url.mockRejectedValue(new Error('openurl failed\nmore'))
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain(LINK)
+        expect(result.error).toContain('openurl failed')
+        expect(result.error).toContain(APP)
+        expect(result.error).toContain('scoped open refused')
+        expect(result.error).not.toContain('stack line')
+        expect(result.error).not.toContain('more')
+      })
+
+      it('opens a custom-scheme link in the configured app through mobile: deepLink', async () => {
+        await adapter.setup({ platform: 'ios', bundleId: 'org.reactjs.native.example.wdiodemoapp' })
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: 'wdio://drag' })
+
+        expect(result.success).toBe(true)
+        expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', {
+          url: 'wdio://drag',
+          bundleId: 'org.reactjs.native.example.wdiodemoapp',
+        })
+        expect(mockDriver.url).not.toHaveBeenCalled()
+      })
     })
 
     it('fails native-scheme links when no iOS bundle id is available', async () => {
       await adapter.setup({ platform: 'ios' })
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wdio://forms' })
+      const result = await adapter.execute({ type: 'openUniversalLink', url: 'wdio://forms' })
 
       expect(result.success).toBe(false)
-      expect(result.error).toContain('Missing iOS bundle id')
+      expect(result.error).toBe('Missing iOS bundle id for native deep link: wdio://forms')
+      expect(mockDriver.execute).not.toHaveBeenCalled()
+      expect(mockDriver.url).not.toHaveBeenCalled()
+    })
+
+    describe('system routing (no bundle id given or configured)', () => {
+      it.each([
+        ['no bundleId', {}],
+        ['an empty bundleId', { bundleId: '' }],
+      ])('lets the app that claims the link open it, with %s', async (_label, extra) => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, APP])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK, ...extra })
+
+        expect(result).toEqual({ success: true })
+        expect(mockDriver.url).toHaveBeenCalledTimes(1)
+        expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+        expect(mockDriver.pause.mock.calls.length).toBeLessThanOrEqual(12)
+        expect(deepLinkExecutes()).toEqual([])
+        expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      })
+
+      it('succeeds after one pause when iOS hands the link to another app', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, OTHER])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(true)
+        expect(mockDriver.pause).toHaveBeenCalledTimes(1)
+        expect(mockDriver.pause).toHaveBeenCalledWith(500)
+        expect(foregroundReads()).toBe(2)
+        expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      })
+
+      it('fails and returns to the previous app when iOS opens the link in Safari', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, APP, SAFARI])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain(LINK)
+        expect(result.error).toContain('Safari')
+        expect(result.error).toContain(APP)
+        expect(result.error).toContain('bundleId')
+        expect(result.error).not.toContain('PROCESS_SECRET')
+        expect(result.error!.endsWith(`Returned to ${APP}.`)).toBe(true)
+        expect(mockDriver.pause).toHaveBeenCalledTimes(2)
+        expect(mockDriver.activateApp).toHaveBeenCalledWith(APP)
+        expect(deepLinkExecutes()).toEqual([])
+      })
+
+      it('says so when the previous app cannot be re-activated', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, SAFARI])
+        mockDriver.activateApp.mockRejectedValue(new Error('activation refused\ndetail'))
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error!.endsWith(`Could not return to ${APP}: activation refused.`)).toBe(true)
+      })
+
+      it('decides on the first decisive read: Safari then an app fails after one pause', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, SAFARI, OTHER])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('Safari')
+        expect(mockDriver.pause).toHaveBeenCalledTimes(1)
+        expect(foregroundReads()).toBe(2)
+        expect(mockDriver.activateApp).toHaveBeenCalledWith(APP)
+      })
+
+      it('never decides on a SpringBoard read: SpringBoard then Safari fails after two pauses', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, SPRINGBOARD, SAFARI])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('Safari')
+        expect(mockDriver.pause).toHaveBeenCalledTimes(2)
+        expect(foregroundReads()).toBe(3)
+        expect(mockDriver.activateApp).toHaveBeenCalledWith(APP)
+      })
+
+      it('polls to the bound when no read is decisive, and the last read decides', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(true)
+        expect(mockDriver.pause).toHaveBeenCalledTimes(12)
+        expect(foregroundReads()).toBe(13)
+      })
+
+      it('catches a cold Safari launch that comes to the front after about 3.5 s', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, APP, APP, APP, APP, APP, APP, SAFARI])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain(`iOS opened ${LINK} in Safari`)
+        expect(mockDriver.pause).toHaveBeenCalledTimes(7)
+        expect(foregroundReads()).toBe(8)
+        expect(mockDriver.activateApp).toHaveBeenCalledWith(APP)
+      })
+
+      it('never scopes to SpringBoard: from the home screen to Safari fails without re-activating', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([SPRINGBOARD, SAFARI])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain('Safari')
+        expect(result.error).toContain(SPRINGBOARD)
+        expect(result.error).not.toContain('Returned to')
+        expect(result.error).not.toContain('Could not return')
+        expect(mockDriver.activateApp).not.toHaveBeenCalled()
+        expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+        expect(deepLinkExecutes()).toEqual([])
+      })
+
+      it('succeeds with no polls when Safari is already in front', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([SAFARI])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(true)
+        expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+        expect(foregroundReads()).toBe(1)
+        expect(mockDriver.pause).not.toHaveBeenCalled()
+        expect(deepLinkExecutes()).toEqual([])
+      })
+
+      it.each([
+        ['activeAppInfo rejects', new Error('unknown command')],
+        ['activeAppInfo has no bundle id', {}],
+      ])('opens through the system handler with no polls when %s', async (_label, info) => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([info])
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(true)
+        expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+        expect(foregroundReads()).toBe(1)
+        expect(mockDriver.pause).not.toHaveBeenCalled()
+      })
+
+      it('fails naming the URL and the cause when the system open rejects', async () => {
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP])
+        mockDriver.url.mockRejectedValue(new Error('simctl openurl failed\nstderr tail'))
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(result.success).toBe(false)
+        expect(result.error).toContain(LINK)
+        expect(result.error).toContain('simctl openurl failed')
+        expect(result.error).not.toContain('stderr tail')
+        expect(mockDriver.pause).not.toHaveBeenCalled()
+      })
+
+      it('takes system routing after a WEBVIEW read, because every action runs from NATIVE_APP', async () => {
+        Object.assign(mockDriver, {
+          getContexts: vi.fn().mockResolvedValue(['NATIVE_APP', 'WEBVIEW_1']),
+          switchContext: vi.fn().mockResolvedValue(undefined),
+        })
+        await adapter.setup({ platform: 'ios' })
+        scriptForeground([APP, APP])
+        await adapter.execute({ type: 'assertValue', expr: '1', op: 'isDefined' })
+        const switchContext = (mockDriver as unknown as { switchContext: ReturnType<typeof vi.fn> }).switchContext
+        expect(switchContext).toHaveBeenLastCalledWith('WEBVIEW_1')
+
+        const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+        expect(switchContext).toHaveBeenLastCalledWith('NATIVE_APP')
+        expect(result.success).toBe(true)
+        expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+        expect(deepLinkExecutes()).toEqual([])
+      })
+    })
+
+    it('uses driver.url in a BrowserStack browser session without querying the foreground app', async () => {
+      await adapter.setup({
+        platform: 'ios',
+        device: { name: 'iPhone 15', platform: 'ios', transport: 'browserstack', match: { browserName: 'Safari' } },
+        farmSession: {
+          hostname: 'hub-cloud.browserstack.com',
+          port: 443,
+          path: '/wd/hub',
+          capabilities: { 'appium:browserName': 'Safari' },
+        },
+      })
+
+      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
+
+      expect(result.success).toBe(true)
+      expect(mockDriver.url).toHaveBeenCalledWith(LINK)
+      expect(foregroundReads()).toBe(0)
+      expect(mockDriver.pause).not.toHaveBeenCalled()
     })
   })
 
-  describe('execute — waitFor', () => {
-    it('pauses for specified timeout', async () => {
+  describe('execute — waitFor (schema on-modes replace legacy condition/timeout)', () => {
+    it('on:"selector" returns a §7.1 web-only error on native iOS', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'waitFor', condition: 'loading', timeout: 2000 })
+      const result = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 })
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/web|selector/i)
+    })
+
+    it('on:"text" succeeds immediately when the text is already in the page source', async () => {
+      await adapter.setup({ platform: 'ios' })
+      mockDriver.getPageSource.mockResolvedValue('<XCUIElementTypeStaticText value="Ready" />')
+      const result = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Ready', timeoutMs: 2000 })
       expect(result.success).toBe(true)
-      expect(mockDriver.pause).toHaveBeenCalledWith(2000)
+    })
+
+    it('on:"text" times out with a §7.1 error when the text never appears', async () => {
+      await adapter.setup({ platform: 'ios' })
+      mockDriver.getPageSource.mockResolvedValue('<XCUIElementTypeOther />')
+      const result = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Never', timeoutMs: 20 })
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/did not appear/i)
     })
   })
 
@@ -615,10 +1037,10 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('execute — keypress', () => {
+  describe('execute — keypress (schema mode gate: press-only on mobile)', () => {
     it('sends mapped key code for single key', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(1)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE003'])
@@ -626,7 +1048,7 @@ describe('IOSPlatformAdapter', () => {
 
     it('iterates multiple keys in order with KEY_MAP lookup', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace', 'Space', 'ArrowLeft'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace', 'Space', 'ArrowLeft'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(3)
       expect(mockDriver.keys).toHaveBeenNthCalledWith(1, ['\uE003'])
@@ -636,24 +1058,25 @@ describe('IOSPlatformAdapter', () => {
 
     it('falls back to raw string when key is not in KEY_MAP', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['x'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['x'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['x'])
     })
 
     it('ignores convertPlatformKeys flag (no-op on mobile)', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'], convertPlatformKeys: false })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Backspace'], mode: 'press', convertPlatformKeys: false })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE003'])
     })
   })
 
-  describe('execute — assert', () => {
-    it('returns success (handled by agent core)', async () => {
+  describe('execute — keypress hold/release gate', () => {
+    it('mode:"down"/"up" (key hold/release) returns a §7.1 press-only error', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'assert', condition: 'element visible' })
-      expect(result.success).toBe(true)
+      const up = await adapter.execute({ type: 'keypress', keys: ['Shift'], mode: 'up' })
+      expect(up.success).toBe(false)
+      expect(up.error).toMatch(/press|web-only|hold/i)
     })
   })
 
@@ -695,22 +1118,10 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'swipe', direction: 'right' })
+      const result = await adapter.execute({ type: 'swipe', mode: 'direction', direction: 'right', durationMs: 300 })
       expect(result.success).toBe(true)
 
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
-      expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
-    })
-  })
-
-  describe('execute — click (alias for tap)', () => {
-    it('performs tap for click action', async () => {
-      await adapter.setup({ platform: 'ios' })
-      const state = await adapter.observe()
-      const el = state.elements.find(e => e.name === 'Log In')
-
-      const result = await adapter.execute({ type: 'click', ref: el!.ref })
-      expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
     })
   })
@@ -762,7 +1173,7 @@ describe('IOSPlatformAdapter', () => {
   describe('execute — coordinate passthrough (tapCoordinate, swipe, pinch, multiTap)', () => {
     it('tapCoordinate passes LLM coords directly to driver', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 100, y: 200 })
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
@@ -770,7 +1181,7 @@ describe('IOSPlatformAdapter', () => {
 
     it('tapCoordinate passes arbitrary coords unchanged', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 200, y: 400 })
       expect(result.coordinates).toEqual({ x: 200, y: 400 })
@@ -780,8 +1191,9 @@ describe('IOSPlatformAdapter', () => {
       await adapter.setup({ platform: 'ios' })
       const result = await adapter.execute({
         type: 'swipe',
-        direction: 'up',
-        startX: 100, startY: 200, endX: 300, endY: 400,
+        mode: 'path',
+        from: { x: 100, y: 200 }, to: { x: 300, y: 400 },
+        coordSpace: 'viewport', durationMs: 300,
       })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenNthCalledWith(1, { x: 100, y: 200 })
@@ -792,21 +1204,65 @@ describe('IOSPlatformAdapter', () => {
 
     it('pinch center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
     })
 
     it('multiTap center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
     })
 
     it('large coords pass through unchanged (viewport-space contract)', async () => {
       await adapter.setup({ platform: 'ios' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 800, y: 400 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 800, y: 400, coordSpace: 'viewport' })
       expect(result.coordinates).toEqual({ x: 800, y: 400 })
+    })
+  })
+
+  describe('liveStream (428 D-11)', () => {
+    function contextSpies() {
+      const spies = {
+        getContext: vi.fn().mockResolvedValue('NATIVE_APP'),
+        switchContext: vi.fn().mockResolvedValue(undefined),
+        getWindowSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
+        takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
+      }
+      Object.assign(mockDriver, spies)
+      return spies
+    }
+
+    it('LIVE-STREAM-IS-CONTEXT-NEUTRAL-SNAPSHOT: snapshots come from takeScreenshot alone, never a context switch', async () => {
+      await adapter.setup({ platform: 'ios' })
+      const spies = contextSpies()
+      const stream = (adapter as PlatformAdapter<'ios'>).liveStream
+      expect(stream?.kind).toBe('snapshot')
+      const frames: LiveFrame[] = []
+      await stream!.start((frame) => frames.push(frame))
+      await vi.waitFor(() => expect(frames).toHaveLength(1))
+      await stream!.stop()
+      expect(Buffer.from(frames[0].bytes).toString('base64')).toBe(SCREENSHOT_BASE64)
+      expect(frames[0].kind).toBe('snapshot')
+      expect(spies.takeScreenshot).toHaveBeenCalledTimes(1)
+      expect(spies.switchContext, 'a tick must never move the session under a running step').not.toHaveBeenCalled()
+      expect(spies.getContext).not.toHaveBeenCalled()
+      expect(spies.getWindowSize).not.toHaveBeenCalled()
+    })
+
+    it('the getter answers one capability, before the driver exists too, and cleanup() stops and drops it', async () => {
+      const early = (adapter as PlatformAdapter<'ios'>).liveStream
+      expect(early?.kind, 'declared before setup, so selection never reaches screenshot()').toBe('snapshot')
+      await adapter.setup({ platform: 'ios' })
+      const stream = (adapter as PlatformAdapter<'ios'>).liveStream
+      expect(stream).toBe(early)
+      expect((adapter as PlatformAdapter<'ios'>).liveStream).toBe(stream)
+      const stop = vi.spyOn(stream!, 'stop')
+      await stream!.start(() => {})
+      await adapter.cleanup()
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect((adapter as PlatformAdapter<'ios'>).liveStream).not.toBe(stream)
     })
   })
 })

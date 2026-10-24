@@ -1,7 +1,8 @@
 import { XMLParser } from 'fast-xml-parser'
-import type { ElementInfo } from '../types/platform.js'
-import type { MobileRefMap, ParsedMobileTree } from './types.js'
-import { normalizeRole } from './role-map.js'
+import type { InterimNode, RefBinding } from '@vostride/agent-qa-runner'
+import { isToggleElement, type ElementLabels, type ElementState } from '@vostride/agent-qa-schema'
+import type { ParsedMobileSource, RefEntry } from './types.js'
+import { IOS_EDITABLE_TYPES, iosAccessibleOtherRole, normalizeRole } from './role-map.js'
 
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox',
@@ -18,8 +19,18 @@ const CONTENT_ROLES = new Set([
   'progressbar',
 ])
 
-function shouldAssignRef(role: string): boolean {
+// Only interactive/content roles become interim nodes; structural containers
+// (group/window/application/scroll-area/...) are filtered — their children reparent to
+// the nearest surviving ancestor. This preserves the v1 element set exactly (the same
+// nodes that used to receive refs), now minted by the shared builder.
+function shouldEmit(role: string): boolean {
   return INTERACTIVE_ROLES.has(role) || CONTENT_ROLES.has(role)
+}
+
+// fast-xml-parser leaves attribute values as strings (parseAttributeValue is off), so a
+// real boolean signal is the literal "true" — coerce defensively per T-352-07.
+function boolAttr(value: unknown): boolean {
+  return value === true || value === 'true'
 }
 
 function parseAndroidBounds(boundsStr: string): { x: number; y: number; width: number; height: number } | undefined {
@@ -65,18 +76,171 @@ function extractValue(attrs: Record<string, any>, platform: 'android' | 'ios'): 
   return String(value)
 }
 
-interface WalkContext {
-  platform: 'android' | 'ios'
-  refCounter: number
-  elements: ElementInfo[]
-  refs: MobileRefMap
-  lines: string[]
-  roleNameCounts: Map<string, number>
-  refToKey: Map<string, string>
-  viewport?: { width: number; height: number }
+/**
+ * D-08 attribute lift. Only signals the platform actually emitted populate `state` —
+ * an absent attribute leaves the key typed-absent (the builder applies documented
+ * defaults). No signal is ever fabricated.
+ *
+ * Attribute names verified against core/src/mobile/__tests__/xml-parser.test.ts
+ * page-source fixtures (Assumption A1): Android UiAutomator2 uses hyphenated
+ * `resource-id`/`content-desc` and literal `checkable`/`checked`/`selected`/`focused`/
+ * `scrollable`/`enabled`/`displayed`; iOS XCUITest uses `value`/`selected`/`enabled`/
+ * `visible`. `scrollable` is retained in the raw attribute bag (consumed by
+ * deriveMobileScroll), not lifted onto state.
+ *
+ * iOS `editable`: XCUITest exposes no editability attribute (WDA writes `focused` only on
+ * tvOS, and `traits` lists public UIKit traits only), so the XCUI text-entry type is the
+ * platform's editability signal. It is a candidate: the adapter confirms it by keyboard
+ * focus at execution, which is how a static UITextView is told apart.
+ *
+ * iOS `checked` (437 D-03): XCUITest reports a switch, toggle or checkbox's state only as its
+ * `value`, so for a classifier toggle of role `switch` or `checkbox` the value '1' lifts to
+ * checked true and '0' to checked false. Any other value, or none, leaves `checked` absent.
+ * `selected` keeps no toggle meaning on either platform.
+ */
+function liftState(
+  tagName: string,
+  role: string,
+  attrs: Record<string, any>,
+  platform: 'android' | 'ios',
+  bounds: { x: number; y: number; width: number; height: number } | undefined,
+  viewport: { width: number; height: number } | undefined,
+): Partial<ElementState> {
+  const state: Partial<ElementState> = {}
+
+  if (attrs['@_enabled'] !== undefined) {
+    state.enabled = boolAttr(attrs['@_enabled'])
+  }
+  if (attrs['@_selected'] !== undefined) {
+    state.selected = boolAttr(attrs['@_selected'])
+  }
+
+  if (platform === 'android') {
+    // `checked` is only meaningful when the widget is `checkable` — otherwise typed-absent.
+    if (boolAttr(attrs['@_checkable']) && attrs['@_checked'] !== undefined) {
+      state.checked = boolAttr(attrs['@_checked'])
+    }
+    if (attrs['@_focused'] !== undefined) {
+      state.focused = boolAttr(attrs['@_focused'])
+    }
+    // visible derivation (documented): explicit displayed=false, else bounds fully
+    // outside the viewport ⇒ offscreen. Absent otherwise (builder defaults visible=true).
+    if (attrs['@_displayed'] !== undefined && !boolAttr(attrs['@_displayed'])) {
+      state.visible = false
+    } else if (bounds && viewport && (bounds.y + bounds.height < 0 || bounds.y > viewport.height)) {
+      state.visible = false
+    }
+  } else {
+    if ((role === 'switch' || role === 'checkbox') && isToggleElement({ role })) {
+      const value = attrs['@_value']
+      if (value === '1') state.checked = true
+      else if (value === '0') state.checked = false
+    }
+    if (attrs['@_visible'] !== undefined && !boolAttr(attrs['@_visible'])) {
+      state.visible = false
+    } else if (bounds && viewport && (bounds.y + bounds.height < 0 || bounds.y > viewport.height)) {
+      state.visible = false
+    }
+    if (IOS_EDITABLE_TYPES.has(tagName) && state.enabled !== false) {
+      state.editable = true
+    }
+  }
+
+  return state
 }
 
-function walkNode(node: any, tagName: string, depth: number, ctx: WalkContext): void {
+/** Android maps `resource-id -> labels.testId` and `content-desc -> labels.ariaLabel`
+ * (empty strings stay absent). iOS carries no dedicated label attributes here. */
+function liftLabels(attrs: Record<string, any>, platform: 'android' | 'ios'): ElementLabels {
+  const labels: ElementLabels = {}
+  if (platform === 'android') {
+    const resourceId = attrs['@_resource-id']
+    if (resourceId) labels.testId = String(resourceId)
+    const contentDesc = attrs['@_content-desc']
+    if (contentDesc) labels.ariaLabel = String(contentDesc)
+  }
+  return labels
+}
+
+interface WalkContext {
+  platform: 'android' | 'ios'
+  nodes: InterimNode[]
+  viewport?: { width: number; height: number }
+  screenReference?: { width: number; height: number }
+}
+
+const IOS_FULL_SCREEN_AREA_RATIO = 0.9
+const IOS_PROMOTED_NAME_MAX = 120
+
+function collectAttrs(node: any): Record<string, any> {
+  const attrs: Record<string, any> = {}
+  for (const key of Object.keys(node)) {
+    if (key.startsWith('@_')) attrs[key] = node[key]
+  }
+  return attrs
+}
+
+// UIKit merges an accessible element's subviews into it and exposes no child text, so its
+// label is the only handle; React Native pressables without an accessibilityRole surface
+// this way as XCUIElementTypeOther.
+function isIosAccessibleLabelledOther(
+  tagName: string,
+  attrs: Record<string, any>,
+  ctx: WalkContext,
+): boolean {
+  if (ctx.platform !== 'ios' || tagName !== 'XCUIElementTypeOther') return false
+  if (!boolAttr(attrs['@_accessible'])) return false
+  const label = attrs['@_label']
+  if (label === undefined || label === null || String(label).trim() === '') return false
+  const bounds = parseIosBounds(attrs)
+  if (!bounds) return false
+  if (attrs['@_visible'] !== undefined && !boolAttr(attrs['@_visible'])) return false
+  // WDA reports a frame it cannot compute as (-1,-1,0,0).
+  if (!(bounds.width > 0 && bounds.height > 0)) return false
+  const ref = ctx.screenReference
+  if (ref && ref.width > 0 && ref.height > 0) {
+    const onScreen =
+      bounds.x < ref.width &&
+      bounds.y < ref.height &&
+      bounds.x + bounds.width > 0 &&
+      bounds.y + bounds.height > 0
+    if (!onScreen) return false
+    const area = bounds.width * bounds.height
+    if (area >= IOS_FULL_SCREEN_AREA_RATIO * ref.width * ref.height) return false
+  }
+  return true
+}
+
+// React Native joins a pressable's subtree text into its label, which can run to paragraphs.
+function capPromotedName(label: string): string {
+  const chars = Array.from(label)
+  if (chars.length <= IOS_PROMOTED_NAME_MAX) return label
+  return chars.slice(0, IOS_PROMOTED_NAME_MAX - 1).join('') + '…'
+}
+
+function descendantCarriesLabel(node: any, label: string, ctx: WalkContext): boolean {
+  for (const childKey of Object.keys(node)) {
+    if (childKey.startsWith('@_') || childKey === '#text') continue
+    const childVal = node[childKey]
+    const children = Array.isArray(childVal) ? childVal : [childVal]
+    for (const child of children) {
+      if (!child || typeof child !== 'object') continue
+      const attrs = collectAttrs(child)
+      const childLabel = extractLabel(attrs, ctx.platform)
+      if (
+        childLabel !== undefined &&
+        String(childLabel).trim() === label &&
+        shouldEmit(normalizeRole(childKey, ctx.platform))
+      ) {
+        return true
+      }
+      if (descendantCarriesLabel(child, label, ctx)) return true
+    }
+  }
+  return false
+}
+
+function walkNode(node: any, tagName: string, parentIndex: number | undefined, ctx: WalkContext): void {
   const attrs: Record<string, any> = {}
   // fast-xml-parser puts attributes with @_ prefix at the node level
   for (const key of Object.keys(node)) {
@@ -85,62 +249,71 @@ function walkNode(node: any, tagName: string, depth: number, ctx: WalkContext): 
     }
   }
 
-  const role = normalizeRole(tagName, ctx.platform)
-  const label = extractLabel(attrs, ctx.platform)
-  const value = extractValue(attrs, ctx.platform)
+  let role = normalizeRole(tagName, ctx.platform)
+  let emit = shouldEmit(role)
+  let promoted = false
 
-  let bounds: { x: number; y: number; width: number; height: number } | undefined
-  if (ctx.platform === 'android' && attrs['@_bounds']) {
-    bounds = parseAndroidBounds(attrs['@_bounds'])
-  } else if (ctx.platform === 'ios') {
-    bounds = parseIosBounds(attrs)
+  if (ctx.platform === 'ios') {
+    if (
+      ctx.screenReference === undefined &&
+      (tagName === 'XCUIElementTypeApplication' || tagName === 'XCUIElementTypeWindow')
+    ) {
+      const reference = parseIosBounds(attrs)
+      if (reference && reference.width > 0 && reference.height > 0) {
+        ctx.screenReference = { width: reference.width, height: reference.height }
+      }
+    }
+    if (
+      !emit &&
+      isIosAccessibleLabelledOther(tagName, attrs, ctx) &&
+      !descendantCarriesLabel(node, String(attrs['@_label']).trim(), ctx)
+    ) {
+      const traits = attrs['@_traits']
+      role = iosAccessibleOtherRole(typeof traits === 'string' ? traits : undefined)
+      emit = true
+      promoted = true
+    }
   }
 
-  const isEnabled = attrs['@_enabled'] !== 'false' && attrs['@_enabled'] !== false
+  // The index children reparent to: this node's own index if it is emitted, else the
+  // nearest surviving ancestor passed down.
+  let childParentIndex = parentIndex
 
-  // Container nodes with no label and non-interactive role are included in tree but don't get refs
-  const isUnlabeledContainer = !label && !shouldAssignRef(role)
-  const shouldRef = shouldAssignRef(role)
+  if (emit) {
+    const rawLabel = extractLabel(attrs, ctx.platform)
+    const label = promoted && rawLabel !== undefined ? capPromotedName(String(rawLabel)) : rawLabel
+    const value = extractValue(attrs, ctx.platform)
 
-  const indent = '  '.repeat(depth)
+    let bounds: { x: number; y: number; width: number; height: number } | undefined
+    if (ctx.platform === 'android' && attrs['@_bounds']) {
+      bounds = parseAndroidBounds(attrs['@_bounds'])
+    } else if (ctx.platform === 'ios') {
+      bounds = parseIosBounds(attrs)
+    }
 
-  // Determine if element is offscreen (outside viewport bounds)
-  const offscreen = bounds && ctx.viewport
-    ? (bounds.y + bounds.height < 0 || bounds.y > ctx.viewport.height)
-    : false
+    const state = liftState(tagName, role, attrs, ctx.platform, bounds, ctx.viewport)
+    const labels = liftLabels(attrs, ctx.platform)
 
-  if (shouldRef) {
-    ctx.refCounter++
-    const ref = `e${ctx.refCounter}`
-    const key = `${role}:${label ?? ''}`
+    // Retain the raw platform attribute bag (prefix stripped, values stringified).
+    const attributes: Record<string, string> = {}
+    for (const key of Object.keys(attrs)) {
+      attributes[key.slice(2)] = String(attrs[key])
+    }
 
-    const currentCount = ctx.roleNameCounts.get(key) ?? 0
-    ctx.roleNameCounts.set(key, currentCount + 1)
-    ctx.refToKey.set(ref, key)
+    const interim: InterimNode = {
+      role,
+      ...(label !== undefined ? { name: label } : {}),
+      ...(value !== undefined ? { value } : {}),
+      ...(parentIndex !== undefined ? { parentIndex } : {}),
+      ...(bounds !== undefined ? { bounds } : {}),
+      ...(Object.keys(state).length > 0 ? { state } : {}),
+      ...(Object.keys(labels).length > 0 ? { labels } : {}),
+      attributes,
+      nativeType: tagName,
+    }
 
-    ctx.refs[ref] = { role, name: label, nth: currentCount, bounds, nativeType: tagName, value }
-
-    const elementAttrs: Record<string, string> = {}
-    if (!isEnabled) elementAttrs['disabled'] = 'true'
-    elementAttrs.nativeType = tagName
-    if (value) elementAttrs.value = value
-
-    ctx.elements.push({ ref, role, name: label ?? '', value, attributes: elementAttrs })
-
-    let line = `${indent}- ${role}`
-    if (label) line += ` "${label}"`
-    line += ` [ref=${ref}]`
-    if (bounds) line += ` @(${bounds.x},${bounds.y} ${bounds.width}x${bounds.height})`
-    if (!isEnabled) line += ' [disabled]'
-    if (offscreen) line += ' [offscreen]'
-    ctx.lines.push(line)
-  } else {
-    // Include in tree for structure but no ref
-    let line = `${indent}- ${role}`
-    if (label) line += ` "${label}"`
-    if (!isEnabled) line += ' [disabled]'
-    if (offscreen) line += ' [offscreen]'
-    ctx.lines.push(line)
+    childParentIndex = ctx.nodes.length
+    ctx.nodes.push(interim)
   }
 
   // Walk children
@@ -150,7 +323,7 @@ function walkNode(node: any, tagName: string, depth: number, ctx: WalkContext): 
     const children = Array.isArray(childVal) ? childVal : [childVal]
     for (const child of children) {
       if (child && typeof child === 'object') {
-        walkNode(child, childKey, depth + 1, ctx)
+        walkNode(child, childKey, childParentIndex, ctx)
       }
     }
   }
@@ -160,25 +333,24 @@ export function parseMobileSource(
   xml: string,
   platform: 'android' | 'ios',
   viewport?: { width: number; height: number },
-): ParsedMobileTree {
+): ParsedMobileSource {
+  // WDA writes a newline in an attribute as `&#10;`; numeric references are decoded on iOS
+  // only, so a multi-line value is observed as typed (Android parsing is left as it was).
   const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: '@_',
     allowBooleanAttributes: true,
     preserveOrder: false,
+    htmlEntities: platform === 'ios',
   })
 
   const parsed = parser.parse(xml)
 
   const ctx: WalkContext = {
     platform,
-    refCounter: 0,
-    elements: [],
-    refs: {},
-    lines: [],
-    roleNameCounts: new Map(),
-    refToKey: new Map(),
+    nodes: [],
     viewport,
+    ...(platform === 'ios' && viewport ? { screenReference: viewport } : {}),
   }
 
   // Find root element(s) to walk
@@ -195,43 +367,71 @@ export function parseMobileSource(
         const children = Array.isArray(childVal) ? childVal : [childVal]
         for (const child of children) {
           if (child && typeof child === 'object') {
-            walkNode(child, childKey, 0, ctx)
+            walkNode(child, childKey, undefined, ctx)
           }
         }
       }
     }
   }
 
-  // Post-process: remove nth from refs that don't have duplicates
-  for (const [ref, data] of Object.entries(ctx.refs)) {
-    const key = ctx.refToKey.get(ref)!
-    if ((ctx.roleNameCounts.get(key) ?? 0) <= 1) {
-      delete ctx.refs[ref].nth
+  return { nodes: ctx.nodes }
+}
+
+/**
+ * Reconstruct the execute-time `lastRefs` record from the interim nodes plus the shared
+ * builder's ref->node binding (D-01/D-03). The mobile adapters store this privately so
+ * planner-ref -> live-node resolution survives the builder taking over ref minting. No
+ * position lives anywhere: not here, not on the binding, not on ElementInfo (438 D-13).
+ */
+export function buildRefEntries(
+  nodes: InterimNode[],
+  binding: Record<string, RefBinding>,
+): Record<string, RefEntry> {
+  const entries: Record<string, RefEntry> = {}
+  for (const [ref, { index }] of Object.entries(binding)) {
+    const node = nodes[index]
+    if (!node) continue
+    const rawInputType = node.attributes?.['input-type']
+    entries[ref] = {
+      role: node.role,
+      ...(node.name !== undefined ? { name: node.name } : {}),
+      ...(node.bounds !== undefined ? { bounds: node.bounds } : {}),
+      ...(node.nativeType !== undefined ? { nativeType: node.nativeType } : {}),
+      ...(node.value !== undefined ? { value: node.value } : {}),
+      ...(node.state?.editable === true ? { editable: true } : {}),
+      ...(rawInputType !== undefined && /^\d+$/.test(rawInputType)
+        ? { inputType: Number(rawInputType) }
+        : {}),
     }
   }
+  return entries
+}
 
-  let tree = ctx.lines.join('\n')
-
-  // Add viewport summary so LLM can understand scroll position
-  if (viewport) {
-    const allBounds = Object.values(ctx.refs)
-      .filter(r => r.bounds)
-      .map(r => r.bounds!)
-
-    const visible = allBounds.filter(b => b.y + b.height > 0 && b.y < viewport.height)
-    const above = allBounds.filter(b => b.y + b.height <= 0)
-    const below = allBounds.filter(b => b.y >= viewport.height)
-
-    const parts = [`[Viewport: ${viewport.width}x${viewport.height}]`]
-    if (above.length > 0 || below.length > 0) {
-      parts.push(`[${visible.length} visible, ${above.length} scrolled above, ${below.length} below]`)
-    }
-    tree = parts.join(' ') + '\n' + tree
+/**
+ * Best-effort mobile scroll metadata (D-10). Unlike web — which reads the exact window
+ * scroll offset and document content size — mobile page source exposes no true scroll
+ * position, so this is a documented approximation, explicit and never silently precise:
+ * contentWidth/contentHeight are the maximum element extent across all node bounds
+ * (falling back to the viewport dimensions when no node carries bounds), and
+ * offsetX/offsetY stay 0 (no reliable scroll-offset signal in the source).
+ */
+export function deriveMobileScroll(
+  nodes: InterimNode[],
+  viewport: { width: number; height: number },
+): { offsetX: number; offsetY: number; contentWidth: number; contentHeight: number } {
+  let maxX = viewport.width
+  let maxY = viewport.height
+  let sawBounds = false
+  for (const node of nodes) {
+    if (!node.bounds) continue
+    sawBounds = true
+    maxX = Math.max(maxX, node.bounds.x + node.bounds.width)
+    maxY = Math.max(maxY, node.bounds.y + node.bounds.height)
   }
-
   return {
-    tree,
-    elements: ctx.elements,
-    refs: ctx.refs,
+    offsetX: 0,
+    offsetY: 0,
+    contentWidth: sawBounds ? maxX : viewport.width,
+    contentHeight: sawBounds ? maxY : viewport.height,
   }
 }

@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import type { Mock } from 'vitest'
+import type { LiveFrame, LiveFrameEndReason } from '@vostride/agent-qa-schema'
 import type { LiveSessionConfig } from '../live-editor/types.js'
 
 const HOOK_ID = 'h_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
@@ -10,6 +12,20 @@ const mockCleanup = vi.fn().mockResolvedValue(undefined)
 const mockExecute = vi.fn().mockResolvedValue({ success: true })
 const mockScreenshot = vi.fn().mockResolvedValue(Buffer.from('fake-screenshot'))
 const mockObserve = vi.fn().mockResolvedValue({ tree: '', elements: [], timestamp: 0, metadata: {} })
+// The web adapter's Chromium screencast, as the editor's hub sees it (428 D-07).
+let screencastEmit: ((frame: LiveFrame) => void) | undefined
+const mockScreencastStart = vi.fn(async (onFrame: (frame: LiveFrame) => void) => {
+  screencastEmit = onFrame
+})
+const mockScreencastStop = vi.fn(async () => {
+  screencastEmit = undefined
+})
+const mockScreencast = {
+  kind: 'cdp-screencast' as const,
+  start: mockScreencastStart,
+  ack: vi.fn(async () => {}),
+  stop: mockScreencastStop,
+}
 
 vi.mock('@vostride/agent-qa-web', () => ({
   WebPlatformAdapter: vi.fn().mockImplementation(function () {
@@ -20,6 +36,7 @@ vi.mock('@vostride/agent-qa-web', () => ({
       execute: mockExecute,
       screenshot: mockScreenshot,
       observe: mockObserve,
+      liveStream: mockScreencast,
     }
   }),
 }))
@@ -76,7 +93,7 @@ const mockFindUnresolvedTemplates = vi.fn((instruction: string) => {
   return unresolved
 })
 
-const mockCreateModel = vi.fn().mockResolvedValue({ modelId: 'test-model' })
+const mockCreateModel = vi.fn().mockReturnValue({ modelId: 'test-model' })
 const mockGetProviderOptions = vi.fn().mockReturnValue(undefined)
 const mockVariableStoreInstance = {
   set: vi.fn((name: string, value: string) => {
@@ -92,7 +109,37 @@ const mockVariableStoreInstance = {
   snapshot: vi.fn(() => Object.fromEntries(variableStoreEntries)),
 }
 
-vi.mock('@vostride/agent-qa-core', () => {
+// executeStep/LLMPlanner/LLMVerifier moved to the runner package (Phase 353-07);
+// live-session now imports them from @vostride/agent-qa-runner, so intercept them there.
+vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
+  return {
+    ...actual,
+    executeStep: (...args: unknown[]) => mockExecuteStep(...args),
+    LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
+    LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
+    // runHooks moved to runner in Phase 363 D-06.
+    runHooks: (...args: unknown[]) => mockRunHooks(...args),
+    // Variables subsystem moved to runner in Phase 363 D-07.
+    VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
+    interpolateVariables: (...args: unknown[]) => mockInterpolateVariables(...args as Parameters<typeof mockInterpolateVariables>),
+    findUnresolvedTemplates: (...args: unknown[]) => mockFindUnresolvedTemplates(...args as Parameters<typeof mockFindUnresolvedTemplates>),
+    // Inline hook parsing moved to runner in Phase 363-11; live-session imports it from runner.
+    parseHookInline: (text: string) => mockParseHookInline(text),
+    stripHookInline: (text: string) => mockStripHookInline(text),
+  }
+})
+
+// DockerHookExecutor moved to runner-local in Phase 363 D-06; its execute() is the old
+// runHookInSandbox body behind the port.
+vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
+  DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
+}))
+
+vi.mock('@vostride/agent-qa-core', async () => {
+  // 436-19: the live door checks limit leaves with the real core schemas the CLI applies.
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
   class LocalSecretStore {
     private secrets: Record<string, string>
     constructor(secrets: Record<string, string> = {}) {
@@ -128,36 +175,6 @@ vi.mock('@vostride/agent-qa-core', () => {
     }
     return value
   }
-  const redactAuthStateValue = (value: any, context: { secretRedactor?: LocalSecretRedactor } = {}): any => {
-    const secretRedacted = redactSecretValue(value, context.secretRedactor)
-    if (typeof secretRedacted === 'string') {
-      if (
-        secretRedacted.includes('AGENT_QA_AUTH_STATE_JSON')
-        || secretRedacted.includes('/workspace/.agent-qa-auth-state/storage-state.json')
-        || (secretRedacted.includes('"cookies"') && secretRedacted.includes('"origins"'))
-      ) {
-        return '[auth state redacted]'
-      }
-      return secretRedacted.replace(/authState:\s*[^\s]+/g, 'authState: [auth state redacted]')
-    }
-    if (Buffer.isBuffer(secretRedacted)) return secretRedacted
-    if (Array.isArray(secretRedacted)) return secretRedacted.map((item) => redactAuthStateValue(item, {}))
-    if (secretRedacted && typeof secretRedacted === 'object') {
-      if (Array.isArray((secretRedacted as any).cookies) && Array.isArray((secretRedacted as any).origins)) {
-        return '[auth state redacted]'
-      }
-      return Object.fromEntries(Object.entries(secretRedacted).map(([key, item]) => {
-        if (/^(authState|storageStatePath|AGENT_QA_AUTH_STATE_JSON|AGENT_QA_AUTH_STATE_STORAGE_STATE_PATH)$/i.test(key)) {
-          return [key, '[auth state redacted]']
-        }
-        if (/^(ACCESS_TOKEN|SESSION_TOKEN|AUTH_TOKEN|csrf)$/i.test(key)) {
-          return [key, '[auth state redacted]']
-        }
-        return [key, redactAuthStateValue(item, {})]
-      }))
-    }
-    return secretRedacted
-  }
   const resolveSecretTemplatesInValue = (value: any, store?: LocalSecretStore): any => {
     if (!store) return value
     if (typeof value === 'string') return value.replace(/\{\{secret:(\w+)\}\}/g, (_match, name) => store.require(name))
@@ -178,13 +195,8 @@ vi.mock('@vostride/agent-qa-core', () => {
     },
     resolveMobileRunConfig: vi.fn(),
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
-    createModel: (...args: unknown[]) => mockCreateModel(...args),
-    getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
-    VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
-    interpolateVariables: (...args: unknown[]) => mockInterpolateVariables(...args as Parameters<typeof mockInterpolateVariables>),
-    findUnresolvedTemplates: (...args: unknown[]) => mockFindUnresolvedTemplates(...args as Parameters<typeof mockFindUnresolvedTemplates>),
     runHooks: (...args: unknown[]) => mockRunHooks(...args),
     runHookInSandbox: (...args: unknown[]) => mockRunHookInSandbox(...args),
     parseHookInline: (text: string) => mockParseHookInline(text),
@@ -192,13 +204,26 @@ vi.mock('@vostride/agent-qa-core', () => {
     SecretStore: LocalSecretStore,
     SecretRedactor: LocalSecretRedactor,
     redactSecretValue,
-    redactAuthStateValue,
     resolveSecretTemplatesInValue,
+    PlannerConfigSchema: actual.PlannerConfigSchema,
+    TestDefinitionSchema: actual.TestDefinitionSchema,
+    SuiteDefinitionSchema: actual.SuiteDefinitionSchema,
   }
 })
 
-import { LiveSession } from '../live-editor/live-session.js'
-import { SecretRedactor, SecretStore } from '@vostride/agent-qa-core'
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: (...args: unknown[]) => mockCreateModel(...args),
+    getProviderOptions: (...args: unknown[]) => mockGetProviderOptions(...args),
+  }
+})
+
+import { LivePlannerLimitsRefusedError, LiveSession, resolveLivePlannerLimits } from '../live-editor/live-session.js'
+import type { ConfigManager } from '../config/index.js'
+import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { resolvePlannerLimits } from '@vostride/agent-qa-schema'
 
 const webConfig: LiveSessionConfig = {
   platform: 'web',
@@ -249,7 +274,7 @@ describe('LiveSession', () => {
 
   it('initialize navigates to URL when provided', async () => {
     await session.initialize({ ...webConfig, url: 'https://example.com' })
-    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', url: 'https://example.com' })
+    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://example.com' })
   })
 
   it('initialize resolves secret placeholders only for adapter navigation', async () => {
@@ -261,7 +286,7 @@ describe('LiveSession', () => {
       secretRedactor: new SecretRedactor(secretStore),
     })
 
-    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', url: 'https://example.com/runtime-url-token' })
+    expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://example.com/runtime-url-token' })
   })
 
   it('initialize remains interactive when hookRegistryError is present but no missing setup hooks are requested', async () => {
@@ -318,7 +343,7 @@ describe('LiveSession', () => {
     expect(mockExecuteStep).toHaveBeenCalledWith(
       'Click the login button',
       expect.objectContaining({
-        healingConfig: expect.objectContaining({ maxAttempts: 3 }),
+        plannerConfig: expect.objectContaining({ maxActions: 30, maxPlanningTurns: 30 }),
       }),
       expect.objectContaining({
         stepInstruction: 'Click the login button',
@@ -371,40 +396,7 @@ describe('LiveSession', () => {
     )
     expect(JSON.stringify(result)).not.toContain('raw-secret-sentinel')
     expect(JSON.stringify(messages)).not.toContain('raw-secret-sentinel')
-    expect(result.error).toContain('[secret]')
-  })
-
-  it('executeStepCommand redacts auth-state shaped live payloads', async () => {
-    const storageState = JSON.stringify({
-      cookies: [{ name: 'sid', value: 'live-cookie-secret' }],
-      origins: [{ origin: 'https://example.com', localStorage: [{ name: 'token', value: 'live-local-secret' }] }],
-    })
-    mockExecuteStep.mockResolvedValue({
-      name: 'Auth step',
-      status: 'failed',
-      duration: 7,
-      error: storageState,
-      trace: {
-        observation: storageState,
-        reasoning: 'use authState: demo-acc',
-        plannedAction: { type: 'waitFor', condition: storageState },
-        result: 'failure',
-        error: '/workspace/.agent-qa-auth-state/storage-state.json',
-        screenStateBefore: storageState,
-      },
-      variableSnapshot: { SESSION_TOKEN: { value: 'live-session-token', source: 'hook' } },
-    })
-
-    await session.initialize(webConfig)
-    const result = await session.executeStepCommand('Verify authenticated dashboard', 0)
-    const serialized = JSON.stringify(result)
-
-    expect(serialized).toContain('[auth state redacted]')
-    expect(serialized).not.toContain('live-cookie-secret')
-    expect(serialized).not.toContain('live-local-secret')
-    expect(serialized).not.toContain('demo-acc')
-    expect(serialized).not.toContain('/workspace/.agent-qa-auth-state/storage-state.json')
-    expect(serialized).not.toContain('live-session-token')
+    expect(result.error).toContain('[secret:loginPassword]')
   })
 
   it('executeStepCommand throws when already executing', async () => {
@@ -464,7 +456,7 @@ describe('LiveSession', () => {
 
     expect(mockRunHookInSandbox).toHaveBeenCalledWith(
       expect.objectContaining({ id: HOOK_ID, name: 'Seed Auth' }),
-      expect.objectContaining({ envVars: {} }),
+      expect.objectContaining({ env: {} }),
     )
     expect(mockFindUnresolvedTemplates).toHaveBeenCalledWith('Verify that 42 equals 42')
     expect(mockExecuteStep).toHaveBeenCalledWith(
@@ -552,7 +544,7 @@ describe('LiveSession', () => {
 
     expect(mockRunHooks).toHaveBeenCalledWith(
       [expect.objectContaining({ name: 'Seed Auth' })],
-      { envVars: {} },
+      expect.objectContaining({ env: {} }),
     )
     expect(mockVariableStoreInstance.setAll).toHaveBeenCalledWith(
       { AUTH_TOKEN: 'hook-token' },
@@ -652,7 +644,7 @@ describe('LiveSession', () => {
 
     expect(mockRunHooks).toHaveBeenLastCalledWith(
       [expect.objectContaining({ id: HOOK_ID, name: 'Seed Auth' })],
-      { envVars: {} },
+      expect.objectContaining({ env: {} }),
     )
     expect(mockVariableStoreInstance.setAll).toHaveBeenCalledWith(
       { AUTH_TOKEN: 'hook-token' },
@@ -787,43 +779,167 @@ describe('LiveSession', () => {
     expect(mockCleanup).toHaveBeenCalled()
     expect(mockRunHooks).toHaveBeenLastCalledWith(
       [expect.objectContaining({ name: 'Cleanup Auth' })],
-      { envVars: { AUTH_TOKEN: 'hook-token' } },
+      expect.objectContaining({ env: { AUTH_TOKEN: 'hook-token' } }),
     )
   })
 
-  it('getScreenshot delegates to adapter', async () => {
+  it('HUB-REGISTERED-UNDER-SESSION: a web session registers its screencast as handle 0 of its own hub', async () => {
     await session.initialize(webConfig)
-    const screenshot = await session.getScreenshot()
-    expect(mockScreenshot).toHaveBeenCalled()
-    expect(screenshot).toBeInstanceOf(Buffer)
+    const attachment = session.liveAttachment()
+
+    expect(attachment.streamCapabilityOf(0)).toEqual({ kind: 'cdp-screencast' })
+
+    const frames: LiveFrame[] = []
+    const subscription = attachment.subscribeFrames(0, (frame) => frames.push(frame))
+    expect(subscription, 'handle 0 is subscribable').toBeDefined()
+    await vi.waitFor(() => expect(mockScreencastStart).toHaveBeenCalledTimes(1))
+
+    screencastEmit?.({
+      id: 7,
+      bytes: new Uint8Array([1, 2, 3]),
+      metadata: { width: 10, height: 20, timestamp: 1_700_000_000_000 },
+    })
+    expect(frames.map((frame) => frame.id)).toEqual([7])
+    expect(frames[0]?.kind).toBe('cdp-screencast')
+    subscription?.unsubscribe()
   })
 
-  it('initialize does not pass screenshotSize to adapter.setup()', async () => {
+  it('HUB-REGISTERED-UNDER-SESSION: a session whose setup hooks failed has no adapter and no hub', async () => {
+    mockRunHooks.mockResolvedValue({ results: new Map(), variables: {}, allPassed: false, duration: 1 })
+    await session.initialize({
+      ...webConfig,
+      setupHooks: [HOOK_ID],
+      resolvedHooks: new Map([[HOOK_ID, {
+        id: HOOK_ID,
+        name: 'Seed Auth',
+        runtime: 'node',
+        file: '/tmp/seed-auth.js',
+        deps: [],
+        timeout: 30_000,
+        network: false,
+      }]]),
+    })
+    const attachment = session.liveAttachment()
+
+    expect(attachment.streamCapabilityOf(0)).toEqual({ kind: 'none' })
+    expect(attachment.subscribeFrames(0, () => {})).toBeUndefined()
+  })
+
+  it('MOBILE-REGISTERS-SNAPSHOT: a mobile session registers the adapter\'s context-neutral snapshot stream', async () => {
+    const { AndroidPlatformAdapter } = await import('@vostride/agent-qa-android')
+    const snapshotStream = {
+      kind: 'snapshot' as const,
+      start: vi.fn(async () => {}),
+      ack: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+    }
+    const mobileScreenshot = vi.fn()
+    ;(AndroidPlatformAdapter as unknown as Mock).mockImplementationOnce(function () {
+      return {
+        platform: 'android',
+        setup: vi.fn().mockResolvedValue(undefined),
+        cleanup: vi.fn().mockResolvedValue(undefined),
+        execute: vi.fn(),
+        observe: vi.fn(),
+        screenshot: mobileScreenshot,
+        liveStream: snapshotStream,
+      }
+    })
+
+    await session.initialize({ ...webConfig, platform: 'android', appPackage: 'com.example.app' })
+    const attachment = session.liveAttachment()
+
+    expect(attachment.streamCapabilityOf(0)).toEqual({ kind: 'snapshot' })
+    const subscription = attachment.subscribeFrames(0, () => {})
+    expect(subscription).toBeDefined()
+    await vi.waitFor(() => expect(snapshotStream.start).toHaveBeenCalledTimes(1))
+    expect(mobileScreenshot, 'never the context-switching screenshot()').not.toHaveBeenCalled()
+    subscription?.unsubscribe()
+  })
+
+  it('CLEANUP-CLOSES-HUB-AND-ENDS: cleanup closes the hub before the browser goes, settles ended, and runs once', async () => {
+    await session.initialize({
+      ...webConfig,
+      teardownHooks: [TEARDOWN_HOOK_ID],
+      resolvedHooks: new Map([[TEARDOWN_HOOK_ID, {
+        id: TEARDOWN_HOOK_ID,
+        name: 'Cleanup Auth',
+        runtime: 'node',
+        file: '/tmp/cleanup-auth.js',
+        deps: [],
+        timeout: 30_000,
+        network: false,
+      }]]),
+    })
+    const attachment = session.liveAttachment()
+    let ended = false
+    void attachment.ended.then(() => {
+      ended = true
+    })
+    const ends: LiveFrameEndReason[] = []
+    attachment.subscribeFrames(0, () => {}, (reason) => ends.push(reason))
+    await vi.waitFor(() => expect(mockScreencastStart).toHaveBeenCalledTimes(1))
+    await Promise.resolve()
+    expect(ended, 'ended is pending while the session lives').toBe(false)
+
+    await session.cleanup()
+    await Promise.resolve()
+
+    expect(ends).toEqual(['closed'])
+    expect(ended).toBe(true)
+    expect(mockScreencastStop).toHaveBeenCalledTimes(1)
+    expect(mockScreencastStop.mock.invocationCallOrder[0]).toBeLessThan(mockCleanup.mock.invocationCallOrder[0] ?? 0)
+    expect(mockRunHooks).toHaveBeenCalledTimes(1)
+    expect(mockCleanup).toHaveBeenCalledTimes(1)
+
+    await session.cleanup()
+
+    expect(mockRunHooks, 'teardown hooks run once').toHaveBeenCalledTimes(1)
+    expect(mockCleanup, 'the browser is closed once').toHaveBeenCalledTimes(1)
+  })
+
+  // 428-19 (D-07): the session has no screenshot getter. The adapter's capture is reached only
+  // through the hub's snapshot producer, lazily, so an initialized session with no viewer never
+  // captures. The title is kept.
+  it('getScreenshot delegates to adapter', async () => {
+    await session.initialize(webConfig)
+    expect('getScreenshot' in session).toBe(false)
+    expect(mockScreenshot).not.toHaveBeenCalled()
+  })
+
+  it('initialize does not pass resolved vision sizing to adapter.setup() or createModel()', async () => {
     const configWithSize: LiveSessionConfig = {
       platform: 'web',
       llmConfig: {
         provider: 'anthropic-compatible',
         model: 'claude-sonnet-4-20250514',
         baseURL: 'https://anthropic-proxy.example/messages',
-        screenshotSize: 1048576,
+        vision: { screenshotSize: 1048576 },
       },
       headless: true,
     }
     await session.initialize(configWithSize)
     expect(mockSetup).toHaveBeenCalledWith(
-      expect.not.objectContaining({ screenshotSize: expect.anything() }),
+      expect.not.objectContaining({ vision: expect.anything() }),
+    )
+    expect(mockCreateModel).toHaveBeenCalledWith(
+      expect.not.objectContaining({ vision: expect.anything() }),
+      { kind: 'none' },
+      expect.any(Function),
     )
   })
 
-  it('executeStepCommand passes screenshotSize to loopConfig when configured', async () => {
+  it('executeStepCommand passes resolved vision sizing to loopConfig when configured', async () => {
     const configWithSize: LiveSessionConfig = {
       platform: 'web',
       llmConfig: {
         provider: 'anthropic-compatible',
         model: 'claude-sonnet-4-20250514',
         baseURL: 'https://anthropic-proxy.example/messages',
-        screenshotSize: 1048576,
-        effectiveResolution: 1568,
+        vision: {
+          screenshotSize: 1048576,
+          effectiveResolution: 1568,
+        },
       },
       headless: true,
     }
@@ -832,10 +948,278 @@ describe('LiveSession', () => {
     expect(mockExecuteStep).toHaveBeenCalledWith(
       'Click the button',
       expect.objectContaining({
-        screenshotSize: 1048576,
-        effectiveResolution: 1568,
+        vision: {
+          screenshotSize: 1048576,
+          effectiveResolution: 1568,
+        },
       }),
       expect.anything(),
     )
+  })
+})
+
+// 436-09 (D-03): the live editor is a door; its limits come from the project config and the entity.
+describe('C436-EFFECTIVE-LIMITS live editor', () => {
+  let session: LiveSession
+
+  beforeEach(() => {
+    session = new LiveSession('limits-session')
+    vi.clearAllMocks()
+    variableStoreEntries.clear()
+    mockExecuteStep.mockResolvedValue({ name: 'test-step', status: 'passed', duration: 100 })
+  })
+
+  function plannerConfigOfLastStep(): unknown {
+    const call = mockExecuteStep.mock.calls.at(-1) as unknown[] | undefined
+    return (call?.[1] as { plannerConfig?: unknown } | undefined)?.plannerConfig
+  }
+
+  it('a live session uses the project\'s configured limits', async () => {
+    await session.initialize({ ...webConfig, plannerLimits: { maxActions: 12, maxPlanningTurns: 8 } })
+    await session.executeStepCommand('Click the login button', 0)
+    expect(plannerConfigOfLastStep()).toEqual({ maxActions: 12, maxPlanningTurns: 8, previousStepCount: 5 })
+  })
+
+  it('without plannerLimits the session uses the defaults', async () => {
+    await session.initialize(webConfig)
+    await session.executeStepCommand('Click the login button', 0)
+    expect(plannerConfigOfLastStep()).toEqual({ maxActions: 30, maxPlanningTurns: 30, previousStepCount: 5 })
+  })
+
+  function configManagerWith(config: Record<string, unknown>): ConfigManager {
+    return { readWithRevision: async () => ({ kind: 'ok', config, raw: '', revision: 'r1' }) } as unknown as ConfigManager
+  }
+
+  const project = configManagerWith({ use: { planner: { maxActions: 20, maxPlanningTurns: 15 } } })
+  const testYaml = 'test-id: t_bulk\nname: Bulk archive\nuse:\n  planner:\n    maxActions: 60\nsteps:\n  - archive all\n'
+  const suiteYaml = 'suite-id: s_inbox\nname: Inbox\nuse:\n  planner:\n    maxPlanningTurns: 40\ntests: []\n'
+  const readers = {
+    findTest: async (id: string) => (id === 't_bulk' ? { content: testYaml } : null),
+    findSuite: async (id: string) => (id === 's_inbox' ? { content: suiteYaml } : null),
+  }
+
+  it('the create door resolves project use and the entity\'s use', async () => {
+    expect(await resolveLivePlannerLimits(project, undefined, readers))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_bulk' }, readers))
+      .toEqual({ maxActions: 60, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(project, { type: 'suite', id: 's_inbox' }, readers))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 40 })
+  })
+
+  it('an entity the door cannot load leaves the project value', async () => {
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_missing' }, readers))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(project, { type: 'suite', id: 's_inbox' }, {}))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    const throwing = { findTest: async () => { throw new Error('unreadable') } }
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_bulk' }, throwing))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    const broken = { findTest: async () => ({ content: 'use: [unterminated' }) }
+    expect(await resolveLivePlannerLimits(project, { type: 'test', id: 't_bulk' }, broken))
+      .toEqual({ maxActions: 20, maxPlanningTurns: 15 })
+    expect(await resolveLivePlannerLimits(undefined, undefined, readers))
+      .toEqual({ maxActions: 30, maxPlanningTurns: 30 })
+  })
+})
+
+// 436-19 (D-03, WR-12): a live suite session runs each child at its own effective limits.
+describe('C436-EFFECTIVE-LIMITS live suite children', () => {
+  let session: LiveSession
+
+  beforeEach(() => {
+    session = new LiveSession('suite-limits-session')
+    vi.clearAllMocks()
+    variableStoreEntries.clear()
+    mockExecuteStep.mockResolvedValue({ name: 'test-step', status: 'passed', duration: 100 })
+    mockRunHooks.mockResolvedValue({ results: new Map(), variables: {}, allPassed: true, duration: 5 })
+  })
+
+  function plannerConfigsOfSteps(): unknown[] {
+    return mockExecuteStep.mock.calls.map(
+      (call) => ((call as unknown[])[1] as { plannerConfig?: unknown } | undefined)?.plannerConfig,
+    )
+  }
+
+  const projectUse = { planner: { maxActions: 20, maxPlanningTurns: 15 } }
+  const project = {
+    readWithRevision: async () => ({ kind: 'ok', config: { use: projectUse }, raw: '', revision: 'r1' }),
+  } as unknown as ConfigManager
+  const suiteUse = { planner: { maxPlanningTurns: 40 } }
+  const bulkUse = { planner: { maxActions: 80 } }
+  const suiteYaml = 'suite-id: s_inbox\nname: Inbox\nuse:\n  planner:\n    maxPlanningTurns: 40\ntests: []\n'
+  const bulkYaml = 'test-id: t_bulk\nname: Bulk archive\nuse:\n  planner:\n    maxActions: 80\nsteps:\n  - archive all\n'
+  const plainYaml = 'test-id: t_plain\nname: Plain\nsteps:\n  - open inbox\n'
+  const readers = {
+    findTest: async (id: string) =>
+      id === 't_bulk' ? { content: bulkYaml } : id === 't_plain' ? { content: plainYaml } : null,
+    findSuite: async (id: string) => (id === 's_inbox' ? { content: suiteYaml } : null),
+  }
+  const suiteRef = { type: 'suite' as const, id: 's_inbox' }
+
+  async function initializeSuiteSession(): Promise<void> {
+    await session.initialize({
+      ...webConfig,
+      plannerLimits: await resolveLivePlannerLimits(project, suiteRef, readers),
+      plannerLimitsForTest: (testId) =>
+        resolveLivePlannerLimits(project, [suiteRef, { type: 'test', id: testId }], readers),
+    })
+  }
+
+  function draft(testId: string, steps: string[]) {
+    return { testIndex: 0, testId, testName: testId, steps, setup: [], teardown: [] }
+  }
+
+  it('a suite child with its own override runs at its own limits', async () => {
+    await initializeSuiteSession()
+    const result = await session.executeTestCommand('exec-bulk', draft('t_bulk', ['archive all', 'confirm']))
+    expect(result.status).toBe('passed')
+    expect(plannerConfigsOfSteps()).toEqual([
+      { maxActions: 80, maxPlanningTurns: 40, previousStepCount: 5 },
+      { maxActions: 80, maxPlanningTurns: 40, previousStepCount: 5 },
+    ])
+  })
+
+  it('a sibling without its own block runs at project then suite', async () => {
+    await initializeSuiteSession()
+    await session.executeTestCommand('exec-plain', draft('t_plain', ['open inbox', 'read first']))
+    expect(plannerConfigsOfSteps()).toEqual([
+      { maxActions: 20, maxPlanningTurns: 40, previousStepCount: 5 },
+      { maxActions: 20, maxPlanningTurns: 40, previousStepCount: 5 },
+    ])
+  })
+
+  it('the live child limits equal the CLI resolver for the same blocks', async () => {
+    await initializeSuiteSession()
+    await session.executeTestCommand('exec-bulk', draft('t_bulk', ['archive all']))
+    await session.executeTestCommand('exec-plain', draft('t_plain', ['open inbox']))
+    const [bulk, plain] = plannerConfigsOfSteps() as Array<{ maxActions: number; maxPlanningTurns: number }>
+    const limitsOf = (c: { maxActions: number; maxPlanningTurns: number }) => ({
+      maxActions: c.maxActions,
+      maxPlanningTurns: c.maxPlanningTurns,
+    })
+    expect(limitsOf(bulk)).toEqual(resolvePlannerLimits(projectUse, suiteUse, bulkUse))
+    expect(limitsOf(plain)).toEqual(resolvePlannerLimits(projectUse, suiteUse, undefined))
+  })
+
+  it('a single step keeps the session limits', async () => {
+    await initializeSuiteSession()
+    await session.executeStepCommand('Click archive', 0)
+    expect(plannerConfigsOfSteps()).toEqual([{ maxActions: 20, maxPlanningTurns: 40, previousStepCount: 5 }])
+  })
+})
+
+// 436-19 (D-02, D-03, D-05, WR-11): the live door refuses, never ignores, a limit the CLI refuses.
+describe('C436-EFFECTIVE-LIMITS live refusal', () => {
+  function configManagerWith(config: Record<string, unknown>): ConfigManager {
+    return { readWithRevision: async () => ({ kind: 'ok', config, raw: '', revision: 'r1' }) } as unknown as ConfigManager
+  }
+
+  function testYaml(planner: string): string {
+    return `test-id: t_bad\nname: Bad\nuse:\n  planner:\n${planner}steps:\n  - archive all\n`
+  }
+
+  function readersFor(test: string, suite?: string) {
+    return {
+      findTest: async (id: string) => (id === 't_bad' ? { content: test } : null),
+      findSuite: async (id: string) => (id === 's_bad' && suite !== undefined ? { content: suite } : null),
+    }
+  }
+
+  const project = configManagerWith({ use: { planner: { maxActions: 20, maxPlanningTurns: 15 } } })
+  const testRef = { type: 'test' as const, id: 't_bad' }
+
+  async function refusalOf(promise: Promise<unknown>): Promise<LivePlannerLimitsRefusedError> {
+    const error = await promise.then(() => undefined, (e: unknown) => e)
+    expect(error).toBeInstanceOf(LivePlannerLimitsRefusedError)
+    return error as LivePlannerLimitsRefusedError
+  }
+
+  it.each([
+    ['0', '0'],
+    ['-1', '-1'],
+    ['2.5', '2.5'],
+    ["'30'", '"30"'],
+  ])('a test maxActions of %s is refused, naming the test file and the key', async (written, shown) => {
+    const error = await refusalOf(
+      resolveLivePlannerLimits(project, testRef, readersFor(testYaml(`    maxActions: ${written}\n`))),
+    )
+    expect(error.message).toContain(`test file t_bad sets use.planner.maxActions to ${shown}: `)
+    expect(error.message).toContain('The CLI refuses this file too.')
+  })
+
+  it('a suite maxPlanningTurns of 0 is refused, naming the suite file', async () => {
+    const suite = 'suite-id: s_bad\nname: Bad suite\nuse:\n  planner:\n    maxPlanningTurns: 0\ntests: []\n'
+    const error = await refusalOf(resolveLivePlannerLimits(
+      project,
+      [{ type: 'suite', id: 's_bad' }, testRef],
+      readersFor('test-id: t_bad\nname: Bad\nsteps:\n  - a\n', suite),
+    ))
+    expect(error.message).toContain('suite file s_bad sets use.planner.maxPlanningTurns to 0: ')
+  })
+
+  it('a project maxActions of 0 is refused, naming the project config', async () => {
+    const error = await refusalOf(resolveLivePlannerLimits(
+      configManagerWith({ use: { planner: { maxActions: 0 } } }),
+      undefined,
+      {},
+    ))
+    expect(error.message).toContain('project config sets use.planner.maxActions to 0: ')
+  })
+
+  it('the retired maxSubActions is refused with the core message at every layer', async () => {
+    const retired = 'use.planner.maxSubActions was removed in v2'
+    const fromTest = await refusalOf(
+      resolveLivePlannerLimits(project, testRef, readersFor(testYaml('    maxSubActions: 10\n'))),
+    )
+    expect(fromTest.message).toContain('test file t_bad sets use.planner.maxSubActions to 10: ')
+    expect(fromTest.message).toContain(retired)
+    const fromProject = await refusalOf(resolveLivePlannerLimits(
+      configManagerWith({ use: { planner: { maxSubActions: 10 } } }),
+      undefined,
+      {},
+    ))
+    expect(fromProject.message).toContain('project config sets use.planner.maxSubActions to 10: ')
+    expect(fromProject.message).toContain(retired)
+  })
+
+  it('exactly 1 at every layer resolves', async () => {
+    const suite = 'suite-id: s_bad\nname: One\nuse:\n  planner:\n    maxActions: 1\n    maxPlanningTurns: 1\ntests: []\n'
+    const one = configManagerWith({ use: { planner: { maxActions: 1, maxPlanningTurns: 1 } } })
+    expect(await resolveLivePlannerLimits(
+      one,
+      [{ type: 'suite', id: 's_bad' }, testRef],
+      readersFor(testYaml('    maxActions: 1\n    maxPlanningTurns: 1\n'), suite),
+    )).toEqual({ maxActions: 1, maxPlanningTurns: 1 })
+  })
+
+  it('a suite child with an invalid limit fails without running a step', async () => {
+    const session = new LiveSession('refusal-session')
+    vi.clearAllMocks()
+    variableStoreEntries.clear()
+    mockExecuteStep.mockResolvedValue({ name: 'test-step', status: 'passed', duration: 100 })
+    mockRunHooks.mockResolvedValue({ results: new Map(), variables: {}, allPassed: true, duration: 5 })
+    const readers = readersFor(testYaml('    maxActions: 0\n'))
+    await session.initialize({
+      ...webConfig,
+      plannerLimits: await resolveLivePlannerLimits(project, undefined, readers),
+      plannerLimitsForTest: (testId) => resolveLivePlannerLimits(project, [{ type: 'test', id: testId }], readers),
+    })
+    mockRunHooks.mockClear()
+    const result = await session.executeTestCommand('exec-bad', {
+      testIndex: 0,
+      testId: 't_bad',
+      testName: 'Bad',
+      steps: ['archive all'],
+      setup: [HOOK_ID],
+      teardown: [TEARDOWN_HOOK_ID],
+    })
+    expect(result.status).toBe('failed')
+    expect(result.error).toContain('test file t_bad sets use.planner.maxActions to 0: ')
+    expect(result.stepResults).toEqual([])
+    expect(result.setupHookExecutions).toEqual([])
+    expect(result.teardownHookExecutions).toEqual([])
+    expect(mockExecuteStep).not.toHaveBeenCalled()
+    expect(mockRunHooks).not.toHaveBeenCalled()
   })
 })

@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const {
   mockResolveConfig,
   mockDashboardDatabase,
   mockResolveDashboardDbPath,
   mockStartServer,
-  mockFlushAnalytics,
+  mockCreateInProcessExecutionBackend,
 } = vi.hoisted(() => ({
   mockResolveConfig: vi.fn(),
   mockDashboardDatabase: vi.fn(),
@@ -17,24 +18,60 @@ const {
     configuredDbPath || '.agent-qa/runs.db',
   ),
   mockStartServer: vi.fn(),
-  mockFlushAnalytics: vi.fn(),
+  // 401-07: the run door composes this through the same lazy import. A mock missing it does not
+  // fail as a missing assertion — `createDashboardRunDoor` throws on the destructure, the command
+  // exits 2, and every cell below then measures a command that never ran.
+  mockCreateInProcessExecutionBackend: vi.fn((options: unknown) => ({
+    options,
+    execute: vi.fn(),
+    kill: vi.fn(() => false),
+    killAll: vi.fn(),
+    getActiveExecutions: vi.fn(() => []),
+    getBufferedEvents: vi.fn(() => []),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  })),
 }))
 
 vi.mock('../config.js', () => ({
   resolveConfig: mockResolveConfig,
 }))
 
-vi.mock('@vostride/agent-qa-dashboard', () => ({
-  DashboardDatabase: mockDashboardDatabase,
-  resolveDashboardDbPath: mockResolveDashboardDbPath,
-  startServer: mockStartServer,
-}))
+vi.mock('@vostride/agent-qa-dashboard', async () => {
+  // What this file mocks is a web server, and that is all it should mock: the in-memory helpers
+  // the command destructures from the same lazily imported package are the real ones. (Until
+  // 432-14 that included the run-confirm scope predicate and the confirm registry, both deleted.)
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-dashboard')>('@vostride/agent-qa-dashboard')
+  return {
+    DashboardDatabase: mockDashboardDatabase,
+    createInProcessExecutionBackend: mockCreateInProcessExecutionBackend,
+    // 404-05: THE REAL RELAY, on the reasoning above. The
+    // command destructures it from this same lazily imported package, so a mock without it leaves
+    // `createPostProcessingRelay()` a call on `undefined` — which the command's own catch turns
+    // into `process.exit`, and every cell in this file dies before it asserts. It is also not a
+    // thing this file should be stubbing: it is an in-memory `Map` of listeners, with no server,
+    // no socket and no database in it.
+    createPostProcessingRelay: actual.createPostProcessingRelay,
+    // 405-01: THE REAL READER FACTORY, on the relay's own reasoning one line up. The command
+    // destructures it from this same lazily imported package, so a mock without it leaves
+    // `createDashboardRunDetailReader(db)` a call on `undefined` — which the command's own catch
+    // turns into `process.exit`, and every cell in this file dies before it asserts. It is also
+    // not a thing this file should be stubbing: it is a one-method object over a database handle,
+    // with no server and no socket in it.
+    createDashboardRunDetailReader: actual.createDashboardRunDetailReader,
+    // 428-12 (D-07): THE REAL EDITOR-SUBJECT REGISTRY, on the same reasoning. The command
+    // destructures it from this package and calls it beside the run registry; it is an in-memory
+    // `Map` with no server, no socket and no browser in it.
+    createLiveEditorSubjects: actual.createLiveEditorSubjects,
+    resolveDashboardDbPath: mockResolveDashboardDbPath,
+    startServer: mockStartServer,
+  }
+})
 
 vi.mock('@vostride/agent-qa-core', async importOriginal => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
   return {
     ...actual,
-    flushAnalytics: mockFlushAnalytics,
     resolveLLMAuth: vi.fn(async () => ({
       kind: 'api-key',
       credentialKey: 'default',
@@ -60,7 +97,6 @@ function makeDashboardConfig(config: Record<string, unknown> = {}): Record<strin
       testMatch: ['tests/**/*.yaml'],
       suiteMatch: ['suites/**/*.suite.yaml'],
       hooksFile: 'hooks.yaml',
-      agentRules: 'agent-rules.md',
       envFile: '.env',
       secretsFile: '.env.secrets.local',
     },
@@ -95,11 +131,9 @@ beforeEach(() => {
     },
   }))
   mockDashboardDatabase.mockImplementation(function () { return { close: vi.fn() } })
-  mockFlushAnalytics.mockResolvedValue(undefined)
   mockStartServer.mockResolvedValue({
     server: {},
     port: 3470,
-    mcp: { enabled: true, transport: 'http', url: 'http://127.0.0.1:3471/mcp' },
     close: vi.fn(),
   })
 })
@@ -156,6 +190,24 @@ describe('createDashboardCommand', () => {
 
     expect(mockDashboardDatabase).toHaveBeenCalled()
     expect(mockStartServer).toHaveBeenCalled()
+
+    // RE-SPELLED 2026-10-01 (432-14, D-14): was '400-03: ONE registry, reaching BOTH halves'. The
+    // command creates no confirm registry now, so the host it hands the server carries none.
+    const started = mockStartServer.mock.calls[0]?.[0] as {
+      agentHost?: Record<string, unknown>
+      executionBackend?: unknown
+    }
+    expect(started.agentHost).toBeDefined()
+    expect(started.agentHost).not.toHaveProperty('con' + 'firms')
+
+    // 401-07 (INVK-01): the SAME shape, one line down, for the run door. The command composes the
+    // backend here — where the agent packages are nameable — and hands it over; a server started
+    // without it answers 503 from the execution routes and runs nothing.
+    expect(mockCreateInProcessExecutionBackend).toHaveBeenCalledTimes(1)
+    expect(started.executionBackend).toBe(mockCreateInProcessExecutionBackend.mock.results[0]?.value)
+    // And the backend it handed over is composed over a real starter rather than a placeholder.
+    const backendOptions = (started.executionBackend as { options?: { invokeRun?: unknown } }).options
+    expect(typeof backendOptions?.invokeRun).toBe('function')
   })
 
   it('uses dashboard config from resolved config', async () => {
@@ -166,14 +218,14 @@ describe('createDashboardCommand', () => {
           provider: 'anthropic-compatible',
           model: 'claude-sonnet-4-6',
           baseURL: 'https://anthropic-proxy.example/messages',
-          screenshotSize: 1048576,
-          effectiveResolution: 1568,
+          vision: true,
         }],
       },
       use: { llm: 'default' },
       services: {
         dashboard: { port: 4000 },
         mcp: { enabled: true, port: 3472, path: '/mcp' },
+        vision: { screenshotSize: 524288, effectiveResolution: 768 },
       },
     }))
 
@@ -192,14 +244,18 @@ describe('createDashboardCommand', () => {
     expect(mockStartServer).toHaveBeenCalledWith(
       expect.objectContaining({
         port: 4000,
-        mcp: { enabled: true, port: 3472, path: '/mcp' },
         llmConfig: expect.objectContaining({
           provider: 'anthropic-compatible',
-          screenshotSize: 1048576,
-          effectiveResolution: 1568,
+          vision: {
+            screenshotSize: 524288,
+            effectiveResolution: 768,
+          },
         }),
       }),
     )
+    const startArg = mockStartServer.mock.calls.at(-1)?.[0]
+    expect(startArg?.llmConfig).not.toHaveProperty('screenshotSize')
+    expect(startArg?.llmConfig).not.toHaveProperty('effectiveResolution')
   })
 
   it('uses the current Claude fallback model when no LLM config is selected', async () => {
@@ -217,7 +273,7 @@ describe('createDashboardCommand', () => {
       expect.objectContaining({
         llmConfig: expect.objectContaining({
           provider: 'anthropic-subscription',
-          model: 'claude-sonnet-4-6',
+          model: 'claude-sonnet-5-5',
         }),
       }),
     )
@@ -263,7 +319,15 @@ describe('createDashboardCommand', () => {
     expect(exitSpy).not.toHaveBeenCalled()
   })
 
-  it('flushes analytics best-effort during signal shutdown', async () => {
+  it('shuts down cleanly on a signal with no telemetry step left in the path (398-10/398-11, D-18/D-20)', async () => {
+    // THE WITNESS RETIRED IN 398-11, DELIBERATELY. This cell used to mock core's `flushAnalytics`
+    // and assert it was never called; that was measurable only while the export existed. D-20 has
+    // now deleted `core/src/analytics` outright, so the mock would have been a `vi.fn()` standing in
+    // for nothing and "never called" would have passed by having nothing to check — the exact
+    // vacuity the original comment warned about. What carries the claim instead: the compiler (there
+    // is no `flushAnalytics`/`captureAnalytics` symbol left to call) and the two source pins at the
+    // bottom of this file, which refuse the vocabulary back into `commands/dashboard.ts`. What this
+    // cell still measures on its own is the shutdown path itself — a clean close and exit 0.
     const config = makeDashboardConfig({ analytics: { privacy: true } })
     const close = vi.fn()
     const signalHandlers = new Map<string | symbol, (...args: any[]) => unknown>()
@@ -272,11 +336,9 @@ describe('createDashboardCommand', () => {
       return process
     }) as typeof process.on)
     mockResolveConfig.mockResolvedValueOnce(config)
-    mockFlushAnalytics.mockRejectedValueOnce(new Error('analytics flush failed'))
     mockStartServer.mockResolvedValueOnce({
       server: {},
       port: 3470,
-      mcp: { enabled: true, transport: 'http', url: 'http://127.0.0.1:3471/mcp' },
       close,
     })
 
@@ -293,7 +355,6 @@ describe('createDashboardCommand', () => {
       expect(shutdown).toBeDefined()
       await expect(Promise.resolve(shutdown?.())).rejects.toThrow('process.exit')
       expect(close).toHaveBeenCalledOnce()
-      expect(mockFlushAnalytics).toHaveBeenCalledWith({ config })
       expect(exitSpy).toHaveBeenCalledWith(0)
     } finally {
       processOnSpy.mockRestore()
@@ -342,7 +403,6 @@ describe('createServeCommand', () => {
     expect(mockStartServer).toHaveBeenCalledWith(
       expect.objectContaining({
         port: 4100,
-        mcp: { enabled: true, port: 3472, path: '/mcp' },
       }),
     )
     expect(exitSpy).not.toHaveBeenCalled()
@@ -358,7 +418,6 @@ describe('createServeCommand', () => {
     mockStartServer.mockResolvedValueOnce({
       server: {},
       port: 3470,
-      mcp: { enabled: true, transport: 'http', url: 'http://127.0.0.1:3471/mcp' },
       close,
     })
 
@@ -376,10 +435,37 @@ describe('createServeCommand', () => {
       await expect(Promise.resolve(shutdown?.())).rejects.toThrow('process.exit')
       expect(close).toHaveBeenCalledOnce()
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Shutting down local services'))
-      expect(mockFlushAnalytics).toHaveBeenCalled()
       expect(exitSpy).toHaveBeenCalledWith(0)
     } finally {
       processOnSpy.mockRestore()
     }
+  })
+})
+
+// ---- 398-10 / 398-11 (D-18 / D-20): the drop, pinned at the source ---------------------------
+//
+// These two cells are now the WHOLE behavioural claim for the drop, and they were always the
+// stronger half: a `flushAnalytics` re-added to this command would satisfy "never called" in any
+// test that did not reach the shutdown path. The mock-based counterpart retired in 398-11 with the
+// module it stood in for (see the note in the signal-shutdown cell above) — a `vi.fn()` mocking an
+// export that no longer exists asserts nothing.
+describe('the dashboard command names no analytics at all (398-10)', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../commands/dashboard.ts', import.meta.url)),
+    'utf8',
+  )
+
+  it('imports nothing from the analytics package and calls no flush helper', () => {
+    expect(source).not.toMatch(/from '@vostride\/agent-qa-analytics'/u)
+    expect(source).not.toMatch(/\bflushAnalytics\b/u)
+    expect(source).not.toMatch(/\bcaptureAnalytics\b/u)
+    expect(source).not.toMatch(/\bcomposeAnalytics/u)
+  })
+
+  it('records WHY the three v33 dashboard events are gone, dated', () => {
+    expect(source).toMatch(/2026-08-17.*Phase 398 plan 10/u)
+    expect(source).toContain('dashboard.opened')
+    expect(source).toContain('dashboard.live_mode.started')
+    expect(source).toContain('dashboard.entity.created')
   })
 })

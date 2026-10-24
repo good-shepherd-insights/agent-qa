@@ -1,0 +1,957 @@
+// The stage order and the single public entry, pinned structurally (394 plan 02, D-01 · WTST-01).
+//
+// THE MUTATION THIS FILE MUST GO RED ON: moving the dedup call site in `loop.ts` to after the
+// compile call. That is the reordering "dedup-before-author" forbids — it turns a screen that
+// stops the loop before a byte is authored into one that runs after an LLM has already been paid
+// and a file already written — and a pin that never reds on it has measured one traversal and
+// called it an order. The mutation is named HERE, in the test, and deliberately nowhere in
+// `loop.ts`'s own comments: a source comment describing the forbidden edit teaches the next reader
+// how to make it look intentional.
+//
+// SEQUENCE EQUALITY, NOT PER-STAGE CALL COUNTS. Every assertion below compares a WHOLE ordered
+// sequence. Per-call checks (`expect(getBrief).toHaveBeenCalled()`) can only say that a stage ran;
+// the claim this pin exists to support is that nothing ran out of order and nothing was skipped,
+// and only an ordered comparison carries it. This is the key-set-equality argument `ports.test-d.ts`
+// makes about SHAPE, applied to TIME.
+//
+// TWO INDEPENDENT WITNESSES, AND THE SECOND IS WHAT MAKES THE FIRST HONEST. The loop reports the
+// stages it entered on its own result, which a reordered loop would report reordered — but a trace
+// the loop writes about itself could in principle disagree with what it did. So the fakes keep
+// their OWN log: each injected dep pushes its stage name when it is actually reached, and the two
+// logs are asserted against each other. A self-report that claimed `compile` before `dedup` while
+// the deps fired the other way fails the second cell even if it satisfies the first.
+
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
+import {
+  DRAFT_STABILITY_RUNS_N,
+  MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  computeDraftDisposition,
+  WrittenTestReceiptSchema,
+  authoredSuiteTargetPath,
+  CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
+} from '@vostride/agent-qa-schema'
+import type {
+  AuthoringBrief,
+  DraftDisposition,
+  DraftGateBooleans,
+  DraftReceipt,
+  FunctionCaller,
+  ScopeKey,
+  TestFileWrite,
+} from '@vostride/agent-qa-schema'
+import { describe, expect, it } from 'vitest'
+
+import {
+  ACCEPT_CONTROL_DRAFT,
+  ACCEPT_CONTROL_SUBACTIONS,
+  acceptControlMember,
+  expectedElement,
+  fakeFingerprintIndex,
+  fakeRunPort,
+  runDocument,
+} from './evidence-fixtures.js'
+import {
+  AUTHORING_LOOP_STAGES,
+  AuthoringLoopUnroutableEvidenceError,
+  routeAfterVerify,
+  runAuthoringLoop,
+} from '../loop.js'
+import type { AuthoringLoopStage } from '../loop.js'
+import type { JobModelRequest } from '../../jobs/record-llm-authorship.js'
+import { AUTHORING_REFINE_AGENT_CONTEXT } from '../refine.js'
+import { evaluateDraft } from '../verify-draft.js'
+import type {
+  AuthoringReadPortLike,
+  DraftShelfPortLike,
+  SuiteTextCorpusEntryLike,
+} from '../ports.js'
+import { createFunctionRegistry } from '../../functions/registry.js'
+import type { FunctionDeps } from '../../functions/spec.js'
+
+const INTENT = 'Check that the local account form shows its heading'
+const SCOPE: ScopeKey = { tier: 'product', key: 'local-form' }
+
+/**
+ * The `target` vocabulary this host declares (394-33, WR-07).
+ *
+ * NEITHER NAME IS `SCOPE.key`, and that is deliberate. `deriveDefaultAuthoringScope` answers a
+ * PRODUCT, so the scope key and a configured target name are different kinds of value that only
+ * coincide by accident — a fixture whose names included the scope key would let a block that
+ * rendered the scope satisfy the pin below.
+ */
+const CONFIGURED_TARGET_NAMES: readonly string[] = ['local-form-web', 'storefront-web']
+
+/** The staged draft's shelf path, as `stageDraft` mints it — digest in, path out. */
+const STAGED_PATH = `tests/.agent-qa-drafts/${ACCEPT_CONTROL_DRAFT.contentDigest}.yaml`
+
+/**
+ * The draft this host's shelf answers with — the accept control, ON A TARGET THIS HOST DECLARES.
+ *
+ * The retarget is not cosmetic (394-37, WR-04). Until the compile stage compared the vocabulary it
+ * serves against the draft it stages, this file's shelf could answer a draft named `local-form`
+ * while its read port declared `local-form-web` and `storefront-web` — a host whose own fixture
+ * staged a test it could not have run. Nothing could see the disagreement, because nothing looked;
+ * the guard's first catch was this fixture. Read off `CONFIGURED_TARGET_NAMES` rather than spelled,
+ * so the two cannot drift apart again.
+ */
+const STAGED_DRAFT = {
+  ...ACCEPT_CONTROL_DRAFT,
+  filePath: STAGED_PATH,
+  target: CONFIGURED_TARGET_NAMES[0] as string,
+}
+
+const EMPTY_BRIEF: AuthoringBrief = {
+  exemplars: [],
+  procedures: [],
+  facts: [],
+  cautions: [],
+  coverage: {},
+  truncation: 'none',
+  admissions: [],
+}
+
+const SUITE_TEXT: readonly SuiteTextCorpusEntryLike[] = [
+  {
+    filePath: 'tests/unrelated.yaml',
+    testName: 'Delete an archived invoice from the billing ledger',
+    stepsText: ['Open the billing ledger', 'Delete the archived invoice'],
+  },
+]
+
+/**
+ * Fakes that keep an ordered log of the stage each of them belongs to.
+ *
+ * The `verify` fake runs the REAL `evaluateDraft` over the shared evidence fixtures rather than
+ * answering a hand-written receipt, so the value stage 5 routes on is one the evaluator actually
+ * produced — a scripted `keep-eligible` would let the routing cell pass over a disposition no gate
+ * ever reached.
+ */
+function observedLoop() {
+  const observed: AuthoringLoopStage[] = []
+
+  const refineQueries: string[] = []
+  const read: AuthoringReadPortLike = {
+    getAuthoringBrief(query: string, scope: ScopeKey): Promise<AuthoringBrief> {
+      expect(scope).toEqual(SCOPE)
+      // TWO READS, ONE STAGE. Stage 1 asks the INTENT; D-18's refinement round asks the DRAFT, and
+      // it does so from inside stage 3. Only the first is the `brief` stage — recording the second
+      // under that name would make this pin report a stage the vocabulary does not have and would
+      // break the sequence equality below for a loop that is running exactly as designed.
+      if (query === INTENT) {
+        observed.push('brief')
+      } else {
+        refineQueries.push(query)
+      }
+      return Promise.resolve(EMPTY_BRIEF)
+    },
+    suiteTextCorpus(): Promise<readonly SuiteTextCorpusEntryLike[]> {
+      observed.push('dedup')
+      return Promise.resolve(SUITE_TEXT)
+    },
+    // 394-33 WR-07: the `target` vocabulary the compile prompt serves. TWO names, and neither is
+    // the scope key — so a block that rendered the scope, or rendered one name because there was
+    // only one, cannot satisfy the pins below.
+    configuredTargetNames: (): Promise<readonly string[]> =>
+      Promise.resolve(CONFIGURED_TARGET_NAMES),
+  }
+
+  const modelCalls: string[] = []
+  const refineCalls: string[] = []
+  const compileRequests: JobModelRequest[] = []
+  const written: string[] = []
+  const published: string[] = []
+
+  const shelf: DraftShelfPortLike = {
+    model: () => Promise.resolve({
+      modelId: 'fixture:loop-ordering',
+      generate(request) {
+        // The two stage-3 calls are told apart by their PINNED agent-context lines rather than by
+        // a call counter, so a reordering that put the refinement first would be visible here
+        // instead of being absorbed by an index.
+        if ((request.system ?? '').includes(AUTHORING_REFINE_AGENT_CONTEXT)) {
+          refineCalls.push(request.prompt)
+          // Not a patch set: this file pins ORDER, and a refinement that actually patched would
+          // make every later assertion depend on an applier fake as well. The round still ran,
+          // which is what the counts below assert; `refine.test.ts` owns what it does.
+          return Promise.resolve({ text: 'no changes needed' })
+        }
+        observed.push('compile')
+        modelCalls.push(request.prompt)
+        compileRequests.push(request)
+        return Promise.resolve({ text: 'name: whatever the fixture parses to\nsteps: []\n' })
+      },
+    }),
+    write(contents: string) {
+      // NOT its own stage name: the shelf write is the back half of `compile`, and giving it a
+      // seventh name would let this pin claim an order over a stage the vocabulary does not have.
+      // What it asserts instead is the ORDER WITHIN the stage — a model call has already been
+      // observed by the time bytes arrive, which is what "compile then stage" means.
+      expect(observed.at(-1)).toBe('compile')
+      written.push(contents)
+      return Promise.resolve({ kind: 'staged' as const, draft: STAGED_DRAFT })
+    },
+    // The accept control passes its gates, so stage 5 answers `drafted` without consulting a run —
+    // but a shelf that could not run one would be a host that verifies drafts and cannot look at
+    // what answered. Bound to the shared fake so the port is real rather than absent.
+    runs: fakeRunPort({ runs: [] }),
+    // Never reached by this file: the accept control passes its gates, so stage 5 answers
+    // `drafted` and the repair arm is not entered. Present because the shelf's contract requires
+    // it — a host that can stage a draft can patch one — and a fake that answered a patch it was
+    // never asked for would be a second staging path this pin could accidentally observe.
+    applyPatches(): Promise<never> {
+      throw new Error('the accept control never enters repair, so no patch is ever applied')
+    },
+    async verifyDraft(input): Promise<DraftReceipt> {
+      expect(input.draftPath).toBe(STAGED_PATH)
+      observed.push('verify')
+      return await evaluateDraft(
+        { draft: STAGED_DRAFT },
+        {
+          runs: fakeRunPort({
+            runs: Array.from({ length: DRAFT_STABILITY_RUNS_N }, () => [
+              { ...acceptControlMember(), filePath: STAGED_PATH },
+            ]),
+          }),
+          fingerprints: fakeFingerprintIndex([
+            {
+              filePath: 'demo/init/tests/uat-381-local-form.yaml',
+              testName: 'Sign in on the local account form',
+              elements: [expectedElement(ACCEPT_CONTROL_SUBACTIONS[0]![0]!)],
+            },
+          ]),
+          textCorpus: [],
+          receipts: { put: () => Promise.resolve() },
+          now: () => 1_700_000_000_000,
+        },
+      )
+    },
+    // 432 D-06: the final write. Not a stage name of its own — it is the tail of `route`, so it can
+    // only happen once `verify` has been observed.
+    publish(request) {
+      expect(observed.at(-1)).toBe('verify')
+      published.push(request.targetPath)
+      return Promise.resolve({
+        kind: 'written' as const,
+        filePath: request.targetPath,
+        contentDigest: STAGED_DRAFT.contentDigest,
+      })
+    },
+  }
+
+  return {
+    observed,
+    modelCalls,
+    refineCalls,
+    refineQueries,
+    compileRequests,
+    written,
+    published,
+    deps: { read, shelf },
+  }
+}
+
+/** The stages that touch an injected dep — the ones an observer outside the loop can witness. */
+const DEP_OBSERVABLE_STAGES: readonly AuthoringLoopStage[] = ['brief', 'dedup', 'compile', 'verify']
+
+describe('the six-stage order is structural, not a habit of the code', () => {
+  it('enters every declared stage exactly once, in the declared order', async () => {
+    const loop = observedLoop()
+
+    const result = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // SEQUENCE EQUALITY over the WHOLE vocabulary. Not a subset, not a set, not a count: the
+    // stages the loop entered are exactly the stages it declares, in exactly that order.
+    expect(result.stages).toEqual([...AUTHORING_LOOP_STAGES])
+    // …and the vocabulary really is the six, so the line above cannot be satisfied by a
+    // vocabulary that quietly shrank to the stages the loop happens to run.
+    expect(AUTHORING_LOOP_STAGES).toEqual([
+      'brief',
+      'dedup',
+      'compile',
+      'verify',
+      'route',
+      'compound',
+    ])
+    expect(result.outcome.kind).toBe('drafted')
+  })
+
+  it('is corroborated by the deps themselves, so the loop cannot mis-report its own order', async () => {
+    const loop = observedLoop()
+
+    const result = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // The independent witness: what the FAKES saw, in the order they saw it. `route` and
+    // `compound` touch no dep and cannot appear here — the first is a pure function of the
+    // receipt, the second is the recorded fact that the Curator's existing path already fires —
+    // so the comparison is against the dep-observable stages, taken from the same vocabulary
+    // rather than re-listed.
+    expect(loop.observed).toEqual([...DEP_OBSERVABLE_STAGES])
+    // The two logs AGREE: the loop's self-report, filtered to the stages a dep can witness, is
+    // byte-for-byte what the deps witnessed. This is what makes the first cell's trace evidence
+    // rather than an assertion the loop makes about itself.
+    expect(result.stages.filter((stage) => DEP_OBSERVABLE_STAGES.includes(stage)))
+      .toEqual(loop.observed)
+  })
+
+  it('screens the intent exactly once, and does so before anything is authored', async () => {
+    const loop = observedLoop()
+
+    const result = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // ONCE. A second screen would be a second answer to "is this already covered", and the two
+    // would be free to disagree about the same intent.
+    expect(loop.observed.filter((stage) => stage === 'dedup')).toHaveLength(1)
+    // BEFORE. Stated as an index comparison over the observed log rather than as a pair of
+    // "was it called" checks, so a dedup that ran after the model call fails here even though
+    // both stages ran.
+    expect(loop.observed.indexOf('dedup')).toBeLessThan(loop.observed.indexOf('compile'))
+    // …and nothing was authored on the way to it: the screen saw a corpus, the model saw one
+    // prompt, and the shelf received exactly one document — after both.
+    expect(result.dedup.comparedTests).toBe(SUITE_TEXT.length)
+    expect(loop.modelCalls).toHaveLength(1)
+    expect(loop.written).toHaveLength(1)
+  })
+
+  it('reaches verify only after the compiled bytes are on the shelf', async () => {
+    const loop = observedLoop()
+
+    await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // The shelf write has no stage name of its own, so its ordering is pinned by the path the
+    // verify stage was handed: `STAGED_PATH` is what `write` answered, and the `verifyDraft` fake
+    // asserts it received exactly that. A verify reached before the write would have had no path
+    // to pass — which is the claim, made structurally.
+    expect(loop.observed.indexOf('compile')).toBeLessThan(loop.observed.indexOf('verify'))
+    expect(loop.written).toHaveLength(1)
+  })
+
+  it('calls the model exactly TWICE — compile, then D-18 one refinement round', async () => {
+    const loop = observedLoop()
+
+    const result = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // TWO CALLS AND NO MORE. One to author the whole document, one to refine it. A third would be
+    // a retry hidden inside a stage, which would make the fan-out preview's sibling promise — that
+    // the loop's cost is the number a person was shown — a promise about model calls nobody counted.
+    expect(loop.modelCalls).toHaveLength(1)
+    expect(loop.refineCalls).toHaveLength(1)
+    // The SECOND call is built from the draft the FIRST produced: the fixture's staged draft is the
+    // accept control, and its own step text is in the refinement prompt. Text derived from the
+    // draft rather than from the intent is what makes it a second question instead of a retry.
+    for (const step of ACCEPT_CONTROL_DRAFT.steps) {
+      expect(loop.refineCalls[0]).toContain(step)
+    }
+    // …and the round's re-retrieval was keyed on the same words, not on the intent.
+    expect(loop.refineQueries).toHaveLength(1)
+    expect(loop.refineQueries[0]).not.toContain(INTENT)
+    for (const step of ACCEPT_CONTROL_DRAFT.steps) {
+      expect(loop.refineQueries[0]).toContain(step)
+    }
+    // The round RAN and is reported, even though this fixture's emission is not a patch set — an
+    // invocation that entered stage 3 always carries an arm saying what its refinement did.
+    expect(result.refinement?.kind).toBe('not-applied')
+  })
+})
+
+// ---- the schema channel: which TIER carries the document format --------------------------------
+//
+// WINDOWS 111. On 5/5 live gate-allowed invocations the compile stage emitted a document missing
+// `test-id` and `target` and carrying an unrecognized `product` key. The prompt's blocks were Role,
+// Procedures, Intent, Scope, What this project knows and Exemplar tests, and the required document
+// schema was named in NONE of them — `exemplarBlockBody` answers "No exemplar tests were served for
+// this scope" when the brief carries none, which is every brief in a fresh project.
+//
+// THE TIER IS THE CLAIM, not the presence. A format rule served from the volatile tier is served
+// only when memory has something to say; the cells below read the STABLE tier — the shared byte
+// prefix — off a brief carrying ZERO exemplars, which is the bootstrap condition itself.
+
+/** The block title a model reads, spelled as a model reads it: a literal, not an import. */
+const FORMAT_BLOCK_TITLE = 'Test document format'
+/** The vocabulary block's title, as a MODEL reads it — a literal, never the exported constant. */
+const TARGETS_BLOCK_TITLE = 'Configured targets'
+
+interface RenderedBlock {
+  readonly title: string
+  readonly body: string
+}
+
+/** `buildTieredPrompt`'s output read back as blocks — the markdown a model is actually handed. */
+function renderedBlocks(text: string): readonly RenderedBlock[] {
+  return text.split(/^## /m).slice(1).map((part) => {
+    const split = part.indexOf('\n\n')
+    return {
+      title: part.slice(0, split),
+      body: part.slice(split + 2).replace(/\n+$/, ''),
+    }
+  })
+}
+
+describe('the document schema rides the stable tier, not the exemplar block (WINDOWS 111)', () => {
+  it('names the required keys in a STABLE block, on a brief carrying ZERO exemplars', async () => {
+    const loop = observedLoop()
+
+    await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // The condition, stated rather than assumed: this brief serves no exemplars at all.
+    expect(EMPTY_BRIEF.exemplars).toHaveLength(0)
+
+    const stable = renderedBlocks(loop.compileRequests[0]?.system ?? '')
+    const format = stable.find((block) => block.title === FORMAT_BLOCK_TITLE)
+    expect(format).toBeDefined()
+    // The three keys the live emission was missing or wrong about, by name.
+    expect(format?.body).toContain('test-id')
+    expect(format?.body).toContain('target')
+    expect(format?.body).toContain('steps')
+
+    // THE NON-VACUITY GUARD. The only other block that could have carried a schema is the exemplar
+    // block, and on this brief it carries the empty answer — so the assertions above cannot be
+    // satisfied by prose that arrived through memory.
+    const served = renderedBlocks(loop.compileRequests[0]?.prompt ?? '')
+    const exemplars = served.find((block) => block.title === 'Exemplar tests')
+    expect(exemplars?.body).toBe(
+      'No exemplar tests were served for this scope. Follow the house YAML test style.',
+    )
+    expect(exemplars?.body).not.toContain('test-id')
+  })
+
+  it('ADDS a block rather than rearranging: every prior block keeps its title and its tier', async () => {
+    const loop = observedLoop()
+
+    await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // Ordered title equality per tier, not membership: a fix that demoted the exemplar block, moved
+    // Procedures out of stable, or reordered Intent and Scope fails here even though every block
+    // still exists somewhere.
+    expect(renderedBlocks(loop.compileRequests[0]?.system ?? '').map((block) => block.title))
+      .toEqual(['Role', FORMAT_BLOCK_TITLE, 'Procedures'])
+    expect(renderedBlocks(loop.compileRequests[0]?.prompt ?? '').map((block) => block.title))
+      .toEqual([
+        'Intent',
+        'Scope',
+        TARGETS_BLOCK_TITLE,
+        'What this project knows',
+        'Exemplar tests',
+      ])
+  })
+
+  it('serves the configured target names in the CONTEXT tier, beside Scope (394-33, WR-07)', async () => {
+    const loop = observedLoop()
+
+    await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    // THE TIER IS THE DECISION. Target names are PER-PROJECT facts, and the stable tier is the
+    // byte prefix a provider's prompt cache keys on — a project-dependent block there would defeat
+    // the sharing the tier law exists to enable. So it rides the context tier, which is where the
+    // Scope block it corrects already lives.
+    const stable = renderedBlocks(loop.compileRequests[0]?.system ?? '')
+    expect(stable.find((block) => block.title === TARGETS_BLOCK_TITLE)).toBeUndefined()
+
+    const served = renderedBlocks(loop.compileRequests[0]?.prompt ?? '')
+    const targets = served.find((block) => block.title === TARGETS_BLOCK_TITLE)
+    expect(targets).toBeDefined()
+    // One name per line, verbatim — nothing rendered around them for a model to mistake for a name.
+    expect(targets?.body.split('\n')).toEqual([...CONFIGURED_TARGET_NAMES])
+
+    // AND THE FORMAT BLOCK POINTS AT IT. The bullet asking for `target` names the block by title,
+    // so the vocabulary is not merely present in the prompt but is what the instruction sends a
+    // reader to — the half a served-but-unreferenced block would silently miss.
+    const format = stable.find((block) => block.title === FORMAT_BLOCK_TITLE)
+    expect(format?.body).toContain(TARGETS_BLOCK_TITLE)
+
+    // THE NON-VACUITY GUARD: the scope key is not one of the served names, so a block that
+    // rendered the scope — the shipping derivation's own mistake — cannot satisfy the pin above.
+    expect(CONFIGURED_TARGET_NAMES).not.toContain(SCOPE.key)
+  })
+})
+
+// ---- the second claim: there is exactly ONE public entry to the loop ---------------------------
+
+const LISTING_CALLER: FunctionCaller = {
+  surface: 'test',
+  origin: 'human',
+}
+
+function minimalDeps(): FunctionDeps {
+  return {
+    runs: {
+      list: () => Promise.resolve([]),
+      get: () => Promise.resolve(undefined),
+      readEvents: () => Promise.resolve([]),
+      readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
+    },
+    knowledge: {
+      listBundles: () => Promise.resolve([]),
+      inspectRecords: () => Promise.resolve([]),
+      diffSince: () => Promise.resolve([]),
+      showRecord: ({ recordId }) => Promise.resolve(
+        { kind: 'not-found', schemaVersion: 2, recordId } as const,
+      ),
+    },
+    entities: {
+      resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
+      get: () => Promise.resolve(undefined),
+    },
+    config: {
+      getMasked: () => Promise.resolve({
+        schemaVersion: MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+        configPath: 'agent-qa.config.yaml',
+        entries: [],
+      }),
+    },
+  }
+}
+
+/**
+ * The ids this phase intends the `authoring.` domain to hold, and no others.
+ *
+ * `authoring.draft.edit` lands in plan 09 and is deliberately absent until it does — a pin that
+ * pre-authorised an id nothing registers would go green on the day it arrived and say nothing
+ * about it.
+ *
+ * 394-07 ADDS `authoring.funnel.get`, and the addition is a DECISION rather than bookkeeping,
+ * because this pin is not a census — it is the one-public-entry claim. What it forbids is
+ * promoting a loop STAGE to its own registered op, which would hand the chat planner (binding
+ * every registered op 1:1) a way to run dedup, compile or route on its own and reorder or skip
+ * the rest.
+ *
+ * 394-09 ADDS `authoring.draft.edit`, and the same argument has to be made for it rather than
+ * assumed from the family name. It is not a stage of the loop: it takes an EXISTING committed test
+ * plus a change to make to it, where every loop stage takes an intent and a draft in flight. It has
+ * no position in the six-stage order — there is nothing it could be moved before or after — and
+ * invoking it before, during or after a loop invocation answers the same question. A planner
+ * holding it therefore gains a user-facing entry point and no way to run the loop out of order,
+ * which is the distinction this pin exists to make somebody state out loud.
+ *
+ * The funnel read is not a stage and cannot become one. It runs over records the loop has already
+ * written, it takes no draft and no intent, it starts nothing, and there is no ordering it could
+ * be moved within: invoking it before, during or after a loop invocation answers a question about
+ * the receipts on disk either way. Registering it therefore widens the DOMAIN without widening the
+ * loop's entry surface — which is the distinction this line exists to make somebody state out
+ * loud, in the same change that makes it.
+ */
+const EXPECTED_AUTHORING_IDS: readonly string[] = [
+  'authoring.draft.edit',
+  'authoring.draft.verify',
+  'authoring.draft.write',
+  'authoring.funnel.get',
+]
+
+describe('the loop has exactly one public entry', () => {
+  it('registers no authoring op besides the evaluator and the loop', () => {
+    const registry = createFunctionRegistry({
+      deps: minimalDeps(),
+    })
+
+    const authoringIds = registry
+      .list(LISTING_CALLER)
+      .map((declaration) => declaration.id)
+      .filter((id) => id.startsWith('authoring.'))
+      .sort()
+
+    // EXACT SET EQUALITY off the registry, which is what makes "no caller can reorder or skip the
+    // stages" a structural claim rather than a statement about how `loop.ts` happens to be
+    // written today. Promoting any stage — dedup, compile, route — to its own registered op would
+    // hand the chat planner, which binds every registered op 1:1, a way to run that stage on its
+    // own; this line is what refuses that edit, in the same change that makes it.
+    expect(authoringIds).toEqual([...EXPECTED_AUTHORING_IDS])
+  })
+})
+
+// ---- 432 D-06 (EDGE-09): the final write, one disposition at a time -----------------------------
+//
+// Stage 5 is driven directly with a receipt per disposition, so each arm of the rule is measured
+// on its own: which final drafts reach the writer, what they ask it to write, and that the receipt
+// the loop answers with keeps the disposition and all four gate booleans exactly as evaluated.
+
+const ALL_PASS: DraftGateBooleans = {
+  executesDefinitive: true,
+  stableVerdict: true,
+  addsValue: true,
+  falsifiableAssertion: true,
+}
+
+const MIXED: DraftGateBooleans = {
+  executesDefinitive: true,
+  stableVerdict: false,
+  addsValue: false,
+  falsifiableAssertion: true,
+}
+
+function scriptedReceipt(
+  disposition: DraftDisposition,
+  gates: DraftGateBooleans,
+  runs: { readonly requested: number; readonly completed: number },
+): DraftReceipt {
+  return {
+    schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION,
+    draftRef: {
+      filePath: STAGED_DRAFT.filePath,
+      testId: STAGED_DRAFT.testId,
+      testName: STAGED_DRAFT.testName,
+      contentDigest: STAGED_DRAFT.contentDigest,
+    },
+    gates: {
+      executesDefinitive: { pass: gates.executesDefinitive, runRefs: [], indefinitiveRunRefs: [] },
+      stableVerdict: {
+        pass: gates.stableVerdict,
+        runRefs: [],
+        distinctOutcomes: [],
+        earlyStopped: false,
+      },
+      addsValue: { pass: gates.addsValue, novelElementCount: 0, comparedTestCount: 0 },
+      falsifiableAssertion: {
+        pass: gates.falsifiableAssertion,
+        assertionStepCount: 1,
+        falsifiableAssertionCount: gates.falsifiableAssertion ? 1 : 0,
+      },
+    },
+    stepTable: [],
+    gateRuns: [],
+    addsValueFinding: { novelElements: [], comparedTests: [] },
+    stabilityRunsRequested: runs.requested,
+    stabilityRunsCompleted: runs.completed,
+    disposition,
+    evaluatedAt: 1_700_000_000_000,
+  }
+}
+
+function writerShelf(
+  answer?: (targetPath: string) => TestFileWrite,
+  runs: DraftShelfPortLike['runs'] = fakeRunPort({ runs: [] }),
+) {
+  const requests: { draftPath: string; targetPath: string; sourceDigest?: string }[] = []
+  const shelf: DraftShelfPortLike = {
+    model: () => Promise.reject(new Error('stage 5 calls no model')),
+    write: () => Promise.reject(new Error('stage 5 stages nothing')),
+    applyPatches: () => Promise.reject(new Error('these receipts never reach repair')),
+    runs,
+    verifyDraft: () => Promise.reject(new Error('stage 5 is handed its receipt')),
+    publish(request) {
+      requests.push({ ...request })
+      return Promise.resolve(answer?.(request.targetPath) ?? {
+        kind: 'written',
+        filePath: request.targetPath,
+        contentDigest: STAGED_DRAFT.contentDigest,
+      })
+    },
+  }
+  const read: AuthoringReadPortLike = {
+    getAuthoringBrief: () => Promise.reject(new Error('stage 5 reads no brief')),
+    suiteTextCorpus: () => Promise.reject(new Error('stage 5 screens nothing')),
+    configuredTargetNames: () => Promise.reject(new Error('stage 5 serves no vocabulary')),
+  }
+  return { requests, deps: { read, shelf } }
+}
+
+const FINAL_TARGET = authoredSuiteTargetPath(STAGED_DRAFT.filePath, STAGED_DRAFT.testName)
+
+describe('EDGE-09: exactly the non-rejected final dispositions are written (432 D-06)', () => {
+  const written: readonly {
+    readonly disposition: DraftDisposition
+    readonly gates: DraftGateBooleans
+    readonly runs: { readonly requested: number; readonly completed: number }
+  }[] = [
+    { disposition: 'keep-eligible', gates: ALL_PASS, runs: { requested: 3, completed: 3 } },
+    { disposition: 'proposal-only', gates: ALL_PASS, runs: { requested: 3, completed: 2 } },
+    // RE-SPELLED 2026-10-03 (quick 261003-cpv, WR-09): draft mode writes a draft whose gates 1, 3
+    // and 4 passed, and the receipt carries the booleans unchanged; a false one rejects it.
+    {
+      disposition: 'unverified',
+      gates: { ...ALL_PASS, stableVerdict: false },
+      runs: { requested: 1, completed: 1 },
+    },
+  ]
+
+  for (const row of written) {
+    it(`writes a ${row.disposition} final draft once, as a new file, keeping all four booleans`, async () => {
+      const host = writerShelf()
+      const receipt = scriptedReceipt(row.disposition, row.gates, row.runs)
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
+
+      expect(routed.outcome.kind).toBe('drafted')
+      // One write, of the shelf copy, to the loop's own target recipe, claiming the target absent.
+      expect(host.requests).toEqual([{ draftPath: STAGED_PATH, targetPath: FINAL_TARGET }])
+      const answer = routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined
+      expect(answer).toEqual({
+        file: { kind: 'written', filePath: FINAL_TARGET, contentDigest: STAGED_DRAFT.contentDigest },
+        disposition: row.disposition,
+        gates: row.gates,
+      })
+      expect(WrittenTestReceiptSchema.safeParse(answer).success).toBe(true)
+    })
+  }
+
+  it('never hands a rejected final draft to the writer', async () => {
+    const host = writerShelf()
+    const receipt = scriptedReceipt('rejected', MIXED, { requested: 3, completed: 3 })
+
+    // A rejected receipt ROUTES; with no run evidence the router refuses by name. Either way the
+    // writer is never reached.
+    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
+      .then(() => undefined, (error: unknown) => error)
+
+    expect(outcome).toBeInstanceOf(AuthoringLoopUnroutableEvidenceError)
+    expect(host.requests).toEqual([])
+  })
+
+  it('reports a write that did not land as not written, keeping the verification facts', async () => {
+    for (const reason of ['target-changed', 'outside-workspace', 'write-failed'] as const) {
+      const host = writerShelf((targetPath) => ({
+        kind: 'not-written',
+        targetPath,
+        reason,
+        ...(reason === 'write-failed' ? { detail: 'EIO' } : {}),
+      }))
+      const receipt = scriptedReceipt('keep-eligible', ALL_PASS, { requested: 3, completed: 3 })
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
+
+      expect(host.requests).toHaveLength(1)
+      const answer = routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined
+      expect(answer?.file).toMatchObject({ kind: 'not-written', targetPath: FINAL_TARGET, reason })
+      expect(answer?.disposition).toBe('keep-eligible')
+      expect(answer?.gates).toEqual(ALL_PASS)
+      expect(WrittenTestReceiptSchema.safeParse(answer).success).toBe(true)
+    }
+  })
+
+  it('writes only after verify, as the tail of route, in a full loop', async () => {
+    const loop = observedLoop()
+
+    const result = await runAuthoringLoop({ intent: INTENT, scope: SCOPE }, loop.deps)
+
+    expect(result.stages).toEqual([...AUTHORING_LOOP_STAGES])
+    expect(loop.published).toEqual([FINAL_TARGET])
+    expect(result.outcome.kind === 'drafted' ? result.outcome.written.file.kind : undefined)
+      .toBe('written')
+  })
+})
+
+// 2026-10-03 (quick 261003-cpv, 432 review WR-09): a draft-mode evaluation whose gate 1, 3 or 4 said
+// no is rejected by the disposition table (D-06: "writes the test file unless a keep-gate rejected
+// it"), so stage 5 never hands it to the writer. The disposition is COMPUTED here rather than
+// scripted, so the cell reds on the table, not on a fixture.
+describe('C261003-CPV-DRAFT-KEEP-GATES: a draft-mode draft a keep-gate rejected is not written', () => {
+  const ONE_RUN = { requested: 1, completed: 1 } as const
+
+  function draftModeReceipt(gates: DraftGateBooleans, runId?: string): DraftReceipt {
+    const receipt = scriptedReceipt(computeDraftDisposition({
+      gates,
+      stabilityRunsRequested: ONE_RUN.requested,
+      stabilityRunsCompleted: ONE_RUN.completed,
+    }), gates, ONE_RUN)
+    return runId === undefined
+      ? receipt
+      : {
+        ...receipt,
+        gateRuns: [{ runId, memberOutcome: 'passed', definitive: true, healed: false }],
+      }
+  }
+
+  it('a draft-mode draft whose run reached no verdict is never written', async () => {
+    const host = writerShelf()
+    const receipt = draftModeReceipt({ ...ALL_PASS, executesDefinitive: false })
+
+    const outcome = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
+      .then((routed) => routed, (error: unknown) => error)
+
+    expect(receipt.disposition).toBe('rejected')
+    expect(host.requests).toEqual([])
+    expect(outcome).toBeInstanceOf(AuthoringLoopUnroutableEvidenceError)
+  })
+
+  it('a draft-mode draft that passed but asserts nothing falsifiable answers not written: rejected',
+    async () => {
+      const runId = 'r_draft-mode-passed'
+      const document = runDocument(runId, [{
+        filePath: STAGED_DRAFT.filePath,
+        testName: STAGED_DRAFT.testName,
+        outcome: 'passed',
+        steps: ACCEPT_CONTROL_SUBACTIONS,
+      }])
+      const host = writerShelf(undefined, {
+        start: () => Promise.reject(new Error('stage 5 starts no run')),
+        get: (id: string) => Promise.resolve(id === runId ? document : undefined),
+      })
+      const gates = { ...ALL_PASS, falsifiableAssertion: false }
+      const receipt = draftModeReceipt(gates, runId)
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, [])
+
+      expect(host.requests).toEqual([])
+      expect(routed.outcome.kind).toBe('drafted')
+      const answer = routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined
+      expect(answer).toEqual({
+        file: { kind: 'not-written', targetPath: FINAL_TARGET, reason: 'rejected' },
+        disposition: 'rejected',
+        gates,
+      })
+      expect(WrittenTestReceiptSchema.safeParse(answer).success).toBe(true)
+    })
+})
+
+// 2026-10-12 (440-05, D-08): the keep check is driven directly, since compile, refine and repair
+// already hold the values on the normal path. STAGED_DRAFT's steps carry `alice` and `Local Form`.
+describe('C440-VALUE-KEEP', () => {
+  const GATE_RUN_IDS = ['r_keep-gate-0', 'r_keep-gate-1', 'r_keep-gate-2'] as const
+
+  function keepEligibleReceipt(): DraftReceipt {
+    return {
+      ...scriptedReceipt('keep-eligible', ALL_PASS, { requested: 3, completed: 3 }),
+      gateRuns: GATE_RUN_IDS.map((runId) => ({
+        runId,
+        memberOutcome: 'passed' as const,
+        definitive: true,
+        healed: false,
+      })),
+    }
+  }
+
+  function unverifiedReceipt(): DraftReceipt {
+    return scriptedReceipt(
+      'unverified',
+      { ...ALL_PASS, stableVerdict: false },
+      { requested: 1, completed: 1 },
+    )
+  }
+
+  it('a keep-eligible draft that lost a stated value is refused at keep and never published',
+    async () => {
+      const host = writerShelf()
+      const receipt = keepEligibleReceipt()
+
+      const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, ['Sign In'])
+
+      expect(routed.outcome).toEqual({
+        kind: 'refused',
+        draftRef: {
+          filePath: STAGED_DRAFT.filePath,
+          testId: STAGED_DRAFT.testId,
+          testName: STAGED_DRAFT.testName,
+          contentDigest: STAGED_DRAFT.contentDigest,
+        },
+        receipt,
+        statedValueRefusal: { stage: 'keep', missingValues: ['Sign In'] },
+      })
+      expect(host.requests).toEqual([])
+      expect(routed.fanOut.consumedTotal).toBe(receipt.gateRuns.length)
+      expect(routed.fanOut.consumedTotal).toBe(GATE_RUN_IDS.length)
+    })
+
+  it('a keep-eligible draft that carries every stated value is written', async () => {
+    const host = writerShelf()
+    const receipt = keepEligibleReceipt()
+
+    const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, ['Local Form', 'alice'])
+
+    expect(routed.outcome.kind).toBe('drafted')
+    expect(host.requests).toEqual([{ draftPath: STAGED_PATH, targetPath: FINAL_TARGET }])
+    expect(routed.outcome.kind === 'drafted' ? routed.outcome.written.file.kind : undefined)
+      .toBe('written')
+  })
+
+  it("draft mode's unverified draft is checked before it is written", async () => {
+    const refusedHost = writerShelf()
+    const refused = await routeAfterVerify(
+      STAGED_DRAFT,
+      unverifiedReceipt(),
+      refusedHost.deps,
+      ['alice', 'Sign In'],
+    )
+    expect(refused.outcome.kind).toBe('refused')
+    expect(refused.outcome.kind === 'refused' ? refused.outcome.statedValueRefusal : undefined)
+      .toEqual({ stage: 'keep', missingValues: ['Sign In'] })
+    expect(refusedHost.requests).toEqual([])
+
+    const writtenHost = writerShelf()
+    const written = await routeAfterVerify(
+      STAGED_DRAFT,
+      unverifiedReceipt(),
+      writtenHost.deps,
+      ['alice', 'Local Form'],
+    )
+    expect(written.outcome.kind).toBe('drafted')
+    expect(written.outcome.kind === 'drafted' ? written.outcome.written.disposition : undefined)
+      .toBe('unverified')
+    expect(writtenHost.requests).toEqual([{ draftPath: STAGED_PATH, targetPath: FINAL_TARGET }])
+  })
+
+  it('a case-changed value is refused at keep', async () => {
+    const host = writerShelf()
+
+    const routed = await routeAfterVerify(
+      STAGED_DRAFT,
+      keepEligibleReceipt(),
+      host.deps,
+      ['local form'],
+    )
+
+    expect(routed.outcome.kind === 'refused' ? routed.outcome.statedValueRefusal : undefined)
+      .toEqual({ stage: 'keep', missingValues: ['local form'] })
+    expect(host.requests).toEqual([])
+  })
+
+  it('a rejected draft is never checked and never written', async () => {
+    const runId = 'r_keep-rejected-passed'
+    const document = runDocument(runId, [{
+      filePath: STAGED_DRAFT.filePath,
+      testName: STAGED_DRAFT.testName,
+      outcome: 'passed',
+      steps: ACCEPT_CONTROL_SUBACTIONS,
+    }])
+    const host = writerShelf(undefined, {
+      start: () => Promise.reject(new Error('stage 5 starts no run')),
+      get: (id: string) => Promise.resolve(id === runId ? document : undefined),
+    })
+    const gates = { ...ALL_PASS, falsifiableAssertion: false }
+    const ONE_RUN = { requested: 1, completed: 1 } as const
+    const receipt: DraftReceipt = {
+      ...scriptedReceipt(
+        computeDraftDisposition({
+          gates,
+          stabilityRunsRequested: ONE_RUN.requested,
+          stabilityRunsCompleted: ONE_RUN.completed,
+        }),
+        gates,
+        ONE_RUN,
+      ),
+      gateRuns: [{ runId, memberOutcome: 'passed', definitive: true, healed: false }],
+    }
+
+    const routed = await routeAfterVerify(STAGED_DRAFT, receipt, host.deps, ['Sign In'])
+
+    expect(receipt.disposition).toBe('rejected')
+    expect(host.requests).toEqual([])
+    expect(routed.outcome.kind).toBe('drafted')
+    expect(routed.outcome).not.toHaveProperty('statedValueRefusal')
+    expect(routed.outcome.kind === 'drafted' ? routed.outcome.written : undefined).toEqual({
+      file: { kind: 'not-written', targetPath: FINAL_TARGET, reason: 'rejected' },
+      disposition: 'rejected',
+      gates,
+    })
+  })
+
+  it('the keep check is the only door to publishing', () => {
+    const lines = readFileSync(fileURLToPath(new URL('../loop.ts', import.meta.url)), 'utf8')
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    const publishLines = lines.flatMap((line, index) => (line.includes('.publish(') ? [index] : []))
+    expect(publishLines).toHaveLength(1)
+
+    const start = lines.findIndex((line) => line.startsWith('async function writeFinalDraft('))
+    const end = lines.findIndex((line, index) => index > start && line === '}')
+    const publishAt = publishLines[0] as number
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(publishAt).toBeGreaterThan(start)
+    expect(publishAt).toBeLessThan(end)
+
+    const checkAt = lines.findIndex(
+      (line, index) => index > start && index < end && line.includes('missingStatedValues('),
+    )
+    expect(checkAt).toBeGreaterThan(start)
+    expect(checkAt).toBeLessThan(publishAt)
+  })
+})

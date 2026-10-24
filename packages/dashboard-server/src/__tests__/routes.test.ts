@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   AUTH_STATE_SCHEMA_VERSION,
-  hashStepInstruction,
   resolveAuthStatePaths,
   resolveWorkspacePaths,
   writeAuthStateFiles,
@@ -23,8 +22,22 @@ import { extractTestFileMetadata, TestFileManager } from '../tests/test-file-man
 import { generateText } from 'ai'
 
 vi.mock('ai', () => ({
+  addToolInputExamplesMiddleware: vi.fn(() => ({})),
+  createProviderRegistry: vi.fn(),
+  customProvider: vi.fn(),
+  extractJsonMiddleware: vi.fn(() => ({})),
   generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
+  parsePartialJson: vi.fn(),
 }))
+
+vi.mock('@vostride/agent-qa-model', async () => {
+  const actual = await vi.importActual<typeof import('@vostride/agent-qa-model')>('@vostride/agent-qa-model')
+  return {
+    ...actual,
+    createModel: vi.fn(() => ({})),
+    getProviderOptions: vi.fn(() => undefined),
+  }
+})
 
 const mockGenerateText = vi.mocked(generateText)
 
@@ -45,29 +58,18 @@ interface MockRun {
   startedAt: string | null
   endedAt: string | null
   source: string
-  parentRunId: string | null
   platform: string
   metadata: Record<string, unknown> | null
   testFileContent: string | null
   createdAt: string
 }
 
-interface MockStep {
-  id: string
-  runId: string
-  name: string
-  status: string
-  duration: number
-  stepOrder: number
-}
-
 function createMockDatabase() {
   const runs: MockRun[] = []
-  const steps: MockStep[] = []
 
   function filterRuns(filters: Record<string, unknown> = {}): MockRun[] {
     const {
-      status,
+      statuses,
       name,
       tag,
       from,
@@ -80,8 +82,8 @@ function createMockDatabase() {
 
     let filtered = [...runs]
 
-    if (typeof status === 'string') {
-      filtered = filtered.filter((run) => run.status === status)
+    if (Array.isArray(statuses) && statuses.length > 0) {
+      filtered = filtered.filter((run) => statuses.includes(run.status))
     }
     if (typeof name === 'string') {
       filtered = filtered.filter((run) => run.name.includes(name))
@@ -120,7 +122,6 @@ function createMockDatabase() {
         startedAt: typeof run.startedAt === 'string' ? run.startedAt : null,
         endedAt: typeof run.endedAt === 'string' ? run.endedAt : null,
         source: typeof run.source === 'string' ? run.source : 'test',
-        parentRunId: typeof run.parentRunId === 'string' ? run.parentRunId : null,
         platform: typeof run.platform === 'string' ? run.platform : 'web',
         metadata: run.metadata && typeof run.metadata === 'object' ? run.metadata as Record<string, unknown> : null,
         testFileContent: typeof run.testFileContent === 'string' ? run.testFileContent : null,
@@ -132,31 +133,11 @@ function createMockDatabase() {
       })
       return id
     },
-    insertStep(step: Record<string, unknown>) {
-      const id = typeof step.id === 'string' ? step.id : randomUUID()
-      steps.push({
-        id,
-        runId: String(step.runId),
-        name: String(step.name ?? 'Unnamed Step'),
-        status: String(step.status ?? 'pending'),
-        duration: typeof step.duration === 'number' ? step.duration : 0,
-        stepOrder: typeof step.stepOrder === 'number' ? step.stepOrder : 0,
-      })
-      return id
-    },
     getRuns(filters: Record<string, unknown> = {}) {
       return filterRuns(filters)
     },
-    getRunsByParent(parentRunId: string) {
-      return runs.filter((run) => run.parentRunId === parentRunId)
-    },
     getRun(id: string) {
       return runs.find((run) => run.id === id) ?? null
-    },
-    getSteps(runId: string) {
-      return steps
-        .filter((step) => step.runId === runId)
-        .sort((left, right) => left.stepOrder - right.stepOrder)
     },
     getStats(filters: Record<string, unknown> = {}) {
       const relevantRuns = filterRuns(filters)
@@ -220,22 +201,18 @@ function insertSampleRun(overrides: Record<string, unknown> = {}) {
   })
 }
 
-function insertSampleStep(runId: string, overrides: Record<string, unknown> = {}) {
-  return db.insertStep({
-    runId,
-    name: 'Click login button',
-    status: 'passed',
-    duration: 1000,
-    stepOrder: 0,
-    ...overrides,
-  })
-}
-
 interface MockResponse {
   status: number
   headers: Record<string, string>
   body: string
 }
+
+// A mock request that omits `Host` models no real client: HTTP/1.1 requires the header and every
+// browser, `curl`, `fetch` and the conformance harness sends it. The display-seam read arms
+// (405 CR-01) now refuse a request whose claimed Host is not a loopback name, so the default below
+// is what keeps these direct-invoke probes speaking the wire's own shape. An explicit `host` in
+// `options.headers` still wins, which is how the refusal itself is exercised.
+const LOOPBACK_HOST_HEADER = { host: '127.0.0.1:3470' } as const
 
 function createMockRequest(
   url: string,
@@ -244,7 +221,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { ...LOOPBACK_HOST_HEADER, ...options.headers }
 
   process.nextTick(() => {
     if (options.body) {
@@ -343,7 +320,7 @@ async function createConfigWorkspace(configContent: string, hooksContent?: strin
     await writeFile(join(dir, 'hooks.yaml'), hooksContent, 'utf-8')
   }
   return {
-    configManager: new ConfigManager(configPath),
+    configManager: new ConfigManager(configPath, (text) => text),
     configPath,
   }
 }
@@ -361,10 +338,10 @@ function createWorkspacePaths(
         testMatch: options.testMatch ?? ['**/*.yaml'],
         suiteMatch: options.suiteMatch ?? ['**/*.suite.yaml'],
         hooksFile: 'runtime/hooks/custom-hooks.yaml',
-        agentRules: 'agent-rules.md',
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
+      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
     },
     configPath: join(workspaceDir, 'agent-qa.config.yaml'),
   })
@@ -476,7 +453,11 @@ describe('API Routes', () => {
       expect(durableSources).not.toMatch(/\blive_timeline\b/)
       expect(durableSources).not.toMatch(/\bliveEvents\b/)
       expect(durableSources).not.toMatch(/\bliveTimeline\b/)
-      expect(routesSource).toContain('/api/execution/events')
+      // 2026-08-27 (405-07, D-19): this line asserted the live feed's route was PRESENT — the 225
+      // guardrail's way of saying "live state lives on the wire, not in the schema". The route is
+      // retired, so the assertion is inverted: the wire it names must be absent from this file too.
+      // Split needle, so this cell is not itself the grep-clean inventory's hit.
+      expect(routesSource).not.toContain('api/' + 'execution/events')
       expect(routesSource).not.toMatch(/\/api\/runs\/[^'"]+\/live[-_]timeline/)
     })
   })
@@ -677,8 +658,8 @@ describe('API Routes', () => {
     })
   })
 
-  describe('auth-state redaction for run APIs', () => {
-    it('sanitizes artifacts, logs, execution logs, and steps at response boundaries', async () => {
+  describe('auth state in run APIs', () => {
+    it('serves the artifact, execution logs and run row with stored auth-state values as written', async () => {
       const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
       const runId = actualDb.insertRun({
         name: 'Auth redaction run',
@@ -707,16 +688,6 @@ describe('API Routes', () => {
           },
         },
       })
-      actualDb.insertLogs([{
-        id: randomUUID(),
-        runId,
-        stepId: null,
-        level: 'info',
-        source: 'runner',
-        message: storageJson,
-        data: { storageStatePath: storagePath },
-        timestamp: '2026-05-17T10:00:00.000Z',
-      }])
       actualDb.insertExecutionLog({
         id: randomUUID(),
         runId,
@@ -729,38 +700,28 @@ describe('API Routes', () => {
         stderr: storageJson,
         variables: { SESSION_TOKEN: 'hook-session-token', SAFE_VALUE: 'visible' },
       })
-      actualDb.insertStep({
-        runId,
-        name: 'Auth step',
-        status: 'failed',
-        duration: 1,
-        error: storageJson,
-        capturedVariables: { ACCESS_TOKEN: 'step-token' },
-        variableSnapshot: { SESSION_TOKEN: { value: 'step-token', source: 'hook' } },
-        stepOrder: 0,
-      })
-      router = createRouter(actualDb, artifactsDir)
+      router = createRouter(actualDb)
 
-      const responses = await Promise.all([
+      // 2026-10-14 (441-05, D-13): no auth-state redactor; a stored value is served as written.
+      const [runRes, artifactRes, logsRes] = await Promise.all([
         invokeRoute(`/api/runs/${runId}`),
         invokeRoute(`/api/runs/${runId}/artifact`),
-        invokeRoute(`/api/runs/${runId}/logs`),
         invokeRoute(`/api/runs/${runId}/execution-logs`),
-        invokeRoute(`/api/runs/${runId}/steps`),
       ])
 
-      for (const res of responses) {
-        expect(res.status).toBe(200)
-        expect(res.body).toContain('[auth state redacted]')
-        expect(res.body).not.toContain('demo-acc')
-        expect(res.body).not.toContain(storagePath)
-        expect(res.body).not.toContain('/workspace/.agent-qa-auth-state/storage-state.json')
-        expect(res.body).not.toContain(AUTH_STATE_COOKIE_SECRET)
-        expect(res.body).not.toContain(AUTH_STATE_LOCAL_STORAGE_SECRET)
-        expect(res.body).not.toContain(AUTH_STATE_INDEXED_DB_SECRET)
-        expect(res.body).not.toContain('hook-session-token')
-        expect(res.body).not.toContain('step-token')
-      }
+      expect(runRes.status).toBe(200)
+      expect(JSON.parse(runRes.body).run.name).toBe('Auth redaction run')
+      expect(artifactRes.status).toBe(200)
+      const payload = JSON.parse(artifactRes.body).artifact.payload
+      expect(payload.config.rawConfigContent).toBe('use:\n  authState: demo-acc\n')
+      expect(payload.config.effectiveConfig).toEqual({ use: { authState: 'demo-acc' } })
+      expect(payload.runtime).toEqual({ storageStatePath: storagePath, storageState: AUTH_STATE_PAYLOAD })
+      expect(logsRes.status).toBe(200)
+      expect(JSON.parse(logsRes.body).logs[0]).toMatchObject({
+        stdout: '/workspace/.agent-qa-auth-state/storage-state.json',
+        stderr: storageJson,
+        variables: { SESSION_TOKEN: 'hook-session-token', SAFE_VALUE: 'visible' },
+      })
 
       actualDb.close()
     })
@@ -1124,17 +1085,19 @@ describe('API Routes', () => {
   })
 
   describe('GET /api/runs/:id', () => {
-    it('returns run with steps', async () => {
+    // 405-07 (D-03): the body is `{ run }` and nothing else. It used to carry `steps` off a v1
+    // projection with no producer and `attempts`/`tests` off a child-run walk over a deleted
+    // column — three keys that were structurally empty on every run this build produces. The run's
+    // members, steps and sub-actions are `GET /api/runs/:id/detail`'s, through `runs.detail`.
+    it('returns the run row, and only the run row', async () => {
       const runId = insertSampleRun()
-      insertSampleStep(runId, { name: 'Step 1', stepOrder: 0 })
-      insertSampleStep(runId, { name: 'Step 2', stepOrder: 1 })
 
       const res = await invokeRoute(`/api/runs/${runId}`)
       expect(res.status).toBe(200)
-      const data = JSON.parse(res.body) as any
-      expect(data.run.id).toBe(runId)
-      expect(data.run.name).toBe('Login Test')
-      expect(data.steps).toHaveLength(2)
+      const data = JSON.parse(res.body) as Record<string, unknown>
+      expect(Object.keys(data)).toEqual(['run'])
+      expect((data.run as { id: string }).id).toBe(runId)
+      expect((data.run as { name: string }).name).toBe('Login Test')
     })
 
     it('returns 404 for unknown run', async () => {
@@ -1145,60 +1108,25 @@ describe('API Routes', () => {
     })
   })
 
-  describe('GET /api/videos/:runId/:filename', () => {
-    it('serves video files from run-id directories', async () => {
-      const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const videosDir = join(artifactsDir, 'videos')
-      await mkdir(join(videosDir, 'run_1'), { recursive: true })
-      await writeFile(join(videosDir, 'run_1', 'recording.webm'), 'video-body', 'utf-8')
-
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
-
-      const res = await invokeRoute('/api/videos/run_1/recording.webm')
-
-      expect(res.status).toBe(200)
-      expect(res.headers['content-type']).toBe('video/webm')
-      expect(res.body).toBe('video-body')
-
-      actualDb.close()
-    })
-
-    it('does not serve flat videos through run-id URLs', async () => {
-      const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const videosDir = join(artifactsDir, 'videos')
-      await mkdir(videosDir, { recursive: true })
-      await writeFile(join(videosDir, 'recording.webm'), 'flat-video', 'utf-8')
-
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
-
-      const res = await invokeRoute('/api/videos/run_1/recording.webm')
-
-      expect(res.status).toBe(404)
-
-      actualDb.close()
-    })
-  })
+  // 2026-08-27 (405-07, D-14): the video-serving describe is deleted with the route. Two cells
+  // stood here — one served a file under a run-id directory, one refused a flat file through a
+  // run-id URL. There is no path-addressed artifact route left and no video surface at all, because
+  // no producer mints a recording ref; `routes.traversal.test.ts` holds the containment cells for
+  // the ref-addressed route that replaced them.
 
   describe('DELETE /api/runs/:id', () => {
-    it('deletes a run tree and artifacts while preserving token event stats', async () => {
+    // 2026-08-27 (405-07, D-14 · T-405-27): ROWS ONLY, AND THE FILESYSTEM CLAIM IS INVERTED.
+    //
+    // The cell that stood here seeded a parent/child run tree with screenshot and video
+    // directories and asserted the delete REMOVED them. The parent link is gone, the path columns
+    // are gone, and the sweep is gone: what lives under a run's directory is the event log and the
+    // content-addressed blobs, which are the run's own record and not the dashboard's to delete.
+    // So the same fixture now asserts the opposite — every byte on disk survives.
+    it('deletes the run rows, preserves token event stats, and touches no file', async () => {
       const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const screenshotsDir = join(artifactsDir, 'screenshots')
-      const videosDir = join(artifactsDir, 'videos')
-      await mkdir(join(screenshotsDir, 'suite_run'), { recursive: true })
-      await mkdir(join(screenshotsDir, 'child_run'), { recursive: true })
-      await mkdir(join(videosDir, 'suite_run'), { recursive: true })
-      await mkdir(join(videosDir, 'child_run'), { recursive: true })
-      await writeFile(join(screenshotsDir, 'suite_run', 'suite.png'), 'suite', 'utf-8')
-      await writeFile(join(screenshotsDir, 'child_run', 'child.png'), 'child', 'utf-8')
-      await writeFile(join(videosDir, 'suite_run', 'suite.webm'), 'suite-video', 'utf-8')
-      await writeFile(join(videosDir, 'child_run', 'child.mp4'), 'child-video', 'utf-8')
-      await writeFile(join(videosDir, 'child.mp4'), 'unrelated-flat-video', 'utf-8')
+      const runDir = join(artifactsDir, 'runs', 'suite_run')
+      await mkdir(runDir, { recursive: true })
+      await writeFile(join(runDir, 'events.jsonl'), '{"seq":1}\n', 'utf-8')
 
       actualDb.insertRun({
         id: 'suite_run',
@@ -1208,42 +1136,9 @@ describe('API Routes', () => {
         startedAt: '2026-04-19T00:00:00.000Z',
         endedAt: '2026-04-19T00:00:01.200Z',
         suiteId: 's_long-suite',
-        videoPath: 'suite_run/suite.webm',
       })
-      actualDb.insertRun({
-        id: 'child_run',
-        name: 'Child run',
-        status: 'failed',
-        duration: 800,
-        startedAt: '2026-04-19T00:00:00.000Z',
-        endedAt: '2026-04-19T00:00:00.800Z',
-        parentRunId: 'suite_run',
-        suiteId: 's_long-suite',
-        filePath: 'tests/web/login.yaml',
-        videoPath: 'child_run/child.mp4',
-      })
-      actualDb.insertStep({
-        id: 'step_parent',
-        runId: 'suite_run',
-        name: 'Open suite',
-        status: 'failed',
-        duration: 400,
-        stepOrder: 0,
-        screenshotPath: '/api/screenshots/suite_run/suite.png',
-      })
-      actualDb.insertStep({
-        id: 'step_child',
-        runId: 'child_run',
-        name: 'Open child',
-        status: 'failed',
-        duration: 300,
-        stepOrder: 0,
-        screenshotPath: '/api/screenshots/child_run/child.png',
-      })
-      actualDb.insertReasoningTrace({
-        stepId: 'step_child',
-        observeText: 'child trace',
-      })
+      actualDb.insertRunArtifact({ runId: 'suite_run', kind: 'test' })
+      actualDb.upsertRunMember({ runId: 'suite_run', testIndex: 0, name: 'Member A' })
       actualDb.insertTokenEvent({
         modelName: 'gpt-5.4-mini',
         promptTokens: 10,
@@ -1251,93 +1146,52 @@ describe('API Routes', () => {
         source: 'test-run',
       })
 
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
+      router = createRouter({ db: actualDb })
 
-      const res = await invokeRoute('/api/runs/suite_run', {
-        method: 'DELETE',
-      })
+      const res = await invokeRoute('/api/runs/suite_run', { method: 'DELETE' })
 
       expect(res.status).toBe(200)
       expect(JSON.parse(res.body)).toEqual({
         deleted: true,
-        deletedRunIds: ['suite_run', 'child_run'],
+        deletedRunIds: ['suite_run'],
       })
       expect(actualDb.getRun('suite_run')).toBeUndefined()
-      expect(actualDb.getRun('child_run')).toBeUndefined()
-      expect(actualDb.getSteps('suite_run')).toEqual([])
-      expect(actualDb.getSteps('child_run')).toEqual([])
+      // The cascade reached the run's projected rows and its artifact...
+      expect(actualDb.getRunArtifact('suite_run')).toBeNull()
+      expect(actualDb.readRunDetailRows('suite_run')).toBeUndefined()
+      // ...and did not reach the token events, which are not run-scoped.
       expect(actualDb.getTokenEventStats().totals).toEqual({
         promptTokens: 10,
         completionTokens: 5,
       })
-      await expect(stat(join(screenshotsDir, 'suite_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(screenshotsDir, 'child_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(videosDir, 'suite_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(videosDir, 'child_run'))).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(stat(join(videosDir, 'child.mp4'))).resolves.toMatchObject({ isFile: expect.any(Function) })
+      // The run's own record on disk is untouched.
+      await expect(stat(join(runDir, 'events.jsonl')))
+        .resolves.toMatchObject({ isFile: expect.any(Function) })
 
       actualDb.close()
     })
 
-    it('preserves absolute video paths outside artifactsDir/videos', async () => {
-      const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
-      const externalDir = await mkdtemp(join(tmpdir(), 'agent-qa-dashboard-external-video-'))
-      tempDirs.push(externalDir)
-      const externalVideo = join(externalDir, 'outside.webm')
-      await writeFile(externalVideo, 'outside-video', 'utf-8')
+    it('answers 404 for a run that does not exist', async () => {
+      const { db: actualDb } = await createDashboardWorkspace()
+      router = createRouter({ db: actualDb })
 
-      actualDb.insertRun({
-        id: 'outside_video_run',
-        name: 'Outside video run',
-        status: 'failed',
-        duration: 100,
-        startedAt: '2026-04-19T00:00:00.000Z',
-        endedAt: '2026-04-19T00:00:00.100Z',
-        videoPath: externalVideo,
-      })
-
-      router = createRouter({
-        db: actualDb,
-        artifactsDir,
-      })
-
-      const res = await invokeRoute('/api/runs/outside_video_run', {
-        method: 'DELETE',
-      })
-
-      expect(res.status).toBe(200)
-      await expect(stat(externalVideo)).resolves.toMatchObject({ isFile: expect.any(Function) })
-
-      actualDb.close()
-    })
-  })
-
-  describe('GET /api/runs/:id/steps', () => {
-    it('returns steps for a run', async () => {
-      const runId = insertSampleRun()
-      insertSampleStep(runId, { name: 'Step 1', stepOrder: 0 })
-      insertSampleStep(runId, { name: 'Step 2', stepOrder: 1 })
-
-      const res = await invokeRoute(`/api/runs/${runId}/steps`)
-      expect(res.status).toBe(200)
-      const data = JSON.parse(res.body) as any
-      expect(data.steps).toHaveLength(2)
-      expect(data.steps[0].name).toBe('Step 1')
-    })
-
-    it('returns 404 for unknown run', async () => {
-      const res = await invokeRoute('/api/runs/nonexistent-id/steps')
+      const res = await invokeRoute('/api/runs/never_existed', { method: 'DELETE' })
       expect(res.status).toBe(404)
+
+      actualDb.close()
     })
   })
+
+  // 2026-08-27 (405-07, D-03): the step-list describe is deleted with the arm. `runs.detail` is
+  // the one read for a run's members, steps and sub-actions, and it is proven end-to-end in
+  // `run-service/__tests__/run-detail-routes.test.ts`. The absence of this arm — and of the three
+  // others the census retired — is pinned in `suite-parent-debris-census.test.ts`, which drives
+  // each retired URL against a live router and requires the generic 404.
 
   describe('POST /api/queue/enqueue', () => {
     it('normalizes queued files under configured workspace.testMatch', async () => {
       const testsDir = join(tmpdir(), `agent-qa-queue-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Queued test\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-queue')
@@ -1456,7 +1310,15 @@ describe('API Routes', () => {
       expect(enqueue).not.toHaveBeenCalled()
     })
 
-    it('strips client-controlled execution targets from queued metadata', async () => {
+    // ---- G-401-18-CR01 (write half): `metadata` is server-derived -----------------------------
+    //
+    // THE REJECT/ADMIT PAIR. A control that only shows the door refusing cannot tell an allowlist
+    // apart from a route that 400s on every request, and a control that only shows it admitting
+    // cannot tell one apart from a route with no validation at all. Both are here, and the ADMIT
+    // side is the one that proves the tightening validated the door rather than closing it: a
+    // caller's own labels still round-trip, through `attributes`, which is their actual door.
+
+    it('REJECT — a client-supplied metadata key is refused by name, not silently dropped', async () => {
       const enqueue = vi.fn().mockReturnValue('run-queue-metadata')
       const queueDb = {
         ...(db as any),
@@ -1478,16 +1340,52 @@ describe('API Routes', () => {
             target: '/tmp/outside.yaml',
             args: ['/tmp/outside.yaml'],
             keep: 'trusted label',
+            confirmScope: 'run-trigger:planted-by-a-client',
+            timeout: 9_007_199_254_740_991,
           },
         }),
       })
 
+      expect(res.status).toBe(400)
+      const error = String((JSON.parse(res.body) as { error: string }).error)
+      // NAMED, ALL OF THEM. A message that mentioned only the first offending key would let a
+      // caller peel the request one key at a time and never learn the rule.
+      for (const key of ['args', 'confirmScope', 'keep', 'target', 'timeout']) {
+        expect(error, `the refusal did not name ${key}`).toContain(key)
+      }
+      expect(error).toContain('attributes')
+      // AND NOTHING WAS ENQUEUED — a 400 that still queued the run would be a worse defect than
+      // the one this closes.
+      expect(enqueue).not.toHaveBeenCalled()
+    })
+
+    it('ADMIT — a request with no client metadata queues, and the caller\'s own labels round-trip', async () => {
+      const enqueue = vi.fn().mockReturnValue('run-queue-admitted')
+      const queueDb = {
+        ...(db as any),
+        getPendingRuns: vi.fn(() => [{ id: 'run-queue-admitted' }]),
+      }
+      router = createRouter({
+        db: queueDb as any,
+        jobQueue: { enqueue } as any,
+      })
+
+      const res = await invokeRoute('/api/queue/enqueue', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Queued admitted',
+          metadata: {},
+          attributes: { 'git.branch': 'gap-401-23' },
+        }),
+      })
+
       expect(res.status).toBe(202)
+      // THE SERVER'S OWN METADATA STILL REACHES THE QUEUE. The allowlist refuses what a CLIENT
+      // writes; it must not have deleted what this route writes.
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
-        metadata: {
-          keep: 'trusted label',
-          args: [],
-        },
+        metadata: { args: [] },
+        attributes: expect.objectContaining({ 'git.branch': 'gap-401-23' }),
       }))
     })
 
@@ -1574,7 +1472,8 @@ describe('API Routes', () => {
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Queued suite',
         filePath: 'suites/sample-basic.suite.yaml',
-        kind: 'suite-parent',
+        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        kind: 'test',
         metadata: expect.objectContaining({
           args: [join(workspaceDir, 'suites', 'sample-basic.suite.yaml')],
           isSuite: true,
@@ -1660,7 +1559,7 @@ describe('API Routes', () => {
 
     it('resolves test-viewer paths through configured workspace.testMatch', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-1')
@@ -1707,7 +1606,7 @@ describe('API Routes', () => {
 
     it('normalizes trigger patterns against discovered configured workspace tests', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-patterns')
@@ -1881,7 +1780,7 @@ describe('API Routes', () => {
 
     it('normalizes dashboard list workspace paths before enqueueing the run', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-2')
@@ -2037,7 +1936,8 @@ describe('API Routes', () => {
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Workspace suite',
         filePath: 'suites/slow.suite.yaml',
-        kind: 'suite-parent',
+        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        kind: 'test',
         metadata: expect.objectContaining({
           args: [join(workspaceDir, 'suites', 'slow.suite.yaml')],
           isSuite: true,
@@ -2050,7 +1950,7 @@ describe('API Routes', () => {
       expect(enqueue.mock.calls[0][0].metadata.args[0]).not.toContain(`${sep}tests${sep}suites${sep}`)
     })
 
-    it('uses suite YAML use.parallel for dashboard-triggered suite parent jobs', async () => {
+    it('uses suite YAML use.parallel for dashboard-triggered suite jobs', async () => {
       const workspaceDir = await mkdtemp(join(tmpdir(), 'agent-qa-trigger-suite-parallel-'))
       const testsDir = join(workspaceDir, 'tests')
       const suitesDir = join(workspaceDir, 'suites')
@@ -2107,14 +2007,16 @@ describe('API Routes', () => {
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Parallel suite',
         filePath: 'suites/parallel.suite.yaml',
-        kind: 'suite-parent',
+        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        kind: 'test',
         parallel: true,
+        metadata: expect.objectContaining({ isSuite: true }),
       }))
     })
 
-    it('passes cache and memory overrides through to the queued args and labels BrowserStack explicitly', async () => {
+    it('passes the cache override through to the queued args and labels BrowserStack explicitly', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
-      tempDirs.push(testsDir)
+      tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
       await writeFile(join(testsDir, 'web/15-github-trending.yaml'), 'name: Trending\nsteps: []\n', 'utf-8')
       const enqueue = vi.fn().mockReturnValue('run-3')
@@ -2133,7 +2035,6 @@ describe('API Routes', () => {
           file: 'web/15-github-trending.yaml',
           local: false,
           noCache: true,
-          noMemory: true,
         }),
       })
 
@@ -2147,8 +2048,7 @@ describe('API Routes', () => {
         metadata: expect.objectContaining({
           args: [
             join(testsDir, 'web/15-github-trending.yaml'),
-            '--no-cache',
-            '--no-memory',
+            '--disable-cache',
           ],
         }),
       }))
@@ -2431,7 +2331,7 @@ describe('API Routes', () => {
   })
 
   describe('POST /api/cache/purge', () => {
-    it('reads services.cache.dir and purges target-driven mobile cache entries with the effective platform', async () => {
+    it('purges the branch-namespaced cache entries for a file request (Phase 356 layout)', async () => {
       const testsDir = await mkdtemp(join(tmpdir(), 'agent-qa-cache-purge-tests-'))
       const cacheDir = await mkdtemp(join(tmpdir(), 'agent-qa-cache-purge-cache-'))
       tempDirs.push(testsDir, cacheDir)
@@ -2458,9 +2358,12 @@ describe('API Routes', () => {
       ].join('\n')
       await writeFile(join(testsDir, 'android-only.yaml'), testContent, 'utf-8')
 
-      const stepHash = hashStepInstruction('Open Google Maps', 'android', configContent, testContent)
-      await mkdir(join(cacheDir, stepHash), { recursive: true })
-      await writeFile(join(cacheDir, stepHash, 'plan.json'), '{"ok":true}', 'utf-8')
+      // Redesigned layout: <cacheRoot>/<branch-slug>/<cacheKey>.json (opaque, D-06). Seed two
+      // entries across two branch namespaces; a file purge clears the whole cache.
+      await mkdir(join(cacheDir, 'main'), { recursive: true })
+      await writeFile(join(cacheDir, 'main', 'a1b2c3d4e5f60718.json'), '{"schemaVersion":10}', 'utf-8')
+      await mkdir(join(cacheDir, 'feature-x'), { recursive: true })
+      await writeFile(join(cacheDir, 'feature-x', 'f0e1d2c3b4a59687.json'), '{"schemaVersion":10}', 'utf-8')
 
       router = createRouter({
         db: db as any,
@@ -2477,7 +2380,7 @@ describe('API Routes', () => {
 
       expect(res.status).toBe(200)
       const data = JSON.parse(res.body) as { purged: number }
-      expect(data.purged).toBe(1)
+      expect(data.purged).toBe(2)
     })
 
     it('resolves relative services.cache.dir from the config file directory', async () => {
@@ -2508,10 +2411,10 @@ describe('API Routes', () => {
       ].join('\n')
       await writeFile(join(testsDir, 'web-flow.yaml'), testContent, 'utf-8')
 
-      const stepHash = hashStepInstruction('Open the homepage', 'web', configContent, testContent)
-      const cacheEntryDir = join(cacheDir, stepHash)
-      await mkdir(cacheEntryDir, { recursive: true })
-      await writeFile(join(cacheEntryDir, 'plan.json'), '{"ok":true}', 'utf-8')
+      const branchDir = join(cacheDir, 'main')
+      const cacheEntryPath = join(branchDir, 'a1b2c3d4e5f60718.json')
+      await mkdir(branchDir, { recursive: true })
+      await writeFile(cacheEntryPath, '{"schemaVersion":10}', 'utf-8')
 
       router = createRouter({
         db: db as any,
@@ -2529,56 +2432,7 @@ describe('API Routes', () => {
       expect(res.status).toBe(200)
       const data = JSON.parse(res.body) as { purged: number }
       expect(data.purged).toBe(1)
-      await expect(stat(cacheEntryDir)).rejects.toMatchObject({ code: 'ENOENT' })
-    })
-  })
-
-  describe('DELETE /api/memory/observations/:testId/:obsId', () => {
-    it('deletes observations from configured services.memory.dir without touching the default root', async () => {
-      const obsId = 'obs_amber-birch-coral-delta-ember-falcon-garden-harbor-island-jungle'
-      const configContent = [
-        'workspace:',
-        '  testMatch:',
-        '    - tests/**/*.yaml',
-        '  suiteMatch:',
-        '    - suites/**/*.suite.yaml',
-        '  hooksFile: hooks.yaml',
-        '  agentRules: agent-rules.md',
-        '  envFile: .env',
-        '  secretsFile: .env.secrets.local',
-        'services:',
-        '  memory:',
-        '    enabled: true',
-        '    provider: local',
-        '    dir: .agent-qa/custom-memory',
-        'use:',
-        '  mobile:',
-        '    appState: preserve',
-        '',
-      ].join('\n')
-      const { configManager, configPath } = await createConfigWorkspace(configContent)
-      const configDir = dirname(configPath)
-      const defaultObservationPath = join(configDir, 'agent-qa-memory/tests', SEEDED_TEST_ID, `${obsId}.md`)
-      const customObservationPath = join(configDir, '.agent-qa/custom-memory/tests', SEEDED_TEST_ID, `${obsId}.md`)
-      await mkdir(join(defaultObservationPath, '..'), { recursive: true })
-      await mkdir(join(customObservationPath, '..'), { recursive: true })
-      await writeFile(defaultObservationPath, 'default-root observation', 'utf-8')
-      await writeFile(customObservationPath, 'custom-root observation', 'utf-8')
-
-      router = createRouter({
-        db: db as any,
-        configManager,
-        configPath,
-      })
-
-      const res = await invokeRoute(`/api/memory/observations/${SEEDED_TEST_ID}/${obsId}`, {
-        method: 'DELETE',
-      })
-
-      expect(res.status).toBe(200)
-      expect(JSON.parse(res.body)).toEqual({ deleted: true })
-      await expect(stat(customObservationPath)).rejects.toMatchObject({ code: 'ENOENT' })
-      await expect(readFile(defaultObservationPath, 'utf-8')).resolves.toBe('default-root observation')
+      await expect(stat(cacheEntryPath)).rejects.toMatchObject({ code: 'ENOENT' })
     })
   })
 
@@ -2609,8 +2463,11 @@ describe('API Routes', () => {
   })
 
   describe('CORS', () => {
-    it('includes CORS headers on API responses', async () => {
-      const res = await invokeRoute('/api/runs')
+    it('includes CORS headers on the legacy read routes', async () => {
+      // MOVED OFF `/api/runs` BY 405 CR-01, and the move is the point. `json()`'s wildcard still
+      // serves the legacy reads — that posture is unchanged and this cell still guards it — but
+      // `/api/runs` stopped being one of them the moment 405-10 put restored cleartext on its body.
+      const res = await invokeRoute('/api/stats')
       expect(res.headers['access-control-allow-origin']).toBe('*')
     })
 

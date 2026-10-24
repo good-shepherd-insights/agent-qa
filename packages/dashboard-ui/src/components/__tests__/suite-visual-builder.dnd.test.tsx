@@ -130,7 +130,7 @@ function makeStep(status: TestStepDetail['status'] = 'running'): TestStepDetail 
     networkLogs: [],
     variableSnapshot: null,
     originalStepName: null,
-    subActionsData: null,
+    liveSubActions: null,
     executionLogs: [],
     executionGeneration: 0,
   }

@@ -2,15 +2,25 @@ import { Eye, Brain, Play, ShieldCheck } from 'lucide-react'
 import { ReasoningPipeline } from '@/components/reasoning-pipeline'
 import type { SectionDef } from '@/components/reasoning-pipeline'
 import { ConfidenceBadge } from '@/components/confidence-badge'
-import type { SubActionData } from '@/lib/api'
+import type { LiveSubAction } from '@/hooks/use-live-editor'
 import type { DisplayStep } from '@/lib/display-step'
+import { RESULT_WORDS } from '@/lib/action-vocabulary'
 
 interface EditorStepDetailProps {
   step: DisplayStep
-  subAction: SubActionData | null
+  subAction: LiveSubAction | null
 }
 
-function buildSubActionSections(sub: SubActionData): SectionDef[] {
+function resultWord(sub: LiveSubAction): string {
+  return sub.result === 'no-input' ? RESULT_WORDS['no-input'] : sub.result
+}
+
+function resultColour(sub: LiveSubAction): string {
+  if (sub.result === 'no-input') return 'text-muted-foreground'
+  return sub.result === 'success' ? 'text-emerald-500' : 'text-red-500'
+}
+
+function buildSubActionSections(sub: LiveSubAction): SectionDef[] {
   const sections: SectionDef[] = []
 
   if (sub.observation) {
@@ -113,8 +123,8 @@ export function EditorStepDetail({ step, subAction }: EditorStepDetailProps) {
       <div className="p-3 space-y-3 min-w-0">
         <div className="flex items-center gap-2 text-sm">
           <span className="font-medium">Sub-action #{subAction.index + 1}</span>
-          <span className={`text-xs font-medium ${subAction.result === 'success' ? 'text-emerald-500' : 'text-red-500'}`}>
-            {subAction.result}
+          <span className={`text-xs font-medium ${resultColour(subAction)}`}>
+            {resultWord(subAction)}
           </span>
           {subAction.confidence != null && (
             <ConfidenceBadge confidence={subAction.confidence} />

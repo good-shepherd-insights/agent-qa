@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const ANDROID_XML = `<?xml version="1.0" encoding="UTF-8"?>
@@ -49,6 +50,7 @@ function createMockDriver() {
     keys: vi.fn().mockResolvedValue(undefined),
     pause: vi.fn().mockResolvedValue(undefined),
     activateApp: vi.fn().mockResolvedValue(undefined),
+    queryAppState: vi.fn().mockResolvedValue(1),
     terminateApp: vi.fn().mockResolvedValue(undefined),
     execute: vi.fn().mockResolvedValue(undefined),
     getContexts: vi.fn().mockResolvedValue(['NATIVE_APP']),
@@ -64,7 +66,8 @@ vi.mock('webdriverio', () => ({
 }))
 
 import { AndroidPlatformAdapter } from '../adapter.js'
-import type { PlatformConfig } from '@vostride/agent-qa-core'
+import type { PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
+import type { LiveFrame } from '@vostride/agent-qa-schema'
 
 describe('AndroidPlatformAdapter', () => {
   let adapter: AndroidPlatformAdapter
@@ -277,6 +280,71 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
+  describe('C444.1-SESSION-START', () => {
+    const appPackage = 'dev.example.deeplinked'
+
+    it('an app already in the foreground is not activated again', async () => {
+      mockDriver.queryAppState.mockResolvedValue(4)
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      expect(mockDriver.queryAppState).toHaveBeenCalledWith(appPackage)
+    })
+
+    it('an app that is not running is activated once', async () => {
+      mockDriver.queryAppState.mockResolvedValue(1)
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).toHaveBeenCalledTimes(1)
+      expect(mockDriver.activateApp).toHaveBeenCalledWith(appPackage)
+    })
+
+    it('a session started twice on a foreground app never activates it', async () => {
+      mockDriver.queryAppState.mockResolvedValue(4)
+
+      await adapter.setup({ platform: 'android', appPackage })
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      expect(mockDriver.queryAppState).toHaveBeenCalledTimes(2)
+    })
+
+    it('an app state that cannot be read falls back to activating the app', async () => {
+      mockDriver.queryAppState.mockRejectedValue(new Error('unknown command'))
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).toHaveBeenCalledTimes(1)
+      expect(mockDriver.activateApp).toHaveBeenCalledWith(appPackage)
+    })
+
+    it('a foreground app read through mobile queryAppState when the typed query is gone is not activated', async () => {
+      mockDriver.queryAppState.mockRejectedValue(new Error('unknown command'))
+      mockDriver.execute.mockImplementation(async (script: string) =>
+        script === 'mobile: queryAppState' ? 4 : undefined)
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).not.toHaveBeenCalled()
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: queryAppState', { appId: appPackage })
+    })
+
+    it('an app state that neither query can read activates the app once', async () => {
+      mockDriver.queryAppState.mockRejectedValue(new Error('unknown command'))
+      mockDriver.execute.mockImplementation(async (script: string) => {
+        if (script === 'mobile: queryAppState') throw new Error('unknown mobile command')
+        return undefined
+      })
+
+      await adapter.setup({ platform: 'android', appPackage })
+
+      expect(mockDriver.activateApp).toHaveBeenCalledTimes(1)
+      expect(mockDriver.activateApp).toHaveBeenCalledWith(appPackage)
+    })
+  })
+
   describe('cleanup', () => {
     it('calls deleteSession and clears state', async () => {
       await adapter.setup({ platform: 'android' })
@@ -292,17 +360,22 @@ describe('AndroidPlatformAdapter', () => {
   })
 
   describe('observe', () => {
-    it('returns ScreenState with parsed tree and elements', async () => {
+    it('returns schema v2 ScreenState with builder tree, elements, and refMap', async () => {
       await adapter.setup({ platform: 'android' })
       const state = await adapter.observe()
 
+      expect(state.platform).toBe('android')
       expect(state.tree).toContain('text "Login"')
       expect(state.tree).toContain('textbox "Username"')
       expect(state.tree).toContain('textbox "Password"')
       expect(state.tree).toContain('button "Sign In"')
       expect(state.elements.length).toBeGreaterThanOrEqual(5)
       expect(state.timestamp).toBeGreaterThan(0)
-      expect(state.metadata.refMap).toBeDefined()
+      // Schema v2: refMap is top-level (not metadata.refMap); every bounded element has one.
+      expect(state.refMap).toBeDefined()
+      expect(Object.keys(state.refMap).length).toBeGreaterThanOrEqual(5)
+      expect(state.metadata.captureMode).toBe('textOnly')
+      expect(state.metadata.coordSpace).toBe('viewport')
     })
 
     it('ignores unrelated Chrome webviews for native app targets', async () => {
@@ -326,13 +399,20 @@ describe('AndroidPlatformAdapter', () => {
 
     it('observes a webview when the context belongs to the target app package', async () => {
       mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
+      // Reworked WEB_OBSERVER_SCRIPT emits serializable interim nodes only (Pitfall #5):
+      // no refs, no tree text — the shared builder mints refs and renders the tree.
       mockDriver.execute.mockResolvedValueOnce({
-        tree: 'Current page: https://linear.local\n- button "Create issue" [ref=e1]',
-        elements: [{ ref: 'e1', role: 'button', name: 'Create issue', attributes: {} }],
-        refs: { e1: { role: 'button', name: 'Create issue', bounds: { x: 1, y: 2, width: 3, height: 4 } } },
+        nodes: [{
+          role: 'button',
+          name: 'Create issue',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 200, height: 100 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 200, contentHeight: 800 },
         url: 'https://linear.local',
-        viewportHeight: 100,
-        viewportWidth: 200,
       })
 
       await adapter.setup({
@@ -348,19 +428,29 @@ describe('AndroidPlatformAdapter', () => {
       const state = await adapter.observe()
 
       expect(mockDriver.switchContext).toHaveBeenCalledWith('WEBVIEW_app.linear')
+      expect(state.platform).toBe('android')
       expect(state.url).toBe('https://linear.local')
-      expect(state.tree).toContain('Create issue')
+      expect(state.tree).toContain('button "Create issue"')
+      // Builder-minted ref carries the bounds from the interim node into refMap.
+      const issueEl = state.elements.find(e => e.name === 'Create issue')!
+      expect(state.refMap[issueEl.ref].bounds).toEqual({ x: 1, y: 2, width: 3, height: 4 })
+      expect(state.metadata.captureMode).toBe('textOnly')
     })
 
     it('observes Chrome webviews for explicit Android browser-mode targets', async () => {
       mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_chrome'])
       mockDriver.execute.mockResolvedValueOnce({
-        tree: 'Current page: https://example.com\n- link "Example" [ref=e1]',
-        elements: [{ ref: 'e1', role: 'link', name: 'Example', attributes: {} }],
-        refs: { e1: { role: 'link', name: 'Example', bounds: { x: 1, y: 2, width: 3, height: 4 } } },
+        nodes: [{
+          role: 'link',
+          name: 'Example',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 200, height: 100 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 200, contentHeight: 800 },
         url: 'https://example.com',
-        viewportHeight: 100,
-        viewportWidth: 200,
       })
 
       await adapter.setup({
@@ -376,6 +466,30 @@ describe('AndroidPlatformAdapter', () => {
 
       expect(mockDriver.switchContext).toHaveBeenCalledWith('WEBVIEW_chrome')
       expect(state.url).toBe('https://example.com')
+      expect(state.tree).toContain('link "Example"')
+    })
+
+    it('shape-validates attacker-shaped WEB_OBSERVER_SCRIPT results (T-352-11)', async () => {
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
+      // Non-array nodes + a malformed record must never reach the builder: the whole
+      // payload is rejected (nodes not an array) → falls back to native observation.
+      mockDriver.execute.mockResolvedValueOnce({ nodes: 'not-an-array', viewport: null, scroll: null })
+
+      await adapter.setup({
+        platform: 'android',
+        device: {
+          name: 'android-emu',
+          platform: 'android',
+          transport: 'local',
+          match: { automationName: 'UiAutomator2' },
+        },
+        appPackage: 'app.linear',
+      })
+      const state = await adapter.observe()
+
+      // Rejected web payload → native XML fallback (ANDROID_XML) produced the state.
+      expect(state.platform).toBe('android')
+      expect(state.tree).toContain('button "Sign In"')
     })
 
     it('throws if adapter not initialized', async () => {
@@ -413,15 +527,31 @@ describe('AndroidPlatformAdapter', () => {
       const usernameEl = state.elements.find(e => e.name === 'Username')
       expect(usernameEl).toBeDefined()
 
-      // Mock the focused element finder
-      const mockElement = { isExisting: vi.fn().mockResolvedValue(true), setValue: vi.fn().mockResolvedValue(undefined) }
-      mockDriver.$ = vi.fn().mockResolvedValue(mockElement)
+      // Mock the focused element finder — the compound re-reads via getText() and probes
+      // getAttribute('password') for the secure lane. The showing-hint probe (437-05) matches nothing.
+      const mockElement = {
+        isExisting: vi.fn().mockResolvedValue(true),
+        setValue: vi.fn().mockResolvedValue(undefined),
+        addValue: vi.fn().mockResolvedValue(undefined),
+        getText: vi.fn().mockResolvedValue('test'),
+        getAttribute: vi.fn().mockResolvedValue(null),
+      }
+      const noMatch = { isExisting: vi.fn().mockResolvedValue(false) }
+      mockDriver.$ = vi.fn(async (selector: string) =>
+        selector === '//*[@focused="true"]' ? mockElement : noMatch) as any
 
-      const result = await adapter.execute({ type: 'fill', ref: usernameEl!.ref, value: 'test' })
+      const result = await adapter.execute({ type: 'fill', ref: usernameEl!.ref, text: 'test', clearMode: 'replace', submit: false })
       expect(result.success).toBe(true)
+      expect(result.metadata).toEqual({
+        fillReread: { expected: 'test', actual: 'test' },
+        fillVerdict: { verb: 'fill', verdict: 'exact', path: 'native' },
+      })
 
-      // Verify tap to focus
+      // Verify tap to focus, then one setValue and the read-back, with no Enter
       expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
+      expect(mockElement.setValue).toHaveBeenCalledTimes(1)
+      expect(mockElement.getText).toHaveBeenCalled()
+      expect(mockDriver.execute).not.toHaveBeenCalledWith('mobile: pressKey', { keycode: 66 })
     })
   })
 
@@ -488,34 +618,24 @@ describe('AndroidPlatformAdapter', () => {
       expect(result.error).toContain('tap, swipe, or tapCoordinate')
     })
 
-    it('keeps native select from reporting tap-only success', async () => {
-      mockDriver.getPageSource.mockResolvedValue(ANDROID_SPINNER_XML)
-      await adapter.setup({ platform: 'android' })
-      const state = await adapter.observe()
-      const spinnerEl = state.elements.find(e => e.name === 'Priority')
-
-      const result = await adapter.execute({ type: 'select', ref: spinnerEl!.ref, value: 'High' })
-
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('select is for HTML dropdowns')
-      expect(result.error).toContain('nativeSelect')
-    })
   })
 
   describe('execute — scroll', () => {
-    it('performs swipe gesture in the specified direction', async () => {
+    // 2026-10-07 (436-02): a native scroll is the driver's scrollGesture, not a raw touch swipe.
+    it('performs one scrollGesture over the screen area in the specified direction', async () => {
       await adapter.setup({ platform: 'android' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'scroll', scrollType: 'vertical', value: 500 })
+      const result = await adapter.execute({ type: 'scroll', mode: 'direction', direction: 'down', amount: 'halfPage', retryOpposite: true })
       expect(result.success).toBe(true)
+      expect(result.metadata?.scrollUntilVisible).toMatchObject({ swipes: 1, reversedOnce: false, outcome: 'unresolved' })
 
-      expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
-      // viewport: 1080x1920, center: 540,960
-      // scroll down (value=500): startY=center=960, endY=center-500=460
-      // finger swipes up (960→460) which scrolls content down
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 960 })
-      expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 540, y: 460, duration: 300 })
+      const gestures = mockDriver.execute.mock.calls.filter((c: unknown[]) => c[0] === 'mobile: scrollGesture')
+      expect(gestures).toHaveLength(1)
+      // viewport 1080x1920; content direction is passed as-is; halfPage halves the 0.75 page percent.
+      // 436-12 (live A1): the area is the middle 60% of the swipe axis, clear of the gesture zones.
+      expect(gestures[0][1]).toEqual({ left: 0, top: 384, width: 1080, height: 1152, direction: 'down', percent: 0.375 })
+      expect(mockDriver.action).not.toHaveBeenCalled()
     })
   })
 
@@ -545,88 +665,76 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  describe('execute — unsupported actions', () => {
-    it('navigate returns error', async () => {
+  // openLink retired (D-19) — the deep-link-open behavior re-keys onto the typed `intent` verb
+  // (mobile: startActivity). Exhaustive hostile-input pins live in catalog.test.ts.
+  describe('execute — intent', () => {
+    it('maps action + data + package to typed mobile: startActivity args (uri, never a shell string)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'navigate', url: 'https://example.com' })
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('not supported')
-    })
-
-    it('hover returns error', async () => {
-      await adapter.setup({ platform: 'android' })
-      await adapter.observe()
-      const state = await adapter.observe()
-      const el = state.elements[0]
-      const result = await adapter.execute({ type: 'hover', ref: el.ref })
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('web-only')
-    })
-  })
-
-  describe('execute — openLink', () => {
-    it('passes explicit Android app package to the deep-link command', async () => {
-      await adapter.setup({ platform: 'android' })
-
-      const result = await adapter.execute({
-        type: 'openLink',
-        url: 'wikipedia://wiki/Grace_Hopper',
-        appPackage: 'org.wikipedia.alpha',
-      })
-
-      expect(result.success).toBe(true)
-      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', {
-        url: 'wikipedia://wiki/Grace_Hopper',
-        package: 'org.wikipedia.alpha',
-      })
-    })
-
-    it('ignores empty appId and uses explicit Android app package for deep links', async () => {
-      await adapter.setup({ platform: 'android' })
-
-      const result = await adapter.execute({
-        type: 'openLink',
-        url: 'wikipedia://wiki/Grace_Hopper',
-        appId: '',
-        appPackage: 'org.wikipedia.alpha',
-      })
-
-      expect(result.success).toBe(true)
-      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', {
-        url: 'wikipedia://wiki/Grace_Hopper',
-        package: 'org.wikipedia.alpha',
-      })
-    })
-
-    it('falls back to setup app package for deep links', async () => {
-      await adapter.setup({ platform: 'android', appPackage: 'org.wikipedia.alpha' })
       mockDriver.execute.mockClear()
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wikipedia://wiki/Alan_Turing' })
+      const result = await adapter.execute({
+        type: 'intent',
+        action: 'android.intent.action.VIEW',
+        data: 'wikipedia://wiki/Grace_Hopper',
+        packageName: 'org.wikipedia.alpha',
+      })
 
       expect(result.success).toBe(true)
-      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: deepLink', {
-        url: 'wikipedia://wiki/Alan_Turing',
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: startActivity', {
+        action: 'android.intent.action.VIEW',
+        uri: 'wikipedia://wiki/Grace_Hopper',
         package: 'org.wikipedia.alpha',
       })
     })
 
-    it('fails native-scheme links when no Android app package is available', async () => {
+    it('maps typed extras to [typeTag,key,value] triples (string→s, int→i, bool→z)', async () => {
       await adapter.setup({ platform: 'android' })
+      mockDriver.execute.mockClear()
 
-      const result = await adapter.execute({ type: 'openLink', url: 'wikipedia://wiki/Grace_Hopper' })
+      const result = await adapter.execute({
+        type: 'intent',
+        action: 'android.intent.action.VIEW',
+        extras: [
+          { key: 'name', type: 'string', value: 'Ada' },
+          { key: 'count', type: 'int', value: '3' },
+          { key: 'flag', type: 'bool', value: 'true' },
+        ],
+      })
 
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('Missing Android app package')
+      expect(result.success).toBe(true)
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: startActivity', {
+        action: 'android.intent.action.VIEW',
+        extras: [['s', 'name', 'Ada'], ['i', 'count', '3'], ['z', 'flag', 'true']],
+      })
+    })
+
+    it('omits uri/package/extras when only an action is provided', async () => {
+      await adapter.setup({ platform: 'android' })
+      mockDriver.execute.mockClear()
+
+      const result = await adapter.execute({ type: 'intent', action: 'android.intent.action.MAIN' })
+
+      expect(result.success).toBe(true)
+      expect(mockDriver.execute).toHaveBeenCalledWith('mobile: startActivity', {
+        action: 'android.intent.action.MAIN',
+      })
     })
   })
 
   describe('execute — waitFor', () => {
-    it('pauses for specified timeout', async () => {
+    it('polls the accessibility tree for on:text (not a blind pause)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'waitFor', condition: 'loading', timeout: 3000 })
+      mockDriver.getPageSource.mockClear()
+      const result = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Sign In', timeoutMs: 500 })
       expect(result.success).toBe(true)
-      expect(mockDriver.pause).toHaveBeenCalledWith(3000)
+      expect(mockDriver.getPageSource).toHaveBeenCalled()
+    })
+
+    it('returns a §7.1 web-only error for on:selector (no selector waiting on native)', async () => {
+      await adapter.setup({ platform: 'android' })
+      const result = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 })
+      expect(result.success).toBe(false)
+      expect(result.error).toMatch(/web|selector/i)
     })
   })
 
@@ -642,7 +750,7 @@ describe('AndroidPlatformAdapter', () => {
   describe('execute — keypress', () => {
     it('sends mapped key code for single key', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(1)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE007'])
@@ -650,7 +758,7 @@ describe('AndroidPlatformAdapter', () => {
 
     it('iterates multiple keys in order with KEY_MAP lookup', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter', 'Escape'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Tab', 'Enter', 'Escape'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledTimes(3)
       expect(mockDriver.keys).toHaveBeenNthCalledWith(1, ['\uE004'])
@@ -660,26 +768,31 @@ describe('AndroidPlatformAdapter', () => {
 
     it('falls back to raw string when key is not in KEY_MAP', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['a'] })
+      const result = await adapter.execute({ type: 'keypress', keys: ['a'], mode: 'press' })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['a'])
     })
 
     it('ignores convertPlatformKeys flag (no-op on mobile)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], convertPlatformKeys: false })
+      const result = await adapter.execute({ type: 'keypress', keys: ['Enter'], mode: 'press', convertPlatformKeys: false })
       expect(result.success).toBe(true)
       expect(mockDriver.keys).toHaveBeenCalledWith(['\uE007'])
     })
   })
 
-  describe('execute — assert', () => {
-    it('returns success (handled by agent core)', async () => {
+  describe('execute — keypress mode gating', () => {
+    it('returns a §7.1 press-only error for mode:down (web-only key hold/release)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'assert', condition: 'text visible' })
-      expect(result.success).toBe(true)
+      const down = await adapter.execute({ type: 'keypress', keys: ['Shift'], mode: 'down' })
+      expect(down.success).toBe(false)
+      expect(down.error).toMatch(/press|mobile|down|up/i)
+      expect(mockDriver.keys).not.toHaveBeenCalled()
     })
   })
+
+  // assert retired (D-19) — deterministic checks now route through the runner-side assertValue
+  // comparator and claim-shaped checks through assertAI; there is no adapter assert case.
 
   describe('screenshot', () => {
     it('returns PNG buffer from base64', async () => {
@@ -692,6 +805,139 @@ describe('AndroidPlatformAdapter', () => {
     it('returns undefined when no driver', async () => {
       const buf = await adapter.screenshot()
       expect(buf).toBeUndefined()
+    })
+  })
+
+  describe('C444.1-WEBVIEW-SCREENSHOT', () => {
+    // sharp is runner-local's dependency, not android's, so it is resolved from there.
+    const runnerLocal = createRequire(import.meta.url).resolve('@vostride/agent-qa-runner-local')
+    const sharp = createRequire(runnerLocal)('sharp') as any
+    const appPackage = 'dev.example.web'
+
+    async function transparentPng(): Promise<Buffer> {
+      const png: Buffer = await sharp({
+        create: { width: 4, height: 4, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
+      }).png().toBuffer()
+      expect((await sharp(png).metadata()).hasAlpha).toBe(true)
+      return png
+    }
+
+    it('a WebView screenshot of an unset background is white, not black', async () => {
+      const png = await transparentPng()
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', `WEBVIEW_${appPackage}`])
+      mockDriver.execute.mockResolvedValueOnce({
+        nodes: [{
+          role: 'button',
+          name: 'Submit',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 4, height: 4 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 4, contentHeight: 4 },
+        url: 'https://web.example.test',
+      })
+      await adapter.setup({ platform: 'android', appPackage })
+      const state = await adapter.observe()
+      expect(state.url).toBe('https://web.example.test')
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+
+      const buf = await adapter.screenshot()
+
+      const { data, info } = await sharp(buf).raw().toBuffer({ resolveWithObject: true })
+      expect([...data.subarray(0, info.channels)]).toEqual([255, 255, 255])
+      expect(info.channels).toBe(3)
+      expect((await sharp(buf).metadata()).format).toBe('png')
+    })
+
+    it('a native screenshot is returned as captured', async () => {
+      const png = await transparentPng()
+      await adapter.setup({ platform: 'android', appPackage })
+      await adapter.observe()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+
+      const buf = await adapter.screenshot()
+
+      expect(buf).toBeInstanceOf(Buffer)
+      expect(buf!.equals(png)).toBe(true)
+    })
+
+    async function enterWebView() {
+      mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', `WEBVIEW_${appPackage}`])
+      mockDriver.execute.mockResolvedValueOnce({
+        nodes: [{
+          role: 'button',
+          name: 'Submit',
+          bounds: { x: 1, y: 2, width: 3, height: 4 },
+          state: { enabled: true, focused: false },
+          labels: {},
+          attributes: {},
+        }],
+        viewport: { width: 4, height: 4 },
+        scroll: { offsetX: 0, offsetY: 0, contentWidth: 4, contentHeight: 4 },
+        url: 'https://web.example.test',
+      })
+      await adapter.setup({ platform: 'android', appPackage })
+      const state = await adapter.observe()
+      expect(state.url).toBe('https://web.example.test')
+      const submit = state.elements.find(e => e.name === 'Submit')
+      expect(submit).toBeDefined()
+      return submit!.ref
+    }
+
+    async function expectWhite(buf: Buffer | Uint8Array | undefined): Promise<void> {
+      expect(buf).toBeDefined()
+      const { data, info } = await sharp(Buffer.from(buf!)).raw().toBuffer({ resolveWithObject: true })
+      expect([...data.subarray(0, info.channels)]).toEqual([255, 255, 255])
+      expect(info.channels).toBe(3)
+    }
+
+    it('a failure screenshot taken in a WebView is white, not black', async () => {
+      const png = await transparentPng()
+      const ref = await enterWebView()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+      mockDriver.execute.mockRejectedValueOnce(new Error('tap failed'))
+
+      const result = await adapter.execute({ type: 'tap', ref })
+
+      expect(result.success).toBe(false)
+      expect(result.error).toBe('tap failed')
+      await expectWhite(result.screenshot)
+    })
+
+    it('a live preview frame taken in a WebView is white and switches no context', async () => {
+      const png = await transparentPng()
+      await enterWebView()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+      const getContext = vi.fn().mockResolvedValue(`WEBVIEW_${appPackage}`)
+      Object.assign(mockDriver, { getContext })
+      mockDriver.switchContext.mockClear()
+
+      const stream = (adapter as PlatformAdapter<'android'>).liveStream!
+      const first = new Promise<LiveFrame>((resolve) => { void stream.start(resolve) })
+      const frame = await first
+      await stream.stop()
+
+      await expectWhite(frame.bytes)
+      expect(mockDriver.switchContext).not.toHaveBeenCalled()
+      expect(getContext).not.toHaveBeenCalled()
+    })
+
+    it('a native failure screenshot is returned as captured', async () => {
+      const png = await transparentPng()
+      await adapter.setup({ platform: 'android', appPackage })
+      const state = await adapter.observe()
+      const signIn = state.elements.find(e => e.name === 'Sign In')
+      expect(signIn).toBeDefined()
+      mockDriver.takeScreenshot.mockResolvedValue(png.toString('base64'))
+      mockDriver._pointerAction.perform.mockRejectedValueOnce(new Error('touch failed'))
+
+      const result = await adapter.execute({ type: 'tap', ref: signIn!.ref })
+
+      expect(result.success).toBe(false)
+      expect(result.screenshot).toBeInstanceOf(Buffer)
+      expect(result.screenshot!.equals(png)).toBe(true)
     })
   })
 
@@ -718,7 +964,7 @@ describe('AndroidPlatformAdapter', () => {
       await adapter.setup({ platform: 'android' })
       await adapter.observe()
 
-      const result = await adapter.execute({ type: 'swipe', direction: 'left' })
+      const result = await adapter.execute({ type: 'swipe', mode: 'direction', direction: 'left', durationMs: 300 })
       expect(result.success).toBe(true)
 
       expect(mockDriver.action).toHaveBeenCalledWith('pointer', { parameters: { pointerType: 'touch' } })
@@ -726,22 +972,10 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  describe('execute — click (alias for tap)', () => {
-    it('performs tap for click action', async () => {
-      await adapter.setup({ platform: 'android' })
-      const state = await adapter.observe()
-      const el = state.elements.find(e => e.name === 'Sign In')
-
-      const result = await adapter.execute({ type: 'click', ref: el!.ref })
-      expect(result.success).toBe(true)
-      expect(mockDriver._pointerAction.perform).toHaveBeenCalled()
-    })
-  })
-
   describe('execute — coordinate passthrough (tapCoordinate, swipe, pinch, multiTap)', () => {
     it('tapCoordinate passes LLM coords directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 100, y: 200 })
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
@@ -749,18 +983,21 @@ describe('AndroidPlatformAdapter', () => {
 
     it('tapCoordinate passes arbitrary coords unchanged', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 200, y: 400, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenCalledWith({ x: 200, y: 400 })
       expect(result.coordinates).toEqual({ x: 200, y: 400 })
     })
 
-    it('swipe passes 4 coords directly to driver', async () => {
+    it('swipe (mode:path) drives from/to points directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
       const result = await adapter.execute({
         type: 'swipe',
-        direction: 'up',
-        startX: 100, startY: 200, endX: 300, endY: 400,
+        mode: 'path',
+        from: { x: 100, y: 200 },
+        to: { x: 300, y: 400 },
+        coordSpace: 'viewport',
+        durationMs: 300,
       })
       expect(result.success).toBe(true)
       expect(mockDriver._pointerAction.move).toHaveBeenNthCalledWith(1, { x: 100, y: 200 })
@@ -771,20 +1008,20 @@ describe('AndroidPlatformAdapter', () => {
 
     it('pinch center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'pinch', scale: 0.5, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
     })
 
     it('multiTap center coords pass directly to driver', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'multiTap', fingers: 2, x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.success).toBe(true)
     })
 
     it('coords pass through unchanged (viewport-space contract)', async () => {
       await adapter.setup({ platform: 'android' })
-      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200 })
+      const result = await adapter.execute({ type: 'tapCoordinate', x: 100, y: 200, coordSpace: 'viewport' })
       expect(result.coordinates).toEqual({ x: 100, y: 200 })
     })
   })
@@ -803,6 +1040,50 @@ describe('AndroidPlatformAdapter', () => {
       mockDriver.getWindowSize.mockRejectedValueOnce(new Error('session closed'))
       const buf = await adapter.screenshot()
       expect(buf).toBeInstanceOf(Buffer)  // Assertion failure is best-effort, returns buffer
+    })
+  })
+
+  describe('liveStream (428 D-11)', () => {
+    function contextSpies() {
+      const spies = {
+        getContext: vi.fn().mockResolvedValue('NATIVE_APP'),
+        switchContext: vi.fn().mockResolvedValue(undefined),
+        getWindowSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
+        takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
+      }
+      Object.assign(mockDriver, spies)
+      return spies
+    }
+
+    it('LIVE-STREAM-IS-CONTEXT-NEUTRAL-SNAPSHOT: snapshots come from takeScreenshot alone, never a context switch', async () => {
+      await adapter.setup({ platform: 'android' })
+      const spies = contextSpies()
+      const stream = (adapter as PlatformAdapter<'android'>).liveStream
+      expect(stream?.kind).toBe('snapshot')
+      const frames: LiveFrame[] = []
+      await stream!.start((frame) => frames.push(frame))
+      await vi.waitFor(() => expect(frames).toHaveLength(1))
+      await stream!.stop()
+      expect(Buffer.from(frames[0].bytes).toString('base64')).toBe(SCREENSHOT_BASE64)
+      expect(frames[0].kind).toBe('snapshot')
+      expect(spies.takeScreenshot).toHaveBeenCalledTimes(1)
+      expect(spies.switchContext, 'a tick must never move the session under a running step').not.toHaveBeenCalled()
+      expect(spies.getContext).not.toHaveBeenCalled()
+      expect(spies.getWindowSize).not.toHaveBeenCalled()
+    })
+
+    it('the getter answers one capability, before the driver exists too, and cleanup() stops and drops it', async () => {
+      const early = (adapter as PlatformAdapter<'android'>).liveStream
+      expect(early?.kind, 'declared before setup, so selection never reaches screenshot()').toBe('snapshot')
+      await adapter.setup({ platform: 'android' })
+      const stream = (adapter as PlatformAdapter<'android'>).liveStream
+      expect(stream).toBe(early)
+      expect((adapter as PlatformAdapter<'android'>).liveStream).toBe(stream)
+      const stop = vi.spyOn(stream!, 'stop')
+      await stream!.start(() => {})
+      await adapter.cleanup()
+      expect(stop).toHaveBeenCalledTimes(1)
+      expect((adapter as PlatformAdapter<'android'>).liveStream).not.toBe(stream)
     })
   })
 })

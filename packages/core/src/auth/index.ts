@@ -17,7 +17,7 @@ export {
   getCredential,
 } from './store.js'
 
-export { resolveLLMAuth } from './resolver.js'
+export { PUBLIC_PROVIDER_API_HOSTS, resolveLLMAuth } from './resolver.js'
 
 export type {
   CreateAuthFetchContext,

@@ -71,7 +71,6 @@ function resetLiveEditorState() {
     ],
     setupHooks: [],
     teardownHooks: [],
-    screenshot: null,
     currentUrl: 'https://example.com',
     pendingNavigation: null,
     error: null,
@@ -79,7 +78,6 @@ function resetLiveEditorState() {
     executeStepByIndex: vi.fn(),
     executeHookById: vi.fn(),
     cancelStep: vi.fn(),
-    requestScreenshot: vi.fn(),
     refreshPage: vi.fn(),
     goBack: vi.fn(),
     goForward: vi.fn(),
@@ -95,6 +93,7 @@ function resetLiveEditorState() {
     runningStepId: null,
     sessionId: 'session-1',
     isTerminated: false,
+    sessionGone: false,
     deviceLogs: [],
     platform: 'web',
     ariaTree: null,
@@ -297,7 +296,7 @@ beforeEach(() => {
   fetchAuthStatesMock.mockResolvedValue({ authStates: [] })
   saveLiveAuthStateMock.mockResolvedValue({
     authState: {
-      version: 1,
+      version: 2,
       kind: 'web',
       target: 'demo-target',
       name: 'suite-admin',
@@ -419,7 +418,7 @@ describe('SuiteEditorPage live mode orchestration', () => {
   it('passes suite auth-state prefill, saves via auth-state API, and leaves YAML unchanged', async () => {
     fetchAuthStatesMock.mockResolvedValue({
       authStates: [{
-        version: 1,
+        version: 2,
         kind: 'web',
         target: 'demo-target',
         name: 'suite-admin',

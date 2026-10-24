@@ -38,7 +38,6 @@ export interface StepOverrides {
   timeout?: string
   retries?: number
   screenshot?: boolean
-  maxAttempts?: number
 }
 
 export interface StepFormState {
@@ -83,7 +82,6 @@ export function yamlToFormState(yamlContent: string): TestFormState | null {
                 timeout: obj.timeout as string | undefined,
                 retries: obj.retries as number | undefined,
                 screenshot: obj.screenshot as boolean | undefined,
-                maxAttempts: obj.maxAttempts as number | undefined,
               },
             }
           })

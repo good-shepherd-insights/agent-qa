@@ -1,32 +1,59 @@
 import { createServer, type Server } from 'node:http'
+import { randomBytes } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join, extname, resolve } from 'node:path'
 import { cpus } from 'node:os'
 import type { DashboardDatabase } from '../db/database.js'
-import { createRouter } from './routes.js'
-import { TestRunner } from '../execution/test-runner.js'
+import { classifyRunOwner } from '../db/run-owner.js'
+import { createRouter, sanitizeQueuedExecutionTimeout } from './routes.js'
+import { backstopServerError, refuseUnparseableRequest, tryParseRequestUrl } from './request-url.js'
+import type { ExecutionBackend, RunSettledDetails, RunSettledStatus } from '../execution/execution-backend.js'
 import { JobQueue } from '../queue/job-queue.js'
 import { TestFileManager } from '../tests/test-file-manager.js'
 import { SuiteFileManager } from '../tests/suite-file-manager.js'
-import { ConfigManager } from '../config/index.js'
+import { ConfigManager, readConfigValues } from '../config/index.js'
 import { AppiumManager } from '../execution/appium-manager.js'
 import { WebSocketServer } from 'ws'
 import { SessionManager } from '../live-editor/session-manager.js'
 import { createSessionHandler } from '../live-editor/ws-handler.js'
+import { LIVE_EMBED_PATH_PREFIX, LIVE_VIEW_WS_PATH } from '../live-view/protocol.js'
+import { renderLiveEmbedPage } from '../live-view/embed-page.js'
+import { createFrameProxy } from '../live-view/frame-proxy.js'
+import { refuseCrossSiteRequest, refuseNonLoopbackHost } from './cross-site.js'
+import { LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from '../live-editor/types.js'
+import type { LiveEditorSubjects } from '../live-view/editor-subjects.js'
+import type {
+  EditorLiveUrlResult,
+  LiveUrlVerdict,
+  LiveViewSubjectRef,
+  MaskFn,
+  RunSession,
+  RunsLiveUrlResult,
+} from '@vostride/agent-qa-schema'
 import {
-  buildAnalyticsEvent,
-  captureAnalytics,
-  resolveAnalyticsStandardProperties,
-  type ModelConfig,
+  isLoopbackHost,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
+import type { DashboardLLMConfig } from '../llm-model-mapping.js'
+import type { AgentHost } from '../chat/host.js'
+import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import {
-  createLocalMcpHttpHandler,
-  resolveLocalMcpEndpoint,
-  resolveMcpEndpointShape,
-  type LocalMcpEndpointConfig,
-  type LocalMcpTransport,
-} from '@vostride/agent-qa-mcp'
+  createRunServiceRoutes,
+  ownsRunServicePath,
+  type RunServicePorts,
+} from '../run-service/run-service-routes.js'
+import type { RunServiceReadiness } from '@vostride/agent-qa-schema'
+// 396-01 D-10: the `@vostride/agent-qa-mcp` import is GONE, together with the MCP endpoint this
+// server used to start beside the dashboard. The v2 server is composed per-caller by the CLI's own
+// host (`agent-qa mcp`) over the function registry, so a dashboard that mounted its own copy would
+// be a second composition root for the same surface — the private power the milestone abolishes.
+// M5's dashboard rebuild decides whether it wants a mount back, via `/hono` and its own decision.
+//
+// 2026-08-24 — THE HONO RESERVATION IS RETIRED (Phase 402 D-03). The question this file reserved
+// ("would a framework earn its place here?") is answered: no. The run service mounted below is
+// hand-rolled `node:http`, like the daemon server and the MCP listener — zero new dependencies at a
+// network boundary, one routing idiom per process. A framework added later would
+// have to argue against that, not inherit an open reservation.
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -53,51 +80,223 @@ function isAnalyticsPrivacyEnabled(config: unknown): boolean {
     && (analytics as { privacy?: unknown }).privacy === true)
 }
 
+/**
+ * The refusal that keeps the dashboard surface off the network (402-05, D-07; 432 D-13).
+ *
+ * NAMES THE HOST AND THE CONFIG KEY, AND NOTHING ELSE (395-16 measured Node's default uncaught
+ * printer walking a `cause` chain with `util.inspect`, which is how a config file's contents once
+ * reached a person's terminal). There is deliberately no `cause` attached.
+ *
+ * WHY A REFUSAL AND NOT A WARNING. Nothing this server mounts asks for a credential: the run
+ * trigger, the queue enqueue, the run service, the artifact serving, the config reads. 2026-10-01
+ * (432-21, D-12/D-13): that is now true of the run service too — its bearer tokens are deleted — so
+ * the loopback bind is the whole of what keeps another machine off every one of them.
+ *
+ * AND WHY THE REFUSAL IS UNCONDITIONAL. This guard originally exempted a process that had declared
+ * a run-service credential, on the premise that "the operator who genuinely wants remote access
+ * declares a credential — which is the same act that makes the remote surface an authed one".
+ * Phase-402 verification measured that premise FALSE off a real interface: a credential
+ * authenticates exactly `ownsRunServicePath` — `POST /run`, `GET /run/:runId/events`, `GET /ok` —
+ * and declaring one was precisely what unlocked the bind. With `host: 0.0.0.0` and one token,
+ * `POST /api/runs/trigger` carrying no Authorization header answered `202` and started a run, and
+ * `GET /api/runs` answered `200` with the run list. The token count was never evidence about the
+ * surface this guard protects, so it is no longer consulted. Since 432-21 there is no credential to
+ * consult at all. Publishing this server to a network needs a front-door login first (432 D-13's
+ * forward note); until there is one, the honest answer is no.
+ */
+export class DashboardRemoteBindRefusedError extends Error {
+  constructor(readonly host: string) {
+    super(
+      `The dashboard was asked to bind ${host}, which is not a loopback interface. Nothing this `
+      + 'server serves — the run trigger, the queue enqueue, the run service, the artifact '
+      + 'serving, the config reads — asks for a credential, so a non-loopback bind would publish '
+      + 'an anonymous run trigger to the network. Leave '
+      + `services.dashboard.host unset (it defaults to ${DEFAULT_DASHBOARD_HOST}), and reach a `
+      + 'remote dashboard through an authenticating proxy or a tunnel you control.',
+    )
+    this.name = 'DashboardRemoteBindRefusedError'
+  }
+}
+
+/** Where this server binds when nothing says otherwise (402-05, D-07). BREAKING since v2. */
+export const DEFAULT_DASHBOARD_HOST = '127.0.0.1'
+
 interface StartServerOptions {
   db: DashboardDatabase
   port?: number
+  /**
+   * The interface this server binds (402-05, D-07 — INVK-03).
+   *
+   * DEFAULTS TO LOOPBACK, and a non-loopback value is REFUSED before anything listens — with no
+   * exemption. This is BREAKING for anyone who relied on the previous `server.listen(port)`, which
+   * bound every interface, and there is no migration flag: the v2 ethos ships no back-compat shim
+   * for a hole. Remote access goes through an authenticating proxy (432 D-13's forward note).
+   */
+  host?: string
   uiDir?: string
+  /**
+   * Where this workspace writes run artifacts (`services.dashboard.artifactsDir`).
+   *
+   * ACCEPTED AND NOT READ BY THIS SERVER SINCE 405-07 (D-14). It used to be resolved into a
+   * screenshots and a videos root that two path-serving routes and the run-deletion sweep read.
+   * Refs are the only artifact addressing now, and the bytes are reached through the
+   * `runs.artifact` op over the evidence store's own layout. The option stays declared because it
+   * is a user-facing config key the RECORDING path still writes under; the dashboard simply no
+   * longer serves or deletes anything by path.
+   */
   artifactsDir?: string
   workspacePaths?: ResolvedWorkspacePaths
   configPath?: string
-  mcp?: LocalMcpEndpointConfig
-  llmConfig?: Pick<
-    ModelConfig,
-    'provider' | 'model' | 'apiKey' | 'authToken' | 'baseURL' | 'providerHeaders'
-  > & {
-    screenshotSize?: number
-    effectiveResolution?: number
+  // 441-21 (D-29): every config read this server serves passes through the declared mask.
+  declaredSecretMask: MaskFn
+  llmConfig?: DashboardLLMConfig & {
+    vision?: { screenshotSize?: number; effectiveResolution?: number }
   }
   authFetch?: typeof globalThis.fetch
-}
-
-interface McpStartupInfo {
-  enabled: boolean
-  transport: LocalMcpTransport
-  host?: string
-  port?: number
-  path?: string
-  url?: string
+  /**
+   * The composed agent host the chat door dispatches through (400-01, D-01).
+   *
+   * INJECTED by whoever starts this server — in production `agent-qa dashboard`, which composes the
+   * SAME port set `agent-qa chat` does and hands it over, so the two interactive doors have one
+   * answer to "what can a conversation do" (D-08). Absent leaves the chat routes answering 501 by
+   * name: the door exists, this process was started without a host. See `chat/host.ts`.
+   */
+  agentHost?: AgentHost
+  /**
+   * The backend every dashboard run executes through (401-07, D-01/D-09/D-10 — INVK-01).
+   *
+   * INJECTED, ON `agentHost`'s OWN IDIOM AND FOR ITS OWN REASON. The implementation that starts a
+   * run names `runs.start`, `invokeFunction` and the composed local host — all of it
+   * `@vostride/agent-qa-agent*` vocabulary this package may not import (validate:arch). So
+   * `agent-qa dashboard` composes it in the process that runs this server and hands it over, which
+   * is what makes the run button one more caller of the op chat already uses rather than a
+   * dashboard carve-out around the gates.
+   *
+   * ABSENT DEGRADES BY NAME, exactly as it did when the CLI binary could not be resolved: the
+   * execution routes answer 503 and the queue's execute handler does nothing. A dashboard started
+   * without a run door is a dashboard that cannot run tests, and it says so.
+   */
+  executionBackend?: ExecutionBackend
+  /**
+   * The run service's ports (402-01, D-02/D-06 — INVK-03).
+   *
+   * INJECTED, ON `agentHost`'s AND `executionBackend`'s OWN IDIOM AND FOR THEIR OWN REASON. The
+   * implementations name `runs.start`, `invokeFunction` and the composed local host — all of it
+   * vocabulary this package may not import (validate:arch). So `agent-qa dashboard` composes them
+   * in the process that runs this server and hands them over, which is what makes the run service
+   * a mountable module rather than a fourth process.
+   *
+   * ABSENT MEANS THE SERVICE IS NOT MOUNTED, and `/run` and its neighbours reach whatever the
+   * static/SPA handling below does with an unknown path. 2026-10-01 (432-21, D-12): `agent-qa
+   * dashboard` supplies it unconditionally now. It used to mount only when a run-service credential
+   * was declared, and those credentials are deleted; the door is guarded by the same-site check
+   * and the loopback bind like every other door here. Absent is a bare in-process mount's posture.
+   */
+  runService?: RunServicePorts
+  /**
+   * The run service's readiness predicate, served WITHOUT a token on the local dashboard API
+   * (402-05, D-15 — `GET /api/run-readiness`).
+   *
+   * SEPARATE FROM `runService` ABOVE AND NOT DERIVED FROM IT, because a mount without the service
+   * still has a browser that needs an honest readiness answer rather than a 404. `agent-qa
+   * dashboard` supplies the very same function object it put on `runService.readiness`: one
+   * predicate, two doors. (Until 432-21 the service was absent whenever no credential was declared.)
+   */
+  runServiceReadiness?: () => RunServiceReadiness
+  /**
+   * The run id → live `RunSession` lookup, as a FIRST-CLASS option (403 D-14 — WINDOWS #264).
+   *
+   * SEPARATE FROM `runService` AND NOT DERIVED FROM IT, on `runServiceReadiness`'s exact argument
+   * one field up. The derivation `runService?.attach` is what made the local run-stream door
+   * answer 503 about runs this very process was executing: until 432-21 `composeRunServicePorts`
+   * ran only when `runServiceTokens` were declared, so the DEFAULT zero-token dashboard composed no
+   * registry at all and the local door had nothing to attach to. `agent-qa dashboard` supplies this
+   * from a registry hoisted above the door.
+   *
+   * The legacy derivation still applies when this is absent, so an in-process caller that only
+   * passes `runService` keeps working byte-for-byte.
+   */
+  runServiceAttach?: (runId: string) => RunSession | undefined
+  /**
+   * The live-view seam (403 D-03/D-06): the function layer's validator, by reference, and the
+   * mint dispatched through the registry.
+   *
+   * ABSENT MEANS NO LIVE VIEW IS SERVED — the embed route is not registered, the frame socket
+   * refuses the upgrade, and `GET /api/runs/:runId/live-url` answers 503 by name. This server
+   * holds NO signing key and NO token parse of its own; both are the function layer's, handed in.
+   */
+  liveView?: {
+    validate(token: string, expect: { subject: LiveViewSubjectRef; now: number }): LiveUrlVerdict
+    mintLiveUrl(runId: string, handle: number): Promise<RunsLiveUrlResult>
+    /**
+     * The `editor.liveurl` mint, dispatched through the registry (428 D-07). ABSENT MEANS NO
+     * EDITOR VIEW IS MINTED, and `GET /api/live-editor/sessions/:id/live-url` answers 503 by name.
+     */
+    mintEditorLiveUrl?(sessionId: string): Promise<EditorLiveUrlResult>
+  }
+  /**
+   * The editor-subject registry (428 D-07): the session manager registers each live editor session
+   * here and the frame socket attaches editor subjects through it.
+   *
+   * ABSENT MEANS NO EDITOR SUBJECT IS SERVED ON THE FRAME SOCKET. `agent-qa dashboard` creates one
+   * registry and hands the same object to the live-view composition and to this server.
+   */
+  liveEditorSubjects?: LiveEditorSubjects
+  /**
+   * The in-process post-processing chip relay (404-05, D-16).
+   *
+   * INJECTED, ON `agentHost`'s OWN IDIOM AND FOR ITS OWN REASON. The PUBLISHER is the CLI's
+   * post-run chip emitter, in this same process, and this package may not import it — so
+   * `agent-qa dashboard` creates one relay, hands `relay.publish` to the run door's bridge as the
+   * emitter's second sink and hands the relay itself here. It has to be the SAME object: a relay
+   * built inside this function would be a registry nothing publishes to, and the stream door would
+   * heartbeat forever at a page whose chips are demonstrably moving.
+   *
+   * ABSENT MEANS NO PUSH CHANNEL, and `GET /api/runs/:id/post-processing/stream` answers 503 by
+   * name. The READ route needs none of this and keeps working: polling is the floor the whole
+   * design rests on, and the stream is the optimisation over it.
+   */
+  postProcessingRelay?: PostProcessingRelay
 }
 
 export async function startServer(opts: StartServerOptions): Promise<{
   server: Server
   port: number
-  mcp: McpStartupInfo
   close: () => void
 }> {
-  const { db, port = 3470, uiDir, artifactsDir, workspacePaths, configPath, mcp, llmConfig, authFetch } = opts
+  const { db, port = 3470, uiDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView, liveEditorSubjects, postProcessingRelay } = opts
+  // 403 D-14: the explicit port wins; the pre-403 derivation is the fallback for legacy callers.
+  const runServiceAttach = opts.runServiceAttach ?? runService?.attach
+  const host = opts.host?.trim() || DEFAULT_DASHBOARD_HOST
+
+  // ---- THE BIND GUARD (402-05, D-07 — T-402-16) ---------------------------------------------
+  //
+  // FIRST STATEMENT WITH ANY EFFECT, and that placement is the whole mechanism. Below this line the
+  // function opens a database, starts a queue, acquires Appium leases and constructs a WebSocket
+  // server; a guard placed after any of them would be a guard that has to tear down what it just
+  // built, and the tear-down path is where a refusal turns into a half-started process. Refusing
+  // here means the refused configuration allocates nothing and listens on nothing.
+  //
+  // MEMBERSHIP IS `isLoopbackHost`, IMPORTED — the same predicate `LoopbackHostSchema` refines on,
+  // never a second literal list (T-402-18). `services.dashboard.host` is deliberately a plain
+  // string in the config schema so this decision is reachable at all, and so a loopback SPELLING
+  // other than the default (`localhost`, `::1`) stays configurable.
+  //
+  // NO EXEMPTION — see `DashboardRemoteBindRefusedError`. A run-service credential once exempted a
+  // non-loopback bind and never authenticated `/api/runs/trigger`; since 432-21 no credential
+  // exists to consult.
+  if (!isLoopbackHost(host)) {
+    throw new DashboardRemoteBindRefusedError(host)
+  }
 
   const resolvedConfigPath = configPath ?? resolve('agent-qa.config.yaml')
-  const configManager = new ConfigManager(resolvedConfigPath)
+  const configManager = new ConfigManager(resolvedConfigPath, opts.declaredSecretMask)
 
   // Read concurrency from config (defaults to os.cpus().length)
-  const config = await configManager.read().catch(() => ({}))
+  const config = await readConfigValues(configManager).catch(() => ({}))
   const concurrency = typeof (config as any).concurrency === 'number'
     ? (config as any).concurrency
     : cpus().length
-
-  let testRunner: TestRunner | undefined
 
   const finalizeRunArtifactBestEffort = (
     runId: string,
@@ -116,259 +315,156 @@ export async function startServer(opts: StartServerOptions): Promise<{
     } catch { /* best-effort cleanup */ }
   }
 
-  // Resolve CLI binary once — used by TestRunner
-  let cliBin: string | undefined
-  try {
-    cliBin = TestRunner.resolveCliBin()
-  } catch {
-    console.warn('Warning: Could not resolve agent-qa CLI binary. Execution will not work.')
-  }
+  // THE RUN'S TERMINAL STATE, RECONCILED WHERE THE CHILD'S EXIT USED TO BE (401-07, D-04/D-09).
+  //
+  // This body is the `onProcessClose` reconciliation, unchanged in what it writes. What changed is
+  // where the facts come from: the status is the bus's own ground truth rather than an exit code
+  // read through a scrape, and the diagnostic lines are the failure's OWN message rather than a
+  // tail of the child's stderr. The three things it does — reconcile a db row still reading
+  // `running`, release the run's Appium lease, free the queue slot — are the three things the
+  // process exit was load-bearing for, and all three still need doing.
+  executionBackend?.on('run-settled', (
+    runId: string,
+    status: RunSettledStatus,
+    details: RunSettledDetails,
+  ) => {
+    // The run settled but the DB row is still 'running' — update it so the dashboard does not
+    // show a stuck run. 2026-10-17 (444-06, D-31): a row the run already finished is never rewritten.
+    try {
+      const run = db.getRun(runId)
+      const output = details.output
+      if (run && run.status === 'running') {
+        const duration = run.startedAt
+          ? Date.now() - new Date(run.startedAt).getTime()
+          : 0
 
-  // TestRunner for live test execution
-  if (cliBin) {
-    testRunner = new TestRunner({
-      cliBin,
-      onProcessClose: (runId, status) => {
-        // If the child process exited but the DB row is still 'running',
-        // update it so the dashboard doesn't show a stuck run.
-        try {
-          const run = db.getRun(runId)
-          const handle = testRunner!.getHandle(runId)
-          const isBrowserDisconnect = handle?.output.some(line =>
-            line.includes('Target page, context or browser has been closed') ||
-            line.includes('Browser closed by user')
+        let dbStatus: string
+        let failureSummary: string | undefined
+        let errorLog: string | undefined
+        // 401-18 (G-401-16): the neutral prose a REFUSAL is carrying, held aside so the errorLog
+        // composition below can prefer it over the diagnostic lines. Undefined on every other arm,
+        // which is what keeps those arms byte-identical.
+        let refusalProse: string | undefined
+        if (status === 'cancelled') {
+          dbStatus = 'cancelled'
+          failureSummary = undefined
+        } else if (status === 'timeout') {
+          dbStatus = 'failed'
+          failureSummary = 'Test timed out -- process was killed'
+        } else if (details.refusedBeforeStart) {
+          // A REFUSAL IS NOT A PROCESS EXIT (401-18, G-401-16).
+          //
+          // Branched on the FACT the settle carries, above the `completed` arm and above the regex
+          // fallback, because both of those describe a run that ran. A run the gate refused before
+          // anything started has no exit to report — and the summary is the line a runs list shows,
+          // so it was the sentence a person read about every denied dashboard run.
+          //
+          // THE PROSE IS THE GATE'S NEUTRAL FORM, NOT ITS CANONICAL ONE. The canonical sentence
+          // named the session trust flag, declared on one CLI command, and this reader is in a
+          // browser. Where the rejection carries no neutral form — an unrecognised request field, an
+          // input error — its own message is used, which names no surface's affordance either.
+          //
+          // 2026-09-30, 432-09 (D-15): the refusal is this plain sentence. No remedy list rides it.
+          dbStatus = 'failed'
+          refusalProse = details.neutralReason ?? details.reason
+          failureSummary = refusalProse
+            ? `Refused before the run started: ${refusalProse}`.slice(0, 300)
+            : 'Refused before the run started'
+        } else if (status === 'completed') {
+          dbStatus = 'failed'
+          failureSummary = 'Process exited before test completed'
+        } else {
+          dbStatus = 'failed'
+          const outputLines = output.map(l => l.replace(/\x1b\[[0-9;]*m/g, ''))
+          const meaningfulLine = [...outputLines].reverse().find(l =>
+            /error/i.test(l) || l.includes('Parse') || l.includes('not found') || l.includes('rejected')
           )
-          if (run && (run.status === 'running' || run.status === 'cancelled')) {
-            const duration = run.startedAt
-              ? Date.now() - new Date(run.startedAt).getTime()
-              : 0
+          failureSummary = meaningfulLine
+            ? meaningfulLine.slice(0, 300)
+            : 'Process exited before test completed'
+        }
 
-            let dbStatus: string
-            let failureSummary: string | undefined
-            let errorLog: string | undefined
-            const explicitCancellation = run.status === 'cancelled' || status === 'cancelled'
-            if (explicitCancellation) {
-              dbStatus = 'cancelled'
-              failureSummary = undefined
-            } else if (status === 'timeout') {
-              dbStatus = 'failed'
-              failureSummary = 'Test timed out -- process was killed'
-            } else if (status === 'completed') {
-              dbStatus = 'failed'
-              failureSummary = 'Process exited before test completed'
-            } else if (isBrowserDisconnect) {
-              dbStatus = 'cancelled'
-              failureSummary = 'Browser closed by user'
-            } else {
-              dbStatus = 'failed'
-              const outputLines = handle?.output.map(l => l.replace(/\x1b\[[0-9;]*m/g, '')) ?? []
-              const meaningfulLine = [...outputLines].reverse().find(l =>
-                /error/i.test(l) || l.includes('Parse') || l.includes('not found') || l.includes('rejected')
-              )
-              failureSummary = meaningfulLine
-                ? meaningfulLine.slice(0, 300)
-                : 'Process exited before test completed'
-            }
+        if (refusalProse !== undefined) {
+          // The refused run's ONLY record of why it never happened. The diagnostic lines it
+          // replaces are the rejection's canonical message — the one carrying the CLI flag.
+          errorLog = refusalProse.replace(/\x1b\[[0-9;]*m/g, '').slice(-10000) || undefined
+        } else if (dbStatus === 'failed' && output.length) {
+          errorLog = [...output]
+            .join('\n')
+            .replace(/\x1b\[[0-9;]*m/g, '')
+            .slice(-10000) || undefined
+        }
 
-            if (dbStatus === 'failed' && handle?.output.length) {
-              errorLog = handle.output
-                .join('\n')
-                .replace(/\x1b\[[0-9;]*m/g, '')
-                .slice(-10000) || undefined
-            }
+        // 2026-08-24 (Phase 402 plan 09, D-11): THE SUITE-PARENT STATUS FOLD IS RETIRED WITH THE
+        // CHILDREN IT FOLDED — the same retirement, at the same site, as the retry-child block
+        // below, for the same reason.
+        //
+        // ~75 lines stood here: force every `running`/`pending` child terminal, re-read them, and
+        // derive the parent's status as the worst child status. A suite is now ONE run row with
+        // member handles (D-11, 402-04); nothing writes the run row's parent-link column, so the
+        // fold's own `updatedChildren.length === 0` branch was the only branch it could still take,
+        // and that is what the common path below does. What a suite run GAINS by falling through
+        // is the diagnostic `failureSummary` and the captured `errorLog` the fold discarded in
+        // favour of the constant sentence "Suite test(s) failed".
+        //
+        // HISTORICAL ROWS ARE UNAFFECTED: this fold only ever ran when a live process closed, and
+        // no live process owns pre-402 children. The read side that renders them is untouched.
 
-            // Suite parent: derive status from child test runs
-            if (run.suiteId && !run.parentRunId) {
-              const children = db.getRunsByParent(runId)
-              const incompleteChildStatus = dbStatus === 'cancelled' ? 'cancelled' : 'failed'
-              const incompleteChildSummary = incompleteChildStatus === 'cancelled'
-                ? 'Suite cancelled'
-                : failureSummary ?? 'Suite process terminated'
+        // 2026-08-23 (Phase 401 plan 07, D-12): THE RETRY-CHILD CLASSIFICATION IS RETIRED WITH
+        // THE MACHINERY THAT CREATED THE CHILDREN.
+        //
+        // Retry children were minted by the RUNNER PROCESS, off variables the queue put in a
+        // child's environment. There is no child, and nothing mints a retry child any more. The
+        // ~60 lines that stood here folded those children into a `flaky` / `passed` / `cancelled`
+        // verdict on the parent; with no children to fold they could only ever have been dead
+        // code that read as live policy.
+        //
+        // WHERE RETRY-ON-FAILURE LIVES NOW: the runner's own re-run machinery (runner.md §7). It is
+        // the runner's concern and always was — a queue that re-spawns a process is retrying the
+        // WRAPPER, which is why a dashboard retry could report `flaky` for a run whose flakiness
+        // nothing had measured.
+        //
+        // WHAT DEGRADES, HONESTLY (DETL-06-adjacent debris, recorded rather than hidden): the
+        // `runs.retry_count` / `runs.max_retries` COLUMNS and the dashboard UI that reads them
+        // stay, and stop receiving new writes. Historical rows keep their values. A successor retry
+        // UX, if one is wanted, is M5's to design against the runner's machinery — it is filed in
+        // `.planning/phases/401-.../deferred-items.md` rather than left as an empty affordance
+        // somebody re-implements at the queue.
 
-              for (const child of children) {
-                if (child.status === 'running' || child.status === 'pending') {
-                  db.updateRun(child.id, {
-                    status: incompleteChildStatus,
-                    endedAt: new Date().toISOString(),
-                    failureSummary: incompleteChildSummary,
-                  })
-                  finalizeRunArtifactBestEffort(
-                    child.id,
-                    'suite-process-close',
-                    'process-close',
-                    incompleteChildSummary,
-                    { status: incompleteChildStatus, finalStatus: incompleteChildStatus, processStatus: status },
-                  )
-                }
-              }
-
-              const updatedChildren = db.getRunsByParent(runId)
-
-              const statusPriority: Record<string, number> = {
-                failed: 4,
-                cancelled: 3,
-                flaky: 2,
-                passed: 1,
-                skipped: 0,
-                pending: 0,
-                running: 0,
-              }
-
-              let worstStatus = 'passed'
-              let worstPriority = 0
-              for (const child of updatedChildren) {
-                const p = statusPriority[child.status] ?? 0
-                if (p > worstPriority) {
-                  worstPriority = p
-                  worstStatus = child.status
-                }
-              }
-
-              if (updatedChildren.length === 0) {
-                if (isBrowserDisconnect) {
-                  worstStatus = 'cancelled'
-                } else {
-                  worstStatus = dbStatus
-                }
-              }
-
-              db.updateRun(runId, {
-                status: worstStatus,
-                duration,
-                endedAt: new Date().toISOString(),
-                failureSummary: worstStatus === 'failed' ? 'Suite test(s) failed'
-                  : worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled')
-                  : undefined,
-              })
-              finalizeRunArtifactBestEffort(
-                runId,
-                'suite-process-close',
-                'process-close',
-                worstStatus === 'cancelled' ? (isBrowserDisconnect ? 'Browser closed by user' : 'Suite cancelled') : 'Suite process closed',
-                { status: worstStatus, finalStatus: worstStatus, processStatus: status, duration },
-              )
-
-              releaseMobileAppiumLease(runId, 'suite-process-close')
-              jobQueue.onSlotFreed(runId)
-              return
-            }
-
-            // Check for retry child runs and classify accordingly
-            const childRuns = db.getRunsByParent(runId)
-            if (childRuns.length > 0) {
-              const incompleteChildStatus = dbStatus === 'cancelled' ? 'cancelled' : 'failed'
-              const incompleteChildSummary = incompleteChildStatus === 'cancelled'
-                ? 'Retry cancelled'
-                : failureSummary ?? 'Retry process terminated'
-              for (const child of childRuns) {
-                if (child.status === 'running' || child.status === 'pending') {
-                  db.updateRun(child.id, {
-                    status: incompleteChildStatus,
-                    endedAt: new Date().toISOString(),
-                    failureSummary: incompleteChildSummary,
-                  })
-                  finalizeRunArtifactBestEffort(
-                    child.id,
-                    'retry-process-close',
-                    'process-close',
-                    incompleteChildSummary,
-                    { status: incompleteChildStatus, finalStatus: incompleteChildStatus, processStatus: status },
-                  )
-                }
-              }
-
-              const updatedChildRuns = db.getRunsByParent(runId)
-              const anyPassed = updatedChildRuns.some(r => r.status === 'passed')
-              const firstPassed = updatedChildRuns[0]?.status === 'passed'
-              if (anyPassed && !firstPassed) {
-                dbStatus = 'flaky'
-              } else if (anyPassed && firstPassed) {
-                dbStatus = 'passed'
-              } else if (dbStatus === 'cancelled' || updatedChildRuns.some(r => r.status === 'cancelled')) {
-                dbStatus = 'cancelled'
-              } else {
-                dbStatus = 'failed'
-              }
-              const lastChild = updatedChildRuns[updatedChildRuns.length - 1]
-              db.updateRun(runId, {
-                status: dbStatus,
-                duration,
-                endedAt: new Date().toISOString(),
-                failureSummary: dbStatus === 'failed' ? 'All retry attempts failed'
-                  : dbStatus === 'cancelled' ? 'Retry cancelled'
-                  : undefined,
-              })
-              finalizeRunArtifactBestEffort(
-                runId,
-                'retry-process-close',
-                'process-close',
-                dbStatus === 'failed' ? 'All retry attempts failed'
-                  : dbStatus === 'cancelled' ? 'Retry cancelled'
-                  : 'Retry process closed',
-                { status: dbStatus, finalStatus: dbStatus, processStatus: status, duration },
-              )
-              db.updateRunRetryInfo(runId, {
-                retryCount: updatedChildRuns.length,
-                maxRetries: lastChild?.maxRetries ?? run.maxRetries,
-              })
-              releaseMobileAppiumLease(runId, 'retry-process-close')
-              jobQueue.onSlotFreed(runId)
-              return
-            }
-
-            db.updateRun(runId, {
-              status: dbStatus,
-              duration,
-              endedAt: new Date().toISOString(),
-              failureSummary,
-              errorLog,
-            })
-            finalizeRunArtifactBestEffort(
-              runId,
-              isBrowserDisconnect ? 'browser-disconnect' : 'process-close',
-              'process-close',
-              failureSummary ?? 'Process closed',
-              { status: dbStatus, finalStatus: dbStatus, processStatus: status, duration },
-            )
-          }
-        } catch { /* best-effort */ }
-
-        releaseMobileAppiumLease(runId, status)
-        jobQueue.onSlotFreed(runId)
-      },
-    })
-  }
-
-  // Clean up orphaned runs from previous server sessions — any run still
-  // marked 'running' in the DB has no live process and should be failed.
-  // Suite parents with active children are skipped (CLI process may still be running).
-  const orphaned = db.getRuns({ status: 'running' })
-  let cleaned = 0
-  for (const run of orphaned) {
-    if (run.suiteId && !run.parentRunId) {
-      const children = db.getRunsByParent(run.id)
-      if (children.some(c => c.status === 'running')) {
-        continue
+        db.updateRun(runId, {
+          status: dbStatus,
+          duration,
+          endedAt: new Date().toISOString(),
+          failureSummary,
+          errorLog,
+        })
+        finalizeRunArtifactBestEffort(
+          runId,
+          'process-close',
+          'process-close',
+          failureSummary ?? 'Process closed',
+          { status: dbStatus, finalStatus: dbStatus, processStatus: status, duration },
+        )
       }
+    } catch { /* best-effort */ }
+
+    releaseMobileAppiumLease(runId, status)
+    jobQueue.onSlotFreed(runId)
+  })
+
+  // 2026-10-16 (442-04, D-05/D-04): only runs whose owning process is provably gone are finalized.
+  let finalized = 0
+  for (const { id, owner } of db.listRunningRunOwners()) {
+    if (classifyRunOwner(owner, db.runOwnership) === 'gone' && db.finalizeOrphanRun(id, owner)) {
+      finalized++
     }
-    const duration = run.startedAt
-      ? Date.now() - new Date(run.startedAt).getTime()
-      : 0
-    db.updateRun(run.id, {
-      status: 'failed',
-      duration,
-      endedAt: new Date().toISOString(),
-      failureSummary: 'Process terminated unexpectedly (server restarted)',
-    })
-    finalizeRunArtifactBestEffort(run.id, 'server-restart', 'startup-cleanup', 'Process terminated unexpectedly (server restarted)', { status: 'failed', duration })
-    cleaned++
   }
-  if (cleaned > 0) {
-    console.log(`Cleaned up ${cleaned} orphaned run(s) stuck in 'running' state`)
+  if (finalized > 0) {
+    console.log(`Finalized ${finalized} run(s) whose agent-qa process had ended`)
   }
 
   // Log any pending rows left from previous session (benign — picked up when queue starts)
-  const pendingOrphans = db.getRuns({ status: 'pending' })
+  const pendingOrphans = db.getRuns({ statuses: ['pending'] })
   if (pendingOrphans.length > 0) {
     console.log(`Found ${pendingOrphans.length} pending run(s) from previous session — will be processed when queue starts`)
   }
@@ -390,14 +486,24 @@ export async function startServer(opts: StartServerOptions): Promise<{
     }
   }
 
-  // Persistent job queue — all triggers route through this
-  const jobQueue = new JobQueue({ db, concurrency })
-  console.log(`Job queue started with ${concurrency} concurrency slot(s)`)
+  // The persistent RUN QUEUE — all run triggers route through this. Named per D-21: it is not
+  // the curation queue and not the agent job queue. The `JobQueue` class name is v1 vocabulary
+  // that D-21 leaves unrenamed; only what an operator reads carries the qualifier.
+  const jobQueue = new JobQueue({
+    db,
+    concurrency,
+    requestStop: (runId) => executionBackend?.kill(runId) ?? false,
+  })
+  console.log(`Run queue started with ${concurrency} concurrency slot(s)`)
   console.log('Appium lifecycle manager initialized (auto-start on first mobile test)')
 
-  // Wire JobQueue 'execute' event to TestRunner
+  // Wire the run queue's 'execute' event to the injected execution backend (401-07, D-09/D-10).
+  //
+  // THE QUEUE ITSELF IS UNTOUCHED — its slots, its polling, its ordering and its cancel signal are
+  // the same object they were, which is D-09's build-order pin in one line: what changed underneath
+  // it is who executes, not who schedules.
   jobQueue.on('execute', async (run) => {
-    if (!testRunner) return
+    if (!executionBackend) return
 
     const platform = run.platform ?? 'web'
     const isMobile = platform === 'ios' || platform === 'android'
@@ -428,20 +534,25 @@ export async function startServer(opts: StartServerOptions): Promise<{
     if (args.length === 0 && run.filePath) {
       args.push(run.filePath)
     }
-    testRunner.execute({
+    executionBackend.execute({
       runId: run.id,
       args,
       source: meta.isSuite ? 'suite' : 'dashboard',
+      // 2026-10-01 (432-14, D-14): no confirm scope is read off the row any more. The browser that
+      // triggered a run is not asked anything, so nothing about it has to survive the wait.
       attributes: run.attributes,
-      timeout: meta.timeout as number | undefined,
-      maxRetries: run.maxRetries,
-      env: isMobile ? { AGENT_QA_APPIUM_URL: appiumManager.getUrl() } : undefined,
+      // T-401-G26 (401-23): a persisted row's timeout is VALIDATED at the seam that consumes it.
+      // `in-process-backend.ts:211` reads `opts.timeout ?? defaultTimeout` and validates AFTER, so
+      // any non-nullish nonsense here skips the default and leaves the run with no reclamation
+      // timer at all. An unusable value falls back to the backend's default rather than a number
+      // this call invented.
+      timeout: sanitizeQueuedExecutionTimeout(meta.timeout),
+      // THE LEASE ABOVE IS UNCHANGED; ONLY ITS DELIVERY IS. `acquireLease` still runs where it ran,
+      // still keys on this run id and still owns the bundled Appium's lifecycle (design-of-record).
+      // What used to ride `AGENT_QA_APPIUM_URL` in a child's environment now travels as an
+      // argument, because there is no child to carry an environment.
+      ...(isMobile ? { appiumUrl: appiumManager.getUrl() } : {}),
     })
-  })
-
-  // Wire cancellation — running jobs need process kill via TestRunner
-  jobQueue.on('cancel-running', (runId: string) => {
-    testRunner?.kill(runId)
   })
 
   // Start the queue polling loop
@@ -456,91 +567,285 @@ export async function startServer(opts: StartServerOptions): Promise<{
     appiumManager,
     configManager,
     configPath: resolvedConfigPath,
+    // 428 D-07: each created session registers here, which is what the frame socket attaches.
+    ...(liveEditorSubjects === undefined ? {} : { liveEditorSubjects }),
   })
+
+  // 428 D-07: the embed route and the frame socket serve a live view when the seam is bound and at
+  // least one subject registry is present. The proxy dispatches on the token's signed kind, so a
+  // missing registry is only a lookup that answers nothing.
+  const servesLiveView = liveView !== undefined
+    && (runServiceAttach !== undefined || liveEditorSubjects !== undefined)
 
   const apiRouter = createRouter({
     db,
-    artifactsDir,
     workspacePaths,
-    testRunner,
+    // 401-07: conditionally spread on the same house rule `agentHost` follows — an absent
+    // dependency is an ABSENT field, never a present `undefined`, so the router's own 503 arm is
+    // what decides, in one place.
+    ...(executionBackend === undefined ? {} : { executionBackend }),
     jobQueue,
     testFileManager,
     suiteFileManager,
     configManager,
     configPath: resolvedConfigPath,
+    declaredSecretMask: opts.declaredSecretMask,
     llmConfig,
     authFetch,
     sessionManager,
+    // 400-01: conditionally spread on the house rule an absent dependency is an ABSENT field and
+    // never a present `undefined` — the router's own 501 arm is what decides, in one place.
+    ...(agentHost === undefined ? {} : { agentHost }),
+    // 402-05 (D-15): the same conditional-spread house rule. Absent means a legacy mount rather
+    // than an unconfigured service, and the router's own 503 arm is what decides, in one place.
+    ...(runServiceReadiness === undefined ? {} : { runServiceReadiness }),
+    // 402-08 (D-01): the LOCAL run-stream door's attach port, READ OFF `runService` rather than
+    // composed again. That derivation is the "one session registry serves both doors" claim in its
+    // structural form — there is no second wiring a composition root could forget or point
+    // somewhere else, and the two doors cannot end up attached to different registries. Absent
+    // `runService` means no registry exists at all, so the same conditional-spread house rule
+    // applies and the router's own 503 arm decides.
+    ...(runServiceAttach === undefined ? {} : { runServiceAttach }),
+    // 403 D-03: the mint route's port, on the same conditional-spread house rule — absent means
+    // this host serves no live view and the route's own 503 arm decides, in one place.
+    ...(liveView === undefined ? {} : { mintLiveUrl: liveView.mintLiveUrl }),
+    // 428 D-07: the editor mint, on the same house rule — absent means the editor mint route's own
+    // 503 decides.
+    ...(liveView?.mintEditorLiveUrl === undefined
+      ? {}
+      : { mintEditorLiveUrl: liveView.mintEditorLiveUrl }),
+    // 404-05 (D-16): the same conditional-spread house rule — absent means this host serves no
+    // post-processing push channel and the stream arm's own 503 decides, in one place.
+    ...(postProcessingRelay === undefined ? {} : { postProcessingRelay }),
   })
 
+  // 402-01: composed once, at start, on `apiRouter`'s own idiom. Absent ports mean no router and
+  // therefore no mount — the path check below is skipped entirely and this server behaves as today.
+  const runServiceRouter = runService === undefined ? undefined : createRunServiceRoutes(runService)
+
+  // THE PROCESS-LEVEL BACKSTOP AND THE GUARDED PARSE (400-16, gap 7). Every request enters here, so
+  // this is the choke point: an unparseable request line is answered 400 before any frame below can
+  // see it, and the whole body runs inside a `try` so a synchronous throw out of `apiRouter` — or a
+  // rejection of anything awaited below — becomes a 500 instead of an unhandled rejection that ends
+  // the process. `server.ts`'s listener is `async`, which is why the ONE `catch` covers both. The
+  // full throw-path enumeration, and what each frame owns, lives in `./request-url.ts`.
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://localhost')
-    const path = url.pathname
+    try {
+      const url = tryParseRequestUrl(req)
+      if (url === undefined) {
+        refuseUnparseableRequest(res)
+        return
+      }
+      const path = url.pathname
 
-    // API routes
-    if (path.startsWith('/api/')) {
-      apiRouter(req, res)
-      return
-    }
+      // THE RUN SERVICE, CONSULTED FIRST (402-01, D-02/D-06 — INVK-03).
+      //
+      // ABOVE EVERYTHING, INCLUDING THE `OPTIONS` PREFLIGHT ARM AND THE SPA FALLBACK, and the
+      // order is the guard. The preflight arm below writes a wildcard `Access-Control-Allow-Origin`
+      // and the SPA fallback answers 200 with an HTML page for any unknown path; either reaching
+      // this surface would be a grant nobody decided. `ownsRunServicePath` is METHOD-BLIND for
+      // exactly that reason — every request to a service path is this door's to refuse, and its
+      // same-site guard runs before its route table (432-21, D-13).
+      if (runServiceRouter !== undefined && ownsRunServicePath(path)) {
+        runServiceRouter(req, res)
+        return
+      }
 
-    // OPTIONS preflight
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      })
-      res.end()
-      return
-    }
+      // API routes
+      if (path.startsWith('/api/')) {
+        apiRouter(req, res)
+        return
+      }
 
-    // Static file serving
-    if (uiDir) {
-      const filePath = path === '/' ? join(uiDir, 'index.html') : join(uiDir, path)
+      // OPTIONS preflight
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        })
+        res.end()
+        return
+      }
 
-      try {
-        const fileStat = await stat(filePath)
-        if (fileStat.isFile()) {
-          const content = await readFile(filePath)
-          const ext = extname(filePath)
-          const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+      // GET /live/:runId — THE SERVED EMBED PAGE (403 D-06).
+      //
+      // REGISTERED ABOVE THE STATIC/SPA ARM, and the ORDER IS THE MECHANISM (RESEARCH Pitfall 10).
+      // The SPA fallback below answers `index.html` for ANY unknown path, so a `/live/` arm placed
+      // after it would render the React dashboard inside every embedding iframe — a failure that
+      // looks like a styling bug and is actually the contract being unreachable. `live-view-anchors`
+      // and the tracer cell both assert this route's answer is a live-view document.
+      //
+      // NO `X-Frame-Options` — the whole point of this page is that a host embeds it. What replaces
+      // it is a CSP that permits exactly one nonce'd inline script and nothing else, plus
+      // `Referrer-Policy: no-referrer` so the fragment-carried token cannot ride a `Referer` out
+      // (T-403-12).
+      if (req.method === 'GET' && path.startsWith(LIVE_EMBED_PATH_PREFIX)) {
+        if (!servesLiveView) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'live_view_unavailable' }))
+          return
+        }
+        let embedRunId: string
+        try {
+          embedRunId = decodeURIComponent(path.slice(LIVE_EMBED_PATH_PREFIX.length))
+        } catch {
+          res.writeHead(404, { 'Content-Type': 'text/plain' })
+          res.end('Not Found')
+          return
+        }
+        if (embedRunId === '' || embedRunId.includes('/')) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' })
+          res.end('Not Found')
+          return
+        }
+        const nonce = randomBytes(16).toString('base64')
+        const body = renderLiveEmbedPage({ runId: embedRunId, nonce })
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'Referrer-Policy': 'no-referrer',
+          'Content-Security-Policy':
+            `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; `
+            + "connect-src 'self' ws: wss:; img-src blob: data:",
+          'Content-Length': Buffer.byteLength(body),
+        })
+        res.end(body)
+        return
+      }
+
+      // Static file serving
+      if (uiDir) {
+        const filePath = path === '/' ? join(uiDir, 'index.html') : join(uiDir, path)
+
+        try {
+          const fileStat = await stat(filePath)
+          if (fileStat.isFile()) {
+            const content = await readFile(filePath)
+            const ext = extname(filePath)
+            const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+            res.writeHead(200, {
+              'Content-Type': contentType,
+              'Content-Length': content.length,
+              'Access-Control-Allow-Origin': '*',
+            })
+            res.end(content)
+            return
+          }
+        } catch {
+          // File not found — fall through to SPA fallback
+        }
+
+        // SPA fallback: serve index.html for non-file paths
+        try {
+          const indexPath = join(uiDir, 'index.html')
+          const content = await readFile(indexPath)
           res.writeHead(200, {
-            'Content-Type': contentType,
+            'Content-Type': 'text/html',
             'Content-Length': content.length,
             'Access-Control-Allow-Origin': '*',
           })
           res.end(content)
           return
+        } catch {
+          // No index.html available
         }
-      } catch {
-        // File not found — fall through to SPA fallback
       }
 
-      // SPA fallback: serve index.html for non-file paths
-      try {
-        const indexPath = join(uiDir, 'index.html')
-        const content = await readFile(indexPath)
-        res.writeHead(200, {
-          'Content-Type': 'text/html',
-          'Content-Length': content.length,
-          'Access-Control-Allow-Origin': '*',
-        })
-        res.end(content)
-        return
-      } catch {
-        // No index.html available
-      }
+      res.writeHead(404, { 'Content-Type': 'text/plain' })
+      res.end('Not Found')
+    } catch (error) {
+      backstopServerError(res, req, error)
     }
+  })
 
-    res.writeHead(404, { 'Content-Type': 'text/plain' })
-    res.end('Not Found')
+  // Bytes Node's own parser rejects never reach the listener above, and an unhandled `clientError`
+  // is an uncaught error on the server. Answering it in fixed bytes keeps that class inside the
+  // same posture as the rest of the enumeration.
+  server.on('clientError', (_error, socket) => {
+    if (socket.destroyed) return
+    if (socket.writable) {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+      return
+    }
+    socket.destroy()
   })
 
   const wss = new WebSocketServer({ noServer: true })
 
   server.on('upgrade', (request, socket, head) => {
-    const url = new URL(request.url ?? '/', 'http://localhost')
+    // SYNCHRONOUS, so a throw here is an uncaught EXCEPTION the listener's backstop cannot reach.
+    // The guarded parse is the only thing standing between `GET //%` with an `Upgrade` header and a
+    // dead process; `undefined` takes this handler's existing refusal idiom.
+    const url = tryParseRequestUrl(request)
+    if (url === undefined) {
+      socket.destroy()
+      return
+    }
+    // 403 D-06: the frame socket. The run id is the ONLY query parameter — the token arrives in
+    // the first text message and nowhere else, so a refused upgrade has never seen a credential.
+    if (url.pathname === LIVE_VIEW_WS_PATH) {
+      const hostRefusal = refuseNonLoopbackHost(request)
+      if (hostRefusal !== undefined) {
+        socket.destroy()
+        return
+      }
+
+      // DEFENSE IN DEPTH, AND NOT THE CREDENTIAL — 403 gap round 1, T-403-21.
+      //
+      // A WebSocket upgrade is exempt from CORS entirely, so the mint door's same-site guard is not
+      // inherited here. This rung refuses the ONE shape it can honestly refuse: a present `Origin`
+      // that names another host. It is explicitly NOT a credential, and the reason is worth writing
+      // down rather than rediscovering. The legitimate embed page runs in an iframe sandboxed
+      // WITHOUT `allow-same-origin` (`live-preview.tsx`), so its upgrade carries the literal
+      // `null` — and a sandboxed ATTACKER iframe sends exactly the same thing. Accepting `null` is
+      // therefore mandatory for the real embed and worthless as a gate, and dropping the sandbox to
+      // make this check "real" would hand the embed same-origin access to the dashboard, which is a
+      // worse trade than the one this rung declines to make.
+      //
+      // THE CREDENTIAL REMAINS THE TOKEN validated in the first `hello` message, minted only by a
+      // door that now refuses a cross-site caller. An absent `Origin` is the non-browser client and
+      // is accepted, on the mint door's own reasoning.
+      const upgradeOrigin = request.headers.origin
+      if (typeof upgradeOrigin === 'string' && upgradeOrigin !== '' && upgradeOrigin !== 'null') {
+        const upgradeHost = typeof request.headers.host === 'string' ? request.headers.host.toLowerCase() : ''
+        let upgradeOriginHost = ''
+        try {
+          upgradeOriginHost = new URL(upgradeOrigin).host.toLowerCase()
+        } catch {
+          upgradeOriginHost = ''
+        }
+        // Hosts, not schemes — the same reasoning the mint door's guard records: the bound door
+        // speaks `http` on loopback and an operator may put an `https` terminator in front of it.
+        if (upgradeOriginHost === '' || upgradeHost === '' || upgradeOriginHost !== upgradeHost) {
+          socket.destroy()
+          return
+        }
+      }
+      const liveRunId = url.searchParams.get('runId')
+      if (liveRunId === null || liveRunId === '' || liveView === undefined || !servesLiveView) {
+        socket.destroy()
+        return
+      }
+      const proxy = createFrameProxy({
+        validate: liveView.validate,
+        attach: runServiceAttach ?? ((): undefined => undefined),
+        ...(liveEditorSubjects === undefined ? {} : { attachEditor: liveEditorSubjects.attach }),
+      })
+      wss.handleUpgrade(request, socket, head, (ws) => { proxy(ws, liveRunId) })
+      return
+    }
     if (url.pathname === '/api/live-editor/ws') {
+      // THE SAME-SITE GUARD, FIRST (428 D-08 — WINDOWS #275). This socket drives a browser, and a
+      // WebSocket upgrade is exempt from CORS, so a page on another origin could otherwise open it.
+      // Unlike the frame socket there is no sandboxed embed to admit, so the literal `null` is
+      // refused with every other foreign origin. A refusal is a bare destroy: nothing is written
+      // back to a cross-site caller, not even a status line.
+      const crossSite = refuseCrossSiteRequest(request)
+      if (crossSite !== undefined) {
+        socket.destroy()
+        return
+      }
       const sessionId = url.searchParams.get('sessionId')
       if (!sessionId) {
         socket.destroy()
@@ -548,14 +853,20 @@ export async function startServer(opts: StartServerOptions): Promise<{
       }
       const session = sessionManager.getSession(sessionId)
       if (!session) {
-        socket.destroy()
+        // 428 P5: an admitted caller asking for a session this process does not hold is told so by
+        // name, so the page can say the session ended instead of "Disconnected".
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          ws.close(LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE, 'unknown_session')
+        })
         return
       }
 
       wss.handleUpgrade(request, socket, head, (ws) => {
         session.clearIdleTimer()
         const handler = createSessionHandler(session, () => {
-          sessionManager.terminateSession(sessionId)
+          void sessionManager.terminateSession(sessionId).catch((error: unknown) => {
+            console.error(`[live-editor] could not end session ${sessionId}`, error)
+          })
         }, (event) => {
           db.insertTokenEvent(event)
         }, testFileManager)
@@ -572,150 +883,47 @@ export async function startServer(opts: StartServerOptions): Promise<{
   process.on('SIGTERM', gracefulShutdown)
   process.on('SIGINT', gracefulShutdown)
 
-  const configuredMcp = (mcp ?? (config as any).services?.mcp ?? {}) as LocalMcpEndpointConfig
-  const effectiveMcpConfig = configuredMcp.port === undefined && port === 0
-    ? { ...configuredMcp, port: 0 }
-    : configuredMcp
-  const resolvedMcp = resolveLocalMcpEndpoint(effectiveMcpConfig)
-  let mcpHttpServer: Server | undefined
-  let mcpInfo: McpStartupInfo
-  const captureMcpLifecycle = async (
-    properties: {
-      mcp_server_state: 'started' | 'disabled'
-      mcp_transport: LocalMcpTransport
-      mcp_host_kind?: 'loopback' | 'other'
-      mcp_port_kind?: 'default' | 'custom'
-      mcp_path_kind?: 'default' | 'custom'
-    },
-  ): Promise<void> => {
-    if (isAnalyticsPrivacyEnabled(config)) return
-
-    try {
-      const standardProperties = await resolveAnalyticsStandardProperties({ surface: 'dashboard-server' })
-      await captureAnalytics(buildAnalyticsEvent({
-        name: 'agent-qa.mcp.server.lifecycle',
-        properties: {
-          ...standardProperties,
-          surface: 'dashboard-server',
-          ...properties,
-        },
-      }), { config }).catch(() => {})
-    } catch {
-      // Dashboard MCP lifecycle analytics must not alter startup behavior.
-    }
-  }
+  // 396-01 D-10: the `services.mcp` read, the endpoint resolution, the `node:http` MCP listener and
+  // the `agent-qa.mcp.server.lifecycle` analytics that reported on it all lived here and are gone.
+  // The config KEY itself is deliberately retained in `ServicesSchema` — that object is `.strict()`,
+  // so deleting the key would make every existing project that declares `services.mcp` fail to
+  // parse.
   const cleanupRuntimeResources = () => {
     jobQueue.stop()
-    if (testRunner) {
-      testRunner.killAll()
-    }
+    executionBackend?.killAll()
     releaseAllMobileAppiumLeases('server-startup-error')
     appiumManager.shutdown()
     sessionManager.cleanupAll()
     db.close()
   }
 
-  if (!resolvedMcp.enabled) {
-    mcpInfo = {
-      enabled: false,
-      transport: resolvedMcp.transport,
-    }
-    await captureMcpLifecycle({
-      mcp_server_state: 'disabled',
-      mcp_transport: resolvedMcp.transport,
-    })
-    console.log('MCP disabled by services.mcp.enabled: false')
-  } else if (resolvedMcp.transport === 'stdio') {
-    mcpInfo = {
-      enabled: false,
-      transport: 'stdio',
-    }
-    console.log('MCP stdio transport selected; start editor MCP with `agent-qa mcp`')
-  } else {
-    let mcpHttpHandler = createLocalMcpHttpHandler({
-      endpoint: resolvedMcp,
-      dashboardUrl: `http://localhost:${port}`,
-      configPath: resolvedConfigPath,
-      analyticsConfig: config,
-    })
-    mcpHttpServer = createServer((req, res) => {
-      void mcpHttpHandler(req, res)
-    })
-
-    try {
-      await new Promise<void>((resolveMcp, rejectMcp) => {
-        const onError = (err: Error) => {
-          rejectMcp(err)
-        }
-        mcpHttpServer!.once('error', onError)
-        mcpHttpServer!.listen(resolvedMcp.port, resolvedMcp.host, () => {
-          mcpHttpServer!.off('error', onError)
-          resolveMcp()
-        })
-      })
-    } catch (err) {
-      mcpHttpServer.close()
-      cleanupRuntimeResources()
-      const message = err instanceof Error ? err.message : String(err)
-      throw new Error(`Failed to start MCP endpoint at ${resolvedMcp.url}: ${message}`)
-    }
-
-    const mcpAddress = mcpHttpServer.address()
-    const actualMcpPort = typeof mcpAddress === 'object' && mcpAddress
-      ? mcpAddress.port
-      : resolvedMcp.port
-    const actualMcp = resolveLocalMcpEndpoint({
-      ...resolvedMcp,
-      port: actualMcpPort,
-    })
-    if (actualMcpPort !== resolvedMcp.port) {
-      mcpHttpHandler = createLocalMcpHttpHandler({
-        endpoint: actualMcp,
-        dashboardUrl: `http://localhost:${port}`,
-        configPath: resolvedConfigPath,
-        analyticsConfig: config,
-      })
-    }
-
-    mcpInfo = {
-      enabled: true,
-      transport: 'http',
-      host: actualMcp.host,
-      port: actualMcp.port,
-      path: actualMcp.path,
-      url: actualMcp.url,
-    }
-    await captureMcpLifecycle({
-      mcp_server_state: 'started',
-      mcp_transport: 'http',
-      ...resolveMcpEndpointShape(actualMcp),
-    })
-    console.log(`MCP running locally at ${actualMcp.url} (Streamable HTTP, loopback only)`)
-  }
-
   return new Promise((resolve, reject) => {
     const onError = (err: Error) => {
-      mcpHttpServer?.close()
       cleanupRuntimeResources()
       reject(err)
     }
     server.once('error', onError)
-    server.listen(port, () => {
+    server.listen(port, host, () => {
       server.off('error', onError)
-      console.log(`Dashboard running at http://localhost:${port}`)
+      // A LOOPBACK BIND PRINTS THE LINE IT ALWAYS PRINTED, BYTE FOR BYTE. That is not cosmetic
+      // conservatism: this line is the readiness signal three shipped conformance harnesses parse
+      // a port out of. The non-loopback arm is unreachable since the bind guard above lost its
+      // credential exemption (402 verification); it is kept so the line never names a `localhost`
+      // that is not where the server is.
+      console.log(
+        isLoopbackHost(host)
+          ? `Dashboard running at http://localhost:${port}`
+          : `Dashboard running at http://${host.includes(':') ? `[${host}]` : host}:${port}`,
+      )
       resolve({
         server,
         port,
-        mcp: mcpInfo,
         close: () => {
           jobQueue.stop()
-          if (testRunner) {
-            testRunner.killAll()
-          }
+          executionBackend?.killAll()
           releaseAllMobileAppiumLeases('server-close')
           appiumManager.shutdown()
           sessionManager.cleanupAll()
-          mcpHttpServer?.close()
           server.close()
           db.close()
         },

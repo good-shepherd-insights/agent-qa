@@ -1,4 +1,28 @@
-export const SCHEMA_VERSION = 1
+// The dashboard's durable schema (Phase 405 plans 01 and 07, D-01/D-02).
+//
+// Every `user_version` other than `SCHEMA_VERSION` is refused on open, never upgraded.
+//
+// 2026-08-27 (405-07, D-02) — THE CENSUS RAN AND THE V1 DEBRIS IS GONE. Plan 01 left the dormant
+// v1 projection tables and the unfed `runs` columns spelled here on purpose, so that the deletion
+// could be a MEASUREMENT rather than a guess taken in the same commit that added their successors.
+// The two-predicate census (402 D-11's idiom: "required" = a producer on the shipped in-process
+// core AND a reader on the rebuilt page) then scored each one, and everything it scored zero on
+// left with its readers in this plan:
+//
+//   - the three v1 projection tables and their indexes — no producer since the subscriber was
+//     rebuilt on the bus payloads, and no reader once `/steps`, `/steps/:n/reasoning`, `/logs` and
+//     `/accessibility` were retired in favour of `runs.detail`;
+//   - the run-level video column — no producer at all (D-14: refs are the only artifact
+//     addressing, and no ref producer mints a recording yet, so the honest state is no column
+//     rather than a column nothing fills);
+//   - the four parent/attempt/retry columns and their index — nothing has written a child run row
+//     since 402-09 put one `runs` row per run and moved member identity onto `run_members`.
+//
+// WHAT SURVIVED IS WHAT THE CENSUS MEASURED A LIVE PRODUCER AND READER FOR: `execution_logs` (the
+// subscriber's `hookFinished` arm → the hook panel), `token_events` (the live-editor ws handler →
+// the insights page — D-20's verdict, measured, not assumed), and the construction-data columns on
+// `runs` that the queue and the settle path write.
+export const SCHEMA_VERSION = 2
 
 export interface DashboardMigration {
   version: number
@@ -7,13 +31,13 @@ export interface DashboardMigration {
 
 export const MIGRATIONS: DashboardMigration[] = [
   {
-    version: 1,
+    version: 2,
     sql: [
       `CREATE TABLE IF NOT EXISTS runs (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         file_path TEXT,
-        status TEXT NOT NULL CHECK(status IN ('passed','failed','skipped','running','cancelled','pending','flaky')),
+        status TEXT NOT NULL CHECK(status IN ('pending','running','passed','healed','failed','timeout','cancelled')),
         priority INTEGER NOT NULL DEFAULT 0,
         duration INTEGER NOT NULL DEFAULT 0,
         attributes TEXT NOT NULL DEFAULT '{}',
@@ -22,85 +46,20 @@ export const MIGRATIONS: DashboardMigration[] = [
         started_at TEXT,
         ended_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        video_path TEXT,
         failure_summary TEXT,
         platform TEXT DEFAULT 'web',
         test_file_content TEXT,
         model_name TEXT,
         llm_provider TEXT,
         parallel INTEGER DEFAULT 0,
-        parent_run_id TEXT,
-        attempt_number INTEGER DEFAULT 0,
-        retry_count INTEGER DEFAULT 0,
-        max_retries INTEGER DEFAULT 0,
         error_log TEXT,
         memory_log TEXT,
         test_id TEXT,
-        suite_id TEXT
-      )`,
-      `CREATE TABLE IF NOT EXISTS steps (
-        id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL REFERENCES runs(id),
-        name TEXT NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('passed','failed','healed','skipped','cancelled')),
-        duration INTEGER NOT NULL DEFAULT 0,
-        action TEXT,
-        observation TEXT,
-        reasoning TEXT,
-        planned_action TEXT,
-        result TEXT CHECK(result IN ('success','failure')),
-        error TEXT,
-        screenshot_path TEXT,
-        screenshot_before_path TEXT,
-        healing_attempts TEXT,
-        retry_count INTEGER DEFAULT 0,
-        captured_variables TEXT,
-        step_order INTEGER NOT NULL DEFAULT 0,
-        annotation_data TEXT,
-        healing_screenshot_paths TEXT,
-        accessibility_violations TEXT,
-        confidence REAL,
-        prompt_tokens INTEGER DEFAULT 0,
-        completion_tokens INTEGER DEFAULT 0,
-        total_tokens INTEGER DEFAULT 0,
-        sub_actions_data TEXT,
-        console_logs TEXT,
-        network_logs TEXT,
-        variable_snapshot TEXT,
-        original_step_name TEXT,
-        screen_context_before TEXT,
-        screen_context_after TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS reasoning_traces (
-        id TEXT PRIMARY KEY,
-        step_id TEXT NOT NULL REFERENCES steps(id),
-        observe_text TEXT,
-        observe_duration INTEGER,
-        plan_reasoning TEXT,
-        plan_confidence REAL,
-        plan_action TEXT,
-        plan_duration INTEGER,
-        execute_action TEXT,
-        execute_duration INTEGER,
-        verify_reasoning TEXT,
-        verify_success INTEGER,
-        verify_duration INTEGER,
-        heal_attempts TEXT,
-        total_duration INTEGER,
-        screen_state_before TEXT,
-        screen_state_after TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
-      )`,
-      `CREATE TABLE IF NOT EXISTS logs (
-        id TEXT PRIMARY KEY,
-        step_id TEXT REFERENCES steps(id) ON DELETE CASCADE,
-        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-        level TEXT NOT NULL CHECK(level IN ('debug','info','warn','error')),
-        source TEXT NOT NULL CHECK(source IN ('agent','adapter','cache','planner','healer','hook','runner')),
-        message TEXT NOT NULL,
-        data TEXT,
-        timestamp TEXT NOT NULL
+        suite_id TEXT,
+        owner_pid INTEGER,
+        owner_incarnation TEXT,
+        owner_host TEXT,
+        CHECK (status <> 'running' OR owner_pid IS NOT NULL)
       )`,
       `CREATE TABLE IF NOT EXISTS execution_logs (
         id TEXT PRIMARY KEY,
@@ -116,7 +75,12 @@ export const MIGRATIONS: DashboardMigration[] = [
         return_data TEXT,
         variables TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        hook_id TEXT
+        hook_id TEXT,
+        -- 405 D-01: where in the run tree this hook ran. Sourced from HookFinishedPayload's own
+        -- optional testIndex/stepIndex; NULL means a run-scoped hook, which is a real state and
+        -- not a missing value.
+        test_index INTEGER,
+        step_index INTEGER
       )`,
       `CREATE TABLE IF NOT EXISTS token_events (
         id TEXT PRIMARY KEY,
@@ -128,25 +92,97 @@ export const MIGRATIONS: DashboardMigration[] = [
       )`,
       `CREATE TABLE IF NOT EXISTS run_artifacts (
         run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
-        kind TEXT NOT NULL CHECK(kind IN ('test', 'suite-parent', 'suite-child', 'unknown')),
+        -- 2026-08-27 (405-07, RESEARCH Open Q4): TWO KINDS, because two is all anything mints.
+        -- The set used to admit two more, named for the parent/child run tree 402-09 retired; no
+        -- writer has produced either since, so admitting them was the schema agreeing to store a
+        -- distinction the product no longer makes.
+        kind TEXT NOT NULL CHECK(kind IN ('test', 'unknown')),
         schema_version INTEGER NOT NULL,
         payload TEXT NOT NULL DEFAULT '{}',
         finalized_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
+      // ---- The v2 bus-shaped projection (405 D-01) ----------------------------------------
+      //
+      // THE COLUMNS ARE THE PAYLOAD'S OWN NAMES, snake_cased and nothing else. No field is
+      // re-derived, renamed or re-interpreted on the way in — that is D-01's whole claim, and
+      // it is what makes the read a mirror rather than a second opinion. Nested payload objects
+      // (`planned_action`, `grounding`, `result`, `artifact_refs`) are `JSON.stringify` of the
+      // field VERBATIM; the projection never reaches inside one.
+      //
+      // `test_index` IS THE HANDLE (RESEARCH D4). `handleId(runId, testIndex)` is how this
+      // product spells run-scoped member identity, so minting a second id here would be a
+      // second spelling of the same fact.
+      `CREATE TABLE IF NOT EXISTS run_members (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        test_index INTEGER NOT NULL,
+        test_id TEXT,
+        name TEXT,
+        file_path TEXT,
+        suite_id TEXT,
+        suite_name TEXT,
+        suite_index INTEGER,
+        total_steps INTEGER,
+        outcome TEXT,
+        duration_ms INTEGER,
+        failure_summary TEXT,
+        retry_count INTEGER,
+        -- D-17 ordinal. Starts at 1 and rises on testRetryScheduled; never reset by an upsert.
+        attempts INTEGER NOT NULL DEFAULT 1,
+        recording_json TEXT,
+        PRIMARY KEY (run_id, test_index)
+      )`,
+      // The token columns are NULLABLE AND NEVER DEFAULT 0 (D-05/D-06). The retired v1 projection
+      // declared these `INTEGER DEFAULT 0`, and that zero was a measurement nobody made — the exact
+      // lie this shape refuses to be able to tell. 405-04 landed the producer, so a step the runner
+      // measured carries real counts and a step it did not carries NULL, which stays honest.
+      `CREATE TABLE IF NOT EXISTS run_steps (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        test_index INTEGER NOT NULL,
+        step_index INTEGER NOT NULL,
+        step_text TEXT,
+        cache_status TEXT NOT NULL,
+        verifier_verdict TEXT NOT NULL,
+        self_heal_occurred INTEGER NOT NULL,
+        brief_digest TEXT NOT NULL,
+        status TEXT,
+        duration_ms INTEGER,
+        error TEXT,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
+        total_tokens INTEGER,
+        evidence_json TEXT,
+        variable_snapshot_json TEXT,
+        model_usage_json TEXT,
+        PRIMARY KEY (run_id, test_index, step_index)
+      )`,
+      // NO FOREIGN KEY TO `run_steps`, deliberately: `subActionRecorded` envelopes PRECEDE the
+      // `stepFinalized` for their own step by construction, so a constraint pointing at a row
+      // that does not exist yet would drop every sub-action of every step.
+      `CREATE TABLE IF NOT EXISTS run_sub_actions (
+        run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+        test_index INTEGER NOT NULL,
+        step_index INTEGER NOT NULL,
+        sub_action_index INTEGER NOT NULL,
+        plan TEXT NOT NULL,
+        planned_action TEXT NOT NULL,
+        grounding TEXT,
+        result TEXT NOT NULL,
+        screen_state_hash TEXT NOT NULL,
+        screen_state_hash_after TEXT,
+        artifact_refs TEXT,
+        evidence_state_json TEXT,
+        recording_offset_ms REAL,
+        PRIMARY KEY (run_id, test_index, step_index, sub_action_index)
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_run_members_run ON run_members(run_id)',
+      'CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps(run_id, test_index)',
+      'CREATE INDEX IF NOT EXISTS idx_run_sub_actions_run ON run_sub_actions(run_id, test_index, step_index)',
       'CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status)',
       'CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at)',
       'CREATE INDEX IF NOT EXISTS idx_runs_name ON runs(name)',
       'CREATE INDEX IF NOT EXISTS idx_runs_queue ON runs(status, priority, created_at)',
-      'CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id)',
-      'CREATE INDEX IF NOT EXISTS idx_steps_run_id ON steps(run_id)',
-      'CREATE INDEX IF NOT EXISTS idx_reasoning_traces_step_id ON reasoning_traces(step_id)',
-      'CREATE INDEX IF NOT EXISTS idx_logs_step_id ON logs(step_id)',
-      'CREATE INDEX IF NOT EXISTS idx_logs_run_id ON logs(run_id)',
-      'CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level)',
-      'CREATE INDEX IF NOT EXISTS idx_logs_source ON logs(source)',
-      'CREATE INDEX IF NOT EXISTS idx_logs_run_level_source ON logs(run_id, level, source)',
       'CREATE INDEX IF NOT EXISTS idx_execution_logs_run_id ON execution_logs(run_id)',
       'CREATE INDEX IF NOT EXISTS idx_execution_logs_step_id ON execution_logs(step_id)',
       'CREATE INDEX IF NOT EXISTS idx_execution_logs_type ON execution_logs(type)',

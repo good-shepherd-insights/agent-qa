@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -127,7 +128,7 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'openai-subscription',
       required: true,
-      message: 'Authenticate "OpenAI subscription" for this config before testing.',
+      message: 'Sign in to "OpenAI subscription" for the "planner" config: agent-qa auth login --config planner',
     })
   })
 
@@ -217,7 +218,7 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'gemini',
       required: true,
-      message: 'Save a Gemini API key for this config before testing.',
+      message: 'Save a Gemini API key for the "planner" config: agent-qa auth set --config planner --type api-key',
     })
   })
 
@@ -248,14 +249,14 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'openai-subscription',
       required: true,
-      message: 'Authenticate "OpenAI subscription" for this config before testing.',
+      message: 'Sign in to "OpenAI subscription" for the "planner" config: agent-qa auth login --config planner',
     })
     expect(anthropicResult).toEqual({
       kind: 'missing',
       credentialKey: 'planner',
       provider: 'anthropic-subscription',
       required: true,
-      message: 'Authenticate "Anthropic subscription" for this config before testing.',
+      message: 'Sign in to "Anthropic subscription" for the "planner" config: agent-qa auth login --config planner',
     })
   })
 
@@ -288,14 +289,14 @@ describe('resolveLLMAuth', () => {
       credentialKey: 'planner',
       provider: 'anthropic-subscription',
       required: true,
-      message: 'Authenticate "Anthropic subscription" for this config before testing.',
+      message: 'Sign in to "Anthropic subscription" for the "planner" config: agent-qa auth login --config planner',
     })
     expect(openAIResult).toEqual({
       kind: 'missing',
       credentialKey: 'planner',
       provider: 'openai-subscription',
       required: true,
-      message: 'Authenticate "OpenAI subscription" for this config before testing.',
+      message: 'Sign in to "OpenAI subscription" for the "planner" config: agent-qa auth login --config planner',
     })
   })
 
@@ -516,5 +517,171 @@ describe('resolveLLMAuth', () => {
       optional: true,
       message: 'Testing without a saved credential.',
     })
+  })
+})
+
+describe('C445-AUTH-MESSAGES', () => {
+  let tempDir: string
+  let authPath: string
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-445-auth-messages-'))
+    authPath = join(tempDir, 'auth.json')
+  })
+
+  afterEach(async () => {
+    clearLLMAuthProviderPlugins()
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('a subscription config with no sign-in is told to run auth login with its name', async () => {
+    const withoutPlugin = await resolveLLMAuth('claude-code', {
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet',
+    }, authPath)
+
+    expect(withoutPlugin.kind).toBe('missing')
+    if (withoutPlugin.kind !== 'missing') throw new Error('Expected missing result')
+    expect(withoutPlugin.message).toContain('npm install -D @vostride/agent-qa-subscription-auth')
+    expect(withoutPlugin.message).toContain('plugins.auth')
+
+    registerLLMAuthProviderPlugin({
+      providerId: 'anthropic-subscription',
+      credentialProviderId: 'anthropic-subscription',
+      label: 'Anthropic subscription',
+      modelAdapter: 'anthropic-messages',
+      dashboardAuth: { mode: 'manual-code' },
+      createAuthFetch: () => globalThis.fetch,
+    })
+
+    const result = await resolveLLMAuth('claude-code', {
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet',
+    }, authPath)
+
+    expect(result.kind).toBe('missing')
+    if (result.kind !== 'missing') throw new Error('Expected missing result')
+    expect(result.message).toContain('agent-qa auth login --config claude-code')
+    expect(result.message).toContain('Anthropic subscription')
+  })
+
+  it('an API-key config with no key is told to run auth set with its name', async () => {
+    const unusable = { type: 'session', provider: 'any', key: 'sk-unusable-not-a-key' }
+    await writeAuth('compat', unusable as unknown as AuthCredential, authPath)
+    await writeAuth('claude-compat', unusable as unknown as AuthCredential, authPath)
+
+    const gemini = await resolveLLMAuth('gemini-key', {
+      provider: 'gemini',
+      model: 'gemini-3-flash-preview',
+    }, authPath)
+    const openAI = await resolveLLMAuth('compat', {
+      provider: 'openai-compatible',
+      model: 'chat-compatible',
+      baseURL: 'https://remote.example/v1',
+    }, authPath)
+    const anthropic = await resolveLLMAuth('claude-compat', {
+      provider: 'anthropic-compatible',
+      model: 'claude-compatible',
+      baseURL: 'https://remote.example/messages',
+    }, authPath)
+
+    const messages = [gemini, openAI, anthropic].map((result) => {
+      expect(result.kind).toBe('missing')
+      if (result.kind !== 'missing') throw new Error('Expected missing result')
+      return result.message
+    })
+    expect(messages[0]).toContain('agent-qa auth set --config gemini-key --type api-key')
+    expect(messages[0]).toContain('Gemini API key')
+    expect(messages[1]).toContain('agent-qa auth set --config compat --type api-key')
+    expect(messages[2]).toContain('agent-qa auth set --config claude-compat --type api-key')
+    expect(messages[2]).toContain('--type bearer-token')
+    for (const text of messages) expect(text).not.toContain('sk-unusable-not-a-key')
+  })
+})
+
+describe('C445-PUBLIC-API-KEY', () => {
+  let tempDir: string
+  let authPath: string
+
+  beforeEach(async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-445-public-api-key-'))
+    authPath = join(tempDir, 'auth.json')
+  })
+
+  afterEach(async () => {
+    clearLLMAuthProviderPlugins()
+    await rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('a compatible config with no key on api.anthropic.com or api.openai.com resolves as missing and names auth set', async () => {
+    const anthropicConfig = {
+      provider: 'anthropic-compatible',
+      model: 'claude-sonnet-4-6',
+      baseURL: 'https://api.anthropic.com/v1',
+    }
+    const anthropic = await resolveLLMAuth('default', anthropicConfig, authPath)
+    expect(anthropic.kind).toBe('missing')
+    if (anthropic.kind !== 'missing') throw new Error('Expected missing result')
+    expect(anthropic.message).toContain('agent-qa auth set --config default --type api-key')
+    expect(anthropic.message).toContain('--type bearer-token')
+
+    const openAI = await resolveLLMAuth('compat', {
+      provider: 'openai-compatible',
+      model: 'gpt-5.2',
+      baseURL: 'https://api.openai.com/v1',
+    }, authPath)
+    expect(openAI.kind).toBe('missing')
+    if (openAI.kind !== 'missing') throw new Error('Expected missing result')
+    expect(openAI.message).toContain('agent-qa auth set --config compat --type api-key')
+
+    const [first, second] = await Promise.all([
+      resolveLLMAuth('default', anthropicConfig, authPath),
+      resolveLLMAuth('default', anthropicConfig, authPath),
+    ])
+    expect(first).toEqual(second)
+    expect(first).toEqual(anthropic)
+    expect(existsSync(authPath)).toBe(false)
+  })
+
+  it('a compatible config with no key on a local or self-hosted server stays credential optional', async () => {
+    const hosts = [
+      'http://127.0.0.1:11434/v1',
+      'http://localhost:8080/v1',
+      'https://llm.internal.example/v1',
+    ]
+    const results: unknown[] = []
+    for (const baseURL of hosts) {
+      for (const provider of ['openai-compatible', 'anthropic-compatible'] as const) {
+        const config = { provider, model: 'local-model', baseURL }
+        results.push(await resolveLLMAuth('local', config, authPath))
+      }
+    }
+    expect(results).toHaveLength(6)
+    for (const result of results) {
+      expect(result).toMatchObject({ kind: 'unauthenticated', credentialKey: 'local', optional: true })
+    }
+  })
+
+  it('the public host is matched on the parsed hostname, ignoring case', async () => {
+    const resolveFor = (provider: 'openai-compatible' | 'anthropic-compatible', baseURL: string) =>
+      resolveLLMAuth('default', { provider, model: 'any-model', baseURL }, authPath)
+
+    const upperCase = await resolveFor('anthropic-compatible', 'HTTPS://API.ANTHROPIC.COM/v1')
+    const explicitPort = await resolveFor('openai-compatible', 'https://Api.OpenAI.com:443/v1')
+    expect(upperCase.kind).toBe('missing')
+    expect(explicitPort.kind).toBe('missing')
+
+    const lookAlikes = [
+      await resolveFor('anthropic-compatible', 'https://api.anthropic.com.evil.example/v1'),
+      await resolveFor('anthropic-compatible', 'https://evil.example/api.anthropic.com/v1'),
+      await resolveFor('openai-compatible', 'https://evil.example/v1?u=https://api.openai.com'),
+      await resolveFor('openai-compatible', 'not a url'),
+    ]
+    expect(lookAlikes.map(result => result.kind)).toEqual([
+      'unauthenticated',
+      'unauthenticated',
+      'unauthenticated',
+      'unauthenticated',
+    ])
   })
 })

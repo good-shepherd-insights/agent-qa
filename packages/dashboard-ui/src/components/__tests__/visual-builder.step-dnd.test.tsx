@@ -112,7 +112,7 @@ steps:
   - [broken
 `
 
-function makeLiveStep(id: string, instruction: string, subActionsData: EditorStep['subActionsData'] = null): EditorStep {
+function makeLiveStep(id: string, instruction: string, liveSubActions: EditorStep['liveSubActions'] = null): EditorStep {
   return {
     id,
     draftId: id,
@@ -124,7 +124,7 @@ function makeLiveStep(id: string, instruction: string, subActionsData: EditorSte
     networkLogs: [],
     variableSnapshot: null,
     originalStepName: null,
-    subActionsData,
+    liveSubActions,
     executionLogs: [],
     executionGeneration: 0,
   }
@@ -139,8 +139,6 @@ const LIVE_STEPS_BY_ID: Record<string, EditorStep> = {
       reasoning: '',
       plannedAction: { type: 'click', target: 'button' },
       result: 'success',
-      screenStateBefore: '',
-      cached: false,
     },
   ]),
   'draft-gamma': makeLiveStep('draft-gamma', 'Third step'),

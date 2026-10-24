@@ -3,6 +3,12 @@ import { exec } from 'node:child_process'
 import pc from 'picocolors'
 import input from '@inquirer/input'
 import password from '@inquirer/password'
+import { createModel } from '@vostride/agent-qa-model'
+import {
+  classifyProviderError,
+  extractProviderError,
+  providerErrorSentence,
+} from '@vostride/agent-qa-schema'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 
 type ProviderMode =
@@ -21,8 +27,6 @@ type CliLLMConfig = {
   model: string
   baseURL?: string
   providerHeaders?: Record<string, string>
-  screenshotSize?: number
-  effectiveResolution?: number
   contextWindow?: number
 }
 
@@ -80,21 +84,6 @@ function printCredentialGuidance(configName: string, provider: string): void {
   }
 }
 
-function applyAuthToModelConfig(llmConfig: CliLLMConfig, auth: ResolvedAuth): Record<string, unknown> {
-  switch (auth.kind) {
-    case 'api-key':
-      return { ...llmConfig, apiKey: auth.apiKey }
-    case 'bearer-token':
-      return { ...llmConfig, authToken: auth.token }
-    case 'auth-fetch':
-      return { ...llmConfig, fetch: auth.fetch, modelAdapter: auth.modelAdapter }
-    case 'unauthenticated':
-      return { ...llmConfig }
-    case 'missing':
-      throw new Error(auth.message)
-  }
-}
-
 function statusForResolvedAuth(auth: ResolvedAuth): string {
   switch (auth.kind) {
     case 'api-key':
@@ -110,32 +99,6 @@ function statusForResolvedAuth(auth: ResolvedAuth): string {
     case 'missing':
       return pc.red('Missing credential')
   }
-}
-
-function extractProviderError(err: unknown): { message: string; statusCode?: number } {
-  const errObj = err as Record<string, unknown>
-  const statusCode = errObj?.statusCode as number | undefined
-  const responseBody = errObj?.responseBody as string | undefined
-  const data = errObj?.data as Record<string, unknown> | undefined
-  const apiError = data?.error as Record<string, string> | undefined
-
-  let message = err instanceof Error ? err.message : String(err)
-
-  if (apiError?.message && apiError.message !== 'Error') {
-    message = apiError.message
-  } else if (typeof data?.detail === 'string') {
-    message = data.detail
-  } else if (responseBody) {
-    try {
-      const body = JSON.parse(responseBody)
-      if (body?.detail) message = body.detail
-      else if (body?.error?.message && body.error.message !== 'Error') message = body.error.message
-    } catch {
-      // Provider did not return JSON.
-    }
-  }
-
-  return { message, statusCode }
 }
 
 function openAuthorizationUrl(url: string): void {
@@ -248,23 +211,27 @@ export function createAuthCommand(): Command {
           const requestedName = normalizeConfigName(opts.config)
           if (!requestedName) {
             console.log(pc.red('configName is required'))
+            process.exitCode = 1
             return
           }
           const resolved = await resolveNamedConfig(requestedName, configPath)
           const resolvedName = normalizeConfigName(resolved.config.name)
           if (!resolvedName) {
             console.log(pc.red('Config name is invalid'))
+            process.exitCode = 1
             return
           }
           configName = resolvedName
           const configProvider = resolved.config.provider
           if (!isSubscriptionProvider(configProvider)) {
             printCredentialGuidance(configName, configProvider)
+            process.exitCode = 1
             return
           }
           provider = configProvider
         } catch (err: unknown) {
           console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
           return
         }
 
@@ -282,6 +249,7 @@ export function createAuthCommand(): Command {
         const credentialType = opts.type.trim()
         if (credentialType !== 'api-key' && credentialType !== 'bearer-token') {
           console.log(pc.red('type must be api-key or bearer-token'))
+          process.exitCode = 1
           return
         }
 
@@ -292,6 +260,7 @@ export function createAuthCommand(): Command {
           resolved = await resolveNamedConfig(opts.config, configPath)
         } catch (err: unknown) {
           console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
           return
         }
 
@@ -299,23 +268,27 @@ export function createAuthCommand(): Command {
         const provider = resolved.config.provider
 
         if (SUBSCRIPTION_PROVIDERS.has(provider)) {
-          console.log(pc.red('Subscription providers use OAuth login'))
+          console.log(pc.red(`${configName} uses a subscription; sign in with: agent-qa auth login --config ${configName}`))
+          process.exitCode = 1
           return
         }
 
         if (credentialType === 'bearer-token' && provider !== 'anthropic-compatible') {
           console.log(pc.red('bearer-token credentials are only supported for anthropic-compatible configs'))
+          process.exitCode = 1
           return
         }
 
         if (credentialType === 'api-key' && !API_KEY_CREDENTIAL_PROVIDERS.has(provider)) {
           console.log(pc.red('api-key credentials are not supported for this provider'))
+          process.exitCode = 1
           return
         }
 
         const secret = (secretArg ?? await password({ message: 'Secret:' })).trim()
         if (!secret) {
           console.log(pc.red('Secret is required'))
+          process.exitCode = 1
           return
         }
 
@@ -336,7 +309,11 @@ export function createAuthCommand(): Command {
     new Command('status')
       .description('Show credential status for configured LLMs')
       .action(async function (this: Command) {
-        const { loadAuthPluginsForRawConfig, resolveModelAuth } = await import('../llm-utils.js')
+        const {
+          loadAuthPluginsForRawConfig,
+          loadProviderPluginsForRawConfig,
+          resolveModelAuth,
+        } = await import('../llm-utils.js')
         const { loadConfigFile } = await import('../config.js')
         const configPath = getGlobalConfigPath(this) ?? 'agent-qa.config.yaml'
 
@@ -347,6 +324,7 @@ export function createAuthCommand(): Command {
         try {
           const cfg = (await loadConfigFile(configPath)) as any
           await loadAuthPluginsForRawConfig(cfg, configPath)
+          await loadProviderPluginsForRawConfig(cfg, configPath)
           llms = cfg?.registry?.llms
           defaultLLM = cfg?.use?.llm
         } catch {
@@ -409,7 +387,7 @@ export function createAuthCommand(): Command {
       .option('--provider <name>', 'override config provider')
       .option('--model <name>', 'override config model')
       .action(async (opts: { config?: string; provider?: string; model?: string }, command: Command) => {
-        const { resolveModelAuth, resolveNamedConfig } = await import('../llm-utils.js')
+        const { resolveModelAuth, resolveNamedConfig, toModelProfileAndAuth } = await import('../llm-utils.js')
         const configPath = getGlobalConfigPath(command)
 
         let planner: CliLLMConfig
@@ -422,6 +400,7 @@ export function createAuthCommand(): Command {
           configName = name
         } catch (err: unknown) {
           console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
           return
         }
 
@@ -433,18 +412,25 @@ export function createAuthCommand(): Command {
         const auth = await resolveModelAuth(configName, planner) as ResolvedAuth
         if (auth.kind === 'missing') {
           console.log(pc.red(auth.message))
+          process.exitCode = 1
           return
         }
         if (auth.kind === 'unauthenticated') {
           console.log(pc.dim(auth.message))
         }
 
-        const { createModel, getProviderOptions } = await import('@vostride/agent-qa-core')
         const { generateText } = await import('ai')
 
-        const modelConfig = applyAuthToModelConfig(planner, auth)
-        const model = await createModel(modelConfig as any)
-        const providerOpts = getProviderOptions(modelConfig as any)
+        let model: ReturnType<typeof createModel>
+        try {
+          const { profile, auth: modelAuth } = toModelProfileAndAuth(planner, auth as any)
+          // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+          model = createModel(profile, modelAuth, (text) => text)
+        } catch (err: unknown) {
+          console.log(pc.red(err instanceof Error ? err.message : String(err)))
+          process.exitCode = 1
+          return
+        }
 
         const start = Date.now()
         const controller = new AbortController()
@@ -454,28 +440,14 @@ export function createAuthCommand(): Command {
             model,
             prompt: 'Say "ok"',
             abortSignal: controller.signal,
-            ...(providerOpts ? { providerOptions: providerOpts } : {}),
           })
           const elapsed = Date.now() - start
           console.log(pc.green(`Connected to ${planner.provider}/${planner.model} (${elapsed}ms)`))
         } catch (err: unknown) {
           const { message, statusCode } = extractProviderError(err)
-          const fullContext = `${message} ${statusCode ?? ''}`
-
-          if (/auth|unauthorized|401|invalid.*key|permission/i.test(fullContext)) {
-            console.log(pc.red('Authentication failed. Check the saved credential for this config.'))
-          } else if (/model.*not.*support|not found|404|does not exist/i.test(fullContext)) {
-            console.log(pc.red('Model not found. Check the model name.'))
-          } else if (/rate|429|quota|limit/i.test(fullContext)) {
-            console.log(pc.red('Rate limited. Try again later.'))
-          } else if (/ECONNREFUSED|ENOTFOUND|timeout|abort|fetch failed|network/i.test(fullContext)) {
-            console.log(pc.red('Network error. Check the exact base URL and try again.'))
-          } else if (/invalid_request|400|bad request/i.test(fullContext)) {
-            console.log(pc.red('Invalid request. Check model and provider settings.'))
-          } else {
-            console.log(pc.red(`Connection failed. ${message}`))
-          }
+          console.log(pc.red(providerErrorSentence(classifyProviderError(message, statusCode), message)))
           console.log(pc.dim(message))
+          process.exitCode = 1
         } finally {
           clearTimeout(timeout)
         }

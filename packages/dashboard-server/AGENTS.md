@@ -32,7 +32,10 @@ ownership, and dashboard-started MCP service lifecycle.
   secrets in JSON responses.
 - Preserve dashboard reporter contracts consumed by the UI.
 - Live editor sessions must clean up processes, sockets, Appium sessions, and
-  run state on disconnect or cancellation.
+  run state on an explicit end, cancellation, or idle expiry; an unexpected
+  control-socket drop detaches the session for the idle window so the page can
+  reconnect (428 D-09). The detach is deliberate: do not turn a socket close
+  back into a session end.
 - Dashboard-owned MCP and Appium lifecycles should remain explicit and
   observable.
 - File manager changes must preserve canonical IDs and workspace path safety.

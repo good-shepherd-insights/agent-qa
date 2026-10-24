@@ -1,0 +1,536 @@
+import { useEffect, useId, useRef, useState } from 'react'
+import type { Mark, RunDetailProjection } from '@vostride/agent-qa-schema'
+import type { FeedbackComposerProps } from '@/components/run-detail/feedback-composer'
+import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
+import type { StepTreeFeedback } from '@/components/run-detail/step-tree'
+import { parseCorrectedAction } from '@/components/run-detail/mark-correction-fields'
+import {
+  fetchMarkPreview,
+  fetchMarksHistory,
+  type MarkPreviewRead,
+  type MarksHistoryRead,
+} from '@/lib/api'
+import type { MarkDenial, OnMark } from '@/lib/analysis-view'
+import {
+  DRAFT_KEPT_STATUS,
+  EMPTY_DRAFT,
+  PREVIEW_DEBOUNCE_MS,
+  SENDING_STATUS,
+  correctedActionField,
+  correctedActionGate,
+  decidesCorrectedActionGate,
+  feedbackAddress,
+  feedbackEntryLabel,
+  feedbackPreviewState,
+  feedbackRecordedText,
+  feedbackTargetView,
+  formatMarkTime,
+  hasUniqueAddress,
+  isDraftEmpty,
+  pinnedTargetText,
+  previewInputFor,
+  previewRequestKey,
+  resolveHeaderFeedbackTarget,
+  submitBlockedReason,
+  switchTargetLabel,
+  unsentDraftLabel,
+  type CorrectedActionGate,
+  type FeedbackComposerState,
+  type FeedbackCorrection,
+  type FeedbackDraft,
+  type FeedbackPlace,
+  type FeedbackTarget,
+} from '@/lib/feedback-view'
+import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
+import { runDetailStepKey, type Selection } from '@/lib/selection'
+
+interface UseRunFeedbackInput {
+  runId: string | undefined
+  runStatus: string | undefined
+  detail: RunDetailProjection | null | undefined
+  onMark: OnMark
+  markPending: boolean
+  selectedStep: { testIndex: number; stepIndex: number } | null
+  memberFilter: number | undefined
+  /** The page's denial, addressed; shown only on the composer address it names. */
+  markDenial?: MarkDenial & FeedbackTarget
+  /** The page's guarded runs.detail re-read, called on every open (a mark written elsewhere shows). */
+  reloadDetail?: () => Promise<unknown>
+  /** The page's selection setter; Show step selects a step without re-targeting (D-14). */
+  setSelection?: (next: Selection | null) => void
+  beforeOpen?: () => void
+}
+
+/** 419-15's local announcement, kept per address so re-targeting shows each address its own. */
+interface AddressOutcome {
+  state: FeedbackComposerState
+  status: string
+}
+
+const COMPOSING: AddressOutcome = { state: 'composing', status: '' }
+
+// 2026-10-01 (432-14, D-14): the pending mark approval this page held (426-10, D-20) is deleted with
+// the confirm channel that raised it. A submission is one request; its answer is the only outcome.
+
+function targetOfAddress(address: string): FeedbackTarget {
+  const [testIndex, stepIndex] = address.split(':')
+  return stepIndex === 'run' ? { testIndex: Number(testIndex) } : { testIndex: Number(testIndex), stepIndex: Number(stepIndex) }
+}
+
+/** The last read that landed, with the request key, address and kind it was computed for (D-16). */
+interface LandedPreview {
+  key: string
+  address: string
+  kind: Mark
+  read: MarkPreviewRead
+}
+
+function decisionKey(address: string, kind: Mark): string {
+  return `${address}|${kind}`
+}
+
+/**
+ * D-15: the expectation whenever it has text; the action only while the gate shows and it parses. A
+ * hidden action stays in the draft but is never sent, so runs.mark never sees ambiguous-correction.
+ */
+function draftCorrection(entry: FeedbackDraft, gate: CorrectedActionGate): { correction?: FeedbackCorrection; invalid: boolean } {
+  const parsed = parseCorrectedAction(entry.actionText)
+  const correction: FeedbackCorrection = {
+    ...(entry.expectation === '' ? {} : { correctedExpectation: entry.expectation }),
+    ...(gate.shown && parsed.kind === 'valid' ? { correctedAction: parsed.action } : {}),
+  }
+  return {
+    ...(Object.keys(correction).length === 0 ? {} : { correction }),
+    invalid: gate.shown && parsed.kind === 'invalid',
+  }
+}
+
+/**
+ * The run-detail page's feedback state (426 D-09). It lives above the composer so drafts survive the
+ * composer closing and a run change discards them; the page's own `onMark` is the only writer.
+ * Nothing is fetched on mount: history is read when the composer opens, re-targets or records a
+ * mark, and a preview once a choice is picked.
+ */
+export function useRunFeedback({
+  runId,
+  runStatus,
+  detail,
+  onMark,
+  markPending,
+  selectedStep,
+  memberFilter,
+  markDenial,
+  reloadDetail,
+  setSelection,
+  beforeOpen,
+}: UseRunFeedbackInput) {
+  const baseId = useId()
+  const composerId = `${baseId}-feedback`
+  const headingId = `${baseId}-feedback-heading`
+  const [open, setOpen] = useState(false)
+  const [target, setTarget] = useState<FeedbackTarget | null>(null)
+  const [drafts, setDrafts] = useState<ReadonlyMap<string, FeedbackDraft>>(() => new Map())
+  const [landed, setLanded] = useState<LandedPreview>()
+  // The read that decides the corrected-action gate, per address and kind; a re-fetch keeps it.
+  const [decisions, setDecisions] = useState<ReadonlyMap<string, MarkPreviewRead>>(() => new Map())
+  const requestedKey = useRef<string | undefined>(undefined)
+  const [retrying, setRetrying] = useState(false)
+  const [outcomes, setOutcomes] = useState<ReadonlyMap<string, AddressOutcome>>(() => new Map())
+  // 419-15: each retained address keeps its own denial; the page holds only the latest one.
+  const [denials, setDenials] = useState<ReadonlyMap<string, MarkDenial>>(() => new Map())
+  const [focusRequest, setFocusRequest] = useState(0)
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const opener = useRef<HTMLElement | null>(null)
+  const previewGeneration = useRef(0)
+  const [history, setHistory] = useState<MarksHistoryRead>()
+  const historyGeneration = useRef(0)
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const submission = useRef<object | undefined>(undefined)
+  const runRef = useRef(runId)
+  const detailRef = useRef(detail)
+  useEffect(() => { detailRef.current = detail }, [detail])
+  useEffect(() => { if (focusRequest > 0) headingRef.current?.focus() }, [focusRequest])
+  useEffect(() => {
+    if (markDenial === undefined) return
+    setDenials((previous) =>
+      new Map(previous).set(feedbackAddress(markDenial), { reason: markDenial.reason }),
+    )
+  }, [markDenial])
+
+  useEffect(() => {
+    runRef.current = runId
+    previewGeneration.current += 1
+    historyGeneration.current += 1
+    setHistory(undefined)
+    clearTimeout(previewTimer.current)
+    submission.current = undefined
+    opener.current = null
+    setOpen(false)
+    setTarget(null)
+    setDrafts(new Map())
+    setLanded(undefined)
+    setDecisions(new Map())
+    requestedKey.current = undefined
+    setRetrying(false)
+    setOutcomes(new Map())
+    setDenials(new Map())
+    return () => {
+      previewGeneration.current += 1
+      historyGeneration.current += 1
+      clearTimeout(previewTimer.current)
+    }
+  }, [runId])
+
+  // D-22: no live push; the last read stays on screen until a newer one lands, and a read for an
+  // earlier open or target is dropped (the page's reloadDetail idiom).
+  const readHistory = () => {
+    const requestRunId = runRef.current
+    if (requestRunId === undefined) return
+    const generation = ++historyGeneration.current
+    void fetchMarksHistory(requestRunId).then((read) => {
+      if (historyGeneration.current !== generation || runRef.current !== requestRunId) return
+      setHistory(read)
+    })
+  }
+
+  const address = target === null ? undefined : feedbackAddress(target)
+  const draft = (address === undefined ? undefined : drafts.get(address)) ?? EMPTY_DRAFT
+  const { state, status } = (address === undefined ? undefined : outcomes.get(address)) ?? COMPOSING
+  // While the mark is in flight the draft it sends stays as sent.
+  const busy = state === 'submitting'
+  const setOutcome = (key: string, next: AddressOutcome) => setOutcomes((previous) => new Map(previous).set(key, next))
+  const gateFor = (forAddress: string | undefined, kind: Mark | undefined) =>
+    correctedActionGate({
+      kind,
+      landedForTargetAndKind: forAddress === undefined || kind === undefined ? undefined : decisions.get(decisionKey(forAddress, kind)),
+    })
+  const gate = gateFor(address, draft.kind)
+  const { correction, invalid: invalidCorrection } = draftCorrection(draft, gate)
+  const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target, ...correction })
+  // Another address's read is never shown here; this address's last read stays on screen while its
+  // re-fetch is in flight, so the section never blanks (UI-SPEC S5).
+  const shown = landed !== undefined && landed.address === address ? landed : undefined
+  const landedOutcome = shown === undefined ? undefined : shown.read.kind === 'read' ? shown.read.result.kind : 'failed'
+  const previewCurrent = shown !== undefined && currentKey !== '' && shown.key === currentKey
+  const addressable = target === null || hasUniqueAddress(detail, target.testIndex)
+  const previewState = !addressable ? 'idle' : feedbackPreviewState({ kind: draft.kind, landed: shown?.read })
+  const previewFailure = shown?.read.kind === 'failed' ? shown.read.reason : undefined
+  const previewUpdating =
+    (previewState !== 'idle' && previewState !== 'loading' && !previewCurrent) || (retrying && previewState === 'failed')
+  const submitReason = submitBlockedReason({
+    noUniqueAddress: !addressable,
+    kind: draft.kind,
+    currentKey,
+    landedKey: shown?.key,
+    landedOutcome,
+    invalidCorrection,
+    inFlight: markPending || state === 'submitting',
+  })
+
+  // Every scheduled fetch takes a new generation, so an answer for anything scheduled earlier —
+  // in flight or still debounced — is dropped when it lands. A landing only ever shows a read;
+  // nothing here submits (D-19).
+  const schedulePreview = (
+    next: FeedbackTarget,
+    kind: Mark,
+    nextCorrection: FeedbackCorrection | undefined,
+    delay: number = PREVIEW_DEBOUNCE_MS,
+  ) => {
+    clearTimeout(previewTimer.current)
+    setRetrying(false)
+    const generation = ++previewGeneration.current
+    const key = previewRequestKey({ kind, ...next, ...nextCorrection })
+    requestedKey.current = key
+    // D-01: a test onMark would refuse is never previewed either.
+    if (!hasUniqueAddress(detailRef.current, next.testIndex)) return
+    const fire = () => {
+      if (previewGeneration.current !== generation) return
+      const requestRunId = runRef.current
+      const previewMember = detailRef.current?.members.find((entry) => entry.testIndex === next.testIndex)
+      if (requestRunId === undefined || previewMember === undefined) return
+      const requestAddress = feedbackAddress(next)
+      void fetchMarkPreview(requestRunId, previewInputFor(previewMember, next, kind, nextCorrection)).then((read) => {
+        if (previewGeneration.current !== generation || runRef.current !== requestRunId) return
+        setRetrying(false)
+        setLanded({ key, address: requestAddress, kind, read })
+        const decided = decisionKey(requestAddress, kind)
+        setDecisions((previous) =>
+          decidesCorrectedActionGate(read) || !previous.has(decided) ? new Map(previous).set(decided, read) : previous,
+        )
+      })
+    }
+    if (delay === 0) fire()
+    else previewTimer.current = setTimeout(fire, delay)
+  }
+
+  // Retry asks again for the form as it is, at once; the failed block stays, busy, until it lands.
+  const retryPreview = () => {
+    if (target === null || draft.kind === undefined || busy) return
+    schedulePreview(target, draft.kind, correction, 0)
+    setRetrying(true)
+  }
+
+  // The preview input for an address's draft with a given kind, gated as the composer would show it.
+  const requestCorrection = (forAddress: string, kind: Mark) =>
+    draftCorrection(drafts.get(forAddress) ?? EMPTY_DRAFT, gateFor(forAddress, kind)).correction
+
+  // An edited correction, or a landed read that opens or closes the action gate, changes the request;
+  // a note never does (D-16).
+  useEffect(() => {
+    if (!open || target === null || draft.kind === undefined || busy) return
+    if (requestedKey.current === currentKey) return
+    schedulePreview(target, draft.kind, correction)
+    // schedulePreview reads the latest render; the request key is the only trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentKey])
+
+  // Re-activating the entry already open keeps it open and refocuses the heading (D-07).
+  const openFeedback = (next: FeedbackTarget, openerElement: HTMLElement) => {
+    beforeOpen?.()
+    opener.current = openerElement
+    void reloadDetail?.().catch(() => undefined)
+    readHistory()
+    const nextAddress = feedbackAddress(next)
+    if (address !== nextAddress) {
+      previewGeneration.current += 1
+      const kind = drafts.get(nextAddress)?.kind
+      if (kind === undefined) clearTimeout(previewTimer.current)
+      else schedulePreview(next, kind, requestCorrection(nextAddress, kind))
+    }
+    setTarget(next)
+    setOpen(true)
+    setFocusRequest((count) => count + 1)
+  }
+
+  // D-03's switcher: the composer moves to another test's address and shows that address's draft.
+  // The page's member filter and selection are not touched.
+  const retarget = (next: FeedbackTarget) => {
+    const nextAddress = feedbackAddress(next)
+    if (state === 'submitting' || nextAddress === address) return
+    previewGeneration.current += 1
+    setTarget(next)
+    setFocusRequest((count) => count + 1)
+    readHistory()
+    const kind = drafts.get(nextAddress)?.kind
+    if (kind === undefined) clearTimeout(previewTimer.current)
+    else schedulePreview(next, kind, requestCorrection(nextAddress, kind))
+  }
+
+  // Closing keeps every draft; focus goes back to the opener, else the header entry, else the
+  // evidence strip's active tab (D-07).
+  const close = () => {
+    setOpen(false)
+    const back = opener.current?.isConnected
+      ? opener.current
+      : (document.querySelector<HTMLElement>('[data-feedback-entry="test"]') ??
+        document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]'))
+    back?.focus()
+  }
+
+  // A form edit returns the address to composing.
+  const composeAt = (key: string) => {
+    setOutcome(key, COMPOSING)
+  }
+
+  const editNote = (note: string) => {
+    if (address === undefined || busy) return
+    setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), note }))
+    composeAt(address)
+  }
+
+  const choose = (kind: Mark) => {
+    if (target === null || address === undefined || busy) return
+    setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), kind }))
+    composeAt(address)
+    schedulePreview(target, kind, requestCorrection(address, kind))
+  }
+
+  const editCorrection = (expectation: string, actionText: string) => {
+    if (address === undefined || busy) return
+    setDrafts((previous) =>
+      new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), expectation, actionText }),
+    )
+    composeAt(address)
+  }
+
+  const submit = async () => {
+    if (target === null || address === undefined || draft.kind === undefined || submitReason !== '' || submission.current) return
+    const request = {}
+    const submitted = target
+    submission.current = request
+    setOutcome(address, { state: 'submitting', status: SENDING_STATUS })
+    setDenials((previous) => {
+      const next = new Map(previous)
+      next.delete(address)
+      return next
+    })
+    // 432-14 (D-14): the validated body goes out once, directly; nothing waits on an approval.
+    try {
+      const result = await onMark(submitted.testIndex, submitted.stepIndex, draft.kind, draft.note || undefined, correction)
+      if (submission.current !== request) return
+      if (result === 'refreshed') {
+        setDrafts((previous) => {
+          const next = new Map(previous)
+          next.delete(address)
+          return next
+        })
+        setLanded(undefined)
+        setOutcome(address, { state: 'recorded', status: '' })
+        readHistory()
+      } else if (result === 'retained') {
+        setOutcome(address, { state: 'retained', status: DRAFT_KEPT_STATUS })
+      } else {
+        setOutcome(address, COMPOSING)
+      }
+    } finally {
+      if (submission.current === request) submission.current = undefined
+    }
+  }
+
+  // The receipt is read from the refreshed projection, never from the POST's answer (419-15).
+  const recordedMark = state !== 'recorded' || target === null
+    ? undefined
+    : detail?.members.find((entry) => entry.testIndex === target.testIndex)
+      ?.marks?.find((entry) => entry.stepIndex === target.stepIndex)
+  const statusText = state === 'recorded' ? (recordedMark === undefined ? '' : feedbackRecordedText(recordedMark.disposition)) : status
+
+  // D-17/D-18: an earlier mark's time is its history entry's own, and absent until history holds it.
+  const historyEntries = history?.kind === 'read' && history.result.kind === 'history' ? history.result.entries : []
+  const timeFor = (markId: string) => formatMarkTime(historyEntries.find((entry) => entry.markId === markId)?.markedAt)
+
+  const view = target === null ? undefined : feedbackTargetView({ detail, target, runStatus })
+  const members = detail?.members ?? []
+  const testSwitcher = target === null || target.stepIndex !== undefined || members.length <= 1
+    ? undefined
+    : {
+        value: target.testIndex,
+        options: members.map((entry) => ({
+          testIndex: entry.testIndex,
+          label: `${memberDisplayName(entry)} ${memberHandleLabel(entry.testIndex)}`,
+        })),
+        onChange: (testIndex: number) => retarget({ testIndex }),
+      }
+
+  // D-08: the target is set only by an explicit act; the selection it was opened from may move on.
+  // `selectedStep` is the step owning the selection, null for a hook or no selection.
+  const suite = (detail?.members.length ?? 0) > 1
+  const placeMember = (testIndex: number) =>
+    suite ? (members.find((entry) => entry.testIndex === testIndex) ?? { testIndex }) : undefined
+  const viewing = selectedStep
+  const showPinned = target !== null && viewing !== null && (
+    target.stepIndex === undefined ? viewing.testIndex !== target.testIndex : feedbackAddress(viewing) !== address
+  )
+  const pinned = !showPinned || target === null || viewing === null
+    ? undefined
+    : {
+        text: pinnedTargetText(
+          { stepIndex: viewing.stepIndex, member: placeMember(viewing.testIndex) },
+          { stepIndex: target.stepIndex, member: placeMember(target.testIndex) },
+        ),
+        switchLabel: switchTargetLabel(
+          target.stepIndex === undefined
+            ? { member: placeMember(viewing.testIndex) }
+            : { stepIndex: viewing.stepIndex, member: viewing.testIndex === target.testIndex ? undefined : placeMember(viewing.testIndex) },
+        ),
+        onSwitch: () => retarget(target.stepIndex === undefined ? { testIndex: viewing.testIndex } : viewing),
+      }
+
+  const placeOf = (other: FeedbackTarget): FeedbackPlace => ({
+    stepIndex: other.stepIndex,
+    member: other.stepIndex !== undefined && other.testIndex === target?.testIndex ? undefined : placeMember(other.testIndex),
+  })
+
+  // D-09: every other address holding a non-empty draft is one link away.
+  const unsentDrafts = [...drafts]
+    .filter(([key, entry]) => key !== address && !isDraftEmpty(entry))
+    .map(([key]) => {
+      const other = targetOfAddress(key)
+      return { address: key, label: unsentDraftLabel(placeOf(other)), onOpen: () => retarget(other) }
+    })
+
+  const denial = state === 'retained' && address !== undefined ? denials.get(address) : undefined
+
+  const composer: FeedbackComposerProps | undefined = !open || target === null || address === undefined || view === undefined
+    ? undefined
+    : {
+        composerId,
+        headingId,
+        heading: view.heading,
+        scopeLine: view.scopeLine,
+        state,
+        scope: target.stepIndex === undefined ? 'test' : 'step',
+        target: address,
+        outcomeClass: view.outcomeClass,
+        selected: draft.kind,
+        onChoose: choose,
+        noUniqueAddress: !addressable,
+        testSwitcher,
+        pinned,
+        unsentDrafts,
+        note: draft.note,
+        onNoteChange: editNote,
+        expectation: draft.expectation,
+        actionText: draft.actionText,
+        actionField: correctedActionField(gate),
+        onCorrectionChange: editCorrection,
+        previewState,
+        previewCurrent,
+        previewRead: shown?.read.kind === 'read' ? shown.read.result : undefined,
+        previewUpdating,
+        previewFailure,
+        onPreviewRetry: retryPreview,
+        timeFor,
+        history: {
+          read: history,
+          detail,
+          newMarkId: recordedMark?.markId,
+          onRetry: readHistory,
+        },
+        stepCount: view.stepCount,
+        testId: members.find((entry) => entry.testIndex === target.testIndex)?.testId,
+        onShowStep: (stepIndex: number) => {
+          setSelection?.({ type: 'step', stepId: runDetailStepKey(target.testIndex, stepIndex) })
+        },
+        submitReason,
+        onSubmit: () => { void submit() },
+        status: statusText,
+        denial,
+        headingRef,
+        onClose: close,
+      }
+
+  // D-03: one test-level door per page, whatever the suite shape. Absent until the target member's
+  // marks have landed, never a disabled placeholder.
+  const headerTarget = resolveHeaderFeedbackTarget({ detail, selectedStep, memberFilter, runStatus })
+  const headerMember = headerTarget === undefined
+    ? undefined
+    : detail?.members.find((entry) => entry.testIndex === headerTarget.testIndex)
+  const headerMark = headerMember?.marks?.find((entry) => entry.stepIndex === undefined)
+  const headerEntry: Omit<FeedbackEntryButtonProps, 'scope'> | undefined =
+    headerTarget === undefined || headerMember?.marks === undefined
+      ? undefined
+      : {
+          label: feedbackEntryLabel({
+            scope: 'test',
+            ...(suite ? { memberName: memberDisplayName(headerMember), handle: memberHandleLabel(headerMember.testIndex) } : {}),
+            ...(headerMark === undefined ? {} : { markedChoice: headerMark.kind }),
+          }),
+          target: feedbackAddress(headerTarget),
+          marked: headerMark !== undefined,
+          expanded: open && target?.stepIndex === undefined,
+          controls: composerId,
+          onOpen: (openerElement: HTMLElement) => openFeedback(headerTarget, openerElement),
+        }
+
+  const openStepFeedback = (testIndex: number, stepIndex: number, openerElement: HTMLElement) =>
+    openFeedback({ testIndex, stepIndex }, openerElement)
+
+  // D-04: the step door on the row owning the selection opens the composer on that row's own step.
+  const tree: StepTreeFeedback = {
+    composerId,
+    expandedAddress: open && target?.stepIndex !== undefined ? address : undefined,
+    onOpenStep: openStepFeedback,
+  }
+
+  return { open, target, composerId, openFeedback, openStepFeedback, retarget, composer, headerEntry, tree }
+}

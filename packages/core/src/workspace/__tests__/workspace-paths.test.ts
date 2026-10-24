@@ -7,6 +7,7 @@ import {
   discoverWorkspaceFiles,
   resolveWorkspaceFileTarget,
   resolveWorkspacePaths,
+  workspaceRelativeIdentityPath,
 } from '../workspace-paths.js'
 
 interface SampleWorkspaceConfigFixture {
@@ -32,14 +33,15 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
       testMatch: ['specs/web/**/*.yaml', 'specs/mobile/**/*.yaml'],
       suiteMatch: ['cases/**/*.suite.yaml'],
       hooksFile: 'runtime/hooks/custom-hooks.yaml',
-      agentRules: 'config/agent-rules.md',
       envFile: 'config/env/public.env',
       secretsFile: 'config/env/secrets.local',
     },
+    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
     services: {
       dashboard: {
         port: 3470,
         artifactsDir: '.agent-qa/custom-artifacts',
+        // 432-22: `runServiceTokens` is deleted, so the parsed shape no longer carries it.
       },
       cache: {
         dir: '.agent-qa/custom-cache',
@@ -54,22 +56,6 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
       accessibility: {
         enabled: false,
       },
-      memory: {
-        enabled: true,
-        provider: 'local',
-        dir: '.agent-qa/custom-memory',
-        minTrust: 0.3,
-        maxInjections: 3,
-        curatorEnabled: true,
-        curatorLockTimeout: 120_000,
-        trustConfirmDelta: 0.05,
-        trustContradictDelta: 0.10,
-        ablationEnabled: true,
-        circuitBreakerEnabled: true,
-        circuitBreakerWindowSize: 20,
-        circuitBreakerBaselineSize: 3,
-        circuitBreakerThreshold: 0.15,
-      },
     },
   }
 
@@ -79,7 +65,6 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
     writeFixtureFile(root, 'cases/smoke.suite.yaml', 'name: Smoke\ntests: []\n'),
     writeFixtureFile(root, 'runtime/hooks/custom-hooks.yaml', 'hooks: []\n'),
     writeFixtureFile(root, 'runtime/hooks/set-env.js', 'export default async function setup() {}\n'),
-    writeFixtureFile(root, 'config/agent-rules.md', '# Rules\n'),
     writeFixtureFile(root, 'config/env/public.env', 'PUBLIC_VALUE=1\n'),
     writeFixtureFile(root, 'config/env/secrets.local', 'SECRET_VALUE=1\n'),
     writeFixtureFile(root, 'tests/legacy.yaml', 'name: Legacy\n'),
@@ -110,7 +95,6 @@ describe('workspace path resolver', () => {
     expect(workspace.configDir).toBe(fixture.root)
     expect(workspace.hooksFile.absolutePath).toBe(path.join(fixture.root, 'runtime/hooks/custom-hooks.yaml'))
     expect(workspace.hooksFile.workspaceRelativePath).toBe('runtime/hooks/custom-hooks.yaml')
-    expect(workspace.agentRules.absolutePath).toBe(path.join(fixture.root, 'config/agent-rules.md'))
     expect(workspace.envFile.absolutePath).toBe(path.join(fixture.root, 'config/env/public.env'))
     expect(workspace.secretsFile.absolutePath).toBe(path.join(fixture.root, 'config/env/secrets.local'))
   })
@@ -124,9 +108,6 @@ describe('workspace path resolver', () => {
     expect(fixture.config.services?.logging?.level).toBe('warn')
     expect(fixture.config.services?.recording?.enabled).toBe(false)
     expect(fixture.config.services?.accessibility?.enabled).toBe(false)
-    expect(fixture.config.services?.memory?.provider).toBe('local')
-    expect(fixture.config.services?.memory?.curatorEnabled).toBe(true)
-    expect(fixture.config.services?.memory?.dir).toBe('.agent-qa/custom-memory')
   })
 
   it('discovers test files from non-default testMatch patterns only', async () => {
@@ -196,5 +177,53 @@ describe('workspace path resolver', () => {
       configPath: fixture.configPath,
       requireExistingFiles: true,
     })).toThrow(/workspace\.envFile/)
+  })
+})
+
+// The ONE spelling of the durable identity recipe (390-08 / CR-02). The committed quarantine
+// ledger keys entries on this string, so "the same file under a different checkout root answers
+// the same bytes" is not a convenience — it is the property that lets a ledger written on one
+// machine suppress on another.
+describe('workspaceRelativeIdentityPath', () => {
+  const CHECKOUT_A = path.join(path.sep, 'Users', 'someone', 'repo')
+  const CHECKOUT_B = path.join(path.sep, 'var', 'ci', 'workspace', '4711', 'repo')
+
+  it('answers identical bytes for the same file under two different checkout roots', () => {
+    const underA = workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, 'tests', 'checkout.yaml'))
+    const underB = workspaceRelativeIdentityPath(CHECKOUT_B, path.join(CHECKOUT_B, 'tests', 'checkout.yaml'))
+
+    expect(underA).toBe('tests/checkout.yaml')
+    expect(underB).toBe('tests/checkout.yaml')
+    expect(underA).toBe(underB)
+    // Anchored on the bytes themselves, not on a relation between the two answers: no root
+    // prefix survives, the separators are forward slashes, and there is no leading './' or '/'.
+    expect(underA.startsWith('/')).toBe(false)
+    expect(underA).not.toContain('\\')
+    expect(underA).not.toContain(CHECKOUT_A)
+    expect(underB).not.toContain(CHECKOUT_B)
+  })
+
+  it('trims a leading ./ and normalizes nested segments', () => {
+    expect(workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, 'a', 'b', 'c.yaml')))
+      .toBe('a/b/c.yaml')
+    expect(workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, '.', 'tests', 'x.yaml')))
+      .toBe('tests/x.yaml')
+  })
+
+  it('is idempotent — re-minting an already-relative identity is a no-op', () => {
+    // A second mint must not resolve against process.cwd() and silently produce a different (or
+    // escaping) answer: identity has to survive being handed through a layer twice.
+    const once = workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, 'tests', 'checkout.yaml'))
+    expect(workspaceRelativeIdentityPath(CHECKOUT_A, once)).toBe(once)
+  })
+
+  it('REFUSES a path that escapes the config directory', () => {
+    expect(() => workspaceRelativeIdentityPath(CHECKOUT_A, path.join(CHECKOUT_A, '..', 'outside.yaml')))
+      .toThrow(/escapes config directory/)
+    expect(() => workspaceRelativeIdentityPath(CHECKOUT_A, path.join(path.sep, 'etc', 'passwd')))
+      .toThrow(/escapes config directory/)
+    // The config directory itself is not a file identity.
+    expect(() => workspaceRelativeIdentityPath(CHECKOUT_A, CHECKOUT_A))
+      .toThrow(/escapes config directory/)
   })
 })

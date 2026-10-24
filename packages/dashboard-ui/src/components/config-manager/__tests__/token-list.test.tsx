@@ -1,0 +1,270 @@
+// @vitest-environment jsdom
+
+// NO ACCESS TOKENS ON THE CONFIG PAGE (432-22 · D-12/D-18/D-22), re-spelled from 429-27 Task 1.
+//
+// This file pinned the MCP and run-service token lists: rows by name with the env-var name in clear,
+// the scope and trust-scope add rows, and the undoable delete. 432 deletes `services.mcp.tokens`,
+// `services.mcp.stdio.grantConfigWrite` and `services.dashboard.runServiceTokens`, so the lists, the
+// stdio switch and their copy are gone. What survives is pinned here: the remaining MCP and dashboard
+// controls still save through the page's autosave transaction, and `allowProduction` is an ordinary
+// switch on that same transaction. The undoable unset-by-name claim of TOKEN-DELETE-UNDO lives on in
+// model-row's DELETE-MODEL-UNDO (`registry.llms`, the one named array left).
+
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { DashboardSection } from '@/components/config-manager/dashboard-section'
+import { McpSection } from '@/components/config-manager/mcp-section'
+import { RunsSection } from '@/components/config-manager/runs-section'
+import {
+  ConfigAutosaveProvider,
+  configFieldControlId,
+  configFieldKeyOf,
+  useConfigAutosave,
+  type ConfigAutosave,
+} from '@/hooks/use-config-autosave'
+import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
+import * as copy from '@/lib/config-copy'
+import { CONFIG_SECTION_IDS, EXPLICIT_ACTION_KINDS } from '@/lib/config-tabs'
+
+vi.mock('@/lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api')>()),
+  fetchConfig: vi.fn(),
+  fetchConfigRevision: vi.fn(),
+  applyConfigChanges: vi.fn(),
+  undoConfigAction: vi.fn(),
+}))
+
+;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+const CONFIG_PATH = '/work/agent-qa.config.yaml'
+const HERE = dirname(fileURLToPath(import.meta.url))
+
+const records = {
+  services: {
+    mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
+    dashboard: { port: 3470 },
+  },
+}
+
+function answer(config: Record<string, unknown>) {
+  return { config, provider: null, revision: 'rev-1', file: { path: CONFIG_PATH, lines: [] } }
+}
+
+let hook: ConfigAutosave | undefined
+
+function Harness() {
+  const autosave = useConfigAutosave()
+  hook = autosave
+  if (autosave.load.kind !== 'ready') return null
+  return (
+    <ConfigAutosaveProvider value={autosave}>
+      <section data-config-section="mcp">
+        <McpSection />
+      </section>
+      <section data-config-section="dashboard">
+        <DashboardSection />
+      </section>
+      <section data-config-section="runs">
+        <RunsSection />
+      </section>
+    </ConfigAutosaveProvider>
+  )
+}
+
+let container: HTMLDivElement | null = null
+let root: Root | null = null
+
+async function flush() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+}
+
+async function mount() {
+  container = document.createElement('div')
+  document.body.appendChild(container)
+  root = createRoot(container)
+  await act(async () => {
+    root!.render(<Harness />)
+  })
+  await flush()
+}
+
+async function unmount() {
+  if (root) {
+    await act(async () => root!.unmount())
+  }
+  root = null
+  container?.remove()
+  container = null
+  hook = undefined
+}
+
+function section(id: 'mcp' | 'dashboard' | 'runs') {
+  return container?.querySelector(`[data-config-section="${id}"]`) as HTMLElement | null
+}
+
+function fieldPaths(scope: HTMLElement | null): string[] {
+  return (Array.from(scope?.querySelectorAll('[data-field-path]') ?? []) as HTMLElement[])
+    .map((element) => element.getAttribute('data-field-path')!)
+}
+
+function control<T extends HTMLElement = HTMLInputElement>(segments: readonly string[]) {
+  return document.getElementById(configFieldControlId(configFieldKeyOf(segments))) as T | null
+}
+
+async function click(element: HTMLElement | null) {
+  expect(element).not.toBeNull()
+  await act(async () => {
+    element!.focus()
+    element!.click()
+  })
+  await flush()
+}
+
+async function typeAndBlur(input: HTMLInputElement | null, value: string) {
+  expect(input).not.toBeNull()
+  await act(async () => {
+    input!.focus()
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+    setter?.call(input!, value)
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await flush()
+  await act(async () => {
+    input!.blur()
+  })
+  await flush()
+}
+
+function writeCalls() {
+  return vi.mocked(applyConfigChanges).mock.calls.map((call) => call[0])
+}
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  localStorage.clear()
+  vi.mocked(fetchConfig).mockResolvedValue(answer(records) as never)
+  vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: 'rev-1' })
+  vi.mocked(applyConfigChanges).mockResolvedValue({ revision: 'rev-2' } as never)
+})
+
+afterEach(async () => {
+  await unmount()
+  vi.clearAllMocks()
+  vi.useRealTimers()
+  localStorage.clear()
+})
+
+describe('no token controls (432-22, re-spelled from 429-27 Task 1)', () => {
+  it('C432-NO-TOKEN-CONTROLS: the MCP and dashboard sections render their fields and no token list, row, add row or stdio switch', async () => {
+    await mount()
+
+    expect(fieldPaths(section('mcp'))).toEqual([
+      'services.mcp.enabled',
+      'services.mcp.transport',
+      'services.mcp.host',
+      'services.mcp.port',
+      'services.mcp.path',
+    ])
+    expect(fieldPaths(section('dashboard'))).toEqual([
+      'services.dashboard.port',
+      'services.dashboard.host',
+      'services.dashboard.dbPath',
+      'services.dashboard.artifactsDir',
+      'services.dashboard.baseUrl',
+      'services.dashboard.workspace',
+    ])
+    for (const id of ['mcp', 'dashboard', 'runs'] as const) {
+      const scope = section(id)!
+      expect(scope.querySelector('[data-token-row]'), id).toBeNull()
+      expect(scope.querySelector('[data-token-draft]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-list]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-path*="tokens"]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-path*="stdio"]'), id).toBeNull()
+      expect(scope.querySelector('[data-field-path*="trustScope"]'), id).toBeNull()
+      expect(Array.from(scope.querySelectorAll('button')).map((b) => b.textContent?.trim()), id).not.toContain('Add token')
+      expect(scope.textContent, id).not.toMatch(/access tokens|token scopes|trust scope/i)
+    }
+  })
+
+  it('C432-NO-TOKEN-CONTROLS: the token list module, its copy, its section and its delete actions are gone', () => {
+    expect(existsSync(join(HERE, '..', 'token-list.tsx'))).toBe(false)
+    const retiredCopy = [
+      'ACCESS_TOKENS_HEADING', 'ADD_TOKEN_LABEL', 'NO_TOKENS_TEXT', 'tokenEnvLine', 'TOKEN_FIELD_LABELS',
+      'DISCARD_TOKEN_LABEL', 'TOKEN_NAME_REQUIRED_ERROR', 'TOKEN_ENV_VAR_REQUIRED_ERROR', 'tokenNameTakenError',
+      'SCOPES_LABEL', 'FUNCTION_SCOPE_LABELS', 'SCOPE_REQUIRED_ERROR', 'TRUST_SCOPE_LEGEND', 'TRUST_SCOPE_HELP',
+      'TRUST_SCOPE_LABELS',
+    ]
+    expect(retiredCopy.filter((name) => name in copy)).toEqual([])
+    expect(Object.keys(copy.MCP_FIELD_LABELS)).toEqual(['enabled', 'transport', 'host', 'port', 'path'])
+    expect(Object.keys(copy.MCP_FIELD_HELP)).toEqual(['enabled', 'host'])
+    expect(copy.MCP_FIELD_HELP.enabled).not.toMatch(/token/i)
+    expect(CONFIG_SECTION_IDS as readonly string[]).not.toContain('run-service-tokens')
+    expect(EXPLICIT_ACTION_KINDS as readonly string[]).not.toContain('delete-mcp-token')
+    expect(EXPLICIT_ACTION_KINDS as readonly string[]).not.toContain('delete-run-service-token')
+  })
+
+  it('C432-NO-TOKEN-CONTROLS: a retained MCP control still saves through the autosave transaction', async () => {
+    await mount()
+
+    await typeAndBlur(control(['services', 'mcp', 'port']), '4000')
+    await typeAndBlur(control(['services', 'dashboard', 'port']), '4100')
+
+    expect(writeCalls()).toEqual([
+      [{ op: 'set', path: ['services', 'mcp', 'port'], value: 4000 }],
+      [{ op: 'set', path: ['services', 'dashboard', 'port'], value: 4100 }],
+    ])
+  })
+
+  it('ALLOW-PRODUCTION-SWITCH: allowProduction is an ordinary Runs switch, off by default, saved by the autosave transaction', async () => {
+    await mount()
+
+    expect(fieldPaths(section('runs'))).toEqual(['use.parallel', 'use.workers', 'use.buildTag', 'allowProduction'])
+    const toggle = control<HTMLButtonElement>(['allowProduction'])
+    expect(toggle?.getAttribute('role')).toBe('switch')
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    const row = section('runs')!.querySelector('[data-field-path="allowProduction"]')!
+    expect(row.textContent).toContain(copy.RUNS_FIELD_LABELS.allowProduction)
+    expect(row.textContent).toContain(copy.RUNS_FIELD_HELP.allowProduction)
+
+    await click(toggle)
+    expect(writeCalls()).toEqual([[{ op: 'set', path: ['allowProduction'], value: true }]])
+    expect(toggle?.getAttribute('aria-checked')).toBe('true')
+
+    await click(toggle)
+    expect(writeCalls()).toEqual([
+      [{ op: 'set', path: ['allowProduction'], value: true }],
+      [{ op: 'set', path: ['allowProduction'], value: false }],
+    ])
+  })
+
+  it('ALLOW-PRODUCTION-SWITCH: a refused allowProduction write fails like any field, and Retry sends it again', async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer({ ...records, allowProduction: false }) as never)
+    vi.mocked(applyConfigChanges).mockRejectedValueOnce(
+      new ApiError(422, 'Unprocessable', { error: 'validation_failed', issues: [] }),
+    )
+    await mount()
+
+    const toggle = control<HTMLButtonElement>(['allowProduction'])
+    expect(toggle?.getAttribute('aria-checked')).toBe('false')
+    await click(toggle)
+    expect(hook!.status.state).toBe('failed')
+
+    await act(async () => {
+      hook!.retry()
+    })
+    await flush()
+    expect(writeCalls()).toEqual([
+      [{ op: 'set', path: ['allowProduction'], value: true }],
+      [{ op: 'set', path: ['allowProduction'], value: true }],
+    ])
+    expect(hook!.status.state).not.toBe('failed')
+  })
+})
