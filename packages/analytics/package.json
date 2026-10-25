@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-analytics",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "private": false,
   "description": "Product analytics port, closed event union, and transports for agent-qa hosts.",
   "keywords": [
@@ -10,7 +10,7 @@
     "posthog",
     "ports"
   ],
-  "license": "SEE LICENSE IN LICENSE.md",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://github.com/vostride/agent-qa#readme",
   "bugs": {
     "url": "https://github.com/vostride/agent-qa/issues"

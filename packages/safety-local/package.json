@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-safety-local",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "private": false,
   "description": "StorageImplementation shell for the local run-safety scope and execution-context detection in agent-qa.",
   "keywords": [
@@ -9,7 +9,7 @@
     "agent",
     "ports"
   ],
-  "license": "SEE LICENSE IN LICENSE.md",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://github.com/vostride/agent-qa#readme",
   "bugs": {
     "url": "https://github.com/vostride/agent-qa/issues"

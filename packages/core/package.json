@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-core",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "private": false,
   "description": "Core agent-qa runtime, schemas, tools, and execution services.",
   "keywords": [
@@ -10,7 +10,7 @@
     "runtime",
     "schemas"
   ],
-  "license": "SEE LICENSE IN LICENSE.md",
+  "license": "FSL-1.1-ALv2",
   "homepage": "https://github.com/vostride/agent-qa#readme",
   "bugs": {
     "url": "https://github.com/vostride/agent-qa/issues"
