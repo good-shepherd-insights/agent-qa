@@ -21,7 +21,7 @@ const fullObservation = {
   observedAtOrdinal: 44,
 }
 
-describe('distilled observation disk contract (377 D-09)', () => {
+describe('distilled observation disk contract', () => {
   it('parses a full edge-feeding observation', () => {
     expect(distilledObservationSchema.parse(fullObservation)).toEqual(fullObservation)
   })
@@ -33,7 +33,7 @@ describe('distilled observation disk contract (377 D-09)', () => {
     expect(result.success).toBe(false)
     if (!result.success) {
       expect(result.error.issues.map((issue) => issue.message).join(' '))
-        .toMatch(/D-09.*Pitfall 8/)
+        .toContain('element or locator requires platform')
     }
   })
 

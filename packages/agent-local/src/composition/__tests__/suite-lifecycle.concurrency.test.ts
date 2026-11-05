@@ -1,15 +1,4 @@
-// The suite lifecycle under the bounded member pool (402-02 Task 2, D-09).
-//
-// `createSuiteLifecycle` was written for a `for` loop: `ensureReady` checked the active suite key,
-// then awaited `hooks.setup()`, THEN assigned the key. Every one of those three steps is separated
-// from the next by an await, so two members entering concurrently both observe "no active suite"
-// and both run setup — two browsers for one suite, and the second one's teardown handle silently
-// replacing the first's. This file drives that race deliberately.
-//
-// THE RACE IS FORCED, NOT SIMULATED. `setup` returns a promise the test holds open, and the second
-// member enters while the first is suspended inside it. There is no scenario here that a
-// sequential caller could produce — which is the point: these are the invariants the `for` loop
-// gave away for free and the pool has to earn.
+// Setup awaits before the active key is set, so a held-open setup forces the concurrent-entry race.
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -117,8 +106,7 @@ describe('createSuiteLifecycle — teardown after the LAST member settles', () =
     const m0 = await lifecycle.ensureReady('A', a)
     const m1 = await lifecycle.ensureReady('A', a)
 
-    // The first member is done; the second is not. Suite A must NOT be torn down here — that is
-    // the mid-flight teardown the old boundary-triggered design would have performed.
+    // The first member is done and the second is not, so suite A is not torn down here.
     m0.release()
     log.push('m0-settled')
     await expect(lifecycle.ensureReady('B', b)).rejects.toBeInstanceOf(SuiteBoundaryWhileLiveError)

@@ -1,25 +1,4 @@
-// THE DASHBOARD RUN PATH HAS NO SPAWN AND NO SCRAPE (Phase 401 plan 07 — D-01/D-12, INVK-01).
-//
-// WHAT A COMPLETE-SET CLAIM NEEDS, AND WHY THIS IS NOT A GREP. The claim is about a PATH, not a
-// file, so the scanner walks every non-test module under `src/` and reports what it finds; and it
-// self-checks first, against a planted source that carries each forbidden token, so a scanner that
-// had stopped seeing anything cannot sweep clean. The two survivors are named, with the reason each
-// one is design-of-record — a census that can only refuse what it happens to name is not a census,
-// so the allow-list is a set of exact paths and any new holder of the vocabulary is a failure.
-//
-// THE FOUR SURVIVORS, deliberately and by name:
-//   `execution/appium-manager.ts` — the BUNDLED APPIUM SPAWN. Design-of-record, named in INVK-01's
-//     own scoping sentence; what 401-07 changed is only how its lease URL reaches a run.
-//   `ownership-contract.ts` — the DECLARATION that this package owns `tree-kill` as an external
-//     dependency. It is a manifest entry, and the manager above is what still needs the package.
-//   `server/server.ts` — `process.on('SIGTERM', …)`, THIS process's own shutdown handler. It is a
-//     signal this server RECEIVES, never one it sends at a child; the retirement removed every
-//     `process.kill` / `child.kill` / `treeKill` SEND on the run path, and this is the converse.
-//   `db/run-owner-host.ts` — one bounded, synchronous `/usr/sbin/ioreg` read of the macOS
-//     hardware UUID that names a run owner's host (442-17, GAP-D4). It signals nothing.
-//
-// The daemon-owned embedder child lives in another package and is equally design-of-record; it is
-// outside this scanner's range and is not being retired either.
+// Self-checked against planted tokens first; the survivors are an exact-path allow-list.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -72,8 +51,8 @@ const MODULES = walk(SRC_ROOT).map((path) => ({
   code: codeOnly(readFileSync(path, 'utf8')),
 }))
 
-describe('the dashboard run path (401-07, INVK-01)', () => {
-  it('(i) THE SCANNER SEES WHAT IT FORBIDS — before any verdict about any module', () => {
+describe('the dashboard run path', () => {
+  it('the scanner sees what it forbids — before any verdict about any module', () => {
     // A planted source, run through the SAME comment filter, must still carry every token.
     const planted = codeOnly([
       '// a comment naming node:child_process, treeKill, SIGKILL and AGENT_QA_EVENT: proves nothing',
@@ -92,14 +71,14 @@ describe('the dashboard run path (401-07, INVK-01)', () => {
     expect(MODULES.map((module) => module.path)).toContain('execution/in-process-backend.ts')
   })
 
-  it('(ii) THE COMPLETE SET — every module holding spawn vocabulary is one of the named survivors', () => {
+  it('every module holding spawn vocabulary is one of the named survivors', () => {
     const holders = MODULES
       .filter((module) => SPAWN_TOKENS.some((token) => module.code.includes(token)))
       .map((module) => module.path)
     expect([...holders].sort()).toEqual([...SPAWN_ALLOWED].sort())
   })
 
-  it('(iii) NOBODY SENDS A SIGNAL AT A CHILD ANY MORE — the two named survivors are a manifest and a receiver', () => {
+  it('nobody sends a signal at a child — the two named survivors are a manifest and a receiver', () => {
     // The allow-list above is exact, but "allowed" must not become "unexamined": these two are
     // allowed because of WHAT they do with the vocabulary, and that is the part a later edit could
     // silently change.
@@ -116,14 +95,14 @@ describe('the dashboard run path (401-07, INVK-01)', () => {
     expect(server.code).toContain('executionBackend?.kill(runId)')
   })
 
-  it('(iv) THE SCRAPE PREFIX IS GONE FROM THE PACKAGE ENTIRELY — no survivors, named or otherwise', () => {
+  it('the scrape prefix is gone from the package — no survivors, named or otherwise', () => {
     const holders = MODULES
       .filter((module) => module.code.includes(SCRAPE_PREFIX))
       .map((module) => module.path)
     expect(holders).toEqual([])
   })
 
-  it('(v) THE RETIRED FILE IS GONE, and nothing production still names its class', () => {
+  it('the retired file is gone, and nothing production still names its class', () => {
     expect(MODULES.map((module) => module.path)).not.toContain('execution/test-runner.ts')
     const namers = MODULES
       .filter((module) => module.code.includes('TestRunner'))
@@ -132,26 +111,23 @@ describe('the dashboard run path (401-07, INVK-01)', () => {
   })
 })
 
-describe('queue retries are retired, and the retirement is on the record (401-07, D-12)', () => {
+describe('queue retries are retired', () => {
   const server = readFileSync(join(SRC_ROOT, 'server', 'server.ts'), 'utf8')
   const backendInterface = readFileSync(join(SRC_ROOT, 'execution', 'execution-backend.ts'), 'utf8')
 
-  it('NO RETRY CEILING REACHES THE BACKEND — the field is not on the options at all', () => {
+  it('no retry ceiling reaches the backend — the field is not on the options at all', () => {
     expect(codeOnly(backendInterface)).not.toContain('maxRetries')
     expect(codeOnly(backendInterface)).not.toContain('env?:')
     // The lease is data on the same options object, and it is optional.
     expect(codeOnly(backendInterface)).toContain('appiumUrl?: string')
   })
 
-  it('THE QUEUE WIRING CARRIES A DATED NOTE — debris recorded, not hidden', () => {
+  it('the queue wiring passes no retry ceiling', () => {
     const executeCall = server.slice(server.indexOf("jobQueue.on('execute'"))
     expect(executeCall).not.toContain('maxRetries')
-    expect(server).toMatch(/2026-08-23 \(Phase 401 plan 07, D-12\)/)
   })
 
-  it('THE APPIUM LEASE BLOCK IS UNTOUCHED — only the URL delivery moved', () => {
-    // The acquisition, the per-run keying and the release paths are all still here; what is gone is
-    // the child environment the URL used to ride in.
+  it('the Appium lease block is untouched — only the URL delivery moved', () => {
     expect(server).toContain('appiumManager.acquireLease({ runId: run.id, platform })')
     expect(server).toContain('appiumManager.releaseLease(runId, reason)')
     expect(server).toContain('appiumUrl: appiumManager.getUrl()')

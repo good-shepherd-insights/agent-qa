@@ -1,18 +1,4 @@
-// The serve-time retrieval trace (Phase 387 plan 02, KREV-02 · D-13/D-14/D-15).
-//
-// Three claims are pinned here, and each one is pinned by a case the assertion could
-// actually REJECT rather than by a happy-path sample:
-//
-//   1. The trace contract is CLOSED — a fourth retrieval leg, a second schemaVersion, a
-//      zero rank and an unknown key are each refused, so a producer cannot widen the shape
-//      by writing to it.
-//   2. The truncation ledger is BOUNDED at both edges of `TRACE_TRUNCATION_TOP_K` — exactly
-//      K is admitted, K + 1 is refused. A test that only fed a "large" array would pass
-//      against any bound at all, including none.
-//   3. `retrievalTrace` is a beside-field on `StepEvidence` that a v5 handoff may carry, may
-//      OMIT (historical absence — D-15's substrate), and may not carry malformed.
-//
-// Schema module-discipline law: extension-less relative import specifiers, no node builtins.
+// Each claim is pinned by a case the assertion could reject; exactly K passes and K + 1 is refused.
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -59,7 +45,7 @@ function ledgerOf(size: number): TraceLine[] {
   )
 }
 
-describe('ServedRetrievalTraceV1 (D-14 grain)', () => {
+describe('ServedRetrievalTraceV1', () => {
   it('accepts a full-attribution trace at RETRIEVAL_TRACE_SCHEMA_VERSION', () => {
     const parsed = ServedRetrievalTraceV1Schema.parse(trace())
 
@@ -123,7 +109,7 @@ describe('ServedRetrievalTraceV1 (D-14 grain)', () => {
   })
 })
 
-describe('TRACE_TRUNCATION_TOP_K (D-14 bounded truncation ledger)', () => {
+describe('TRACE_TRUNCATION_TOP_K (bounded truncation ledger)', () => {
   it('exports the bound as a positive integer constant', () => {
     expect(Number.isSafeInteger(TRACE_TRUNCATION_TOP_K)).toBe(true)
     expect(TRACE_TRUNCATION_TOP_K).toBeGreaterThan(0)
@@ -227,7 +213,7 @@ function handoffWithStep(step: Record<string, unknown>): Record<string, unknown>
   }
 }
 
-describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
+describe('CompletedRunHandoff v5 retrievalTrace beside-field', () => {
   it('pins the current handoff schema version at 2', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
@@ -247,7 +233,7 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
     expect(error.supportedVersion).toBe(2)
   })
 
-  it('loads a v5 step that carries NO retrievalTrace (historical absence, D-15)', () => {
+  it('loads a v5 step that carries NO retrievalTrace (historical absence)', () => {
     const guarded = guardCompletedRunHandoff(makeHandoff())
 
     expect('retrievalTrace' in guarded.tests[0].steps[0]).toBe(false)
@@ -264,9 +250,7 @@ describe('CompletedRunHandoff v5 retrievalTrace beside-field (D-13)', () => {
   })
 
   it('refuses a step whose PRESENT retrievalTrace is malformed (fail-closed)', () => {
-    // The why-verb (387-06) dereferences every line's recordId/leg/rank/score to answer
-    // with, so the load boundary admits the block only in consumer-traversable form — the
-    // same present-implies-valid discipline `planSource` and `interpolatedVariables` carry.
+    // The why-verb dereferences each line's fields, so the boundary admits only traversable blocks.
     const cases: unknown[] = [
       'not-an-object',
       { schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION, servedLines: [], truncated: [] , extra: true },

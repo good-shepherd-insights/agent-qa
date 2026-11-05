@@ -1,9 +1,4 @@
-// DEVICES (429-22 · D-02, D-08, D-19, D-23, D-24 · UI-SPEC S2 "Record/list editors", S6, S8, E8).
-//
-// Each device is a row opened in place: platform and connection autosave, and each match setting
-// shows its key with its value through SecretValue, replaced explicitly. A new setting
-// saves only through Save setting. Add device opens an inline draft row; delete acts at once with
-// Undo.
+// Match values show through `SecretValue` and save only through Save setting; delete has Undo.
 
 import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent } from "react"
 import { Plus, X } from "lucide-react"
@@ -48,13 +43,6 @@ import {
 } from "@/lib/config-copy"
 
 type DevicePlatform = "android" | "ios"
-type DeviceTransport = "local" | "browserstack"
-
-export const DEVICE_TRANSPORT_OPTIONS: { value: DeviceTransport; label: string }[] = [
-  { value: "local", label: "Local" },
-  { value: "browserstack", label: "BrowserStack" },
-]
-
 const DEVICE_PLATFORM_OPTIONS: { value: DevicePlatform; label: string }[] = [
   { value: "android", label: TARGET_PLATFORM_LABELS.android },
   { value: "ios", label: TARGET_PLATFORM_LABELS.ios },
@@ -67,7 +55,6 @@ const LOCAL_MATCH_FIELDS: Record<DevicePlatform, readonly string[]> = {
 
 interface DeviceEntry {
   platform?: string
-  transport?: string
   match?: Record<string, unknown>
 }
 
@@ -94,16 +81,8 @@ function platformOf(value: unknown): DevicePlatform {
   return value === "ios" ? "ios" : "android"
 }
 
-function transportOf(value: unknown): DeviceTransport {
-  return value === "browserstack" ? "browserstack" : "local"
-}
-
-function transportLabel(transport: DeviceTransport): string {
-  return DEVICE_TRANSPORT_OPTIONS.find((option) => option.value === transport)?.label ?? transport
-}
-
 function summarizeDevice(device: DeviceEntry): string {
-  return `${TARGET_PLATFORM_LABELS[platformOf(device.platform)]} · ${transportLabel(transportOf(device.transport))}`
+  return TARGET_PLATFORM_LABELS[platformOf(device.platform)]
 }
 
 function maskedTextOf(value: unknown): string {
@@ -205,12 +184,6 @@ function DeviceFields({ name, device }: { name: string; device: DeviceEntry }) {
         kind="select"
         options={DEVICE_PLATFORM_OPTIONS}
       />
-      <ConfigField
-        field={{ ...at("transport"), pattern: "registry.devices.*.transport" }}
-        label={DEVICE_FIELD_LABELS.transport}
-        kind="select"
-        options={DEVICE_TRANSPORT_OPTIONS}
-      />
       <div className="space-y-2">
         {keys.length > 0 ? (
           <dl data-field-list="registry.devices.*.match" className="space-y-2">
@@ -244,7 +217,6 @@ function DeviceFields({ name, device }: { name: string; device: DeviceEntry }) {
           device={name}
           existingKeys={Object.keys(match)}
           platform={platformOf(device.platform)}
-          transport={transportOf(device.transport)}
         />
       </div>
     </>
@@ -262,12 +234,10 @@ function AddMatchSetting({
   device,
   existingKeys,
   platform,
-  transport,
 }: {
   device: string
   existingKeys: readonly string[]
   platform: DevicePlatform
-  transport: DeviceTransport
 }) {
   const autosave = useConfigAutosaveContext()
   const [open, setOpen] = useState(false)
@@ -277,9 +247,8 @@ function AddMatchSetting({
   const focusAddNext = useRef(false)
   const helpId = useId()
   const key = draft.key.trim()
-  const allowed = transport === "local" ? LOCAL_MATCH_FIELDS[platform] : undefined
-  const ready =
-    key !== "" && draft.value !== "" && !existingKeys.includes(key) && (allowed === undefined || allowed.includes(key))
+  const allowed = LOCAL_MATCH_FIELDS[platform]
+  const ready = key !== "" && draft.value !== "" && !existingKeys.includes(key) && allowed.includes(key)
 
   useEffect(() => {
     if (!open && focusAddNext.current) {
@@ -331,7 +300,7 @@ function AddMatchSetting({
           autoComplete="off"
           autoFocus
           aria-label={DEVICE_FIELD_LABELS.key}
-          aria-describedby={allowed === undefined ? undefined : helpId}
+          aria-describedby={helpId}
           placeholder={DEVICE_FIELD_LABELS.key}
           value={draft.key}
           onChange={(event) => setDraft({ ...draft, key: event.target.value })}
@@ -355,11 +324,9 @@ function AddMatchSetting({
           {DISCARD_SETTING_LABEL}
         </Button>
       </div>
-      {allowed === undefined ? null : (
-        <p id={helpId} className="text-xs text-muted-foreground break-words">
-          {deviceMatchKeysHelp(platformLabel, allowed)}
-        </p>
-      )}
+      <p id={helpId} className="text-xs text-muted-foreground break-words">
+        {deviceMatchKeysHelp(platformLabel, allowed)}
+      </p>
     </div>
   )
 }
@@ -367,10 +334,9 @@ function AddMatchSetting({
 interface DeviceDraft extends Record<string, string> {
   name: string
   platform: string
-  transport: string
 }
 
-const EMPTY_DRAFT: DeviceDraft = { name: "", platform: "android", transport: "local" }
+const EMPTY_DRAFT: DeviceDraft = { name: "", platform: "android" }
 
 function draftNameError(draft: DeviceDraft, takenNames: ReadonlySet<string>): string | undefined {
   const name = draft.name.trim()
@@ -415,7 +381,7 @@ function AddDeviceRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddDe
         {
           op: "set",
           path: ["registry", "devices", name],
-          value: { platform: platformOf(current.platform), transport: transportOf(current.transport) },
+          value: { platform: platformOf(current.platform) },
         },
       ],
       undefined,
@@ -429,7 +395,7 @@ function AddDeviceRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddDe
     if (leavesGroup(event)) void settle(draft, true)
   }
 
-  function select(key: "platform" | "transport", label: string, options: readonly { value: string; label: string }[]) {
+  function select(key: "platform", label: string, options: readonly { value: string; label: string }[]) {
     return (
       <div className="space-y-2">
         <Label htmlFor={`${baseId}-${key}`}>{label}</Label>
@@ -471,7 +437,6 @@ function AddDeviceRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddDe
         onEnter={() => void settle(draft, true)}
       />
       {select("platform", DEVICE_FIELD_LABELS.platform, DEVICE_PLATFORM_OPTIONS)}
-      {select("transport", DEVICE_FIELD_LABELS.transport, DEVICE_TRANSPORT_OPTIONS)}
       <Button type="button" variant="ghost" size="sm" onClick={onDiscard}>
         {DISCARD_DEVICE_LABEL}
       </Button>

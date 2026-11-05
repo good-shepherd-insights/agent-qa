@@ -1,24 +1,14 @@
 // The knowledge maintenance verbs: drain, rebuild-index, rollback, purge.
-//
-// 2026-08-02 (Phase 387 plan 09, D-20): this file's three firewall-ledger entries are cleared,
-// and what happened is an IMPORT-TOPOLOGY migration — no subcommand gained, lost or changed a
-// behaviour. Each capability now arrives through an edge a surface is sanctioned to name:
-//
-//   knowledge root      the CLI's own config helper, which is where every other verb resolves it
-//   build ordinals      the local composition's build-ordinal edge (agent-local composition)
-//   masking helpers     the agent barrel's re-exports, exactly as the `fn` invoker takes them
 
 import { randomUUID } from 'node:crypto'
 import { readdirSync } from 'node:fs'
 import { userInfo } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { buildPromotionPostureResolver, promotionPostureResolverForHost, renderPromotionLine } from '../curation/promotion-posture.js'
-import { createReplayGatePortForHost } from '../gates/replay-gate-host.js'
+import { renderPromotionLine } from '../curation/promotion-line.js'
 
 import {
   BuildOrdinalReservationError,
   LOCAL_CURATION_CAPABILITIES,
-  latestBuildOrdinal,
   LOCAL_DAEMON_CAPABILITIES,
   reserveBuildOrdinalForProducts,
   resolveRunExecutionContext,
@@ -34,6 +24,11 @@ import type {
   RollbackReport,
   WriterLeaseAuthority,
 } from '@vostride/agent-qa-agent-local'
+import {
+  guardJsonText,
+  printRunText,
+  reserveStdoutForData,
+} from '@vostride/agent-qa-core/run-text-output'
 import { asRecordId, maskPayloadTree } from '@vostride/agent-qa-schema'
 import type { MaskFn, OriginClass } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
@@ -65,12 +60,8 @@ import {
   type RemoveRegistrationOutcome,
 } from '../daemon/registration.js'
 import { daemonSocketOwnershipFor, unlinkDaemonSocket } from '../daemon/server.js'
-import { trustPriorsForHost } from '../curation/trust-priors.js'
 
-// The eleven maintenance verbs, taken off the local host's curation capabilities rather than
-// imported from the knowledge package directly (D-14). Bound once here so every call site below is
-// the line it always was: this phase moves where the verbs come FROM and changes nothing about what
-// the command does with them.
+// Taken off the local host's curation capabilities rather than imported from the knowledge package.
 const {
   acquireWriterLease,
   purgeAffectedSetFingerprint,
@@ -110,13 +101,7 @@ interface PurgeOptions {
 export interface DrainOptions {
   status?: boolean
   json?: boolean
-  /**
-   * Quarantined registration paths a routing attempt left behind (WR-03). NOT a CLI flag.
-   *
-   * It rides the options object because that is the one value every drain exit already receives:
-   * a router that computed the evidence next to a single `return` is how three of the four exits
-   * came to report nothing, and re-deriving it at each exit would reproduce that by hand.
-   */
+  // Not a CLI flag: it rides the options object every drain exit receives, so no exit drops it.
   quarantined?: readonly string[]
 }
 
@@ -239,10 +224,7 @@ async function resolveKnowledgePaths(command: Command): Promise<KnowledgePaths> 
   }
 }
 
-/**
- * The declared mask for this invocation, read once at start (E3): a secrets file that cannot be
- * read refuses the command before anything else runs.
- */
+// Read once at start: a secrets file that cannot be read refuses the command before anything runs.
 function declaredMaskFor(command: Command): MaskFn {
   const configPath = resolve(globalOptions(command).config ?? 'agent-qa.config.yaml')
   const declaredSecrets = createDeclaredSecretMask(configPath)
@@ -250,22 +232,21 @@ function declaredMaskFor(command: Command): MaskFn {
   return declaredSecrets.mask
 }
 
-// 2026-10-14 (441-14, D-07): everything this file prints is masked and never restored; JSON is
-// masked leaf by leaf before it is serialized. 2026-10-15 (441-62, IN-A07): keys too.
+// Everything printed is masked and never restored; JSON is masked by key and leaf first.
 function emitJson(mask: MaskFn, value: unknown): void {
-  console.log(JSON.stringify(maskPayloadTree(value, mask), null, 2))
+  console.log(guardJsonText(JSON.stringify(maskPayloadTree(value, mask), null, 2)))
 }
 
 function emitHuman(mask: MaskFn, text: string, stream: OutputStream = 'stdout'): void {
-  const rendered = `${mask(text)}\n`
-  if (stream === 'stderr') process.stderr.write(rendered)
-  else process.stdout.write(rendered)
+  const target = stream === 'stderr' ? process.stderr : process.stdout
+  printRunText(mask(text), (block) => target.write(`${block}\n`))
 }
 
 function printUnavailable(error: DeclaredSecretsUnavailableError): void {
   const [first, ...rest] = error.lines
-  if (first !== undefined) console.error(pc.red(first))
-  for (const line of rest) console.error(pc.dim(line))
+  if (first === undefined) return
+  printRunText([pc.red(first), ...rest.map((line) => pc.dim(line))].join('\n'),
+    (text) => console.error(text))
 }
 
 // A refusal raised before the loader exists has nothing to mask with.
@@ -276,7 +257,7 @@ function reportErrorLine(line: string, error: unknown, mask: MaskFn | undefined)
     return
   }
   if (mask === undefined) {
-    process.stderr.write(`${pc.red(line)}\n`)
+    printRunText(pc.red(line), (text) => process.stderr.write(`${text}\n`))
     return
   }
   try {
@@ -389,13 +370,7 @@ function renderRemainingDisposition(work: RemainingCurationWork): string {
     + `quarantined ${work.quarantined})`
 }
 
-/**
- * Append the same provenance record a daemon session appends, for a session run inline.
- *
- * D-16's receipt chain answers "who drained what, and what was left". Once the one-shot host
- * can recover a wedged daemon's queue, the chain would be silent about exactly the sessions
- * that mattered most unless the recovering host attests its own.
- */
+// Attests an inline drain like a daemon session, so the receipt chain covers recovered queues.
 function recordInlineDrainSession(
   paths: KnowledgePaths,
   report: Awaited<ReturnType<typeof drainQueue>>,
@@ -422,26 +397,11 @@ function recordInlineDrainSession(
 async function drainInline(
   paths: KnowledgePaths,
   options: DrainOptions,
-  trustPriors: ReturnType<typeof trustPriorsForHost>,
   mask: MaskFn,
 ): Promise<void> {
-  const resolveTrustPriors = trustPriors.resolve
-  const posture = await buildPromotionPostureResolver({ configPath: paths.configPath,
-    replayGate: createReplayGatePortForHost({ configPath: paths.configPath, agentQaRoot: paths.runtimeRoot, resolveTrustPriors }),
-    knowledgeRoot: paths.knowledgeRoot, agentQaRoot: paths.runtimeRoot,
-    canaryFacts: LOCAL_CURATION_CAPABILITIES.readCanaryPostureFacts,
-    lowerTrustShares: LOCAL_CURATION_CAPABILITIES.readLowerTrustShares,
-    currentBuildOrdinal: product => latestBuildOrdinal({ root: paths.runtimeRoot, product }),
-  })
-  const resolvePromotionPosture = promotionPostureResolverForHost(
-    posture,
-    message => emitHuman(mask, message, 'stderr'),
-  )
   const seenCandidateIds = new Set<string>()
   let inlineAuthority: { leaseId: string; epoch: number } | undefined
   const report = await drainQueue({
-    priors: resolveTrustPriors(),
-    ...(resolvePromotionPosture === undefined ? {} : { resolvePromotionPosture }),
     knowledgeRoot: paths.knowledgeRoot,
     author: FALLBACK_CURATOR_AUTHOR,
     executionContext: resolveRunExecutionContext(),
@@ -613,17 +573,7 @@ function removeClassifiedDrainRegistration(
   return removeRegistrationIfOwned(paths.runtimeRoot, classified.registration.instanceId)
 }
 
-/**
- * Reclaim the exactly-removed generation's own address, through startup's gate and no other.
- *
- * 386-34 left this socket on disk (WINDOWS #39) because the client had no way to prove a recorded
- * path was safe to delete; 386-38 built that proof and made it `unlinkDaemonSocket`'s own
- * precondition. So this is not a second, drain-local rule — it is the same function, given the
- * same scope, derived by the same helper the daemon's startup recovery uses. A refusal is not an
- * error: the registration is already compare-deleted and the drain has work to finish, so the
- * refusal is recorded as `socketRemoved: false` on the same `registration-recovered` record
- * startup writes, rather than raised or invented as a new event kind.
- */
+// Uses startup recovery's own `unlinkDaemonSocket` gate; a refusal records `socketRemoved: false`.
 function reclaimDrainRecoveredSocket(
   paths: KnowledgePaths,
   classified: RecoverableDaemonRegistration,
@@ -709,14 +659,7 @@ function collectStrandedQuarantine(
   if (outcome?.kind === 'changed-under-removal') stranded.push(outcome.quarantinePath)
 }
 
-/**
- * Refusals for a host this command must not recover from, and must not guess about.
- *
- * D-14's law in one place: a fresh holder keeps its lease and gets named; registration bytes
- * this command cannot parse select nothing at all. Either refusal also names any quarantined
- * evidence a prior removal attempt left behind (WR-03) — the refusal is the operator's only
- * output on these paths, so it is the only place the parked bytes can be reported.
- */
+// A fresh holder keeps its lease and is named; unparseable registration bytes select nothing.
 function refuseDrainRouting(
   outcome: ClassifyDaemonRegistrationOutcome,
   options: DrainOptions,
@@ -746,12 +689,7 @@ function refuseDrainRouting(
     return true
   }
   if (outcome.kind === 'unreachable-lease-fresh') {
-    /**
-     * CR-01 (round 5): the holder is absent exactly when the lease bytes could not be read, so
-     * this refusal names the errno on the file instead of a pid it never saw. Same verdict, same
-     * exit code, same law (a lease that cannot be read is held, never recoverable) — the only
-     * difference is which fact the operator is given to act on.
-     */
+    // The holder is absent when the lease could not be read, so the refusal names the file's errno.
     const holder = outcome.holder
     if (options.json === true) {
       emitJson(mask, {
@@ -794,7 +732,6 @@ function refuseDrainRouting(
 async function routeDrain(
   paths: KnowledgePaths,
   options: DrainOptions,
-  trustPriors: ReturnType<typeof trustPriorsForHost>,
   mask: MaskFn,
 ): Promise<void> {
   const classified = await classifyDrainHost(paths)
@@ -804,17 +741,11 @@ async function routeDrain(
   }
   if (refuseDrainRouting(classified, options, mask)) return
   if (classified.kind === 'absent') {
-    await drainInline(paths, options, trustPriors, mask)
+    await drainInline(paths, options, mask)
     return
   }
 
-  /**
-   * WR-03: the evidence ledger, hoisted above every exit that can follow a removal attempt.
-   *
-   * A predecessor's bytes parked under a name nobody reads is a fact about the SYSTEM, not about
-   * whichever branch the router happened to take next — so it is accumulated once here and read by
-   * the delegate, the two refusals, the contended exit and the inline drain alike.
-   */
+  // Hoisted above every exit after a removal attempt, so each exit reports parked evidence.
   const stranded: string[] = []
   const routed = (): DrainOptions => ({ ...options, quarantined: [...stranded] })
 
@@ -864,7 +795,7 @@ async function routeDrain(
   }
   const inline = routed()
   reportStrandedQuarantine(inline, mask)
-  await drainInline(paths, inline, trustPriors, mask)
+  await drainInline(paths, inline, mask)
 }
 
 function reportDrainError(error: unknown, mask: MaskFn | undefined): void {
@@ -1219,13 +1150,14 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .option('--json', 'output the drain result as JSON')
     .addHelpText(
       'after',
-      '\nAgentQA keeps three work lanes; this command drains the second only:\n'
+      '\nagent-qa keeps three work lanes; this command drains the second only:\n'
       + '  run queue        test executions dispatched by the dashboard server\n'
       + '  curation queue   knowledge curation work drained by this command\n'
       + '  agent job queue  durable background agent jobs in .agent-qa/agent-jobs.db\n',
     )
     .action(async (options: DrainOptions, drainCommand: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = options.json === true ? reserveStdoutForData() : undefined
       try {
         mask = declaredMaskFor(drainCommand)
         const paths = await resolveKnowledgePaths(drainCommand)
@@ -1236,10 +1168,11 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
           return
         }
 
-        const trustPriors = trustPriorsForHost({ configPath: paths.configPath })
-        await routeDrain(paths, options, trustPriors, mask)
+        await routeDrain(paths, options, mask)
       } catch (error) {
         reportDrainError(error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -1249,18 +1182,20 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .option('--json', 'output the typed RebuildReport as masked JSON')
     .action(async (options: RebuildOptions, rebuildCommand: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = options.json === true ? reserveStdoutForData() : undefined
       try {
         mask = declaredMaskFor(rebuildCommand)
         const paths = await resolveKnowledgePaths(rebuildCommand)
-        const trustPriors = trustPriorsForHost({ configPath: paths.configPath })
         const result = await withWriterLease('rebuild-index', paths.knowledgeRoot, mask, (writerAuthority) => (
-          rebuildIndex({ knowledgeRoot: paths.knowledgeRoot, writerAuthority, priors: trustPriors.resolve() })
+          rebuildIndex({ knowledgeRoot: paths.knowledgeRoot, writerAuthority })
         ))
         if (result.kind === 'refused') return
         if (options.json === true) emitJson(mask, result.value)
         else emitHuman(mask, renderRebuildReport(result.value))
       } catch (error) {
         reportError('rebuild-index', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -1275,12 +1210,12 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .option('--json', 'output the typed RollbackReport as masked JSON')
     .action(async (options: RollbackOptions, rollbackCommand: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = options.json === true ? reserveStdoutForData() : undefined
       try {
         mask = declaredMaskFor(rollbackCommand)
         const selector = rollbackSelector(options)
         const paths = await resolveKnowledgePaths(rollbackCommand)
-        // Running the command is the intent (Phase 432 D-14). The preview is still resolved and
-        // shown outside the lease, and the lease rechecks it before the first write.
+        // The preview is resolved outside the lease, and the lease rechecks it before writing.
         const previewInput = rollbackInput(selector, paths, 0)
         const previewAffected = resolveRollbackAffectedSet(previewInput)
         const previewFingerprint = rollbackPreviewFingerprint(previewAffected)
@@ -1316,6 +1251,8 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
         else emitHuman(mask, renderRollbackReport(leaseResult.value.report))
       } catch (error) {
         reportError('rollback', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -1326,13 +1263,13 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
     .option('--json', 'output the typed PurgeReceipt as masked JSON')
     .action(async (recordIdValue: string, options: PurgeOptions, purgeCommand: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = options.json === true ? reserveStdoutForData() : undefined
       try {
         const purgeMask = declaredMaskFor(purgeCommand)
         mask = purgeMask
         const recordId = asRecordId(recordIdValue)
         const paths = await resolveKnowledgePaths(purgeCommand)
-        // The explicit record id is the whole selection (Phase 432 D-14): no repeated id, no
-        // prompt. A target that changes between this preview and the lease is refused below.
+        // The explicit record id is the whole selection; a target changed before the lease refuses.
         const preview = resolvePurgeAffectedSet({
           knowledgeRoot: paths.knowledgeRoot,
           recordId,
@@ -1395,6 +1332,8 @@ export function registerKnowledgeMaintainCommands(command: Command): void {
         )
       } catch (error) {
         reportError('purge', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 }

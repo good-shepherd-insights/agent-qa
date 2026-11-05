@@ -42,7 +42,7 @@ function sha(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-describe('BNDL-03 event-sourced trust derivation acceptance', () => {
+describe('event-sourced trust derivation acceptance', () => {
   let root: string
 
   beforeEach(() => {
@@ -57,7 +57,6 @@ describe('BNDL-03 event-sourced trust derivation acceptance', () => {
     return {
       knowledgeRoot: join(root, 'agent-qa-knowledge'),
       productKey,
-      commitArtifacts: 'none',
     }
   }
 

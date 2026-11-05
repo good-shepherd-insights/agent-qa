@@ -147,7 +147,7 @@ function snapshotTree(root: string): string[] {
   return snapshot
 }
 
-describe('queue and recovery writer-authority fencing (CR-02)', () => {
+describe('queue and recovery writer-authority fencing', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -247,7 +247,6 @@ describe('queue and recovery writer-authority fencing (CR-02)', () => {
     const config = {
       knowledgeRoot,
       productKey: 'queue-authority-fencing',
-      commitArtifacts: 'none' as const,
     }
     const generations = Array.from(
       { length: supersededGenerations + 1 },

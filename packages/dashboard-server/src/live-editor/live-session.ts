@@ -1,11 +1,15 @@
 import { randomUUID } from 'node:crypto'
 import { dirname, resolve as resolvePath } from 'node:path'
+import { format } from 'node:util'
 import {
   AUTH_STATE_SCHEMA_VERSION,
   MobileSetupError,
   PlannerConfigSchema,
   SuiteDefinitionSchema,
   TestDefinitionSchema,
+  TimeoutConfigSchema,
+  getAgentQaVersion,
+  printRunText,
   readAuthStateMetadata,
   resolveAuthStatePaths,
   writeAuthStateFiles,
@@ -40,7 +44,7 @@ import type {
   HookDefinition,
   MobilePlatform,
 } from '@vostride/agent-qa-core'
-import { buildProductionRefusal, distinctInFirstOccurrenceOrder, resolvePlannerLimits } from '@vostride/agent-qa-schema'
+import { resolvePlannerLimits } from '@vostride/agent-qa-schema'
 import type { DeclaredModelProfile, PlannerLimits } from '@vostride/agent-qa-schema'
 import { parse as parseYaml } from 'yaml'
 import type {
@@ -78,62 +82,8 @@ import type {
   ServerMessage,
 } from './types.js'
 
-/**
- * What the current config declares about the one target a live session names (432 D-18).
- *
- * A session drives at most one target. It is production only when the request names a target the
- * config declares `environment: production`; a raw URL with no target name, or a name the config
- * does not declare, is not production. `allowProduction` is the config's top-level key, and only
- * the literal `true` opts in.
- */
-export interface LiveTargetProduction {
-  readonly productionTargetNames: readonly string[]
-  readonly allowProduction: boolean
-}
-
-/** A live session refused because its target is production and the config has not opted in. */
-export class LiveProductionRefusedError extends Error {
-  readonly productionTargetNames: readonly string[]
-
-  constructor(productionTargetNames: readonly string[]) {
-    super(buildProductionRefusal(productionTargetNames))
-    this.name = 'LiveProductionRefusedError'
-    this.productionTargetNames = distinctInFirstOccurrenceOrder(productionTargetNames)
-  }
-}
-
 function isConfigRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-/** The target name a session is labelled with: trimmed, and absent when blank. */
-function liveTargetName(targetName: unknown): string | undefined {
-  if (typeof targetName !== 'string') return undefined
-  const trimmed = targetName.trim()
-  return trimmed.length > 0 ? trimmed : undefined
-}
-
-/**
- * Read the current config for the target a session names. The request supplies the name only;
- * the environment and the opt-in come from the config file as it is now.
- */
-export async function resolveLiveTargetProduction(
-  configManager: ConfigManager | undefined,
-  targetName: string | undefined,
-): Promise<LiveTargetProduction> {
-  const name = liveTargetName(targetName)
-  if (name === undefined || configManager === undefined) {
-    return { productionTargetNames: [], allowProduction: false }
-  }
-  const config = await readConfigValues(configManager)
-  const registry = isConfigRecord(config.registry) ? config.registry : undefined
-  const targets = registry !== undefined && isConfigRecord(registry.targets) ? registry.targets : undefined
-  const declared = targets !== undefined && Object.hasOwn(targets, name) ? targets[name] : undefined
-  const production = isConfigRecord(declared) && declared.environment === 'production'
-  return {
-    productionTargetNames: production ? [name] : [],
-    allowProduction: config.allowProduction === true,
-  }
 }
 
 /** The workspace readers the create door already holds, by canonical id. */
@@ -159,11 +109,18 @@ async function readEntityUse(
   }
 }
 
-/** 436 D-02/D-05: a layer sets a planner limit the CLI refuses, so the live editor refuses it too. */
+// Thrown when a layer sets a planner limit the CLI refuses.
 export class LivePlannerLimitsRefusedError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'LivePlannerLimitsRefusedError'
+  }
+}
+
+export class LiveNavigationTimeoutRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LiveNavigationTimeoutRefusedError'
   }
 }
 
@@ -175,8 +132,9 @@ function shownLimitValue(value: unknown): string {
   return typeof value === 'number' ? String(value) : JSON.stringify(value) ?? String(value)
 }
 
-// Only the limit leaves are checked, with the core schemas the CLI applies to them; other `use`
-// keys are not the live editor's to refuse.
+// Only the `use` leaves the live editor applies are checked, with the core schemas the CLI applies
+// to them: the limit leaves here and `timeout.navigation` in resolveLiveNavigationTimeoutMs. Other
+// `use` keys are not the live editor's to refuse.
 function useLeafIssue(schema: EntityUseSchema, key: LiveLimitLeaf, value: unknown): string | undefined {
   const parsed = schema.safeParse({ planner: { [key]: value } })
   return parsed.success ? undefined : parsed.error.issues[0]?.message ?? 'invalid value'
@@ -187,8 +145,7 @@ function projectLeafIssue(key: LiveLimitLeaf, value: unknown): string | undefine
   return parsed.success ? undefined : parsed.error.issues[0]?.message ?? 'invalid value'
 }
 
-// A planner key core retired is named only by core's retired-key scan, as a custom issue at
-// ['planner', key]; the live editor asks core rather than spelling the key (436 D-18 census).
+// A retired planner key is named by core's retired-key scan; the live editor never spells the key.
 function retiredPlannerKeyIssue(schema: EntityUseSchema, key: string, value: unknown): string | undefined {
   const parsed = schema.safeParse({ planner: { [key]: value } })
   if (parsed.success) return undefined
@@ -221,11 +178,7 @@ function refuseInvalidLimits(
   }
 }
 
-/**
- * 436 D-03: the limits a live session runs under — the project config's `use` block, then each
- * entity's `use` in order (a suite, then a test of it) when the door can load it. An entity it
- * cannot load contributes nothing.
- */
+// The project config's `use`, then each entity's `use` in order; an unloadable entity adds nothing.
 export async function resolveLivePlannerLimits(
   configManager: ConfigManager | undefined,
   entities: EntityRef | readonly EntityRef[] | undefined,
@@ -244,12 +197,40 @@ export async function resolveLivePlannerLimits(
   return resolvePlannerLimits(config.use, ...uses)
 }
 
-/** The refusal a finding calls for, or nothing when the target is not production or is opted in. */
-export function liveProductionRefusal(
-  found: LiveTargetProduction,
-): LiveProductionRefusedError | undefined {
-  if (found.productionTargetNames.length === 0 || found.allowProduction) return undefined
-  return new LiveProductionRefusedError(found.productionTargetNames)
+/**
+ * The navigation bound a live web session runs under, in milliseconds: the project config's
+ * `use.timeout.navigation`, then each entity's in order, parsed with the schema the CLI applies.
+ * A value the CLI refuses is refused here too. Undefined when no layer sets one, so the adapter
+ * keeps its default.
+ */
+export async function resolveLiveNavigationTimeoutMs(
+  configManager: ConfigManager | undefined,
+  entities: EntityRef | readonly EntityRef[] | undefined,
+  readers: LiveEntityDefinitionReaders,
+): Promise<number | undefined> {
+  const config = configManager === undefined ? {} : await readConfigValues(configManager)
+  const layers: Array<{ layer: string; use: unknown }> = [
+    { layer: 'project config', use: config.use },
+  ]
+  for (const entity of ([] as EntityRef[]).concat(entities ?? [])) {
+    const use = await readEntityUse(entity, readers)
+    layers.push({ layer: `${entity.type} file ${entity.id}`, use })
+  }
+  let navigation: number | undefined
+  for (const { layer, use } of layers) {
+    if (!isConfigRecord(use) || !isConfigRecord(use.timeout)) continue
+    if (!Object.hasOwn(use.timeout, 'navigation')) continue
+    const value = use.timeout.navigation
+    const parsed = TimeoutConfigSchema.shape.navigation.safeParse(value)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]?.message ?? 'invalid value'
+      throw new LiveNavigationTimeoutRefusedError(
+        `${layer} sets use.timeout.navigation to ${shownLimitValue(value)}: ${issue}. The CLI refuses this file too.`,
+      )
+    }
+    navigation = parsed.data
+  }
+  return navigation
 }
 
 export const IDLE_TIMEOUT_MS = 5 * 60 * 1000
@@ -438,8 +419,7 @@ export class LiveSession {
   private planner: LLMPlanner | null = null
   private verifier: LLMVerifier | null = null
   private modelProfiles: { planner: DeclaredModelProfile; verifier: DeclaredModelProfile } | null = null
-  // D-14 (Phase 360): the run-scoped storage-state store, constructed lazily on first use and
-  // rooted at the session's `.agent-qa` runtime dir (the FsStorageStateStore rooting idiom).
+  // Built lazily on first use, rooted at the session's `.agent-qa` runtime dir.
   private storageStateStore: StorageStatePort | null = null
   private model: LanguageModel | null = null
   private variableStore: VariableStore | null = null
@@ -467,14 +447,13 @@ export class LiveSession {
   private mobileAppiumLease: MobileLiveAppiumLease | null = null
   private secretStore: SecretStore | undefined
   private secretRedactor: SecretRedactor | undefined
-  // 428 D-07: one hub per session, handle 0, created once the adapter exists. A session whose
-  // setup hooks failed has no adapter and therefore no hub; its subject declares `none`.
+  // One hub per session at handle 0, created once the adapter exists; no adapter means no hub.
   private liveHub: LiveStreamHub | null = null
   private attachment: LiveEditorAttachment | null = null
   private resolveEnded: () => void = () => {}
   private readonly ended: Promise<void>
   private cleanupRun: Promise<void> | null = null
-  // RESEARCH P4: which control socket is the current one. Only its close may detach the session.
+  // Which control socket is the current one; only its close may detach the session.
   private attachmentGeneration = 0
   private releaseAttachment: ((reason: LiveAttachmentRelease) => void) | null = null
 
@@ -507,11 +486,7 @@ export class LiveSession {
     this.liveHub = hub
   }
 
-  /**
-   * Make a control socket the current one. `release` is how the session lets go of it later: the
-   * previous attachment's is called with `superseded` here (428 WR-01), so one socket drives the
-   * session at a time.
-   */
+  // The previous attachment's `release` gets `superseded`, so one socket drives the session.
   beginAttachment(release?: (reason: LiveAttachmentRelease) => void): number {
     const previous = this.releaseAttachment
     this.attachmentGeneration += 1
@@ -534,11 +509,7 @@ export class LiveSession {
     this.pendingMessages = []
   }
 
-  /**
-   * A command's reply, for whichever control socket is attached now (428 CR-01). A command can
-   * outlive the socket that issued it, and its outcome belongs to the page, not to that socket:
-   * with none attached it is held and flushed to the next one.
-   */
+  // A reply can outlive its socket, so it goes to the current socket or waits for the next one.
   deliver(message: ServerMessage): void {
     if (this.messageSink) {
       this.messageSink(message)
@@ -677,7 +648,7 @@ export class LiveSession {
       }
 
       const result = await runHooks([hookDef], {
-        executor: new DockerHookExecutor(),
+        executor: new DockerHookExecutor({ version: getAgentQaVersion() }),
         env: this.getHookEnvVars(),
         secretStore: this.secretStore,
         secretRedactor: this.secretRedactor,
@@ -764,7 +735,6 @@ export class LiveSession {
         ? {
             name: config.device.name,
             platform,
-            transport: 'local',
             match: config.device,
           }
         : undefined,
@@ -839,19 +809,6 @@ export class LiveSession {
   }
 
   async initialize(config: LiveSessionConfig): Promise<void> {
-    // 432 D-18: refuse a production target before the first setup effect. The door has already
-    // asked, and this asks again because `initialize` is callable apart from it. A name the door
-    // found production stays refused here unless the config read now opts in.
-    const found = await resolveLiveTargetProduction(this.deps.configManager, config.targetName)
-    const refusal = liveProductionRefusal({
-      productionTargetNames: distinctInFirstOccurrenceOrder([
-        ...(config.production?.productionTargetNames ?? []),
-        ...found.productionTargetNames,
-      ]),
-      allowProduction: found.allowProduction,
-    })
-    if (refusal !== undefined) throw refusal
-
     this.platform = config.platform
     this.targetName = typeof config.targetName === 'string' && config.targetName.trim().length > 0
       ? config.targetName.trim()
@@ -890,7 +847,13 @@ export class LiveSession {
     } else {
       const { WebPlatformAdapter } = await import('@vostride/agent-qa-web')
       const adapter = new WebPlatformAdapter()
-      await adapter.setup({ platform: 'web', browser: { name: 'chromium', headless: config.headless ?? true } })
+      await adapter.setup({
+        platform: 'web',
+        browser: { name: 'chromium', headless: config.headless ?? true },
+        ...(config.navigationTimeoutMs === undefined
+          ? {}
+          : { timeouts: { navigation: config.navigationTimeoutMs } }),
+      })
       this.adapter = adapter
 
       if (config.url) {
@@ -911,7 +874,7 @@ export class LiveSession {
     )
     const { profile, auth } = toModelProfileAndAuth(modelIdentity, runtimeAuth)
     const capabilities = resolveCapabilities(profile)
-    // 439 D-19: the live editor resolves vision as the CLI does, from the model it uses.
+    // The live editor resolves vision as the CLI does, from the model it uses.
     this.visionGate = resolveVisionGate({ vision: visionFromConfig(modelVision, capabilities) })
     const plannerDeclared: DeclaredModelProfile = {
       provider: profile.provider,
@@ -927,8 +890,7 @@ export class LiveSession {
     }
     this.modelProfiles = { planner: plannerDeclared, verifier: verifierDeclared }
     this.model = createModel(profile, auth, (text) => this.secretRedactor?.redactString(text) ?? text)
-    // Both roles share this.model here, but hold separate accounting instances per role so
-    // each owns its own cache anchor (D-11); the D-04 lazy thunk re-reads `profile` per call.
+    // Separate accounting per role so each owns its own cache anchor; the thunk re-reads `profile`.
     const plannerAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
     const verifierAccounting = createTokenAccounting({ getCapabilities: () => resolveCapabilities(profile) })
     this.planner = new LLMPlanner(this.model, config.platform, undefined, undefined, plannerAccounting, plannerDeclared)
@@ -967,7 +929,7 @@ export class LiveSession {
 
         const startedAt = performance.now()
         try {
-          const result = await new DockerHookExecutor().execute(hookDef, {
+          const result = await new DockerHookExecutor({ version: getAgentQaVersion() }).execute(hookDef, {
             env: this.getHookEnvVars(),
             secretEnv: resolveSecretEnv(this.secretStore),
             secretRedactor: this.secretRedactor,
@@ -1152,12 +1114,7 @@ export class LiveSession {
     return this.redact(result)
   }
 
-  // Inner step execution — no gating. Callers must own the executing/status
-  // lifecycle (executeStepCommand for single steps, executeTestCommand for
-  // the per-test loop that runs many steps under one outer gate).
-  // D-14 (Phase 360): lazily construct the run-scoped storage-state store, rooted at the session's
-  // `.agent-qa` runtime dir. All fs writes live in runner-local (validate:arch storageNeutral);
-  // the loop records only { name, fingerprint }. Absent configPath falls back to the cwd root.
+  // Lazily built and rooted at the session's `.agent-qa` dir; fs writes stay in runner-local.
   private async getStorageStateStore(): Promise<StorageStatePort> {
     let store = this.storageStateStore
     if (!store) {
@@ -1326,8 +1283,7 @@ export class LiveSession {
     }
 
     try {
-      // 436 D-03: a test runs at its own effective limits (project, suite, then its own `use`),
-      // resolved once before its first step, exactly as the CLI suite producer resolves a member.
+      // A test runs at its own effective limits, resolved once before its first step.
       let testLimits: PlannerLimits
       try {
         testLimits = this.plannerLimitsForTest !== undefined && testDraft.testId.length > 0
@@ -1335,7 +1291,9 @@ export class LiveSession {
           : this.plannerLimits ?? resolvePlannerLimits()
       } catch (error) {
         if (!(error instanceof LivePlannerLimitsRefusedError)) throw error
-        console.warn(`[live-session] executeTestCommand: ${error.message}`, { testName: testDraft.testName })
+        const line = `[live-session] executeTestCommand: ${error.message}`
+        const detail = { testName: testDraft.testName }
+        printRunText(format(line, detail), () => console.warn(line, detail))
         return this.redact({
           status: 'failed',
           duration: performance.now() - start,
@@ -1346,9 +1304,7 @@ export class LiveSession {
         })
       }
 
-      // Per-test setup (D-09). Per-test setup failure short-circuits the
-      // test AND skips per-test teardown, matching suite/runner.ts:230 break
-      // (Pitfall 2). Suite-level teardown still fires at session cleanup.
+      // A failed per-test setup skips the test and its teardown; suite teardown runs at cleanup.
       const setupHookPayloads: LiveHookPayload[] = []
       const setupResult = await this.runLifecycleHooksCapturing(
         'setup',
@@ -1361,11 +1317,15 @@ export class LiveSession {
         const detail = failedHook
           ? `Setup hook "${failedHook.hookName}" failed${failedHook.error ? `: ${failedHook.error}` : ''}${failedHook.stderr ? ` — ${failedHook.stderr.split('\n')[0].slice(0, 200)}` : ''}`
           : 'Per-test setup hook failed'
-        console.warn(`[live-session] executeTestCommand: ${detail}`, {
+        const line = `[live-session] executeTestCommand: ${detail}`
+        const context = {
           testName: testDraft.testName,
           setupHooks: testDraft.setup,
-          failedHook: failedHook ? { name: failedHook.hookName, stderr: failedHook.stderr, error: failedHook.error } : null,
-        })
+          failedHook: failedHook
+            ? { name: failedHook.hookName, stderr: failedHook.stderr, error: failedHook.error }
+            : null,
+        }
+        printRunText(format(line, context), () => console.warn(line, context))
         return {
           status: 'failed',
           duration: performance.now() - start,
@@ -1376,9 +1336,7 @@ export class LiveSession {
         }
       }
 
-      // Shared browser context (D-01): each step reuses the same adapter
-      // instance. Per-step context carries the TEST's name/context, not
-      // the suite's, so the LLMPlanner matches production runTest behaviour.
+      // Steps reuse the shared adapter, with the test's name and context, as `runTest` does.
       const stepResults: LiveStepResultPayload[] = []
       const perStepDraft: LiveDraftMetadata = {
         testName: testDraft.testName,
@@ -1430,7 +1388,7 @@ export class LiveSession {
         }
       }
 
-      // Per-test teardown always fires when steps began (D-09 + D-25).
+      // Per-test teardown always fires when steps began.
       const teardownHookPayloads: LiveHookPayload[] = []
       const teardownResult = await this.runLifecycleHooksCapturing(
         'teardown',
@@ -1459,7 +1417,9 @@ export class LiveSession {
           : 'Teardown hook failed'
       }
       if (topLevelError) {
-        console.warn(`[live-session] executeTestCommand: ${topLevelError}`, { testName: testDraft.testName })
+        const line = `[live-session] executeTestCommand: ${topLevelError}`
+        const detail = { testName: testDraft.testName }
+        printRunText(format(line, detail), () => console.warn(line, detail))
       }
 
       return this.redact({
@@ -1477,10 +1437,7 @@ export class LiveSession {
     }
   }
 
-  // Thin wrapper around runLifecycleHooks that also captures the dispatched
-  // hook payloads (hook-complete) for inclusion in the LiveTestResultPayload.
-  // The capture sits beside the message sink rather than wrapping it, so a
-  // control socket that reattaches mid-hook keeps its sink (428 CR-01).
+  // Captures dispatched hook payloads beside the message sink, so a reattached socket keeps it.
   private async runLifecycleHooksCapturing(
     phase: 'setup' | 'teardown',
     hookIds: string[],
@@ -1652,8 +1609,7 @@ export class LiveSession {
 
   startIdleTimer(onExpire: () => void): void {
     this.clearIdleTimer()
-    // 428 WR-02: an ended session has nothing left to expire, and the window never holds the
-    // process open on its own.
+    // An ended session has nothing left to expire, and the window never holds the process open.
     if (this.cleanupRun !== null) return
     this.idleTimer = setTimeout(onExpire, IDLE_TIMEOUT_MS)
     this.idleTimer.unref?.()
@@ -1676,13 +1632,11 @@ export class LiveSession {
   private async runCleanup(): Promise<void> {
     this.clearIdleTimer()
     this.readyForInteraction = false
-    // 428 WR-02: the attached control socket is told the session is gone, however it ended.
+    // The attached control socket is told the session is gone, however it ended.
     const release = this.releaseAttachment
     this.releaseAttachment = null
     release?.('ended')
-    // The hub closes first, so subscribers hear 'closed' and the screencast stops before the
-    // browser that produces it goes away. Its close waits on the screencast's CDP stop, which a
-    // wedged renderer never answers, so the wait is bounded and teardown always goes on (428 WR-03).
+    // The hub closes first; its wait on the CDP stop is bounded, as a wedged renderer never answers
     const hub = this.liveHub
     this.liveHub = null
     if (hub) {

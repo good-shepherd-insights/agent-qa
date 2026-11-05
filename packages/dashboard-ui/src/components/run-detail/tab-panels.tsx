@@ -31,12 +31,9 @@ interface TabPanelsProps extends OverviewPlayerProps {
   executionLogs?: ExecutionLogEntry[]
   platform?: string
   pipelineRef?: React.RefObject<ReasoningPipelineHandle | null>
-  /**
-   * The Knowledge tab's whole input (407-02 · D-01). `undefined` is the read that has not landed
-   * — the page owns the one `runs.knowledge` client, and this component paints what it is handed.
-   */
+  // `undefined` is the read not yet landed; the page owns the one `runs.knowledge` client.
   knowledge?: KnowledgeView | undefined
-  /** 427 D-03: the page's step-reference callback and resolver; the tab only calls back. */
+  // The page's step-reference callback and resolver; the tab only calls back.
   knowledgeStepRefs?: StepRefContext
   onSelectStep?: (stepId: string) => void
 }
@@ -136,10 +133,7 @@ export function TabPanels({
         {evidenceTrigger('aria', 'aria', 'ARIA Tree')}
         {evidenceTrigger('a11y', 'a11y', 'A11y')}
         {/*
-          THE TRIGGER IS STATIC TAB METADATA (UI-SPEC, Knowledge tab trigger). It renders with its
-          six siblings whatever the `runs.knowledge` read is doing: the loading state and the error
-          state both live INSIDE the content, so the tab is always selectable and never lies about
-          whether there is something behind it.
+          The trigger always renders; loading and error states live inside the tab's content.
         */}
         <TabsTrigger value="knowledge" className="text-xs rounded-none flex-initial">Knowledge</TabsTrigger>
       </TabsList>

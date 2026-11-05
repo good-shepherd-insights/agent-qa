@@ -1,15 +1,3 @@
-// THE CEILING'S ARITHMETIC (Phase 392 plan 09, CHAT-03 / D-15).
-//
-// A GATE THAT CANNOT FAIL IS WORSE THAN NO GATE, so the two things this file proves are that the
-// comparison FAILS when it should and PASSES at the boundary — in that order of importance. Every
-// case below is a pair: the count that must pass and the next count up, which must not.
-//
-// THE PRECISION CASES ARE NOT PEDANTRY. The failure this codebase has actually shipped is a
-// threshold that rounds in the implementer's favour: a rate expressed as a percentage and compared
-// after rounding turns 20.1% into 20% and reports a breached ceiling as met. `1000 / 201` below is
-// exactly that case, and it is the reason the ceiling is a `{ num, den }` rational compared by
-// cross-multiplication over integers rather than a float.
-
 import { describe, expect, it } from 'vitest'
 import type { ChatSessionEvent } from '@vostride/agent-qa-schema'
 
@@ -43,9 +31,7 @@ describe('the ceiling is a pinned rational, not a float', () => {
     expect(MARK_UNHANDLED_CEILING.num).toBeGreaterThanOrEqual(0)
   })
 
-  it('is the 1/5 the retune comment names', () => {
-    // The pin is quoted in SUMMARY files and in the retune comment; a silent change to it would
-    // make every previously recorded rate incomparable without saying so.
+  it('is one in five', () => {
     expect(MARK_UNHANDLED_CEILING).toEqual({ num: 1, den: 5 })
   })
 })
@@ -66,7 +52,7 @@ describe('computeMarkUnhandledRate projects counts, never a division', () => {
     })
   })
 
-  it('stores no quotient — the pair of counts IS the answer (D-15)', () => {
+  it('stores no quotient — the pair of counts IS the answer', () => {
     // The field rate is a projection over session logs using this same function, and a stored
     // quotient would be a second number that could disagree with the counts it came from.
     const counts = computeMarkUnhandledRate(events(['mark_unhandled']), 3)
@@ -75,13 +61,13 @@ describe('computeMarkUnhandledRate projects counts, never a division', () => {
 })
 
 describe('ceilingExceeded is strict greater-than on cross-multiplied integers', () => {
-  it('PASSES a count exactly at the ceiling (CHAT-03/boundary, the low side)', () => {
+  it('PASSES a count exactly at the ceiling (boundary, the low side)', () => {
     // 2/10 is exactly 1/5. The gate must not fail a corpus that sits on its own pin, or the pin
     // would be a number nobody could ever satisfy.
     expect(ceilingExceeded({ unhandledCount: 2, denominator: 10 })).toBe(false)
   })
 
-  it('FAILS one more than the ceiling (CHAT-03/boundary, the high side)', () => {
+  it('FAILS one more than the ceiling (boundary, the high side)', () => {
     expect(ceilingExceeded({ unhandledCount: 3, denominator: 10 })).toBe(true)
   })
 
@@ -90,7 +76,7 @@ describe('ceilingExceeded is strict greater-than on cross-multiplied integers', 
     expect(ceilingExceeded({ unhandledCount: 0, denominator: 1 })).toBe(false)
   })
 
-  it('FAILS 20.1% — the case a rounded percentage would report as met (CHAT-03/precision)', () => {
+  it('FAILS 20.1% — the case a rounded percentage would report as met (precision)', () => {
     // The whole reason the comparison is exact. An implementation computing `rate * 100` and
     // rounding to whole percent reads 20 here and passes; the cross-multiplied integers read
     // 201 * 5 = 1005 > 1000 * 1 = 1000 and fail.

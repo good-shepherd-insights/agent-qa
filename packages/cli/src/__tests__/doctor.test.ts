@@ -7,10 +7,7 @@ vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
 }))
 
-// 407-08: spread the real module rather than replacing it wholesale. doctor's knowledge rows reach
-// the real `foldRetrievalRung` through knowledge-local, and a TOTAL node:fs replacement makes that
-// package unloadable (its durable-fs layer names `openSync`/`fsyncSync` this suite never mocked).
-// The five entries below are the only ones any doctor row actually calls.
+// Spreads the real module: knowledge-local's durable-fs layer needs functions not mocked here.
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return {
@@ -27,17 +24,12 @@ vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(() => Promise.reject({ code: 'ENOENT' })),
 }))
 
-// checkDockerAvailable moved to runner-local in Phase 363 D-06 (doctor.ts imports it from there).
+// Doctor imports `checkDockerAvailable` from runner-local.
 vi.mock('@vostride/agent-qa-runner-local', () => ({
   checkDockerAvailable: vi.fn(() => Promise.resolve(true)),
 }))
 
-// 407 D-18: doctor's three knowledge rows reach their probes through the ONE composition edge
-// allowed to name knowledge-local (385 D-14/SC5), so that edge is what this suite replaces.
-//
-// `foldRetrievalRung` and `indexDbPath` are the REAL ones. Stubbing the fold here would let these
-// cells agree with a doctor that prints a different word from the one the runner records, which is
-// the exact disagreement D-17's one-fold rule exists to make impossible.
+// The fold and `indexDbPath` stay real, so doctor and the runner cannot disagree on the rung word.
 const knowledgeProbeStubs = vi.hoisted(() => ({
   classifyIndexFace: vi.fn<() => import('@vostride/agent-qa-agent-local').IndexFace>(
     () => ({ source: 'index' }),
@@ -47,8 +39,7 @@ const knowledgeProbeStubs = vi.hoisted(() => ({
   readEmbedderWorkerRegistration: vi.fn(() => ({ kind: 'absent' as const })),
 }))
 
-// 446-16 (D-32): the Embedder fix reads daemon liveness from the registration, as daemon stop does;
-// the real module reads agent-local daemon capabilities this suite does not bind.
+// The Embedder fix reads daemon liveness from the registration, as `daemon stop` does.
 const daemonRegistrationStubs = vi.hoisted(() => ({
   readDaemonRegistration: vi.fn(() => ({ kind: 'absent' as const })),
   processIsAlive: vi.fn(() => false),
@@ -61,13 +52,6 @@ vi.mock('@vostride/agent-qa-agent-local', async () => {
     '@vostride/agent-qa-knowledge-local',
   )
   return {
-    // 418-07: keep the newly bound read capabilities on this composition mock.
-    // These no-eval-root cells still exit before reading any knowledge bundles.
-    latestBuildOrdinal: vi.fn(() => 0),
-    LOCAL_CURATION_CAPABILITIES: {
-      readCanaryPostureFacts: knowledge.canaryPostureFactsFor,
-      readLowerTrustShares: knowledge.lowerTrustSharesFor,
-    },
     LOCAL_KNOWLEDGE_PROBES: {
       foldRetrievalRung: knowledge.foldRetrievalRung,
       indexDbPath: knowledge.indexDbPath,
@@ -173,8 +157,6 @@ vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
 
 import pc from 'picocolors'
 import { createDoctorCommand, type CheckStatus } from '../commands/doctor.js'
-// 407-30 (REVIEW IN-06): the renderer is its own module, so its symbols come from there. Only the
-// import paths moved — not one assertion in this file changed.
 import {
   DEFAULT_TERMINAL_WIDTH,
   IDENTITY_DECORATION,
@@ -230,42 +212,32 @@ const NATIVE_READY = {
   embedder: {},
 } as never
 
-/** The four knowledge rows between legacy memory and config validation. */
-const KNOWLEDGE_ROW_NAMES = ['Knowledge store', 'Embedder', 'Retrieval rung', 'Learning mode'] as const
+/** The three knowledge rows between legacy memory and config validation. */
+const KNOWLEDGE_ROW_NAMES = ['Knowledge store', 'Embedder', 'Retrieval rung'] as const
 
 const ESC = String.fromCharCode(27)
 const ANSI_PATTERN = new RegExp(`${ESC}\\[[0-9;]*m`, 'g')
 const stripAnsi = (text: string): string => text.replace(ANSI_PATTERN, '')
 
-/** 407-24: the emit loop's fix line, at SIX spaces — deeper than a row's four. */
+// The emit loop's fix line, at six spaces, deeper than a row's four.
 const FIX_LINE_PATTERN = /^ {6}Fix: /
-/** 407-24: a message line that moved beneath its row, at the same six-space indent. */
+// A message line moved beneath its row, at the same six-space indent.
 const CONTINUATION_PATTERN = /^ {6}\S/
 
-/** The strings the 407 UAT measured on the built cli, transcribed so the cells can pin the widths. */
+// Strings measured on the built cli, transcribed so the cells can pin the widths.
 const MEASURED_INDEX_PATH = 'agent-qa-knowledge/memory/index/knowledge.db'
 const MEASURED_FAIL_MESSAGE = `index at ${MEASURED_INDEX_PATH} could not be opened: corrupt`
 const MEASURED_FIX_INSTRUCTIONS =
   'Rebuild the index with `agent-qa knowledge rebuild-index`, or remove the corrupt file at '
   + `${MEASURED_INDEX_PATH} and re-run.`
 
-/**
- * The row template doctor composed BEFORE 407-24, transcribed from the pre-change emit loop
- * (`    {name}  {dots}  {message}  {status}` with `padDots`' 60-column target). The byte-identical
- * pins below build their expectation from this rather than from a snapshot, so a reader can see
- * exactly which bytes are being promised.
- */
+// The one-line row template (`padDots` to 60 columns), written out so the bytes are visible.
 function preChangeRow(name: string, message: string, statusWord: string): string {
   const dots = '.'.repeat(Math.max(2, 60 - (name.length + message.length)))
   return `    ${name}  ${dots}  ${message}  ${statusWord}`
 }
 
-/**
- * 407-24: wide enough that every row this suite renders still fits on ONE line, so the eighteen
- * existing `rowFor` call sites keep measuring exactly the pre-change bytes. Pinned here rather
- * than inherited from the terminal, because a row's shape must be decided by the cell and not by
- * whatever width the host running the suite happens to have.
- */
+// Wide enough for every row here to fit one line, and fixed so the host's terminal decides nothing.
 const WIDE_TEST_WIDTH = 200
 
 const ORIGINAL_STDOUT_COLUMNS = Object.getOwnPropertyDescriptor(process.stdout, 'columns')
@@ -288,24 +260,7 @@ function restoreTerminalWidth(): void {
   }
 }
 
-/**
- * A row as ONE string, however many lines it took (407-24).
- *
- * The recognition rule is mechanical and in TWO parts, and the order matters. A continuation line
- * is `CONTINUATION_PATTERN` — SIX spaces followed by a non-space, the indent the emit loop writes
- * beneath a row — and the constant is read rather than paraphrased, so this reader and the
- * 80-column census that reads the same constant cannot drift apart (407-30 · REVIEW WR-05). AND a
- * line matching `^ {6}Fix: ` ENDS the row unconditionally, tested BEFORE the indent test: the emit
- * loop prints the fix line at six spaces too, so an indent-only rule would silently swallow a
- * failing check's fix instructions into `rowFor('Knowledge store')`.
- *
- * That hazard is invisible to a "widen it and prove nothing changed" run: all eighteen existing
- * call sites assert with `toContain` on a substring that is present either way, so a WRONG helper
- * is green at that step. The terminator cell below is what proves the rule instead.
- *
- * ANSI is stripped before matching because the fix line is dimmed as a WHOLE — the escape sits
- * before its indent, so a raw `^ {6}` test would miss it on a colour-enabled host.
- */
+// A `Fix:` line ends the row before the indent test, because the fix line also sits at six spaces.
 function rowFor(name: string): string {
   const lines = consoleLogs.map(stripAnsi)
   const start = lines.findIndex(line => line.startsWith(`    ${name}  `))
@@ -336,15 +291,12 @@ describe('doctor command', () => {
     mockLoadProviderPluginsForRawConfig.mockResolvedValue()
     mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
     mockReadFileSync.mockReturnValue('')
-    // 407 D-18: a healthy knowledge substrate is the default posture; each knowledge cell below
-    // moves exactly the one axis it is about.
+    // A healthy knowledge substrate is the default; each knowledge cell moves only its own axis.
     knowledgeProbeStubs.classifyIndexFace.mockReturnValue({ source: 'index' })
     knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue(NATIVE_READY)
     knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'absent' })
     knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
-    // 407-24: pin the width every command-level cell renders at. Wide enough that every row
-    // still fits on one line, so these cells keep measuring the pre-change bytes and the shape
-    // of a row is decided by the cell rather than by this host's terminal.
+    // Pins the width every command-level cell renders at, so the host's terminal decides nothing.
     forceTerminalWidth(WIDE_TEST_WIDTH)
     // Clean env for consistent tests
     delete process.env.ANTHROPIC_API_KEY
@@ -404,12 +356,12 @@ describe('doctor command', () => {
     const configPath = resolve(process.cwd(), 'fixture', 'agent-qa.config.yaml')
     const legacyMemoryDir = resolve(process.cwd(), 'fixture', 'agent-qa-memory')
     mockExistsSync.mockImplementation(path => path === legacyMemoryDir)
+    const warning = `v1 memory data found at ${legacyMemoryDir} — no longer used by agent-qa; safe to delete`
+    forceTerminalWidth(warning.length + 120)
 
     await runDoctor(configPath)
 
-    expect(getOutput()).toContain(
-      `v1 memory data found at ${legacyMemoryDir} — no longer used by agent-qa; safe to delete`,
-    )
+    expect(getOutput()).toContain(warning)
     expect(getOutput()).toContain('WARN')
   })
 
@@ -1003,7 +955,7 @@ targets:
 
   it('Overall result: all pass → exit 0', async () => {
     Object.defineProperty(process, 'version', { value: 'v24.10.0', writable: true })
-    mockExistsSync.mockImplementation(path => !String(path).endsWith('agent-qa-eval'))
+    mockExistsSync.mockReturnValue(true)
     mockExecSync.mockReturnValue(Buffer.from('ok'))
     mockResolveLLMAuth.mockResolvedValue({
       kind: 'unauthenticated',
@@ -1023,7 +975,7 @@ targets:
         secretsFile: '.secrets.local',
       },
       registry: { llms: [{ name: 'default', provider: 'openai-compatible', model: 'model-name', baseURL: 'https://remote.example/api/v1' }] },
-      services: { cache: { dir: '.agent-qa/cache', ttl: '7d' }, logging: { level: 'warn' }, vision: { screenshotSize: '1m' } },
+      services: { cache: { dir: '.agent-qa/cache' }, logging: { level: 'warn' }, vision: { screenshotSize: '1m' } },
       use: {
         browser: { name: 'chromium', headless: true },
         timeout: { step: '30s', test: '10m', navigation: '10s' },
@@ -1056,11 +1008,10 @@ targets:
     const output = getOutput()
     expect(output).toContain('Install Node.js 24 or newer')
   })
-  // ---- 407 TRST-02: the three knowledge trust rows (D-18/D-19/D-20) ----------------------------
 
   async function runHealthyHost(): Promise<void> {
     Object.defineProperty(process, 'version', { value: 'v24.10.0', writable: true })
-    mockExistsSync.mockImplementation(path => !String(path).endsWith('agent-qa-eval'))
+    mockExistsSync.mockReturnValue(true)
     mockExecSync.mockReturnValue(Buffer.from('ok'))
     mockResolveLLMAuth.mockResolvedValue({
       kind: 'unauthenticated',
@@ -1079,7 +1030,7 @@ targets:
         secretsFile: '.secrets.local',
       },
       registry: { llms: [{ name: 'default', provider: 'openai-compatible', model: 'model-name', baseURL: 'https://remote.example/api/v1' }] },
-      services: { cache: { dir: '.agent-qa/cache', ttl: '7d' }, logging: { level: 'warn' }, vision: { screenshotSize: '1m' } },
+      services: { cache: { dir: '.agent-qa/cache' }, logging: { level: 'warn' }, vision: { screenshotSize: '1m' } },
       use: {
         browser: { name: 'chromium', headless: true },
         timeout: { step: '30s', test: '10m', navigation: '10s' },
@@ -1091,7 +1042,7 @@ targets:
     await runDoctor()
   }
 
-  it('prints four rows between Legacy v1 memory data and Config validation, store then embedder then rung then learning', async () => {
+  it('prints three rows between Legacy v1 memory data and Config validation, store then embedder then rung', async () => {
     await runHealthyHost()
 
     // Row heads only: a row whose message embeds the checkout path wraps beneath itself where the
@@ -1104,17 +1055,11 @@ targets:
 
     expect(legacy).toBeGreaterThanOrEqual(0)
     expect(validation).toBeGreaterThanOrEqual(0)
-    expect(positions).toEqual([legacy + 1, legacy + 2, legacy + 3, legacy + 4])
-    expect(positions[3]).toBeLessThan(validation)
+    expect(positions).toEqual([legacy + 1, legacy + 2, legacy + 3])
+    expect(positions[2]).toBeLessThan(validation)
   })
 
-  it('prints exactly 21 check rows after adding Learning mode', async () => {
-    await runHealthyHost()
-    const rows = consoleLogs.map(stripAnsi).filter(line => /^ {4}\S.*\b(?:PASS|WARN|FAIL|SKIP)\b/.test(line))
-    expect(rows).toHaveLength(21)
-  })
-
-  it('skips all four rows when no knowledge root resolves, and never omits a row', async () => {
+  it('skips all three rows when no knowledge root resolves, and never omits a row', async () => {
     mockExistsSync.mockReturnValue(false)
 
     await runDoctor()
@@ -1132,15 +1077,13 @@ targets:
     expect(getOutput()).not.toContain('Fix: The daemon starts its embedder worker')
   })
 
-  it('passes the retrieval rows and warns Learning mode on a healthy host without an eval root', async () => {
+  it('passes the retrieval rows on a healthy host', async () => {
     await runHealthyHost()
 
     expect(rowFor('Knowledge store')).toContain('index open at')
     expect(rowFor('Embedder')).toContain(`native (${DEFAULT_EMBEDDING_PROFILE.model_id})`)
     expect(rowFor('Retrieval rung')).toContain('memidex')
-    for (const name of KNOWLEDGE_ROW_NAMES.slice(0, 3)) expect(rowFor(name)).toContain('PASS')
-    expect(rowFor('Learning mode')).toContain('WARN')
-    expect(rowFor('Learning mode')).toContain('deterministic-verdict-floor')
+    for (const name of KNOWLEDGE_ROW_NAMES) expect(rowFor(name)).toContain('PASS')
     expect(process.exitCode).toBe(0)
   })
 
@@ -1187,7 +1130,7 @@ targets:
     expect(process.exitCode).toBe(1)
   })
 
-  it('names the folded 399 failure by its cause when a live daemon lease published no worker registration', async () => {
+  it('names the worker profile failure by its cause when a live daemon lease published no worker registration', async () => {
     knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'parsed', lease: {} } as never)
     knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
     daemonRegistrationStubs.readDaemonRegistration.mockReturnValueOnce({
@@ -1216,9 +1159,7 @@ targets:
     expect(getOutput()).not.toContain('agent-qa.config.yaml (the daemon')
   })
 
-  // -------------------------------------------------------------------------
-  // 407-24 (G-407-3): the command measured against the width it resolved.
-  // -------------------------------------------------------------------------
+  // The command measured against the width it resolved.
 
   it('stops a row at the Fix line instead of absorbing a failing check into it', async () => {
     knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
@@ -1258,10 +1199,7 @@ targets:
     // Strip before measuring even though picocolors disables itself off a TTY: the census must
     // measure what a COLOURED terminal receives, not what this harness happened to capture.
     const overlong = lines.filter(line => line.length > 80)
-    // The ONE documented exception (T-407-24-01): a single word wider than the wrap budget takes
-    // its own line UNCUT. `Legacy v1 memory data` prints an ABSOLUTE path, so on a deep enough
-    // checkout that token alone can exceed 80 — and a path a person cannot copy is a diagnostic
-    // that failed. Every line that is not one unbroken token must fit.
+    // One exception: a word wider than the budget, such as a path, takes its own line uncut.
     const offenders = overlong
       .filter(line => line.trim().includes(' '))
       .map(line => `${line.length} columns: ${JSON.stringify(line)}`)
@@ -1283,9 +1221,6 @@ targets:
     expect(rowFor('Knowledge store')).toContain('FAIL')
   })
 
-  // 407-29 (G-407-22 · REVIEW IN-04): a SIBLING of the census above, deliberately not an edit to
-  // it — the census is a 407-24 pin and stays byte-unchanged. Same fixture, same width, same
-  // collected lines, one further property: nothing this command prints ends in whitespace.
   it('emits no line ending in whitespace at a resolved width of 80', async () => {
     forceTerminalWidth(80)
     knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
@@ -1310,9 +1245,7 @@ targets:
   })
 
   it('leaves every row on one line at a wide width, byte-identical to the pre-change output', async () => {
-    // 422-27 adds the build's circularity backing to the absent-root Learning mode row.
-    // The longest logical row measures 240 columns; this unwrapped control uses 300 while
-    // the 80-column wrapping guards stay fixed.
+    // 300 columns is wider than any row, so nothing wraps; the 80-column wrapping guards stay fixed.
     forceTerminalWidth(300)
 
     await runHealthyHost()
@@ -1326,24 +1259,65 @@ targets:
       preChangeRow('Embedder', `native (${DEFAULT_EMBEDDING_PROFILE.model_id})`, 'PASS'),
     )
     expect(lines).toContain(preChangeRow('Retrieval rung', 'memidex', 'PASS'))
-    expect(rowFor('Learning mode')).toContain('circularity backing: recorded posture applied')
+  })
+
+  it('doctor prints its check table as one wrapped block under GitHub Actions', async () => {
+    const pair = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+    mockReadFile.mockResolvedValue(`
+workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: '::set-output name=x::y'
+registry:
+  llms:
+    - name: planner
+      provider: openai-compatible
+      model: deepseek-chat
+      baseURL: https://remote.example/api/v1
+use:
+  llm: planner
+` as never)
+    mockExistsSync.mockImplementation((p) => String(p).endsWith('::set-output name=x::y'))
+    const writes: string[] = []
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      writes.push(String(chunk))
+      return true
+    })
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+    try {
+      await runDoctor()
+    } finally {
+      vi.unstubAllEnvs()
+      stdoutSpy.mockRestore()
+    }
+
+    const blocks = writes.filter((write) => write.includes('::stop-commands::'))
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatch(pair)
+    expect(blocks[0]).toContain('::set-output name=x::y found')
+    expect(blocks[0]).toContain('Node.js')
+    expect(blocks[0]).toContain('Test discovery')
+    expect(blocks[0]).not.toContain('agent-qa doctor')
+    const printed = getOutput()
+    expect(printed).toContain('agent-qa doctor')
+    expect(printed).toMatch(/All checks passed|Some checks failed/u)
+    expect(printed).not.toContain('::set-output')
   })
 })
 
 
-// ---------------------------------------------------------------------------
-// 407-24 (G-407-3): the row renderer, measured directly rather than through the
-// command. Every cell below passes the width as a PARAMETER, so it measures the
-// renderer at a width it chose instead of at whatever width this host happens to
-// have — a width the code never named is the failure the UAT caught.
-// ---------------------------------------------------------------------------
+// The renderer measured directly, with the width as a parameter rather than the host's.
 
 /** A message of about the requested length built from short words, so no long-word exception fires. */
 function wordyMessage(length: number): string {
   return 'lorem ipsum dolor sit amet '.repeat(20).slice(0, length).trimEnd()
 }
 
-describe('C445-NODE-FLOOR-DOCTOR', () => {
+describe('the Node version row', () => {
   const versionDescriptor = Object.getOwnPropertyDescriptor(process, 'version')!
 
   beforeEach(() => {
@@ -1393,8 +1367,8 @@ describe('C445-NODE-FLOOR-DOCTOR', () => {
   })
 })
 
-// 2026-10-19 (445-07, D-23): doctor's Config validation row gives the same fix as the config loader.
-describe('C445-DOCTOR-CONFIG', () => {
+// Doctor's Config validation row gives the same fix as the config loader.
+describe('the Config validation row', () => {
   const safeParse = vi.mocked(core.AgentQaConfigSchema.safeParse)
   const mockedParse = safeParse.getMockImplementation()
   const WORKSPACE = {
@@ -1469,9 +1443,24 @@ describe('C445-DOCTOR-CONFIG', () => {
     expect(unknownKeyFix).not.toContain('agent-qa-memory/')
     expect(unknownKeyFix).not.toContain('re-run `agent-qa init`')
   })
+
+  it('doctor names a removed eval block and gives the key fix, not the hard cut steps', async () => {
+    const fix = await configFix({
+      workspace: WORKSPACE,
+      registry: REGISTRY,
+      use: { llm: 'default' },
+      eval: { gate1: { maxPerJob: 2 } },
+    })
+    expect(rowFor('Config validation'), getOutput()).toContain(
+      'eval.gate1: eval.gate1 was removed: memory is no longer screened by replay before promotion.',
+    )
+    expect(fix).toContain('Fix or remove the key named above')
+    expect(fix).not.toContain('agent-qa-memory/')
+    expect(fix).not.toContain('Delete .agent-qa/')
+  })
 })
 
-describe('C445-DOCTOR-AUTH', () => {
+describe('the LLM auth rows', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockExistsSync.mockReturnValue(false)
@@ -1535,7 +1524,7 @@ describe('C445-DOCTOR-AUTH', () => {
     const real = await vi.importActual<Core>('@vostride/agent-qa-core')
     const { mkdtemp, rm } = await vi.importActual<FsPromises>('node:fs/promises')
     const { tmpdir } = await import('node:os')
-    const tempDir = await mkdtemp(resolve(tmpdir(), 'agent-qa-445-16-doctor-'))
+    const tempDir = await mkdtemp(resolve(tmpdir(), 'agent-qa-doctor-'))
     const authPath = resolve(tempDir, 'auth.json')
     const configYaml = [
       'registry:',
@@ -1595,7 +1584,7 @@ describe('C445-DOCTOR-AUTH', () => {
   })
 })
 
-describe('doctor row renderer (407-24 · G-407-3)', () => {
+describe('doctor row renderer', () => {
   const originalColumnsEnv = process.env.COLUMNS
 
   afterEach(() => {
@@ -1617,9 +1606,7 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
     expect(DEFAULT_TERMINAL_WIDTH).toBe(80)
   })
 
-  // 407-30 (G-407-21 · REVIEW IN-03): the floor on what the ENVIRONMENT may claim. `COLUMNS=4` is
-  // accepted by the ladder above and drives `width - CONTINUATION_INDENT.length` negative, putting
-  // every word of every message on its own over-wide line — a diagnostic nobody can read.
+  // `COLUMNS=4` would drive the content budget negative, so the resolved width is floored.
   it('floors the resolved width, so no environment can claim a width with no content column', () => {
     setStdoutColumns(4)
     expect(resolveTerminalWidth()).toBe(MIN_USABLE_WIDTH)
@@ -1665,7 +1652,7 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
   })
 
   it('keeps FAIL on the name line and wraps the measured 113-column row under 80', () => {
-    // The width the UAT measured on the built cli, reproduced here from the same two strings.
+    // The width measured on the built cli, reproduced from the same two strings.
     expect(preChangeRow('Knowledge store', MEASURED_FAIL_MESSAGE, 'FAIL')).toHaveLength(113)
 
     const row = formatCheckRow('Knowledge store', MEASURED_FAIL_MESSAGE, 'fail', 80)
@@ -1710,16 +1697,7 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
     expect(offenders.slice(0, 5)).toEqual([])
   })
 
-  // 407-30 (G-407-21 · REVIEW IN-03): a SECOND corpus beside the one above, never an edit to it.
-  //
-  // The existing corpus sweeps `nameLength <= 40` at `width >= 60`, where `name.length + 14 > width`
-  // cannot fire — so the head-line exception it would have caught is unreachable from it. This one
-  // sweeps the widths and names where it IS reachable and SAMPLES message lengths instead of
-  // sweeping them: the message dimension is already swept exhaustively above, and this cell is
-  // about width against name.
-  //
-  // Every line wider than the width must fall into exactly ONE of the two DOCUMENTED exceptions,
-  // and each must be OBSERVED — a classification that never fires is not a classification.
+  // Sweeps the widths and names where the head-line exception is reachable; samples messages.
   it('classifies every over-wide line into one of the two documented exceptions, and observes both', () => {
     const statuses: CheckStatus[] = ['pass', 'warn', 'fail', 'skip']
     /** Widths at or below the floor's reach, so `affordable < MIN_DOTS` is attainable. */
@@ -1748,16 +1726,12 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
             const row = formatCheckRow(name, message, status, width)
             for (const line of [row.plainLine, ...row.continuations]) {
               if (line.length <= width) continue
-              // EXCEPTION ONE (T-407-24-01): a word wider than the budget takes its own line
-              // UNCUT. Such a line is a single unbroken token once its indent is stripped.
+              // Exception one: a word wider than the budget takes its own line uncut.
               if (!line.trim().includes(' ')) {
                 uncutTokenLines += 1
                 continue
               }
-              // EXCEPTION TWO (407-30 · REVIEW IN-03): `segmentsFor` clamps with
-              // `Math.max(MIN_DOTS, ...)`, so when `affordable < MIN_DOTS` the FLOOR wins and the
-              // head line comes to `name.length + 14` — four indent, two separator, two dots, two
-              // separator, four status word. Unlike the first, this line CONTAINS SPACES.
+              // Exception two: the `MIN_DOTS` floor makes the head line `name.length + 14` wide.
               if (
                 line === row.plainLine
                 && line.length === nameLength + 14
@@ -1787,7 +1761,7 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
     expect(
       headFloorLines,
       'exception two (the head line at name.length + 14, produced by the MIN_DOTS floor) never'
-      + ' fired in this sweep, so the corpus is still not reaching the case IN-03 reported',
+      + ' fired in this sweep, so the corpus is still not reaching the reported case',
     ).toBeGreaterThan(0)
   })
 
@@ -1807,9 +1781,7 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
     expect(overlong[0]?.trim()).toBe(sha)
   })
 
-  // 407-30 (G-407-21 · REVIEW IN-03): the SECOND floor, on what any CALLER may ask for. The
-  // resolver above bounds the environment; this bounds a direct call, which `formatFixLines`
-  // already floors the same way. Different callers, different jobs, so both floors exist.
+  // This floor bounds a direct call, as the resolver bounds the environment.
   it('puts one word per line rather than taking a negative budget when a caller asks below the indent', () => {
     const row = formatCheckRow('n', 'alpha beta gamma', 'fail', 3)
 
@@ -1868,21 +1840,7 @@ describe('doctor row renderer (407-24 · G-407-3)', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// 407-29 (G-407-14 · REVIEW WR-02): the flattening law.
-//
-// 407-24 gave every row a width budget, and the budget measures `String.length`. A `\n` counts as
-// ONE column there and as a LINE BREAK on the terminal, so a message carrying one measures short,
-// takes the one-line path, and prints with the status word pushed onto a second visual line —
-// the exact detachment G-407-3 exists to prevent. None of the four producers that reach this
-// renderer is a literal the repository controls: `doctor.ts:505` prints `err.message` from an
-// arbitrary throw, `:502`/`:527`/`:557` print a plugin's `auth.message`, `:591` prints a
-// 60-character slice of a provider SDK error, and `:399-401` joins Zod issue messages.
-//
-// The second half is the same root: `wrapWords` splits on `/\s+/`, so a message carrying a double
-// space or a tab printed VERBATIM on a wide terminal and NORMALISED on a narrow one. A diagnostic
-// whose text depends on the reader's window is a diagnostic two people cannot compare.
-// ---------------------------------------------------------------------------
+// A newline measures one column but breaks the line, and `wrapWords` collapses spaces.
 
 /**
  * The message text a row carries, whichever shape it took, with the LINE JOINS collapsed and
@@ -1904,7 +1862,7 @@ const NEWLINE_MESSAGE = 'Authentication failed\nresponse: 401'
 const SPACED_MESSAGE =
   'index at agent-qa-knowledge/memory/index/knowledge.db  could not be opened:\tcorrupt'
 
-describe('doctor row renderer: the flattening law (407-29 · G-407-14)', () => {
+describe('doctor row renderer: the flattening law', () => {
   afterEach(() => {
     restoreTerminalWidth()
   })
@@ -1985,18 +1943,9 @@ describe('doctor row renderer: the flattening law (407-29 · G-407-14)', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// 407-29 (G-407-18 · REVIEW WR-06): the status token is TYPED.
-//
-// 407-24 widened `formatStatus` from `CheckStatus` to `string` with an unchecked
-// `STATUS_COLOURS[statusWord as StatusWord]` and an `undefined` fallback, so `formatStatus('pass')`
-// — the lowercase value every other function in the file deals in, and the value the OLD signature
-// accepted — type-checked, missed the table and printed a bare uncoloured word. The widening was
-// never required: `RowDecoration.status` narrowed alongside it, so the decorator contract carries
-// the type instead of discarding it.
-// ---------------------------------------------------------------------------
+// `formatStatus` takes the typed status word, so a lowercase `pass` fails to type-check.
 
-describe('doctor status token (407-29 · G-407-18)', () => {
+describe('doctor status token', () => {
   it('paints every status word, and the table has no silent fallback left', async () => {
     // picocolors decides `isColorSupported` ONCE, at its own module load, and `STATUS_COLOURS`
     // captures the bound formatters. So the only way to see real paint is a fresh doctor module
@@ -2023,26 +1972,14 @@ describe('doctor status token (407-29 · G-407-18)', () => {
   })
 
   it('rejects a lowercase CheckStatus where a status WORD belongs', () => {
-    // @ts-expect-error 407-29 (REVIEW WR-06): a `CheckStatus` is not a `StatusWord`. This call
-    // type-checked before the narrowing, missed the table and printed an uncoloured `pass`. The
-    // directive is the gate: `tsconfig.json` includes `src`, so `tsc --noEmit` fails on an UNUSED
-    // directive the moment anybody re-widens the parameter — it reds on the regression itself
-    // rather than on its consequence. At runtime the total table has no `undefined` branch left,
-    // so the same call throws instead of quietly degrading to a bare word.
+    // @ts-expect-error a `CheckStatus` is not a `StatusWord`; an unused directive fails tsc.
     expect(() => formatStatus('pass')).toThrow(TypeError)
   })
 })
 
-// ---------------------------------------------------------------------------
-// 407-29 (G-407-22 · REVIEW IN-04): nothing to instruct instructs nothing.
-//
-// `wrapWords('')` returns `[]`, and the guard returned `['      Fix: ']` — a line whose only
-// content is trailing whitespace. Unreachable today (every `fixInstructions` is a non-empty
-// literal), which is precisely why the guard should render nothing rather than render badly:
-// the case it exists for is the case it got wrong.
-// ---------------------------------------------------------------------------
+// An empty instruction renders no fix line rather than one of trailing whitespace.
 
-describe('doctor fix lines: nothing to instruct (407-29 · G-407-22)', () => {
+describe('doctor fix lines: nothing to instruct', () => {
   it('returns no line at all for an instruction with no content', () => {
     for (const instructions of ['', '   ', '\n', '\t \n']) {
       expect(formatFixLines(instructions, 80)).toEqual([])
@@ -2056,22 +1993,9 @@ describe('doctor fix lines: nothing to instruct (407-29 · G-407-22)', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// 407-30 (G-407-17 · REVIEW WR-05): ONE definition of a continuation line.
-//
-// Three spellings of the same concept lived in this file: `CONTINUATION_PATTERN` (`/^ {6}\S/`,
-// read by the 80-column census), `rowFor`'s docstring (six spaces, the indent the emit loop
-// writes) and `rowFor`'s code (`/^ {5}/`). Five is unreachable from today's emit loop — it writes
-// four, six or eleven — so the helper was correct BY ACCIDENT, and a reader whose rule disagrees
-// with the published constant is one edit away from joining a line the census classifies as
-// something else.
-//
-// These two cells drive `rowFor` over a SYNTHETIC captured log rather than a command run, because
-// the subject is the READER'S rule and not any particular output. Each seeds a real six-space
-// continuation as well, so a helper that simply stopped joining everything could not pass them.
-// ---------------------------------------------------------------------------
+// Drives `rowFor` over a synthetic log, seeding a real six-space continuation so joining all fails.
 
-describe('doctor row reader: one definition of a continuation (407-30 · G-407-17)', () => {
+describe('doctor row reader: one definition of a continuation', () => {
   const HEAD = '    Knowledge store  ..........  FAIL'
   const REAL_CONTINUATION = `      ${MEASURED_FAIL_MESSAGE}`
   const NEXT_ROW = '    Embedder  ..........  PASS'

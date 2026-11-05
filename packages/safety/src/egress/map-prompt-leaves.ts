@@ -12,11 +12,14 @@ type UserContentPart = UserMessage['content'][number]
 type AssistantContentPart = AssistantMessage['content'][number]
 type ToolContentPart = ToolMessage['content'][number]
 type FileContentPart = Extract<UserContentPart | AssistantContentPart, { type: 'file' }>
+type ReasoningFileData = Extract<AssistantContentPart, { type: 'reasoning-file' }>['data']
 type ToolResultOutput = Extract<AssistantContentPart, { type: 'tool-result' }>['output']
 type ToolResultContentPart = Extract<ToolResultOutput, { type: 'content' }>['value'][number]
+type FileData = FileContentPart['data']
+type UrlFileData = Extract<FileData, { type: 'url' }>
+type ProviderReference = Extract<FileData, { type: 'reference' }>['reference']
 
-// The AI-SDK V3 prompt walker the masking middleware delegates to; binary file and image data
-// never reach `fn` (441 D-21).
+// The prompt walker the masking middleware delegates to; binary data never reaches `fn`.
 export function mapPromptLeaves(params: ProviderRequestParams, fn: LeafFn): ProviderRequestParams {
   // Only params.prompt is run content. Top-level headers carry provider auth, while
   // stopSequences, tools, responseFormat, and providerOptions are caller/transport config
@@ -37,6 +40,10 @@ function mapMessage(message: PromptMessage, fn: LeafFn): PromptMessage {
       return { ...message, content: message.content.map((part) => mapAssistantPart(part, fn)) }
     case 'tool':
       return { ...message, content: message.content.map((part) => mapToolPart(part, fn)) }
+    default: {
+      const unknown: never = message
+      return refuse('message role', unknown, 'role')
+    }
   }
 }
 
@@ -49,7 +56,8 @@ function mapUserPart(part: UserContentPart, fn: LeafFn): UserContentPart {
     return mapFilePart(part, fn)
   }
 
-  return part
+  const unknown: never = part
+  return refuse('user part', unknown)
 }
 
 function mapAssistantPart(part: AssistantContentPart, fn: LeafFn): AssistantContentPart {
@@ -69,7 +77,16 @@ function mapAssistantPart(part: AssistantContentPart, fn: LeafFn): AssistantCont
     return { ...part, output: mapToolResultOutput(part.output, fn) }
   }
 
-  return part
+  if (part.type === 'reasoning-file') {
+    return { ...part, data: mapReasoningFileData(part.data, fn) }
+  }
+
+  if (part.type === 'custom') {
+    return part
+  }
+
+  const unknown: never = part
+  return refuse('assistant part', unknown)
 }
 
 function mapToolPart(part: ToolContentPart, fn: LeafFn): ToolContentPart {
@@ -81,14 +98,68 @@ function mapToolPart(part: ToolContentPart, fn: LeafFn): ToolContentPart {
     return part.reason === undefined ? part : { ...part, reason: fn(part.reason) }
   }
 
-  return part
+  const unknown: never = part
+  return refuse('tool part', unknown)
 }
 
 function mapFilePart(part: FileContentPart, fn: LeafFn): FileContentPart {
   return {
     ...part,
+    data: mapFileData(part.data, fn),
     ...(part.filename === undefined ? {} : { filename: fn(part.filename) }),
   }
+}
+
+function mapFileData(data: FileData, fn: LeafFn): FileData {
+  switch (data.type) {
+    case 'data':
+      return data
+    case 'text':
+      return { ...data, text: fn(data.text) }
+    case 'url':
+      return mapUrlData(data, fn)
+    case 'reference':
+      return { ...data, reference: mapReference(data.reference, fn) }
+    default: {
+      const unknown: never = data
+      return refuse('file data', unknown)
+    }
+  }
+}
+
+function mapReasoningFileData(data: ReasoningFileData, fn: LeafFn): ReasoningFileData {
+  switch (data.type) {
+    case 'data':
+      return data
+    case 'url':
+      return mapUrlData(data, fn)
+    default: {
+      const unknown: never = data
+      return refuse('reasoning file data', unknown)
+    }
+  }
+}
+
+// A part the walker does not know may carry text, so it is refused rather than sent unmasked.
+function refuse(kind: string, part: Record<string, unknown>, tag = 'type'): never {
+  throw new Error(`masking: unrecognized ${kind} ${String(part[tag])}`)
+}
+
+// The raw string is masked, since URL parsing can percent-encode a declared value out of reach.
+function mapUrlData(data: UrlFileData, fn: LeafFn): UrlFileData {
+  const raw = data.originalUrl ?? data.url.toString()
+  const masked = fn(raw)
+  if (masked === raw) return data
+  if (!URL.canParse(masked)) throw new Error('a masked file URL is not a valid URL')
+  return {
+    ...data,
+    url: new URL(masked),
+    ...(data.originalUrl === undefined ? {} : { originalUrl: masked }),
+  }
+}
+
+function mapReference(reference: ProviderReference, fn: LeafFn): ProviderReference {
+  return Object.fromEntries(Object.entries(reference).map(([provider, id]) => [provider, fn(id)]))
 }
 
 function mapToolResultOutput(output: ToolResultOutput, fn: LeafFn): ToolResultOutput {
@@ -108,37 +179,34 @@ function mapToolResultOutput(output: ToolResultOutput, fn: LeafFn): ToolResultOu
     return { ...output, value: output.value.map((part) => mapToolResultContentPart(part, fn)) }
   }
 
-  return output
+  const unknown: never = output
+  return refuse('tool-result output', unknown)
 }
 
 function mapToolResultContentPart(part: ToolResultContentPart, fn: LeafFn): ToolResultContentPart {
   switch (part.type) {
     case 'text':
       return { ...part, text: fn(part.text) }
-    case 'file-data':
+    case 'file':
       return {
         ...part,
+        data: mapFileData(part.data, fn),
         ...(part.filename === undefined ? {} : { filename: fn(part.filename) }),
       }
-    case 'image-data':
+    case 'custom':
       return part
-    case 'file-url':
-    case 'image-url':
-      return { ...part, url: fn(part.url) }
-    case 'file-id':
-    case 'image-file-id':
-      return typeof part.fileId === 'string' ? { ...part, fileId: fn(part.fileId) } : part
+    default: {
+      const unknown: never = part
+      return refuse('tool-result content part', unknown)
+    }
   }
-
-  return part
 }
 
 function mapJsonLike<T>(value: T, fn: LeafFn): T {
   return mapJsonValue(value, fn, true) as T
 }
 
-// Walks the JSON a provider receives: keys are masked like values, toJSON runs once, any other
-// object is its own enumerable entries, and binary data is returned untouched (441 D-21).
+// Keys are masked like values, `toJSON` runs once, and binary data is returned untouched.
 function mapJsonValue(value: unknown, fn: LeafFn, callToJson: boolean): unknown {
   if (typeof value === 'string') return fn(value)
   if (typeof value !== 'object' || value === null) return value

@@ -1,18 +1,4 @@
-// Filesystem replay-record store (Phase 368, D-12).
-//
-// Persists each per-cassette replay outcome — a ReplayResult or a typed ReplayRefusal (refusals are
-// records too, never silent; Phase 372's baseline reader consumes them) — under an uncommitted
-// runtime staging root beside `eval/cassettes`:
-//
-//   <output-root>/<slugged cassette id segments>/replay.json
-//
-// The store mirrors FsCassetteStore's posture exactly: every id segment delegates to schema's
-// security-reviewed slugBranch sanitizer (path-traversal control, T-368-10), and each record is
-// recreated in full (rm + mkdir) before writing so a re-run leaves no stale files behind (idempotent
-// overwrite). The write is deterministic: the same outcome yields the same path and the same bytes —
-// no timestamps or random ids are minted here; timing data already lives inside the outcome from the
-// engine clock. Records land ONLY under this output root — never knowledge dirs or committed trees;
-// the committed corpus root is Phase 371's leg. Records are written as handed over (441 D-15).
+// Each record dir is recreated in full, so a re-run leaves no stale files; bytes are deterministic.
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -26,9 +12,7 @@ export const REPLAY_RECORD_FILE = 'replay.json'
 export interface FsReplayRecordStoreConfig {
   /** Runtime root (normally the workdir's `.agent-qa` directory). */
   root: string
-  /** Optional retargeted root used by later committed-corpus composition. */
-  outputDir?: string
-  /** Actual producer seed; embedded in the bytes bound by the run publication. */
+  /** Actual producer seed, embedded in the record bytes. */
   executionSeed?: number
 }
 
@@ -43,7 +27,7 @@ export class FsReplayRecordStore {
   private readonly executionSeed?: number
 
   constructor(config: FsReplayRecordStoreConfig) {
-    this.outputRoot = config.outputDir ?? join(config.root, DEFAULT_EVAL_REPLAYS_SUBDIR)
+    this.outputRoot = join(config.root, DEFAULT_EVAL_REPLAYS_SUBDIR)
     this.executionSeed = config.executionSeed
   }
 

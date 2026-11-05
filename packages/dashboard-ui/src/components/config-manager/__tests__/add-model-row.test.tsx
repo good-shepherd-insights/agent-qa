@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 
-// THE CONTINUOUS ADD FLOW (429-25 · D-13, D-14, D-15, D-17, research A8 · UI-SPEC S5, E5 · PXH-CONF-03).
-//
-// How you connect comes first, then only that choice's fields, then the name, then Connect. The
-// test runs on Connect and only a passing model is written, by the connect door alone: the page
-// never writes a draft to the config file. A failure keeps everything, the typed key included, and
-// only then offers Save without testing.
+// Connect runs the test and only a passing model is written; a failure keeps every field.
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -307,7 +302,7 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('AddModelRow steps (429-25 Task 2)', () => {
+describe('AddModelRow steps', () => {
   it('ADD-STEPS-IN-ORDER: only How do you connect? at first, then only that choice\'s fields, the name, then Connect; a new choice clears step 2', async () => {
     await mount()
     expect(addRow()).not.toBeNull()
@@ -405,7 +400,7 @@ describe('AddModelRow steps (429-25 Task 2)', () => {
   })
 })
 
-describe('AddModelRow Connect (429-25 Task 2)', () => {
+describe('AddModelRow Connect', () => {
   it('CONNECT-PASS-BECOMES-SAVED-ROW: a pass replaces the add row with the saved, open row, its line and focus on its header', async () => {
     await mount()
     await fillOpenAiCompatible()
@@ -557,7 +552,7 @@ describe('AddModelRow Connect (429-25 Task 2)', () => {
   })
 })
 
-describe('AddModelRow Connect refusals (429-48 Task 1)', () => {
+describe('AddModelRow Connect refusals', () => {
   const refusals: Array<{ payload: Record<string, unknown> | null; status: number; line: string }> = [
     {
       status: 422,
@@ -641,7 +636,7 @@ describe('AddModelRow Connect refusals (429-48 Task 1)', () => {
   })
 })
 
-describe('AddModelRow sign-in choices (429-25 Task 2)', () => {
+describe('AddModelRow sign-in choices', () => {
   it('SIGN-IN-CHOICE-WITHOUT-PLUGIN: a sign-in choice whose plugin is not registered names the plugin to add and offers no Sign in', async () => {
     vi.mocked(fetchLLMProviders).mockResolvedValue({
       providers: PROVIDERS.filter((provider) => provider.id !== 'anthropic-subscription'),
@@ -672,7 +667,7 @@ function headingAdd() {
   return container?.querySelector<HTMLButtonElement>('[data-model-add]') ?? null
 }
 
-describe('The add row in the list (429-25 Task 3)', () => {
+describe('The add row in the list', () => {
   it('ONE-ADD-ROW: Add model opens one add row first in the list; Add model or ?add while it is open focuses it instead', async () => {
     await mount('/config/models')
     expect(addRow()).toBeNull()
@@ -810,11 +805,7 @@ describe('The add row in the list (429-25 Task 3)', () => {
   })
 })
 
-// SIGN-IN DRAFTS, EXISTING CREDENTIALS, COLLISIONS, RENAMES AND DISCARD (429-26 · D-15, D-16, D-17,
-// research A3 · UI-SPEC S5, E5). A sign-in choice signs the draft name in with no save first, then
-// the test runs by itself; a name that already holds this provider's credential only tests; another
-// provider's credential is never touched; a draft's own sign-in follows its name, and Discard removes
-// only a credential this draft created.
+// A sign-in signs the draft name in with no save first; Discard removes only its own credential.
 
 const AUTHORIZE_URL = 'https://auth.example/authorize'
 const HOUR = 60 * 60 * 1000
@@ -856,7 +847,7 @@ async function signInThenFailTest(created: boolean) {
   await advance(2000)
 }
 
-describe('AddModelRow sign-in drafts (429-26 Task 2)', () => {
+describe('AddModelRow sign-in drafts', () => {
   it('SIGN-IN-DRAFT-BROWSER-POLL: Sign in with Claude signs the draft name in with no save, then the test runs by itself and a pass saves it', async () => {
     await mount()
     await choose('claude-sign-in')
@@ -995,7 +986,7 @@ describe('AddModelRow sign-in drafts (429-26 Task 2)', () => {
   })
 })
 
-describe('AddModelRow existing credentials and collisions (429-26 Task 2)', () => {
+describe('AddModelRow existing credentials and collisions', () => {
   it('EXISTING-CREDENTIAL-CONNECT-ONLY-TESTS: a name holding this provider\'s credential shows the existing line and Connect only tests; key modes offer Replace key', async () => {
     vi.mocked(fetchAuthStatus).mockResolvedValue({
       credentials: heldCredentials(
@@ -1076,7 +1067,7 @@ describe('AddModelRow existing credentials and collisions (429-26 Task 2)', () =
   })
 })
 
-describe('AddModelRow renames and discard after a sign-in (429-26 Task 2)', () => {
+describe('AddModelRow renames and discard after a sign-in', () => {
   it('NAME-EDIT-AFTER-SIGN-IN-MOVES: a renamed draft moves the sign-in it created; a sign-in it did not create is never moved', async () => {
     await mount()
     await signInThenFailTest(true)
@@ -1140,8 +1131,7 @@ describe('AddModelRow renames and discard after a sign-in (429-26 Task 2)', () =
     expect(deleteAuthCredential).not.toHaveBeenCalled()
   })
 
-  // WR-03: Connect saved claude on the server, but the answer was lost to a reload, so the stored
-  // draft still says this draft created the sign-in under claude.
+  // Connect saved `claude`, but a reload lost the answer, so the draft still claims the sign-in.
   const SAVED_CLAUDE = { name: 'claude', provider: 'anthropic-subscription', model: 'claude-sonnet-4.5' }
 
   function storeCreatedDraft(name: string) {
@@ -1196,10 +1186,7 @@ describe('AddModelRow renames and discard after a sign-in (429-26 Task 2)', () =
   })
 })
 
-// THE MODEL MODAL'S CLAIMS ON THE ADD ROW (429-30 · D-10). The modal is gone. Each claim its suite
-// made about adding a model is asserted here on the add row, or pinned as gone where the phase
-// reversed it (asterisk markers, the whole-list write, a vision switch before saving, and saving
-// before a sign-in).
+// Each claim about adding a model is asserted on the add row.
 
 const CATALOG: Record<string, ModelCatalogEntry[]> = {
   'openai-compatible': [
@@ -1223,7 +1210,7 @@ function describedText(element: HTMLInputElement | null): string {
   return ids.map((id) => document.getElementById(id)?.textContent ?? '').join(' ')
 }
 
-describe('The model modal\'s claims on the add row (429-30 Task 1)', () => {
+describe("The model modal's claims on the add row", () => {
   it('LEGACY-LLM-REQUIRED-FIELDS-FOLLOW-PROVIDER: provider metadata decides the fields; a compatible key is optional and a Gemini key is required', async () => {
     await mount()
     await choose('gemini-key')
@@ -1270,7 +1257,7 @@ describe('The model modal\'s claims on the add row (429-30 Task 1)', () => {
     expect(applyConfigChanges).not.toHaveBeenCalled()
   })
 
-  it('LEGACY-LLM-DOTTED-NAME-ACCEPTED: a dotted name is accepted and an uppercase one is refused with the name rule (D-13)', async () => {
+  it('LEGACY-LLM-DOTTED-NAME-ACCEPTED: a dotted name is accepted and an uppercase one is refused with the name rule', async () => {
     await mount()
     await choose('openai-compatible-key')
     await type(input('name'), 'gpt-5.6')

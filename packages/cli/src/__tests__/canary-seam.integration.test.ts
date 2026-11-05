@@ -235,7 +235,7 @@ function expectedCanaryEvidenceToken(
   })
 }
 
-describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
+describe('canary seam public integration', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -257,7 +257,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const storeConfig: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'canary-seam-seed',
     }
     const published = publishBundle(storeConfig, candidateInput())
@@ -296,7 +295,7 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const secondProjection = projectCanaryOutcomes(projectionInput)
     expect(canonicalJson(secondProjection)).toBe(canonicalJson(firstProjection))
     expect(firstProjection).toHaveLength(1)
-    expect(firstProjection[0]).toMatchObject({ benefit: 'rode-along', stateValidity: 'unknown' })
+    expect(firstProjection[0]).toMatchObject({ benefit: 'rode-along' })
 
     const firstEmit = await emitCanaryOutcomes({
       handoff,
@@ -396,7 +395,6 @@ describe('canary seam public integration (PROM-02/SC5 substrate)', () => {
     const storeConfig: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'canary-restart-seed',
     }
     const published = publishBundle(storeConfig, candidateInput())

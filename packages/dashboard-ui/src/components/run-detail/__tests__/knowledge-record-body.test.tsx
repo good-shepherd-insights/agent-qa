@@ -1,8 +1,6 @@
 // @vitest-environment jsdom
 
-// 427 · D-06, D-09, memory.md §7.5 — Show full record: the record as read now, its code-computed
-// track record, and only then the curator's unverified note. Driven through the used row that hosts
-// it, over schema-parsed projections.
+// Show full record: the record as read, its track record, then the curator's unverified note.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -67,7 +65,7 @@ function recordContent(record: RecordShape) {
 function mountRecord(record: RecordShape | undefined): HTMLElement {
   const projection = RunKnowledgeProjectionSchema.parse({
     kind: "ready",
-    runId: "run-427-06-record",
+    runId: "run-record",
     buildOrdinal: 1,
     knowledgeStore: "bound",
     steps: [{
@@ -191,7 +189,7 @@ describe("the curator's note is never the only thing said (memory.md §7.5)", ()
   })
 })
 
-describe("producer text in the full record is text (T-427-06-01)", () => {
+describe("producer text in the full record is text", () => {
   it("RECORD-BODY-HOSTILE-TEXT: a body and a note shaped like markup render as text and create no element", () => {
     const hostile = "<img src=x onerror=alert(1)>"
     const full = open(mountRecord({ body: hostile, narrative: hostile }))

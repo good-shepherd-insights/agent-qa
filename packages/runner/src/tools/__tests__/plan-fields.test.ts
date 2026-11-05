@@ -1,13 +1,3 @@
-// RED scaffold (Wave 0, Phase 358 · WM-01/D-09 · Pattern 5 · Pitfall 2). Pins the
-// remember[] + bulk-completion-predicate plan-field ROUND-TRIP through the v45 PLAN_FIELDS
-// merge BEFORE Plan 05 extends it. Pitfall 2: `toolCallToActionPlan` destructures only the
-// known envelope fields and safeParses the rest as (strict) action fields, so any un-merged
-// plan-field is silently stripped (or, under the strict schemas, rejected) and never reaches
-// the loop. This suite loudly pins the round-trip, the envelope-stripping, the closed enums,
-// the LINT-05 omit guidance, and the frozen catalog counts (plan-fields register no tools).
-//
-// RED BY DESIGN: the shipped PLAN_FIELDS carries neither `remember` nor
-// `bulkCompletionPredicate`, so the round-trip fails today (GREEN when Plan 05 lands).
 import { describe, it, expect, beforeEach } from 'vitest'
 import type { z } from 'zod'
 import { ToolRegistry } from '../registry.js'
@@ -18,7 +8,7 @@ const ENVELOPE = { reasoning: 'act', confidence: 0.9, stepComplete: false }
 const REMEMBER = [{ key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'observation' }]
 const PREDICATE = 'until no rows with a delete button remain'
 
-describe('toolCallToActionPlan — remember[] + bulk-predicate round-trip (Pitfall 2)', () => {
+describe('toolCallToActionPlan — remember[] + bulk-predicate round-trip', () => {
   let registry: ToolRegistry
   beforeEach(() => {
     registry = new ToolRegistry()
@@ -44,7 +34,7 @@ describe('toolCallToActionPlan — remember[] + bulk-predicate round-trip (Pitfa
   })
 })
 
-describe('PLAN_FIELDS descriptors — LINT-05 omit guidance on optional fields', () => {
+describe('PLAN_FIELDS descriptors — omit guidance on optional fields', () => {
   it('both new plan-fields carry .describe() text including omit-when guidance', () => {
     const tools = buildTools(registerAll(), { platform: 'web' })
     const clickTool = tools['web_click'] as { inputSchema?: z.ZodObject<never>; parameters?: z.ZodObject<never> }

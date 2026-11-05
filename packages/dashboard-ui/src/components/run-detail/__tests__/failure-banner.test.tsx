@@ -1,15 +1,6 @@
 // @vitest-environment jsdom
 
-// THE FAILURE BANNER'S CELLS (405-14 Task 2 · DETL-02, T-405-41/42/43, WINDOWS #287; 441 D-28).
-//
-// The banner shows the stored summary as text: a declared value is the `[secret:<name>]` the run
-// wrote, and no chip is painted over it. The shipped-binary cells in
-// `cli/src/__tests__/conformance/run-detail-failure-dom.test.ts` make the same claim on the built
-// bundle.
-//
-// THE TWO STATES ARE TWO CLAIMS, so the toggle is CLICKED and the expanded state is asserted
-// separately. THE CLIPBOARD carries the sentence the reader just looked at — the preview while the
-// banner is collapsed, the whole summary once it is expanded — and nothing past it.
+// The banner shows the stored summary as text; the clipboard carries exactly the sentence shown.
 
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -25,17 +16,7 @@ import {
 const INSIDE_MARKER = "[secret:CONTACT_ADDRESS]"
 const PAST_MARKER = "[secret:OPERATOR_TOKEN]"
 
-/**
- * The two ordinals this file's summary plants its markers at, and the length of that summary.
- *
- * DERIVED FROM THE PUBLISHED BUDGET, NEVER RE-TYPED (WINDOWS #292). They straddle
- * `FAILURE_BANNER_PREVIEW_WORDS` — one marker two words inside it, the other six words past it —
- * which is what makes the truncated and expanded states observably different: the first is in the
- * preview and the second is not. Spelled as `18`/`26`/`30` against a budget of `20`, a change to
- * the budget left this fixture asserting the old one and both cells measuring nothing they claim.
- * The conformance fixture plants its own sentence against the same budget for the same reason, and
- * names it in prose because it cannot import across the package boundary.
- */
+// Derived from `FAILURE_BANNER_PREVIEW_WORDS`, so a budget change moves the markers with it.
 const INSIDE_ORDINAL = FAILURE_BANNER_PREVIEW_WORDS - 2
 const PAST_ORDINAL = FAILURE_BANNER_PREVIEW_WORDS + 6
 const SUMMARY_WORDS = FAILURE_BANNER_PREVIEW_WORDS + 10
@@ -129,11 +110,7 @@ describe("FailureBanner", () => {
     const view = mount(<FailureBanner summary={summaryOverTheBudget()} />)
 
     expect(stateOf(view)).toBe("truncated")
-    // AND THE STATE IS CHECKED AGAINST THE TEXT. `truncated` was once a compile-time constant of
-    // this component — derived from the toggle's `useState(false)`, so it read `truncated` on first
-    // paint for every input, including one whose truncation had been deleted outright. These two
-    // assertions are the fact the attribute claims: the last word of the summary is NOT on the page,
-    // and the helper's ellipsis is. Without them the line above asserts `useState`.
+    // The state is checked against the text: the last word is absent and the ellipsis is present.
     expect(textOf(view)).not.toContain(LAST_WORD)
     expect(textOf(view).endsWith("...")).toBe(true)
     expect(textOf(view)).toContain(INSIDE_MARKER)
@@ -171,8 +148,7 @@ describe("FailureBanner", () => {
   })
 
   it("old marker text renders as written", () => {
-    // An old run's stored text can still hold a numbered placeholder or a `␟`-fenced marker
-    // (441 D-20); the banner shows those characters and converts neither.
+    // An old run's stored text can hold a numbered placeholder or a fenced marker; both show as is.
     const old = `Step 1/1 "probe" failed: token <SECRET_1> and ␟masked:secret␟ stay as stored`
     const view = mount(<FailureBanner summary={old} />)
 
@@ -221,10 +197,7 @@ describe("FailureBanner", () => {
     expect(written).toBe(textOf(view))
   })
 
-  // THE TWO ARMS THE GREEN TICK USED TO SWALLOW. `writeText` was called unguarded, unawaited and
-  // uncaught, and `copied` was set unconditionally on the line after it — so a denied permission
-  // produced an unhandled rejection AND a check mark, and a non-secure context threw a `TypeError`
-  // out of the click handler. Neither arm had a cell, which is why the defect shipped.
+  // A rejected write and a non-secure context neither show a check mark nor throw from the click.
 
   it("does not claim success when the clipboard write rejects", async () => {
     const writeText = vi.fn<(text: string) => Promise<void>>()
@@ -283,8 +256,7 @@ describe("FailureBanner", () => {
     expect(announcementOf(view)).toContain("Could not copy")
   })
 
-  // The producer's text is a text node and nothing else (T-405-42). A cell that fed markup and
-  // found no element is the only assertion that keeps it that way.
+  // Feeding markup and finding no element is the only assertion that keeps the text a text node.
   it("renders a summary containing markup as text, never as an element", () => {
     const view = mount(<FailureBanner summary={'<img src=x onerror="alert(1)">'} />)
 

@@ -1,17 +1,7 @@
-// Ported from core/src/agent/__tests__/prompts-context.test.ts (353-03, D-02).
-// Adaptation: D-10 dropped healingConfig from StepContext — removed from fixtures.
-//
-// 355-02 redirect (Wave-0, RED pending Plan 03): the monolithic step-prompt builder
-// is retired. Per-turn state (previous steps, sub-action history) now lives in
-// `composeTurnMessages(...)` turn content; the suite/test framing moves up into the
-// byte-stable `buildContextTier(...)` CONTEXT tier (D-04). Every content assertion is
-// preserved byte-for-byte — only the producing call changes. Failing reason is exactly
-// the not-yet-implemented tier/turn API (missing exports) until Plan 03 lands it.
 import { describe, it, expect } from 'vitest'
 import type { ModelMessage, SystemModelMessage } from 'ai'
 import {
   buildSystemPrompt,
-  // Plan-03 tier/turn API — intentionally unresolved today (the RED reason for this suite):
   buildContextTier,
   composeTurnMessages,
 } from '../prompts.js'
@@ -136,7 +126,7 @@ describe('turn content rich previous step format (was step-prompt)', () => {
   })
 })
 
-describe('buildSystemPrompt custom-rules removal (Phase 373, KDIR-03 / T-373-07)', () => {
+describe('buildSystemPrompt custom-rules removal', () => {
   it('never renders a Custom rules block', () => {
     expect(buildSystemPrompt(undefined)).not.toContain('Custom rules:')
     expect(buildSystemPrompt('web')).not.toContain('Custom rules:')

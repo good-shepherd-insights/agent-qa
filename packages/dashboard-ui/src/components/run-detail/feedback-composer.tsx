@@ -14,7 +14,6 @@ import { DenialBlock } from '@/components/run-detail/denial-block'
 import { FeedbackHistory, type FeedbackHistoryProps } from '@/components/run-detail/feedback-history'
 import { FeedbackPreview } from '@/components/run-detail/feedback-preview'
 import { FeedbackTechnicalDetails } from '@/components/run-detail/feedback-technical-details'
-import { CorrectionFields, type CorrectedActionField } from '@/components/run-detail/mark-correction-fields'
 import {
   CHOICE_LABELS,
   CHOICE_LEGEND,
@@ -28,7 +27,6 @@ import {
   NO_UNIQUE_ADDRESS_TEXT,
   SEND_FEEDBACK_LABEL,
   TEST_SWITCHER_LABEL,
-  correctedActionUnavailableText,
   noteCounterText,
   resolvedStepText,
   showStepLabel,
@@ -50,21 +48,16 @@ export interface FeedbackComposerProps {
   outcomeClass: FeedbackOutcomeClass
   selected: Mark | undefined
   onChoose: (kind: Mark) => void
-  /** D-01: the target has no unique mark address; the choices stay, nothing can be sent. */
+  // The target has no unique mark address; the choices stay and nothing can be sent.
   noUniqueAddress?: boolean
-  /** D-03: a test-level target in a multi-member run can be moved to another test. */
+  // A test-level target in a multi-member run can be moved to another test.
   testSwitcher?: FeedbackTestSwitcher
-  /** D-08: the selection has moved to another place; the target stays until the person switches. */
+  // The selection has moved elsewhere; the target stays until the person switches.
   pinned?: FeedbackPinned
-  /** D-09: other addresses holding a non-empty draft. */
+  // Other addresses holding a non-empty draft.
   unsentDrafts?: readonly FeedbackUnsentDraft[]
   note?: string
   onNoteChange?: (note: string) => void
-  /** D-15: the draft's raw correction text; the action field shows only while the gate allows it. */
-  expectation?: string
-  actionText?: string
-  actionField?: CorrectedActionField
-  onCorrectionChange?: (expectation: string, actionText: string) => void
   previewState: FeedbackPreviewState
   previewCurrent: boolean
   /** The read on screen, which may be an older one still showing while a re-fetch is in flight. */
@@ -74,25 +67,25 @@ export interface FeedbackComposerProps {
   previewAlreadyMarkedTime?: string
   /** An earlier mark's time from the loaded history; undefined until history holds that mark. */
   timeFor?: (markId: string) => string | undefined
-  /** D-22: the run's mark history, listed for this target and for the whole run. */
+  // The run's mark history, listed for this target and for the whole run.
   history?: Omit<FeedbackHistoryProps, 'scope' | 'address'>
-  /** Why the read on screen failed; its Retry re-reads and never submits (D-19). */
+  /** Why the read on screen failed; its Retry re-reads and never submits. */
   previewFailure?: FeedbackReadFailure
   onPreviewRetry?: () => void
   /** The target member's step count, for the resolved-step sentence. */
   stepCount?: number
-  /** D-13: the target member's testId, shown only under Technical details. */
+  // The target member's `testId`, shown only under Technical details.
   testId?: string
-  /** D-14: select the resolved step on the page without re-targeting the composer. */
+  // Selects the resolved step on the page without re-targeting the composer.
   onShowStep?: (stepIndex: number) => void
   submitReason: string
   onSubmit: () => void
   status: string
-  /** 419-15: the page's denial for this address, shown while its draft is retained. */
+  // The page's denial for this address, shown while its draft is retained.
   denial?: MarkDenial
   headingRef?: Ref<HTMLHeadingElement>
   onClose: () => void
-  /** D-10: beside the evidence, or under it on a page narrower than 768px. */
+  // Beside the evidence, or under it on a page narrower than 768px.
   layout?: FeedbackLayout
 }
 
@@ -124,12 +117,7 @@ function TextParts({ parts }: { parts: FeedbackTextParts }) {
   )
 }
 
-/**
- * The feedback composer (426 D-07), docked beside the evidence or stacked under it (D-10).
- * Presentational (400 D-13): the page owns the target, drafts, preview read and submission, and
- * this paints them. A named section, never a dialog — the tree, the evidence and every copy
- * affordance stay usable while it is open.
- */
+// Presentational and never a dialog, so the tree, evidence and copy controls stay usable.
 export function FeedbackComposer({
   composerId,
   headingId,
@@ -147,10 +135,6 @@ export function FeedbackComposer({
   unsentDrafts = [],
   note = '',
   onNoteChange,
-  expectation = '',
-  actionText = '',
-  actionField,
-  onCorrectionChange,
   previewState,
   previewCurrent,
   previewRead,
@@ -179,7 +163,7 @@ export function FeedbackComposer({
   const bodyRef = useRef<HTMLDivElement>(null)
   const newMarkId = history?.newMarkId
   const historyRead = history?.read
-  // D-21: the recorded mark is brought into view where it lands in history; focus stays put.
+  // The recorded mark scrolls into view in history; focus stays put.
   useEffect(() => {
     if (newMarkId === undefined) return
     const entry = bodyRef.current?.querySelector<HTMLElement>('[data-history-new]')
@@ -188,8 +172,7 @@ export function FeedbackComposer({
   }, [newMarkId, historyRead])
   const blocked = submitReason !== ''
   const choices = FEEDBACK_CHOICE_ORDER[outcomeClass]
-  // D-14: the step a test-level mark lands on is the read's own answer, shown only for the current
-  // read; already-marked and the refusals carry no resolved step (UI-SPEC U6).
+  // A test-level mark's resolved step is the current read's answer; refusals carry none.
   const resolvedPending = scope === 'test' && selected !== undefined && previewState !== 'idle' && !previewCurrent
   const resolved =
     scope === 'test' && selected !== undefined && previewCurrent &&
@@ -359,14 +342,6 @@ export function FeedbackComposer({
           ) : null}
         </div>
 
-        <CorrectionFields
-          expectation={expectation}
-          actionText={actionText}
-          disabled={state === 'submitting'}
-          actionField={actionField ?? { shown: false, reason: correctedActionUnavailableText(selected === undefined ? 'no-choice' : 'loading') }}
-          onChange={(nextExpectation, nextActionText) => onCorrectionChange?.(nextExpectation, nextActionText)}
-        />
-
         <FeedbackPreview
           state={previewState}
           current={previewCurrent}
@@ -390,7 +365,6 @@ export function FeedbackComposer({
           address={target}
           testId={testId}
           recordIds={technicalRead?.kind === 'consequences' ? technicalRead.knowledge.records.map((record) => record.recordId) : undefined}
-          labels={technicalRead?.kind === 'consequences' ? technicalRead.labels : undefined}
           basis={technicalRead?.basis}
         />
       </div>

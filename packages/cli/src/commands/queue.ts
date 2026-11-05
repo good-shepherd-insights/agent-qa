@@ -1,12 +1,31 @@
+import {
+  guardJsonText,
+  printRunText,
+  reserveStdoutForData,
+} from '@vostride/agent-qa-core/run-text-output'
 import { Command } from 'commander'
 import pc from 'picocolors'
 import { resolveConfig } from '../config.js'
 
-// This command operates the RUN QUEUE — the v1 test-execution queue whose implementation is
-// dashboard-server's `JobQueue` class (see Phase 60); all run triggers (dashboard, webhook, CLI,
-// API) route through it. It is not the curation queue (v51 knowledge curation, drained under the
-// writer lease) and not the agent job queue (v52 durable background agent jobs, .agent-qa/
-// agent-jobs.db). D-21 fixes those three names; D-22 keeps this command called `queue`.
+// This command drives the dashboard server's run queue, which every run trigger goes through.
+// It is not the curation queue or the agent job queue.
+
+async function refusalWord(response: Response): Promise<string> {
+  try {
+    const body: unknown = await response.json()
+    if (typeof body === 'object' && body !== null && 'error' in body) {
+      const { error } = body as { error: unknown }
+      if (typeof error === 'string') return ` (${error})`
+    }
+  } catch {
+    // Not a JSON body: the status line says all there is.
+  }
+  return ''
+}
+
+function printError(text: string): void {
+  printRunText(text, (block) => console.error(block))
+}
 
 function timeAgo(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -24,7 +43,7 @@ async function resolveServerUrl(opts: { server?: string }, globalOpts: { config?
   if (envUrl) return envUrl
   try {
     const config = await resolveConfig({ configPath: globalOpts.config })
-    const port = (config as any).dashboard?.port || 3470
+    const port = config.services?.dashboard?.port ?? 3470
     return `http://localhost:${port}`
   } catch {
     return 'http://localhost:3470'
@@ -33,10 +52,10 @@ async function resolveServerUrl(opts: { server?: string }, globalOpts: { config?
 
 export function createQueueCommand(): Command {
   const cmd = new Command('queue')
-    .description('Manage the run queue (v1 test execution)')
+    .description("Manage the dashboard's run queue")
     .addHelpText(
       'after',
-      '\nAgentQA runs three separate queues; this command manages the first only:\n' +
+      '\nagent-qa runs three separate queues; this command manages the first only:\n' +
         '  run queue        test executions dispatched by the dashboard server (this command)\n' +
         '  curation queue   knowledge curation work, drained under the writer lease\n' +
         '  agent job queue  durable background agent jobs in .agent-qa/agent-jobs.db\n' +
@@ -50,6 +69,7 @@ export function createQueueCommand(): Command {
     .option('--all', 'include recently completed jobs')
     .option('--server <url>', 'dashboard server URL')
     .action(async (opts: { json?: boolean; all?: boolean; server?: string }, command: Command) => {
+      const releaseStdout = opts.json ? reserveStdoutForData() : undefined
       try {
         const program = command.parent!.parent!
         const globalOpts = program.opts<{ config?: string }>()
@@ -60,7 +80,8 @@ export function createQueueCommand(): Command {
         try {
           const response = await fetch(endpoint)
           if (!response.ok) {
-            console.error(pc.red(`Server returned ${response.status}: ${response.statusText}`))
+            const word = await refusalWord(response)
+            printError(pc.red(`Server returned ${response.status}: ${response.statusText}${word}`))
             process.exit(1)
           }
           data = await response.json()
@@ -71,7 +92,7 @@ export function createQueueCommand(): Command {
         }
 
         if (opts.json) {
-          console.log(JSON.stringify(data, null, 2))
+          console.log(guardJsonText(JSON.stringify(data, null, 2)))
           return
         }
 
@@ -92,6 +113,7 @@ export function createQueueCommand(): Command {
         if (pending.length > 0) {
           console.log(pc.bold(`Pending (${pending.length} jobs):`))
           console.log(pc.dim('  #   ID            Name                Priority  Source      Queued'))
+          const rows: string[] = []
           for (let i = 0; i < pending.length; i++) {
             const job = pending[i]
             const num = String(i + 1).padEnd(3)
@@ -100,40 +122,47 @@ export function createQueueCommand(): Command {
             const priority = String(job.priority ?? 0).padEnd(8)
             const source = (job.source ?? '').padEnd(10)
             const queued = job.createdAt ? timeAgo(job.createdAt) : ''
-            console.log(`  ${num} ${pc.dim(id)}  ${name}  ${priority}  ${source}  ${pc.dim(queued)}`)
+            rows.push(`  ${num} ${pc.dim(id)}  ${name}  ${priority}  ${source}  ${pc.dim(queued)}`)
           }
+          printRunText(rows.join('\n'))
           console.log()
         }
 
         if (running.length > 0) {
           console.log(pc.bold(`Running (${running.length} jobs):`))
           console.log(pc.dim('  ID            Name                Source      Started'))
+          const rows: string[] = []
           for (const job of running) {
             const id = (job.id ?? '').slice(0, 12).padEnd(12)
             const name = (job.name ?? '').slice(0, 18).padEnd(18)
             const source = (job.source ?? '').padEnd(10)
             const started = job.startedAt ? timeAgo(job.startedAt) : ''
-            console.log(`  ${pc.green(id)}  ${name}  ${source}  ${pc.dim(started)}`)
+            rows.push(`  ${pc.green(id)}  ${name}  ${source}  ${pc.dim(started)}`)
           }
+          printRunText(rows.join('\n'))
           console.log()
         }
 
         if (opts.all && data.recent?.length > 0) {
           console.log(pc.bold(`Recent (${data.recent.length} jobs):`))
           console.log(pc.dim('  ID            Name                Status    Duration'))
+          const rows: string[] = []
           for (const job of data.recent) {
             const id = (job.id ?? '').slice(0, 12).padEnd(12)
             const name = (job.name ?? '').slice(0, 18).padEnd(18)
             const status = (job.status ?? '').padEnd(8)
             const duration = job.duration ? `${Math.round(job.duration / 1000)}s` : ''
             const statusColor = job.status === 'passed' ? pc.green : job.status === 'failed' ? pc.red : pc.dim
-            console.log(`  ${pc.dim(id)}  ${name}  ${statusColor(status)}  ${pc.dim(duration)}`)
+            rows.push(`  ${pc.dim(id)}  ${name}  ${statusColor(status)}  ${pc.dim(duration)}`)
           }
+          printRunText(rows.join('\n'))
           console.log()
         }
       } catch (err) {
-        console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
+        printError(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
         process.exit(1)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -159,11 +188,11 @@ export function createQueueCommand(): Command {
           process.exit(1)
         }
 
-        // 2026-10-17 (444-07, D-31): a 2xx prints the route's message; refusals exit 1 on stderr.
+        // A 2xx prints the route's message; refusals exit 1 on stderr.
         if (response.ok) {
           const data = await response.json() as { message?: string }
           if (typeof data.message === 'string') {
-            console.log(data.message)
+            printRunText(data.message)
           } else {
             console.log(pc.red('Failed to cancel: Unknown error'))
             process.exit(1)
@@ -174,11 +203,11 @@ export function createQueueCommand(): Command {
           console.error(pc.red(`Job not found: ${runId}`))
         } else {
           const data = await response.json().catch(() => ({})) as { error?: string }
-          console.error(pc.red(data.error ?? `Failed to cancel: ${response.statusText}`))
+          printError(pc.red(data.error ?? `Failed to cancel: ${response.statusText}`))
         }
         process.exit(1)
       } catch (err) {
-        console.error(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
+        printError(pc.red(`Error: ${err instanceof Error ? err.message : String(err)}`))
         process.exit(1)
       }
     })

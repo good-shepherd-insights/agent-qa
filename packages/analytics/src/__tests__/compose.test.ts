@@ -40,7 +40,7 @@ class ThrowingTransport implements AnalyticsTransport {
   }
 }
 
-/** Records whether the PostHog transport was CONSTRUCTED at all — the structural half of D-19. */
+// Records whether the PostHog transport is constructed at all.
 function spyingPosthogFactory(): { factory: PosthogTransportFactory; calls: PosthogTransportOptions[] } {
   const calls: PosthogTransportOptions[] = []
   return {
@@ -54,7 +54,7 @@ function spyingPosthogFactory(): { factory: PosthogTransportFactory; calls: Post
 
 const ENABLED_KEY = 'phc_test_key'
 
-describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () => {
+describe('composeAnalytics — the one opt-out decision', () => {
   it.each([
     { label: 'privacy true', config: { analytics: { privacy: true } }, optedOut: true },
     { label: 'privacy false', config: { analytics: { privacy: false } }, optedOut: false },
@@ -97,9 +97,6 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
     expect(spy.calls[0]?.host).toBe('https://sink.invalid')
   })
 
-  // A transport handed in by a caller must not be able to undo the decision. If the override were
-  // honoured on the opted-out arm it would be a second door onto the wire, which is the exact shape
-  // D-19 exists to remove.
   it('an opted-out composition ignores a transport override entirely', async () => {
     const sink = new CountingSink()
     const composed = composeAnalytics({
@@ -129,7 +126,7 @@ describe('composeAnalytics — the one opt-out decision (D-19 / ANLY-01)', () =>
   })
 })
 
-describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, edge ANLY-01/empty)', () => {
+describe('AnalyticsPort — best-effort boundary and the empty queue', () => {
   it('never throws into the host, whatever the transport does', async () => {
     const composed = composeAnalytics({
       projectKey: ENABLED_KEY,
@@ -141,12 +138,7 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
     await expect(composed.port.shutdown()).resolves.toBeUndefined()
   })
 
-  // MEASURED, not assumed (398-03 mutation leg M6). The cell above was VACUOUS for the synchronous
-  // guard: `ThrowingTransport.capture` is reached from inside an async body, so its throw is
-  // already a rejected promise and the `.catch` handles it — deleting `capture`'s try/catch
-  // outright left all 32 cells green. The only thing that can throw SYNCHRONOUSLY out of `capture`
-  // is the identity resolver, so that is what this drives. Plan 06 re-homes the real resolver, and
-  // the real one reads a file.
+  // Only the identity resolver can throw synchronously out of `capture`; a transport throw rejects.
   it('swallows a SYNCHRONOUS throw out of the identity resolver', () => {
     const sink = new CountingSink()
     const composed = composeAnalytics({
@@ -229,7 +221,7 @@ describe('AnalyticsPort — best-effort boundary and the empty queue (T-398-08, 
   })
 })
 
-describe('C447-NO-DNT', () => {
+describe('DO_NOT_TRACK is not an opt-out', () => {
   it('the config privacy flag is the only opt-out', () => {
     const first = spyingPosthogFactory()
     const withVariable = composeAnalytics({
@@ -267,7 +259,7 @@ describe('C447-NO-DNT', () => {
   })
 })
 
-describe('C447-NO-TRANSPORT', () => {
+describe('an opted-out or keyless composition holds no transport', () => {
   it('an opted-out or keyless composition holds no transport object', async () => {
     const arms = [
       {

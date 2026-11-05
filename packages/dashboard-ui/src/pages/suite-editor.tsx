@@ -40,7 +40,6 @@ import type { Selection } from "@/lib/selection"
 import { useVariableSuggestions } from "@/hooks/use-variable-suggestions"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
-import { useRunConfig } from "@/hooks/use-run-config"
 import {
   fetchSuiteFile,
   createSuiteFile,
@@ -93,7 +92,6 @@ export default function SuiteEditorPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isMobile = useIsMobile()
-  const { defaultRunMode } = useRunConfig()
   const { targets, globalUse, isLoading: isLoadingTargets } = useTargetDetails()
   const isCreateMode = !routeSuiteId
   const shouldAutoLaunchLive = searchParams.get("live") === "1"
@@ -146,11 +144,7 @@ export default function SuiteEditorPage() {
   const suiteId = displayFormState?.suiteId ?? ''
   const suiteName = displayFormState?.name || (isCreateMode ? 'New Suite' : filePath)
 
-  // Derive the tests feeding into useLiveEditor. Per D-12, the server re-reads
-  // each test's YAML fresh from disk on each execute-test message, so the client
-  // only needs to identify tests by path + testId. Empty arrays for steps/setup/
-  // teardown are intentional — the hook forwards the signature through to the
-  // server which authoritatively re-reads.
+  // The server re-reads each test's YAML per execute, so the client sends only path and test id.
   const liveTests = useMemo<LiveEditorExternalTest[]>(() => {
     if (!displayFormState) return []
     return displayFormState.tests.map((entry) => ({
@@ -168,7 +162,7 @@ export default function SuiteEditorPage() {
     tests: liveTests,
     setupHooks: liveHookConfig.setup,
     teardownHooks: liveHookConfig.teardown,
-    // The server detaches a dropped session for its idle window, so a drop resumes it (428 D-09).
+    // The server detaches a dropped session for its idle window, so a drop resumes it.
     allowReconnect: true,
   })
   const terminateLiveSession = liveEditor.terminateSession
@@ -184,8 +178,7 @@ export default function SuiteEditorPage() {
     : null
   const draftAuthStateName = useMemo(() => readDraftAuthStateName(content), [content])
 
-  // CRITICAL per D-13: stale check is ONLY over setup + teardown arrays.
-  // Test-list edits must flow through silently — no stale banner, no restart prompt.
+  // Only setup and teardown make hooks stale; test-list edits flow through with no banner.
   const setupHooksStale = hasLiveSession
     && displayFormState !== null
     && (
@@ -198,15 +191,15 @@ export default function SuiteEditorPage() {
     && displayFormState !== null
     && displayFormState.tests.length > 0
 
-  const runDisabled = isLaunchingLive || hasLiveSession // D-16
+  const runDisabled = isLaunchingLive || hasLiveSession
   const liveConnectDisabled = (
     isLaunchingLive
     || hasLiveSession
     || isRunning
     || runId !== null
-    || isCreateMode                                  // D-19
-    || displayFormState === null                     // D-20 YAML invalid
-    || !displayFormState?.target.trim()              // D-18 target required
+    || isCreateMode
+    || displayFormState === null                     // YAML invalid
+    || !displayFormState?.target.trim()              // target required
     || isLoadingTargets
   )
 
@@ -286,7 +279,7 @@ export default function SuiteEditorPage() {
     setContent((c) => updateSuiteField(c, ['suite-id'], generateSuiteId()))
   }, [isCreateMode])
 
-  // Edit mode: backfill suite-id if missing after initial content fetch (D-02)
+  // Edit mode: backfill suite-id if missing after initial content fetch
   useEffect(() => {
     if (isCreateMode || isLoading) return
     const state = suiteYamlToFormState(content)
@@ -339,11 +332,11 @@ export default function SuiteEditorPage() {
     }
   }, [content])
 
-  const handleRun = useCallback(async (local: boolean) => {
+  const handleRun = useCallback(async () => {
     if (isCreateMode) return
     setIsRunning(true)
     try {
-      const r = await triggerRun({ file: filePath, local })
+      const r = await triggerRun({ file: filePath })
       setRunId(r.runId)
       toast.success("Suite run started")
     } catch (err) {
@@ -542,8 +535,7 @@ export default function SuiteEditorPage() {
     closeLiveMode()
   }, [closeLiveMode])
 
-  // D-23: suite allows manual setup re-run during an active session (divergence
-  // from test-editor). Stale banner clears only on explicit Restart.
+  // The suite allows a manual setup re-run in a session; the stale banner clears on Restart.
   const handleRunLiveHook = useCallback((phase: 'setup' | 'teardown', hookId: string) => {
     if (!hasLiveSession) {
       toast.error('Start a live session first.')
@@ -574,8 +566,7 @@ export default function SuiteEditorPage() {
     }
   }, [])
 
-  // Terminal transition: reflect server-driven disconnect
-  // A session the server no longer holds stays on the pane, whose preview names it (428 D-09).
+  // A session the server dropped stays on the pane, whose preview names it.
   useEffect(() => {
     if (!liveSessionId) return
     if (liveConnectionState !== "disconnected") return
@@ -622,7 +613,7 @@ export default function SuiteEditorPage() {
     setLiveDevtoolsTab("reasoning")
   }, [liveEditor.runningTestIndex, liveEditor.tests, liveModeOpen])
 
-  // Auto-launch from ?live=1 (D-17)
+  // Auto-launch from ?live=1
   useEffect(() => {
     if (!shouldAutoLaunchLive || autoLaunchLiveRef.current) return
     if (isCreateMode || isLoading || notFound || isLaunchingLive || liveModeOpen || hasLiveSession) return
@@ -648,10 +639,10 @@ export default function SuiteEditorPage() {
   // Keyboard shortcuts
   const shortcuts = useMemo(
     () => ({
-      r: () => { if (!isCreateMode) handleRun(defaultRunMode === 'local') },
+      r: () => { if (!isCreateMode) handleRun() },
       escape: () => { if (runId) handleRunClose() },
     }),
-    [isCreateMode, runId, handleRun, handleRunClose, defaultRunMode],
+    [isCreateMode, runId, handleRun, handleRunClose],
   )
   useKeyboardShortcuts(shortcuts)
 

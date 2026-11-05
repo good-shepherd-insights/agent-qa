@@ -1,13 +1,3 @@
-// Wave-0 RED scaffold (361-01, Task 2). Pins the SESSION-04 verdict-derivation tables
-// BEFORE any implementation exists — RED strictly on the unresolved import of the
-// not-yet-existing `../verdict.js` module (right-reason RED). Turns green in Plan 05.
-//
-// Contract source: 361-CONTEXT.md D-14 (exit codes), D-15 (member outcome union + neutral
-// skipped), D-16 (per-test outcome is a pure total function; timeout via the existing
-// createTimeoutAbortReason tag; healed keyed on selfHeal evidence, NEVER a step status
-// string — RESEARCH Pitfall 5) + spec/v2/runner.md §2.1 ratified aggregate rule.
-//
-// Runner package convention: `.js`-suffixed relative import specifiers.
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -56,9 +46,9 @@ function test(overrides: Partial<TestResult> = {}): TestResult {
 const TEST_TIMEOUT_MESSAGE = createTimeoutAbortReason('test', 30_000).message
 const STEP_TIMEOUT_MESSAGE = createTimeoutAbortReason('step', 5_000).message
 
-// ---- isTestTimeoutMessage (D-16) -----------------------------------------
+// ---- isTestTimeoutMessage -----------------------------------------
 
-describe('isTestTimeoutMessage (D-16)', () => {
+describe('isTestTimeoutMessage', () => {
   it.each([
     [TEST_TIMEOUT_MESSAGE, true],
     [STEP_TIMEOUT_MESSAGE, false],
@@ -69,9 +59,9 @@ describe('isTestTimeoutMessage (D-16)', () => {
   })
 })
 
-// ---- deriveMemberOutcome (D-15/D-16) -------------------------------------
+// ---- deriveMemberOutcome -------------------------------------
 
-describe('deriveMemberOutcome (D-15/D-16) — pure total function', () => {
+describe('deriveMemberOutcome — pure total function', () => {
   it('passed + a step carrying selfHeal evidence ⇒ healed (keyed on evidence, not step status)', () => {
     const result = test({ status: 'passed', steps: [step({ status: 'passed', evidence: healedEvidence() })] })
     expect(deriveMemberOutcome(result)).toBe('healed')
@@ -102,39 +92,37 @@ describe('deriveMemberOutcome (D-15/D-16) — pure total function', () => {
   })
 })
 
-// ---- deriveAggregateVerdict (spec §2.1 ordered rule + D-15) ---------------
+// ---- deriveAggregateVerdict ----
 
 interface AggregateCase {
   name: string
   runCancelled: boolean
-  runBudgetExpired: boolean
   outcomes: MemberTestOutcome[]
   expected: RunStatus
 }
 
 const AGGREGATE_CASES: AggregateCase[] = [
-  { name: 'runCancelled wins over everything', runCancelled: true, runBudgetExpired: true, outcomes: ['failed', 'passed'], expected: 'cancelled' },
-  { name: 'runBudgetExpired ⇒ timeout (below cancel)', runCancelled: false, runBudgetExpired: true, outcomes: ['failed', 'passed'], expected: 'timeout' },
-  { name: 'any member failed ⇒ failed', runCancelled: false, runBudgetExpired: false, outcomes: ['passed', 'failed', 'healed'], expected: 'failed' },
-  { name: 'any member timeout ⇒ failed', runCancelled: false, runBudgetExpired: false, outcomes: ['passed', 'timeout'], expected: 'failed' },
-  { name: 'any member cancelled (no failed) ⇒ cancelled', runCancelled: false, runBudgetExpired: false, outcomes: ['passed', 'cancelled'], expected: 'cancelled' },
-  { name: 'some healed none failed ⇒ healed', runCancelled: false, runBudgetExpired: false, outcomes: ['passed', 'healed'], expected: 'healed' },
-  { name: 'all passed ⇒ passed', runCancelled: false, runBudgetExpired: false, outcomes: ['passed', 'passed'], expected: 'passed' },
-  { name: 'skipped members are neutral ⇒ passed', runCancelled: false, runBudgetExpired: false, outcomes: ['passed', 'skipped'], expected: 'passed' },
-  { name: 'all-skipped ⇒ passed (vacuous, D-15)', runCancelled: false, runBudgetExpired: false, outcomes: ['skipped', 'skipped'], expected: 'passed' },
-  { name: 'skipped + healed ⇒ healed', runCancelled: false, runBudgetExpired: false, outcomes: ['skipped', 'healed'], expected: 'healed' },
-  { name: 'empty run ⇒ passed', runCancelled: false, runBudgetExpired: false, outcomes: [], expected: 'passed' },
+  { name: 'runCancelled wins over everything', runCancelled: true, outcomes: ['failed', 'passed'], expected: 'cancelled' },
+  { name: 'any member failed ⇒ failed', runCancelled: false, outcomes: ['passed', 'failed', 'healed'], expected: 'failed' },
+  { name: 'any member timeout ⇒ failed', runCancelled: false, outcomes: ['passed', 'timeout'], expected: 'failed' },
+  { name: 'any member cancelled (no failed) ⇒ cancelled', runCancelled: false, outcomes: ['passed', 'cancelled'], expected: 'cancelled' },
+  { name: 'some healed none failed ⇒ healed', runCancelled: false, outcomes: ['passed', 'healed'], expected: 'healed' },
+  { name: 'all passed ⇒ passed', runCancelled: false, outcomes: ['passed', 'passed'], expected: 'passed' },
+  { name: 'skipped members are neutral ⇒ passed', runCancelled: false, outcomes: ['passed', 'skipped'], expected: 'passed' },
+  { name: 'all-skipped ⇒ passed (vacuous)', runCancelled: false, outcomes: ['skipped', 'skipped'], expected: 'passed' },
+  { name: 'skipped + healed ⇒ healed', runCancelled: false, outcomes: ['skipped', 'healed'], expected: 'healed' },
+  { name: 'empty run ⇒ passed', runCancelled: false, outcomes: [], expected: 'passed' },
 ]
 
-describe('deriveAggregateVerdict (spec §2.1 ratified rule + D-15 neutral-skipped)', () => {
-  it.each(AGGREGATE_CASES)('$name', ({ runCancelled, runBudgetExpired, outcomes, expected }) => {
-    expect(deriveAggregateVerdict({ runCancelled, runBudgetExpired, outcomes })).toBe(expected)
+describe('deriveAggregateVerdict (spec §2.1 ratified rule + neutral-skipped)', () => {
+  it.each(AGGREGATE_CASES)('$name', ({ runCancelled, outcomes, expected }) => {
+    expect(deriveAggregateVerdict({ runCancelled, outcomes })).toBe(expected)
   })
 })
 
-// ---- mapVerdictToExitCode (D-14) -----------------------------------------
+// ---- mapVerdictToExitCode -----------------------------------------
 
-describe('mapVerdictToExitCode (D-14)', () => {
+describe('mapVerdictToExitCode', () => {
   it.each<[RunStatus, number]>([
     ['passed', 0],
     ['healed', 0],

@@ -17,14 +17,7 @@ import type {
 import type { LanguageModel } from 'ai'
 import type { LogManager } from '../logging/log-manager.js'
 
-/**
- * Suite run configuration — a types-only contract consumed by the CLI composition root.
- * The former `runSuite`/`executeSuiteMember` orchestration moved onto runner soil
- * (`runMemberTest`) in Phase 363; the CLI now composes per-member execution directly and
- * this interface only describes the shape it passes through. Field types that used to be
- * borrowed from the (deleted) `RunTestConfig` are inlined here so the module carries no
- * value dependency on the retired core run path.
- */
+// Types only: the CLI composes per-member execution and passes this shape through.
 export interface RunSuiteConfig {
   runId?: string
   adapter: PlatformAdapter
@@ -32,28 +25,15 @@ export interface RunSuiteConfig {
   planner: Planner
   verifier: Verifier
   cache?: ActionPlanCache
-  /**
-   * WM-01 run-scoped working-memory store (Phase 358). ONE store spans all suite member tests
-   * (run-scoped, not test-scoped) and is threaded into each test's runner loop; the CLI flushes
-   * it once at suite end.
-   */
+  // One store spans every member of the run; the CLI flushes it once at suite end.
   workingMemory?: WorkingMemoryPort
-  /**
-   * D-14 storage-state store (Phase 360). ONE run-scoped store spans all suite member tests and is
-   * threaded into each test's runner loop; the CLI constructs it at the composition root.
-   */
+  // One run-scoped store spans every member; the CLI builds it at the composition root.
   storageState?: StorageStatePort
-  /**
-   * D-08/Q10 screenshot compressor (Phase 363). ONE runner-local `SharpScreenshotCompressor`
-   * constructed at the CLI composition root, threaded into each member's runner loop (sharp left
-   * core). Absent ⇒ compressor-less loop.
-   */
+  // One runner-local compressor built at the composition root; absent runs without compression.
   compressor?: ScreenshotCompressor
   plannerModel: LanguageModel
   verifierModel: LanguageModel
-  reporters?: never[]
   captureScreenshots?: boolean
-  screenshotMode?: 'failure' | 'every-step'
   timeouts?: { step?: number; test?: number; navigation?: number }
   logger?: LogManager
   configContent?: string
@@ -67,7 +47,7 @@ export interface RunSuiteConfig {
   accessibility?: {
     enabled: boolean
     standard?: 'wcag2a' | 'wcag2aa' | 'wcag2aaa'
-    runAfter?: 'every-step' | 'navigation' | 'test-end'
+    runAfter?: 'every-step' | 'test-end'
     failOnViolation?: boolean
     disableRules?: string[]
     exclude?: string[]
@@ -81,7 +61,7 @@ export interface RunSuiteConfig {
     },
   ) => Promise<AccessibilityViolation[]>
   vision?: { screenshotSize?: number; effectiveResolution?: number }
-  /** Vision gate resolved once per run at the composition root (D-11); passed through to each test. */
+  /** Vision gate resolved once per run at the composition root; passed through to each test. */
   visionGate?: { attachImage: boolean; captureMode: 'full' | 'textOnly'; promptNote: string }
   product?: string
   createAdapter?: () => Promise<PlatformAdapter>

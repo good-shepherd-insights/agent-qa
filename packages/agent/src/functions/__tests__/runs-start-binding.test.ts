@@ -1,25 +1,4 @@
-// The unbound→bound transition, proven where it is decided (Phase 385 plan 10 — D-16).
-//
-// Three claims, and they are not the same claim:
-//
-//   1. `bindingStatus` is COMPUTED per composition. The same spec object, registered in two
-//      registries in this one process, lists `bound` in the one that supplied a run executor
-//      and `unbound` in the one that did not — and `invokeFunction` refuses on exactly the
-//      answer a listing renders. This is what makes D-09's visible-unbound state a fact about
-//      a host rather than a literal somebody has to remember to flip.
-//   2. `mutating-local` is load-bearing THROUGH A DISPATCH. `risk-classification.test.ts`
-//      already proves the descriptor resolves to allow in every context, but until this phase
-//      that allow led nowhere: the binding check refused immediately afterwards, so no test
-//      could tell an allow that dispatches from an allow that does not. These cases run the
-//      whole pipeline and assert the op RAN. 2026-10-02 (432-42): no gate reads the tier or a
-//      context any more, so the four-context loop and the tier counterfactual below now hold by
-//      construction; they are kept as the dispatch witness.
-//   3. The acknowledgment describes the RUN, not the request and not the port's report. The
-//      port says only which run it started; every field a caller reads comes off that run's
-//      own record. A host that returns an id without running anything is refused by name.
-//
-// Nothing is stubbed between the caller and the op: `invokeFunction` runs the real dispatch, and
-// since 432-19 there is no gate or `evaluate` on that path (re-spelled 2026-10-02, 432-42).
+// `bindingStatus` is computed per composition, and `invokeFunction` refuses on the listed answer.
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -40,7 +19,7 @@ import { RUNS_START_FUNCTION_ID, RunNotRecordedError, runsStartSpec } from '../o
 import { createFunctionRegistry, createRegistryFromSpecs, resolveBindingStatus } from '../registry.js'
 import type { FunctionDeps, FunctionSpec, RunInvocationPort } from '../spec.js'
 
-/** Every context a capability call can be made in; none refuses a call since 432-13/19 (D-15). */
+// Every context a capability call can be made in; none refuses a call.
 const EVERY_CONTEXT: readonly ExecutionContext[] = [
   'local-interactive',
   'local-headless',
@@ -48,102 +27,47 @@ const EVERY_CONTEXT: readonly ExecutionContext[] = [
   'cloud',
 ]
 
-/**
- * The caller every case here dispatches as.
- *
- * 2026-10-01 (432-29, D-12): it once held every scope in the union, because `invokeFunction`
- * checked scopes and then human origin before binding, and a missing scope or an agent origin
- * would have turned an unbound refusal into a different one. Both checks are deleted (432-20), so
- * the retired `grantedScopes` and `safeMode` fields are dropped; nothing read them. `origin`
- * stays `human` as attribution only.
- */
+// `origin` stays `human` as attribution only.
 const RUN_CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'human',
 }
 
-/**
- * A PARSING input for every id this file invokes, because input validation also precedes the
- * binding check: `{}` fails the contract of every 387-08 verb, and a contract refusal is not a
- * binding refusal.
- */
+// Input validation precedes the binding check, so each id needs an input that parses.
 const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
-  // 392 D-24: a PARSING input for the same reason every row here carries one — the contract
-  // requires a non-empty message, so the `{}` default would fail validation and turn an unbound
-  // refusal into an input error, which the parity case below reads as `dispatched`.
   'agent.ask': { message: 'proposals' },
-  // 398 D-09: a PARSING input, on its neighbour's reasoning exactly — `query` is required and
-  // non-empty, so the `{}` default would fail validation and this case would read the input error
-  // as `dispatched`, certifying nothing about the binding it exists to measure.
   'agent.explain': { query: 'what can you do' },
-  // 389 D-11: a PARSING input, because validation precedes the binding check — the empty
-  // default fails the contract and reports an input error, certifying nothing about binding.
   'analysis.get': { runId: 'run-alpha' },
-  // 393 D-01: a PARSING input, and its extension is load-bearing beyond the reason its neighbours
-  // carry one. The contract requires a non-empty `draftPath`, so `{}` would report an input error;
-  // but the op ALSO refuses a path with no test-file extension before it consults the binding, so a
-  // path-shaped string with the wrong suffix would report `DraftNotAYamlFileError` and this case
-  // would read that as `dispatched` too. A parsing input is not enough here — it has to be one the
-  // op's own pure refusals let through.
+  // The path needs a test-file extension, or a pure refusal fires before the binding check.
   'authoring.draft.verify': { draftPath: 'tests/nothing-in-this-fixture.yaml' },
-  // 394 D-01: a PARSING input, on its sibling's reasoning — `{}` fails the contract's non-empty
-  // intent and its required scope, so the empty default would report an input error and this case
-  // would read that as `dispatched`, certifying nothing about binding.
   'authoring.draft.write': {
     intent: 'nothing in this fixture can author this',
     scope: { tier: 'product', key: 'nothing-in-this-fixture' },
   },
-  // 394-09 D-21: a PARSING input, on its sibling's reasoning — `{}` fails both non-empty fields,
-  // so the empty default would report an input error and this case would read that as
-  // `dispatched`. The exact-address ref keeps the leg aimed at the BINDING check: free text would
-  // reach the entity resolver first and refuse there instead.
+  // The exact-address ref skips the entity resolver, which would refuse free text first.
   'authoring.draft.edit': {
     testRef: 'tests/nothing-in-this-fixture.yaml::Nothing In This Fixture',
     intent: 'nothing in this fixture can edit this',
   },
-  // 394-07 D-12: a PARSING input, on its siblings' reasoning. Unlike `quarantine.list`, whose
-  // input is genuinely the empty query and which therefore needs no row here, this op REQUIRES a
-  // window — the projection's denominator, which nothing can guess — so the `{}` default would
-  // report an input error and this case would read that as `dispatched`.
   'authoring.funnel.get': { window: { scope: 'all-time' } },
   'runs.get': { runId: 'run-alpha' },
   'runs.events': { runId: 'run-alpha' },
-  // 403 D-03: a PARSING input on its `runs.` siblings' reasoning — `runId` is required, so the
-  // `{}` default would report an input error and this case would read that as `dispatched`,
-  // certifying nothing about the `liveView` binding it exists to measure.
   'runs.liveurl': { runId: 'run-alpha' },
-  // 428 D-07: on runs.liveurl's reasoning — `sessionId` is required, so the `{}` default would
-  // report an input error and certify nothing about the `liveView` binding.
   'editor.liveurl': { sessionId: 's1' },
-  // 419 GATE3-01: valid input lets this census reach the actual binding check.
   'runs.mark': { runId: 'run-alpha', kind: 'false-fail' },
   'runs.mark.preview': { runId: 'run-alpha', kind: 'false-fail' },
   'runs.marks.history': { runId: 'run-alpha' },
   'runs.postprocessing': { runId: 'run-alpha' },
-  // 405 D-03: a PARSING input on its `runs.` siblings' reasoning — `runId` is required, so the
-  // `{}` default would report an input error and this case would read that as `dispatched`,
-  // certifying nothing about the `runDetail` binding it exists to measure.
   'runs.detail': { runId: 'run-alpha' },
-  // 431 D-06: bound through `runDetail` like its sibling above, and `runId` is required.
   'runs.overview': { runId: 'run-alpha' },
   'runs.evidence': { runId: 'run-alpha', testIndex: 0, stepIndex: 0, kind: 'console' },
-  // 405-05 D-12/D-13: a PARSING input on the same reasoning, and the sha carries a second reason
-  // of its own — it is REGEX-constrained to 64 lowercase hex, so any placeholder shorter than
-  // that would fail the contract and this case would read the resulting input error as
-  // `dispatched`, certifying nothing about the `evidenceBlobs` binding it exists to measure.
+  // The sha must be 64 lowercase hex characters to parse.
   'runs.artifact': { runId: 'run-alpha', sha: 'a'.repeat(64) },
-  // 391 D-16: a PARSING input for the same reason its `runs.` siblings carry one — the digest
-  // names a run, so the `{}` default fails its contract and turns an unbound refusal into an
-  // input error, which the parity case below would read as `dispatched`.
   'runs.digest': { runId: 'run-alpha' },
   'knowledge.accept': { target: { grain: 'record', recordId: 'rec-x' } },
   'knowledge.reject': { target: { grain: 'record', recordId: 'rec-x' }, reason: 'no' },
   'knowledge.forget': { target: { grain: 'record', recordId: 'rec-x' } },
   'knowledge.proposal.apply': { proposalId: 'prop_0123456789ab' },
-  // 390 D-13: the two quarantine WRITE verbs take the three legs of stable test identity, so
-  // the `{}` default would fail their contract and turn an unbound refusal into an input
-  // error — which the parity case below reads as `dispatched`. `quarantine.list` genuinely
-  // takes the empty query and needs no row here.
   'quarantine.release': {
     product: 'shop',
     filePath: 'tests/checkout.test.yaml',
@@ -154,21 +78,12 @@ const BINDING_PARITY_INPUTS: Readonly<Record<string, unknown>> = {
     filePath: 'tests/checkout.test.yaml',
     testName: 'checkout completes',
   },
-  // 391 PROP-03: `show` and `reject` take a refined proposal id, so the `{}` default fails their
-  // contract and turns an unbound refusal into an input error. `proposals.list` genuinely takes
-  // the empty query (both filters optional) and needs no row here.
   'proposals.show': { proposalId: 'prop_0123456789ab' },
   'proposals.reject': { proposalId: 'prop_0123456789ab' },
   'proposals.accept': { proposalId: 'prop_0123456789ab' },
-  // 391 PROP-01 / D-03's `grants.revoke` row left with the op (432-18).
-  // 395 D-03: a PARSING input on its siblings' reasoning — the contract requires a non-empty path
-  // and a scalar value, so the `{}` default would fail validation and turn an unbound refusal into
-  // an input error, which the parity case below reads as `dispatched`. The path names a real
-  // config key so the row stays aimed at the BINDING check and nothing else.
   'config.auth.set': { target: 'shop', pluginPackage: '@acme/auth' },
   'config.field.set': { path: 'use.timeout', value: '45s' },
   'config.hook.add': { name: 'seed', runtime: 'node', file: 'scripts/seed.mjs' },
-  // 395-05 D-01: PARSING inputs for the rest of the closed action class, on the row above reasoning.
   'config.target.create': { name: 'shop', platform: 'web', url: 'https://shop.example.com' },
   'config.target.edit': { name: 'shop', changes: { url: 'https://shop.example.com/basket' } },
   'config.undo.propose': {},
@@ -266,10 +181,7 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
       diffSince: () => Promise.resolve([]),
       showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
     },
-    // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
-    // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases
-    // exercise other ops, and nothing in this file mints an address, so an honest miss and a
-    // reported absence are the truthful answers.
+    // `entities` is required; an answering stub, because nothing in this file mints an address.
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
       get: () => Promise.resolve(undefined),
@@ -285,14 +197,8 @@ function deps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
   }
 }
 
-// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell captures audit rows.
+// With no op gate, an ask-tier capability reaches the binding check directly.
 
-// 432-13: no standing-approval control is needed. The claims in this file are about BINDING, and
-// with no op gate an ask-tier capability reaches the binding check directly.
-
-// 2026-10-01 (432-29, D-12): the registries here no longer pass the retired
-// `resolveExecutionContext` option. Nothing in the registry or `invokeFunction` read it, so no
-// dispatch below ever depended on the context it named.
 function registryWith(runInvocation: RunInvocationPort | undefined) {
   return createFunctionRegistry({
     deps: deps(runInvocation === undefined ? {} : { runInvocation }),
@@ -303,7 +209,7 @@ function statusOf(registry: ReturnType<typeof registryWith>, id: string): string
   return registry.list(RUN_CALLER).find((declaration) => declaration.id === id)?.bindingStatus
 }
 
-describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
+describe('bindingStatus is a fact about a COMPOSITION, computed', () => {
   it('reads bound and unbound off ONE spec, from two registries in one process', () => {
     const bound = registryWith(recordingInvocation().port)
     const unbound = registryWith(undefined)
@@ -351,14 +257,7 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
   })
 
   it('refuses on the DECLARATION, whatever the implementation would have done', async () => {
-    // Found by probing this file's own controls: deleting the binding check from
-    // `invokeFunction` left all 205 agent tests green, because `runsStartSpec.invoke` guards
-    // itself as well and the refusal simply moved one layer down. Nothing was asserting
-    // 384's actual law — that the DECLARATION is authoritative and a spec this composition
-    // reports as unbound never dispatches at all, whatever its own body happens to do.
-    //
-    // This spec's implementation ignores its deps and succeeds. If the pipeline's check were
-    // gone it would run, in a composition that says it cannot.
+    // This spec ignores its deps and succeeds, so only the declaration check can stop it running.
     let ran = 0
     const eagerlyBound: FunctionSpec = {
       ...(runsStartSpec as FunctionSpec),
@@ -388,15 +287,10 @@ describe('bindingStatus is a fact about a COMPOSITION, computed (D-16)', () => {
   })
 })
 
-// RE-SPELLED 2026-09-30 (432-13, D-15). 'allows AND runs in every execution context, fail-closed
-// ones included' keeps its claim (the op dispatches everywhere) and loses its audit-row half: no
-// gate decides it. 'would lose the DISPATCH on a mutating-shared descriptor — the counterfactual'
-// inverts: with no gate, even a mutating-shared descriptor dispatches in ci.
-// 2026-10-01 (432-29, D-12): neither cell hands the registry a context any more. The retired option
-// was unread, so dispatch takes no execution context at all, and "every context" and "in ci" hold
-// because there is no context input left to refuse on. Each context still gets its own dispatch
-// and recorder below.
-describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => {
+// Neither cell hands the registry a context: dispatch takes no execution context at all, and
+// "every context" holds because there is no context input left to refuse on. Each context still
+// gets its own dispatch and recorder below.
+describe('runs.start, proven through a dispatch', () => {
   it('allows AND runs in every execution context, fail-closed ones included', async () => {
     for (const context of EVERY_CONTEXT) {
       const recorder = recordingInvocation()
@@ -413,13 +307,13 @@ describe('mutating-local, proven through a DISPATCH (Pitfall 10 / D-16)', () => 
     }
   })
 
-  it('C432-INVOKE-DIRECT: keeps the DISPATCH even on a mutating-shared descriptor in ci', async () => {
+  it('keeps the dispatch even on a destructive descriptor', async () => {
     const recorder = recordingInvocation()
-    const shared: FunctionSpec = {
+    const destructive: FunctionSpec = {
       ...(runsStartSpec as FunctionSpec),
-      risk: { ...runsStartSpec.risk, declaredTier: 'mutating-shared' },
+      risk: { ...runsStartSpec.risk, destructive: true },
     }
-    const registry = createRegistryFromSpecs([shared], {
+    const registry = createRegistryFromSpecs([destructive], {
       deps: deps({ runInvocation: recorder.port }),
     })
 

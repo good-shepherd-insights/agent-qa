@@ -22,7 +22,7 @@ import {
   makeScreenStateFixture,
 } from './fixtures/bundle-fixture.js'
 
-describe('BNDL-02 stable bundle identity over the live store', () => {
+describe('stable bundle identity over the live store', () => {
   let root: string
   let config: BundleStoreConfig
 
@@ -31,7 +31,6 @@ describe('BNDL-02 stable bundle identity over the live store', () => {
     config = {
       knowledgeRoot: join(root, 'agent-qa-knowledge'),
       productKey: 'identity-store',
-      commitArtifacts: 'none',
     }
   })
 

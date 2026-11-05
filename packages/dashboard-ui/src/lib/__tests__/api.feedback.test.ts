@@ -24,9 +24,6 @@ const CONSEQUENCES = RunsMarkPreviewResultSchema.parse({
   resolvedStep: { stepIndex: 2, reason: 'step-mark' },
   latest: { kind: 'first' },
   basis: { ledgerOrdinal: 0 },
-  markedDecisionCount: 1,
-  groundTruth: [],
-  labels: [],
   knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
   draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
 })
@@ -42,9 +39,7 @@ function historyEntry(ordinal: number, over: Partial<MarkHistoryEntry> = {}): Ma
     ordinal,
     markedAt: 1_758_600_000_000 + ordinal,
     disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
-    gold: [],
     evidence: { confirmed: 0, overturned: 0 },
-    corrected: { expectation: false, action: false },
     active: true,
     ...over,
   } as MarkHistoryEntry
@@ -57,8 +52,7 @@ function respond(status: number, body: unknown) {
   return vi.fn(async () => new Response(JSON.stringify(body), { status }))
 }
 
-describe('426-01 feedback read clients', () => {
-  // 432-14: the page holds no confirm scope to leak; the body is still exactly the preview input.
+describe('feedback read clients', () => {
   it('PREVIEW-CLIENT-BODY posts runId and never the confirm scope, and returns the parsed read', async () => {
     const fetchMock = respond(200, CONSEQUENCES)
     vi.stubGlobal('fetch', fetchMock)

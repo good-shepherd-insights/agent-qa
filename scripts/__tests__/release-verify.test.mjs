@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { publicPackageNames } from '../release/packages.mjs'
 import {
-  buildReleaseGatePlan,
   parseReleaseArgs as parseVerifyArgs,
   runCli as runVerifyCli,
   runReleaseVerification,
@@ -34,36 +33,6 @@ function createStagedFixture(rootDir, version = '0.1.1') {
   for (const name of publicPackageNames) dirs.set(name, createPackage(stagedDir, name, version))
   return { stagedDir, dirs }
 }
-
-test('builds the fail-closed release gate plan in exact order through GitHub Release publish', () => {
-  assert.deepEqual(buildReleaseGatePlan('patch'), [
-    'pnpm install --frozen-lockfile',
-    'release preflight',
-    'write shared version',
-    'pnpm typecheck',
-    'pnpm test',
-    'write posthog project key',
-    'pnpm build',
-    'pnpm run validate:skills',
-    'pnpm run validate:agents',
-    'pnpm run validate:publish',
-    'pnpm run validate:tools',
-    'pnpm run validate:arch',
-    'pnpm run validate:safety',
-    'stage packages',
-    'release postbuild verification',
-    'create release commit and tag',
-    'git push',
-    'npm publish',
-    'subscription auth publish',
-    'github release publish',
-    'docker publish',
-  ])
-  assert.deepEqual(buildReleaseGatePlan('patch').slice(-2), [
-    'github release publish',
-    'docker publish',
-  ])
-})
 
 test('parses preflight and postbuild verify CLI args', () => {
   assert.deepEqual(parseVerifyArgs(['--bump', 'patch', '--stage', 'preflight']), { bump: 'patch', stage: 'preflight' })
@@ -182,5 +151,285 @@ test('preflight verification checks bump, git tag, npm registry, and POSTHOG_PRO
     assert.deepEqual(calls, ['git 0.1.1', `npm ${publicPackageNames.length + 1} 0.1.1`])
   } finally {
     await rm(rootDir, { recursive: true, force: true })
+  }
+})
+
+test('parses the resume stage with a target version and no bump', () => {
+  assert.deepEqual(parseVerifyArgs(['--stage', 'resume', '--target-version', '0.2.0']), {
+    stage: 'resume',
+    targetVersion: '0.2.0',
+  })
+  assert.throws(() => parseVerifyArgs(['--stage', 'resume']), /missing --target-version/)
+  assert.throws(
+    () => parseVerifyArgs(['--stage', 'resume', '--target-version', '0.2.0', '--staged-dir', 'x']),
+    /invalid args/,
+  )
+  assert.throws(
+    () => parseVerifyArgs(['--bump', 'patch', '--stage', 'resume', '--target-version', '0.2.0']),
+    /invalid args/,
+  )
+})
+
+async function withResumeFixture(packageVersion, run) {
+  const rootDir = await mkdtemp(join(tmpdir(), 'agent-qa-release-verify-resume-'))
+  try {
+    for (const name of publicPackageNames) {
+      createPackage(join(rootDir, 'packages'), name, packageVersion)
+    }
+    const githubOutput = join(rootDir, 'github-output')
+    writeFileSync(githubOutput, '')
+    await run({ rootDir, githubOutput })
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+}
+
+const onReleaseTag = { GITHUB_REF: 'refs/tags/v0.2.0', GITHUB_SHA: 'abc123' }
+const resumeDispatch = 'gh workflow run release.yml --ref v0.2.0 -f npm_target_version=0.2.0'
+
+function resumeOptions(rootDir, githubOutput, overrides = {}) {
+  return {
+    stage: 'resume',
+    targetVersion: '0.2.0',
+    rootDir,
+    env: { GITHUB_OUTPUT: githubOutput, ...onReleaseTag },
+    readTagCommit: () => 'abc123',
+    readHeadCommit: () => 'abc123',
+    isNpmVersionPresent: () => false,
+    log: () => {},
+    ...overrides,
+  }
+}
+
+test('resume refuses a version that is not 0.x semver before it reaches git', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    for (const version of ['1.0.0', 'bad', 'v0.2.0']) {
+      const tagReads = []
+      await assert.rejects(
+        runReleaseVerification(
+          resumeOptions(rootDir, githubOutput, {
+            targetVersion: version,
+            readTagCommit: tagVersion => tagReads.push(tagVersion),
+          }),
+        ),
+        new RegExp(`invalid resume version: ${version}`),
+      )
+      assert.deepEqual(tagReads, [])
+    }
+    assert.equal(readFileSync(githubOutput, 'utf8'), '')
+  })
+})
+
+test('resume refuses when the release tag is missing', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    await assert.rejects(
+      runReleaseVerification(
+        resumeOptions(rootDir, githubOutput, {
+          execFileSync: () => {
+            const error = new Error('git rev-parse failed')
+            error.status = 1
+            throw error
+          },
+          readTagCommit: undefined,
+        }),
+      ),
+      /git tag is missing: v0\.2\.0/,
+    )
+    assert.equal(readFileSync(githubOutput, 'utf8'), '')
+  })
+})
+
+test('resume reads the tag commit and HEAD with git rev-parse in the release root', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    const calls = []
+    await runReleaseVerification(
+      resumeOptions(rootDir, githubOutput, {
+        execFileSync: (cmd, args, options) => {
+          calls.push([cmd, args, options.cwd])
+          return 'abc123\n'
+        },
+        readTagCommit: undefined,
+        readHeadCommit: undefined,
+      }),
+    )
+    assert.deepEqual(calls, [
+      ['git', ['rev-parse', '--verify', '--quiet', 'refs/tags/v0.2.0^{commit}'], rootDir],
+      ['git', ['rev-parse', 'HEAD'], rootDir],
+    ])
+  })
+})
+
+test('resume refuses when HEAD is not the release tag commit', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    await assert.rejects(
+      runReleaseVerification(
+        resumeOptions(rootDir, githubOutput, { readHeadCommit: () => 'def456' }),
+      ),
+      /HEAD is not the commit of v0\.2\.0/,
+    )
+    assert.equal(readFileSync(githubOutput, 'utf8'), '')
+  })
+})
+
+test('resume refuses when the public package versions differ from the target', async () => {
+  await withResumeFixture('0.2.1', async ({ rootDir, githubOutput }) => {
+    await assert.rejects(
+      runReleaseVerification(resumeOptions(rootDir, githubOutput)),
+      /public package version 0\.2\.1 does not match 0\.2\.0/,
+    )
+    assert.equal(readFileSync(githubOutput, 'utf8'), '')
+  })
+})
+
+test('resume passes at the release tag and writes the version to GITHUB_OUTPUT', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    const result = await runVerifyCli(['--stage', 'resume', '--target-version', '0.2.0'], {
+      rootDir,
+      env: { GITHUB_OUTPUT: githubOutput, ...onReleaseTag },
+      readTagCommit: () => 'abc123',
+      readHeadCommit: () => 'abc123',
+      isNpmVersionPresent: () => false,
+    })
+    assert.deepEqual(result, { targetVersion: '0.2.0', subscriptionAuthOnNpm: false })
+    assert.equal(
+      readFileSync(githubOutput, 'utf8'),
+      'version=0.2.0\nsubscription_auth_on_npm=false\n',
+    )
+  })
+})
+
+test('a resume reports subscription auth npm already has, so its release is skipped', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    const asked = []
+    const lines = []
+    await runReleaseVerification(
+      resumeOptions(rootDir, githubOutput, {
+        isNpmVersionPresent: (name, version) => {
+          asked.push(`${name}@${version}`)
+          return true
+        },
+        log: line => lines.push(line),
+      }),
+    )
+    assert.deepEqual(asked, ['@vostride/agent-qa-subscription-auth@0.2.0'])
+    assert.equal(
+      readFileSync(githubOutput, 'utf8'),
+      'version=0.2.0\nsubscription_auth_on_npm=true\n',
+    )
+    assert.deepEqual(lines, [
+      'already on npm: @vostride/agent-qa-subscription-auth@0.2.0, so its release is skipped',
+    ])
+  })
+})
+
+test('a resume reports subscription auth npm lacks, so its release runs', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    const lines = []
+    await runReleaseVerification(
+      resumeOptions(rootDir, githubOutput, {
+        isNpmVersionPresent: () => false,
+        log: line => lines.push(line),
+      }),
+    )
+    assert.equal(
+      readFileSync(githubOutput, 'utf8'),
+      'version=0.2.0\nsubscription_auth_on_npm=false\n',
+    )
+    assert.deepEqual(lines, [])
+  })
+})
+
+test('a resume fails closed when npm cannot say whether it has subscription auth', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    await assert.rejects(
+      runReleaseVerification(
+        resumeOptions(rootDir, githubOutput, {
+          isNpmVersionPresent: undefined,
+          execFileSync: (cmd, args) => {
+            assert.deepEqual([cmd, args[0]], ['npm', 'view'])
+            const stderr = 'npm error code ECONNRESET'
+            throw Object.assign(new Error('Command failed: npm view'), { stderr })
+          },
+        }),
+      ),
+      /could not verify npm version for @vostride\/agent-qa-subscription-auth@0\.2\.0/,
+    )
+    assert.equal(readFileSync(githubOutput, 'utf8'), '')
+  })
+})
+
+test('a resume refuses a run that is not on its tag and says how to dispatch it', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    for (const ref of ['refs/heads/main', 'refs/heads/release-0.2', 'refs/tags/v0.2.1', undefined]) {
+      const tagReads = []
+      await assert.rejects(
+        runReleaseVerification(
+          resumeOptions(rootDir, githubOutput, {
+            env: { GITHUB_OUTPUT: githubOutput, GITHUB_REF: ref, GITHUB_SHA: 'abc123' },
+            readTagCommit: version => {
+              tagReads.push(version)
+              return 'abc123'
+            },
+          }),
+        ),
+        {
+          message: `a resume runs on refs/tags/v0.2.0, not ${ref ?? 'an unset GITHUB_REF'}; dispatch it with: ${resumeDispatch}`,
+        },
+      )
+      assert.deepEqual(tagReads, [], String(ref))
+    }
+    assert.equal(readFileSync(githubOutput, 'utf8'), '')
+  })
+})
+
+test('a resume refuses a run whose GITHUB_SHA is not the tag commit', async () => {
+  await withResumeFixture('0.2.0', async ({ rootDir, githubOutput }) => {
+    for (const sha of ['def456', undefined]) {
+      await assert.rejects(
+        runReleaseVerification(
+          resumeOptions(rootDir, githubOutput, {
+            env: { GITHUB_OUTPUT: githubOutput, GITHUB_REF: 'refs/tags/v0.2.0', GITHUB_SHA: sha },
+          }),
+        ),
+        {
+          message: `a resume runs on v0.2.0's commit abc123, not GITHUB_SHA ${sha ?? '(unset)'}; dispatch it with: ${resumeDispatch}`,
+        },
+      )
+    }
+    assert.equal(readFileSync(githubOutput, 'utf8'), '')
+  })
+})
+
+async function preflightOnRef(ref) {
+  const rootDir = await mkdtemp(join(tmpdir(), 'agent-qa-release-verify-ref-'))
+  const checks = []
+  try {
+    for (const name of publicPackageNames) createPackage(join(rootDir, 'packages'), name, '0.1.0')
+    const error = await runVerifyCli(['--bump', 'patch', '--stage', 'preflight'], {
+      rootDir,
+      env: { POSTHOG_PROJECT_KEY: 'phc_test_key', GITHUB_REF: ref },
+      checkGitTagAbsent: version => checks.push(`git ${version}`),
+      checkNpmVersionsAbsent: (packages, version) => checks.push(`npm ${version}`),
+    }).then(() => undefined, failure => failure)
+    return { checks, error }
+  } finally {
+    await rm(rootDir, { recursive: true, force: true })
+  }
+}
+
+test('a full release refuses to run on a tag, before it checks anything else', async () => {
+  const { checks, error } = await preflightOnRef('refs/tags/v0.1.0')
+  assert.equal(
+    error?.message,
+    'a full release pushes its commit to the branch it runs on, so it cannot run on refs/tags/v0.1.0; dispatch it on a branch, or set npm_target_version to finish publishing a version from its tag',
+  )
+  assert.deepEqual(checks, [])
+})
+
+test('a full release runs from any branch, a maintenance branch included', async () => {
+  for (const ref of ['refs/heads/main', 'refs/heads/release-0.1']) {
+    const { checks, error } = await preflightOnRef(ref)
+    assert.equal(error, undefined, ref)
+    assert.deepEqual(checks, ['git 0.1.1', 'npm 0.1.1'], ref)
   }
 })

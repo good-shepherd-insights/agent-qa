@@ -1,31 +1,4 @@
-// The write path at the wire: one call writes the change and answers what it changed (432-12,
-// D-04/D-05/D-07/D-13/D-14).
-//
-// WHAT THIS FILE WAS. From 396-06 to 432-11 it drove the two MCP apply doors over the shipped
-// composition and a real git repository: the first apply refused and taught the exact re-call,
-// `confirmed: true` made exactly one commit, a replay answered `already-applied`, and the SEP-2322
-// form rode only on a connection that declared `elicitation`. 432-12 deletes that round with the
-// tools, and every claim moves to its direct form here:
-//
-//   the first apply refuses and commits nothing       -> section 2: the change tool writes on its
-//                                                        one call; the repository still has no
-//                                                        commit (D-07) and no proposal is filed
-//   the confirmed apply commits exactly once          -> sections 1-2: exactly one change, read
-//                                                        back from disk; zero commits
-//   a replayed confirmation answers as data           -> section 3: a repeated operation identity
-//                                                        answers the same records and lands once
-//   doctored one-shots commit nothing                 -> section 4: `confirmed` is not an input and
-//                                                        is refused at the schema wall, changing
-//                                                        nothing
-//   both eras, and the capability that decides shape  -> section 4: no form on either era, even
-//                                                        for a client that can answer one
-//   the second door and the family split              -> section 5: the retired door names are
-//                                                        unknown tools, and the two change tools
-//                                                        each reach only their own ops
-//
-// DRIVEN AS BEFORE: the SHIPPED composition (`composeCliLocalAgent`), the real knowledge store on
-// disk, a real git repository and a real MCP client over the SDK's in-process handler, with every
-// exchange's raw bytes recorded so payload cells assert on what a caller actually received.
+// One change call writes and answers what it changed: no commit, no proposal, no confirm input.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -117,7 +90,7 @@ function porcelain(): string {
 /** One committed candidate record in the real store, through the layer's own publish helper. */
 function publishRecord(name: string): string {
   const outcome = publishBundleForTest(
-    { knowledgeRoot, productKey: 'Change Differential', commitArtifacts: 'none' },
+    { knowledgeRoot, productKey: 'Change Differential' },
     {
       draft: {
         kind: 'fact',
@@ -165,10 +138,7 @@ interface Era {
 const LEGACY: Era = { wire: 'legacy', elicitation: false }
 const MODERN_CAPABLE: Era = { wire: 'modern', elicitation: true }
 
-/**
- * Connect a REAL MCP client to a server built by the SHIPPED factory over the SHIPPED composition.
- * 432-21 (D-12): the caller is the one tokenless MCP caller; every change tool is listed for it.
- */
+// A real MCP client on a server from the shipped factory; every change tool is listed for it.
 async function connect(era: Era = LEGACY): Promise<Session> {
   const frames: Frame[] = []
   const elicited: unknown[] = []
@@ -185,7 +155,7 @@ async function connect(era: Era = LEGACY): Promise<Session> {
     return res
   }) as typeof fetch
 
-  const client = new Client({ name: 'agent-qa-432-12-change', version: '0.0.0' }, {
+  const client = new Client({ name: 'agent-qa-change', version: '0.0.0' }, {
     ...(era.wire === 'modern' ? { versionNegotiation: { mode: { pin: '2026-07-28' } } } : {}),
     ...(era.elicitation ? { capabilities: { elicitation: {} } } : {}),
   } as never)
@@ -239,18 +209,18 @@ async function statuses(session: Session): Promise<string[]> {
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'agent-qa-432-12-change-'))
+  root = mkdtempSync(join(tmpdir(), 'agent-qa-change-'))
   configPath = join(root, CONFIG_FILE)
   agentQaRoot = join(root, '.agent-qa')
   knowledgeRoot = join(root, 'agent-qa-knowledge')
   mkdirSync(agentQaRoot, { recursive: true })
   mkdirSync(knowledgeRoot, { recursive: true })
   writeFileSync(configPath, SEEDED_CONFIG)
-  // 2026-10-14 (441-07, D-06): the MCP masker reads this project's declared secrets.
+  // The MCP masker reads this project's declared secrets.
   writeFileSync(join(root, '.env.secrets.local'), '')
 
   git('init', '--quiet')
-  git('config', 'user.name', 'agent-qa 432-12 change differential')
+  git('config', 'user.name', 'agent-qa change differential')
   git('config', 'user.email', 'change-differential@example.invalid')
   git('config', 'commit.gpgsign', 'false')
   writeFileSync(join(root, '.gitignore'), '.agent-qa/\nagent-qa-knowledge/\n.env.secrets.local\n')
@@ -295,7 +265,7 @@ describe('1 · changing config writes in the call and commits nothing', () => {
       expect(structured.files).toEqual([CONFIG_FILE])
       expect(allFrames(session)).toContain('applied')
 
-      // D-07: a plain edit git shows as modified; no commit, and no proposal record.
+      // A plain edit git shows as modified; no commit, and no proposal record.
       expect(commitCount(), 'changing must not commit').toBe(before)
       expect(porcelain()).toBe(`M ${CONFIG_FILE}`)
       expect(readFileSync(configPath, 'utf8')).toContain('step: 45s')
@@ -304,8 +274,8 @@ describe('1 · changing config writes in the call and commits nothing', () => {
   })
 })
 
-describe('2 · C432-MCP-DIRECT-RECEIPT: knowledge changes apply on their one call', () => {
-  it('C432-MCP-DIRECT-RECEIPT: accept, reject and forget each change the real store once and answer the records they changed', async () => {
+describe('2 · knowledge changes apply on their one call', () => {
+  it('accept, reject and forget each change the real store once and answer the records they changed', async () => {
     const forgotten = publishRecord('Checkout')
     const rejected = publishRecord('Coupon')
     await driven(LEGACY, async (session) => {
@@ -331,15 +301,14 @@ describe('2 · C432-MCP-DIRECT-RECEIPT: knowledge changes apply on their one cal
       // The prose a person reads is the same masked serialization as the machine channel.
       expect(JSON.parse(rendered(reject))).toEqual(reject.structuredContent)
 
-      // D-07: knowledge is gitignored here, so nothing the repository tracks moved, and no
-      // commit was made; D-05: no proposal was filed.
+      // Knowledge is gitignored here: nothing tracked moved, no commit, no proposal filed.
       expect(commitCount()).toBe(before)
       expect(porcelain()).toBe('')
       expect(existsSync(join(agentQaRoot, 'proposals'))).toBe(false)
     })
   })
 
-  it('C432-MCP-DIRECT-RECEIPT: a typed absence is data, and a malformed id is refused before any write', async () => {
+  it('a typed absence is data, and a malformed id is refused before any write', async () => {
     const recordId = publishRecord('Checkout')
     await driven(LEGACY, async (session) => {
       const absent = await call(session, KNOWLEDGE_TOOL, {
@@ -379,8 +348,8 @@ describe('3 · a repeated operation identity is the same change', () => {
   })
 })
 
-describe('4 · C432-MCP-NO-ELICITATION: there is no confirmation round on either era', () => {
-  it('C432-MCP-NO-ELICITATION: a 2026 client that can answer a form is never asked, and its one call lands', async () => {
+describe('4 · there is no confirmation round on either era', () => {
+  it('a 2026 client that can answer a form is never asked, and its one call lands', async () => {
     const recordId = publishRecord('Checkout')
     await driven(MODERN_CAPABLE, async (session) => {
       const answer = await call(session, KNOWLEDGE_TOOL, {
@@ -395,7 +364,7 @@ describe('4 · C432-MCP-NO-ELICITATION: there is no confirmation round on either
     })
   })
 
-  it('C432-MCP-NO-ELICITATION: `confirmed` is not an input — refused at the schema wall, and nothing changes', async () => {
+  it('`confirmed` is not an input — refused at the schema wall, and nothing changes', async () => {
     const recordId = publishRecord('Checkout')
     await driven(LEGACY, async (session) => {
       const before = commitCount()

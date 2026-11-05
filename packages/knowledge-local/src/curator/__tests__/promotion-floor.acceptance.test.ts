@@ -1,5 +1,4 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -46,7 +45,7 @@ const NO_INDEX_MAINTENANCE = {
   vectorReconciliationOutstanding: false,
 } as const
 
-describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
+describe('zero-model promotion floor acceptance', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -216,7 +215,6 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     const published = publishBundle({
       knowledgeRoot,
       productKey: 'storefront',
-      commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
     }, {
       draft,
@@ -256,7 +254,6 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     return {
       knowledgeRoot,
       productKey: 'storefront',
-      commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
     }
   }
@@ -274,11 +271,11 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
   }
 
   it.each(['rode-along', 'exercised-benefited'] as const)
-    ('418 BYOM %s without corpus drains v51 bytes and exactly one floor promotion line', async benefit => {
+    ('a %s canary drained without a model writes the confirm and promote events and exactly one floor promotion line', async benefit => {
       const fixture = createPromotionFloorFixture({ knowledgeRoot })
       const { draft, published } = fixture.publishHeldCandidate('fact-door2-canary')
       const outcome: CanaryOutcome = { candidateId: published.id, runOutcome: 'positive', benefit,
-        stateValidity: 'unknown', runId: 'run-canary-disposition', testId: 'checkout::happy-path',
+        runId: 'run-canary-disposition', testId: 'checkout::happy-path',
         testIndex: 0, buildOrdinal: 43, stepIndex: 2, briefDigest: 'brief-digest-canary-disposition',
         attribution: 'The served checkout hypothesis was exercised by the attributed step.',
         exercisedAnchor: draft.anchors[0]! }
@@ -286,9 +283,10 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       const author = vi.fn<CuratorAuthor>(async () => { throw new Error('no model in BYOM acceptance') })
       expect(await drainQueue({ knowledgeRoot, author, executionContext: 'local-interactive',
         maintenance: 'skip' })).toMatchObject({ jobsProcessed: 1, committed: 1, failures: 0 })
-      const reference = JSON.parse(readFileSync(fileURLToPath(new URL('./fixtures/416-v51-reference.json', import.meta.url)), 'utf8'))
-      expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8'))
-        .toBe(reference['fact/door2-canary'].outcomes)
+      expect(readFileSync(join(published.dir, 'evidence/outcomes.jsonl'), 'utf8')).toBe([
+        '{"buildOrdinal":43,"curationJobId":"032f723f082dd59bffede79e7681c720306e756d388fbc34eaa72425c9288909","evidenceToken":"5f611fe17bf4a92f0e1442f4a851712c84fb4c326ac0751007130aba1e94ee19","observationId":"knowledge-port:8b3b5fe534f25e4add2ca039a0477462122d9ae8fc4aad05acf99d94e00cc69d","origin":"agent-verified","type":"confirmed"}',
+        '{"buildOrdinal":43,"curationJobId":"promote:fact-el-button-held-checkout-fact-door2-canary-c6f8eb46cf81885c","evidenceToken":"4fbb71627919c7cd5ab04d8b9b4266ec4fd4ae7bd3adf8cc29afb229135bf816","type":"promoted"}',
+      ].join('\n') + '\n')
       const promotion = stampReceiptDigest({ schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion', candidateId: published.id,
         promotionPath: 'deterministic-verdict-floor', citedReceiptDigests: [], producedAtOrdinal: 43,
         producedBy: { opId: 'promote' } })
@@ -297,7 +295,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
       expect(author).not.toHaveBeenCalled()
     })
 
-  it('RATIFIED A2: fallback-authored evidence-complete fact drains queue → gate → active', async () => {
+  it('fallback-authored evidence-complete fact drains queue → gate → active', async () => {
     const { report } = await drainWithoutModel(selectorProjection('primary'))
 
     expect(report).toMatchObject({ committed: 1, downgraded: 0, withheld: 0 })
@@ -318,7 +316,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     expect(deriveBundleTrust(bundle).status).toBe('active')
   })
 
-  it('RATIFIED A2: fallback-authored bare behavioral evidence stays needs-enrichment', async () => {
+  it('fallback-authored bare behavioral evidence stays needs-enrichment', async () => {
     await drainWithoutModel({
       ...selectorProjection('bare-behavioral'),
       kind: 'fact',
@@ -337,8 +335,7 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
   })
 
   it('refuses procedure kind and commits a once-flagged row under zero-model fallback', async () => {
-    // D-06 (381-02): the restricted fallback NEVER authors procedures. A procedure-extraction
-    // job under zero-model fallback disposes as a Noop — no bundle is written at all.
+    // The restricted fallback never authors procedures; the job disposes as a Noop with no bundle.
     const { report: procedureReport } = await drainWithoutModel({
       ...selectorProjection('procedure'),
       kind: 'procedure',
@@ -359,7 +356,6 @@ describe('zero-model promotion floor acceptance (PROM-01/D-18)', () => {
     expect(loadedBundles()).toHaveLength(0)
 
     rmSync(knowledgeRoot, { recursive: true, force: true })
-    // 2026-10-15 (441-50, D-26): the once-flagged row now carries no flag and takes the normal path.
     const { report } = await drainWithoutModel(selectorProjection('flagged'))
     expect(report).toMatchObject({ committed: 1, withheld: 0 })
     const flagged = onlyBundle().bundle

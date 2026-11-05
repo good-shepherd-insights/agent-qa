@@ -122,7 +122,7 @@ function snapshotDirectory(dir: string): {
   }
 }
 
-describe('IDX-01 derived-index rebuild projection', () => {
+describe('derived-index rebuild projection', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -140,7 +140,6 @@ describe('IDX-01 derived-index rebuild projection', () => {
     return {
       knowledgeRoot,
       productKey,
-      commitArtifacts: 'none',
     }
   }
 
@@ -1178,13 +1177,13 @@ describe('IDX-01 derived-index rebuild projection', () => {
     })
   }
 
-  it('keeps the SAFE-02 terminal value when a suppressed row is structurally scrubbed', async () => {
+  it('keeps the suppressed terminal value when a suppressed row is structurally scrubbed', async () => {
     const product = 'Dual Suppression Terminal Product'
     const target = publishNamed(product, 'Dual suppression live replacement')
     const victim = publishNamed(product, 'Dual suppression redacted victim')
 
     projectBundleIndexRow({ knowledgeRoot, bundleId: victim.id })
-    // 2026-10-15 (441-24, D-27): nothing writes the terminal value now; an old row may hold it.
+    // No writer emits the terminal value; only a legacy row can hold it.
     const legacyWriter = new DatabaseSync(join(knowledgeRoot, 'memory', 'index', INDEX_DB_FILE))
     try {
       legacyWriter

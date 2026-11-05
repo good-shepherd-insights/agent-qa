@@ -1,24 +1,4 @@
-// The projection-version reconcile differential (393 CR-02).
-//
-// THE PRE-v4 STATE IS PRODUCED, NOT WRITTEN. Every historical run below is folded through the
-// REAL `foldRunOutcomes` path against a REAL index on disk, exactly as the shipping tail folds
-// it. Only two DELETEs are synthetic — the `suite_fingerprints` rows and the version row — and
-// those stand in for the producer that no longer exists in this tree: a v3-era fold, which had
-// no fingerprint write and no stamp, left precisely markers + counters + an empty fingerprint
-// table + no version row. Hand-building the index instead would have risked pinning an
-// unproducible shape, and a differential over impossible inputs cannot tell a vacuous corpus
-// from a real closure (the produced-not-literal law).
-//
-// The two directions are pinned together on purpose (the two-sided contract pin law): a backfill
-// that converges is only half the contract, and the other half — an already-current index that
-// never re-folds — is where a re-fold-every-open regression and double-counted counters would
-// live.
-//
-// 393 round 6 / CR-01 + WR-06: the run dirs now carry the SECOND document production writes beside
-// the handoff. Until this round every fixture below wrote `handoff.json` alone, so the rebuild's
-// `analysis.json` leg was unexercised in BOTH directions — which is precisely the hole through
-// which a family-truncating unguarded read shipped green. The artifact bytes are planted RAW so a
-// TRUNCATED file (the crash / full-disk shape) is expressible, not just an exotic schemaVersion.
+// The pre-v4 state comes from the real fold; two synthetic DELETEs remove its v4 parts.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -209,7 +189,7 @@ const LOGIN_TEST: TestFixture = {
   steps: [[{ type: 'fill', ref: 'e9', role: 'textbox', name: 'password', url: '/login' }]],
 }
 
-/** The gate-run's own draft test — WTST-06's exclusion subject on the rebuild path. */
+// The gate run's own draft test, excluded on the rebuild path.
 const GATE_TEST: TestFixture = {
   filePath: 'suite/internal-gate.test.ts',
   testName: 'gate run draft',
@@ -241,12 +221,7 @@ const HISTORICAL_RUNS: CompletedRunHandoff[] = [
   }),
 ]
 
-// ---------------------------------------------------------------------------
-// The artifact leg (393 round 6 / WR-06). Mirrors run-outcomes-resolved.test.ts's fixtures: one
-// FAILING member carrying no `rootCause`, whose deterministic floor is the minted `unknown` — not
-// a flake. That is what makes the artifact's upgrade observable, and what stops the valid-artifact
-// cell from passing vacuously on a projection the floor alone would have produced.
-// ---------------------------------------------------------------------------
+// One failing member with no `rootCause`, so only the artifact can upgrade it to flake.
 
 const FLAKE_RUN_ID = '004-payment'
 const FLAKY_FILE = 'suite/payment.test.ts'
@@ -280,7 +255,7 @@ function unknownFailureHandoff(runId: string, buildOrdinal: number): CompletedRu
   } as unknown as CompletedRunHandoff
 }
 
-/** The 389 supersession: the author upgraded the floor's `unknown` to `flake`. */
+// A supersession: the author upgraded the floor's `unknown` to `flake`.
 function flakeArtifact(runId: string): RunAnalysisArtifact {
   const verdict: Verdict = {
     class: 'flake',
@@ -370,18 +345,7 @@ interface PreV4Project {
   runsRoot: string
 }
 
-/**
- * PRODUCE the pre-v4 state, then subtract exactly what a v3-era fold never wrote.
- *
- * Everything up to the two DELETEs is the real production path: the same `foldRunOutcomes` the
- * curation tail calls, against the same `openIndexWriter` index, over handoff documents written
- * to a real runs root the way the runner writes them.
- *
- * `artifacts` plants RAW `analysis.json` bytes beside a run's handoff, keyed by runId. Raw rather
- * than typed, because the poisoned cell's whole subject is a file that is NOT a valid artifact and
- * could not be expressed as one (WR-06). The pre-state folds pass no `runDir`, so a planted
- * artifact contributes nothing until the REBUILD reads it — which is exactly the leg under test.
- */
+// Artifacts are raw bytes so an invalid file is expressible; only the rebuild reads them.
 function producePreV4Project(options: {
   runs?: readonly CompletedRunHandoff[]
   artifacts?: Readonly<Record<string, string>>
@@ -410,7 +374,7 @@ function producePreV4Project(options: {
   return { knowledgeRoot, runsRoot }
 }
 
-describe('reconcileRunOutcomesProjection — the projection-version backfill (393 CR-02)', () => {
+describe('reconcileRunOutcomesProjection — the projection-version backfill', () => {
   it('converges a pre-v4 index: suite_fingerprints goes empty -> populated with no counter drift', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
 
@@ -486,7 +450,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('an excludedFromOutcomes gate-run contributes zero rows through the rebuild (WTST-06)', () => {
+  it('an excludedFromOutcomes gate-run contributes zero rows through the rebuild', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
     expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
       .toBe('rebuilt')
@@ -527,7 +491,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
       .toEqual(metaBefore)
   })
 
-  it('costs ONE run, never the family, when a run dir carries a truncated analysis.json (CR-01)', () => {
+  it('costs ONE run, never the family, when a run dir carries a truncated analysis.json', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project({
       artifacts: { '002-login': TRUNCATED_ARTIFACT_BYTES },
     })
@@ -554,8 +518,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
       ).all(SHOP_PRODUCT) as { run_id: string }[]).map((row) => row.run_id)
       expect(appliedRunIds).toEqual(['001-checkout', '003-gate'])
 
-      // The runs AFTER the poisoned one in sort order still fold — the pre-fix module truncated
-      // the family at the bad file and left everything past it missing.
+      // The runs after the poisoned one in sort order still fold, so a bad file truncates nothing.
       const union = createSuiteFingerprintIndex(db, { product: SHOP_PRODUCT }).elementUnion()
       expect(union.has(CHECKOUT_ELEMENT)).toBe(true)
       expect(
@@ -569,21 +532,15 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('refuses to stamp when a PROJECTION-layer throw aborts the rebuild, and self-heals next sweep (CR-01-WIDENED, projection half)', () => {
+  it('refuses to stamp when a PROJECTION-layer throw aborts the rebuild, and self-heals next sweep (projection half)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
 
-    // The injected seam is consumed by `testDelta` inside `projectRunOutcomes` — a PURE computation
-    // that completes BEFORE `applyRunOutcomes` is ever called — so what this cell pins is the
-    // PROJECTION half of the boundary: a throw raised while computing, after the DELETEs. It does
-    // not stand in for a write-layer failure; the trigger cell below holds that half (393 round 7,
-    // measured by mutation). By the time it fires the family has already been DELETEd, which is the
-    // whole question: what does the module do with a family it has destroyed and cannot rebuild?
+    // Throws in the projection after the DELETEs; the trigger cell below covers the write half.
     const throwingAnchors = (): never[] => {
       throw new Error('projection layer refused')
     }
 
-    // (i) It PROPAGATES. A per-run catch this wide counts the throw as a skip and walks on to the
-    // stamp — which is the round-6 regression, and the assertion this cell RED-receipts.
+    // (i) It propagates: a per-run catch this wide would count the throw as a skip and stamp.
     expect(() => reconcileRunOutcomesProjection({
       knowledgeRoot,
       runsRoot,
@@ -619,10 +576,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
   it('refuses to stamp when the WRITE itself fails: a trigger on run_outcome_applied_runs aborts applyRunOutcomes (frozen item 6c)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
 
-    // Driven from OUTSIDE the module's own seams. A trigger is a persisted schema object, so the
-    // reconcile's OWN connection hits it when `applyRunOutcomes` reaches its marker INSERT, inside
-    // that function's own `BEGIN IMMEDIATE`. A pure-path throw therefore cannot satisfy this cell —
-    // which is the property the projection cell above was measured NOT to have (393 frozen item 6c).
+    // A trigger fires inside the reconcile's own `BEGIN IMMEDIATE`, so a pure-path throw fails.
     withIndex(knowledgeRoot, (db) => {
       db.exec(
         `CREATE TRIGGER refuse_applied_runs_insert BEFORE INSERT ON run_outcome_applied_runs
@@ -655,7 +609,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('propagates a host fault reading handoff.json: previous complete family survived, then the healed sweep rebuilds (CR-01-READ)', () => {
+  it('propagates a host fault reading handoff.json: previous complete family survived, then the healed sweep rebuilds', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
     expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
       .toBe('rebuilt')
@@ -666,9 +620,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
       return dumpProjection(db)
     })
 
-    // A DIRECTORY where the document belongs: `readFileSync` throws EISDIR, an errno-coded
-    // non-absence host fault. Root-proof where chmod is inert, on SECOND run 002-login
-    // (WR-04): the first run must not become a partial union while the fault persists.
+    // A directory at the document path makes `readFileSync` throw `EISDIR`, even when run as root.
     const handoffPath = join(runsRoot, '002-login', 'handoff.json')
     rmSync(handoffPath)
     mkdirSync(handoffPath)
@@ -695,7 +647,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('propagates a host fault reading analysis.json: previous complete family survived, then the healed sweep rebuilds (CR-01-READ)', () => {
+  it('propagates a host fault reading analysis.json: previous complete family survived, then the healed sweep rebuilds', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project()
     expect(reconcileRunOutcomesProjection({ knowledgeRoot, runsRoot, extractAnchors }).kind)
       .toBe('rebuilt')
@@ -734,7 +686,7 @@ describe('reconcileRunOutcomesProjection — the projection-version backfill (39
     })
   })
 
-  it('reads a VALID analysis.json through the reconcile-driven rebuild (WR-06, the other half)', () => {
+  it('reads a VALID analysis.json through the reconcile-driven rebuild (the other half)', () => {
     const { knowledgeRoot, runsRoot } = producePreV4Project({
       runs: [...HISTORICAL_RUNS, FLAKE_RUN],
       artifacts: { [FLAKE_RUN_ID]: canonicalJson(flakeArtifact(FLAKE_RUN_ID)) },

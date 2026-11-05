@@ -1,20 +1,4 @@
-// The two predicates the projection is built out of, driven directly (Phase 396 plan 01).
-//
-// 2026-10-01 (432-20, D-12): ONE PREDICATE NOW. `visibleToCaller` — the per-caller visibility law —
-// is deleted with the scopes it compared, so its cells are re-spelled as C432-TOKENLESS-CATALOG
-// below: real servers built for tokenless stdio- and HTTP-shaped callers (and for records still
-// carrying retired grants) list the same tools and resource templates and dispatch identically,
-// while a malformed request still fails through the ordinary schema for each of them.
-//
-// WHY THIS FILE EXISTS BESIDE THE TRACER. `mcp-tracer.test.ts` over in the CLI package proves the
-// whole path end to end through a real client against a real composed registry — that is the
-// architectural claim, and it is the right shape for it. What an end-to-end cell cannot do is show
-// that a REFUSAL happens, because the tracer only ever drives the case that works: a caller granted
-// everything, a tool that is 1:1, a masker with nothing to hide. The cells below drive the two pure
-// functions across the cases the tracer's own fixture makes unreachable.
-//
-// Each cell names the mutation it is the bar for. A cell that no plausible wrong implementation
-// reds is decoration, and this project has measured that lesson more than once.
+// Driven directly, across the cases the CLI tracer's working fixture cannot reach.
 
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
@@ -22,10 +6,6 @@ import { createFunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionDeps, FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
-
-// 2026-09-30 (432-12 D-05): the read fixture was `agent_qa_list_proposals` over `proposals.list`,
-// which left the catalogue with the proposal round. Every claim below is carried unchanged over the
-// marks-history read, the 1:1 read tool whose contract converts cleanly in both modes.
 
 import {
   advertisedContracts,
@@ -55,7 +35,7 @@ function spec(overrides: Partial<ProjectedOpSpec> = {}): ProjectedOpSpec {
   }
 }
 
-// ---- C432-TOKENLESS-CATALOG (432-20, D-12) — re-spelled from 'visibleToCaller (D-05)' ----------
+// ---- The tokenless catalog ----
 
 /** A real registry over every built-in op, with a knowledge reader that answers an empty list. */
 function realRegistry(): FunctionRegistry {
@@ -66,16 +46,11 @@ function realRegistry(): FunctionRegistry {
   })
 }
 
-/**
- * The caller records the doors mint, and records still carrying retired grants. The stdio and HTTP
- * doors mint the same tokenless shape since D-12; the other two differ from it in every retired
- * permission field, so an identical answer for all four is the whole claim.
- */
+// Door callers and records with retired grants; an identical answer for all of them is the claim.
 const DOOR_CALLERS: Readonly<Record<string, FunctionCaller>> = {
   'tokenless stdio': { surface: 'mcp', origin: 'agent' },
   'tokenless http': { surface: 'mcp', origin: 'agent' },
-  // 2026-10-02 (432-39, D-10/D-12): the retired fields are deleted from the type, so the two legacy
-  // records smuggle them past it with a cast — an old record still carries them, and nothing reads.
+  // Old records still carry the retired fields, cast past the type here; nothing reads them.
   'legacy every-scope': {
     surface: 'mcp',
     origin: 'agent',
@@ -94,7 +69,7 @@ async function withClient<Answer>(
   const server = buildAgentQaMcpServer({ registry: realRegistry(), caller, maskText: (text) => text })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await server.connect(serverTransport)
-  const client = new Client({ name: 'c432-tokenless', version: '0.0.0' })
+  const client = new Client({ name: 'tokenless', version: '0.0.0' })
   await client.connect(clientTransport)
   try {
     return await body(client)
@@ -112,7 +87,7 @@ async function discovery(caller: FunctionCaller): Promise<string> {
   }))
 }
 
-describe('C432-TOKENLESS-CATALOG: identical discovery and dispatch for every caller (432-20, D-12)', () => {
+describe('identical discovery and dispatch for every caller', () => {
   it('lists the same tools and resource templates to every door caller', async () => {
     const answers = await Promise.all(Object.values(DOOR_CALLERS).map(discovery))
     const parsed = JSON.parse(answers[0]!) as { tools: { name: string }[]; templates: unknown[] }
@@ -174,7 +149,7 @@ function advertised(projection: ToolProjection): ToolOpContracts {
   return contracts
 }
 
-describe('toRegisterToolConfig (D-16)', () => {
+describe('toRegisterToolConfig', () => {
   const identity = (text: string): string => text
 
   it('derives the description from the op summary and advertises the op contracts', () => {
@@ -182,9 +157,7 @@ describe('toRegisterToolConfig (D-16)', () => {
 
     expect(config.title).toBe('agent_qa_get_run_marks')
     expect(config.description).toBe(spec().summary)
-    // Identity, not equality-by-value: the advertised schema IS the object the op validates with,
-    // which is the whole of D-16's drift claim. A cell comparing converted JSON Schemas would pass
-    // over two objects that merely agree today.
+    // Identity, not equal values: the advertised schema is the object the op validates with.
     expect(config.inputSchema).toBe(AGENT_QA_OP_CONTRACTS['runs.marks.history']!.input)
     expect(config.outputSchema).toBe(AGENT_QA_OP_CONTRACTS['runs.marks.history']!.output)
   })
@@ -196,9 +169,7 @@ describe('toRegisterToolConfig (D-16)', () => {
     expect(config.annotations.destructiveHint).toBe(false)
   })
 
-  // THE BAR: a derivation hard-coding `readOnlyHint: true` (plausible while the only projected tool
-  // is a read) passes every cell above and reds here. The op below does not declare `readOnly`, and
-  // since 432-20 that declaration is the only signal consulted.
+  // Catches a hard-coded `readOnlyHint: true`; the op's own `readOnly` is the only signal.
   it('refuses readOnlyHint for an op that writes, and carries its destructive declaration', () => {
     const writing = spec({
       id: 'config.field.set',
@@ -247,10 +218,7 @@ describe('toRegisterToolConfig (D-16)', () => {
     ).toThrow(McpProjectionError)
   })
 
-  // Plan 01 REFUSED a fold here rather than approximating it; plan 04 composes one, so the refusal
-  // moved to the case that is still dishonest — a tool derived from FEWER arms than it declares.
-  // Shipping that would advertise the union of two arms while dispatching over three, and the
-  // caller who found the missing arm would be told its valid input was invalid.
+  // A fold derived from fewer arms than it declares would refuse valid input for a missing arm.
   it('refuses a fold derived from a subset of its declared arms', () => {
     const projection: ToolProjection = {
       name: 'agent_qa_change_config',

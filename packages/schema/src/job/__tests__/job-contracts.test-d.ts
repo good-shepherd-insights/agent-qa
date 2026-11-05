@@ -11,18 +11,13 @@ import { JOB_CHECKPOINT_SCHEMA_VERSION, jobCheckpointEnvelopeSchema } from '../j
 import type { JobHandlerOutcome } from '../job-outcome'
 import { jobHandlerOutcomeSchema } from '../job-outcome'
 
-// The lockstep detectors, in the shape plan 01 established for the job contract: exact
-// equality between what the runtime schema produces and what the interface promises. A
-// `toMatchTypeOf` here would pass while the two drifted, which is the only drift these
-// files can have. Do not weaken them.
+// Exact equality: `toMatchTypeOf` would pass while the schema and the interface drift.
 expectTypeOf<z.infer<typeof jobEnqueueRequestSchema>>().toEqualTypeOf<JobEnqueueRequest>()
 expectTypeOf<z.infer<typeof chainedJobRequestSchema>>().toEqualTypeOf<ChainedJobRequest>()
 expectTypeOf<z.infer<typeof jobCheckpointEnvelopeSchema>>().toEqualTypeOf<JobCheckpointEnvelope>()
 expectTypeOf<z.infer<typeof jobHandlerOutcomeSchema>>().toEqualTypeOf<JobHandlerOutcome>()
 
-// D-08 at the TYPE level, complementing the runtime rejection cases. The key is a required
-// `string`: an `.optional()` on either side of the lockstep, or a widening to
-// `string | undefined`, reddens this line before any parse is ever attempted.
+// The key is a required `string`: `.optional()` or `string | undefined` on either side fails here.
 expectTypeOf<JobEnqueueRequest['idempotencyKey']>().toEqualTypeOf<string>()
 expectTypeOf<JobEnqueueRequest['kind']>().toEqualTypeOf<JobKind>()
 expectTypeOf<JobEnqueueRequest['payload']>().toEqualTypeOf<unknown>()
@@ -31,8 +26,7 @@ expectTypeOf<JobEnqueueRequest['payload']>().toEqualTypeOf<unknown>()
 // @ts-expect-error every enqueue carries an idempotency key; there is no keyless shape.
 const keyless: JobEnqueueRequest = { kind: 'analyze-run', payload: null }
 
-// D-04: the stamp is the literal, not `number`. A widening here is how a build would start
-// accepting a checkpoint file some other build wrote.
+// The stamp is the literal, not `number`, or a build would accept another build's checkpoint.
 expectTypeOf<JobCheckpointEnvelope['schemaVersion']>().toEqualTypeOf<
   typeof JOB_CHECKPOINT_SCHEMA_VERSION
 >()
@@ -46,8 +40,6 @@ const misstamped: JobCheckpointEnvelope = {
   payload: null,
 }
 
-// The three arms, pinned by exact equality on the discriminant. D-18's retryable/permanent
-// split lives here; a fourth arm or a lost one is a contract change plans 03/04 build on.
 expectTypeOf<JobHandlerOutcome['status']>().toEqualTypeOf<'complete' | 'retryable' | 'permanent'>()
 
 const completion: JobHandlerOutcome = {
@@ -73,39 +65,17 @@ void misstamped
 void completion
 void mixed
 
-// 422 D-16 (ADV-03): the compile-time half of the conclusion vocabulary, in the never-bar shape
-// the closed-set instruments use. Every expectation is written out independently of its subject —
-// neither side derives from the other — so removing a member from the UNION reddens here even
-// while the value list still contains it, and adding one to the union reddens here even while the
-// list does not. That independence is what makes the runtime list above and this file two
-// instruments rather than one restated twice.
-type DeclaredConclusion =
-  | 'no_issue'
-  | 'needs_user_input'
-  | 'insufficient_evidence'
-  | 'knowledge_skipped_draft'
-  | 'model_capability_error'
-  | 'provider_error'
-  | 'insufficient_model_output'
-  | 'unreadable_kind'
-
-it('job conclusion kinds exact type bars', () => {
-  expectTypeOf<JobConclusionKind>().toEqualTypeOf<DeclaredConclusion>()
-  expectTypeOf<(typeof jobConclusionKindValues)[number]>().toEqualTypeOf<DeclaredConclusion>()
+// The conclusion type and its value list are two declarations; these bars check they agree.
+it('the conclusion type and its value list agree', () => {
   expectTypeOf<Exclude<JobConclusionKind, (typeof jobConclusionKindValues)[number]>>().toBeNever()
   expectTypeOf<Exclude<(typeof jobConclusionKindValues)[number], JobConclusionKind>>().toBeNever()
-  expectTypeOf<Exclude<JobConclusionKind, DeclaredConclusion>>().toBeNever()
-  expectTypeOf<Exclude<DeclaredConclusion, JobConclusionKind>>().toBeNever()
-  expectTypeOf<Exclude<(typeof jobConclusionKindValues)[number], DeclaredConclusion>>().toBeNever()
-  expectTypeOf<Exclude<DeclaredConclusion, (typeof jobConclusionKindValues)[number]>>().toBeNever()
 })
 
-it('job kinds stay exactly five while the conclusion vocabulary grows', () => {
-  // The D-16 bar, at the type level: a conclusion was added, and the KINDS did not move. Written
-  // out rather than read from `jobKindValues`, so a retired kind quietly re-admitted to either
-  // declaration reddens here.
+it('the job kinds stay fixed while the conclusion vocabulary grows', () => {
+  // Written out rather than read from `jobKindValues`, so a retired kind quietly re-admitted to
+  // either declaration reddens here.
   expectTypeOf<JobKind>().toEqualTypeOf<
-    'chat' | 'analyze-run' | 'curate-memory' | 'consolidate' | 'propose-improvements'
+    'chat' | 'analyze-run' | 'curate-memory' | 'consolidate'
   >()
   expectTypeOf<Job['kind']>().toEqualTypeOf<JobKind>()
   // Optional, and optional of the WHOLE union: a narrowing here would let the store record a

@@ -6,7 +6,7 @@ import type { Surface } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 import { ToolRegistry } from '../registry.js'
 import { registerAllActions } from '../actions/index.js'
-import { NON_EXPOSED, VERB_SURFACE } from '../actions/surface-map.js'
+import { VERB_SURFACE } from '../actions/surface-map.js'
 import type { ToolDefinition } from '../types.js'
 
 const legalSurfaces = new Set<Surface>(['web', 'mobile', 'android', 'ios', 'common'])
@@ -34,7 +34,6 @@ function fixtureTool(overrides: Record<string, unknown> = {}): ToolDefinition {
     id: 'mobile_tap',
     type: 'tap',
     surface: 'mobile',
-    exposed: true,
     description: 'fixture tool',
     category: 'action',
     schema: z.object({}).strict(),
@@ -94,7 +93,6 @@ const allowedToolKeys = new Set([
   'id',
   'type',
   'surface',
-  'exposed',
   'description',
   'category',
   'schema',
@@ -116,19 +114,11 @@ function findForbiddenKeyOffenders(toolDefs: readonly ToolDefinition[]): string[
   return offenders
 }
 
-function findNonExposedOffenders(nonExposed: ReadonlySet<string>): string[] {
-  return [...nonExposed].map(type => `${type}: NON_EXPOSED must stay empty`)
-}
-
 function findHiddenPlannerToolOffenders(
   toolDefs: readonly ToolDefinition[],
   platformToolDefs: readonly (readonly ToolDefinition[])[],
 ): string[] {
-  const exposedIds = new Set(
-    toolDefs
-      .filter(def => def.exposed !== false)
-      .map(def => def.id),
-  )
+  const toolIds = new Set(toolDefs.map(def => def.id))
   const platformIds = new Set(
     platformToolDefs
       .flat()
@@ -136,15 +126,15 @@ function findHiddenPlannerToolOffenders(
   )
   const offenders: string[] = []
 
-  for (const id of exposedIds) {
+  for (const id of toolIds) {
     if (!platformIds.has(id)) {
-      offenders.push(`${id}: exposed tool missing from every platform slice`)
+      offenders.push(`${id}: tool missing from every platform slice`)
     }
   }
 
   for (const id of platformIds) {
-    if (!exposedIds.has(id)) {
-      offenders.push(`${id}: platform slice exposes a non-exposed tool`)
+    if (!toolIds.has(id)) {
+      offenders.push(`${id}: platform slice exposes an unregistered tool`)
     }
   }
 
@@ -227,7 +217,7 @@ function findBareRefSchemaOffenders(sourceFiles: readonly SourceFile[]): string[
   return offenders
 }
 
-describe('LINT-02', () => {
+describe('tool ids match their declared surface and type', () => {
   it('requires every tool id to match its declared surface and type', () => {
     expect(findSurfaceIdOffenders(defs)).toEqual([])
   })
@@ -245,7 +235,7 @@ describe('LINT-02', () => {
   })
 })
 
-describe('LINT-03', () => {
+describe('tool types and VERB_SURFACE keys agree', () => {
   it('keeps registered tool types in bijection with VERB_SURFACE keys', () => {
     expect(findVerbSurfaceBijectionOffenders(defs, VERB_SURFACE)).toEqual([])
   })
@@ -263,20 +253,19 @@ describe('LINT-03', () => {
   })
 })
 
-describe('LINT-07', () => {
+describe('tool definition metadata', () => {
   it('keeps ToolDefinition metadata on the allowed key set', () => {
     expect(findForbiddenKeyOffenders(defs)).toEqual([])
   })
 
-  it('keeps NON_EXPOSED empty and every exposed tool present in a platform slice', () => {
-    expect(findNonExposedOffenders(NON_EXPOSED)).toEqual([])
+  it('keeps every tool present in a platform slice', () => {
     expect(findHiddenPlannerToolOffenders(
       defs,
       platforms.map(platform => registry.getForPlatform(platform)),
     )).toEqual([])
   })
 
-  it('rejects held-out hidden planner metadata and accepts clean exposed tools', () => {
+  it('rejects held-out hidden planner metadata and accepts clean tools', () => {
     const cleanDef = fixtureTool({ id: 'mobile_tap', type: 'tap', surface: 'mobile' })
 
     expect(findForbiddenKeyOffenders([cleanDef])).toEqual([])
@@ -286,19 +275,14 @@ describe('LINT-07', () => {
       'mobile_tap: forbidden ToolDefinition key "tier"',
     ])
 
-    expect(findNonExposedOffenders(new Set())).toEqual([])
-    expect(findNonExposedOffenders(new Set(['launchApp']))).toEqual([
-      'launchApp: NON_EXPOSED must stay empty',
-    ])
-
     expect(findHiddenPlannerToolOffenders([cleanDef], [[cleanDef]])).toEqual([])
     expect(findHiddenPlannerToolOffenders([cleanDef], [[]])).toEqual([
-      'mobile_tap: exposed tool missing from every platform slice',
+      'mobile_tap: tool missing from every platform slice',
     ])
   })
 })
 
-describe('LINT-04', () => {
+describe('loose Zod types carry an escape-hatch marker', () => {
   it('requires z.any() and z.unknown() to carry an escape-hatch marker', () => {
     expect(findLooseZodOffenders(actionSourceFiles)).toEqual([])
   })
@@ -317,7 +301,7 @@ describe('LINT-04', () => {
   })
 })
 
-describe('LINT-05', () => {
+describe('optional action params explain when to omit them', () => {
   it('requires in-scope optional/default action params to explain when to omit them', () => {
     expect(findOptionalDescribeOffenders(actionSourceFiles)).toEqual([])
   })
@@ -379,7 +363,7 @@ describe('LINT-05', () => {
   })
 })
 
-describe('LINT-06', () => {
+describe('ref fields use refSchema', () => {
   it('requires ref/fromRef/toRef fields to use refSchema', () => {
     expect(findBareRefSchemaOffenders(actionSourceFiles)).toEqual([])
   })

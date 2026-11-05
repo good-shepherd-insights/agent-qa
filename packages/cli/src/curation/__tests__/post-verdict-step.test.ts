@@ -1,44 +1,10 @@
-// The D-09 decision table and the ONE lease acquisition, pinned (Phase 404 plan 01, D-10/D-11).
-//
-// TWO CLAIMS, AND THEY ARE DIFFERENT CLAIMS. `dispositionOf` is a pure mapping and is pinned TOTAL
-// over the lease probe's `kind` domain plus the two inputs that have no probe at all — because
-// what it returns is written into a frozen bus field that 408's embed and every thin client parse,
-// and a case nobody chose is a value nobody chose. `createPostVerdictStep` is pinned on the
-// behaviour AROUND that mapping: a decision taken WITHOUT mutating the lease, at most one
-// acquisition per run and only when a pump asks for it, a nudge on `held`, and a take-ONCE handoff
-// box, which is the whole of RESEARCH Pitfall 3's mitigation.
-//
-// THE LAZINESS IS ITSELF A PINNED CLAIM (2026-08-26). `run()` used to call `acquireWriterLease`
-// eagerly, which minted an epoch and a lease file for every run — including the runs that end
-// above the tail, where the no-leak backstop then released it and printed `released untaken` on
-// stderr. `run-parity.e2e.test.ts` caught that as changed ordinary-run output; the cells below are
-// where it is caught at unit range: after a `drained` decision with no pump, `acquireWriterLease`
-// has not been called, the release is a no-op, and nothing is warned.
-//
-// NO REAL KNOWLEDGE ROOT IS TOUCHED. Every cell stubs `operations`, so nothing here mints an epoch,
-// writes a lease file or wakes a daemon — the acquisition under test is the CALL, not the file
-// system underneath it, which `writer-lease`'s own suite owns.
-//
-// A THIRD CLAIM SINCE PLAN 04 (2026-08-26, D-05/D-08/D-09). The durable `analyze-run` enqueue moved
-// into this step from `post-run-tail.ts`, so its cells moved here with it — the payload's shape and
-// idempotency key, `deduped` as a success, and the D-07 warning wording. What is NEW is the ORDER
-// the step imposes around them, and every arm of it is pinned below: the enqueue happens BEFORE the
-// lease is even read; a run carrying either INVK-06 marker enqueues nothing and reads nothing; a
-// failed enqueue reaches no lease at all; a supplied writer authority reads `drained` without an
-// acquisition; and `--detach` enqueues and then skips only the lease. The order is the design —
-// see `post-verdict-step.ts`'s header for why each arm sits where it does.
+// The decision is taken without mutating the lease; acquisition is lazy, once, and only for a pump.
 
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { generateRunId } from '@vostride/agent-qa-ids'
-import { CURRENT_HANDOFF_SCHEMA_VERSION, asRunId, slugBranch } from '@vostride/agent-qa-schema'
-import { readRunCanaryPolicy } from '../canary-run-state.js'
+import { CURRENT_HANDOFF_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
 import {
   createPostVerdictStep,
-  recordCanaryPolicy,
   dispositionOf,
   enqueueAnalyzeRun,
   PostProcessingUnboundError,
@@ -51,9 +17,9 @@ import {
 } from '../post-verdict-step.js'
 import type { CurationWriterAuthority } from '../curation-tail.js'
 
-const KNOWLEDGE_ROOT = '/tmp/agent-qa-404-fake-knowledge'
-const AGENT_QA_ROOT = '/tmp/agent-qa-404-fake/.agent-qa'
-const CONFIG_PATH = '/tmp/agent-qa-404-fake/agent-qa.config.yaml'
+const KNOWLEDGE_ROOT = '/tmp/agent-qa-fake-knowledge'
+const AGENT_QA_ROOT = '/tmp/agent-qa-fake/.agent-qa'
+const CONFIG_PATH = '/tmp/agent-qa-fake/agent-qa.config.yaml'
 const RUN_ID = 'r_fake-post-verdict-step-run'
 const NOW_MS = 1_700_000_000_000
 
@@ -92,9 +58,8 @@ function stubOperations(
   overrides: Partial<PostVerdictStepOperations> = {},
 ): Partial<PostVerdictStepOperations> {
   return {
-    // This legacy queue/lease harness substitutes IO; real ownership is exercised in post-verdict-continuation.test.ts.
-    ownContinuation: async ({ initializePolicy, prepare, enqueue }) => { await initializePolicy?.(); await prepare(); return await enqueue() },
-    recordCanaryPolicy: vi.fn(async () => undefined),
+    // A queue/lease harness that substitutes IO; post-verdict-continuation tests real ownership.
+    ownContinuation: async ({ enqueue }) => await enqueue(),
     acquireWriterLease: vi.fn(() => ACQUIRED) as unknown as PostVerdictStepOperations['acquireWriterLease'],
     releaseLease: vi.fn(() => ({ kind: 'released' })) as unknown as PostVerdictStepOperations['releaseLease'],
     readWriterLease: vi.fn(() => ({ kind: 'absent' })) as unknown as PostVerdictStepOperations['readWriterLease'],
@@ -164,7 +129,7 @@ describe('probeWriterLease — the decision read, total over the four read kinds
     expect(probeWriterLease({ knowledgeRoot: KNOWLEDGE_ROOT, operations })).toEqual({ kind: 'held' })
     expect(
       operations.deriveWriterLeaseFreshness,
-      'the freshness verdict decides, never the lease bytes alone (CR-01/CR-08)',
+      'the freshness verdict decides, never the lease bytes alone',
     ).toHaveBeenCalledWith(KNOWLEDGE_ROOT, PARSED_LEASE.kind === 'parsed' ? PARSED_LEASE.lease : undefined, NOW_MS)
   })
 
@@ -214,7 +179,7 @@ describe('probeWriterLease — the decision read, total over the four read kinds
   })
 })
 
-describe('dispositionOf — total over the lease probe domain (404 D-09/D-11)', () => {
+describe('dispositionOf — total over the lease probe domain', () => {
   it('held ⇒ handedOff, with nothing to warn about', () => {
     expect(
       dispositionOf({ probe: { kind: 'held' }, leaseSkipped: false }),
@@ -259,7 +224,7 @@ describe('dispositionOf — total over the lease probe domain (404 D-09/D-11)', 
     ).toBe('post-processing-unbound')
   })
 
-  it('a FAILED enqueue ⇒ detached plus post-run-enqueue-failed, whatever the lease said (D-11)', () => {
+  it('a FAILED enqueue ⇒ detached plus post-run-enqueue-failed, whatever the lease said', () => {
     const outcome = dispositionOf({
       enqueue: 'failed',
       enqueueError: 'Post-run analysis was not queued for r_x (SQLITE_BUSY)',
@@ -292,11 +257,11 @@ describe('dispositionOf — total over the lease probe domain (404 D-09/D-11)', 
         writerAuthority: { leaseId: 'daemon-lease', epoch: 11 },
         leaseSkipped: false,
       }),
-      'the host holds the lease and said so — its own pump is what drains this chain (D-09)',
+      'the host holds the lease and said so — its own pump is what drains this chain',
     ).toEqual({ disposition: 'drained' })
   })
 
-  it('a supplied authority OUTRANKS a held probe — the daemon is not handed off to itself (Pitfall 3)', () => {
+  it('a supplied authority OUTRANKS a held probe — the daemon is not handed off to itself', () => {
     expect(
       dispositionOf({
         enqueue: 'enqueued',
@@ -309,7 +274,7 @@ describe('dispositionOf — total over the lease probe domain (404 D-09/D-11)', 
     ).toEqual({ disposition: 'drained' })
   })
 
-  it('a gate-run skip and a --detach skip are the SAME answer: detached, no warning (D-08/D-09)', () => {
+  it('a gate-run skip and a --detach skip are the SAME answer: detached, no warning', () => {
     expect(
       dispositionOf({ enqueue: 'skipped', leaseSkipped: true }),
       'a gate run queued nothing on purpose',
@@ -321,7 +286,7 @@ describe('dispositionOf — total over the lease probe domain (404 D-09/D-11)', 
   })
 })
 
-describe('enqueueAnalyzeRun — THE one durable hand-off (404 D-05, relocated from the tail)', () => {
+describe('enqueueAnalyzeRun — THE one durable hand-off', () => {
   it('queues analyze-run with the handoff digest and the runId as the idempotency key', async () => {
     const operations = stubOperations()
     const outcome = await enqueueAnalyzeRun({
@@ -343,7 +308,7 @@ describe('enqueueAnalyzeRun — THE one durable hand-off (404 D-05, relocated fr
       handoffSchemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
       executionContext: 'local-headless',
     })
-    // D-06: the digest pins the BYTES, so it must be a sha256 of the handoff and not a path.
+    // The digest pins the bytes, so it is a sha256 of the handoff, not a path.
     expect(payload.handoffDigest).toMatch(/^[0-9a-f]{64}$/u)
     expect(
       lastClose,
@@ -405,90 +370,7 @@ describe('enqueueAnalyzeRun — THE one durable hand-off (404 D-05, relocated fr
   })
 })
 
-describe('createPostVerdictStep — decide without mutating, acquire only for a pump (404 D-10, Pitfall 3)', () => {
-  it.each([
-    { source: ['flag'] }, { source: ['config'] }, { source: ['default'] },
-    { source: null }, { source: 1 }, { source: {} },
-  ])('refuses a non-string stored canary policy source: $source', ({ source }) => {
-    const runDir = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
-    const runId = generateRunId()
-    try {
-      writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify({
-        schemaVersion: 2, runId, maxAblations: 4, source,
-      }))
-      expect(() => readRunCanaryPolicy(runDir, runId)).toThrow('canary policy invalid')
-    } finally { rmSync(runDir, { recursive: true, force: true }) }
-  })
-  it.each(['flag', 'config', 'default'] as const)('accepts the primitive stored policy source %s', source => {
-    const runDir = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
-    const runId = generateRunId()
-    const policy = { schemaVersion: 2, runId, maxAblations: 4, source }
-    try {
-      writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify(policy))
-      expect(readRunCanaryPolicy(runDir, runId)).toEqual(policy)
-    } finally { rmSync(runDir, { recursive: true, force: true }) }
-  })
-  it('refuses a malformed stored policy on resumption before enqueue or daemon handoff', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
-    const runId = generateRunId()
-    const runDir = join(root, 'runs', slugBranch(runId))
-    mkdirSync(runDir, { recursive: true })
-    try {
-      writeFileSync(join(runDir, 'canary-policy.json'), JSON.stringify({
-        schemaVersion: 2, runId, maxAblations: 1, source: ['flag'],
-      }))
-      const operations = stubOperations({
-        recordCanaryPolicy,
-        composeHost: vi.fn(() => stubHost()),
-      })
-      const step = createPostVerdictStep({
-        runId, agentQaRoot: root, knowledgeRoot: KNOWLEDGE_ROOT,
-        configPath: CONFIG_PATH, maxAblations: 8, log: { warn: vi.fn() }, operations,
-      })
-      const outcome = await step.port.run({ runId: asRunId(runId), verdict: 'passed' as never })
-      expect(outcome.disposition).toBe('detached')
-      expect(outcome.warning?.code).toBe('post-run-enqueue-failed')
-      expect(outcome.warning?.message).toContain('canary policy invalid')
-      expect(operations.composeHost).not.toHaveBeenCalled()
-      expect(operations.nudgeDaemon).not.toHaveBeenCalled()
-      expect(operations.readWriterLease).not.toHaveBeenCalled()
-      expect(step.handoff.takeAcquiredLease()).toBeUndefined()
-      expect(() => readRunCanaryPolicy(runDir, runId)).toThrow('canary policy invalid')
-    } finally { rmSync(root, { recursive: true, force: true }) }
-  })
-  it.each([true, false])('persists the originating cap before enqueue and daemon handoff (flag=%s)', async flag => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-qa-canary-policy-'))
-    try {
-      const runId = generateRunId()
-      const runDir = join(root, 'runs', slugBranch(runId))
-      mkdirSync(runDir, { recursive: true })
-      const configPath = join(root, 'agent-qa.config.yaml')
-      writeFileSync(configPath, 'workspace:\n  testMatch: [tests/**/*.yaml]\n  suiteMatch: [suites/**/*.suite.yaml]\n  hooksFile: hooks.yaml\n  envFile: .env\n  secretsFile: .env.secrets.local\nuse:\n  mobile:\n    appState: preserve\neval:\n  gate2:\n    maxAblations: 4\n')
-      const expected = { schemaVersion: 2, runId, maxAblations: flag ? 1 : 4, source: flag ? 'flag' : 'config' }
-      const operations = stubOperations({
-        recordCanaryPolicy,
-        loadCompletedRunHandoff: () => ({ ...HANDOFF, runId: asRunId(runId) }),
-        readWriterLease: vi.fn(() => PARSED_LEASE),
-        composeHost: () => {
-          expect(readRunCanaryPolicy(runDir, runId)).toEqual(expected)
-          return stubHost()
-        },
-        nudgeDaemon: vi.fn(async () => {
-          expect(readRunCanaryPolicy(runDir, runId)).toEqual(expected)
-          return undefined
-        }),
-      })
-      const run = (maxAblations?: number) => createPostVerdictStep({
-        runId, agentQaRoot: root, knowledgeRoot: KNOWLEDGE_ROOT, configPath,
-        ...(maxAblations === undefined ? {} : { maxAblations }),
-        log: { warn: vi.fn() }, operations,
-      }).port.run({ runId: runId as never, verdict: 'passed' as never })
-      expect(await run(flag ? 1 : undefined)).toEqual({ disposition: 'handedOff' })
-      expect(operations.nudgeDaemon).toHaveBeenCalledOnce()
-      expect(await run(8)).toEqual({ disposition: 'handedOff' })
-      expect(readRunCanaryPolicy(runDir, runId)).toEqual(expected)
-    } finally { rmSync(root, { recursive: true, force: true }) }
-  })
+describe('createPostVerdictStep — decide without mutating, acquire only for a pump', () => {
   it('a free lease reads drained and ACQUIRES NOTHING until a pump asks', async () => {
     const operations = stubOperations()
     const step = createPostVerdictStep({
@@ -654,7 +536,7 @@ describe('createPostVerdictStep — decide without mutating, acquire only for a 
   })
 })
 
-describe('createPostVerdictStep — the D-05/D-08/D-09 arms, in the order the step imposes', () => {
+describe('createPostVerdictStep — the gate-run, exclusion and detach arms, in the order the step imposes', () => {
   const step = (extra: Record<string, unknown> = {}, operations = stubOperations()) => ({
     operations,
     step: createPostVerdictStep({
@@ -723,8 +605,7 @@ describe('createPostVerdictStep — the D-05/D-08/D-09 arms, in the order the st
     const message = String(outcome.warning?.message)
     expect(message).toContain(RUN_ID)
     expect(message).toContain('SQLITE_BUSY')
-    // The whole point of the D-07 wording is that it says what was NOT affected, and where the
-    // handoff still is — that path IS the manual re-queue path.
+    // The warning says what is unaffected and where the handoff is, the manual re-queue path.
     expect(message).toContain('verdict and exit code are unaffected')
     expect(message).toContain(AGENT_QA_ROOT)
     expect(
@@ -746,7 +627,7 @@ describe('createPostVerdictStep — the D-05/D-08/D-09 arms, in the order the st
     expect(operations.readWriterLease).not.toHaveBeenCalled()
   })
 
-  it('D-08: gateRun ⇒ NO enqueue, NO lease read, detached, and nothing warned', async () => {
+  it('gateRun ⇒ NO enqueue, NO lease read, detached, and nothing warned', async () => {
     const operations = stubOperations()
     const { step: composed } = step({}, operations)
 
@@ -764,7 +645,7 @@ describe('createPostVerdictStep — the D-05/D-08/D-09 arms, in the order the st
     expect(operations.acquireWriterLease).not.toHaveBeenCalled()
   })
 
-  it('D-08: excludedFromOutcomes ALONE skips too — the two markers are DISTINCT axes (C8)', async () => {
+  it('excludedFromOutcomes ALONE skips too — the two markers are DISTINCT axes', async () => {
     const operations = stubOperations()
     const { step: composed } = step({}, operations)
 
@@ -780,7 +661,7 @@ describe('createPostVerdictStep — the D-05/D-08/D-09 arms, in the order the st
     ).not.toHaveBeenCalled()
   })
 
-  it('--detach ENQUEUES and skips only the lease (D-09, RESEARCH Pitfall 8)', async () => {
+  it('--detach ENQUEUES and skips only the lease', async () => {
     const operations = stubOperations()
     const { step: composed } = step({ detach: true }, operations)
 
@@ -800,7 +681,7 @@ describe('createPostVerdictStep — the D-05/D-08/D-09 arms, in the order the st
     const { step: composed } = step({ writerAuthority: authority }, operations)
 
     const outcome = await composed.port.run({ runId: RUN_ID as never, verdict: 'passed' as never })
-    expect(outcome, 'the daemon-launched run IS drained — by the daemon\'s own pump (D-09)').toEqual({
+    expect(outcome, 'the daemon-launched run IS drained — by the daemon\'s own pump').toEqual({
       disposition: 'drained',
     })
     expect(lastEnqueue, 'the daemon door queued nothing at all before this change').toHaveBeenCalledTimes(1)
@@ -830,8 +711,7 @@ describe('createPostVerdictStep — the D-05/D-08/D-09 arms, in the order the st
     })
 
     await composed.port.run({ runId: RUN_ID as never, verdict: 'passed' as never })
-    // The daemon door supplies no tail (388 D-13), so nothing ever takes the authority — and the
-    // drive's outermost `finally` runs the backstop over the box on the way out.
+    // The daemon door supplies no tail, so the drive's outermost `finally` runs the backstop.
     releaseUntakenPostVerdictLease({
       handoff: composed.handoff,
       knowledgeRoot: KNOWLEDGE_ROOT,

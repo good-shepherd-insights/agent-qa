@@ -1,12 +1,4 @@
-// The startRun() pin's own cells, over FIXTURE sources (401-20 · W-2).
-//
-// FIXTURES, NOT THE REAL TREE, for the reason the gate pin's cells are: a cell that scanned the
-// workspace could only ever say "today's tree is clean", which `validate:arch` already says. What a
-// pin is FOR is the file somebody adds tomorrow, and the only way to measure that is to write it.
-//
-// Every scan starts from stand-ins for the two pinned files, each carrying the acquisition FORM the
-// real file uses, so the stale direction stays quiet and the case under test is the only thing that
-// can speak.
+// Fixtures, not the real tree: a pin is for the file someone adds later.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
@@ -50,9 +42,8 @@ describe('the permitted set', () => {
     }
   })
 
-  it('the core entry records the MEASURED chain, not WR-03 prose', () => {
-    // F-1 measured `draftShelf.runs.start` reached zero times during a dispatch. A pin whose
-    // rationale had transcribed that chain would be documenting the wrong link while green.
+  it('the core entry records the MEASURED chain, not the draft-shelf link', () => {
+    // A dispatch never reaches `draftShelf.runs.start`, so the rationale must not name that link.
     const rationale = STARTRUN_PIN[PIN_CORE]!
     expect(rationale).toContain('createDraftEvaluation.startGateRun')
     expect(rationale).not.toContain('draftShelf.runs.start')
@@ -321,7 +312,7 @@ describe('the acquisition census — an independently-shaped predicate over the 
     return found
   }
 
-  /** Files the census MUST range, named rather than read off the scan (the 399/400 scar). */
+  /** Files the census must range, named rather than read off the scan. */
   const REQUIRED_MEMBERS = [
     join('runner', 'src', 'run', 'shell.ts'),
     join('runner', 'src', 'index.ts'),
@@ -370,12 +361,8 @@ describe('the acquisition census — an independently-shaped predicate over the 
     }
   })
 
-  it('the gate-run road named by the measured chain acquires NOTHING — F-1, cross-checked', () => {
-    // `createDraftEvaluation.startGateRun` (the link a dispatch actually takes) and
-    // `draftShelf.runs.start` (the link WR-03's prose names, measured reached zero times) both
-    // live in this file. Neither acquires the run starter: both reach a run through
-    // `invokeFunction('runs.start')`. If either ever did, the pin would name it — and this cell is
-    // what says the permitted set was checked against the chain rather than copied from it.
+  it('the gate-run road named by the measured chain acquires NOTHING, cross-checked', () => {
+    // Both chains reach a run through `invokeFunction('runs.start')`, never the run starter itself.
     const composeRoot = join(PACKAGES_ROOT, 'agent-local', 'src', 'composition', 'compose-local-agent.ts')
     const source = readFileSync(composeRoot, 'utf8')
     expect(findStartRunAcquisitions(source, 'packages/agent-local/src/composition/compose-local-agent.ts')).toEqual([])

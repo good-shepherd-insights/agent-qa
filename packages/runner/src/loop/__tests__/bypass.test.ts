@@ -1,7 +1,3 @@
-// RED scaffold (Wave 0, CACHE-02 / D-08). A step classified NonCacheableStepInput is
-// bypassed: the loop records cacheStatus='bypass' and performs NO cache get/set. Driven
-// via a cache spy that must never receive get/set for the bypassed step. Fails until
-// Plan 03 lands classifyStep and Plan 04 wires the bypass path into executeStep.
 import { describe, expect, it } from 'vitest'
 
 import { executeStep } from '../index.js'
@@ -33,7 +29,7 @@ function makeCacheSpy(): CacheSpy {
   }
 }
 
-describe('env/secret-set step bypasses the cache (CACHE-02, D-08)', () => {
+describe('env/secret-set step bypasses the cache', () => {
   it('classifies the set-variable step as non-cacheable', () => {
     const result = classifyStep({ stepText: 'set SESSION token', envSets: ['SESSION'] })
     expect(result.cacheable).toBe(false)

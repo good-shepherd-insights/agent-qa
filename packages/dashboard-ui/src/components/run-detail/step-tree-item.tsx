@@ -46,20 +46,15 @@ export function StepTreeItem({ step, isSelected, isExpanded, selection, playhead
   const address = step.testIndex === undefined || step.stepIndex === undefined
     ? undefined
     : feedbackAddress({ testIndex: step.testIndex, stepIndex: step.stepIndex })
-  // D-04: the door sits on the row that owns the selection only; a marked row elsewhere keeps a
-  // passive trace instead, so one row never shows two bubbles (D-06).
+  // The door sits only on the row owning the selection; other marked rows keep a passive trace.
   const showTrigger = isSelected && onOpenFeedback !== undefined && marks !== undefined && address !== undefined
   const stepNumber = (step.stepIndex ?? 0) + 1
-  // THE DURABLE SUB-ACTIONS, NOT THE v1 BLOB (405-08/405-11). The v1 sub-action array this row
-  // used to read had no producer on this page, and 405-11 deleted it with the overview's readers.
   const subActions = step.subActions ?? []
   const hasSubActions = subActions.length > 0
 
-  // THE STEP OWNS THE CACHE ANSWER, AND IT IS THREE-VALUED (D-01). `hit` means this step was served
-  // from cache — every action under it with it. `miss` and `bypass` mean it was not, and there is
-  // no partial state to render: the v1 shape counted cached sub-actions, and the projection that
-  // replaced it records nothing per sub-action, so a "2 of 5" here would be a measurement nobody
-  // took.
+  // The step owns the cache answer. `hit` means every action in the step came from the cache;
+  // `miss`, `bypass` and `disabled` mean it was not. Nothing per sub-action is recorded, so there
+  // is no partial state to render.
   const servedFromCache = step.cacheStatus === 'hit'
 
   const hasChildren = hasSubActions || inlineLogs.length > 0

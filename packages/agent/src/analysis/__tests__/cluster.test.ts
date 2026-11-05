@@ -1,10 +1,4 @@
-// Render-time pure clustering over the ONE fingerprint vocabulary (Phase 389, D-13..D-16).
-//
-// The ANLZ-04 story at the unit level: 40 red tests sharing one anchor and one class are ONE
-// problem — exactly one cluster, count 40, forty member refs. Everything here is a total,
-// deterministic pure function of (resolved verdicts, handoff): nothing persisted, no ports,
-// no identity minted (D-16 — the fingerprint VALUE is the only key a cluster carries;
-// a cluster or verdict has no short-ID and no `agentqa://` address).
+// A total, deterministic pure function of verdicts and handoff; clusters mint no identity.
 
 import { canonicalJson, resolveRunVerdicts } from '@vostride/agent-qa-schema'
 import type { Verdict } from '@vostride/agent-qa-schema'
@@ -29,7 +23,7 @@ function appBug(perTest: number, confidence: number): Verdict {
   }
 }
 
-describe('clusterVerdicts — the ANLZ-04 shape (D-14/D-15)', () => {
+describe('clusterVerdicts — one cluster per anchor and failure class', () => {
   it('folds 40 failures sharing one anchor and one class into ONE cluster of count 40', () => {
     const handoff = buildSyntheticHandoff({ failureCount: 40 })
     const resolved = resolveRunVerdicts(undefined, handoff)
@@ -89,7 +83,7 @@ describe('clusterVerdicts — the ANLZ-04 shape (D-14/D-15)', () => {
   })
 })
 
-describe('representative selection (D-15)', () => {
+describe('representative selection', () => {
   it('selects the highest-confidence member as representative', () => {
     const handoff = buildSyntheticHandoff({
       failureCount: 2,
@@ -117,7 +111,7 @@ describe('representative selection (D-15)', () => {
   })
 })
 
-describe('deterministic presentation (D-14)', () => {
+describe('deterministic presentation', () => {
   it('produces byte-identical output from shuffled input verdicts', () => {
     const handoff = buildSyntheticHandoff({
       failureCount: 6,
@@ -134,7 +128,7 @@ describe('deterministic presentation (D-14)', () => {
       .toBe(canonicalJson(clusterVerdicts(resolved, handoff)))
   })
 
-  it('carries fingerprint value, count and member refs ONLY — no minted identity (D-16)', () => {
+  it('carries fingerprint value, count and member refs ONLY — no minted identity', () => {
     const handoff = buildSyntheticHandoff({ failureCount: 2 })
     const clusters = clusterVerdicts(resolveRunVerdicts(undefined, handoff), handoff)
 
@@ -144,7 +138,7 @@ describe('deterministic presentation (D-14)', () => {
     ])
     expect(Object.keys(cluster.representative).sort()).toEqual(['testIndex'])
     expect(Object.keys(cluster.members[0]!).sort()).toEqual(['testId', 'testIndex'])
-    // No short-ID, no address — the fingerprint value is the only key (D-16).
+    // No short-ID, no address — the fingerprint value is the only key.
     expect(canonicalJson(clusters)).not.toContain('agentqa://')
   })
 })

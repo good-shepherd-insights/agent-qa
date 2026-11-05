@@ -1,21 +1,4 @@
-// The live page's BRAIN, proven before the page exists (403-04 · HNST-01/HNST-02/HNST-03, D-10/D-11/D-12).
-//
-// WHY A PURE REDUCER AND NOT A HOOK. The jsdom page cells (403-05) and the Playwright DOM cells
-// (403-06) must exercise the SAME state machine the browser runs. A hook can only be tested
-// through a renderer, so a claim about what the page can and cannot know would be a claim about a
-// rendering discipline. Here it is a claim about a data structure.
-//
-// THE SENTINEL CELL IS THE LOAD-BEARING ONE, AND A TYPE DOES NOT SUBSTITUTE FOR IT. `LiveStepRow`
-// having no `plan`/`plannedAction`/`grounding`/`result`/`reasoning` field proves nothing at
-// runtime: `{ ...payload }` spreads all five in and the type never complains at the boundary where
-// the object was built. So the cells FEED payloads carrying every one of those fields with
-// sentinel values and assert on the actual runtime object, at every depth, via `JSON.stringify`.
-// The type is the intent; the cell is the proof.
-//
-// EVERY CLOCK IS INJECTED. `reduceRunStream(state, envelope, now)` takes `now` as a parameter. A
-// wall clock in the fold is a flake that reads as a real defect (403-03 measured exactly that in a
-// byte-comparing fixture). The liveness window that once took a clock too is gone (428 D-03), and
-// the absence cells below say so.
+// Cells feed payloads carrying every planner field, because a spread puts them back in rows.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -109,11 +92,9 @@ const rowAt = (state: RunStreamState, testIndex: number, stepIndex: number) =>
 
 const runningRows = (state: RunStreamState) => state.steps.filter((row) => row.status === 'running')
 
-// ---------------------------------------------------------------------------
-// The status vocabulary (HNST-02)
-// ---------------------------------------------------------------------------
+// The status vocabulary
 
-describe('the step status vocabulary is exactly HNST-02, and stepStatusOf resolves it', () => {
+describe('the step status vocabulary is exactly seven words, and stepStatusOf resolves it', () => {
   it('declares the seven statuses the page can render, and no eighth', () => {
     expect([...STEP_STATUSES]).toEqual([
       'pending',
@@ -145,8 +126,7 @@ describe('the step status vocabulary is exactly HNST-02, and stepStatusOf resolv
   })
 
   it('falls back to `healed` when `status` is absent and the step self-healed — BEFORE reading the verdict', () => {
-    // A healed step's verdict passes. If the verdict were read first, `healed` would be
-    // unreachable and every heal would render as a plain pass — the exact erasure HNST-02 names.
+    // A healed step's verdict passes, so reading it first would render every heal as a pass.
     expect(stepStatusOf({
       testIndex: 0,
       stepIndex: 0,
@@ -212,19 +192,16 @@ describe('the step status vocabulary is exactly HNST-02, and stepStatusOf resolv
   })
 
   it('creates a row directly in its final status when stepFinalized arrives with no prior stepStarted', () => {
-    // The flagged HNST-02 edge, and a real one on a resumed stream: `subscribe(N+1)` can land
-    // between a step's start and its finalize.
+    // A resumed stream can land between a step's start and its finalize.
     const state = fold([stepFinalized(3, 2, { status: 'failed' })])
     expect(rowAt(state, 3, 2)).toMatchObject({ status: 'failed', ticks: 0 })
     expect(rowAt(state, 3, 2)?.startedAt).toBeUndefined()
   })
 })
 
-// ---------------------------------------------------------------------------
-// D-10: motion and a plain count, and NOTHING ELSE
-// ---------------------------------------------------------------------------
+// Motion and a plain count, and nothing else
 
-describe('D-10: each sub-action is one tick, and no reasoning content survives ingest', () => {
+describe('each sub-action is one tick, and no reasoning content survives ingest', () => {
   it('bumps the running row\'s ticks by exactly one per subActionRecorded', () => {
     const state = fold([
       stepStarted(0, 0),
@@ -297,9 +274,7 @@ describe('D-10: each sub-action is one tick, and no reasoning content survives i
     // fixture that never carried the sentinel in the first place.
     expect(JSON.stringify(subAction(0, 0, 0))).toContain(SENTINEL)
     expect(JSON.stringify(stepFinalized(0, 0))).toContain(SENTINEL)
-    // And the LITERAL is pinned, because 403-05's jsdom cells and 403-06's DOM cells re-assert the
-    // same absence on the rendered surface. A sentinel that drifts here silently decouples the
-    // three layers of that claim from one another.
+    // The literal is pinned because the page and DOM cells assert the same absence on the surface.
     expect(SENTINEL).toBe('SENTINEL-REASONING-7f3a')
   })
 
@@ -319,9 +294,7 @@ describe('D-10: each sub-action is one tick, and no reasoning content survives i
   })
 })
 
-// ---------------------------------------------------------------------------
-// Ordering and adjacency (HNST-01 edges)
-// ---------------------------------------------------------------------------
+// Ordering and adjacency
 
 describe('order is the bus\'s seq, never arrival and never a timestamp tie', () => {
   it('orders two equal-`ts` step events by seq even when the LATER seq arrives first', () => {
@@ -371,9 +344,7 @@ describe('order is the bus\'s seq, never arrival and never a timestamp tie', () 
   })
 })
 
-// ---------------------------------------------------------------------------
-// Members, the thin stream, retries and terminality (D-12)
-// ---------------------------------------------------------------------------
+// Members, the thin stream, retries and terminality
 
 describe('members, the thin handle stream and the terminal freeze', () => {
   it('pre-populates pending rows with empty text when testStarted declares totalSteps', () => {
@@ -405,7 +376,7 @@ describe('members, the thin handle stream and the terminal freeze', () => {
   })
 
   it('THE THIN STREAM: a testFinished with no stepStarted ever seen is noted `did not run`', () => {
-    // 402's `?handle=1` observation: a member stream can BEGIN with a terminal event.
+    // A member stream can begin with a terminal event.
     const state = fold([
       envelope('testStarted', { testId: 't1', testIndex: 1, name: 'member one', totalSteps: 2 }),
       envelope('testFinished', { testId: 't1', testIndex: 1, outcome: 'skipped' }),
@@ -530,14 +501,10 @@ describe('members, the thin handle stream and the terminal freeze', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// G-428-2 (428-30): a pending row carries the text testStarted sent
-// ---------------------------------------------------------------------------
+// A pending row carries the text `testStarted` sent
 
-describe('G-428-2: pending rows are seeded from testStarted.stepTexts (owner decision 2026-09-26 (2))', () => {
-  // The producer masks each entry with the declared-secret mask, so an entry equals the stepText
-  // its step later announces. The fold keeps the entry as it arrived, and the row shows it as
-  // written: a declared value is already its `[secret:<name>]` (D-28).
+describe('pending rows are seeded from testStarted.stepTexts', () => {
+  // The producer masks each entry, so a declared value arrives as its `[secret:<name>]` already.
   const started = (extra: Record<string, unknown>) =>
     envelope('testStarted', { testId: 't', testIndex: 0, name: 'm', ...extra })
 
@@ -579,15 +546,10 @@ describe('G-428-2: pending rows are seeded from testStarted.stepTexts (owner dec
   })
 })
 
-// ---------------------------------------------------------------------------
-// D-03 (428): the reducer publishes no liveness verdict (supersedes 403's D-11)
-// ---------------------------------------------------------------------------
+// The reducer publishes no liveness verdict
 
-describe('D-03: the module publishes no bus liveness, and an absent export is the proof', () => {
-  // RE-SPELLED 2026-09-26 (428-16). These ten cells pinned `livenessOf` and its 20 s window.
-  // The owner removed bus liveness from the live page (428 D-03), and the pure half went with it.
-  // Each cell now states one absence: an export, a type, a transport input or a window, read off
-  // the module namespace or its source, so the liveness path cannot come back by one import.
+describe('the module publishes no bus liveness, and an absent export is the proof', () => {
+  // Each cell states one absence, read off the module namespace or its source.
   const exportNames = (): string[] => Object.keys(reducer).sort()
   const source = (): string => readFileSync(resolve(process.cwd(), 'src/lib/run-stream-reducer.ts'), 'utf8')
 
@@ -662,15 +624,12 @@ describe('D-03: the module publishes no bus liveness, and an absent export is th
     expect(source()).not.toMatch(/20_000|STALE_MS/u)
   })
 
-  it('the clock-as-parameter rule names only the fold: the source never mentions livenessOf', () => {
+  it('the reducer source never mentions livenessOf', () => {
     expect(source()).not.toContain('livenessOf')
-    expect(source()).toContain('EVERY CLOCK IS A PARAMETER')
   })
 })
 
-// ---------------------------------------------------------------------------
-// D-13's gap marker
-// ---------------------------------------------------------------------------
+// The gap marker
 
 describe('markGap records what a replay floor cost the viewer', () => {
   it('spans the envelopes between what was seen and the floor the door advertised', () => {
@@ -695,7 +654,7 @@ describe('markGap records what a replay floor cost the viewer', () => {
   })
 })
 
-describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that carries it (407-10 · D-14)', () => {
+describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that carries it', () => {
   const FLOOR = { schemaVersion: 2, rung: 'static-floor', reason: 'native-runtime-unavailable' } as const
   const LEXICAL = { schemaVersion: 2, rung: 'lexical-only', reason: 'floor-disabled' } as const
 
@@ -724,8 +683,7 @@ describe('the retrieval rung is a RUN-CONSTANT, folded from the first frame that
   })
 
   it('leaves the key ABSENT — not null, not a rung word — before any carrying frame', () => {
-    // "Not yet known" is the absence of the key, which is what lets the page render no element at
-    // all rather than a banner claiming a rung nobody has stated (D-14, live-run's before state).
+    // Not yet known is the absent key, so the page renders no element rather than a guessed rung.
     const state = fold([stepStarted(0, 0), stepFinalized(0, 0, { status: 'passed' })])
     expect(state.retrievalRung).toBeUndefined()
     expect('retrievalRung' in state).toBe(false)

@@ -9,11 +9,12 @@ export interface TimeoutConfig {
   navigation?: number
 }
 
+export const DEFAULT_NAVIGATION_TIMEOUT_MS = 120_000
+
 export interface PlatformBase {
   timeouts?: TimeoutConfig
   recording?: { enabled: boolean; videoDir: string; videoSize?: Viewport }
   verbose?: boolean
-  farmSession?: { hostname: string; port: number; path: string; capabilities: Record<string, unknown> }
   logCapture?: { console?: boolean; network?: boolean }
 }
 
@@ -31,12 +32,6 @@ export const platformBaseShape = {
     videoSize: viewportSchema.optional(),
   }).strict().optional(),
   verbose: z.boolean().optional(),
-  farmSession: z.object({
-    hostname: z.string(),
-    port: z.number(),
-    path: z.string(),
-    capabilities: z.record(z.string(), z.unknown()),
-  }).strict().optional(),
   logCapture: z.object({
     console: z.boolean().optional(),
     network: z.boolean().optional(),

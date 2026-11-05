@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -35,11 +35,6 @@ import {
   READER_CARVEOUT_SCANNED_DIRS,
 } from '../lint/reader-carveout.js'
 import {
-  EVAL_LOCAL_MAIN_ENTRY_ALLOWLIST,
-  findEvalLocalAllowanceUnusedOffenders,
-  findEvalLocalMainEntryOffenders,
-} from '../lint/eval-local-reader-carveout.js'
-import {
   COMPOSITION_CARVEOUT_PACKAGE_DIR,
   findCompositionCarveoutOffenders,
   findCompositionCarveoutUnusedAllowances,
@@ -62,6 +57,7 @@ import {
   findSurfaceFirewallOffenders,
   isFirewalledSurfaceDir,
   SURFACE_ALLOWED_INTERNAL_PACKAGES,
+  SURFACE_ALLOWED_INTERNAL_SPECIFIERS,
   type SurfaceFirewallScan,
 } from '../lint/surface-firewall.js'
 import {
@@ -107,13 +103,7 @@ function packageSourceHits(contract: OwnershipContract): SpecifierHit[] {
   return hitsFromFiles(sourceFilesFor(contract.packageDir, repoRoot))
 }
 
-/**
- * Source text for the startRun() pin (and, since 432-19, the gate-absence census), keyed by
- * repo-relative path.
- *
- * Routed through `sourceFilesFor` on purpose: it already drops `__tests__`, so a test file that
- * plants an acquisition as a fixture string is never read as a production acquisition.
- */
+// Through `sourceFilesFor`, which drops `__tests__`, so a fixture string is never a production hit.
 function pinSourcesFor(packageDir: string): StartRunPinSource[] {
   return sourceFilesFor(packageDir, repoRoot).map(file => ({
     file: relative(repoRoot, file).replaceAll('\\', '/'),
@@ -190,7 +180,7 @@ function surfaceClassContracts(packageNames: readonly string[]): OwnershipContra
   )
 }
 
-describe('validate:arch (LINT-01..05)', () => {
+describe('arch lint class rules and dep contracts', () => {
   it('every contract-bearing package satisfies its class rules and dep contract', () => {
     const offenders: string[] = []
     const contracts: readonly OwnershipContract[] = ARCH_MANIFEST.packages
@@ -199,10 +189,6 @@ describe('validate:arch (LINT-01..05)', () => {
     // "Exactly one importer" is a property of the workspace, not of any one package, so the
     // reader-scanned hits are accumulated and judged once after the loop.
     const readerScannedHits: SpecifierHit[] = []
-    // 414 D-20. The eval-local main-entry allowance is likewise a workspace property: "used by
-    // nobody" cannot be decided from one package's slice, so every contract's source hits are
-    // accumulated here and the unused-allowance direction is judged once after the loop.
-    const evalLocalHits: SpecifierHit[] = []
 
     for (const contract of contracts) {
       pinSources.push(...pinSourcesFor(contract.packageDir))
@@ -230,9 +216,7 @@ describe('validate:arch (LINT-01..05)', () => {
       }
       offenders.push(...findCompositionCarveoutOffenders(contract, sourceHits))
       offenders.push(...findCompositionCarveoutUnusedAllowances(contract, sourceHits))
-      // D-11 layer 3. Handed whole MODULES rather than the flat hit list the rules above take,
-      // because it walks an import closure and a file with no imports at all still has to be
-      // resolvable — derived from hits alone, such a file would look like a hole in the graph.
+      // Takes whole modules: a file with no imports still has to resolve in the import closure.
       if (contract.packageDir === RESUME_PATH_PACKAGE_DIR) {
         offenders.push(
           ...findResumePathModelFreeOffenders(resumePathModules(contract.packageDir, repoRoot)),
@@ -242,20 +226,11 @@ describe('validate:arch (LINT-01..05)', () => {
         surfaceScans.push({ packageDir: contract.packageDir, hits: sourceHits })
       }
       offenders.push(...findKnowledgeLocalWallOffenders(contract, sourceHits))
-      // 414 D-20 / ROOT-10 SC5: over EVERY contract, not the reader carve-out's scanned-dirs
-      // slice — the packages this rule exists to hold (`agent`, `agent-local`,
-      // `knowledge-local`) are not in that list, and a rule that never sees them would pass
-      // forever while reading like proof.
-      offenders.push(...findEvalLocalMainEntryOffenders(contract, sourceHits))
-      evalLocalHits.push(...sourceHits)
     }
 
     offenders.push(...findKnowledgeWriterSingletonOffenders(readerScannedHits))
-    offenders.push(...findEvalLocalAllowanceUnusedOffenders(evalLocalHits))
     offenders.push(...findSurfaceFirewallOffenders(surfaceScans, SURFACE_FIREWALL_LEDGER))
     offenders.push(...findSurfaceClassGoldenSetOffenders(contracts))
-    // 2026-10-01 (432-19, D-03/D-15): the evaluate() pin is deleted with the gate it policed. The
-    // startRun() pin is the one run pin left, over the same `__tests__`-free sources.
     offenders.push(...findStartRunPinOffenders(pinSources))
     offenders.push(...findAgentBarrelOffenders(readRepoFile(AGENT_BARREL_FILE)))
     offenders.push(...findCycleOffenders(contracts))
@@ -267,16 +242,7 @@ describe('validate:arch (LINT-01..05)', () => {
         contractBearingDirs(repoRoot),
       ),
     )
-    // 2026-08-17 (Phase 398 plan 03). The aggregate above ranges ARCH_MANIFEST, so a package whose
-    // contract exists but is NOT registered has its class rules, dep reconciliation and cycle
-    // position taken on trust — and the contract-less rule cannot see it, because that rule reads
-    // the FILESYSTEM and the file is right there. Found by mutation: deleting the analytics entry
-    // from the manifest left `pnpm validate:arch` green at 41/41.
-    //
-    // `manifest.test.ts` already asserts exactly this equality, so the rule is REUSED rather than
-    // restated — a second census of the same two sets is the drift the census idiom exists to
-    // prevent. What was missing was not a rule; it was this script CALLING it. `validate:arch` is
-    // what `release.yml` runs, and it runs this file alone.
+    // An unregistered contract skips its class and dependency rules, so both sets must match.
     offenders.push(
       ...findSetMismatchOffenders(
         'manifest vs on-disk contracts',
@@ -286,13 +252,11 @@ describe('validate:arch (LINT-01..05)', () => {
     )
 
     expect(offenders).toEqual([])
-    // Walks and scans every contract-bearing package in the workspace, so its cost tracks
-    // workspace size rather than anything this case controls. ~1.5s on a developer machine,
-    // over the 5s default on a 2-core CI runner (first automatic CI run, 2026-08-02).
+    // Walks every contract-bearing package, so its cost tracks workspace size.
   }, 30_000)
 })
 
-describe('validate:arch held-out fixtures', () => {
+describe('arch lint held-out fixtures', () => {
   it('held-out workspace-member contract check rejects a contract-less member', () => {
     expect(
       findContractlessWorkspaceOffenders(
@@ -304,11 +268,6 @@ describe('validate:arch held-out fixtures', () => {
     ])
   })
 
-  // 2026-08-17 (Phase 398 plan 03). The mutation that motivated the CALL: deleting
-  // `AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT` from ARCH_MANIFEST left this file green at 41/41,
-  // because the contract-less check reads the filesystem and the file was still there. An unranged
-  // package is one whose dep set and class rules are taken on trust, so the omission has to red
-  // HERE — `validate:arch` is what the release pipeline runs, and it runs this file alone.
   it('held-out registration equality fails in both drift directions', () => {
     expect(
       findSetMismatchOffenders(
@@ -443,10 +402,10 @@ describe('validate:arch held-out fixtures', () => {
       findDepReconciliationOffenders(
         fixtureContract({
           packageDir: 'packages/arch',
-          // This fixture reads arch's real manifest; retain its compiler baseline.
-          externalDependencies: ['typescript', 'declared-only'],
+          // This fixture reads arch's real manifest, which declares no runtime dependency.
+          externalDependencies: ['declared-only'],
         }),
-        [fixtureHit('typescript'), fixtureHit('runtime-only')],
+        [fixtureHit('runtime-only')],
         repoRoot,
       ),
     ).toEqual([
@@ -456,23 +415,36 @@ describe('validate:arch held-out fixtures', () => {
     ])
   })
 
+  it('held-out bundle reconciliation reports a library devDependencies does not declare', () => {
+    expect(
+      findDepReconciliationOffenders(
+        fixtureContract({
+          packageDir: 'packages/arch',
+          publishesSelfContainedBundle: true,
+          // arch's real manifest declares typescript for development and no runtime dependency.
+          externalDependencies: ['typescript', 'declared-only'],
+        }),
+        [fixtureHit('typescript'), fixtureHit('declared-only')],
+        repoRoot,
+      ),
+    ).toEqual(['packages/arch devDependencies vs contract: missing declared-only'])
+  })
+
   it('held-out config hits feed class rules without becoming runtime dep drift', () => {
     const configAwareContract = fixtureContract({
       packageDir: 'packages/arch',
       packageClasses: ['browserSafe'],
-      externalDependencies: ['typescript'],
     })
     const configHits = [
       fixtureHit('node:fs', { file: 'packages/arch/vitest.config.ts' }),
-      fixtureHit('tsup', { file: 'packages/arch/tsup.config.ts', line: 2 }),
+      fixtureHit('tsdown', { file: 'packages/arch/tsdown.config.ts', line: 2 }),
       fixtureHit('vitest/config', { file: 'packages/arch/vitest.config.ts', line: 3 }),
     ]
 
     expect(findClassRuleOffenders(configAwareContract, configHits)).toEqual([
       'packages/arch | packages/arch/vitest.config.ts:1 | node:fs | browserSafe forbids node:*',
     ])
-    expect(findDepReconciliationOffenders(configAwareContract, [fixtureHit('typescript')], repoRoot))
-      .toEqual([])
+    expect(findDepReconciliationOffenders(configAwareContract, [], repoRoot)).toEqual([])
   })
 
   it('held-out DAG walk reports synthetic cycles and accepts acyclic contracts', () => {
@@ -555,7 +527,7 @@ describe('validate:arch held-out fixtures', () => {
   })
 })
 
-describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
+describe('arch lint surface firewall held-out fixtures', () => {
   it('held-out firewall reports an un-ledgered internal import and accepts the allow-list', () => {
     expect(
       findSurfaceFirewallOffenders(
@@ -574,7 +546,33 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
     ).toEqual([])
   })
 
-  it('held-out firewall leaves non-firewalled surfaces alone until M5 admits them', () => {
+  it('held-out firewall admits core\'s run-text output subpath and nothing else of core', () => {
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([surfaceHit('@vostride/agent-qa-core/run-text-output', 3)]),
+        [],
+      ),
+    ).toEqual([])
+
+    expect(
+      findSurfaceFirewallOffenders(
+        surfaceScan([
+          surfaceHit('@vostride/agent-qa-core', 4),
+          surfaceHit('@vostride/agent-qa-core/logging', 5),
+          surfaceHit('@vostride/agent-qa-core/run-text-output/extra', 6),
+          surfaceHit('@vostride/agent-qa-core/run-text-output.js', 7),
+        ]),
+        [],
+      ),
+    ).toEqual([
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:4 | @vostride/agent-qa-core | surface-firewall un-ledgered internal import`,
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:5 | @vostride/agent-qa-core/logging | surface-firewall un-ledgered internal import`,
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:6 | @vostride/agent-qa-core/run-text-output/extra | surface-firewall un-ledgered internal import`,
+      `packages/cli | ${FIXTURE_SURFACE_FILE}:7 | @vostride/agent-qa-core/run-text-output.js | surface-firewall un-ledgered internal import`,
+    ])
+  })
+
+  it('held-out firewall leaves non-firewalled surfaces alone', () => {
     expect(FIREWALLED_SURFACE_DIRS).toEqual(['packages/cli', 'packages/mcp'])
     expect(EXPECTED_SURFACE_CLASS_PACKAGES).toContain('@vostride/agent-qa-dashboard')
 
@@ -589,7 +587,7 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
     ).toEqual([])
   })
 
-  it('held-out firewall exempts only the ledgered pair, never the whole file (D-03)', () => {
+  it('held-out firewall exempts only the ledgered pair, never the whole file', () => {
     const ledger = [surfaceLedgerFixture('@vostride/agent-qa-runner-local')]
     const ledgeredHit = surfaceHit('@vostride/agent-qa-runner-local', 7)
 
@@ -660,7 +658,7 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
     ])
   })
 
-  it('held-out firewall counts a type-only import as a violation (D-04)', () => {
+  it('held-out firewall counts a type-only import as a violation', () => {
     const source = [
       'import { Command } from "commander"',
       'import type { AuditSink } from "@vostride/agent-qa-safety"',
@@ -674,7 +672,7 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
     ])
   })
 
-  it('held-out golden surface set fails in both drift directions (D-02)', () => {
+  it('held-out golden surface set fails in both drift directions', () => {
     expect(
       findSurfaceClassGoldenSetOffenders(surfaceClassContracts(EXPECTED_SURFACE_CLASS_PACKAGES)),
     ).toEqual([])
@@ -698,14 +696,10 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
     ])
   })
 
-  it('the shipped ledger stays exact, dated, and closed to new-in-384 surface code (D-01)', () => {
-    const newInPhase384 = [
+  it('the shipped ledger stays exact, dated, and closed to the newer surface files', () => {
+    const newerSurfaceFiles = [
       'packages/cli/src/commands/fn.ts',
       'packages/cli/src/composition/masked-config.ts',
-      // The schema-derived visibility walker (Plan 10). It reads the config schema as DATA
-      // handed in at the composition root, so it names no internal package of its own —
-      // pinned here so that stays true rather than being remembered.
-      'packages/cli/src/composition/config-visibility.ts',
     ]
 
     for (const entry of SURFACE_FIREWALL_LEDGER) {
@@ -714,7 +708,7 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
       expect(entry.file.endsWith('/')).toBe(false)
       expect(entry.file).toMatch(/\.(ts|tsx|js|mjs|cjs|css)$/)
       expect(FIREWALLED_SURFACE_DIRS.some(dir => entry.file.startsWith(`${dir}/`))).toBe(true)
-      expect(newInPhase384).not.toContain(entry.file)
+      expect(newerSurfaceFiles).not.toContain(entry.file)
     }
 
     const keys = SURFACE_FIREWALL_LEDGER.map(entry => `${entry.file} :: ${entry.specifier}`)
@@ -722,7 +716,7 @@ describe('validate:arch surface firewall (FUNC-02) held-out fixtures', () => {
   })
 })
 
-describe('validate:arch composition carve-out (385-08 / D-13) registration and scope', () => {
+describe('arch lint composition carve-out registration and scope', () => {
   // The carve-out's own behaviour is unit-tested beside the rule. What can only be checked here is
   // that the aggregate actually CALLS it: a rule nobody invokes passes every build, and its unit
   // tests keep passing too, so nothing anywhere goes red. Source-anchored on this file, the
@@ -738,8 +732,6 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     expect(aggregate).toContain('findCompositionCarveoutUnusedAllowances(contract, sourceHits)')
     expect(aggregate).toContain('findReaderCarveoutOffenders(sourceHits)')
     expect(aggregate).toContain('findKnowledgeWriterSingletonOffenders(readerScannedHits)')
-    expect(aggregate).toContain('findEvalLocalMainEntryOffenders(contract, sourceHits)')
-    expect(aggregate).toContain('findEvalLocalAllowanceUnusedOffenders(evalLocalHits)')
     expect(aggregate).toContain(
       'findResumePathModelFreeOffenders(resumePathModules(contract.packageDir, repoRoot))',
     )
@@ -753,14 +745,7 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     expect(sourceFilesFor(COMPOSITION_CARVEOUT_PACKAGE_DIR, repoRoot).length).toBeGreaterThan(0)
   })
 
-  // A path-keyed pin whose path has moved matches nothing and reports nothing. Both reader files
-  // must exist, and the scanned-dirs list must actually contain the package each one lives in, or
-  // the reader carve-out is silently covering fewer files than it claims.
-  // D-14/SC5. The allow-list is a directory PREFIX, so the shipped value alone permits any number
-  // of importers under it; what makes "the single place" true is the singleton rule, and what makes
-  // the singleton rule reach the right subtree is that the prefix names a directory that exists
-  // inside a scanned package. Both halves are asserted, because either one alone is satisfiable by
-  // a wrong implementation.
+  // A path-keyed pin whose path moves matches nothing, so the prefix must name a real directory.
   it('the writer allowance is one entry, and it points inside a scanned package that exists', () => {
     expect([...KNOWLEDGE_WRITER_ALLOWLIST]).toEqual(['packages/agent-local/src/composition/'])
 
@@ -772,30 +757,7 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     }
   })
 
-  // 414 D-20 / ROOT-10 SC5, and the same shape hazard one rule over. A prefix naming a directory
-  // that does not exist — or one no contract-bearing package owns, so the aggregate never walks
-  // it — matches nothing: the offender direction could never fire on the real tree, and the
-  // unused-allowance direction would fire on every run, which is the pressure that gets a rule
-  // deleted rather than fixed. Both halves are asserted, because either alone is satisfiable by a
-  // wrong value.
-  it('the eval-local main-entry allowance is one prefix, and it points inside a contract-bearing package that exists', () => {
-    expect([...EVAL_LOCAL_MAIN_ENTRY_ALLOWLIST]).toEqual(['packages/cli/'])
-
-    for (const entry of EVAL_LOCAL_MAIN_ENTRY_ALLOWLIST) {
-      expect(existsSync(join(repoRoot, entry))).toBe(true)
-      // Spelled through the shipped prefix rather than repeating 'packages/cli', so a future
-      // widening cannot leave this cell asserting about a package the rule no longer names.
-      const owner = ARCH_MANIFEST.packages.find(
-        contract => entry === `${contract.packageDir}/`,
-      )
-      expect(owner).toBeDefined()
-    }
-  })
-
-  // D-11 layer 3, and the same relocation hazard one rule over: the resume-path rule is keyed on
-  // an exact file path, so a pin left pointing at a moved file would match nothing, report nothing
-  // and still read like proof. The rule reports that case itself; this asserts the pin is right on
-  // the real tree, and that the package it names is one the aggregate actually walks.
+  // A pin left at a moved file matches nothing, so this checks the pin against the real tree.
   it('the resume-path pin points at files that exist inside a contract-bearing package', () => {
     expect([...RESUME_PATH_ENTRY_FILES]).toEqual([
       'packages/agent-local/src/composition/compose-job-recovery.ts',
@@ -826,29 +788,24 @@ describe('validate:arch composition carve-out (385-08 / D-13) registration and s
     }
   })
 
-  // D-13/D-15 widened the firewall allow-list by exactly one entry; 398-10 (D-17) by exactly one
-  // more. Pinned by equality so a private power cannot join by looking like it belongs — every
-  // arrival is a line in this file with a phase attached to it.
+  // Pinned by equality, so a new entry is a visible edit to this list.
   it('the surface allow-list is exactly the function layer, the vocabulary, the composition root and analytics', () => {
     expect([...SURFACE_ALLOWED_INTERNAL_PACKAGES]).toEqual([
       '@vostride/agent-qa-agent',
       '@vostride/agent-qa-agent-local',
-      // 2026-08-17 (Phase 398 plan 10, D-17): telemetry is a HOST concern a host composes at its
-      // root and holds a port for. What this edge replaces is the ambient
-      // `captureAnalytics`/`flushAnalytics` pair reachable from any file in the process, so the
-      // widening narrows what can emit rather than widening it.
+      // Telemetry is a host concern: a host composes it at its root and holds a port.
       '@vostride/agent-qa-analytics',
       '@vostride/agent-qa-schema',
     ])
   })
+
+  it('the surface specifier allowance is exactly core\'s run-text output subpath', () => {
+    expect([...SURFACE_ALLOWED_INTERNAL_SPECIFIERS]).toEqual([
+      '@vostride/agent-qa-core/run-text-output',
+    ])
+  })
 })
 
-// 2026-10-01 (432-19, D-03/D-15): the evaluate() pin's held-out fixtures are re-spelled. Its last two
-// acquisitions (safety's in-run gate hook and the safety barrel's re-export) left with the gate, so
-// the pin is deleted rather than kept at zero entries. What its fixtures measured survives in two
-// places: the ABSENCE of every gate acquisition (C432-NO-EVALUATE, an independent statement census
-// over the real tree) and the SHARED SCANNER's forms and stale-entry direction, now measured on the
-// one run pin that remains (C432-ARCH-RETAINED-PINS).
 const RETIRED_GATE_MODULES = [
   'packages/safety/src/policy/gate.ts',
   'packages/safety/src/policy/gate-hook.ts',
@@ -911,8 +868,8 @@ function startRunScan(...extra: readonly StartRunPinSource[]): string[] {
   return findStartRunPinOffenders([...startRunPinnedFixtures(), ...extra])
 }
 
-describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
-  it('C432-NO-EVALUATE: the gate pin, the gate modules and every production gate acquisition are gone', () => {
+describe('arch lint run pins after the gate', () => {
+  it('the gate pin, the gate modules and every production gate acquisition are gone', () => {
     // The pin module keeps only the shared scanner: no permitted set, no finder, no offender check.
     const pinModule = readRepoFile('packages/arch/src/lint/evaluate-pin.ts')
     expect(pinModule).not.toMatch(/export const EVALUATE_PIN\b/)
@@ -935,15 +892,11 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
     for (const retired of RETIRED_GATE_VALUES) {
       expect(barrelValues, retired).not.toContain(retired)
     }
-    // Non-vacuity: the census reads the barrel's real values, which still include the classifier.
-    expect(barrelValues).toContain('classifyRisk')
+    // Non-vacuity: the census reads the barrel's real values.
+    expect(barrelValues).toContain('createMaskingMiddleware')
   })
 
-  // RE-TITLED 2026-10-03 (quick-261003-tsr, IN-38): was '…the census fires on every form a returning
-  // gate acquisition could take'. The census does not count a whole-module barrel import or a
-  // dynamic `import()` of a retired module; the barrel-values check and the retired modules'
-  // absence in the cell above are what catch those.
-  it('C432-NO-EVALUATE: the census fires on a named gate value from the barrel, aliased or multi-line, and on any static import or re-export of a retired gate module', () => {
+  it('the census fires on a named gate value from the barrel, aliased or multi-line, and on any static import or re-export of a retired gate module', () => {
     // Held-out fixtures, so the absence above is a measurement and not a scanner that sees nothing.
     expect(gateAcquisitions('import { evaluate } from "@vostride/agent-qa-safety"', 'packages/runner/src/x.ts'))
       .toEqual(['packages/runner/src/x.ts:1 ⇏ @vostride/agent-qa-safety'])
@@ -956,17 +909,17 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
       .toHaveLength(1)
     expect(gateAcquisitions('import { createPolicyGateToolCallHook } from "../policy/gate-hook"', 'packages/safety/src/hooks/x.ts'))
       .toHaveLength(1)
-    expect(gateAcquisitions(['import {', '  classifyRisk,', '  evaluate,', '} from "@vostride/agent-qa-safety"'].join('\n'), 'packages/mcp/src/x.ts'))
+    expect(gateAcquisitions(['import {', '  createMaskingMiddleware,', '  evaluate,', '} from "@vostride/agent-qa-safety"'].join('\n'), 'packages/mcp/src/x.ts'))
       .toHaveLength(1)
     // And it stays quiet on what is not an acquisition: a type, a comment, a call token, an
     // unrelated value from the same barrel.
     expect(gateAcquisitions('import type { AuditSink } from "@vostride/agent-qa-safety"', 'packages/cli/src/x.ts')).toEqual([])
     expect(gateAcquisitions('// import { evaluate } from "@vostride/agent-qa-safety"', 'packages/cli/src/x.ts')).toEqual([])
     expect(gateAcquisitions('const t = await page.evaluate(() => document.title)', 'packages/web/src/x.ts')).toEqual([])
-    expect(gateAcquisitions('import { classifyRisk } from "@vostride/agent-qa-safety"', 'packages/eval/src/x.ts')).toEqual([])
+    expect(gateAcquisitions('import { createMaskingMiddleware } from "@vostride/agent-qa-safety"', 'packages/eval/src/x.ts')).toEqual([])
   })
 
-  it('C432-INVOKE-DIRECT: the former surface, run-invocation and hook call-sites acquire nothing', () => {
+  it('the former surface, run-invocation and hook call-sites acquire nothing', () => {
     for (const file of [FORMER_INVOKE, FORMER_RUN_CORE]) {
       expect(gateAcquisitions(readRepoFile(file), file), file).toEqual([])
     }
@@ -975,7 +928,7 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
     expect(gateAcquisitions(readRepoFile(SAFETY_BARREL), SAFETY_BARREL)).toEqual([])
   })
 
-  it('C432-ARCH-RETAINED-PINS: the ONE startRun pin is retained with its two entries and is clean over the real tree', () => {
+  it('the ONE startRun pin is retained with its two entries and is clean over the real tree', () => {
     expect(Object.keys(STARTRUN_PIN).sort()).toEqual(
       ['packages/agent-local/src/composition/run-invocation-core.ts', 'packages/runner/src/index.ts'].sort(),
     )
@@ -986,7 +939,7 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
     expect(findStartRunAcquisitions(readRepoFile(FORMER_RUN_CORE), FORMER_RUN_CORE)).toHaveLength(1)
   })
 
-  it('C432-ARCH-RETAINED-PINS: the shared scanner keeps every acquisition form the gate pin measured', () => {
+  it('the shared scanner keeps every acquisition form the gate pin measured', () => {
     const fourth = 'packages/cli/src/commands/second-starter.ts'
     // named import, aliased import, re-export, whole-module dynamic load naming the symbol
     for (const source of [
@@ -1011,14 +964,14 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
     for (const source of [
       '// import { startRun } from "@vostride/agent-qa-runner"',
       'import type { RunConfig } from "@vostride/agent-qa-runner"',
-      'import { projectRiskAction } from "@vostride/agent-qa-runner"',
+      'import { renderObservationLine } from "@vostride/agent-qa-runner"',
       'const r = await page.evaluate(() => 1)',
     ]) {
       expect(startRunScan({ file: fourth, source }), source).toEqual([])
     }
   })
 
-  it('C432-ARCH-RETAINED-PINS: a pin entry that no longer acquires is reported stale (self-shrinking)', () => {
+  it('a pin entry that no longer acquires is reported stale (self-shrinking)', () => {
     const fixtures = startRunPinnedFixtures()
     expect(findStartRunPinOffenders(fixtures.filter((entry) => entry.file !== FORMER_RUN_CORE))).toEqual([
       `startrun-pin: ${FORMER_RUN_CORE} ⇏ pin entry no longer acquires the run starter (stale)`,
@@ -1030,7 +983,7 @@ describe('validate:arch run pins after the gate (432-19, D-03/D-15)', () => {
   })
 })
 
-describe('validate:arch agent barrel export set (FUNC-01 / SC1) held-out fixtures', () => {
+describe('arch lint agent barrel export set held-out fixtures', () => {
   it('pins the real barrel export set by exact equality, values and types apart', () => {
     expect(readAgentBarrelExports(readRepoFile(AGENT_BARREL_FILE))).toEqual({
       values: [...EXPECTED_AGENT_BARREL_VALUE_EXPORTS],
@@ -1052,8 +1005,7 @@ describe('validate:arch agent barrel export set (FUNC-01 / SC1) held-out fixture
     ]) {
       expect(EXPECTED_AGENT_BARREL_EXPORTS).not.toContain(forbidden)
     }
-    // No `*Spec` value of any name: a spec carries its own implementation, so exporting
-    // one hands a surface a dispatch path that never reaches the gate (T-384-20).
+    // A spec carries its own implementation, so exporting one opens a path around the gate.
     expect(EXPECTED_AGENT_BARREL_EXPORTS.filter(name => name.endsWith('Spec'))).toEqual([])
   })
 
@@ -1088,145 +1040,5 @@ describe('validate:arch agent barrel export set (FUNC-01 / SC1) held-out fixture
       'agent-barrel: missing type export CreateFunctionRegistryOptions',
       'agent-barrel: missing type export FunctionRegistry',
     ])
-  })
-})
-
-// 414 D-19 / D-20 / D-18, ROOT-10 SC5. The requirement says the proposer-side read port "has no
-// method that can return a private held-out entry — an arch cell under `validate:arch` REDs if one
-// is added", so the cell has to live HERE: `validate:arch` runs the whole of this file, and a pin
-// that only ran under the eval-local suite would satisfy the words but not the requirement.
-//
-// It reads the barrel's RAW SOURCE rather than importing it, for two reasons. The arch package
-// must never import the thing it polices — that would make a firewall a dependent of what it
-// walls off — and raw source needs no `dist/`, so the cell is honest on a clean checkout and
-// during a broken build, which is exactly when a widening would slip through.
-//
-// This is one of THREE pins on the same surface. The other two live beside the port: the runtime
-// key-set cell in `packages/eval-local/src/__tests__/reader.test.ts` and the never-bar in
-// `packages/eval-local/src/__tests__/reader.test-d.ts`. This one is the only one that fires under
-// `pnpm validate:arch`, and the only one that sees a NEW export before anyone imports it.
-const EVAL_LOCAL_READER_BARREL = 'packages/eval-local/src/reader.ts'
-const PUBLISH_SURFACE_VALIDATOR = 'scripts/validate-publish-surface.mjs'
-
-/**
- * The sorted VALUE export names a barrel publishes.
- *
- * Values are the whole question: a value is power a proposer can reach, a type is not. So
- * `export type { … } from '…'` and `export type X =` / `export interface X` are excluded, and an
- * inline `type Foo` member inside a value clause is excluded with them. A bare `export { x }`
- * with no `from` counts exactly like a re-export — it widens the barrel by the same one name.
- *
- * A hand-rolled extractor rather than the TypeScript compiler for the same reason the file is
- * read raw: `packages/arch` may not depend on the packages it polices, and this rule must run
- * before anything is built.
- */
-function readerValueExports(source: string): string[] {
-  const names: string[] = []
-
-  for (const match of source.matchAll(/\bexport\s+(type\s+)?\{([^}]*)\}/g)) {
-    if (match[1] !== undefined) continue
-    for (const member of (match[2] ?? '').split(',')) {
-      const trimmed = member.trim()
-      if (trimmed === '' || /^type\s/.test(trimmed)) continue
-      const parts = trimmed.split(/\s+as\s+/)
-      names.push((parts[parts.length - 1] ?? trimmed).trim())
-    }
-  }
-
-  for (const match of source.matchAll(
-    /\bexport\s+(?!type\b|interface\b)(?:async\s+)?(?:function|const|class|let|var)\s+([A-Za-z_$][\w$]*)/g,
-  )) {
-    names.push(match[1] ?? '')
-  }
-
-  return names.sort()
-}
-
-describe('validate:arch eval-local reader port (414 D-19/D-20) — source-anchored export-set pin', () => {
-  // The relocation hazard this file guards everywhere else: a path-keyed pin whose path has moved
-  // matches nothing, reports nothing, and still reads like proof. The barrel must EXIST.
-  it('the eval-local /reader subpath exports exactly one value, openCorpusReader (414 D-19/D-20)', () => {
-    expect(existsSync(join(repoRoot, EVAL_LOCAL_READER_BARREL))).toBe(true)
-
-    expect(readerValueExports(readRepoFile(EVAL_LOCAL_READER_BARREL))).toEqual(['openCorpusReader'])
-  })
-
-  // The pin above is only worth its line if the extractor can actually see an arrival. Both
-  // directions are fed literal source, so the extractor's failing direction is proven INSIDE
-  // `validate:arch` rather than asserted about elsewhere.
-  it('the export-set extractor sees a planted value export and ignores a type-only re-export', () => {
-    const barrel = readRepoFile(EVAL_LOCAL_READER_BARREL)
-
-    expect(
-      readerValueExports(`${barrel}\nexport function readPrivateEntries() { return [] }\n`),
-    ).toEqual(['openCorpusReader', 'readPrivateEntries'])
-
-    expect(readerValueExports(`${barrel}\nexport type { Foo } from './x.js'\n`)).toEqual([
-      'openCorpusReader',
-    ])
-  })
-
-  // D-18: the subpath is only a boundary if it is actually published. The publish-surface
-  // validator asserted the `./reader` triple for knowledge-local alone; a per-package `if` is how
-  // a second package quietly ships an unguarded subpath, so the condition is now a LIST and both
-  // members are named here.
-  it('the publish-surface validator asserts the ./reader triple for both subpath packages', () => {
-    const source = readRepoFile(PUBLISH_SURFACE_VALIDATOR)
-    const start = source.indexOf('READER_SUBPATH_PACKAGES')
-    expect(start).toBeGreaterThan(-1)
-
-    const declaration = source.slice(start, source.indexOf(']', start) + 1)
-    expect(declaration).toContain('@vostride/agent-qa-knowledge-local')
-    expect(declaration).toContain('@vostride/agent-qa-eval-local')
-    expect(source).toContain('READER_SUBPATH_PACKAGES.includes(record.pkg.name)')
-  })
-})
-
-// 422-21 (D-18). The lesson recorded at the top of this file — "what was missing was not a rule;
-// it was this script CALLING it" — was learned by mutation and then had to be learned again: a
-// wall file can be added to `src/__tests__/` and never reach `release.yml`, because
-// `validate:arch` names its cells one by one. The package suite runs everything, so the gap is
-// invisible locally and total in the release pipeline.
-//
-// This census closes it in the one direction that matters: every cell file in this directory is
-// either NAMED by `validate:arch` or listed below with a reason. A new wall lands RED until
-// somebody decides which it is. The two exclusions are deliberate and are not carve-outs for a
-// failing rule — both pass, both run under `pnpm --filter @vostride/agent-qa-arch test`, and
-// neither is a phase wall: `manifest.test.ts` asserts the manifest/on-disk equality that the
-// aggregate above already CALLS through `findSetMismatchOffenders`, and
-// `parity-reverse-completeness.test.ts` builds the agent function registry, which is a
-// conformance leg over another package's source rather than an architecture gate over this one.
-describe('validate:arch roster completeness (422-21 / D-18)', () => {
-  const NOT_IN_ARCH_GATE: Record<string, string> = {
-    'ci-matrix-coverage.test.ts':
-      'a coverage pin over the CI test matrix in .github/workflows/ci.yml (quick 261024-3w1), not '
-      + 'an architecture gate; the arch package test task runs it in the ubuntu rest leg',
-    'manifest.test.ts':
-      'the manifest/on-disk equality it asserts is already CALLED by the aggregate above',
-    'parity-reverse-completeness.test.ts':
-      'conformance LEG 5 over the agent function registry, not an architecture gate',
-    'turbo-arch-test-order.test.ts':
-      'a build-graph pin over turbo.json (quick 261002-hyg), not an architecture gate; the arch '
-      + 'package test task runs it',
-  }
-
-  const rostered = (): string[] =>
-    (JSON.parse(readRepoFile('package.json')).scripts['validate:arch'] as string)
-      .split(/\s+/)
-      .filter(token => token.startsWith('src/__tests__/'))
-      .map(token => token.replace('src/__tests__/', ''))
-
-  it('names every architecture cell file, or records why it is excluded', () => {
-    const onDisk = readdirSync(testDir)
-      .filter(file => file.endsWith('.test.ts'))
-      .sort()
-    const covered = new Set([...rostered(), ...Object.keys(NOT_IN_ARCH_GATE)])
-    expect(onDisk.filter(file => !covered.has(file))).toEqual([])
-  })
-
-  it('carries no exclusion or roster entry for a cell file that no longer exists', () => {
-    const onDisk = new Set(readdirSync(testDir).filter(file => file.endsWith('.test.ts')))
-    expect(Object.keys(NOT_IN_ARCH_GATE).filter(file => !onDisk.has(file))).toEqual([])
-    expect(rostered().filter(file => !onDisk.has(file))).toEqual([])
   })
 })

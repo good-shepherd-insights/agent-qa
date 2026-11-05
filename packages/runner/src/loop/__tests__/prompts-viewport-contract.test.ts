@@ -1,8 +1,7 @@
-// Ported from core/src/agent/__tests__/prompts-viewport-contract.test.ts (353-03, D-02).
 import { describe, it, expect } from 'vitest'
 import { buildSystemPrompt } from '../prompts.js'
 
-describe('rule #9 viewport-space coord-space contract (D-15)', () => {
+describe('rule #9 viewport-space coord-space contract', () => {
   const systemPrompt = buildSystemPrompt('web')
 
   it('rule #9 references [Viewport: WxH] header for coord space', () => {

@@ -1,24 +1,7 @@
 import { RECORD_CHANGE_SCHEMA_VERSION, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
-// THE KNOWLEDGE TAB A PERSON ACTUALLY SEES (407-02 · LERN-01, D-01/D-03/D-06/D-16, T-407-06).
-//
-// WHY THESE CELLS RENDER INTO `document.body` THROUGH `createRoot`. That is the call `main.tsx`
-// makes. A component mounted into a detached node can satisfy every query in a file like this one
-// while the real mount path is broken, and the cell would never know.
-//
-// THE DOM CONTRACT IS THE SUBJECT, not the styling. `data-knowledge-state`, `data-used-summary`,
-// `data-step-index`, `data-test-index`, `data-plan-source`, `data-brief-lines` and
-// `data-canary-lines` are what the later plans' Playwright cells address on the built bundle, so
-// every one of them is pinned here in the cheap medium first. Colours and badge variants are
-// deliberately NOT asserted — a cell that pinned `bg-muted/40` would go red on a design change
-// that broke nothing a person relies on. The two class assertions that DO appear (`break-words`
-// on the error body) pin a legibility rule the Copywriting Contract states, not a look.
-//
-// THE FIVE STATE CELLS ARE THE POINT. D-06 and D-16 exist because a tab that renders blank when
-// its read has not landed, or when the project has no store, is indistinguishable from a tab
-// whose op is broken. Each state is asserted BY ATTRIBUTE and by its own sentence, and the
-// loading cell additionally asserts the absence of any text at all.
+// Each tab state is asserted by attribute and by its sentence; loading asserts no text at all.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -73,7 +56,7 @@ function mount(element: ReactElement): HTMLElement {
   container = document.createElement("div")
   document.body.append(container)
   root = createRoot(container)
-  // `tab-panels.tsx` wraps the tab in this provider; bucket labels are tooltip triggers (427 D-16).
+  // `tab-panels.tsx` wraps the tab in this provider; bucket labels are tooltip triggers.
   act(() => { root?.render(<TooltipProvider delayDuration={0}>{element}</TooltipProvider>) })
   return container
 }
@@ -114,7 +97,7 @@ function readyView(
   }
 }
 
-// 427 D-19: the per-step ledger renders only once the collapsed Retrieval details is opened.
+// The per-step ledger renders only once the collapsed Retrieval details is opened.
 function openRetrievalDetails(view: HTMLElement): void {
   const trigger = view.querySelector('[data-knowledge-section="retrieval-details"] [data-slot="collapsible-trigger"]')
   if (trigger === null) throw new Error("no Retrieval details trigger")
@@ -135,7 +118,7 @@ describe("the first read has not landed (UI-SPEC page-level states)", () => {
   })
 })
 
-describe("the read failed or was refused (D-06)", () => {
+describe("the read failed or was refused", () => {
   it("states the failure, forwards the masked reason and points at doctor", () => {
     const error = "read_failed"
     const view = mount(<TabKnowledge view={{ state: "error", heading: READ_FAILED_HEADING, body: readFailedBody(error) }} />)
@@ -156,7 +139,7 @@ describe("the read failed or was refused (D-06)", () => {
   })
 })
 
-describe("the handoff was pruned (D-06)", () => {
+describe("the handoff was pruned", () => {
   it("renders the SHIPPED evidence-incomplete pane rather than inventing a second wording", () => {
     const view = mount(<TabKnowledge view={{ state: "evidence-incomplete" }} />)
 
@@ -165,7 +148,7 @@ describe("the handoff was pruned (D-06)", () => {
   })
 })
 
-describe("the project has no knowledge store (D-16)", () => {
+describe("the project has no knowledge store", () => {
   it("says so, and says the one thing that changes it", () => {
     const view = mount(<TabKnowledge view={{ state: "empty-no-store", heading: NO_STORE_HEADING, body: NO_STORE_BODY }} />)
 
@@ -175,7 +158,7 @@ describe("the project has no knowledge store (D-16)", () => {
   })
 })
 
-describe("a ready panel paints the Used half from the view it was handed (D-03)", () => {
+describe("a ready panel paints the Used half from the view it was handed", () => {
   it("heads the half, prints the derived summary, and gives every step its own row", () => {
     const steps = [
       row({ testIndex: 0, stepIndex: 0, briefLines: 3, canaryLines: 1, facts: ["3 brief lines", "1 canary"] }),
@@ -242,7 +225,7 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
     expect(badges.map(b => b.textContent)).toEqual(["2 brief lines", "1 canary", "hint"])
   })
 
-  it("fills the row's detail slot with the channel sections it was served once it is expanded (407-06, 427 D-19)", () => {
+  it("fills the row's detail slot with the channel sections it was served once it is expanded", () => {
     const view = mount(<TabKnowledge view={readyView([row({
       detail: {
         channel1: [{
@@ -288,7 +271,7 @@ describe("a ready panel paints the Used half from the view it was handed (D-03)"
   })
 })
 
-describe("producer text reaches the DOM as TEXT, never as markup (T-407-06)", () => {
+describe("producer text reaches the DOM as TEXT, never as markup", () => {
   it("renders a hostile step title as a text node — no element is created from it", () => {
     const hostile = "Step 1 — <img src=x onerror=alert(1)>"
     const view = mount(<TabKnowledge view={readyView([row({ title: hostile })])} />)
@@ -307,12 +290,11 @@ describe("producer text reaches the DOM as TEXT, never as markup (T-407-06)", ()
   })
 })
 
-// THE FOUR SECTIONS, IN ORDER (427 · D-02, SC1). Knowledge used, then its effect, then what the
-// run wrote back, then the collapsed ledger — and each of the first three states itself when empty.
-describe("the ready arm paints four sections in KNOWLEDGE_SECTIONS order (427 D-02)", () => {
+// Knowledge used, its effect, what the run wrote back, then the collapsed ledger, in that order.
+describe("the ready arm paints four sections in KNOWLEDGE_SECTIONS order", () => {
   function allZeroView(): KnowledgeView {
     const projection = RunKnowledgeProjectionSchema.parse({
-      kind: "ready", runId: "run-427-01-absence", buildOrdinal: 2, knowledgeStore: "bound", steps: [],
+      kind: "ready", runId: "run-absence", buildOrdinal: 2, knowledgeStore: "bound", steps: [],
       curation: { status: "complete", counts: { curated: 0, deprecated: 0 } },
       learned: {
         changes: [], canaryAttributions: [],
@@ -367,16 +349,14 @@ describe("the ready arm paints four sections in KNOWLEDGE_SECTIONS order (427 D-
   })
 })
 
-// 423 D-15 · WIN #313, ON THE PAGE'S OWN PATH. The tab is fed exactly what `run-detail.tsx` feeds
-// it: a schema-valid `runs.knowledge` projection folded by `projectKnowledgeView`. A fix that held
-// only for hand-built views would pass the cells above while the page dropped the rows.
-const RUN_423 = "run-423-24-tab"
+// Fed what `run-detail.tsx` feeds it, so a fix that held only for hand-built views would fail here.
+const RECORDED_RUN_ID = "run-tab"
 type ReadyProjection = Extract<RunKnowledgeProjection, { kind: "ready" }>
 type LearnedChange = ReadyProjection["learned"]["changes"][number]
 
 function change(recordId: string, kind: LearnedChange["change"], atOrdinal: number, extra: Partial<LearnedChange> = {}) {
   return {
-    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION, recordId, change: kind, atOrdinal, sourceRunId: RUN_423,
+    schemaVersion: RECORD_CHANGE_SCHEMA_VERSION as typeof RECORD_CHANGE_SCHEMA_VERSION, recordId, change: kind, atOrdinal, sourceRunId: RECORDED_RUN_ID,
     evidenceToken: `receipt-${recordId}-${String(atOrdinal)}`, ...extra,
   }
 }
@@ -412,7 +392,7 @@ function snapshot() {
 
 function pageView(status: ReadyProjection["curation"]["status"], learned: Partial<ReadyProjection["learned"]>): KnowledgeView {
   const projection = RunKnowledgeProjectionSchema.parse({
-    kind: "ready", runId: RUN_423, buildOrdinal: 2, knowledgeStore: "bound", steps: [],
+    kind: "ready", runId: RECORDED_RUN_ID, buildOrdinal: 2, knowledgeStore: "bound", steps: [],
     curation: { status, ...(status === "complete" ? { counts: { curated: 4, deprecated: 1 } } : {}) },
     learned: { changes: [], canaryAttributions: [], ...learned },
   })
@@ -423,7 +403,7 @@ function learnedRows(view: HTMLElement): HTMLElement[] {
   return [...view.querySelectorAll<HTMLElement>("li[data-record-change]")]
 }
 
-describe("423 D-15: the page path keeps failed-chain rows and states the snapshot sections (WIN #313)", () => {
+describe("the page path keeps failed-chain rows and states the snapshot sections", () => {
   it("FAILED-CHAIN-ROWS-RETAINED: a failed chain's joined and absent changes reach the tab as rows", () => {
     const view = mount(<TabKnowledge view={pageView("failed", {
       changes: [
@@ -464,8 +444,7 @@ describe("423 D-15: the page path keeps failed-chain rows and states the snapsho
 
     expect(section?.getAttribute("data-learned-snapshot")).toBe("recorded")
     expect(section?.getAttribute("data-learned-since-then")).toBe("1")
-    // 427 D-15/D-17: the curation rows are the snapshot's five records, and the later promotion
-    // reads Confirmed in its own open "Since this run" subsection.
+    // The snapshot's records are the curation rows; the later promotion reads Confirmed apart.
     expect(learnedRows(view).map(row => row.getAttribute("data-learned-section")))
       .toEqual([...recorded.rows.map(() => "curation"), "since-then"])
     expect(learnedRows(view).at(-1)?.getAttribute("data-record-change")).toBe("confirmed")

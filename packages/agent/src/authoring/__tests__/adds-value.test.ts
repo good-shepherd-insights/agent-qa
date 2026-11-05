@@ -1,16 +1,3 @@
-// Gate 3, the D-14/D-16 behavior table (393-06, Task 3).
-//
-// Two lanes, and the receipt must say which one answered for each compared test. The FINGERPRINT
-// lane is a set comparison with no threshold — D-14 is spec §6.3 verbatim, and conservatism lives
-// in the normalizer rather than in a constant. The TEXT lane exists only for suite tests the
-// derived index has no evidence for, over-flags toward "already covered" (the safe direction), and
-// is the one place in this gate where a pinned number decides anything.
-//
-// The corpus texts below are copied verbatim from `fixtures/corpus/*.yaml` and
-// `demo/init/tests/uat-381-local-form.yaml`. The near-duplicate draft was authored to mirror
-// uat-381's anchors with cosmetically different wording; the accept control was authored not to.
-// Those two are what the threshold has to separate, so they are what the tests measure it on.
-
 import { describe, expect, it } from 'vitest'
 
 import { ACCEPT_CONTROL_DRAFT, fakeFingerprintIndex } from './evidence-fixtures.js'
@@ -21,8 +8,8 @@ import {
 } from '../adds-value.js'
 import type { SuiteTextCorpusEntryLike } from '../ports.js'
 
-const UAT_381 = {
-  filePath: 'demo/init/tests/uat-381-local-form.yaml',
+const LOCAL_FORM_TEST = {
+  filePath: 'demo/init/tests/local-form.yaml',
   testName: 'Sign in on the local account form',
   stepsText: [
     'Type "{{env:PROBE_USER}}" into the Username field',
@@ -50,12 +37,12 @@ const ACCEPT_CONTROL_TEXT = {
 
 const EMPTY_INDEX = fakeFingerprintIndex([])
 
-describe('addsValueGate — the fingerprint lane (D-14)', () => {
+describe('addsValueGate — the fingerprint lane', () => {
   it('passes on at least one element absent from the union, and NAMES it', () => {
     const result = addsValueGate({
       draft: ACCEPT_CONTROL_TEXT,
       draftElements: ['el-username', 'el-heading'],
-      index: fakeFingerprintIndex([{ ...UAT_381, elements: ['el-username'] }]),
+      index: fakeFingerprintIndex([{ ...LOCAL_FORM_TEST, elements: ['el-username'] }]),
       textCorpus: [],
     })
 
@@ -68,7 +55,7 @@ describe('addsValueGate — the fingerprint lane (D-14)', () => {
       draft: NEAR_DUPLICATE_DRAFT,
       draftElements: ['el-username', 'el-password', 'el-submit', 'el-received'],
       index: fakeFingerprintIndex([{
-        ...UAT_381,
+        ...LOCAL_FORM_TEST,
         elements: ['el-username', 'el-password', 'el-submit', 'el-received'],
       }]),
       textCorpus: [],
@@ -83,8 +70,8 @@ describe('addsValueGate — the fingerprint lane (D-14)', () => {
       draft: ACCEPT_CONTROL_TEXT,
       draftElements: ['el-heading'],
       index: fakeFingerprintIndex([
-        { ...UAT_381, elements: ['el-username'] },
-        { filePath: 'demo/init/tests/uat-381-ladder.yaml', testName: 'Ladder', elements: ['el-x'] },
+        { ...LOCAL_FORM_TEST, elements: ['el-username'] },
+        { filePath: 'demo/init/tests/ladder.yaml', testName: 'Ladder', elements: ['el-x'] },
       ]),
       textCorpus: [],
     })
@@ -116,19 +103,17 @@ describe('addsValueGate — the fingerprint lane (D-14)', () => {
     const byName = new Map(result.finding.comparedTests.map((row) => [row.testName, row.covered]))
     expect(byName.get('Touches only A')).toBe(false)
     expect(byName.get('Covers A and B')).toBe(true)
-    // The gate itself turns on the UNION, which holds both — the per-test rows explain, they do
-    // not decide (D-14).
+    // The verdict comes from the union; the per-test rows explain it and do not decide.
     expect(result.pass).toBe(false)
   })
 
   it('has no similarity threshold on the fingerprint lane — one novel element is enough', () => {
-    // 19 of 20 elements shared, and the draft still adds value. A gate that scored overlap would
-    // call this covered; D-14 says the answer is set membership, not proportion.
+    // Set membership decides, not proportion: one element outside the suite's set adds value.
     const shared = Array.from({ length: 19 }, (_, index) => `el-${index}`)
     const result = addsValueGate({
       draft: ACCEPT_CONTROL_TEXT,
       draftElements: [...shared, 'el-novel'],
-      index: fakeFingerprintIndex([{ ...UAT_381, elements: shared }]),
+      index: fakeFingerprintIndex([{ ...LOCAL_FORM_TEST, elements: shared }]),
       textCorpus: [],
     })
 
@@ -137,18 +122,18 @@ describe('addsValueGate — the fingerprint lane (D-14)', () => {
   })
 })
 
-describe('addsValueGate — the text fallback lane (D-16)', () => {
+describe('addsValueGate — the text fallback lane', () => {
   it('fails the gate when an evidence-less suite test is similar enough to the draft', () => {
     const result = addsValueGate({
       draft: NEAR_DUPLICATE_DRAFT,
       // A novel element on the fingerprint lane: the fingerprint lane alone would PASS this draft.
       draftElements: ['el-novel'],
       index: EMPTY_INDEX,
-      textCorpus: [UAT_381],
+      textCorpus: [LOCAL_FORM_TEST],
     })
 
     expect(result.pass).toBe(false)
-    const row = result.finding.comparedTests.find((entry) => entry.filePath === UAT_381.filePath)
+    const row = result.finding.comparedTests.find((entry) => entry.filePath === LOCAL_FORM_TEST.filePath)
     expect(row?.lane).toBe('text')
     expect(row?.covered).toBe(true)
   })
@@ -158,11 +143,11 @@ describe('addsValueGate — the text fallback lane (D-16)', () => {
       draft: ACCEPT_CONTROL_TEXT,
       draftElements: ['el-heading'],
       index: EMPTY_INDEX,
-      textCorpus: [UAT_381],
+      textCorpus: [LOCAL_FORM_TEST],
     })
 
     expect(result.pass).toBe(true)
-    const row = result.finding.comparedTests.find((entry) => entry.filePath === UAT_381.filePath)
+    const row = result.finding.comparedTests.find((entry) => entry.filePath === LOCAL_FORM_TEST.filePath)
     expect(row?.lane).toBe('text')
     expect(row?.covered).toBe(false)
   })
@@ -170,14 +155,14 @@ describe('addsValueGate — the text fallback lane (D-16)', () => {
   it('separates the corpus near-duplicate from the corpus accept control', () => {
     // The pair the pinned constant exists to separate. Recording both scores here means a retune
     // has to look at the margin it is spending, not just at the case it is trying to rescue.
-    const duplicateScore = textSimilarity(NEAR_DUPLICATE_DRAFT, UAT_381)
-    const controlScore = textSimilarity(ACCEPT_CONTROL_TEXT, UAT_381)
+    const duplicateScore = textSimilarity(NEAR_DUPLICATE_DRAFT, LOCAL_FORM_TEST)
+    const controlScore = textSimilarity(ACCEPT_CONTROL_TEXT, LOCAL_FORM_TEST)
 
     expect(duplicateScore).toBeGreaterThanOrEqual(TEXT_FALLBACK_SIMILARITY_THRESHOLD)
     expect(controlScore).toBeLessThan(TEXT_FALLBACK_SIMILARITY_THRESHOLD)
   })
 
-  it('a score exactly AT the threshold reads as covered — ties fail the gate (D-16)', () => {
+  it('a score exactly AT the threshold reads as covered — ties fail the gate', () => {
     // Over-flagging toward "already covered" is the safe direction, so the boundary belongs on the
     // covered side. A strict `>` would hand the tie to the draft.
     const identical = {
@@ -203,23 +188,19 @@ describe('addsValueGate — the text fallback lane (D-16)', () => {
     const result = addsValueGate({
       draft: NEAR_DUPLICATE_DRAFT,
       draftElements: ['el-novel'],
-      index: fakeFingerprintIndex([{ ...UAT_381, elements: ['el-username'] }]),
-      textCorpus: [UAT_381],
+      index: fakeFingerprintIndex([{ ...LOCAL_FORM_TEST, elements: ['el-username'] }]),
+      textCorpus: [LOCAL_FORM_TEST],
     })
 
-    const rows = result.finding.comparedTests.filter((row) => row.filePath === UAT_381.filePath)
+    const rows = result.finding.comparedTests.filter((row) => row.filePath === LOCAL_FORM_TEST.filePath)
     expect(rows).toHaveLength(1)
     expect(rows[0]?.lane).toBe('fingerprint')
     expect(result.pass).toBe(true)
   })
 })
 
-describe('addsValueGate — lane precedence (D-14/D-16, CR-01)', () => {
-  /**
-   * An evidence-less sibling whose tokens are the draft's own, so `textSimilarity` returns 1.0 —
-   * the strongest possible text-lane "covered" claim. Its identity is NOT in the fingerprint
-   * index, so it stays on the degraded lane where D-16 put it.
-   */
+describe('addsValueGate — lane precedence', () => {
+  // Tokens match the draft's but the identity is outside the fingerprint index, so it stays text.
   const TEXT_TWIN: SuiteTextCorpusEntryLike = {
     filePath: 'demo/init/tests/text-twin.yaml',
     testName: NEAR_DUPLICATE_DRAFT.testName,
@@ -227,22 +208,18 @@ describe('addsValueGate — lane precedence (D-14/D-16, CR-01)', () => {
   }
 
   it('the fingerprint lane DECIDES a pass over a text sibling that resembles the draft', () => {
-    // The veto direction, which no case covered before this one: the primary lane has evidence and
-    // says NOVEL, and a degraded-lane resemblance is recorded beside it. D-14 gives the verdict to
-    // the lane with evidence; the text lane is a fallback for identities the index cannot speak
-    // for, not a veto over the identities it can (D-16).
+    // The lane with evidence decides; a text-lane resemblance beside it does not veto.
     const result = addsValueGate({
       draft: NEAR_DUPLICATE_DRAFT,
       draftElements: ['el-username', 'el-novel'],
-      index: fakeFingerprintIndex([{ ...UAT_381, elements: ['el-username'] }]),
+      index: fakeFingerprintIndex([{ ...LOCAL_FORM_TEST, elements: ['el-username'] }]),
       textCorpus: [TEXT_TWIN],
     })
 
     expect(result.pass).toBe(true)
     expect(result.finding.novelElements).toEqual(['el-novel'])
 
-    // Recorded, not deciding: the sibling still carries its lane and its covered flag, because
-    // D-16's value is the per-test attribution on the receipt — only the arithmetic moved.
+    // The sibling keeps its lane and covered flag on the receipt, though it does not decide.
     const twinRow = result.finding.comparedTests.find((row) => row.filePath === TEXT_TWIN.filePath)
     expect(twinRow?.lane).toBe('text')
     expect(twinRow?.covered).toBe(true)
@@ -264,7 +241,7 @@ describe('addsValueGate — lane precedence (D-14/D-16, CR-01)', () => {
     const result = addsValueGate({
       draft: NEAR_DUPLICATE_DRAFT,
       draftElements: covering,
-      index: fakeFingerprintIndex([{ ...UAT_381, elements: covering }]),
+      index: fakeFingerprintIndex([{ ...LOCAL_FORM_TEST, elements: covering }]),
       textCorpus: [TEXT_TWIN],
     })
 
@@ -274,7 +251,7 @@ describe('addsValueGate — lane precedence (D-14/D-16, CR-01)', () => {
     expect(result.reason).not.toContain('text fallback lane')
   })
 
-  it('the text lane still DECIDES when the index is empty — the state D-16 wrote it for', () => {
+  it('the text lane still DECIDES when the index is empty — the state it exists for', () => {
     const result = addsValueGate({
       draft: NEAR_DUPLICATE_DRAFT,
       draftElements: ['el-novel'],
@@ -287,7 +264,7 @@ describe('addsValueGate — lane precedence (D-14/D-16, CR-01)', () => {
   })
 })
 
-describe('addsValueGate — the empty suite (D-16)', () => {
+describe('addsValueGate — the empty suite', () => {
   it('passes trivially when the union AND the text corpus are both empty', () => {
     const result = addsValueGate({
       draft: ACCEPT_CONTROL_TEXT,
@@ -317,7 +294,7 @@ describe('addsValueGate — the empty suite (D-16)', () => {
     const result = addsValueGate({
       draft: ACCEPT_CONTROL_TEXT,
       draftElements: [],
-      index: fakeFingerprintIndex([{ ...UAT_381, elements: ['el-username'] }]),
+      index: fakeFingerprintIndex([{ ...LOCAL_FORM_TEST, elements: ['el-username'] }]),
       textCorpus: [],
     })
 
@@ -326,14 +303,14 @@ describe('addsValueGate — the empty suite (D-16)', () => {
 })
 
 describe('addsValueGate — a draft with no observed evidence', () => {
-  it('reports FALSE against a covered suite, and says why (D-04: gate 3 is still answered)', () => {
+  it('reports FALSE against a covered suite, and says why (gate 3 is still answered)', () => {
     // The gate-1-failed case, named rather than emergent. A draft whose runs produced no succeeded
     // sub-actions has no elements, so nothing can be shown to be novel — and the honest answer is
     // "not shown to add value", not a default. The receipt has to say which of the two it is.
     const result = addsValueGate({
       draft: ACCEPT_CONTROL_TEXT,
       draftElements: [],
-      index: fakeFingerprintIndex([{ ...UAT_381, elements: ['el-username'] }]),
+      index: fakeFingerprintIndex([{ ...LOCAL_FORM_TEST, elements: ['el-username'] }]),
       textCorpus: [],
     })
 

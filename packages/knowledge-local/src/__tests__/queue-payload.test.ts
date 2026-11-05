@@ -79,7 +79,7 @@ function strictAddressInput(): Parameters<
   }
 }
 
-describe('curation candidate projection and payload contracts (SAFE-02)', () => {
+describe('curation candidate projection and payload contracts', () => {
   it('requires source descriptors before copy', () => {
     const {
       schemaVersion: _schemaVersion,
@@ -325,8 +325,7 @@ describe('format-local durability versions and strict public surface', () => {
   })
 })
 
-describe('C441-CURATION', () => {
-  // Spelled in parts: the retired field names appear nowhere in packages (441-25, census leg 10).
+describe('new queue payloads carry no retired fields', () => {
   const RETIRED_KEYS = [
     ['capture', 'Evidence'].join(''),
     ['step', 'Interactions'].join(''),
@@ -386,7 +385,7 @@ describe('C441-CURATION', () => {
       const outcome = enqueueArtifactFreeCandidateProjection({
         knowledgeRoot,
         projectionInput: {
-          sourceRunId: 'run-441-25',
+          sourceRunId: 'run-queued',
           scope: { tier: 'product', key: 'storefront' },
           buildOrdinal: 42,
           executionContext: 'local-interactive',
@@ -396,8 +395,8 @@ describe('C441-CURATION', () => {
           summarySeed: 'Checkout button selector',
           bodySeed: 'The checkout button was resolved and verified.',
           distilledObservations: [],
-          evidenceToken: 'evidence-441-25',
-          attributingObservationId: 'run-441-25:test-0:step-0',
+          evidenceToken: 'evidence-queued',
+          attributingObservationId: 'run-queued:test-0:step-0',
           emittedAt: '2026-10-15T00:00:00.000Z',
         },
       })

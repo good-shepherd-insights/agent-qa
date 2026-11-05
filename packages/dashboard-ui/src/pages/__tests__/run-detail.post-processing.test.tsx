@@ -1,20 +1,6 @@
 // @vitest-environment jsdom
 
-// WHO OWNS THE CHIP CLIENT (404-07 · LIFE-03/LIFE-04, D-20, 400 D-13).
-//
-// THE NAVBAR IS PRESENTATIONAL. It takes a view and paints it; it opens no socket, holds no timer
-// and knows no run id. The page owns the client, and this file is where that ownership is measured
-// rather than asserted — `watchPostProcessing` is held, and the cells count its calls, invoke its
-// disposer and read what the navbar was handed. A header that fetched for itself would still paint
-// correctly in a component test and would open one client per mount of a component that remounts.
-//
-// THIS IS ITS OWN FILE ON PURPOSE. 404-06's `run-detail.bounce.test.tsx` measures the page's ONE
-// navigation decision and mocks the navbar down to a status probe; folding these cells into it
-// would have made that file answer two questions and made this plan edit that plan's subject.
-//
-// THE PROJECTION IS REAL, NOT MOCKED. `projectPostProcessingView` is pure and total, so doubling it
-// would replace the very contract that "the navbar gets the projection of the last read, and
-// nothing else" is about.
+// The navbar is presentational, so this file counts the page's `watchPostProcessing` calls.
 
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -63,18 +49,10 @@ const {
     models: unknown
     onOpenVerdict: unknown
   }>,
-  // WHAT THE TREE BELOW THE HEADER WAS HANDED, render by render (425-09). The door must move
-  // scroll and focus and NOTHING else, and "nothing else" is only observable as props that did
-  // not change — so the probes record rather than assert.
+  // The tree's props are recorded per render, because nothing else changing is visible only there.
   stepTreeProps: [] as Array<{ playhead: unknown; selection: unknown }>,
   tabPanelProps: [] as Array<{ activeTab: unknown }>,
-  /**
-   * How many verdict blocks and collapsed member groups the mocked tree mounts this render, and
-   * whether the two OTHER `aria-expanded` emitters of the real scroll container (the member-filter
-   * trigger and the Error Details disclosure) are mounted ahead of the groups (425-14 · WR-01).
-   * `verdictGroup` is the one collapsed group whose toggle carries the verdict-bearing contract
-   * attribute the real `MemberGroup` writes; unset, every group renders alike.
-   */
+  // Verdict blocks, collapsed groups and the other `aria-expanded` emitters the mocked tree mounts.
   treeScene: { blocks: 0, collapsedGroups: 0, trap: false, verdictGroup: undefined as number | undefined },
 }))
 
@@ -83,15 +61,9 @@ vi.mock("@/lib/api", async () => {
   return {
     ...actual,
     fetchRun: fetchRunMock,
-    // 2026-08-28 (405-08): the page's second read, stubbed to RESOLVE. Left unstubbed it would hit
-    // the real one against a `fetch` these cells do not provide, and the page would sit in its
-    // could-not-load posture while the chip client under test was measured on a broken screen.
+    // Stubbed to resolve, or the page would measure the chip client on a could-not-load screen.
     fetchRunDetail: fetchRunDetailMock,
-    // 2026-08-29 (406-01, D-04): the page's third read, stubbed to RESOLVE for the same reason —
-    // the real one would reach a `fetch` these cells do not provide.
-    // 2026-09-22 (425-09): held rather than inlined, because the verdict door is gated on the
-    // page's own `analysisView` being non-empty — a fixed empty answer could only ever prove the
-    // closed half of that gate.
+    // Held, because the verdict door needs a non-empty `analysisView` to prove its open half.
     fetchRunAnalysis: fetchRunAnalysisMock,
     fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
     fetchRunArtifact: fetchRunArtifactMock,
@@ -127,10 +99,7 @@ vi.mock("@/hooks/use-keyboard-shortcuts", () => ({ useKeyboardShortcuts: () => {
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock("@/components/page-skeleton", () => ({ DetailSkeleton: () => <div data-loading /> }))
 vi.mock("@/components/empty-state", () => ({ EmptyState: ({ title }: { title: string }) => <div>{title}</div> }))
-// THE TREE IS A PROBE THAT CAN ALSO MOUNT A TARGET (425-09 · D-11). The real `StepTree` would
-// drag the whole member/verdict projection into a file about the header's wiring; what the door
-// needs from it is a `[data-verdict-block]` at a known place inside `stepTreeScrollRef`, and what
-// idempotency needs from it is the props it was handed.
+// The tree probe mounts a `[data-verdict-block]` target and records the props it is handed.
 vi.mock("@/components/run-detail/step-tree", () => ({
   StepTree: (props: { playhead?: unknown; selection?: unknown }) => {
     stepTreeProps.push({ playhead: props.playhead, selection: props.selection })
@@ -166,7 +135,6 @@ vi.mock("@/components/run-detail/tab-panels", () => ({
   },
 }))
 vi.mock("@/components/run-detail/artifact-drawer", () => ({ ArtifactDrawer: () => <div /> }))
-vi.mock("@/components/run-detail/hook-detail-panel", () => ({ HookDetailPanel: () => <div /> }))
 vi.mock("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
@@ -211,14 +179,12 @@ function runRow(id: string, status = "passed") {
     endedAt: "2026-08-27T00:00:01.000Z",
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: null,
     platform: "web",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
   }
 }
 
@@ -291,7 +257,7 @@ function lastNavbarView(): unknown {
   return last.postProcessing
 }
 
-/** The model summary the header was handed on its last render (425-05 · D-23). */
+/** The model summary the header was handed on its last render. */
 function lastNavbarModels(): unknown {
   const last = navbarProps.at(-1)
   if (last === undefined) throw new Error("the navbar never rendered")
@@ -384,7 +350,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
   })
 
-  it("hands a refusal down as the unavailable view — never as chips (D-23)", async () => {
+  it("hands a refusal down as the unavailable view — never as chips", async () => {
     await renderPage()
     await act(async () => {
       onReadOf()({ kind: "unavailable", error: "function_not_bound", reason: "runs.postprocessing is not bound" })
@@ -396,10 +362,8 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
   })
 
-  // The tracer's page leg (425-01 · D-13): the outcome sentence must reach the navbar off the read
-  // the page already holds. A projection that only composed correctly in a unit test would pass its
-  // own cells and still hand this header nothing.
-  it("hands the navbar the passing run's analysis card, straight off the read (SC3)", async () => {
+  // The outcome sentence must reach the navbar off the read the page already holds.
+  it("hands the navbar the passing run's analysis card, straight off the read", async () => {
     await renderPage()
     await act(async () => {
       onReadOf()(statusRead("complete", "complete", { disposition: "drained" }, {
@@ -418,10 +382,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
   })
 
-  // THE SKIPPED FACT TRAVELS THE WHOLE WAY (425-08 · D-08; 444 D-39). Plan 02 put it on the read over all
-  // four doors; the observable here is that the page's own wiring carries it to the header without
-  // the header having to know what a gate run is. A projection that only folded correctly in a unit
-  // test would pass its own cells and still hand this navbar a chain that reads `pending` forever.
+  // The skipped fact reaches the header through the page's wiring; the header knows no gate runs.
   it("PAGE-EXCLUDED-READ: hands the navbar the skipped view, reason included, off the read", async () => {
     await renderPage()
     await act(async () => {
@@ -435,12 +396,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
   })
 
-  // MODEL IDENTITY REACHES THE HEADER FROM THE DURABLE READ, AND FROM NOWHERE ELSE (425-05 · D-23).
-  //
-  // The page holds the `runs.detail` projection; the header is presentational and can only paint
-  // what it is handed. The observable is therefore the PROP, not a rendered string — a page that
-  // held the summary and forgot to pass it down would paint no model line and look, from the DOM,
-  // exactly like a pre-423 run that never recorded one.
+  // The observable is the prop: a dropped summary looks like a run with no model in the DOM.
   it("PAGE-PASSES-MODELS: hands down the summary the read answered, and nothing when it answered none", async () => {
     const models = { declared: [{ provider: "openai", modelId: "gpt-5.6-terra", stepCount: 3 }] }
     fetchRunDetailMock.mockImplementation(async (id: string) => ({
@@ -490,15 +446,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
   })
 })
 
-// ---------------------------------------------------------------------------
-// THE VERDICT DOOR (425-09 · D-11, PXH-RUN-03, UI-SPEC S4)
-//
-// The header is presentational and the tree is below it, so the ONLY place the two can be joined
-// is here. What is pinned is the page's judgement — when a door exists at all — and its mechanics:
-// scroll the first mounted block into view honouring reduced motion, then put focus on it and stop.
-// Everything the door must NOT touch is observable only as props that did not move, which is why
-// the tree and the tab panels are probes rather than stubs.
-// ---------------------------------------------------------------------------
+// Scroll the first block into view honouring reduced motion, focus it, and change no other state.
 
 /** The door the page handed the header on its last render, or `undefined` when it gave none. */
 function doorOf(): unknown {
@@ -559,7 +507,7 @@ async function invokeDoor(): Promise<void> {
   await act(async () => { (door as () => void)() })
 }
 
-describe("the failed run's analysis indicator is the door to its verdict (D-11)", () => {
+describe("the failed run's analysis indicator is the door to its verdict", () => {
   async function renderFailedRunWithVerdict(): Promise<void> {
     fetchRunMock.mockImplementation(async (id: string) => ({ run: runRow(id, "failed") }))
     fetchRunAnalysisMock.mockResolvedValue(analysisWithVerdict())
@@ -626,8 +574,7 @@ describe("the failed run's analysis indicator is the door to its verdict (D-11)"
     expect(doorOf()).toBeUndefined()
   })
 
-  // T-425-09-02: focus must not be lost when the reader has collapsed the groups. The toggle is
-  // inside the same scroll container, so the verdict stays one keypress away instead of nowhere.
+  // With no block mounted, focus falls back to a group toggle in the same scroll container.
   it("PAGE-OPENS-VERDICT: falls back to the first member group's toggle when no block is mounted", async () => {
     const restore = pinReducedMotion(false)
     try {
@@ -649,10 +596,7 @@ describe("the failed run's analysis indicator is the door to its verdict (D-11)"
     }
   })
 
-  // WR-01 (425-14). The run the door is enabled for is a FAILED run, and a failed run with an error
-  // log mounts the Error Details disclosure — and, on a suite, the member-filter trigger — above the
-  // groups in this same container. Both emit `aria-expanded`, so a fallback that named that state
-  // landed on whichever of them rendered first. The probes stand in for exactly those two controls.
+  // Error Details and the member filter also emit `aria-expanded` above the groups; skip them.
   it("PAGE-OPENS-VERDICT-FALLBACK-IS-SCOPED: lands on the group's own toggle, never on the controls above it", async () => {
     const restore = pinReducedMotion(false)
     try {
@@ -680,9 +624,7 @@ describe("the failed run's analysis indicator is the door to its verdict (D-11)"
     }
   })
 
-  // WR-01 (425 review). Only a failed member mounts a verdict, so on a suite whose first member
-  // passed, the first group's toggle opens onto nothing. The fallback lands on the toggle of the
-  // group that holds the verdict, named by its own contract attribute rather than by tree order.
+  // Only a failed member mounts a verdict, so the fallback finds its group's toggle.
   it("PAGE-OPENS-VERDICT-FALLBACK-FINDS-THE-FAILED-GROUP: skips a passed member's group ahead of it", async () => {
     const restore = pinReducedMotion(false)
     try {
@@ -725,10 +667,7 @@ describe("the failed run's analysis indicator is the door to its verdict (D-11)"
       expect(scrolled).toHaveLength(2)
       expect(scrolled[1]!.el).toBe(scrolled[0]!.el)
 
-      // THE ELEVATION CLAIM (T-425-09-01). A header control that changed a tab, the playhead or
-      // the selection would be mutating page state it does not own — and because the page re-renders
-      // on any of those, "it changed nothing" is exactly "the tree and the tabs were not handed
-      // anything new". The declined option (drive the playhead) is measured here, not asserted.
+      // A header control must not change tabs, playhead or selection, so their props stay equal.
       expect(tabPanelProps).toEqual(tabsBefore)
       expect(stepTreeProps).toEqual(treeBefore)
       expect(tabPanelProps.at(-1)!.activeTab).toBe("overview")

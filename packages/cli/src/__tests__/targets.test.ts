@@ -1,6 +1,5 @@
 import { describe, it, expect, expectTypeOf } from 'vitest'
 import { resolveTarget, listTargets, type ResolvedTarget } from '../targets.js'
-import { resolveTargetEnvironmentForProduct } from '../eval-session-composition.js'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 
 function makeConfig(targets?: Record<string, unknown>): AgentQaConfig {
@@ -116,7 +115,7 @@ describe('resolveTarget — product field', () => {
   })
 })
 
-describe('resolveTarget — environment declaration (D-06)', () => {
+describe('resolveTarget — environment declaration', () => {
   it('carries a declared local environment through', () => {
     const config = makeConfig({
       'local-form': { platform: 'web' as const, url: 'http://127.0.0.1:8931/form.html', environment: 'local' },
@@ -139,12 +138,11 @@ describe('resolveTarget — environment declaration (D-06)', () => {
   })
 })
 
-// 432-02 D-18: production joins the declared classes. The CLI resolver and eval's per-product
-// fold carry all four states, absence included, and never read a class off a hostname.
-describe('C432-TARGET-ENVIRONMENT-ROUNDTRIP: CLI target environment (432 D-18)', () => {
+// Production joins the declared classes; resolvers carry every state and never read a hostname.
+describe('CLI target environment', () => {
   const STATES = ['local', 'shared', 'production', undefined] as const
 
-  it('C432-TARGET-ENVIRONMENT-ROUNDTRIP: resolveTarget carries local, shared, production and absence unchanged', () => {
+  it('resolveTarget carries local, shared, production and absence unchanged', () => {
     expectTypeOf<ResolvedTarget['environment']>().toEqualTypeOf<'local' | 'shared' | 'production' | undefined>()
     for (const environment of STATES) {
       const config = makeConfig({
@@ -159,28 +157,10 @@ describe('C432-TARGET-ENVIRONMENT-ROUNDTRIP: CLI target environment (432 D-18)',
     }
   })
 
-  it('C432-TARGET-ENVIRONMENT-ROUNDTRIP: the eval fold stamps one declared class, production included, and omits the rest', () => {
-    const fold = (targets: Record<string, unknown>) =>
-      resolveTargetEnvironmentForProduct(makeConfig(targets), 'shop')
-    for (const environment of STATES) {
-      expect(fold({ shop: { platform: 'web', url: 'https://shop.example.com', ...(environment === undefined ? {} : { environment }) } }), String(environment))
-        .toBe(environment)
-    }
-    expect(fold({
-      shop: { platform: 'web', url: 'https://shop.example.com', environment: 'production' },
-      'shop-local': { platform: 'web', url: 'http://127.0.0.1:3000', product: 'shop', environment: 'local' },
-    })).toBeUndefined()
-    expect(fold({
-      shop: { platform: 'web', url: 'https://shop.example.com', environment: 'production' },
-      'shop-mirror': { platform: 'web', url: 'https://mirror.example.com', product: 'shop', environment: 'production' },
-    })).toBe('production')
-  })
-
   it('never infers production from a hostname', () => {
     for (const url of ['https://prod.example.com', 'https://production.shop.com', 'https://www.shop.com']) {
       const config = makeConfig({ shop: { platform: 'web' as const, url } })
       expect(resolveTarget(config, 'shop').environment, url).toBeUndefined()
-      expect(resolveTargetEnvironmentForProduct(config, 'shop'), url).toBeUndefined()
     }
   })
 })

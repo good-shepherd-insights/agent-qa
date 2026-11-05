@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 
-// THE ONE QUIET STATUS (429 D-20/D-21/D-24 · UI-SPEC S3 and the save-status tone map).
-//
-// SaveStatus renders what deriveSaveStatus answers. These cells hold its six faces, its box, its
-// polite region and its reduced-motion spelling; the precedence itself is config-autosave.test.ts.
+// `SaveStatus` renders what `deriveSaveStatus` answers; precedence is tested in config-autosave.
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -88,7 +85,7 @@ function button(name: string): HTMLButtonElement {
   return found
 }
 
-describe('the save status faces (429-15 Task 2)', () => {
+describe('the save status faces', () => {
   it('SAVE-STATUS-TONES: each of the six states renders its data attribute, word and glyph', () => {
     expect(Object.keys(STATUSES)).toEqual([...SAVE_STATES])
 
@@ -160,7 +157,7 @@ describe('the save status faces (429-15 Task 2)', () => {
   })
 })
 
-describe('the polite region (429-15 Task 2)', () => {
+describe('the polite region', () => {
   it('SAVING-NOT-ANNOUNCED: Saving never reaches the polite region', () => {
     show(STATUSES.saving)
     expect(liveRegion().textContent).toBe('')
@@ -226,13 +223,13 @@ describe('the polite region (429-15 Task 2)', () => {
   })
 })
 
-describe('long text and motion (429-15 Task 2)', () => {
+describe('long text and motion', () => {
   it('UNDO-LINE-FULL-NAME: a long name truncates at max-w-40 and the full sentence is the accessible name', () => {
-    const line = undoLine('delete-model', LONG_NAME, { judge: true })
+    const line = undoLine('delete-model', LONG_NAME)
     show({ state: 'undo', failingFieldKeys: [], undo: { line, name: LONG_NAME, token: 'u3' } })
 
     const lineElement = statusElement().querySelector<HTMLElement>('[data-save-undo-line]')
-    expect(lineElement?.getAttribute('aria-label')).toBe(`Deleted ${LONG_NAME}, an eval judge`)
+    expect(lineElement?.getAttribute('aria-label')).toBe(`Deleted ${LONG_NAME}`)
     const name = statusElement().querySelector<HTMLElement>('[data-save-undo-name]')
     expect(name?.textContent).toBe(LONG_NAME)
     expect(name?.classList.contains('max-w-40')).toBe(true)

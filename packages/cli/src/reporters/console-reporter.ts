@@ -1,4 +1,6 @@
 import pc from 'picocolors'
+import { guardRunText, isGitHubActions } from '@vostride/agent-qa-core/run-text-output'
+import type { RunTextEnv } from '@vostride/agent-qa-core/run-text-output'
 import { quarantineAppliesToTest } from '@vostride/agent-qa-schema'
 import type { QuarantineAppliedEntry } from '@vostride/agent-qa-schema'
 import type {
@@ -35,40 +37,20 @@ export interface ConsoleReporterOptions {
   /** Test seam: override TTY detection (defaults to process.stdout.isTTY). */
   isTTY?: boolean
   columns?: number
-  /**
-   * The run-start quarantine snapshot (390 D-15/D-16), taken AT CONSTRUCTION — the same set the
-   * runner's aggregate verdict rule was handed, matched through schema's ONE predicate so the human
-   * line and the exit code cannot tell different stories about the same member.
-   */
+  // Taken at construction from the set the verdict rule got, matched through schema's predicate.
   quarantined?: readonly QuarantineAppliedEntry[]
+  env?: RunTextEnv
 }
 
-/**
- * What a quarantined FAILURE reads as (390 D-15). Three facts in one phrase, in the order a reader
- * needs them: it is under quarantine, it FAILED (no skipped-mapping, no pass-with-note — the test
- * ran, which is FLAK-02's point), and that failure is not in the build's failing tally.
- */
 export const QUARANTINE_TEST_ANNOTATION = 'QUARANTINED — failed, not counted'
 
-/**
- * The summary line's separate count segment (390 D-15) — a pure string composer, the
- * `renderChainTerminalLine` idiom, so it can be pinned by value without rendering a run.
- *
- * SILENT at zero, and that silence is load-bearing: every pre-390 summary line stays byte-frozen on
- * a run with nothing quarantined, so 388's exit summary and 389's D-08/D-09 lines keep their pins.
- */
+// Silent at zero, so a summary with nothing quarantined is unchanged.
 export function renderQuarantineSummarySegment(count: number): string {
   if (count <= 0) return ''
   return ` · ${count} quarantined failure${count === 1 ? '' : 's'}`
 }
 
-/**
- * The reporter handle every subscriber factory returns. `handler` is attached to the run
- * session bus; `flush` is awaited by the CLI after `session.done`.
- *
- * 2026-10-02 (432-42, D-14): no `pauseLive`/`resumeLive`. They cleared the live TTY line for a
- * confirm prompt; no run asks, so nothing pauses the line.
- */
+// `handler` attaches to the session bus; `flush` is awaited after `session.done`.
 export interface ConsoleReporterHandle {
   handler: (envelope: RunEventEnvelope) => void
   flush: () => Promise<void>
@@ -79,15 +61,12 @@ interface TestMeta {
   filePath: string
 }
 
-/**
- * `createConsoleReporter` — the bus-subscriber successor to core's `ConsoleReporter`
- * (D-01/D-03). Pure accumulation from typed envelopes (D-04, replay-equivalent). Payloads are
- * printed as masked at their source (441 D-07).
- */
+// Pure accumulation from typed envelopes; payloads print as masked at their source.
 export function createConsoleReporter(options: ConsoleReporterOptions = {}): ConsoleReporterHandle {
   const verbose = options.verbose ?? false
+  const env = options.env ?? process.env
   const isTTY = options.isTTY ?? process.stdout.isTTY === true
-  const plain = options.plain ?? (!isTTY || process.env.CI === 'true')
+  const plain = options.plain ?? (!isTTY || process.env.CI === 'true' || isGitHubActions(env))
   const colorize = plain ? false : (options.colorize ?? true)
   const canOverwrite = !plain && isTTY && options.logLevel !== 'debug'
   const sink = options.write ?? ((chunk: string) => void process.stdout.write(chunk))
@@ -109,11 +88,20 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     }
   }
 
+  // Run-derived lines print as one block, so under GitHub Actions they share one stop-commands pair.
+  function printBlock(lines: readonly string[]): void {
+    if (isGitHubActions(env)) {
+      emit(guardRunText(`${lines.join('\n')}\n`, env))
+      return
+    }
+    for (const line of lines) println(line)
+  }
+
   function c(fn: (s: string) => string, text: string): string {
     return colorize ? fn(text) : text
   }
 
-  // --- accumulation state (D-04) ---------------------------------------------
+  // Accumulation state.
   let memberTestCount = 0
   let currentSuiteId: string | undefined
   let sawSuite = false
@@ -125,6 +113,8 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
   let stepsCancelled = 0
   let cacheHits = 0
   let cacheMisses = 0
+  const cacheDisabledTests = new Set<number>()
+  const cacheUsedTests = new Set<number>()
 
   // per-test buckets (reset on testStarted and testRetryScheduled)
   let ptPassed = 0
@@ -138,8 +128,7 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
   let testsSkipped = 0
   let testsCancelled = 0
   let totalDurationMs = 0
-  // 390 D-14: counted SEPARATELY and never subtracted from `testsFailed` — the member outcome stays
-  // truthful, and this is the segment that explains the green build's arithmetic.
+  // Counted apart and never subtracted from `testsFailed`, so the member outcome stays true.
   let quarantinedFailures = 0
 
   const stepTextByIndex = new Map<number, string>()
@@ -219,7 +208,9 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     const modelInfo = model
       ? `  ${c(pc.dim, `Model: ${model}${provider ? ` (${provider})` : ''}`)}\n`
       : ''
-    println(`\n${c(pc.bold, `Running ${memberTestCount} test(s)...`)}\n${modelInfo}`)
+    const text = `\n${c(pc.bold, `Running ${memberTestCount} test(s)...`)}\n${modelInfo}`
+    if (model) printBlock([text])
+    else println(text)
   }
 
   function onTestStarted(payload: TestStartedPayload): void {
@@ -231,7 +222,7 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     if (payload.suiteId && payload.suiteId !== currentSuiteId) {
       currentSuiteId = payload.suiteId
       sawSuite = true
-      println(`\n${c(pc.bold, `Suite: ${payload.suiteName ?? payload.suiteId}`)}`)
+      printBlock([`\n${c(pc.bold, `Suite: ${payload.suiteName ?? payload.suiteId}`)}`])
     }
     const indent = sawSuite ? '  ' : ''
     transient(`${indent}${testBadge('running')} ${payload.filePath ?? payload.name}`)
@@ -251,13 +242,16 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
 
     if (payload.cacheStatus === 'hit') cacheHits++
     else if (payload.cacheStatus === 'miss') cacheMisses++
+    if (payload.cacheStatus === 'disabled') cacheDisabledTests.add(payload.testIndex)
+    else cacheUsedTests.add(payload.testIndex)
 
     const stepText = stepTextByIndex.get(payload.stepIndex) ?? `Step ${payload.stepIndex + 1}`
     const dur = humanDuration(payload.durationMs ?? 0)
-    println(`${statusIcon(status)} ${stepText} ${c(pc.dim, dur)}`)
+    const lines = [`${statusIcon(status)} ${stepText} ${c(pc.dim, dur)}`]
     if (status === 'failed' && payload.error) {
-      println(`  ${c(pc.red, 'Error:')} ${payload.error}`)
+      lines.push(`  ${c(pc.red, 'Error:')} ${payload.error}`)
     }
+    printBlock(lines)
   }
 
   function onHookStarted(payload: HookStartedPayload): void {
@@ -270,25 +264,27 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
         : payload.phase === 'teardown'
           ? 'Running teardown hooks'
           : `Running hook: ${payload.hookName}`
-    println(`${plain ? 'RUN' : c(pc.bold, '▶')} ${label}`)
+    const line = `${plain ? 'RUN' : c(pc.bold, '▶')} ${label}`
+    if (payload.phase === 'inline') printBlock([line])
+    else println(line)
   }
 
   function onHookFinished(payload: HookFinishedPayload): void {
     const icon = statusIcon(payload.status === 'passed' ? 'passed' : payload.status === 'failed' ? 'failed' : 'skipped')
-    println(`  ${icon} ${payload.hookName} ${c(pc.dim, humanDuration(payload.durationMs))}`)
+    const lines = [`  ${icon} ${payload.hookName} ${c(pc.dim, humanDuration(payload.durationMs))}`]
     if (payload.status === 'failed' && payload.error) {
-      println(`    ${c(pc.red, 'Error:')} ${payload.error}`)
+      lines.push(`    ${c(pc.red, 'Error:')} ${payload.error}`)
     }
     if (verbose && payload.variables && Object.keys(payload.variables).length > 0) {
       for (const [key, value] of Object.entries(payload.variables)) {
-        println(`    ${plain ? '->' : c(pc.dim, '↳')} ${key}=${value}`)
+        lines.push(`    ${plain ? '->' : c(pc.dim, '↳')} ${key}=${value}`)
       }
     }
+    printBlock(lines)
   }
 
   function onTestRetryScheduled(_payload: TestRetryScheduledPayload): void {
-    // A new attempt begins: drop the aborted attempt's step accumulation so the
-    // aggregate summary counts only the final attempt (D-01/Q-3).
+    // A new attempt drops the aborted attempt's steps, so the summary counts the final attempt.
     resetPerTest()
   }
 
@@ -311,9 +307,7 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
     else if (cancelled) testsCancelled++
     else testsPassed++
 
-    // Only a FAILED member carries the disposition: the annotation's claim is "this failure is not
-    // counted", which a passing member cannot make. Which tests are under quarantine at all is
-    // `quarantine.list`'s question (FLAK-03), not this line's.
+    // Only a failed member carries the annotation; a passing one cannot be an uncounted failure.
     const quarantined =
       failed
       && quarantineAppliesToTest(options.quarantined, {
@@ -331,10 +325,18 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
         : testBadge('passed')
     const indent = sawSuite ? '  ' : ''
     const dur = skipped || cancelled ? `(${outcome})` : humanDuration(payload.durationMs ?? 0)
-    // Empty at zero quarantined, so this line is byte-identical to its pre-390 self.
+    // Empty at zero quarantined, so the line is unchanged for an unquarantined member.
     const disposition = quarantined ? ` ${c(pc.yellow, QUARANTINE_TEST_ANNOTATION)}` : ''
-    println(`${indent}${badge} ${name} ${c(pc.dim, dur)}${disposition}`)
+    printBlock([`${indent}${badge} ${name} ${c(pc.dim, dur)}${disposition}`])
     println('')
+  }
+
+  function formatCacheLine(): string {
+    const disabled = cacheDisabledTests.size
+    if (disabled > 0 && cacheUsedTests.size === 0) return 'disabled'
+    const tally = `${cacheHits} hits, ${cacheMisses} misses`
+    if (disabled === 0) return tally
+    return `${tally} (disabled for ${disabled} ${disabled === 1 ? 'test' : 'tests'})`
   }
 
   function onRunFinished(_payload: RunFinishedPayload): void {
@@ -345,18 +347,19 @@ export function createConsoleReporter(options: ConsoleReporterOptions = {}): Con
       println(c(pc.red, 'Failed tests:'))
       for (const failure of failedTests) {
         const disposition = failure.quarantined ? ` ${c(pc.yellow, QUARANTINE_TEST_ANNOTATION)}` : ''
-        println(`  ${plain ? 'x' : c(pc.red, '✗')} ${failure.name}${disposition}`)
+        const lines = [`  ${plain ? 'x' : c(pc.red, '✗')} ${failure.name}${disposition}`]
         if (failure.failureSummary) {
           for (const line of failure.failureSummary.split('\n')) {
-            println(`    ${c(pc.dim, line)}`)
+            lines.push(`    ${c(pc.dim, line)}`)
           }
         }
+        printBlock(lines)
       }
     }
     const segments = `${cancelledSegment}${renderQuarantineSummarySegment(quarantinedFailures)}`
     println(`Tests:  ${testsPassed} of ${total} passed${segments}`)
     println(`Steps:  ${formatStepsLine()}`)
-    println(`Cache:  ${cacheHits} hits, ${cacheMisses} misses`)
+    println(`Cache:  ${formatCacheLine()}`)
     println(`Time:   ${humanDuration(totalDurationMs)}`)
     println('')
   }

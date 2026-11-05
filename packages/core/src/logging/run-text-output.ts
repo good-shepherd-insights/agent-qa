@@ -1,0 +1,71 @@
+import { randomBytes } from 'node:crypto'
+
+export type RunTextEnv = Readonly<Record<string, string | undefined>>
+
+export interface PrintRunTextOptions {
+  readonly env?: RunTextEnv
+  readonly stdoutIsData?: boolean
+}
+
+// The root entry and the subpath entry each bundle a copy of this module, so the count lives on
+// globalThis where a reservation taken through either is seen by both.
+const STDOUT_RESERVATIONS = Symbol.for('agent-qa.run-text-output.stdout-reservations')
+
+interface StdoutReservations {
+  count: number
+}
+
+function stdoutReservations(): StdoutReservations {
+  const holder = globalThis as typeof globalThis & { [STDOUT_RESERVATIONS]?: StdoutReservations }
+  holder[STDOUT_RESERVATIONS] ??= { count: 0 }
+  return holder[STDOUT_RESERVATIONS]
+}
+
+export function isGitHubActions(env: RunTextEnv = process.env): boolean {
+  const value = env.GITHUB_ACTIONS
+  return value !== undefined && value !== '' && value.toLowerCase() !== 'false' && value !== '0'
+}
+
+export function guardRunText(text: string, env: RunTextEnv = process.env): string {
+  if (!isGitHubActions(env)) return text
+  // Longer than 6 characters, so the runner masks the token in the log.
+  const token = randomBytes(16).toString('hex')
+  const block = text.endsWith('\n') ? text : `${text}\n`
+  return `::stop-commands::${token}\n${block}::${token}::\n`
+}
+
+export function guardJsonText(serialized: string, env: RunTextEnv = process.env): string {
+  return isGitHubActions(env) ? serialized.replaceAll('#', '\\u0023') : serialized
+}
+
+/** Marks this process's stdout as carrying a JSON document or protocol; returns the release. */
+export function reserveStdoutForData(): () => void {
+  const reservations = stdoutReservations()
+  reservations.count += 1
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    reservations.count -= 1
+  }
+}
+
+export function printRunText(
+  text: string,
+  print: (text: string) => void = (line) => console.log(line),
+  options: PrintRunTextOptions = {},
+): void {
+  const env = options.env ?? process.env
+  if (!isGitHubActions(env)) {
+    print(text)
+    return
+  }
+  const block = guardRunText(text, env)
+  // The runner reads stdout and stderr on separate threads, so every wrapped block shares one
+  // stream: stdout, or stderr when stdout carries data. The caller's print never sees a block.
+  if (options.stdoutIsData ?? stdoutReservations().count > 0) {
+    process.stderr.write(block)
+    return
+  }
+  process.stdout.write(block)
+}

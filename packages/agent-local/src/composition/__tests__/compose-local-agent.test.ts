@@ -1,15 +1,18 @@
-// The one local composition root, proven by USE (Phase 385 plan 09, D-15).
-//
-// The criterion this file exists to strengthen is "composeLocalAgent() returns the composed host".
-// An object of nulls satisfies that sentence, and so does a host whose members are real types over
-// dead wiring. So every member below is exercised against the real thing it claims to be: the
-// registry answers a function op through the gate and leaves an audit row on disk, the queue opens
-// a real sqlite database and runs a job to a real checkpoint file, and the bound model is proven to
-// be the one the engine hands the author callback rather than merely a field that was set.
+// Each member is exercised against real wiring, because typed nulls would pass a shape check.
 
-import { existsSync, mkdirSync, readFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 
@@ -54,7 +57,7 @@ import type {
   StepEvidence,
 } from '@vostride/agent-qa-schema'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createPromotionFloorFixture, completeGate1Receipt, resolvedPromotionPosture } from './fixtures/promotion-capabilities.js'
+import { createPromotionFloorFixture, markReceipt } from './fixtures/promotion-capabilities.js'
 
 import { writeAnalysisArtifact } from '../../analysis/persist-analysis.js'
 import { AGENT_JOB_STORE_DB_FILE } from '../../store/sqlite-job-store.js'
@@ -72,15 +75,9 @@ import type {
   RunExecutionPort,
 } from '../compose-local-agent.js'
 
-/**
- * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
- * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
- * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
- */
+// Passthrough: this fixture already speaks canonical workspace-relative bytes.
 const MINT_IDENTITY = (filePath: string): string => filePath
 
-// 2026-10-01 (432-30, D-12): the retired `grantedScopes` and `safeMode` caller fields are dropped
-// here and from the quarantine block's WRITE_CALLER; nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'cli',
   origin: 'agent',
@@ -140,7 +137,7 @@ function authoringKinds(): JobKindRegistry {
   ])
 }
 
-describe('composeLocalAgent (D-15)', () => {
+describe('composeLocalAgent', () => {
   let root: string
   let agentQaRoot: string
   let model: ReturnType<typeof recordingModel>
@@ -154,7 +151,6 @@ describe('composeLocalAgent (D-15)', () => {
       jobKinds?: JobKindRegistry
       runExecution?: RunExecutionPort
       knowledgeRoot?: () => Promise<string> | string
-      resolvePromotionPosture?: ComposeLocalAgentInput['resolvePromotionPosture']
       feedback?: ComposeLocalAgentInput['feedback']
     } = {},
   ): LocalAgentHost {
@@ -191,11 +187,7 @@ describe('composeLocalAgent (D-15)', () => {
     host = compose()
   })
 
-  // RE-SPELLED 2026-10-01 (432-17, D-05/D-22) from '419 review apply forwards persisted commitReceipt
-  // with strict absence (%s)': the review port's `apply` is deleted with the inbox, so a pre-432
-  // applied record with or without its receipt is never read back; the port's only member is the
-  // direct change, and the planted file is left exactly as it was.
-  it.each([true, false])('419 review apply forwards persisted commitReceipt with strict absence (%s)', async present => {
+  it.each([true, false])('review apply forwards persisted commitReceipt with strict absence (%s)', async present => {
     const proposalId = `prop_${randomUUID()}`
     const commitReceipt = { schemaVersion: COMMIT_RECEIPT_SCHEMA_VERSION as typeof COMMIT_RECEIPT_SCHEMA_VERSION, proposalId, committedAtOrdinal: 12,
       recordIds: ['fact-confirmed'], gate3: [{ candidateId: 'fact-confirmed', receiptDigest: 'a'.repeat(64) }],
@@ -214,14 +206,14 @@ describe('composeLocalAgent (D-15)', () => {
     expect(readFileSync(planted, 'utf8')).toBe(before)
   })
 
-  it('416 exposes only the existing writer edge for receipt and promotion capabilities', () => {
+  it('exposes only the existing writer edge for receipt and promotion capabilities', () => {
     expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt).toBeTypeOf('function')
     expect(LOCAL_CURATION_CAPABILITIES.canaryOutcomeObservationId).toBeTypeOf('function')
     expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts).toBeTypeOf('function')
     expect(Object.isFrozen(LOCAL_CURATION_CAPABILITIES)).toBe(true)
   })
 
-  it('419 feedback is bound only when the host supplies the port', async () => {
+  it('feedback is bound only when the host supplies the port', async () => {
     expect(host.registry.list(CALLER).find(entry => entry.id === 'runs.mark')).toMatchObject({ bindingStatus: 'unbound' })
     const feedback = { mark: vi.fn(), marksFor: vi.fn(async () => []) }
     const bound = compose({ feedback })
@@ -230,9 +222,6 @@ describe('composeLocalAgent (D-15)', () => {
     } finally { await bound.close() }
   })
 
-  // RE-SPELLED 432-09 (D-04/D-11/D-22) from '419 withdrawPendingProposal rejects pending %s once then
-  // returns not-pending': a mark applies its fix directly, so there is no filing and nothing to
-  // withdraw; a legacy pending proposal is left exactly as it was.
   it.each(['knowledge', 'test-draft'] as const)('the curation capabilities neither file nor withdraw a mark %s proposal, and leave a legacy one untouched', async proposalKind => {
     const capabilities = LOCAL_CURATION_CAPABILITIES as unknown as Record<string, unknown>
     expect(capabilities.withdrawPendingProposal).toBeUndefined()
@@ -243,8 +232,7 @@ describe('composeLocalAgent (D-15)', () => {
     } : {
       schemaVersion: CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION, draftRef: { filePath: 'tests/draft.yaml', testId: 'fixture', testName: 'Checkout', contentDigest: 'digest' }, targetPath: 'tests/checkout.yaml', disposition: 'unverified', runsPreviewed: 0, runsConsumed: 0, repairIterations: 0, summaryLine: 'Checkout edit',
     }
-    // 2026-10-01 (432-17): the store that wrote and read these records is deleted, so the legacy
-    // record is planted as the bytes it wrote and asserted untouched by the composed host.
+    // The legacy record is planted as raw bytes, because no store in this package writes it.
     mkdirSync(join(agentQaRoot, 'proposals'), { recursive: true })
     writeFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), `${JSON.stringify({
       schemaVersion: 1, id: proposalId, kind: proposalKind,
@@ -255,7 +243,7 @@ describe('composeLocalAgent (D-15)', () => {
     expect(readFileSync(join(agentQaRoot, 'proposals', `${proposalId}.json`), 'utf8')).toBe(before)
   })
 
-  it('416 promotes through the caller held lease and records one floor line', async () => {
+  it('promotes through the caller held lease and records one floor line', async () => {
     const knowledgeRoot = join(root, 'knowledge')
     const fixture = createPromotionFloorFixture({ knowledgeRoot })
     const lease = LOCAL_CURATION_CAPABILITIES.maintenance.acquireWriterLease(knowledgeRoot)
@@ -274,7 +262,7 @@ describe('composeLocalAgent (D-15)', () => {
       await expect(LOCAL_CURATION_CAPABILITIES.promoteWithReceipts({ ...input, candidateId: published.id }))
         .resolves.toEqual({ kind: 'already-active', promotionPath: 'deterministic-verdict-floor' })
       expect(readGateReceipts(published.dir, published.id)).toHaveLength(1)
-      const receipt = completeGate1Receipt(published.id)
+      const receipt = markReceipt(published.id)
       await expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ ...input, receipt })).resolves.toEqual({ kind: 'appended' })
       await expect(LOCAL_CURATION_CAPABILITIES.recordGateReceipt({ ...input, receipt })).resolves.toEqual({ kind: 'duplicate' })
       const invalid = { ...input, lease: { leaseId: 'foreign', epoch: lease.epoch } }
@@ -283,24 +271,6 @@ describe('composeLocalAgent (D-15)', () => {
       expect(readGateReceipts(published.dir, published.id)).toHaveLength(2)
     } finally {
       LOCAL_CURATION_CAPABILITIES.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId })
-    }
-  })
-
-  it('416 forwards the host posture factory through composition to the gates reader', async () => {
-    const knowledgeRoot = join(root, 'knowledge')
-    const fixture = createPromotionFloorFixture({ knowledgeRoot })
-    const { published } = fixture.publishHeldCandidate('reader-composition')
-    const resolver = vi.fn(() => resolvedPromotionPosture({ replayGateAvailable: false }))
-    const factory = vi.fn(async () => resolver)
-    const composed = compose({ resolvePromotionPosture: factory })
-    try {
-      expect(factory).not.toHaveBeenCalled()
-      const result = await invokeFunction(composed.registry, 'knowledge.gates.list', { recordId: published.id }, CALLER)
-      expect(result).toMatchObject({ posture: 'resolved' })
-      expect(factory).toHaveBeenCalledOnce()
-      expect(resolver).toHaveBeenCalledWith(expect.objectContaining({ id: published.id }))
-    } finally {
-      await composed.close()
     }
   })
 
@@ -347,10 +317,7 @@ describe('composeLocalAgent (D-15)', () => {
     expect(configReads).toBe(1)
   })
 
-  // RE-SPELLED 2026-09-30 (432-13, D-15) from 'leaves a real audit row at the project root for every
-  // invocation'. The op gate that wrote that row is gone: an invocation dispatches and decides
-  // nothing, so the composition writes no execution-audit file for it.
-  it('C432-INVOKE-DIRECT: writes NO execution-audit row at the project root for an invocation', async () => {
+  it('writes NO execution-audit row at the project root for an invocation', async () => {
     await expect(invokeFunction(host.registry, 'config.get', {}, CALLER)).resolves.toBeDefined()
 
     expect(existsSync(join(agentQaRoot, 'execution_audit.jsonl'))).toBe(false)
@@ -464,16 +431,11 @@ describe('composeLocalAgent (D-15)', () => {
     expect(SYSTEM_CLOCK.now()).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u)
   })
 
-  // ---- runs.start: what this host can and cannot do (D-16) ------------------------------
+  // ---- runs.start: what this host can and cannot do ------------------------------
 
   it('lists runs.start as UNBOUND when this composition has no run executor', async () => {
-    // D-09's visible state, still carried by the very capability that named it — and now
-    // carried because it is TRUE of this composition rather than because a spec said so.
-    // A host without an executor is a real thing (a listing, a read-only surface, 386's
-    // daemon before it wires one), and the catalog says so instead of hiding the capability.
     const declaration = host.registry.list(CALLER).find((entry) => entry.id === 'runs.start')
 
-    // 432-20 (D-12): no scope column on a declaration.
     expect(declaration).toMatchObject({ bindingStatus: 'unbound' })
     expect(Object.keys(declaration ?? {})).not.toContain('requiredScopes')
     await expect(invokeFunction(host.registry, 'runs.start', {}, CALLER))
@@ -542,21 +504,60 @@ describe('composeLocalAgent (D-15)', () => {
     }
   })
 
-  // Named here rather than left to the cross-package suite that caught it, because the failure is
-  // silent from inside this package: vitest resolves `../store/...` by source, so every test above
-  // passes while the PUBLISHED bundle is unloadable. esbuild rewrites `node:sqlite` to a bare
-  // `sqlite`, and unlike `node:fs` that specifier resolves to nothing at all.
+  const PACKAGE_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
+  const REBUILD_INSTRUCTION = 'run `pnpm --filter @vostride/agent-qa-agent-local build` or `pnpm build`'
+    + ' at the repository root first; a stale bundle certifies the previous revision'
+
+  function newestBundleInput(): { path: string; mtimeMs: number } {
+    const repoRoot = join(PACKAGE_ROOT, '..', '..')
+    // The lockfile pins the bundler itself, and the manifest decides what stays external.
+    const inputs = [
+      join(PACKAGE_ROOT, 'tsdown.config.ts'),
+      join(PACKAGE_ROOT, 'package.json'),
+      join(PACKAGE_ROOT, 'tsconfig.json'),
+      join(repoRoot, 'tsconfig.base.json'),
+      join(repoRoot, 'pnpm-lock.yaml'),
+    ]
+    let newest = { path: '', mtimeMs: 0 }
+    for (const file of inputs) {
+      const { mtimeMs } = statSync(file)
+      if (mtimeMs > newest.mtimeMs) newest = { path: relative(PACKAGE_ROOT, file), mtimeMs }
+    }
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === '__tests__') continue
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) {
+          walk(full)
+          continue
+        }
+        if (!entry.isFile() || /\.test(?:-d)?\.ts$/u.test(entry.name)) continue
+        const { mtimeMs } = statSync(full)
+        if (mtimeMs > newest.mtimeMs) newest = { path: relative(PACKAGE_ROOT, full), mtimeMs }
+      }
+    }
+    walk(join(PACKAGE_ROOT, 'src'))
+    return newest
+  }
+
+  // vitest resolves the source, so only the built bundle shows a lost `node:` prefix, and a bare
+  // `sqlite` specifier resolves to nothing.
   it('keeps the node: protocol in the published bundle, or the store cannot be imported', () => {
-    const config = readFileSync(
-      new URL('../../../tsup.config.ts', import.meta.url),
-      'utf8',
-    )
-    expect(config).toContain('removeNodeProtocol: false')
+    const newest = newestBundleInput()
+    for (const file of ['index.js', 'index.cjs']) {
+      const path = join(PACKAGE_ROOT, 'dist', file)
+      expect(existsSync(path), `dist/${file} is missing; ${REBUILD_INSTRUCTION}`).toBe(true)
+      const stale = `${newest.path} is newer than dist/${file}; ${REBUILD_INSTRUCTION}`
+      expect(statSync(path).mtimeMs, stale).toBeGreaterThanOrEqual(newest.mtimeMs)
+      const bundle = readFileSync(path, 'utf8')
+      expect(bundle).toContain('node:sqlite')
+      expect(bundle).not.toMatch(/(?:from|import|require\()\s*["']sqlite["']/)
+    }
   })
 
-  // ---- the 389 plan-06 bindings: analysis reader, recurrence, capability members ----------
+  // ---- the analysis bindings: analysis reader, recurrence, capability members ----------
 
-  describe('the 389-06 analysis bindings (385 D-15)', () => {
+  describe('the analysis bindings', () => {
     const ANALYZED_RUN_ID = 'run_bound_analysis'
     const TEST_FILE_PATH = 'tests/checkout.yaml'
     const TEST_NAME = 'checkout loads'
@@ -596,7 +597,7 @@ describe('composeLocalAgent (D-15)', () => {
       return runDir
     }
 
-    /** Seeds the derived run-outcome projection through the REAL writer path (plan 02's law). */
+    /** Seeds the derived run-outcome projection through the real writer path. */
     function seedOutcome(handoff: CompletedRunHandoff): void {
       const path = indexDbPath(knowledgeRootDir())
       mkdirSync(dirname(path), { recursive: true })
@@ -654,15 +655,12 @@ describe('composeLocalAgent (D-15)', () => {
         host.registry, 'analysis.get', { runId: ANALYZED_RUN_ID }, CALLER,
       ) as AnalysisAnswer
 
-      // Artifact absent → the D-10 floor: the minted unknown, honestly rendered.
+      // Artifact absent: the answer is the minted unknown.
       expect(answer.verdicts).toEqual([
         {
           perTest: 0, testId: 't_checkout', class: 'unknown',
           producer: 'deterministic-classifier', confidence: 0,
-          // 406-03 (`a8bf2950`) put every verdict's own evidence on the wire. The
-          // deterministic floor cites nothing, and asserting that here — rather than
-          // relaxing this pin to a subset match — keeps the exact-equality claim that
-          // the floor is the minted unknown and NOTHING else.
+          // The deterministic floor cites nothing; an exact match keeps it the minted unknown only.
           evidence: { citedSteps: [], citedArtifacts: [] },
         },
       ])
@@ -683,7 +681,7 @@ describe('composeLocalAgent (D-15)', () => {
       expect(answer.sentences[0]!.sentence).toContain('app_bug: observed (test outcome): "failed"')
     })
 
-    it('refuses a PRESENT artifact recording another run\'s id — floor by identity, adoption once corrected (G-389-3A)', async () => {
+    it('refuses a PRESENT artifact recording another run\'s id — floor by identity, adoption once corrected', async () => {
       // The two-sided-contract pin law: BOTH legs have the file PRESENT on run B's own
       // path — only the recorded runId varies — which is what distinguishes the identity
       // refusal from absence. The write half derives this path FROM artifact.runId; a
@@ -701,10 +699,7 @@ describe('composeLocalAgent (D-15)', () => {
         {
           perTest: 0, testId: 't_checkout', class: 'unknown',
           producer: 'deterministic-classifier', confidence: 0,
-          // 406-03 (`a8bf2950`) put every verdict's own evidence on the wire. The
-          // deterministic floor cites nothing, and asserting that here — rather than
-          // relaxing this pin to a subset match — keeps the exact-equality claim that
-          // the floor is the minted unknown and NOTHING else.
+          // The deterministic floor cites nothing; an exact match keeps it the minted unknown only.
           evidence: { citedSteps: [], citedArtifacts: [] },
         },
       ])
@@ -749,8 +744,7 @@ describe('composeLocalAgent (D-15)', () => {
       expect(first.sentences[0]!.sentence)
         .toContain('failure 1 of this test in the last 1 builds')
 
-      // A second recorded failure of the SAME identity, folded between the two invocations —
-      // the D-08 live join must see it without any recomposition.
+      // A second failure of the same identity between invocations; the live join must see it.
       seedOutcome(failedHandoff('run_bound_analysis_b', 2))
 
       const second = await invokeFunction(
@@ -761,10 +755,7 @@ describe('composeLocalAgent (D-15)', () => {
     })
 
     it('primes an ASYNC knowledge root before the sync join — the CLI-host resolver shape', async () => {
-      // The CLI host's knowledgeRoot resolver is async (it layers configuration). The
-      // recurrence seam is SYNC by decision (plan 05), so a one-shot invocation on such a
-      // host would render the no-history clause FALSELY unless the invocation path resolves
-      // the root before the join runs. This is that exact hazard, pinned.
+      // The CLI root resolver is async and the seam sync, so the invocation resolves it first.
       plantHandoff(failedHandoff(ANALYZED_RUN_ID, 1))
       seedOutcome(failedHandoff(ANALYZED_RUN_ID, 1))
 
@@ -782,14 +773,7 @@ describe('composeLocalAgent (D-15)', () => {
       }
     })
 
-    // ---- G-389-2: the failing-resolver degrade contract (389-08) --------------------------
-    //
-    // The doc at createProjectionRecurrenceProvider promises "a resolution failure is
-    // swallowed HERE only — the provider then answers the honest no-history clause". These
-    // three cases make that sentence a measurement. The run fixture carries TWO failed
-    // members deliberately: the sentences loop is one synchronous pass, and only a second
-    // verdict makes it mint a second root-resolution promise while the first is in flight —
-    // the defect is unreachable with one.
+    // Two failed members: only a second verdict mints a second promise while one is in flight.
 
     function twoFailureHandoff(runId: string, buildOrdinal: number): CompletedRunHandoff {
       return {
@@ -815,17 +799,8 @@ describe('composeLocalAgent (D-15)', () => {
       }
     }
 
-    it('never crashes the render on a rejecting async resolver (G-389-2)', async () => {
-      // A CLI host whose async config resolution rejects, plus one analysis.get over a run
-      // with >=2 verdicts. The op must RESOLVE with the explicit no-history clause in every
-      // sentence, zero unhandled rejections may fire, and the resolver is consulted exactly
-      // twice.
-      //
-      // THE TWO ARE THE RECURRENCE PROVIDER: prime's mint plus ONE re-mint by the first join after
-      // the rejection reset. The second join in the same synchronous loop reuses the in-flight
-      // promise, and THAT is the single-flight property this case pins: a regression there pushes
-      // the total to three. (Until 432-13 a third call was the op gate's per-invocation
-      // standing-approval reader; the gate and that resolution are gone.)
+    it('never crashes the render on a rejecting async resolver', async () => {
+      // Prime's mint plus one re-mint; the second join reuses the in-flight promise.
       const runId = 'run_rejecting_resolver'
       plantHandoff(twoFailureHandoff(runId, 1))
 
@@ -929,7 +904,7 @@ describe('composeLocalAgent (D-15)', () => {
       }
     })
 
-    // ---- the capability members plan 04 declared, bound here (postRunCapabilities) --------
+    // ---- the capability members, bound here (postRunCapabilities) --------
 
     function capabilityInput(
       overrides: Partial<ComposeLocalAgentInput> = {},
@@ -978,8 +953,7 @@ describe('composeLocalAgent (D-15)', () => {
       const caps = postRunCapabilities(capabilityInput(), knowledgeRootDir())!
 
       expect(caps.readEvidenceBlob?.(ANALYZED_RUN_ID, stored.sha)).toEqual(bytes)
-      // T-389-14: the 64-hex guard precedes the join — a traversal-shaped sha answers
-      // undefined, and so does a well-formed sha no blob was ever written under.
+      // The 64-hex guard precedes the join, so a traversal-shaped sha answers `undefined`.
       expect(caps.readEvidenceBlob?.(ANALYZED_RUN_ID, '../../etc/passwd')).toBeUndefined()
       expect(caps.readEvidenceBlob?.(ANALYZED_RUN_ID, 'a'.repeat(64))).toBeUndefined()
     })
@@ -996,7 +970,7 @@ describe('composeLocalAgent (D-15)', () => {
       const without = postRunCapabilities(capabilityInput(), knowledgeRootDir())!
       expect(without.analysisTokenBudget).toBeUndefined()
 
-      // No postRun input → no capability bag at all, exactly as before this plan.
+      // No postRun input → no capability bag at all.
       const bagless = capabilityInput()
       expect(postRunCapabilities(
         { ...bagless, postRun: undefined } as unknown as ComposeLocalAgentInput,
@@ -1009,8 +983,7 @@ describe('composeLocalAgent (D-15)', () => {
         new URL('../compose-local-agent.ts', import.meta.url),
         'utf8',
       )
-      // The region spans the projection-read helper (where the plan-02 read is named)
-      // through the capability bag itself — the whole binding path a query crosses.
+      // The region spans the projection-read helper through the capability bag, the whole binding.
       const start = source.indexOf('function readProjectedTestHistory')
       expect(start).toBeGreaterThan(-1)
       const end = source.indexOf('export function composeLocalAgent', start)
@@ -1024,14 +997,9 @@ describe('composeLocalAgent (D-15)', () => {
     })
   })
 
-  // ---- the 390-06 quarantine bindings: the three verbs, and the rebound recurrence seam ----
-  //
-  // SC4 is the spine: the sentence's recurrence clause and the `quarantine.list` verb must be two
-  // readings of ONE live computation, not a number restated in two places. The differential that
-  // proves it mutates the ledger BETWEEN two `analysis.get` calls through the bound `add` verb —
-  // one mutation, two surfaces — and both halves are addressed by the same test identity.
+  // The recurrence clause and `quarantine.list` must read one live computation.
 
-  describe('the 390-06 quarantine bindings (D-12/D-13/D-17, SC4)', () => {
+  describe('the quarantine bindings', () => {
     const QUARANTINED_RUN_ID = 'run_quarantine_a'
     const TEST_FILE_PATH = 'tests/checkout.yaml'
     const TEST_NAME = 'checkout loads'
@@ -1070,13 +1038,7 @@ describe('composeLocalAgent (D-15)', () => {
       }
     }
 
-    /**
-     * One failed member with ONE failing step anchored on `anchorName`.
-     *
-     * The anchor name is the only thing that varies, and it is what makes two runs of the SAME
-     * test carry two DIFFERENT fingerprints — which is the only way to tell the fingerprint-keyed
-     * window (390 D-07) apart from the per-test one it replaced.
-     */
+    // Only the anchor name varies, so two runs of one test carry different fingerprints.
     function steppedHandoff(
       runId: string,
       buildOrdinal: number,
@@ -1187,14 +1149,14 @@ describe('composeLocalAgent (D-15)', () => {
 
     // ---- the binding itself ---------------------------------------------------------------
 
-    it('lists all three quarantine verbs as BOUND on this composition (385 D-15)', () => {
+    it('lists all three quarantine verbs as BOUND on this composition', () => {
       const listed = host.registry.list(WRITE_CALLER)
       for (const id of ['quarantine.list', 'quarantine.release', 'quarantine.add']) {
         expect(listed.find((entry) => entry.id === id)).toMatchObject({ bindingStatus: 'bound' })
       }
     })
 
-    it('answers an empty list against a knowledge root with no ledger — the FLAK-03 empty edge', async () => {
+    it('answers an empty list against a knowledge root with no ledger', async () => {
       expect(await invokeFunction(host.registry, 'quarantine.list', {}, CALLER))
         .toEqual({ entries: [] })
     })
@@ -1227,9 +1189,9 @@ describe('composeLocalAgent (D-15)', () => {
         .toEqual({ kind: 'no-entry' })
     })
 
-    // ---- SC4: one computation, two surfaces ------------------------------------------------
+    // ---- one computation, two surfaces ------------------------------------------------
 
-    it('SC4: a ledger mutation between two analysis.get calls changes the clause, and the SAME mutation shows in quarantine.list', async () => {
+    it('a ledger mutation between two analysis.get calls changes the clause, and the SAME mutation shows in quarantine.list', async () => {
       plantHandoff(failedHandoff(QUARANTINED_RUN_ID, 1))
       seedOutcome(failedHandoff(QUARANTINED_RUN_ID, 1))
 
@@ -1268,7 +1230,7 @@ describe('composeLocalAgent (D-15)', () => {
       )
     })
 
-    it('renders the EXPIRED arm with the recorded deadline — failures count again (D-11)', async () => {
+    it('renders the EXPIRED arm with the recorded deadline — failures count again', async () => {
       plantHandoff(failedHandoff(QUARANTINED_RUN_ID, 1))
       seedOutcome(failedHandoff(QUARANTINED_RUN_ID, 1))
       // The SAME entry with a deadline already behind it: suppression stopped, the entry stays
@@ -1297,8 +1259,7 @@ describe('composeLocalAgent (D-15)', () => {
         'utf8',
       )
 
-      // Committed truth this build cannot read is a refusal, never a healed absence: healing here
-      // renders a suppressed test as ordinary, which is the silent flip the phase exists to stop.
+      // Committed truth this build cannot read is a refusal, never a healed absence.
       await expect(sentenceFor(QUARANTINED_RUN_ID))
         .rejects.toMatchObject({ name: 'QuarantineLedgerVersionError' })
       await expect(invokeFunction(host.registry, 'quarantine.list', {}, CALLER))
@@ -1308,9 +1269,7 @@ describe('composeLocalAgent (D-15)', () => {
     // ---- the fingerprint-keyed rebind ------------------------------------------------------
 
     it('counts recurrence per FINGERPRINT, not per test — two different failures of one test stay apart', async () => {
-      // Same identity, two builds, two DIFFERENT anchors. The per-test window this seam was bound
-      // to in 389 answers `failure 2`; the fingerprint window 390 rebound it to answers `failure 1`,
-      // because the second build's failure is not a recurrence of the first one.
+      // Same identity, two different anchors: the fingerprint window answers `failure 1`.
       plantHandoff(steppedHandoff('run_fp_a', 1, 'Submit'))
       plantHandoff(steppedHandoff('run_fp_b', 2, 'Pay'))
       seedOutcome(steppedHandoff('run_fp_a', 1, 'Submit'))
@@ -1319,9 +1278,7 @@ describe('composeLocalAgent (D-15)', () => {
       expect(await sentenceFor('run_fp_b'))
         .toContain('failure 1 of this test in the last 2 builds')
 
-      // The control that makes the pin above load-bearing: a THIRD build repeating the FIRST
-      // anchor is a recurrence, so run A's own fingerprint now counts two — and crossing the flag
-      // floor renders D-06's one build of warning.
+      // Control: a third build with the first anchor recurs, so run A's fingerprint counts two.
       plantHandoff(steppedHandoff('run_fp_c', 3, 'Submit'))
       seedOutcome(steppedHandoff('run_fp_c', 3, 'Submit'))
 

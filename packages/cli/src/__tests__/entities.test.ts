@@ -1,17 +1,4 @@
-// `agent-qa entities` — the verb that replaced `ids` (Phase 387 plan 09, D-20).
-//
-// This file replaces `ids.test.ts`, and the substitution is deliberate rather than
-// bookkeeping. What that suite actually covered was a CLI surface over id minting: parse a
-// type, call the generator, print, set an exit code. The generator itself is covered where it
-// lives (`packages/ids/src/__tests__/persistent-id.test.ts`) and did NOT move — the addressing
-// ledger maps FROM those ids — so nothing was lost by deleting the command's own suite. What
-// is covered here is the property that replaced it: this surface owns no capability at all,
-// and the card it prints came out of the function layer.
-//
-// Every case runs the real command against a real temp project: a bundle is genuinely
-// published to disk, the composition root is genuinely built, and the addressing ledger is a
-// real sqlite file. A stubbed registry would let a renderer that fabricated a plausible card
-// pass every assertion below.
+// Real command, real temp project and real sqlite, so a renderer fabricating a card cannot pass.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -42,8 +29,12 @@ const PRODUCT = 'shop'
 interface InvocationResult {
   stdout: string
   stderr: string
+  writes: string[]
+  errorWrites: string[]
   exitCode: typeof process.exitCode
 }
+
+const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
 
 interface FixtureWorkspace {
   root: string
@@ -69,7 +60,6 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
       },
       knowledge: {
         dir: 'agent-qa-knowledge',
-        commitArtifacts: 'none',
       },
       use: {
         mobile: { appState: 'preserve' },
@@ -125,7 +115,6 @@ function seedBundle(workspace: FixtureWorkspace, name: string): string {
   const config: BundleStoreConfig = {
     knowledgeRoot: workspace.knowledgeRoot,
     productKey: PRODUCT,
-    commitArtifacts: 'none',
   }
   const outcome = publishBundleForTest(config, bundleInput(name, 5))
   expect(outcome.kind).toBe('published')
@@ -145,6 +134,16 @@ async function invoke(
   const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
     stderr.push(values.map(String).join(' '))
   })
+  const writes: string[] = []
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+    writes.push(String(chunk))
+    return true
+  })
+  const errorWrites: string[] = []
+  const errorWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+    errorWrites.push(String(chunk))
+    return true
+  })
   process.exitCode = undefined
 
   try {
@@ -160,10 +159,18 @@ async function invoke(
       'entities',
       ...args,
     ])
-    return { stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode: process.exitCode }
+    return {
+      stdout: stdout.join('\n'),
+      stderr: stderr.join('\n'),
+      writes,
+      errorWrites,
+      exitCode: process.exitCode,
+    }
   } finally {
     log.mockRestore()
     error.mockRestore()
+    write.mockRestore()
+    errorWrite.mockRestore()
   }
 }
 
@@ -200,7 +207,7 @@ describe('agent-qa entities (the addressing debug verb)', () => {
     // fabricated could satisfy the object above and still not be a card.
     if (resolution.kind !== 'resolved') throw new Error('expected the resolved arm')
     expect(EntityCardSchema.safeParse(resolution.card).success).toBe(true)
-    // D-10: no dashboard base URL is configured, so no link is offered.
+    // No dashboard base URL is configured, so no link is offered.
     expect(Object.hasOwn(resolution.card, 'url')).toBe(false)
   })
 
@@ -268,5 +275,88 @@ describe('agent-qa entities (the addressing debug verb)', () => {
 
     expect(result.exitCode).toBe(1)
     expect(stripVTControlCharacters(result.stderr)).toContain('[missing-ref]')
+  })
+})
+
+describe('agent-qa entities under GitHub Actions', () => {
+  const roots: string[] = []
+  const CRAFTED = '##[error]x ::set-output name=x::y'
+  let originalExitCode: typeof process.exitCode
+
+  beforeEach(() => {
+    originalExitCode = process.exitCode
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    process.exitCode = originalExitCode
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('prints a card carrying a workflow command inside one stop-commands pair', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundleId = seedBundle(workspace, CRAFTED)
+    const plain = await invoke(workspace, ['resolve', bundleId])
+    expect(plain.stdout).toContain('::set-output name=x::y')
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, ['resolve', bundleId])
+
+    expect(result.stdout).toBe('')
+    expect(result.writes).toHaveLength(1)
+    expect(result.writes[0]).toMatch(PAIR)
+    expect(result.writes[0]).toContain(`\n${plain.stdout}\n`)
+  })
+
+  it('prints --json with no # and the same value', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundleId = seedBundle(workspace, CRAFTED)
+    const plain = await invoke(workspace, ['resolve', bundleId, '--json'])
+    expect(plain.stdout).toContain('##[error]x')
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, ['resolve', bundleId, '--json'])
+
+    expect(result.writes).toEqual([])
+    expect(result.stdout).not.toContain('#')
+    expect(JSON.parse(result.stdout)).toEqual(JSON.parse(plain.stdout))
+  })
+
+  it('prints an error inside a pair, on stderr while --json holds stdout', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedBundle(workspace, 'Checkout')
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const human = await invoke(workspace, ['get', 'MEM-404'])
+    const json = await invoke(workspace, ['get', 'MEM-404', '--json'])
+
+    expect(human.exitCode).toBe(1)
+    expect(human.stderr).toBe('')
+    expect(human.writes).toHaveLength(1)
+    expect(human.writes[0]).toMatch(PAIR)
+    expect(human.writes[0]).toContain('Entities get error')
+    expect(json.exitCode).toBe(1)
+    expect(json.writes).toEqual([])
+    expect(json.stdout).toBe('')
+    expect(json.stderr).toBe('')
+    expect(json.errorWrites).toHaveLength(1)
+    expect(json.errorWrites[0]).toMatch(PAIR)
+  })
+
+  it('prints the same card and JSON as before without the variable', async () => {
+    const workspace = fixtureWorkspace(roots)
+    const bundleId = seedBundle(workspace, CRAFTED)
+
+    const human = await invoke(workspace, ['resolve', bundleId])
+    const json = await invoke(workspace, ['resolve', bundleId, '--json'])
+
+    expect(human.writes).toEqual([])
+    expect(human.stdout).toContain(CRAFTED)
+    expect(human.stdout).not.toContain('::stop-commands::')
+    expect(json.writes).toEqual([])
+    expect(json.stdout).toBe(JSON.stringify(JSON.parse(json.stdout), null, 2))
+    expect(json.stdout).toContain(CRAFTED)
   })
 })

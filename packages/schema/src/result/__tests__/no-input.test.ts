@@ -1,20 +1,18 @@
-// 2026-10-08 (437-03, D-05): the one reader of a skipped tap's no-input block, shared by the
-// runner and the dashboard.
 import { describe, expect, it } from 'vitest'
 
 import { actionDidNotFail, readIdempotentNoopMeta } from '../../index'
 
 const withNoop = (idempotentNoop: unknown) => ({ metadata: { idempotentNoop } })
 
-describe('C437-NO-INPUT-READER', () => {
-  it('reads the 437 block that marks no input sent', () => {
+describe('the no-input-sent block reader', () => {
+  it('reads the block that marks no input sent', () => {
     expect(readIdempotentNoopMeta(withNoop({ currentState: 'checked', inputSent: false }))).toEqual({
       currentState: 'checked',
       inputSent: false,
     })
   })
 
-  it('reads a pre-437 block that carries only the current state', () => {
+  it('reads an older block that carries only the current state', () => {
     expect(readIdempotentNoopMeta(withNoop({ currentState: 'checked' }))).toEqual({
       currentState: 'checked',
     })

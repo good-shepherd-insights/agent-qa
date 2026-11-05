@@ -1,20 +1,5 @@
 // @vitest-environment jsdom
-//
-// THE MEMBER-GROUPED STEP TREE (405-08 · DETL-01, D-16 / D-17 / D-18).
-//
-// The tree these cells drive reads the DURABLE projection and nothing else. Every fixture below is
-// a real `RunDetailMember` / `RunDetailStep` / `RunDetailSubAction` — no casts through `unknown`,
-// because a cast would throw away the one property that makes typing the UI on the op's contract
-// worth anything: a payload drift becomes a compile error here rather than an `undefined` in a
-// text node.
-//
-// COPY IS ASSERTED BY CONSTANT (405-06's law). `reranLabel`, `memberNote` and `DID_NOT_RUN_LABEL`
-// come from `lib/run-detail-view.ts`, so a sentence moves in one place and these cells move with
-// it. A string re-typed here would stay green while the page said something else.
-//
-// THE `data-*` ATTRIBUTES CARRY RAW WORDS, not labels — `data-member-outcome="failed"`,
-// `data-sub-action-result="success"` — because 405-12's Playwright cells address the built bundle
-// and a cell reading visible text would be asserting on presentation.
+// `data-*` attributes carry raw words, not labels, because DOM cells address the built bundle.
 
 import { act, type ReactElement, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -127,7 +112,7 @@ function tree(groups: RunDetailGroup[], showMemberChrome: boolean) {
   )
 }
 
-describe("the step tree groups by member (D-16)", () => {
+describe("the step tree groups by member", () => {
   it("renders one group per member in handle order, each named and handled", () => {
     const view = tree(
       [
@@ -164,20 +149,13 @@ describe("the step tree groups by member (D-16)", () => {
 
 })
 
-describe("every member wears its outcome, in the navbar's one palette (406 D-07)", () => {
-  // WHAT THIS REPLACED. Until 406-06 this file asserted the OPPOSITE — no badge on a member that
-  // ran — because 405 D-16 was explicit that per-member outcomes beside the aggregate were 406's
-  // DETL-04 and were not to be pre-claimed. 406 D-07 is that decision arriving: the badge goes on
-  // every member that has an outcome, so "one aggregate + N members" reads as one vocabulary.
-  //
-  // AND IT IS ASSERTED THROUGH `statusBadgeLook`, never through colour strings typed here. The
-  // navbar and this header now share one definition; a cell that re-typed `emerald-500` would keep
-  // passing on the day the palette moved and the two surfaces diverged.
+describe("every member wears its outcome, in the navbar's one palette", () => {
+  // Asserted through `statusBadgeLook`, so the navbar and member header share one palette.
   it("badges a member that PASSED, in the palette the run's own verdict badge uses", () => {
     const view = tree([group(member(0, { name: "Login", outcome: "passed" }), [step(0, 0)])], true)
 
     const badge = view.querySelector('[data-member-outcome="passed"]')
-    expect(badge, "a passed member says so — this is the D-07 reversal").not.toBeNull()
+    expect(badge, "a passed member says so").not.toBeNull()
     expect(badge?.textContent).toBe(statusBadgeLook("passed").label)
     for (const cls of (statusBadgeLook("passed").className ?? "").split(" ")) {
       expect(badge?.className, `the navbar's own ${cls}`).toContain(cls)
@@ -207,7 +185,7 @@ describe("every member wears its outcome, in the navbar's one palette (406 D-07)
   })
 })
 
-describe("the toggle of a group that holds a verdict says so, collapsed or not (425 WR-01)", () => {
+describe("the toggle of a group that holds a verdict says so, collapsed or not", () => {
   function verdictFor(testIndex: number): MemberVerdictView {
     return {
       testIndex,
@@ -248,7 +226,7 @@ describe("the toggle of a group that holds a verdict says so, collapsed or not (
   })
 })
 
-describe("a re-run says so, and a first attempt says nothing (D-17)", () => {
+describe("a re-run says so, and a first attempt says nothing", () => {
   it("reads the re-run count off `attempts` for a member that was re-run", () => {
     const label = reranLabel(3)
     expect(label).toBeDefined()
@@ -265,8 +243,8 @@ describe("a re-run says so, and a first attempt says nothing (D-17)", () => {
   })
 })
 
-describe("a member that never ran renders honestly, never as an empty tree (D-18)", () => {
-  it("shows the did-not-run note BESIDE the badge, and the producer's own summary (405 D-18)", () => {
+describe("a member that never ran renders honestly, never as an empty tree", () => {
+  it("shows the did-not-run note BESIDE the badge, and the producer's own summary", () => {
     const view = tree(
       [
         group(
@@ -278,14 +256,13 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
     )
 
     expect(view.textContent).toContain(DID_NOT_RUN_LABEL)
-    // BOTH, and that is the D-07 point: the badge is now every member's, so the one place the
-    // outcome word already appeared must not lose its note to it.
+    // Both, because the badge must not take the note from the one place the outcome word appeared.
     expect(view.querySelector('[data-member-outcome="skipped"]')).toBeTruthy()
     expect(view.querySelector("[data-member-note]")?.textContent).toBe(DID_NOT_RUN_LABEL)
     expect(view.textContent).toContain("skipped by fail-fast")
   })
 
-  it("shows the summary's stored marker as written, with no chip (D-28, 405 CR-03)", () => {
+  it("shows the summary's stored marker as written, with no chip", () => {
     const view = tree(
       [
         group(
@@ -305,7 +282,7 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
     expect(view.querySelector("[data-masked]")).toBeNull()
   })
 
-  it("leaves the member's NAME unmasked — structural identity is not a redaction (405 CR-03)", () => {
+  it("leaves the member's NAME unmasked — structural identity is not a redaction", () => {
     // A CONTROL, and the asymmetry it pins is deliberate. `testStarted.name` is published UNMASKED
     // beside `testId` as structural identity, so a name that happens to contain a marker-shaped
     // sentence is not a redaction the producer made. Sending it through the seam would claim one.
@@ -330,7 +307,7 @@ describe("a member that never ran renders honestly, never as an empty tree (D-18
   })
 })
 
-describe("a sub-action carries its action sentence and its result word (D-16)", () => {
+describe("a sub-action carries its action sentence and its result word", () => {
   it("renders the action sentence and addresses itself by ordinal", () => {
     const view = mount(
       <ul>

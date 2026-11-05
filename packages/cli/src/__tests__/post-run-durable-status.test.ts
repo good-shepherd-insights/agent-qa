@@ -1,21 +1,4 @@
-// SC4's closed-socket half, and the 386 D-16 two-receipt rule (Phase 388 plan 06).
-//
-// Two claims, measured against the same real daemon generation:
-//
-//   1. A USER WHO EXITS AND RE-QUERIES SEES THE TRUTH. Chip status is read through the one op
-//      (`runs.postprocessing`) from a SECOND composition over the same project root — mid-chain
-//      while the daemon is still working, and again after the daemon has been stopped and its
-//      socket is gone. Nothing is asked of another process in either read; nothing could be.
-//   2. THE DAEMON NEVER WRITES A FINISHED RUN'S LOG. `events.jsonl` is snapshotted the moment the
-//      CLI tail returns and compared whole after the daemon's ENTIRE drain — claim, analysis,
-//      chain, curation, chain terminal, shutdown — has completed.
-//
-// The second claim's honesty rests on where `createChipEmitter(` sits: it is constructed once in
-// the product, inside `post-run-tail.ts`'s acquired-lease branch, which is the one branch a
-// handed-off run never reaches and a daemon never runs at all. That is asserted here too, because
-// a byte comparison over a file nothing was ever going to touch is a comparison over nothing —
-// see the differential recorded in the plan summary, which puts an emitter on the daemon's own
-// curation binding and turns this file red.
+// Chip status is re-read from a second composition; the daemon's drain leaves `events.jsonl`.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -46,7 +29,7 @@ import {
 } from './post-run-daemon/spawn-helpers.js'
 
 const describePosix = process.platform === 'win32' ? describe.skip : describe
-const RUN_ID = 'run-388-06-durable'
+const RUN_ID = 'run-durable'
 
 const hosts: LocalAgentHost[] = []
 
@@ -57,7 +40,7 @@ afterEach(async () => {
 
 afterAll(cleanupPostRunDaemonRoots)
 
-describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', () => {
+describePosix('post-processing status survives a closed socket', () => {
   test(
     'answers mid-chain and after the daemon is gone, from durable rows alone, while the run log '
     + 'stays byte-identical across the whole drain',
@@ -98,12 +81,7 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
       expect(tail.info).toEqual([
         'post-processing — analysis: pending (daemon will drain) · curation: pending'
         + ' (deferred to a later local run)'
-        // 391 D-17: the handed-off tail completed no analyze-run in-process, so the exit line
-        // carries the pending-proposal count and the exact fetch command for the digest the
-        // daemon's chain will fill in. Nothing is waiting on a human in this fixture, and the
-        // line says `0 pending` rather than omitting the clause — the count is READ, so its
-        // absence would mean the digest could not be composed.
-        + ' · trust priors: provisional'
+        // The handed-off tail completed no analyze-run, so the exit line carries the fetch command.
         + ` · digest: agent-qa digest "${RUN_ID}"`,
       ])
       expect(tail.warn).toEqual([])
@@ -150,9 +128,7 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
         analysis: 'complete',
         curation: 'complete',
       })
-      // The attached record is the view of the SAME record the terminal transaction wrote,
-      // compared whole: a projection that assembled a plausible notification of its own would
-      // fail here. The stored row keeps its own words (444 D-36).
+      // Compared whole with the record the terminal transaction wrote; a made-up one fails.
       const rows = await readNotifications(paths.agentQaRoot, paths.knowledgeRoot)
       expect(rows).toHaveLength(1)
       expect(afterExit.notification).toEqual(toRunNotificationView(rows[0]!.payload as RunNotification))
@@ -169,16 +145,14 @@ describePosix('post-processing status survives a closed socket (SC4, ANLZ-05)', 
         },
       })
 
-      // ---- 386 D-16: no second process wrote this run's log -------------------------------------
-      // Whole-file equality, across the daemon's entire life: claim, analysis, chain, curation,
-      // chain terminal and shutdown all happened between the two reads.
+      // Whole-file equality across the daemon's entire life between the reads.
       expect(readEventsBytes(project.eventsPath)).toBe(eventsWhenTailReturned)
     },
     LEG_TIMEOUT_MS,
   )
 })
 
-describe('the one construction site that makes the daemon silent (D-13)', () => {
+describe('the one construction site that makes the daemon silent', () => {
   test('the chip emitter is built once, inside the acquired-lease branch, and nowhere else', () => {
     const tail = readFileSync(new URL('../curation/post-run-tail.ts', import.meta.url), 'utf8')
     // One construction site in the whole product, and it is downstream of both early returns —
@@ -202,11 +176,7 @@ describe('the one construction site that makes the daemon silent (D-13)', () => 
       new URL('./post-run-daemon/project.ts', import.meta.url),
       'utf8',
     )
-    // Scoped to `openProjectHost`'s own body rather than to the module. The module ALSO holds
-    // `runRealTail`, which uses the real `nudgeDaemon` on purpose — a scan over the whole file
-    // would be reading the tail's powers as the reader's. (And the scan is over CODE: this file
-    // explains in prose what it does not do, and prose is what the 388-02/388-03 extractor
-    // hazard reads as a specifier.)
+    // Scoped to `openProjectHost`, because `runRealTail` in the module uses the real nudge.
     const start = source.indexOf('export function openProjectHost(')
     expect(start).toBeGreaterThan(0)
     const body = source.slice(start, source.indexOf('\n}\n', start))

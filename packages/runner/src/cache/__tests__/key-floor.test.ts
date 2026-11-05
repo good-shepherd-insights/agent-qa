@@ -1,6 +1,3 @@
-// RED scaffold (Wave 0, CACHE-01 / MASK-FUT-01). Mirrors the v48 safety floor proof
-// (safety/masking/__tests__/cache-key-floor.test.ts) against the runtime key builder.
-// Fails until Plan 03 creates ../key.ts. Do NOT weaken any assertion to make it pass.
 import { describe, expect, it } from 'vitest'
 
 import { computeCacheKey, relevantEnvDigest } from '@vostride/agent-qa-schema'
@@ -37,8 +34,8 @@ function buildInput(stepText: string, mask?: MaskFn) {
   })
 }
 
-describe('runtime cache-key masking floor (CACHE-01 / MASK-FUT-01)', () => {
-  it('masks stepText before it enters key material — masked key differs from raw key (D-05)', () => {
+describe('runtime cache-key masking floor', () => {
+  it('masks stepText before it enters key material — masked key differs from raw key', () => {
     const masked = buildInput(STEP_TEXT, declaredMask())
     const raw = buildInput(STEP_TEXT)
 
@@ -54,7 +51,7 @@ describe('runtime cache-key masking floor (CACHE-01 / MASK-FUT-01)', () => {
     expect(computeCacheKey(masked)).not.toBe(computeCacheKey(raw))
   })
 
-  it('the ${key}.json filename derived from the masked input carries no raw secret (D-06)', () => {
+  it('the ${key}.json filename derived from the masked input carries no raw secret', () => {
     const masked = buildInput(STEP_TEXT, declaredMask())
     const filename = `${computeCacheKey(masked)}.json`
 
@@ -71,7 +68,7 @@ describe('runtime cache-key masking floor (CACHE-01 / MASK-FUT-01)', () => {
   })
 })
 
-describe('C441-RUN-RECORDS', () => {
+describe('masked step text in the cache key', () => {
   it('the cache key folds the masked step text', () => {
     const mask = declaredMask()
 

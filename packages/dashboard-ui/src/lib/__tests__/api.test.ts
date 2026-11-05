@@ -142,7 +142,7 @@ describe('ApiError propagation through postJson', () => {
   })
 })
 
-describe('C441-GAP2-TEST-SAVE', () => {
+describe('a test save refused for a written-back secret marker', () => {
   it('a test save refused as marker_written_back rejects with the sentence as its message', async () => {
     const sentence = 'This holds [secret:<name>], the way a declared secret is shown.'
     globalThis.fetch = vi.fn()
@@ -187,10 +187,10 @@ describe('dashboard analytics instrumentation boundaries', () => {
         status: 201,
         json: async () => ({
           hook: {
-            id: 'h_phase244',
-            name: 'Phase 244 Hook',
+            id: 'h_smoke',
+            name: 'Smoke Hook',
             runtime: 'node',
-            file: 'hooks/phase244.js',
+            file: 'hooks/smoke.js',
             timeout: '30s',
             network: true,
           },
@@ -209,15 +209,15 @@ describe('dashboard analytics instrumentation boundaries', () => {
     })
     await expect(createHook({
       hook: {
-        name: 'Phase 244 Hook',
+        name: 'Smoke Hook',
         runtime: 'node',
-        file: 'hooks/phase244.js',
+        file: 'hooks/smoke.js',
         timeout: '30s',
         network: true,
       },
       source: 'export default async function hook() {}',
     })).resolves.toMatchObject({
-      hook: { id: 'h_phase244' },
+      hook: { id: 'h_smoke' },
     })
   })
 
@@ -225,14 +225,14 @@ describe('dashboard analytics instrumentation boundaries', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 201,
-      json: async () => ({ sessionId: 'live_phase244', sessionNumber: 42 }),
+      json: async () => ({ sessionId: 'live_smoke', sessionNumber: 42 }),
     }) as unknown as typeof fetch
 
     await expect(createLiveEditorSession({
       platform: 'ios',
       entity: { type: 'suite', id: 's_secret' },
     })).resolves.toEqual({
-      sessionId: 'live_phase244',
+      sessionId: 'live_smoke',
       sessionNumber: 42,
     })
   })

@@ -44,7 +44,7 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-describe('FsCassetteStore (D-05/D-06/D-07)', () => {
+describe('FsCassetteStore', () => {
   let root: string
 
   beforeEach(async () => {
@@ -98,14 +98,6 @@ describe('FsCassetteStore (D-05/D-06/D-07)', () => {
 
     expect(raw).toBe(`${JSON.stringify(extracted.cassette, null, 2)}\n`)
     expect(guardCassette(JSON.parse(raw))).toEqual(extracted.cassette)
-  })
-
-  it('uses an explicit outputDir instead of the default staging root', async () => {
-    const outputDir = join(root, 'retargeted-cassettes')
-    const written = new FsCassetteStore({ root, outputDir }).write(fixtureLeaf())
-
-    expect(relative(outputDir, written.dir)).not.toMatch(/^\.\.(?:[/\\]|$)/)
-    expect(await exists(join(root, DEFAULT_EVAL_CASSETTES_SUBDIR))).toBe(false)
   })
 
   it('omits byte-sha mismatches and persists evidence-incomplete completeness', async () => {

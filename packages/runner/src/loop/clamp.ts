@@ -1,43 +1,24 @@
-// Runner-side clamp/degrade policy helper (Phase 355 / CTXB-04). Pure, generic policy
-// over the shipped Phase 354 TokenAccounting port: the dynamic output clamp
-// (max_output = max(floor, min(default, C − I − safety))), the percentage-plus-floor
-// safety margin, the proactive/reactive degrade wiring, the observation+instruction
-// pins, retry-exactly-once on a live context overflow, the recordUsage feed, and the
-// structured cannot-fit outcome (never a crash, D-17).
-//
-// CRITICAL: provider-neutral. Imports message/usage TYPES from 'ai' only and the runner
-// TokenAccounting port from './ports.js'; reuses estimateTokens from './prompts.js'.
-// NEVER imports the model package (@vostride/agent-qa-model) or any provider SDK
-// (@ai-sdk/*) — overflow detection is runner-local (validate:arch, mirrors ports.ts).
+// Provider-neutral: overflow detection is runner-local, so no model package or `@ai-sdk/*` import.
 
 import type { LanguageModelUsage, ModelMessage, SystemModelMessage } from 'ai'
 import type { TokenAccounting, RunnerDegradeOutcome } from './ports.js'
 import { estimateTokens } from './prompts.js'
 
-// ---------------------------------------------------------------------------
-// Safety policy (D-02/D-14) — documented, injectable consts. The margin scales
-// with the model window across the full BYOM range (a 4k local model floors at
-// 256; a 1M model reserves 2%), and every knob is overridable per call.
-// ---------------------------------------------------------------------------
+// The margin scales with the model window: a 4k model floors at 256, a 1M model reserves 2%.
 
-/** Fraction of the context window reserved as headroom above the output cap (D-02). */
+/** Fraction of the context window reserved as headroom above the output cap. */
 export const SAFETY_PERCENT = 0.02
-/** Absolute floor for the safety margin — dominates on small windows (D-02). */
+/** Absolute floor for the safety margin — dominates on small windows. */
 export const SAFETY_FLOOR = 256
-/** Floor for the output clamp — the cap never drops to zero/negative (D-01). */
+/** Floor for the output clamp — the cap never drops to zero/negative. */
 export const OUTPUT_FLOOR = 256
 
-/** Per-call overrides for the safety policy (D-14). */
 export interface SafetyOverrides {
   percent?: number
   floor?: number
 }
 
-/**
- * Resolve the safety margin for a context window `C` (D-02/D-14):
- * `max(floor, ceil(percent * C))`. Injectable percentage + floor so callers can
- * tune the reserve without forking the arithmetic.
- */
+// `max(floor, ceil(percent * C))` for a context window `C`.
 export function resolveSafety(contextWindow: number, overrides?: SafetyOverrides): number {
   const percent = overrides?.percent ?? SAFETY_PERCENT
   const floor = overrides?.floor ?? SAFETY_FLOOR
@@ -49,10 +30,6 @@ export function computeSafety(contextWindow: number): number {
   return resolveSafety(contextWindow)
 }
 
-// ---------------------------------------------------------------------------
-// Clamp arithmetic (D-01).
-// ---------------------------------------------------------------------------
-
 export interface ComputeMaxOutputInput {
   contextWindow: number
   inputTokens: number
@@ -63,11 +40,7 @@ export interface ComputeMaxOutputInput {
   floor?: number
 }
 
-/**
- * The dynamic output clamp (D-01):
- * `max(floor, min(default, C − I − safety))`. A tiny/negative headroom clamps up to
- * the floor rather than emitting a zero/negative cap.
- */
+// `max(floor, min(default, C − I − safety))`; a tiny or negative headroom clamps up to the floor.
 export function computeMaxOutput(input: ComputeMaxOutputInput): number {
   const { contextWindow, inputTokens, defaultMaxOutput } = input
   const safety = input.safety ?? resolveSafety(contextWindow)
@@ -75,12 +48,9 @@ export function computeMaxOutput(input: ComputeMaxOutputInput): number {
   return Math.max(floor, Math.min(defaultMaxOutput, contextWindow - inputTokens - safety))
 }
 
-// ---------------------------------------------------------------------------
-// Input estimate (§5.1) — the port's estimate() counts messages only; tool schemas
-// are not in the message stream, so their tokens must be added explicitly (Pitfall 4).
-// ---------------------------------------------------------------------------
+// The port's estimate() counts messages only, so tool-schema tokens are added explicitly.
 
-/** Tool-schema token count for the always-send-all action slice (Pitfall 4). */
+/** Tool-schema token count for the always-send-all action slice. */
 export function estimateToolSchemaTokens(actionTools: unknown): number {
   if (actionTools === undefined || actionTools === null) return 0
   return estimateTokens(JSON.stringify(actionTools))
@@ -158,13 +128,7 @@ export function isContextLengthOverflow(err: unknown): boolean {
   return CONTEXT_OVERFLOW_PATTERNS.some((pattern) => new RegExp(pattern, 'i').test(lower))
 }
 
-// ---------------------------------------------------------------------------
-// The generic clamp → pre-degrade → call → overflow-retry-once → recordUsage
-// wrapper (D-10/D-17). Provider-neutral and result-generic so both the planner
-// (result = PlanningTurnResult) and verifier (result = generateText result)
-// consume it identically (D-03). The tool-loop (planning-turn.ts) stays pure —
-// this module owns all clamp/degrade/retry policy (D-15).
-// ---------------------------------------------------------------------------
+// The planner and verifier both call through this, so the planning turn stays free of policy.
 
 export interface ClampedCallOptions<T> {
   accounting: TokenAccounting
@@ -174,13 +138,12 @@ export interface ClampedCallOptions<T> {
   messages: ModelMessage[]
   /** Serialized action-slice JSON (computed once at the call site); '' when none. */
   toolSchema?: string
-  /** Pin predicate protecting the observation + current instruction (D-08). */
+  /** Pin predicate protecting the observation + current instruction. */
   pin: (message: ModelMessage, index: number) => boolean
   /** Provider call: receives the output cap and the fitted message set. */
   call: (maxOutputTokens: number, messages: ModelMessage[]) => Promise<T>
   /** Overflow predicate; defaults to the runner-local isContextLengthOverflow. */
   isOverflow?: (err: unknown) => boolean
-  /** Per-call safety policy override (D-14). */
   safetyOverride?: SafetyOverrides
   /** Extract the usage anchor from a successful result; defaults to `result.usage`. */
   recordFrom?: (result: T) => LanguageModelUsage
@@ -202,13 +165,7 @@ interface FittedTurn {
   degrade?: RunnerDegradeOutcome
 }
 
-/**
- * Compute the clamp for the current ceilings and fit the turn messages to the input
- * budget. Degrades (proactively) when the input estimate exceeds the budget, or when
- * `force` is set (the reactive backstop after a live overflow). On a cannot-fit
- * (`ok:false`) outcome it keeps the best-effort pinned floor and surfaces the reason —
- * never throws (D-17).
- */
+// Degrades when the estimate exceeds the budget or on `force`; a cannot-fit keeps the pinned floor.
 function fitTurn(
   opts: ClampedCallOptions<unknown>,
   toolSchemaTokens: number,
@@ -229,20 +186,7 @@ function fitTurn(
   return { maxOut, messages: outcome.messages, degrade: outcome }
 }
 
-/**
- * Run one clamped, degrade-fitted provider call with a single reactive overflow retry.
- *
- * 1. Compute the clamp and proactively degrade the turn messages when the input
- *    estimate exceeds the budget (pinning observation + instruction).
- * 2. Invoke `call(maxOut, fittedMessages)`.
- * 3. On a runner-local context overflow, recompute the clamp against the now-shrunk
- *    window (the 354 lazy capabilities thunk has learned it), re-degrade, and retry
- *    the call EXACTLY once. A non-overflow error rethrows unchanged.
- * 4. After a successful response, feed `recordUsage` once with the full sent set.
- *
- * Never throws for the cannot-fit case — it proceeds with the pinned floor and returns
- * the structured degrade outcome (D-17).
- */
+// Retries once on a runner-local overflow, after re-degrading; any other error rethrows unchanged.
 export async function executeClampedCall<T>(
   opts: ClampedCallOptions<T>,
 ): Promise<ClampedCallResult<T>> {

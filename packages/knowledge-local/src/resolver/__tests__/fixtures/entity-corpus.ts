@@ -1,42 +1,4 @@
-// The committed entity-resolution validation corpus (Phase 387, D-08 / ENTY-01).
-//
-// WHAT THIS FILE IS
-//
-// A hand-authored population of entities and the references a human might type at them, with
-// each reference's EXPECTED outcome class declared per embedder posture. It is data, not a
-// test: `corpus.test.ts` drives the real resolver over it twice — once with the dense leg fed
-// and once with nothing embedded at all — and holds the outcomes to what is declared here.
-//
-// WHY THE VECTORS ARE AUTHORED AND NOT MEASURED
-//
-// D-08 requires the corpus to run deterministically in CI with no live stores, and a real
-// embedding model is neither deterministic across builds nor available on a floor host. So the
-// geometry is DECLARED: every entity sits on a family axis plus an axis of its own, and every
-// query declares which axes it points at. Cosine similarity is then arithmetic anybody can
-// check by hand, and "the semantic case lands near its target" is a property of the fixture
-// rather than a hope about a model.
-//
-//   entity  = 0.5 * family + (sqrt(3)/2) * own          (a unit vector)
-//   cosine(query, entity) = sum over shared axes of the two weight products
-//
-// Two consequences worth stating, because the whole case taxonomy rests on them:
-//   - a query pointed at ONE entity's own axis scores 0.866 on it and 0.25 on its siblings,
-//     and 0.25 is below `tau_dense` (0.38) — so the dense leg admits exactly that entity;
-//   - a query pointed at a FAMILY axis scores 0.5 on every member and 0 elsewhere, so the
-//     dense leg admits the whole family and nothing else.
-//
-// HOW AN EXPECTATION WAS ARRIVED AT
-//
-// Every `expected` below was written from the fusion arithmetic BEFORE the corpus was ever
-// run, never from an observed outcome. On the normalised scale a rank-1 leg contributes
-// exactly 0.5 and rank 2 contributes 0.4919, so:
-//   - a reference whose lexical and dense legs agree on one entity and disagree about
-//     everything else clears the strong-hit margin and RESOLVES;
-//   - a reference matching two or more entities in the same leg cannot clear it — adjacent
-//     ranks differ by 0.008 — and DISAMBIGUATES;
-//   - a reference matching nothing in either leg is an honest MISS.
-// Where a prediction turned out wrong it was adjudicated in writing (387-05's summary) and the
-// declaration here was corrected with the reason, never relaxed to make a run go green.
+// Vectors are declared, not measured: entity = 0.5 * family + (sqrt(3)/2) * own.
 
 import type { EntityKind } from '@vostride/agent-qa-schema'
 
@@ -229,10 +191,7 @@ export interface CorpusCase {
   readonly axes?: Readonly<Record<string, number>>
   readonly full: CorpusExpectation
   readonly floor: CorpusExpectation
-  /**
-   * The two fused scores are declared to be EXACTLY equal under the full posture — the D-07
-   * equal-strength case, where the legs rank the same pair in opposite orders.
-   */
+  // The two fused scores are exactly equal under the full posture.
   readonly equalStrength?: true
   /**
    * The degradation gate's witness: under the shipped margin this case's postures agree, and
@@ -240,15 +199,7 @@ export interface CorpusCase {
    * the invariant's gate non-vacuous rather than arithmetically unreachable.
    */
   readonly divergenceWitness?: true
-  /**
-   * The floor posture is declared to be MORE confident than the full posture here.
-   *
-   * 387-03's handoff named this class before the corpus existed: one lexical match, no dense
-   * hit on it, and a dense-only rival. The floor host has nothing to weigh the single match
-   * against and resolves; the full host sees the rival and refuses. It does NOT resolve a
-   * different entity — the safety half is arithmetic — but "the floor only ever ADDS
-   * disambiguation" is false, and these cases are why that half is reported as empirical.
-   */
+  // The floor posture is more confident than the full posture here.
   readonly monotonicityCounterexample?: true
   readonly note?: string
 }
@@ -261,19 +212,14 @@ const PAIR_NEAR = 0.8
 const PAIR_FAR = 0.6
 const PAIR_EVEN = 0.7071067811865476
 
-/**
- * The authored query cases.
- *
- * Five locked categories (D-08). Every `full`/`floor` pair below was derived from the fusion
- * arithmetic in this file's header before the corpus was executed.
- */
+// Every `full`/`floor` pair is derived from the fusion arithmetic in the header.
 export const CORPUS_CASES: readonly CorpusCase[] = [
   // ================= exact: tier (a), posture-independent by construction =================
   { id: 'exact-shortid-checkout', category: 'exact', ref: { form: 'short-id', entity: 'checkout-happy-path' }, full: { outcome: 'resolved', target: 'checkout-happy-path', exact: true }, floor: { outcome: 'resolved', target: 'checkout-happy-path', exact: true } },
   { id: 'exact-shortid-nightly', category: 'exact', ref: { form: 'short-id', entity: 'r_nightly_checkout' }, full: { outcome: 'resolved', target: 'r_nightly_checkout', exact: true }, floor: { outcome: 'resolved', target: 'r_nightly_checkout', exact: true } },
   { id: 'exact-shortid-offset', category: 'exact', ref: { form: 'short-id', entity: 'mem_pagination_offset' }, full: { outcome: 'resolved', target: 'mem_pagination_offset', exact: true }, floor: { outcome: 'resolved', target: 'mem_pagination_offset', exact: true } },
   { id: 'exact-shortid-credential', category: 'exact', ref: { form: 'short-id', entity: 'pol_never_reuse_credential' }, full: { outcome: 'resolved', target: 'pol_never_reuse_credential', exact: true }, floor: { outcome: 'resolved', target: 'pol_never_reuse_credential', exact: true } },
-  { id: 'exact-shortid-checkout-web', category: 'exact', ref: { form: 'short-id', entity: 'checkout-web' }, full: { outcome: 'resolved', target: 'checkout-web', exact: true }, floor: { outcome: 'resolved', target: 'checkout-web', exact: true }, note: 'slug-addressed: TGT ids are names, not ordinals (D-03)' },
+  { id: 'exact-shortid-checkout-web', category: 'exact', ref: { form: 'short-id', entity: 'checkout-web' }, full: { outcome: 'resolved', target: 'checkout-web', exact: true }, floor: { outcome: 'resolved', target: 'checkout-web', exact: true }, note: 'slug-addressed: TGT ids are names, not ordinals' },
   { id: 'exact-shortid-audit', category: 'exact', ref: { form: 'short-id', entity: 'zephyr-latency-audit' }, full: { outcome: 'resolved', target: 'zephyr-latency-audit', exact: true }, floor: { outcome: 'resolved', target: 'zephyr-latency-audit', exact: true } },
   { id: 'exact-shortid-visual-review', category: 'exact', ref: { form: 'short-id', entity: 'r_visual_diff_review' }, full: { outcome: 'resolved', target: 'r_visual_diff_review', exact: true }, floor: { outcome: 'resolved', target: 'r_visual_diff_review', exact: true } },
   { id: 'exact-shortid-analytics', category: 'exact', ref: { form: 'short-id', entity: 'analytics-warehouse' }, full: { outcome: 'resolved', target: 'analytics-warehouse', exact: true }, floor: { outcome: 'resolved', target: 'analytics-warehouse', exact: true } },
@@ -296,7 +242,7 @@ export const CORPUS_CASES: readonly CorpusCase[] = [
   // Twelve point at one entity's own axis (0.866 on it, 0.25 on a sibling — below tau_dense),
   // so the dense leg admits exactly one candidate and the full posture resolves. The floor
   // posture has no dense leg and the words match nothing, so it is an honest miss.
-  { id: 'sem-buy-something', category: 'semantic', ref: { form: 'text', text: 'where we buy something' }, axes: { 'checkout-happy-path': 1 }, full: { outcome: 'resolved', target: 'checkout-happy-path' }, floor: { outcome: 'none', reason: 'no-match' }, note: "D-05's product bar, verbatim" },
+  { id: 'sem-buy-something', category: 'semantic', ref: { form: 'text', text: 'where we buy something' }, axes: { 'checkout-happy-path': 1 }, full: { outcome: 'resolved', target: 'checkout-happy-path' }, floor: { outcome: 'none', reason: 'no-match' }, note: "the product bar, verbatim" },
   { id: 'sem-authentication', category: 'semantic', ref: { form: 'text', text: 'authentication handshake' }, axes: { 'signin-stored-password': 1 }, full: { outcome: 'resolved', target: 'signin-stored-password' }, floor: { outcome: 'none', reason: 'no-match' } },
   { id: 'sem-trolley-contents', category: 'semantic', ref: { form: 'text', text: 'trolley contents' }, axes: { 'basket-add-item': 1 }, full: { outcome: 'resolved', target: 'basket-add-item' }, floor: { outcome: 'none', reason: 'no-match' } },
   { id: 'sem-money-failure', category: 'semantic', ref: { form: 'text', text: 'money movement failure' }, axes: { 'payment-declined-retry': 1 }, full: { outcome: 'resolved', target: 'payment-declined-retry' }, floor: { outcome: 'none', reason: 'no-match' } },
@@ -320,11 +266,7 @@ export const CORPUS_CASES: readonly CorpusCase[] = [
   { id: 'sem-confidentiality', category: 'semantic', ref: { form: 'text', text: 'confidentiality rules' }, axes: { 'fam-secrets': 1 }, full: { outcome: 'ambiguous', mustContain: ['pol_never_reuse_credential', 'pol_secret_rotation_ninety'] }, floor: { outcome: 'none', reason: 'no-match' } },
   { id: 'sem-twin-timings', category: 'semantic', ref: { form: 'text', text: 'twin timings' }, axes: { 'fam-zephyr': 1 }, full: { outcome: 'ambiguous', mustContain: ['zephyr-latency-probe', 'zephyr-latency-audit'] }, floor: { outcome: 'none', reason: 'no-match' } },
 
-  // ================= near-twin: entities a human would confuse for each other ==============
-  // The five equal-strength cases first. Each pair's two members share every query word, so
-  // BM25 ties and the lexical leg orders them by short-ID; the query vector then leans on the
-  // SECOND one, so the dense leg ranks them the other way round. Ranks 1/2 against 2/1 fuse to
-  // the same number exactly, and D-07 refuses to pick between them at any positive margin.
+  // Equal-strength pairs: the two legs rank each pair in opposite orders, fusing to a tie.
   { id: 'twin-equal-quarantine', category: 'near-twin', ref: { form: 'text', text: 'quarantine spec' }, axes: { 'quarantine-flake-report': PAIR_NEAR, 'quarantine-flake-triage': PAIR_FAR }, equalStrength: true, full: { outcome: 'ambiguous', mustContain: ['quarantine-flake-triage', 'quarantine-flake-report'] }, floor: { outcome: 'ambiguous', mustContain: ['quarantine-flake-triage', 'quarantine-flake-report'] } },
   { id: 'twin-equal-latency', category: 'near-twin', ref: { form: 'text', text: 'latency' }, axes: { 'zephyr-latency-audit': PAIR_NEAR, 'zephyr-latency-probe': PAIR_FAR }, equalStrength: true, full: { outcome: 'ambiguous', mustContain: ['zephyr-latency-probe', 'zephyr-latency-audit'] }, floor: { outcome: 'ambiguous', mustContain: ['zephyr-latency-probe', 'zephyr-latency-audit'] } },
   { id: 'twin-equal-pagination', category: 'near-twin', ref: { form: 'text', text: 'pagination cursor offset token' }, axes: { 'mem_pagination_cursor': PAIR_NEAR, 'mem_pagination_offset': PAIR_FAR }, equalStrength: true, full: { outcome: 'ambiguous', mustContain: ['mem_pagination_offset', 'mem_pagination_cursor'] }, floor: { outcome: 'ambiguous', mustContain: ['mem_pagination_offset', 'mem_pagination_cursor'] } },
@@ -409,7 +351,7 @@ export const CORPUS_CASES: readonly CorpusCase[] = [
   { id: 'miss-address-tst-999', category: 'miss', ref: { form: 'literal', text: 'TST-999' }, full: { outcome: 'none', reason: 'unknown-address' }, floor: { outcome: 'none', reason: 'unknown-address' } },
   { id: 'miss-address-uri-pol', category: 'miss', ref: { form: 'literal', text: 'agentqa://policy/POL-777' }, full: { outcome: 'none', reason: 'unknown-address' }, floor: { outcome: 'none', reason: 'unknown-address' } },
   { id: 'miss-address-uri-tgt', category: 'miss', ref: { form: 'literal', text: 'agentqa://target/TGT-nowhere' }, full: { outcome: 'none', reason: 'unknown-address' }, floor: { outcome: 'none', reason: 'unknown-address' } },
-  { id: 'miss-address-shaped-never-a-kind', category: 'miss', ref: { form: 'literal', text: 'ZZZ-7' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'no-match' }, floor: { outcome: 'none', reason: 'no-match' }, note: 'address-shaped in a prefix outside the vocabulary: parses as nothing and falls through to free text (410 D-05/D-06)' },
+  { id: 'miss-address-shaped-never-a-kind', category: 'miss', ref: { form: 'literal', text: 'ZZZ-7' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'none', reason: 'no-match' }, floor: { outcome: 'none', reason: 'no-match' }, note: 'address-shaped in a prefix outside the vocabulary: parses as nothing and falls through to free text' },
 
   { id: 'miss-noise-elephant', category: 'miss', ref: { form: 'text', text: 'the flaky elephant migration' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'ambiguous', mustContain: [] }, floor: { outcome: 'ambiguous', mustContain: [] }, note: 'common words, no entity: a disambiguation card is the honest answer' },
   { id: 'miss-noise-production', category: 'miss', ref: { form: 'text', text: 'every page production' }, axes: { [VOID_AXIS]: 1 }, full: { outcome: 'ambiguous', mustContain: [] }, floor: { outcome: 'ambiguous', mustContain: [] } },

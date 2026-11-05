@@ -1,9 +1,4 @@
-// Tier (b) and tier (c) of the never-guess resolver (Phase 387, D-05 / D-07 / ENTY-01/02).
-//
-// Every case below runs the REAL pipeline — `lexicalLeg` and `denseLeg` over a real entity
-// index, fused by `fuseWeightedRrf`. The only thing faked is the embedder, which is a fixed set
-// of unit vectors: no model runtime, no acquisition ladder, no network, and two runs of the
-// same corpus produce byte-identical rankings.
+// Runs the real pipeline; only the embedder is faked, as fixed unit vectors.
 
 import { randomUUID } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
@@ -125,7 +120,7 @@ function idsOf(resolution: EntityResolution): string[] {
   return []
 }
 
-describe('D-07 the strong-hit rule: absolute threshold plus margin over the runner-up', () => {
+describe('the strong-hit rule: absolute threshold plus margin over the runner-up', () => {
   let root: string
   let corpora: EntityIndexHandle[]
 
@@ -173,14 +168,12 @@ describe('D-07 the strong-hit rule: absolute threshold plus margin over the runn
     expect(scoresOf(resolution)[0]).toBeCloseTo(1, 10)
   })
 
-  it('always disambiguates two entities of equal strength, never resolves one (D-07)', async () => {
+  it('always disambiguates two entities of equal strength, never resolves one', async () => {
     const entities = [
       entity('TST-010', 'Checkout with a saved card'),
       entity('TST-011', 'Checkout with a stored card'),
     ]
-    // The legs DISAGREE about which near-twin is closer: lexical prefers TST-010 (it carries
-    // the query's `saved`), the dense leg prefers TST-011. Ranks 1/2 and 2/1 fuse to exactly
-    // the same number, which is the equal-strength case D-07 says must always disambiguate.
+    // Lexical prefers TST-010 and dense prefers TST-011; ranks 1/2 and 2/1 fuse to an exact tie.
     const seeded = await corpus(entities, new Map([
       ['test Checkout with a saved card', unit({ 0: 0.9, 1: 0.435889894354067 })],
       ['test Checkout with a stored card', unit({ 0: 1 })],
@@ -301,7 +294,7 @@ describe('D-07 the strong-hit rule: absolute threshold plus margin over the runn
   })
 })
 
-describe('D-07 the constants sit where the fusion scale puts them', () => {
+describe('the constants sit where the fusion scale puts them', () => {
   it('normalises one leg leading alone to exactly the absolute threshold', () => {
     const oneLegRankOne = RESOLVER_LEG_WEIGHT_LEXICAL / (C_RRF + 1)
 
@@ -325,7 +318,7 @@ describe('D-07 the constants sit where the fusion scale puts them', () => {
   })
 })
 
-describe('D-05 tier (b) composes the existing pipeline and implements no scoring of its own', () => {
+describe('tier (b) composes the existing pipeline and implements no scoring of its own', () => {
   function statements(): string {
     return readFileSync(new URL('../hybrid.ts', import.meta.url), 'utf8')
       .split('\n')
@@ -368,7 +361,7 @@ describe('D-05 tier (b) composes the existing pipeline and implements no scoring
   })
 })
 
-describe('ENTY-01 tier (a) falls through to tier (b), and an address never does', () => {
+describe('tier (a) falls through to tier (b), and an address never does', () => {
   let root: string
   let ledger: AddressingLedger
   let handle: EntityIndexHandle

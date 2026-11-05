@@ -1,10 +1,4 @@
-// THE CONFIG PAGE'S STRINGS OF RECORD (429 UI-SPEC Copywriting Contract · PXH-CONF-01..05).
-//
-// Every sentence the Config page renders is an exported constant or pure function here, so cells
-// import the constant instead of re-typing prose. Strings holding an apostrophe use double quotes.
-// No string carries storage vocabulary (bucket names, dotted config paths); those stay in
-// data-field-path attributes. Connection-failure sentences are never spelled here: they come from
-// the shared classifier in @vostride/agent-qa-schema, byte-identical with the CLI (D-18).
+// Config sentences are constants here; connection-failure text comes from the schema classifier.
 
 import type {
   ConfigSectionId,
@@ -59,7 +53,6 @@ export const CONFIG_SECTION_LABELS = {
   'planner-limits': 'Planner limits',
   targets: 'Targets',
   devices: 'Devices',
-  'device-farms': 'Device farms',
   'login-states': 'Saved login states',
   'mobile-app-state': 'Mobile app state',
   browser: 'Browser',
@@ -76,7 +69,6 @@ export const CONFIG_SECTION_LABELS = {
   logging: 'Logging',
   'pass-rate-scope': 'Pass-rate scope',
   mcp: 'MCP access',
-  eval: 'Evaluation',
   'config-file': 'Config file',
 } as const satisfies Record<ConfigSectionId, string>
 
@@ -94,7 +86,7 @@ export function configLoadFailedBody(reason: string): string {
 
 export const RELOAD_CONFIG_LABEL = 'Reload config'
 
-/** The file parses but fails whole-config validation (429-16): one notice above the tabs. */
+/** The file parses but fails whole-config validation: one notice above the tabs. */
 export const CONFIG_FILE_ISSUES_TITLE = 'The config file has a problem'
 
 export function configFileIssuesBody(reason: string): string {
@@ -111,20 +103,18 @@ export const SAVE_STATUS_WORDS = {
 export const RETRY_LABEL = 'Retry'
 export const NOT_SAVED_ACTION_NAME = 'Not saved. Go to the first unsaved field.'
 export const UNDO_LABEL = 'Undo'
-/** A computed write the file changed under twice in a row (429-46); the page has re-read it. */
+/** A computed write the file changed under twice in a row; the page has re-read it. */
 export const FIELD_CHANGED_TEXT = "This changed in the file. The page now shows the file's value."
 
 /** The past-tense line an explicit action leaves in the status; the status appends " · Undo". */
-export function undoLine(kind: ExplicitActionKind, name: string, opts: { judge?: boolean } = {}): string {
+export function undoLine(kind: ExplicitActionKind, name: string): string {
   switch (kind) {
     case 'delete-model':
-      return opts.judge ? `Deleted ${name}, an eval judge` : `Deleted ${name}`
+      return `Deleted ${name}`
     case 'delete-target':
       return `Deleted target ${name}`
     case 'delete-device':
       return `Deleted device ${name}`
-    case 'delete-device-farm':
-      return `Deleted device farm ${name}`
     case 'sign-out':
       return `Signed out of ${name}`
     case 'remove-key':
@@ -149,8 +139,6 @@ export function deleteActionName(kind: DeleteActionKind, name: string): string {
       return `Delete target ${name}`
     case 'delete-device':
       return `Delete device ${name}`
-    case 'delete-device-farm':
-      return `Delete device farm ${name}`
   }
 }
 
@@ -236,7 +224,7 @@ export function fixedFactsLine(connectionLabel: string): string {
   return `Connects with ${connectionLabel}. The name and connection are fixed; to change them, add a new model.`
 }
 
-/** A saved model's settings in its open row (UI-SPEC S4 item 2); Model and Base URL share the add flow's labels. */
+/** A saved model's settings in its open row; Model and Base URL share the add flow's labels. */
 export const MODEL_SETTING_LABELS = {
   vision: 'Vision',
   contextWindow: 'Context window',
@@ -270,7 +258,6 @@ export function modelHeaderLabel(header: string): string {
   return `${header} header`
 }
 
-export const USED_AS_JUDGE_LINE = 'Used as an eval judge.'
 export const DEFAULT_CANNOT_DELETE_LINE = 'This is the default model. Make another model the default first.'
 export const NO_MODELS_TEXT = 'Runs need a model. Add one to get started.'
 export const NO_DEFAULT_TEXT = 'No default model. Runs need one — make one of these the default.'
@@ -403,7 +390,7 @@ export function connectedSavedText(name: string): string {
 }
 
 export const BECAME_DEFAULT_TEXT = "It's now the default model."
-/** A sign-in choice whose auth plugin is not registered (research A8); the CLI names the same package. */
+/** A sign-in choice whose auth plugin is not registered; the CLI names the same package. */
 export function signInPluginMissingText(choiceLabel: string): string {
   return `${choiceLabel} needs the @vostride/agent-qa-subscription-auth plugin. Install it and list it under plugins.auth in agent-qa.config.yaml.`
 }
@@ -426,12 +413,7 @@ export function keepPathName(pathLabel: string): string {
 
 export type DataPathKey = 'knowledge.dir' | 'services.dashboard.dbPath' | 'services.dashboard.artifactsDir'
 
-/**
- * What applying a new data path changes, as the code does it (429-20, law 2): the dashboard opens
- * its database at startup, runs and agent calls resolve the knowledge folder per run or call while
- * a standing daemon keeps the one it started with, and the artifacts folder holds only each run's
- * working-memory file, which nothing the dashboard shows reads.
- */
+// What applying a new data path changes, as the code does it.
 export const APPLY_CONSEQUENCES = {
   'knowledge.dir':
     'New runs and agents use the new folder right away; a running agent-qa daemon switches when it restarts. Nothing in the current folder is moved or deleted.',
@@ -445,21 +427,11 @@ export const PORT_RESTART_HELP = 'Takes effect after the dashboard restarts.'
 
 export const KNOWLEDGE_FIELD_LABELS = {
   dir: 'Knowledge folder',
-  commitArtifacts: 'Images committed with knowledge',
-  contextBudgetTokens: 'Knowledge budget',
 } as const
 
 export const KNOWLEDGE_FIELD_HELP = {
   dir: 'A folder inside this repository.',
-  contextBudgetTokens: 'The most tokens of knowledge a run is given. Leave empty for no cap.',
 } as const
-
-export const KNOWLEDGE_COMMIT_ARTIFACTS_LABELS = {
-  none: 'None',
-  thumbnails: 'Thumbnails',
-} as const
-
-export const NO_CAP_PLACEHOLDER = 'No cap'
 
 export const DASHBOARD_FIELD_LABELS = {
   port: 'Port',
@@ -600,24 +572,25 @@ export const TIMEOUT_FIELD_LABELS = {
   navigation: 'Navigation timeout',
 } as const
 
+export const TIMEOUT_FIELD_HELP = {
+  navigation: 'How long a web page load or URL wait can take. Default 2m. Android and iOS runs do not use it.',
+} as const
+
 export const RUNS_FIELD_LABELS = {
   parallel: 'Run tests in parallel',
   workers: 'Parallel workers',
   buildTag: 'Build tag',
-  allowProduction: 'Allow production runs',
 } as const
 
 export const RUNS_FIELD_HELP = {
   parallel: 'Run the tests of one run at the same time.',
   workers: 'The most tests that run at once.',
   buildTag: 'Names the app build under test.',
-  allowProduction: 'Lets runs reach targets marked Production. When off, those runs are refused.',
 } as const
 
 export const CACHE_FIELD_LABELS = {
   enabled: 'Reuse cached actions',
   dir: 'Cache folder',
-  ttl: 'Keep cached actions for',
 } as const
 
 export const RECORDING_FIELD_LABELS = {
@@ -659,7 +632,6 @@ export const ACCESSIBILITY_ALL_RULES_TEXT = 'All rules'
 
 export const ACCESSIBILITY_RUN_AFTER_LABELS = {
   'every-step': 'Every step',
-  navigation: 'Navigation',
   'test-end': 'Test end',
 } as const
 
@@ -670,7 +642,6 @@ export const LOG_CAPTURE_FIELD_LABELS = {
 
 export const NO_TARGETS_TEXT = 'No targets yet.'
 export const NO_DEVICES_TEXT = 'No devices yet.'
-export const NO_DEVICE_FARMS_TEXT = 'No device farms yet.'
 export const NO_LOGIN_STATES_TEXT = 'No saved login states yet. Save one from a web Live Mode session.'
 export const LOGIN_STATES_LOADING_TEXT = 'Loading saved login states…'
 export const LOGIN_STATES_LOAD_FAILED_TEXT = "Couldn't load saved login states."
@@ -717,22 +688,12 @@ export const TARGET_ENVIRONMENT_LABELS = {
   production: 'Production',
 } as const satisfies Record<'local' | 'shared' | 'production', string>
 
-// 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1): one name for no class, the add row's.
 export const TARGET_ENVIRONMENT_PLACEHOLDER = 'Undeclared'
 
 /** The add-target row's environment choices: undeclared first, then the declared classes. */
 export const TARGET_ENVIRONMENT_CHOICE_LABELS = {
   undeclared: 'Undeclared',
   ...TARGET_ENVIRONMENT_LABELS,
-} as const satisfies Record<'undeclared' | 'local' | 'shared' | 'production', string>
-
-/** One line under each add-target environment choice. */
-export const TARGET_ENVIRONMENT_HINTS = {
-  undeclared: 'Treated as non-production.',
-  local: 'Runs against this machine.',
-  shared: 'A shared non-production target.',
-  // 2026-10-03 (quick 261003-cpv): the switch's own label and tab, not the raw config key.
-  production: `Runs need "${RUNS_FIELD_LABELS.allowProduction}" turned on (${CONFIG_TAB_LABELS.execution} tab).`,
 } as const satisfies Record<'undeclared' | 'local' | 'shared' | 'production', string>
 
 export const TARGET_FIELD_LABELS = {
@@ -744,11 +705,10 @@ export const TARGET_FIELD_LABELS = {
   appPackage: 'App package',
   appActivity: 'App activity',
   appPath: 'App file',
-  browserstackApp: 'BrowserStack app',
   environment: 'Environment',
 } as const satisfies Record<string, string>
 
-/** Before an app file or BrowserStack app in a mobile target's summary. */
+/** Before an app file in a mobile target's summary. */
 export const TARGET_APP_SUMMARY_PREFIX = 'App'
 
 export const TARGET_NAME_REQUIRED_ERROR = 'Add a name for the target.'
@@ -766,7 +726,6 @@ export function targetNameTakenError(name: string): string {
 export const DEVICE_FIELD_LABELS = {
   name: 'Name',
   platform: 'Platform',
-  transport: 'Connection',
   key: 'Setting',
   value: 'Value',
 } as const satisfies Record<string, string>
@@ -777,9 +736,9 @@ export function deviceNameTakenError(name: string): string {
   return `A device named ${name} already exists.`
 }
 
-/** Under Add setting on a local device: the settings that device can match on. */
+/** Under Add setting on a device: the settings that device can match on. */
 export function deviceMatchKeysHelp(platform: string, keys: readonly string[]): string {
-  return `A local ${platform} device can match on ${keys.join(', ')}.`
+  return `An ${platform} device can match on ${keys.join(', ')}.`
 }
 
 /** A device setting's accessible label, so each eye and Replace value names its own device and key. */
@@ -793,58 +752,14 @@ export function removeMatchSettingName(device: string, key: string): string {
 
 export const MCP_FIELD_LABELS = {
   enabled: 'MCP server',
-  transport: 'Transport',
-  host: 'Host',
   port: 'Port',
-  path: 'Path',
 } as const satisfies Record<string, string>
 
 export const MCP_FIELD_HELP = {
   enabled: "When off, the dashboard doesn't host the MCP endpoint.",
-  host: 'Only localhost, 127.0.0.1 or ::1.',
 } as const satisfies Record<string, string>
 
-export const MCP_TRANSPORT_LABELS = {
-  http: 'HTTP',
-  stdio: 'Stdio',
-} as const satisfies Record<'http' | 'stdio', string>
-
-export const MCP_TRANSPORT_PLACEHOLDER = 'Not set'
-export const MCP_HOST_ERROR = 'Use localhost, 127.0.0.1 or ::1.'
-export const MCP_PATH_ERROR = 'Start the path with /.'
-
-// 2026-10-01 (432-22, D-12): the access-token and run-service-token rows, their scope and trust-scope
-// labels and their errors are deleted with the token keys. MCP and the run service are tokenless.
-
-export const EVAL_GROUP_LABELS = {
-  judge: 'Judge',
-  gate1: 'Gate 1',
-  gate2: 'Gate 2',
-  adversarial: 'Adversarial',
-  seeding: 'Seeding',
-} as const satisfies Record<string, string>
-
-export const JUDGE_MODELS_LABEL = 'Judge models'
-export const JUDGE_LIMIT_TEXT = 'Up to three judges.'
-export const JUDGE_NO_MODELS_TEXT = 'Add a model first to pick a judge.'
-
-export const EVAL_FIELD_LABELS = {
-  judgeAllowSameFamily: 'Allow a judge from the same model family',
-  k: 'Runs per case',
-  seed: 'Seed',
-  maxScreens: 'Most screens per screening',
-  maxPerJob: 'Most screenings per run',
-  maxAblations: 'Most ablations',
-  canaryHorizonBuilds: 'Canary horizon in builds',
-  maxLowerTrustPerScope: 'Most lower-trust items per scope',
-  maxSeedsPerRefresh: 'Most seeds per refresh',
-  maxProbeCalls: 'Most probe calls per refresh',
-  silverPerTestCap: 'Most silver labels per test',
-} as const satisfies Record<string, string>
-
-export const EVAL_FIELD_HELP = {
-  judgeAllowSameFamily: 'Off by default. Every score a same-family judge gives says so.',
-} as const satisfies Record<string, string>
+// MCP and the run service are tokenless, so this copy has no token rows.
 
 export const CONFIG_FILE_NOTE = 'Read-only. Edit the file in your editor; changes show here by themselves.'
 export const COPY_PATH_LABEL = 'Copy config file path'
@@ -873,18 +788,6 @@ export function keepValueName(label: string): string {
 export const SAVE_SETTING_LABEL = 'Save setting'
 export const DISCARD_SETTING_LABEL = 'Discard setting'
 export const ADD_SETTING_LABEL = 'Add setting'
-export const ADD_DEVICE_FARM_LABEL = 'Add device farm'
-
-export const DEVICE_FARM_FIELD_LABELS = {
-  name: 'Name',
-  key: 'Setting',
-  value: 'Value',
-} as const satisfies Record<string, string>
-
-/** A farm setting's accessible label, so each Replace value names its own farm and key. */
-export function deviceFarmSettingLabel(farm: string, key: string): string {
-  return `${farm} ${key}`
-}
 
 export const TOUR_LLM_SETUP_BODY =
   "A run needs a model. Add one: choose how you connect, and it's tested and saved as soon as it works."

@@ -2,55 +2,7 @@
 // The DOM lib is referenced HERE because this file's `page.evaluate` callbacks are compiled as
 // TypeScript and EXECUTED in a browser — `run-detail-dom.test.ts`'s reasoning, unchanged.
 
-// THE FAILURE VIEW, ON THE SURFACE A PERSON LOOKS AT (Phase 406 plan 10 · ANLZ-01 / DETL-04 /
-// DETL-05, CONTEXT D-14 / D-17 / D-19 / D-20).
-//
-// WHAT THIS FILE IS THE ACCEPTANCE OF. Phase 406's four ROADMAP criteria are claims about a page:
-// that `analyze-run` produces a verdict on a RED run, that per-member outcomes are painted beside
-// the one aggregate, that the failure view renders the evidence-linked sentence, and that evidence
-// whose bytes are gone reads `evidence-incomplete` rather than vanishing. Every one of those was
-// proved a layer at a time upstream — in the op, in the route, in jsdom. This file measures all
-// four on the BUILT bundle served by the SHIPPED `agent-qa dashboard` binary, against runs that
-// binary really executed, because that is where the milestone's acceptance constraint puts them.
-//
-// TWO DASHBOARDS, THREE DRIVES. Drive R is a RED run whose analysis the stub AUTHORS (D-14) — the
-// path the 399 defect lived on, enqueue → pump → op → route → page, now that 406-07 has fixed the
-// egress guardrail that was reading a memory-relevance score as a credit card. The DELETION drive
-// is Drive R's own run with one blob removed from under it, so the before/after comparison is of
-// the SAME verdict rather than of two runs that merely resemble each other — which is what makes
-// "the verdict was not re-graded" a measurable claim at all. Drive G is the green control on its
-// own dashboard, torn down after R's.
-//
-// THE GREEN CONTROL ASSERTS COMPLETION AND ABSENCE, NEVER A SENTENCE. `resolveRunVerdicts` filters
-// `passed | skipped | cancelled`, so a run with nothing to explain answers an empty `verdicts[]` by
-// construction. A cell that looked for a sentence on green would be asserting the product's own
-// definition back at it; what green is FOR here is that the chain still terminates `complete` and the
-// page paints no block — the shape a regression that started explaining passing tests would break.
-//
-// TWO MEMBERS PER RUN, AND THE SECOND ONE IS NOT SYMMETRY. `showMemberChrome` is
-// `members.length > 1`: below that threshold `MemberGroup` paints NO `data-member` wrapper and NO
-// `data-member-outcome` badge, so on a one-member run the per-member outcome the second ROADMAP
-// criterion is about is simply not in the document. Measured this session on the one-member recipe:
-// `[data-member]` and `[data-member-outcome]` both answer the empty set. A cell asserting "every
-// member wears its outcome" over that set would pass having measured nothing, which is the
-// green-for-the-wrong-reason this directory exists to refuse. So both drives declare a SECOND test
-// (`POPULATED_PASSING_STEP_TEXT`) and the stub's failing arm is narrowed to the failing step's own
-// planning turns (`failOnlyStepText`) — additive knobs whose defaults leave every 405 caller
-// byte-identical.
-//
-// A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP — 404-08's law, and there is no conditional
-// skip in this file. Nor is a stale `dist` one: the bundle these cells read is built, and
-// `buildFreshness(POPULATED_RUN_ANCHORED_BUILDS)` refuses before anything is spawned. A suite that
-// exits 0 having measured nothing is indistinguishable from one that measured everything.
-//
-// THE DRIVING HAPPENS ONCE, IN `beforeAll`, AND THE CELLS ASSERT ON WHAT IT RECORDED. The drive
-// records and never asserts, so each named claim can be the only red under its own mutation — which
-// is what 406-11 takes each fact away to prove.
-//
-// WHAT A RED ON (1d) MEANS, STATED BEFORE ANYONE IS TEMPTED TO NARROW IT. A declared value on the
-// page, or a planted value inside the verdict the model wrote, is a leak through the fourth producer
-// string on this page, and (1d) is the only cell in the repository that watches it on the shipped
-// bundle. If one turns up, report the node and the value. It is not an occasion to weaken the scan.
+// Two members per run: a one-member run paints no `data-member` chrome for outcome cells to see.
 
 import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
@@ -88,7 +40,6 @@ import {
   PACKAGES_ROOT,
   buildFreshness,
   cleanupTempRoots,
-  reserveEphemeralPort,
   spawnDashboard,
 } from './spawned-chat.js'
 import type { SpawnedDashboard } from './spawned-chat.js'
@@ -112,8 +63,8 @@ const REBUILD_INSTRUCTION =
 const BROWSER_INSTALL_INSTRUCTION =
   'these cells drive the BUILT dashboard UI in a real Chromium, against runs the shipped binary '
   + 'really executed: run `pnpm exec playwright install chromium` and re-run. THEY MUST NOT BE '
-  + 'SKIPPED WHEN THE BROWSER IS ABSENT — they are the acceptance of phase 406\'s four ROADMAP '
-  + 'criteria, and a criterion nobody measured is a criterion nobody met.'
+  + 'SKIPPED WHEN THE BROWSER IS ABSENT — they are the failure view\'s acceptance, and a '
+  + 'criterion nobody measured is a criterion nobody met.'
 
 /** How long the page has to mount and paint the failure view. */
 const PAGE_BUDGET_MS = 60_000
@@ -159,15 +110,7 @@ function unescapeStringBody(body: string): string {
   return out
 }
 
-/**
- * A published constant, read out of the module that publishes it (WINDOWS #297, as 406-09 repaired
- * it: EITHER quote style, body unescaped).
- *
- * WHY THE COPY RATHER THAN AN IMPORT, in this file's own terms. Importing a `dashboard-ui` module
- * into a Node test would drag a renderer in; hardcoding the label would go on passing against a page
- * that says something else. Every copy assertion below therefore reads the shipped word out of the
- * shipped source and compares it to what the shipped bundle painted.
- */
+// Read from the shipped source: an import drags in a renderer, and a hardcoded label goes stale.
 function publishedConstant(relativePath: string, name: string): string {
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
   const entry = new RegExp(
@@ -182,10 +125,10 @@ function publishedConstant(relativePath: string, name: string): string {
   return unescapeStringBody(entry[2] as string)
 }
 
-/** The provenance chip's first half when the model authored the verdict (D-10). */
+/** The provenance chip's first half when the model authored the verdict. */
 const LLM_VERDICT_LABEL = publishedConstant('lib/analysis-view.ts', 'LLM_VERDICT_LABEL')
 
-/** The word BOTH `evidence-incomplete` variants wear (406-05 · D-18). */
+/** The word BOTH `evidence-incomplete` variants wear. */
 const EVIDENCE_INCOMPLETE_LABEL = publishedConstant('lib/run-detail-view.ts', 'EVIDENCE_INCOMPLETE_LABEL')
 
 /**
@@ -200,12 +143,7 @@ function expectedProvenance(confidence: number): string {
   return `${LLM_VERDICT_LABEL} · ${confidence.toFixed(2)}`
 }
 
-/**
- * The member-level count line, composed from `missingEvidenceLine`'s own formula (D-19).
- *
- * Same reasoning as {@link expectedProvenance}: the plural agrees with the TOTAL, because the noun
- * it modifies is the set the member cited rather than the subset that vanished.
- */
+// The plural agrees with the total: the noun is the set the member cited, not what vanished.
 function expectedMissingEvidenceLine(missing: number, total: number): string {
   const noun = total === 1 ? 'cited artifact' : 'cited artifacts'
   return `${String(missing)} of ${String(total)} ${noun} unavailable`
@@ -239,7 +177,7 @@ interface PageHarvest {
   readonly sentences: readonly string[]
   /** Every `[data-verdict-provenance]`'s text. */
   readonly provenances: readonly string[]
-  /** Every `[data-verdict-marker]`'s word — empty on a terminal chain (D-09 / D-11). */
+  /** Every `[data-verdict-marker]`'s word — empty on a terminal chain. */
   readonly markers: readonly string[]
   /** Every clickable cited artifact's sha. */
   readonly citedArtifacts: readonly string[]
@@ -247,7 +185,7 @@ interface PageHarvest {
   readonly citedArtifactStates: readonly string[]
   /** Every `[data-evidence-missing]` count line, as `<attribute> :: <text>`. */
   readonly missingEvidence: readonly string[]
-  /** Every unavailable state with the incomplete flag on the page (D-18). */
+  /** Every unavailable state with the incomplete flag on the page. */
   readonly evidenceStates: readonly string[]
   /** Every `data-artifact-state` — the overview pane's own word. */
   readonly artifactStates: readonly string[]
@@ -331,7 +269,7 @@ interface AnalysisBody {
   readonly sentences?: { readonly perTest?: number; readonly sentence?: string }[]
 }
 
-/** One artifact ref as either op serves it (D-01 / D-17). */
+/** One artifact ref as either op serves it. */
 interface ArtifactRefWire {
   readonly id?: string
   readonly sha?: string
@@ -448,14 +386,14 @@ interface MarkHarvest {
   hostileElements: number
   approvalSeen: boolean
   dialogCountAtApproval?: number
-  /** 432-14: how many run-confirm streams the page opened. The channel is deleted, so zero. */
+  // How many run-confirm streams the page opened; it opens none.
   confirmChannels: number
   previewStatus?: number
   responseStatus?: number
   responseBody?: unknown
   confirmFrames: Array<{ event: string; data: string }>
   markedAtWithinDrive: boolean
-  /** 432-42 (D-25): the new history entry's text, its controls and its applied line. */
+  // The history entry's text, its controls and its applied line.
   historyText?: string
   historyControls?: number
   historyApplied?: number
@@ -495,7 +433,7 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
       if (reply.url().endsWith('/mark-preview')) harvest.previewStatus = reply.status()
     })
     await page.goto(`${origin}/runs/${encodeURIComponent(runId)}`)
-    // 432-14 (D-14): the page opens no confirm stream any more, so presence is the entry itself.
+    // The page opens no confirm stream, so presence is the entry itself.
     await page.locator('[data-feedback-entry="test"]').click({ timeout: 10_000 })
     const composer = page.locator('[data-feedback-composer]')
     await composer.locator('[data-feedback-choice="false-fail"] [role="radio"]').click({ timeout: 10_000 })
@@ -504,7 +442,7 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
     const response = page.waitForResponse(reply => reply.url().endsWith('/mark') && reply.request().method() === 'POST')
       .catch(() => undefined)
     await composer.locator('[data-feedback-submit]').click()
-    // 432-13: the mark is sent on the click; `approvalSeen` records whether an approval group rendered.
+    // The mark is sent on the click; `approvalSeen` records whether an approval group rendered.
     const reply = await response
     harvest.approvalSeen = await composer.locator('[data-feedback-approval]').count() > 0
     harvest.confirmChannels = (await page.evaluate(() =>
@@ -538,7 +476,6 @@ async function observeMark(context_: BrowserContext, origin: string, runId: stri
       .catch(() => [])
     await page.close()
   }
-  process.stderr.write(`419 mark fixture: ${JSON.stringify(harvest)}\n`)
   return harvest
 }
 
@@ -726,7 +663,7 @@ function readJobRows(agentQaRoot: string): JobRow[] {
 
 // ---- The drives ---------------------------------------------------------------------------------
 
-describe('the shipped dashboard paints a RED run\'s authored verdict, its evidence and its absence (406-10 · ANLZ-01 / DETL-04 / DETL-05, D-14 / D-20)', () => {
+describe('the shipped dashboard paints a RED run\'s authored verdict, its evidence and its absence', () => {
   beforeAll(async () => {
     if (process.platform === 'win32') {
       recorded.failure = WINDOWS_REFUSAL
@@ -757,7 +694,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       return
     }
 
-    // ---- DRIVE R: the red run whose analysis the model AUTHORS (D-14) ------------------------
+    // ---- DRIVE R: the red run whose analysis the model AUTHORS ------------------------
     try {
       redTarget = await startTargetPageServer()
       redStub = await startStubModelServer({
@@ -775,11 +712,9 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       // listening before the root is minted.
       redStub.citeEvidenceFrom(project.agentQaRoot)
 
-      const redPort = await reserveEphemeralPort()
       redDashboard = await spawnDashboard(
         project.root,
         project.configPath,
-        redPort,
         60_000,
         populatedRunSpawnEnv(),
       )
@@ -848,15 +783,10 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
         '[data-verdict-block]',
       )
 
-      // 419 Wave-0 probe/mark drive: while the original evidence bytes are still available.
+      // The probe and mark drive runs while the original evidence bytes are still present.
       recorded.mark = await observeMark(beforeContext, origin, runId, runDir)
 
-      // ---- THE DELETION (D-20) --------------------------------------------------------------
-      //
-      // THE ONLY "GC" THAT EXISTS. No retention policy ships, and none is introduced here: the
-      // path is composed from THIS fixture project's own runtime root, this run's slug and the sha
-      // the verdict cited, and it is asserted to be inside the project before anything is removed
-      // (T-406-28). One blob, in a directory the teardown deletes wholesale a moment later.
+      // The path is built from this fixture's runtime root and checked inside the project first.
       const sha = recorded.analysisBefore?.verdicts?.[0]?.evidence?.citedArtifacts?.[0]?.sha
       if (sha === undefined) {
         recorded.deletionFailure = 'the authored verdict cited no evidence blob to delete'
@@ -913,11 +843,9 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
         { modelBaseUrl: greenStub.baseUrl, targetUrl: greenTarget.url },
         { secondStepText: POPULATED_PASSING_STEP_TEXT },
       )
-      const greenPort = await reserveEphemeralPort()
       greenDashboard = await spawnDashboard(
         project.root,
         project.configPath,
-        greenPort,
         60_000,
         populatedRunSpawnEnv(),
       )
@@ -988,8 +916,8 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     const row = analyze[0] as JobRow
     expect(
       row.status,
-      'the `analyze-run` job did not complete. THIS IS THE ANLZ-01 DEFECT\'S OWN SIGNATURE: the 399 '
-      + 'runs left this row `failed` with `handler-threw: Guardrail blocked outbound prompt leaf: '
+      'the `analyze-run` job did not complete. THIS IS THE GUARDRAIL DEFECT\'S OWN SIGNATURE: it '
+      + 'left this row `failed` with `handler-threw: Guardrail blocked outbound prompt leaf: '
       + 'creditCard`, because the egress guardrail read a memory-relevance score as a card. Read '
       + `\`last_failure_reason\` in the block below before concluding anything else.${context()}`,
     ).toBe('done')
@@ -1000,7 +928,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     expect(
       row.attempts,
       'the `analyze-run` job needed more than one attempt. A retry means the handler threw at least '
-      + `once, which is the shape ANLZ-01 wore.${context()}`,
+      + `once, which is the shape the guardrail defect wore.${context()}`,
     ).toBe(1)
 
     expect(
@@ -1068,7 +996,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       + 'received value below says which: an EMPTY list means no member chrome was painted (a '
       + 'one-member run paints none — this fixture declares two on purpose) or the verdict joined a '
       + 'different member handle than the one that failed; `deterministic-classifier` means the '
-      + `author degraded to the floor and ANLZ-01's symptom is back on the page.${context()}`,
+      + `author degraded to the floor and the guardrail defect's symptom is back on the page.${context()}`,
     ).toEqual(['analyze-run'])
     expect(
       page.verdictProducers,
@@ -1160,14 +1088,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       + `${context()}`,
     ).toBe(false)
 
-    // THE ENV CREDENTIAL AND THE EMAIL ARE SCOPED TO THE VERDICT BLOCK, DELIBERATELY, AND THE REASON
-    // IS A CELL ONE FILE AWAY. Neither is a declared secret, so the run records both as written and
-    // the page shows them in the planner's reasoning (D-23) — `run-detail-failure-dom.test.ts` (3e)
-    // asserts the credential IS inside the expanded failure banner. A whole-page assertion here
-    // would therefore contradict a green cell that measures ratified behaviour. What
-    // is this file's to claim is the ANALYSIS's sentence: it quotes the fixture's STEP TEXT, which
-    // carries no value at all, so a planted credential turning up inside the block means the author
-    // quoted a field it should not have. That is a finding to STOP and report, not a scan to widen.
+    // Scoped to the verdict block: the page shows these undeclared values elsewhere by design.
     expect(
       page.verdictBlockText.includes(POPULATED_SECRET_VALUE),
       'the env credential is INSIDE the authored verdict block. The sentence quotes the '
@@ -1227,7 +1148,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     ).toEqual([])
   })
 
-  // ---- (3) THE DELETION FIXTURE (D-20) ----------------------------------------------------------
+  // ---- (3) THE DELETION FIXTURE ----------------------------------------------------------
 
   it('(3a) after deletion, the WIRE says it first: `present: false` on both ops', () => {
     driveOk()
@@ -1306,8 +1227,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
       `the page does not show the published \`evidence incomplete\` word.${context()}`,
     ).toContain(EVIDENCE_INCOMPLETE_LABEL)
 
-    // A REF KNOWN ABSENT IS NEVER REQUESTED (D-17). The op already said the bytes are gone; asking
-    // anyway would turn a known fact into a 404 the page would then have to interpret.
+    // A ref known absent is never requested; the op already said the bytes are gone.
     expect(
       page.artifactRequests.filter(url => url.endsWith(`/artifacts/${recorded.deletedSha}`)),
       'the page asked the door for bytes it had just been told are gone. `present === false` is '
@@ -1341,8 +1261,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
   it('(3d) after deletion, UNCHANGED: the outcome badge, the producer and the sentence are byte-identical', () => {
     const before = harvestOf('before')
     const page = harvestOf('after')
-    // ONE MISSING SCREENSHOT IS NOT AN UNTRUSTWORTHY VERDICT (D-19). The whole-verdict badge that
-    // would say otherwise was rejected; these three are the carriers of that decision.
+    // One missing screenshot leaves the verdict trusted, so no whole-verdict badge renders.
     expect(
       page.memberOutcomes,
       'a member\'s recorded outcome moved when a screenshot went missing. The badge carries the '
@@ -1365,26 +1284,22 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     ).toEqual(before.provenances)
   })
 
-  // RE-SPELLED 2026-09-30 (432-13): was '... sent and approved inline, lands in history'. The mark
-  // is sent with no approval: none renders and no question reaches the channel.
   it('(4a) the header entry opens the composer; false-fail, previewed, sent with no approval, lands in history', () => {
     driveOk()
     const mark = recorded.mark
     expect(mark, `the mark drive was never observed.${context()}`).toBeDefined()
     expect(mark!.failure, context()).toBeUndefined()
-    // 432-14: was `scopeSeen` — the page held the confirm channel. It holds none now.
     expect(mark!.confirmChannels, context()).toBe(0)
     expect(mark!.previewStatus, context()).toBe(200)
     expect(mark!.approvalSeen, context()).toBe(false)
-    // 426 D-20 survives as: nothing covers the evidence.
+    // Nothing covers the evidence.
     expect(mark!.dialogCountAtApproval, context()).toBe(0)
     expect(mark!.responseStatus, context()).toBe(200)
     expect(mark!.confirmFrames.some(frame => frame.event === 'confirm_request'), context()).toBe(false)
     // Literals, because dashboard-ui publishes no library entry: CHOICE_LABELS['false-fail'] and
     // dispositionText's no-draftable-fix arm in lib/feedback-view.ts.
     expect(mark!.historyChoice, context()).toBe('This should have passed')
-    // Wave-0 measured this exact mechanical arm. app_bug belongs to analyze-run; the
-    // persisted deterministic classifier says unknown, with no attributable served record.
+    // `app_bug` belongs to analyze-run; the persisted classifier says unknown and names no record.
     expect(mark!.historyDisposition, context()).toBe('Recorded — no fix could be drafted')
     expect(mark!.disposition, context()).toEqual({ kind: 'no-draftable-fix', checked: {
       servedRecords: 0, procedureReads: 0, assertionDrift: false, rootCause: 'unknown',
@@ -1393,12 +1308,10 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     const receipt = MarkReceiptSchema.parse(mark!.rows[0])
     expect(receipt).toMatchObject({ runId: recorded.red!.runId, testIndex: 0,
       origin: 'user', kind: 'false-fail', ordinal: 1 })
-    expect(receipt.gold.map(item => item.channel)).toEqual(['user-mark'])
-    // RESEARCH A5: markedAt is epoch milliseconds, taken during this drive.
+    // `markedAt` is epoch milliseconds, taken during this drive.
     expect(mark!.markedAtWithinDrive, context()).toBe(true)
     expect(mark!.hostileElements, context()).toBe(0)
-    // 2026-10-02 (432-42, D-25): applied history on the shipped bundle — no control on the entry,
-    // no proposal/review/approval wording, and (no fix was drafted here) no applied line.
+    // Applied history on the shipped bundle: no control, no approval wording and no applied line.
     expect(mark!.historyControls, context()).toBe(0)
     expect(mark!.historyText ?? '', context()).not.toMatch(/propos|review|approv|pending|waiting|accept/iu)
     expect(mark!.historyApplied, context()).toBe(0)

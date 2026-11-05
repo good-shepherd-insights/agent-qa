@@ -1,9 +1,4 @@
-// FsStorageStateStore unit pins (Phase 360-09, D-14 / T-360-03).
-//   - raw save/load round-trips byte-identical (auth material persists verbatim);
-//   - a traversal-shaped name slugs to a filename that stays INSIDE storage-states/
-//     (resolved-path-prefix assertion — the security pin);
-//   - the fingerprint is stable for identical content and differs for different content;
-//   - loading a missing name returns undefined, never throws.
+// Raw round-trip, traversal-safe names, stable fingerprints and `undefined` for a missing name.
 import { readdir, rm, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -35,7 +30,7 @@ describe('FsStorageStateStore', () => {
     await rm(root, { recursive: true, force: true })
   })
 
-  it('round-trips a raw storage-state blob byte-identical (D-14 raw-but-local)', async () => {
+  it('round-trips a raw storage-state blob byte-identical', async () => {
     const store = new FsStorageStateStore({ root })
     const blob = makeBlob()
 
@@ -43,13 +38,13 @@ describe('FsStorageStateStore', () => {
     const loaded = await store.load('admin')
 
     expect(loaded).toEqual(blob)
-    // The reference carries only name + fingerprint — never the blob (evidence-safe, D-14).
+    // The reference carries only name and fingerprint, never the blob.
     expect(ref.name).toBe('admin')
     expect(ref.fingerprint).toMatch(/^[0-9a-f]{16}$/)
     expect(Object.keys(ref)).toEqual(['name', 'fingerprint'])
   })
 
-  it('slugs a traversal-shaped name to a file that stays INSIDE storage-states/ (T-360-03)', async () => {
+  it('slugs a traversal-shaped name to a file that stays INSIDE storage-states/', async () => {
     const store = new FsStorageStateStore({ root })
     const evilName = '../../etc/passwd'
 
@@ -80,7 +75,7 @@ describe('FsStorageStateStore', () => {
     expect(a1.fingerprint).not.toBe(b.fingerprint)
   })
 
-  it('returns undefined for a missing name — never throws (D-14)', async () => {
+  it('returns undefined for a missing name — never throws', async () => {
     const store = new FsStorageStateStore({ root })
     await expect(store.load('never-saved')).resolves.toBeUndefined()
   })

@@ -1,38 +1,4 @@
-// The entity index: a rebuildable projection of the addressing ledger (Phase 387, D-06).
-//
-// WHY THIS IS A RECORDS-SHAPED DATABASE IN ITS OWN FILE
-//
-// D-05 says tier (b) of the resolver is the memidex hybrid pipeline — not a second scoring
-// engine, not fuse.js. `lexicalLeg` and `denseLeg` are the pipeline, and both are written
-// against a fixed projection shape: an FTS5 table joined to a row table carrying scope, status
-// and embedding columns. Reusing them therefore means presenting that shape, which is what
-// this module builds. The alternative — entity-shaped tables plus a hand-rolled BM25/cosine
-// query beside them — would have been a second scoring engine wearing a different name, and
-// the degradation ladder, the admission floors and the FTS escaping would all have had to be
-// rebuilt with it.
-//
-// The separation Pitfall 6 demands is achieved by the FILE, not by the table names. This
-// database lives beside the knowledge index and shares nothing with it: no statement here
-// resolves, opens or writes `knowledge.db`, and the projection tables inside this file are
-// reachable only through a handle opened from `entityIndexDbPath`. An entity therefore cannot
-// be served as a learned fact, because the serving reader opens a different file entirely —
-// asserted directly, with a positive control, in this module's suite.
-//
-// WHY THE DENSE RUNG IS ALWAYS BRUTE
-//
-// `denseVec0` refuses to answer unless the database carries the records index's private
-// vec-cleanup epoch marker, whose value is a module-private constant of `index-open.ts`.
-// Stamping it from here would be a second, unpinned spelling of somebody else's invariant —
-// exactly the drift the projection law exists to avoid — and RESEARCH A3 resolved that the
-// per-profile vec bookkeeping stays untouched. The entity corpus is bounded by the number of
-// things a human can name, where a brute cosine scan costs nothing worth optimising. So the
-// connection pins `brute` on every host, and no `vec0` virtual table is ever created here.
-//
-// WHY IT MAY BE DESTROYED AT WILL
-//
-// Every row is derived from the addressing ledger plus the owning stores. The ledger is the
-// one durable truth (D-02) and is never rebuilt; this file is disposable, and a full rebuild
-// heals arbitrary damage — deleted rows, a corrupted rendering, an orphaned FTS entry.
+// Records-shaped for the retrieval legs, in its own file so no write reaches `knowledge.db`.
 
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -55,42 +21,16 @@ import {
 import type { RetrievalLegScope } from '../retrieval/legs.js'
 import { renderEntity, type EntityRendering } from './renderings.js'
 
-/**
- * The projection's own file name, beside the knowledge index rather than inside it.
- *
- * Beside, because an entity is not a learned fact (D-06). Its own file, because the knowledge
- * index's schema version, rebuild and per-profile vec bookkeeping belong to records, and
- * sharing them would have coupled two projections whose only similarity is their shape.
- */
+// Its own file, because the knowledge index's schema version and rebuild belong to records.
 export const ENTITY_INDEX_DB_FILE = 'entity-index.db'
 
-/**
- * Stamped into `PRAGMA user_version` at creation and checked on every open.
- *
- * Stamp and hard-fail, never migrate — the 385 D-04 house style. Migration would be effort
- * spent on a file whose contents can be regenerated in full from the ledger; a refusal that
- * says which version it found is more useful than a migration nobody would maintain.
- */
+// Stamped and checked on every open; a mismatch refuses, because the ledger regenerates the file.
 export const ENTITY_INDEX_USER_VERSION = 2
 
 /** Busy timeout in milliseconds; the projection is written at a human-paced grain. */
 export const ENTITY_INDEX_BUSY_TIMEOUT_MS = 2000
 
-/**
- * How often a standing daemon re-renders the projection from its sources (D-06).
- *
- * PROVISIONAL 600_000 (ten minutes); retune from operational evidence without adding config,
- * the `LEASE_HEARTBEAT_TTL_MS` house style. What it is bounding is STALENESS of a title or a
- * status in a fuzzy-match target — never correctness of an address, which the ledger owns and
- * no cadence can affect. Sightings already refresh an entity the moment anything touches it,
- * so this sweep exists for the entities nothing has touched since their source data moved.
- *
- * Deliberately its own interval rather than the daemon's `MAINTENANCE_CADENCE_MS`. That
- * cadence runs the lease-holding maintenance tail; this sweep must never require the writer
- * lease (D-02/D-06) because it writes only this file, and sharing a timer with lease-gated
- * work would have made a lease-free projection stop being maintained the moment a lease was
- * lost — a coupling nothing in the projection's own contract asks for.
- */
+// Bounds staleness of titles and statuses; its own timer, so a lost writer lease cannot stop it.
 export const ENTITY_INDEX_SWEEP_INTERVAL_MS = 600_000
 
 /**
@@ -105,13 +45,7 @@ export const ENTITY_INDEX_PRODUCT = 'agentqa-entities'
 /** The one scope key every entity row carries; entities are global by construction. */
 export const ENTITY_INDEX_SCOPE_KEY = 'scope:entities'
 
-/**
- * The projection's row state, which is NOT the entity's status.
- *
- * The scope predicate excludes `deprecated`/`superseded` rows from every scan. An entity that
- * a store reports as quarantined or tombstoned is still a nameable thing that must resolve
- * (D-04), so its row stays admissible and the store's own word lives in `status_source`.
- */
+// Row state, not entity status: a quarantined or tombstoned entity must still resolve.
 const ENTITY_INDEX_ROW_STATUS = 'active'
 
 /** Rows are derived, never authored: the closest origin the records vocabulary offers. */
@@ -191,7 +125,7 @@ const SCHEMA_STATEMENTS = [
 ] as const
 
 export interface EntityIndexHandle {
-  /** The connection shape the retrieval legs take. `vec` is pinned `brute` — see the header. */
+  /** `vec` is `brute`: `denseVec0` needs the records index's private vec-cleanup epoch marker. */
   readonly connection: IndexReaderConnection
   readonly path: string
   close(): void
@@ -200,10 +134,7 @@ export interface EntityIndexHandle {
 export interface OpenEntityIndexOptions {
   /** Absolute path to the projection file, typically `entityIndexDbPath(knowledgeRoot)`. */
   readonly path: string
-  /**
-   * The knowledge root the path lives under. When given, the path's directory chain must stay
-   * inside it (261003-mqc): a linked `memory/` or `memory/index/` is refused before the open.
-   */
+  // A linked `memory/` or `memory/index/` that leaves this root is refused before the open.
   readonly knowledgeRoot?: string
   readonly timeoutMs?: number
 }
@@ -345,28 +276,14 @@ function upsertEntityRow(db: DatabaseSync, descriptor: EntityDescriptor): void {
   writeFtsRow(db, recordRowid, rendering)
 }
 
-/**
- * Project one entity into the index (D-06's incremental half).
- *
- * Called from the resolver's sighting/mint path, so every process posture — daemon, one-shot
- * CLI, a test harness — maintains the projection by using it. Idempotent: re-projecting an
- * unchanged entity leaves the same row.
- */
+// Called from the resolver's sighting path, so every process maintains the projection; idempotent.
 export function refreshEntity(handle: EntityIndexHandle, descriptor: EntityDescriptor): void {
   immediateTransaction(handle.connection.db, () => {
     upsertEntityRow(handle.connection.db, descriptor)
   })
 }
 
-/**
- * Drop everything and re-project from the supplied descriptor set (D-06's healing half).
- *
- * The set comes from the ledger plus the owning stores, which is what makes this a rebuild
- * rather than a repair: nothing in this file is consulted to produce the new contents, so a
- * file damaged in any way at all converges to the same result as a file that never existed.
- * Embeddings are re-derived rather than carried, because a rebuild that preserved derived
- * bytes would preserve exactly the state a rebuild is run to be rid of.
- */
+// Reads nothing from the existing file and re-derives embeddings, so any damage converges.
 export function rebuildEntityIndex(
   handle: EntityIndexHandle,
   descriptors: Iterable<EntityDescriptor>,
@@ -389,13 +306,7 @@ export interface EntityIndexSweepReport {
   readonly refreshed: number
 }
 
-/**
- * Re-project the entities whose source data moved (D-06's maintenance-cadence half).
- *
- * A sweep is maintenance of a disposable projection, so it writes only where a row disagrees
- * with its source. It never touches the addressing ledger — the ledger is not a projection
- * (D-02) — and it takes no writer lease, because everything it writes lives in this file.
- */
+// Writes only rows that disagree with their source, and never touches the addressing ledger.
 export function sweepEntityIndex(
   handle: EntityIndexHandle,
   descriptors: Iterable<EntityDescriptor>,

@@ -24,29 +24,6 @@ const mockWebAdapter = {
   execute: vi.fn(),
 }
 
-const coreMocks = vi.hoisted(() => {
-  const resolveMobileCapabilities = vi.fn(async (config: any) => ({
-    hostname: 'hub.browserstack.com',
-    port: 443,
-    path: '/wd/hub',
-    capabilities: config.app ? { 'appium:app': config.app } : {},
-  }))
-  return {
-    resolveMobileCapabilities,
-    registerAllProviders: vi.fn(),
-    getProvider: vi.fn(() => ({ resolveMobileCapabilities })),
-  }
-})
-
-vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
-  return {
-    ...actual,
-    registerAllProviders: coreMocks.registerAllProviders,
-    getProvider: coreMocks.getProvider,
-  }
-})
-
 vi.mock('@vostride/agent-qa-android', () => ({
   AndroidPlatformAdapter: vi.fn(function () { return mockAndroidAdapter }),
 }))
@@ -59,7 +36,7 @@ vi.mock('@vostride/agent-qa-web', () => ({
   WebPlatformAdapter: vi.fn(function () { return mockWebAdapter }),
 }))
 
-import { createPlatformAdapter, buildPlatformConfig, resolveDeviceAndFarmSession } from '../commands/run.js'
+import { createPlatformAdapter, buildPlatformConfig } from '../commands/run.js'
 import { resolveTarget } from '../targets.js'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 
@@ -132,14 +109,12 @@ describe('buildPlatformConfig', () => {
     const resolvedDevice = {
       name: 'pixel-7',
       platform: 'android' as const,
-      transport: 'local' as const,
       match: { avd: 'Pixel_7_API_34', appPackage: 'com.example.app' },
     }
     const config = buildPlatformConfig('android', resolvedDevice, { step: 15000 })
 
     expect(config.platform).toBe('android')
     expect(config.device?.name).toBe('pixel-7')
-    expect(config.device?.transport).toBe('local')
     expect(config.device?.match.avd).toBe('Pixel_7_API_34')
     expect(config.browser).toBeUndefined()
     expect(config.timeouts).toEqual({ step: 15000 })
@@ -149,14 +124,12 @@ describe('buildPlatformConfig', () => {
     const resolvedDevice = {
       name: 'android-emu',
       platform: 'android' as const,
-      transport: 'local' as const,
       match: { automationName: 'UiAutomator2' },
     }
-    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, undefined, {
+    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, {
       platform: 'android',
       targetName: 'release-android-wikipedia',
       deviceName: 'android-emu',
-      transport: 'local',
       device: resolvedDevice,
       app: {
         appPackage: 'org.wikipedia.alpha',
@@ -180,14 +153,12 @@ describe('buildPlatformConfig', () => {
     const resolvedDevice = {
       name: 'android-emu',
       platform: 'android' as const,
-      transport: 'local' as const,
       match: { automationName: 'UiAutomator2' },
     }
-    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, undefined, {
+    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, {
       platform: 'android',
       targetName: 'release-android-wikipedia',
       deviceName: 'android-emu',
-      transport: 'local',
       device: resolvedDevice,
       app: {
         appPackage: 'org.wikipedia.alpha',
@@ -207,50 +178,16 @@ describe('buildPlatformConfig', () => {
     expect(config.appPackage).toBe('org.wikipedia.alpha')
   })
 
-  it('passes resolved browserstack app reference into mobile platform config', () => {
-    const resolvedDevice = {
-      name: 'bs-pixel',
-      platform: 'android' as const,
-      transport: 'browserstack' as const,
-      match: { deviceName: 'Google Pixel 8' },
-    }
-    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, undefined, {
-      platform: 'android',
-      targetName: 'release-android-wikipedia',
-      deviceName: 'bs-pixel',
-      transport: 'browserstack',
-      device: resolvedDevice,
-      app: {
-        appPackage: 'org.wikipedia.alpha',
-        deepLinkAppId: 'org.wikipedia.alpha',
-        install: {
-          browserstack: 'WikipediaApp',
-          browserstackBaseDir: '/tmp',
-          sourceTrace: { 'app.browserstack': 'agent-qa.config.yaml registry.targets.release-android-wikipedia.app.browserstack' },
-        },
-        sourceTrace: {},
-      },
-      appState: 'preserve',
-      appium: { managed: false },
-      sourceTrace: [],
-    })
-
-    expect(config.browserstackApp).toBe('WikipediaApp')
-    expect(config.appPackage).toBe('org.wikipedia.alpha')
-  })
-
   it('preserves installed-app behavior when no app path resolves', () => {
     const resolvedDevice = {
       name: 'android-emu',
       platform: 'android' as const,
-      transport: 'local' as const,
       match: { automationName: 'UiAutomator2' },
     }
-    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, undefined, {
+    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, {
       platform: 'android',
       targetName: 'release-android-wikipedia',
       deviceName: 'android-emu',
-      transport: 'local',
       device: resolvedDevice,
       app: {
         appPackage: 'org.wikipedia.alpha',
@@ -263,7 +200,6 @@ describe('buildPlatformConfig', () => {
     })
 
     expect(config.appPath).toBeUndefined()
-    expect(config.browserstackApp).toBeUndefined()
     expect(config.appPackage).toBe('org.wikipedia.alpha')
   })
 
@@ -271,14 +207,12 @@ describe('buildPlatformConfig', () => {
     const resolvedDevice = {
       name: 'iphone-15',
       platform: 'ios' as const,
-      transport: 'local' as const,
       match: { udid: '00008120-001E44F11ABC001E', bundleId: 'com.example.ios' },
     }
     const config = buildPlatformConfig('ios', resolvedDevice, undefined)
 
     expect(config.platform).toBe('ios')
     expect(config.device?.name).toBe('iphone-15')
-    expect(config.device?.transport).toBe('local')
     expect(config.device?.match.bundleId).toBe('com.example.ios')
     expect(config.browser).toBeUndefined()
   })
@@ -287,14 +221,12 @@ describe('buildPlatformConfig', () => {
     const resolvedDevice = {
       name: 'ios-sim',
       platform: 'ios' as const,
-      transport: 'local' as const,
       match: { automationName: 'XCUITest' },
     }
-    const config = buildPlatformConfig('ios', resolvedDevice, undefined, undefined, undefined, undefined, {
+    const config = buildPlatformConfig('ios', resolvedDevice, undefined, undefined, undefined, {
       platform: 'ios',
       targetName: 'release-ios-wdio',
       deviceName: 'ios-sim',
-      transport: 'local',
       device: resolvedDevice,
       app: {
         bundleId: 'org.reactjs.native.example.wdiodemoapp',
@@ -313,139 +245,6 @@ describe('buildPlatformConfig', () => {
   it('returns undefined device for mobile when no resolvedDevice', () => {
     const config = buildPlatformConfig('android', undefined, undefined)
     expect(config.device).toBeUndefined()
-  })
-
-  it('attaches farmSession when provided', () => {
-    const resolvedDevice = {
-      name: 'bstack-pixel',
-      platform: 'android' as const,
-      transport: 'browserstack' as const,
-      match: { deviceName: 'Google Pixel 7', platformVersion: '13.0' },
-    }
-    const farmSession = {
-      hostname: 'hub.browserstack.com',
-      port: 443,
-      path: '/wd/hub',
-      capabilities: { platformName: 'Android' },
-    }
-    const config = buildPlatformConfig('android', resolvedDevice, undefined, undefined, undefined, farmSession)
-
-    expect(config.farmSession).toEqual(farmSession)
-    expect(config.device?.transport).toBe('browserstack')
-  })
-})
-
-describe('resolveDeviceAndFarmSession', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  function makeFarmConfig(): AgentQaConfig {
-    return {
-      registry: {
-        llms: [],
-        devices: {
-          'bs-pixel': {
-            platform: 'android',
-            transport: 'browserstack',
-            match: { deviceName: 'Google Pixel 8', platformVersion: '14.0' },
-          },
-        },
-      },
-    } as unknown as AgentQaConfig
-  }
-
-  const localBindings = {
-    providers: {
-      browserstack: { username: 'testuser', accessKey: 'testkey' },
-    },
-  }
-
-  it('passes BrowserStack app references into farm capabilities', async () => {
-    const resolved = await resolveDeviceAndFarmSession(
-      makeFarmConfig(),
-      'bs-pixel',
-      'android',
-      'Wikipedia mobile smoke',
-      120000,
-      undefined,
-      localBindings,
-      {
-        platform: 'android',
-        targetName: 'release-android-wikipedia',
-        deviceName: 'bs-pixel',
-        transport: 'browserstack',
-        device: {
-          name: 'bs-pixel',
-          platform: 'android',
-          transport: 'browserstack',
-          match: { deviceName: 'Google Pixel 8', platformVersion: '14.0' },
-        },
-        app: {
-          appPackage: 'org.wikipedia.alpha',
-          deepLinkAppId: 'org.wikipedia.alpha',
-          install: {
-            browserstack: 'WikipediaApp',
-            browserstackBaseDir: '/tmp',
-            sourceTrace: { 'app.browserstack': 'agent-qa.config.yaml registry.targets.release-android-wikipedia.app.browserstack' },
-          },
-          sourceTrace: {},
-        },
-        appState: 'reset',
-        appium: { managed: false },
-        sourceTrace: [],
-      },
-    )
-
-    expect(resolved.farmSession?.capabilities['appium:app']).toBe('WikipediaApp')
-    expect(coreMocks.resolveMobileCapabilities).toHaveBeenCalledWith(expect.objectContaining({
-      app: 'WikipediaApp',
-      appState: 'reset',
-      appBaseDir: '/tmp',
-    }))
-  })
-
-  it('rejects BrowserStack native app sessions without app.browserstack instead of falling back to app.path', async () => {
-    await expect(
-      resolveDeviceAndFarmSession(
-        makeFarmConfig(),
-        'bs-pixel',
-        'android',
-        'Wikipedia mobile smoke',
-        120000,
-        undefined,
-        localBindings,
-        {
-          platform: 'android',
-          targetName: 'release-android-wikipedia',
-          deviceName: 'bs-pixel',
-          transport: 'browserstack',
-          device: {
-            name: 'bs-pixel',
-            platform: 'android',
-            transport: 'browserstack',
-            match: { deviceName: 'Google Pixel 8', platformVersion: '14.0' },
-          },
-          app: {
-            appPackage: 'org.wikipedia.alpha',
-            deepLinkAppId: 'org.wikipedia.alpha',
-            install: {
-              path: '/tmp/wikipedia.apk',
-              sourceTrace: { 'app.path': 'agent-qa.local.yaml apps.release-android-wikipedia.path' },
-            },
-            sourceTrace: {},
-          },
-          appState: 'reset',
-          appium: { managed: false },
-          sourceTrace: [],
-        },
-      ),
-    ).rejects.toMatchObject({
-      category: 'app-install',
-      message: expect.stringContaining('requires app.browserstack'),
-    })
-
-    expect(coreMocks.resolveMobileCapabilities).not.toHaveBeenCalled()
   })
 })
 

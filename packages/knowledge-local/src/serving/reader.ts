@@ -10,7 +10,6 @@ import {
   isVettedCandidate,
   normalizeAnchor,
   slugBranch,
-  strongestPromotionPath,
   type Anchor,
   type CanaryOutcome,
   type CautionBlock,
@@ -21,13 +20,11 @@ import {
   type ScopeKey,
   type ScreenState,
   type SearchOptions,
-  type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import {
   deriveBundleTrust,
   loadBundle,
-  readGateReceipts,
   readMeasurements,
   verifyBundleIntegrity,
   type LoadedBundle,
@@ -43,7 +40,7 @@ import {
   type KnowledgeReader,
   type OpenKnowledgeReaderOptions,
 } from '../index-reader.js'
-import { assemblePromotionGateInput, snapshotTrustPriors } from '../promotion-gate-input.js'
+import { assemblePromotionGateInput } from '../promotion-gate-input.js'
 import { scopeLadderPredicate } from '../retrieval/pre-filter.js'
 import { effectivePriorDigest, indexTrustEpochMatches } from '../trust-prior-context.js'
 import { selectCautions } from './get-cautions.js'
@@ -56,8 +53,6 @@ const CHARS_PER_TOKEN_ESTIMATE = 4
 
 export interface OpenServingKnowledgeReaderConfig {
   knowledgeRoot: string
-  /** Neutral host data, snapshotted when this reader is opened. */
-  priors?: TrustPriorTable
   product?: string
   scopeDefaults?: {
     asOfBuild?: number
@@ -129,7 +124,7 @@ export function readIndexRows(
     })
     // Pin eligibility before selection: rehydrating mismatched selected rows cannot recover
     // canonical bundles that another epoch's index omitted. Keep the shared SQL scope wall.
-    if (!indexTrustEpochMatches(reader.db, effectivePriorDigest(config.priors))) {
+    if (!indexTrustEpochMatches(reader.db, effectivePriorDigest())) {
       const admits = reader.db.prepare(`
         SELECT 1 FROM (SELECT ? AS product, ? AS scope_tier, ? AS scope_key) r
         WHERE ${predicate.sql}
@@ -194,18 +189,14 @@ export function hydrateRows(
     if (loaded.kind !== 'loaded' || !verifyBundleIntegrity(found.dir).ok) return []
 
     const { bundle } = loaded
-    const trust = deriveBundleTrust(bundle, config.priors)
+    const trust = deriveBundleTrust(bundle)
     const vetted = trust.status === 'candidate' && isVettedCandidate(
       assemblePromotionGateInput({
         knowledgeRoot: config.knowledgeRoot,
         bundleDir: found.dir,
         bundle,
-        priors: config.priors,
       }),
     )
-    // 2026-09-08, 418 D-15/D-16: offline-only actives keep attracting live credit.
-    const lowerTrust = trust.status === 'active'
-      && strongestPromotionPath(readGateReceipts(found.dir, bundle.manifest.id) ?? []) === 'gate1-lower-trust'
     const entry: OriginStampedEntry = {
       id: asRecordId(bundle.manifest.id),
       kind: bundle.frontmatter.kind,
@@ -217,8 +208,7 @@ export function hydrateRows(
       trust: trust.trust,
       anchors: bundle.frontmatter.anchors.map(({ normalized }) => normalized),
       status: trust.status,
-      servedAsCanary: vetted || lowerTrust,
-      ...(lowerTrust ? { lowerTrust: true as const } : {}),
+      servedAsCanary: vetted,
       ...(vetted ? { unverified: true } : {}),
       ...(audit
         ? {
@@ -332,7 +322,7 @@ function searchEntries(
       ) {
         return false
       }
-      const trust = deriveBundleTrust(bundle, config.priors)
+      const trust = deriveBundleTrust(bundle)
       if (
         options.asOfBuild !== undefined
         && !validAtBuild(
@@ -377,15 +367,7 @@ function findReadableBundle(
 
   const hydrated = hydrateRows(config, [row], false)[0]
   if (hydrated === undefined) return undefined
-  /**
-   * G-381-4: `currentServingEntries` is the BRIEF/CAUTION serving wall — it admits candidates
-   * only through the vetted-canary flag, which is fact/caution-only, so a committed procedure
-   * (agent-verified candidate, promotion-excluded in M2 by 379 D-16) was permanently unreadable
-   * even when `getProcedure` had just recommended replaying it. The read face therefore falls
-   * back to the matcher's OWN admission predicate: what getProcedure can recommend, read() can
-   * serve. This is read admission only — `currentServingEntries` is untouched, so nothing new
-   * reaches getRunBrief, getCautions, or search.
-   */
+  // Falls back to the matcher's admission, so a recommended procedure is readable.
   if (
     currentServingEntries([hydrated]).length === 0
     && !admitsProcedure({ entry: hydrated.entry, bundle: hydrated.bundle })
@@ -393,7 +375,7 @@ function findReadableBundle(
     return undefined
   }
 
-  const trust = deriveBundleTrust(hydrated.bundle, config.priors)
+  const trust = deriveBundleTrust(hydrated.bundle)
   const asOfBuild = options?.asOfBuild ?? config.scopeDefaults?.asOfBuild
   if (
     asOfBuild !== undefined
@@ -476,8 +458,7 @@ function servingReader(
       const entries = currentServingEntries(
         hydrateRows(config, readIndexRows(config, scope), true),
       )
-      // D-16: the composite is returned verbatim. The reader does not unwrap and re-wrap it,
-      // so there is no point in this path at which a brief exists without its trace.
+      // Returned verbatim, so no path holds a brief without its trace.
       return assembleRunBrief({
         candidates: entries,
         policy: readPolicyLadder(config.knowledgeRoot, config.product),
@@ -541,7 +522,7 @@ function servingReader(
     },
 
     emitCanaryOutcome(payload: CanaryOutcome) {
-      // D-20: one synchronous, atomic, content-addressed emit pattern.
+      // One synchronous, atomic, content-addressed emit pattern.
       enqueueCanaryOutcome(config.knowledgeRoot, payload)
     },
   }
@@ -562,5 +543,5 @@ export function openKnowledgeReader(
   // KnowledgeHintReader composition seam used by the runner.
   return typeof configOrKnowledgeRoot === 'string'
     ? openIndexKnowledgeReader(configOrKnowledgeRoot, opts)
-    : servingReader({ ...configOrKnowledgeRoot, priors: snapshotTrustPriors(configOrKnowledgeRoot.priors) })
+    : servingReader(configOrKnowledgeRoot)
 }

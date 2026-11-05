@@ -1,20 +1,4 @@
-// SESSION-01..05 requirement roll-call (Phase 361, Plan 12 close-out — the phase-closure anchor).
-// A single durable regression anchor: each SESSION-0N acceptance criterion maps to at least one
-// GREEN assertion here over the SHIPPED run surface — `startRun`/`RunSession` (../shell), the pure
-// verdict/exit derivations (../verdict), the bus envelope stream, and the schema payload
-// projections + event union (@vostride/agent-qa-schema run/bus-events). This is NOT a
-// re-implementation: the per-plan suites (run/__tests__/{run-shell,bus,verdict,masking-proof},
-// schema/__tests__/bus-*, cli/__tests__/run-session-*, runner-local/__tests__/{event-log,handoff-store})
-// own the exhaustive matrices. The roll-call may assert-and-delegate — a direct proof plus a
-// source-anchor pointer for legs owned in another package (the 358-09 WM-02 idiom).
-//
-// Do NOT weaken any assertion to force a pass; if a criterion cannot be proven green, the phase is
-// not done. Mirrors the 356-07 / 357-08 / 358-09 / 359-09 roll-call idiom (one describe per
-// requirement, direct assertions over the shipped surface, plus delegate source-anchors).
-//
-// The SESSION-03 D-11 walk is COMPILE-TIME EXHAUSTIVE: the `Record<RunEventType, RunEvent>` fixture
-// map cannot type-check if the event union gains a member without a fixture — a new event type
-// physically cannot ship without joining the payload-discipline walk.
+// The `Record<RunEventType, RunEvent>` fixture map fails to typecheck when an event has no fixture.
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -164,10 +148,7 @@ function drain(session: RunSession): RunEventEnvelope[] {
   return received
 }
 
-// -----------------------------------------------------------------------------
-// SESSION-01 — startRun(config) → RunSession: synchronously addressable id/status/context
-// -----------------------------------------------------------------------------
-describe('SESSION-01 — a run starts through startRun(config) → RunSession the CLI consumes', () => {
+describe('a run starts through startRun(config) → RunSession the CLI consumes', () => {
   it('returns a session SYNCHRONOUSLY carrying id, running status, and the live executionContext', () => {
     const session = startRun(baseConfig())
     // Addressable before any async member work resolves.
@@ -189,10 +170,7 @@ describe('SESSION-01 — a run starts through startRun(config) → RunSession th
   })
 })
 
-// -----------------------------------------------------------------------------
-// SESSION-02 — the typed event bus: bus schema v1 envelope, gap-free seq, ordering, replay
-// -----------------------------------------------------------------------------
-describe('SESSION-02 — the typed event bus implements bus schema v1 over a gap-free seq stream', () => {
+describe('the typed event bus implements bus schema v1 over a gap-free seq stream', () => {
   it('seq is gap-free from 1; runStarted (seq 1) declares busSchemaVersion = CURRENT_BUS_SCHEMA_VERSION', async () => {
     const session = startRun(baseConfig())
     const events = drain(session)
@@ -234,9 +212,9 @@ describe('SESSION-02 — the typed event bus implements bus schema v1 over a gap
   })
 
   it('a ~10s heartbeat fires through the injected bus timer after silence (liveness)', async () => {
-    // Drive the bus heartbeat clock via the injected timer: startRun wires the run-budget on
-    // config.ports.timer, but the bus builds its own default clock — so we prove the heartbeat
-    // seam directly through createRunEventBus's timer contract.
+    // startRun hands config.ports.timer to the post-verdict bound and the frame hub, but the bus
+    // builds its own default clock — so we prove the heartbeat seam directly through
+    // createRunEventBus's timer contract.
     const events: RunEventEnvelope[] = []
     const timer = makeFakeTimer()
     // A never-resolving executor keeps the run open so a heartbeat can fire mid-run.
@@ -253,7 +231,7 @@ describe('SESSION-02 — the typed event bus implements bus schema v1 over a gap
     expect(calls).toEqual(['slow'])
   })
 
-  it('no chip-event type is emitted in a full run (defined-never-emitted in M1)', async () => {
+  it('no chip-event type is emitted in a full run (defined, never emitted)', async () => {
     const session = startRun(baseConfig())
     const events = drain(session)
     await session.done
@@ -262,11 +240,11 @@ describe('SESSION-02 — the typed event bus implements bus schema v1 over a gap
       'curationStarted', 'curationCompleted', 'curationFailed',
     ])
     expect(events.some(e => chips.has(e.type))).toBe(false)
-    // ...yet they ARE members of the vocabulary (append-only enum, producers land in M1b/M2).
+    // ...yet they are members of the append-only vocabulary.
     for (const chip of chips) expect(RUN_EVENT_TYPES).toContain(chip as RunEventType)
   })
 
-  it('no control/arbiter-group name appears anywhere in RunEventType (the reserved M5 group)', () => {
+  it('no control/arbiter-group name appears anywhere in RunEventType (the reserved group)', () => {
     for (const type of RUN_EVENT_TYPES) {
       expect(type.toLowerCase()).not.toContain('control')
       expect(type.toLowerCase()).not.toContain('arbiter')
@@ -275,22 +253,14 @@ describe('SESSION-02 — the typed event bus implements bus schema v1 over a gap
   })
 })
 
-// -----------------------------------------------------------------------------
-// SESSION-03 — event payloads are browser-safe projections: no live handles, states as hashes
-//              (the D-11 compile-time-exhaustive event-union payload-discipline walk)
-// -----------------------------------------------------------------------------
+// Event payloads are browser-safe projections: no live handles, states as hashes.
 
 const VERIFIER_VERDICT: VerifierVerdict = { pass: true, reasoning: 'ok' }
 const PLANNED_ACTION: Action = { type: 'delay', ms: 100 }
 const RECORDED_RESULT: RecordedActionResult = { success: true, data: { ok: 1 } }
 const EXEC_CTX: ExecutionContext = 'ci'
 
-/**
- * The D-11 exhaustiveness gate. `Record<RunEventType, RunEvent>` forces one fixture per event
- * type: a new enum member cannot type-check into this map without its own payload, so it cannot
- * ship without joining the payload-discipline walk below. Each value is a discriminated `RunEvent`
- * whose `type` narrows the payload — the compiler rejects a mismatched projection.
- */
+// One fixture per event type, so a new event cannot ship without joining the payload walk.
 const chip = (type: RunEventType): RunEvent =>
   ({ seq: 1, ts: 0, runId: RID, type, payload: { runId: RID } } as RunEvent)
 
@@ -348,7 +318,7 @@ const EVENT_FIXTURES: Record<RunEventType, RunEvent> = {
       screenStateHash: 'sha256:before', screenStateHashAfter: 'sha256:after',
     },
   },
-  // 363 D-01 parity appends — hook lifecycle + retry accounting (all browser-safe JSON, no handles).
+  // Hook lifecycle and retry accounting, all browser-safe JSON.
   hookStarted: {
     seq: 12, ts: 0, runId: RID, type: 'hookStarted',
     payload: { hookName: 'seed-db', phase: 'setup', hookExecutionId: 'hx-1', scope: 'suite' },
@@ -390,7 +360,7 @@ function assertBrowserSafe(value: unknown, path: string): void {
   }
 }
 
-describe('SESSION-03 — event payloads are browser-safe JSON projections (no live handles, states as hashes) — D-11', () => {
+describe('event payloads are browser-safe JSON projections (no live handles, states as hashes)', () => {
   it('the fixture map is Record<RunEventType, RunEvent> — one fixture per event type (compile-time exhaustive)', () => {
     // The type annotation on EVENT_FIXTURES is the real gate; this asserts runtime parity so a
     // stale fixture can never silently outlive a shrunk union either.
@@ -418,7 +388,7 @@ describe('SESSION-03 — event payloads are browser-safe JSON projections (no li
     expect(payload).not.toHaveProperty('screenshot')
   })
 
-  it('delegate source anchor — the schema payload types structurally EXCLUDE the raw bodies via `?: never` (D-11)', () => {
+  it('delegate source anchor — the schema payload types structurally EXCLUDE the raw bodies via `?: never`', () => {
     const busEvents = readFileSync(resolve(packagesRoot, 'schema', 'src', 'run', 'bus-events.ts'), 'utf8')
     // testFinished excludes the embedded steps; stepFinalized excludes the ServedBrief body;
     // subActionRecorded excludes the raw stateBefore + screenshot bytes.
@@ -429,16 +399,13 @@ describe('SESSION-03 — event payloads are browser-safe JSON projections (no li
   })
 })
 
-// -----------------------------------------------------------------------------
-// SESSION-04 — `agent-qa run <pattern>` is ONE RunSession spanning N members; aggregate verdict
-//              rule + exit code determined at the verdict event
-// -----------------------------------------------------------------------------
+// One RunSession spans every member; the verdict event fixes the aggregate and exit code.
 
 function healedStep(): StepResult {
   return step({ status: 'healed', evidence: { selfHeal: {} } as unknown as StepEvidence })
 }
 
-describe('SESSION-04 — one RunSession over N members: the ratified aggregate rule + exit code at the verdict', () => {
+describe('one RunSession over N members: the ratified aggregate rule + exit code at the verdict', () => {
   it('a healed member (none failed) ⇒ aggregate healed ⇒ exit 0 (healed is a ratified pass)', async () => {
     const session = startRun(
       baseConfig({
@@ -464,18 +431,6 @@ describe('SESSION-04 — one RunSession over N members: the ratified aggregate r
     expect(mapVerdictToExitCode(verdict)).toBe(1)
   })
 
-  it('whole-run budget expiry ⇒ aggregate timeout ⇒ exit 1', async () => {
-    const timer = makeFakeTimer()
-    const session = startRun(
-      baseConfig({ executor: abortableExecutor(), runBudgetMs: 5_000, ports: { handoffStore: makeFakeHandoffStore(), timer } }),
-    )
-    drain(session)
-    timer.fireLatest() // simulate the wall-clock budget firing
-    const { verdict } = await session.done
-    expect(verdict).toBe('timeout')
-    expect(mapVerdictToExitCode(verdict)).toBe(1)
-  })
-
   it('run-level cancel ⇒ aggregate cancelled ⇒ exit 130 via mapVerdictToExitCode', async () => {
     const session = startRun(baseConfig({ executor: abortableExecutor() }))
     drain(session)
@@ -485,18 +440,17 @@ describe('SESSION-04 — one RunSession over N members: the ratified aggregate r
     expect(mapVerdictToExitCode(verdict)).toBe(130)
   })
 
-  it('the ratified ordered rule + D-15 neutral-skipped clause hold directly on deriveAggregateVerdict', () => {
-    const agg = (outcomes: MemberTestOutcome[], flags: { runCancelled?: boolean; runBudgetExpired?: boolean } = {}): RunStatus =>
-      deriveAggregateVerdict({ runCancelled: flags.runCancelled ?? false, runBudgetExpired: flags.runBudgetExpired ?? false, outcomes })
+  it('the ratified ordered rule + neutral-skipped clause hold directly on deriveAggregateVerdict', () => {
+    const agg = (outcomes: MemberTestOutcome[], flags: { runCancelled?: boolean } = {}): RunStatus =>
+      deriveAggregateVerdict({ runCancelled: flags.runCancelled ?? false, outcomes })
     expect(agg(['passed', 'failed'])).toBe('failed')
     expect(agg(['passed', 'timeout'])).toBe('failed')
     expect(agg(['passed', 'healed'])).toBe('healed')
     expect(agg(['passed', 'passed'])).toBe('passed')
-    // D-15: skipped members are neutral; an all-skipped (and the empty) run is vacuously passed.
+    // Skipped members are neutral; an all-skipped or empty run passes vacuously.
     expect(agg(['skipped', 'skipped'])).toBe('passed')
     expect(agg([])).toBe('passed')
     expect(agg(['passed'], { runCancelled: true })).toBe('cancelled')
-    expect(agg(['passed'], { runBudgetExpired: true })).toBe('timeout')
   })
 
   it('delegate source anchor — BOTH CLI run paths cut over to startRun, with the exit-code pins beside them', () => {
@@ -511,17 +465,14 @@ describe('SESSION-04 — one RunSession over N members: the ratified aggregate r
   })
 })
 
-// -----------------------------------------------------------------------------
-// SESSION-05 — exactly one CompletedRunHandoff per run, carrying the §A8 header + per-test steps
-// -----------------------------------------------------------------------------
-describe('SESSION-05 — exactly one CompletedRunHandoff per run, §A8 header fields copied from RunConfig', () => {
+describe('exactly one CompletedRunHandoff per run, §A8 header fields copied from RunConfig', () => {
   it('the handoff persists exactly once and is the SAME object done resolves (pass path)', async () => {
     const store = makeFakeHandoffStore()
     const session = startRun(baseConfig({ ports: { handoffStore: store, eventLog: makeFakeEventLog() } }))
     const { handoff } = await session.done
     expect(store.saveCalls).toBe(1)
     expect(store.saved[0]).toBe(handoff)
-    // §A8 header fields are copied verbatim from the resolved RunConfig (D-04/D-20 — never re-derived).
+    // Header fields are copied verbatim from the resolved RunConfig, never re-derived.
     expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
     expect(handoff.runId).toBe(RID)
     expect(handoff.scope).toEqual(SCOPE)
@@ -541,13 +492,13 @@ describe('SESSION-05 — exactly one CompletedRunHandoff per run, §A8 header fi
     )
     const { handoff } = await session.done
     expect(store.saveCalls).toBe(1)
-    // Every executed step is covered; indices re-derived from array position (RESEARCH Pitfall 4).
+    // Every executed step is covered; indices come from array position.
     expect(handoff.tests[0].steps.map(s => s.stepIndex)).toEqual([0, 1])
-    // Evidence-less steps get a synthesized minimal StepEvidence (Open Q1: synthesize, do not drop).
+    // Evidence-less steps get a synthesized minimal StepEvidence, never dropped.
     expect(handoff.tests[0].steps).toHaveLength(2)
   })
 
-  it('a handoff-store write failure still resolves done (verdict independence, D-07) — the run is never gated on persistence', async () => {
+  it('a handoff-store write failure still resolves done (verdict independence) — the run is never gated on persistence', async () => {
     const store = makeFakeHandoffStore({ fail: true })
     const session = startRun(baseConfig({ ports: { handoffStore: store, eventLog: makeFakeEventLog() } }))
     const events = drain(session)
@@ -569,10 +520,10 @@ describe('SESSION-05 — exactly one CompletedRunHandoff per run, §A8 header fi
 
   it('delegate source anchors — durable JSONL persistence neutralizes the runId (slugBranch) and reads guard the schema version', () => {
     const eventLog = readFileSync(resolve(packagesRoot, 'runner-local', 'src', 'event-log.ts'), 'utf8')
-    // The runId directory component is slugged traversal-safe (T-360-03 slugBranch idiom).
+    // The runId directory component is slugged traversal-safe.
     expect(eventLog).toContain('slugBranch')
     const handoffStore = readFileSync(resolve(packagesRoot, 'runner-local', 'src', 'handoff-store.ts'), 'utf8')
-    // The read side delegates the reject-newer/migrate-older rule to the schema's ONE guard (D-19).
+    // The read side delegates the reject-newer/migrate-older rule to the schema's ONE guard.
     expect(handoffStore).toContain('guardCompletedRunHandoff')
   })
 })

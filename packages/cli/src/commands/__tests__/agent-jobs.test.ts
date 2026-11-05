@@ -1,11 +1,3 @@
-// `agent-qa agent-jobs` — the surface half of 413 D-04 / D-06.
-//
-// Three claims, none of them a snapshot: the help obeys the three-queue vocabulary relation
-// `queue-help.test.ts` enforces for every other queue surface; `--only` refuses an undeclared kind
-// by NAMING the declared ones (a driver that mistypes a kind must be told the vocabulary, not just
-// that it was wrong); and `list --json` prints a DTO that carries a run id and no payload body —
-// the T-413-47 disclosure boundary, asserted on the bytes an operator actually sees.
-
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,10 +13,11 @@ import type { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createAgentJobsCommand } from '../agent-jobs.js'
+import type { AgentJobsCommandDeps } from '../agent-jobs.js'
 import type { AgentJobsOpsDeps } from '../../composition/agent-jobs-ops.js'
 
 /**
- * The three-queue vocabulary relation, copied from `queue-help.test.ts` rather than imported.
+ * The three-queue vocabulary relation, restated rather than imported from `queue-help.test.ts`.
  *
  * Copied deliberately: that file's helpers are private to it, and the relation is the CONTRACT —
  * a surface that borrowed a helper could be exempted by an edit to the helper. Two independent
@@ -49,11 +42,7 @@ function proseOf(help: string): string {
 
 function qualifiersIn(prose: string): string[] {
   const found = new Set<string>()
-  // Both boundaries, not just the trailing one. The trailing lookahead alone made the relation
-  // fire inside `requeue` — a VERB whose last five letters happen to spell the noun — and would
-  // have forced the 413-14 subcommand to be named something other than what it does. A compound
-  // word is not an unqualified use of the noun; a bare "the queue" still is, and the control cell
-  // below still reddens on it.
+  // Both boundaries are guarded, so a compound like `requeue` does not count as the noun.
   const singular = /(?<![\w-])queue(?![\w-])/g
   for (let m = singular.exec(prose); m !== null; m = singular.exec(prose)) {
     const before = prose.slice(0, m.index)
@@ -72,8 +61,11 @@ const clock = { now: (): string => new Date().toISOString() }
 
 let roots: string[] = []
 
-function harnessDeps(): { deps: AgentJobsOpsDeps; seed: (payload: unknown) => Promise<void> } {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-413-10-cmd-'))
+function harnessDeps(): {
+  deps: AgentJobsOpsDeps
+  seed: (payload: unknown, runId?: string) => Promise<void>
+} {
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-cmd-'))
   roots.push(root)
   const agentQaRoot = join(root, '.agent-qa')
   const knowledgeRoot = join(root, 'knowledge')
@@ -101,8 +93,6 @@ function harnessDeps(): { deps: AgentJobsOpsDeps; seed: (payload: unknown) => Pr
             queue: host.queue,
             model: NEVER_AUTHORS,
             idSource: DIGEST_JOB_ID_SOURCE,
-            // Stated, not omitted: this double composes no posture, and the empty set is a fact
-            // about it rather than a field nobody got round to (CR-02).
             unclaimableKinds: [],
           },
           close: async () => {
@@ -116,10 +106,10 @@ function harnessDeps(): { deps: AgentJobsOpsDeps; seed: (payload: unknown) => Pr
       releaseLease: maintenance.releaseLease,
       refreshWriterLeaseAuthority: maintenance.refreshWriterLeaseAuthority,
     },
-    async seed(payload) {
+    async seed(payload, runId = 'r_list') {
       const host = open()
       try {
-        await host.queue.enqueue('analyze-run', payload, 'r_list')
+        await host.queue.enqueue('analyze-run', payload, runId)
       } finally {
         host.close()
       }
@@ -187,7 +177,6 @@ describe('agent-qa agent-jobs pump --only', () => {
       'analyze-run',
       'curate-memory',
       'consolidate',
-      'propose-improvements',
     ]) {
       expect(stderr).toContain(kind)
     }
@@ -248,5 +237,122 @@ describe('agent-qa agent-jobs requeue <jobId>', () => {
     // requeues a row a drainer already owns must be told, and must not have their driver abort.
     expect(stdout).toBe('{"kind":"not-terminal","status":"queued"}')
     expect(process.exitCode).not.toBe(1)
+  })
+})
+
+describe('agent-qa agent-jobs under GitHub Actions', () => {
+  const CRAFTED = '##[error]x ::set-output name=x::y'
+  const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  async function jobs(
+    deps: AgentJobsCommandDeps,
+    args: readonly string[],
+  ): Promise<{ stdout: string[]; stderr: string[]; writes: string[]; errorWrites: string[] }> {
+    const stdout: string[] = []
+    const stderr: string[] = []
+    const writes: string[] = []
+    const errorWrites: string[] = []
+    const log = vi.spyOn(console, 'log').mockImplementation((value: unknown) => {
+      stdout.push(String(value))
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation((value: unknown) => {
+      stderr.push(String(value))
+    })
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      writes.push(String(chunk))
+      return true
+    })
+    const errorWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      errorWrites.push(String(chunk))
+      return true
+    })
+    try {
+      await createAgentJobsCommand(deps).parseAsync([...args], { from: 'user' })
+      return { stdout, stderr, writes, errorWrites }
+    } finally {
+      log.mockRestore()
+      error.mockRestore()
+      write.mockRestore()
+      errorWrite.mockRestore()
+    }
+  }
+
+  async function craftedQueue(): Promise<AgentJobsCommandDeps> {
+    const harness = harnessDeps()
+    await harness.seed({ runId: CRAFTED }, CRAFTED)
+    return { opsFor: async () => harness.deps }
+  }
+
+  const failing: AgentJobsCommandDeps = {
+    opsFor: async () => {
+      throw new Error(CRAFTED)
+    },
+  }
+
+  it('prints list --json with no # that parses back to the same rows', async () => {
+    const deps = await craftedQueue()
+    const plain = await jobs(deps, ['list', '--json'])
+    expect(plain.stdout.join('')).toContain(CRAFTED)
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const actions = await jobs(deps, ['list', '--json'])
+
+    expect(actions.writes).toEqual([])
+    expect(actions.stdout).toHaveLength(1)
+    expect(actions.stdout[0]).not.toContain('#')
+    expect(JSON.parse(actions.stdout[0] ?? '')).toEqual(JSON.parse(plain.stdout[0] ?? ''))
+  })
+
+  it('prints the human listing of the same job inside one stop-commands pair', async () => {
+    const deps = await craftedQueue()
+    const plain = await jobs(deps, ['list'])
+    expect(plain.stdout.join('\n')).toContain(CRAFTED)
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const actions = await jobs(deps, ['list'])
+
+    expect(actions.stdout).toEqual([])
+    expect(actions.writes).toHaveLength(1)
+    expect(actions.writes[0]).toMatch(PAIR)
+    expect(actions.writes[0]).toContain(`\n${plain.stdout.join('\n')}\n`)
+  })
+
+  it('prints an error inside a pair, on stderr while --json holds stdout', async () => {
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const human = await jobs(failing, ['list'])
+    expect(process.exitCode).toBe(1)
+    const json = await jobs(failing, ['list', '--json'])
+    expect(process.exitCode).toBe(1)
+
+    expect(human.stderr).toEqual([])
+    expect(human.writes).toHaveLength(1)
+    expect(human.writes[0]).toMatch(PAIR)
+    expect(human.writes[0]).toContain(CRAFTED)
+    expect(json.writes).toEqual([])
+    expect(json.stdout).toEqual([])
+    expect(json.stderr).toEqual([])
+    expect(json.errorWrites).toHaveLength(1)
+    expect(json.errorWrites[0]).toMatch(PAIR)
+    expect(json.errorWrites[0]).toContain(CRAFTED)
+  })
+
+  it('prints the listing and the error exactly as before off GitHub Actions', async () => {
+    const deps = await craftedQueue()
+
+    const listing = await jobs(deps, ['list'])
+    const failure = await jobs(failing, ['list'])
+
+    expect(listing.writes).toEqual([])
+    expect(listing.stdout).toHaveLength(1)
+    expect(listing.stdout[0]).toContain(CRAFTED)
+    expect(failure.writes).toEqual([])
+    expect(failure.stderr).toHaveLength(1)
+    expect(failure.stderr[0]).toContain(`agent job queue list error: ${CRAFTED}`)
+    expect(failure.stderr[0]).not.toContain('::stop-commands::')
   })
 })

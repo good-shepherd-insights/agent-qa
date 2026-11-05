@@ -1,19 +1,13 @@
-// `agent-qa agent-jobs` operates the AGENT JOB QUEUE — the v52 durable background-job substrate in
-// `.agent-qa/agent-jobs.db`. It is not the run queue (v1 test executions, `agent-qa queue`) and not
-// the curation queue (v51 knowledge curation, drained under the writer lease). D-21's three names
-// are load-bearing here for one concrete reason: the D-06 disposal step discards CURATOR jobs, and
-// an operator who reached for `agent-qa queue cancel` would be cancelling rows in a different
-// store entirely.
-//
-// 413 D-04 / D-06: `pump --only <kind>` is the in-process, writer-lease-holding, kind-filtered
-// drain. The campaign driver pumps `analyze-run` per leg so seeding reads real verdicts, and the
-// `curate-memory` successor that drain enqueues stays queued for the disposal step to list and
-// cancel. See `../composition/agent-jobs-ops.ts` for why the filter is a construction option on the
-// queue rather than a check in a loop.
+// The agent job queue in `.agent-qa/agent-jobs.db`, distinct from the run and curation queues.
 
 import { Command, InvalidArgumentError } from 'commander'
 import pc from 'picocolors'
 
+import {
+  guardJsonText,
+  printRunText,
+  reserveStdoutForData,
+} from '@vostride/agent-qa-core/run-text-output'
 import type { JobKind } from '@vostride/agent-qa-schema'
 
 import type {
@@ -25,19 +19,18 @@ import type {
 } from '../composition/agent-jobs-ops.js'
 
 /**
- * The five declared kinds, spelled as a total `Record` rather than an array.
+ * The declared kinds, spelled as a total `Record` rather than an array.
  *
  * `jobKindValues` is deliberately not on the schema barrel (its own comment says publishing it
  * would invite a parallel registry), so the vocabulary is restated here — but as a total record,
- * so a sixth kind added to `JobKind` fails to COMPILE here instead of silently becoming an
- * `--only` value this parser rejects.
+ * so a kind added to `JobKind` fails to COMPILE here instead of silently becoming an `--only`
+ * value this parser rejects.
  */
 const JOB_KIND_DECLARED: Record<JobKind, true> = Object.freeze({
   chat: true,
   'analyze-run': true,
   'curate-memory': true,
   consolidate: true,
-  'propose-improvements': true,
 })
 
 const AGENT_JOB_KINDS = Object.freeze(Object.keys(JOB_KIND_DECLARED) as JobKind[])
@@ -86,14 +79,7 @@ function renderRefusal(refusal: Extract<PumpAgentJobsOutcome, { kind: 'refused' 
   return pc.red(`agent job queue: refusal [${refusal.reason}]: ${detail}`)
 }
 
-/**
- * The listing, with the 422 D-16 conclusion column beside the kind it explains.
- *
- * The column is ALWAYS printed, not added only when some row has a conclusion. A table whose
- * shape depended on its contents would mean an operator comparing two listings could not tell a
- * queue with no quarantines from a build that does not report them, and a driver parsing columns
- * by position would silently read the run id as a conclusion the first time one appeared.
- */
+// The conclusion column is always printed, so a column-parsing driver never misreads the run id.
 function renderList(result: ListAgentJobsOutcome): string {
   if (result.jobs.length === 0) return 'agent job queue: empty'
   const header = [
@@ -158,10 +144,17 @@ function renderRequeue(jobId: string, result: RequeueAgentJobOutcome): string {
 }
 
 function reportError(verb: string, error: unknown): void {
-  console.error(
-    pc.red(`agent job queue ${verb} error: ${error instanceof Error ? error.message : String(error)}`),
-  )
+  const message = error instanceof Error ? error.message : String(error)
+  printRunText(pc.red(`agent job queue ${verb} error: ${message}`), (block) => console.error(block))
   process.exitCode = 1
+}
+
+function printRefusal(refusal: Extract<PumpAgentJobsOutcome, { kind: 'refused' }>): void {
+  printRunText(renderRefusal(refusal), (block) => console.error(block))
+}
+
+function holdStdoutForJson(json: boolean | undefined): (() => void) | undefined {
+  return json === true ? reserveStdoutForData() : undefined
 }
 
 export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS): Command {
@@ -181,13 +174,16 @@ export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS
     .description('Show every row of the agent job queue, without any payload body')
     .option('--json', 'emit the typed result DTO to stdout')
     .action(async (opts: { json?: boolean }, command: Command) => {
+      const releaseStdout = holdStdoutForJson(opts.json)
       try {
         const ops = await import('../composition/agent-jobs-ops.js')
         const result = await ops.listAgentJobs(await deps.opsFor(configPathFor(command)))
-        if (opts.json === true) console.log(JSON.stringify(result))
-        else console.log(renderList(result))
+        if (opts.json === true) console.log(guardJsonText(JSON.stringify(result)))
+        else printRunText(renderList(result))
       } catch (error) {
         reportError('list', error)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -197,6 +193,7 @@ export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS
     .requiredOption('--only <kind>', 'the one agent job kind this pump may claim', parseOnlyKind)
     .option('--json', 'emit the typed result DTO to stdout')
     .action(async (opts: { only: JobKind; json?: boolean }, command: Command) => {
+      const releaseStdout = holdStdoutForJson(opts.json)
       try {
         const ops = await import('../composition/agent-jobs-ops.js')
         const result = await ops.pumpAgentJobs(
@@ -204,21 +201,23 @@ export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS
           await deps.opsFor(configPathFor(command)),
         )
         if (opts.json === true) {
-          console.log(JSON.stringify(result))
+          console.log(guardJsonText(JSON.stringify(result)))
           if (result.kind === 'refused') process.exitCode = 1
           return
         }
         if (result.kind === 'refused') {
-          console.error(renderRefusal(result))
+          printRefusal(result)
           process.exitCode = 1
           return
         }
         // A pumped outcome always exits 0. A failed or retry-scheduled disposition is DATA about
         // what the queue durably did — a driver that read it as a command failure would abort a
         // campaign leg over a job the queue has already scheduled to retry.
-        console.log(renderPump(result))
+        printRunText(renderPump(result))
       } catch (error) {
         reportError('pump', error)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -228,22 +227,25 @@ export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS
     .argument('<jobId>', 'the agent job id to cancel')
     .option('--json', 'emit the typed result DTO to stdout')
     .action(async (jobId: string, opts: { json?: boolean }, command: Command) => {
+      const releaseStdout = holdStdoutForJson(opts.json)
       try {
         const ops = await import('../composition/agent-jobs-ops.js')
         const result = await ops.cancelAgentJob(jobId, await deps.opsFor(configPathFor(command)))
         if (opts.json === true) {
-          console.log(JSON.stringify(result))
+          console.log(guardJsonText(JSON.stringify(result)))
           if (result.kind === 'refused') process.exitCode = 1
           return
         }
         if (result.kind === 'refused') {
-          console.error(renderRefusal(result))
+          printRefusal(result)
           process.exitCode = 1
           return
         }
-        console.log(renderCancel(jobId, result))
+        printRunText(renderCancel(jobId, result))
       } catch (error) {
         reportError('cancel', error)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -253,22 +255,25 @@ export function createAgentJobsCommand(deps: AgentJobsCommandDeps = DEFAULT_DEPS
     .argument('<jobId>', 'the agent job id to return to the agent job queue')
     .option('--json', 'emit the typed result DTO to stdout')
     .action(async (jobId: string, opts: { json?: boolean }, command: Command) => {
+      const releaseStdout = holdStdoutForJson(opts.json)
       try {
         const ops = await import('../composition/agent-jobs-ops.js')
         const result = await ops.requeueAgentJob(jobId, await deps.opsFor(configPathFor(command)))
         if (opts.json === true) {
-          console.log(JSON.stringify(result))
+          console.log(guardJsonText(JSON.stringify(result)))
           if (result.kind === 'refused') process.exitCode = 1
           return
         }
         if (result.kind === 'refused') {
-          console.error(renderRefusal(result))
+          printRefusal(result)
           process.exitCode = 1
           return
         }
-        console.log(renderRequeue(jobId, result))
+        printRunText(renderRequeue(jobId, result))
       } catch (error) {
         reportError('requeue', error)
+      } finally {
+        releaseStdout?.()
       }
     })
 

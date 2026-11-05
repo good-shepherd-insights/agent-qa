@@ -1,33 +1,14 @@
-import { DISTILLED_OBSERVATION_SCHEMA_VERSION, GATE_RECEIPT_SCHEMA_VERSION, stampReceiptDigest, type Gate1Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation, type ResolvedPromotionGatePosture } from '@vostride/agent-qa-schema'
+import { DISTILLED_OBSERVATION_SCHEMA_VERSION, GATE_RECEIPT_SCHEMA_VERSION, stampReceiptDigest, type Gate3Receipt, type GateVerdict, type Anchor, type BundleDraft, type DistilledObservation } from '@vostride/agent-qa-schema'
 import { publishBundleForTest } from '@vostride/agent-qa-knowledge-local'
 
-export function resolvedPromotionPosture(
-  overrides: Partial<ResolvedPromotionGatePosture> = {},
-): ResolvedPromotionGatePosture {
-  return {
-    kind: 'resolved', replayGateAvailable: true, gateSetNonEmpty: true, gateSetVerdict: 'ok',
-    corpusDigest: 'c'.repeat(64), minimumGateSet: 1,
-    counts: { natural: 1, heldOutShared: 1, heldOutPrivate: 0, adversarial: 0, excludedCount: 0 },
-    scope: { partition: 'storefront', resolution: 'product-key' },
-    judge: { capable: true, reason: 'eligible' },
-    canary: { kind: 'not-provided', rarePathEligible: false },
-    ...overrides,
-  }
-}
-// 416-02: additive receipt builder; the pristine v51 builders below stay byte-identical.
-export function completeGate1Receipt(
+export function markReceipt(
   candidateId: string,
-  overrides?: { producedAtOrdinal?: number; corpusDigest?: string; verdict?: GateVerdict },
-): Gate1Receipt {
-  const score = { baseline: 0.5, candidate: 0.8, delta: 0.3, floor: 0.1, n: 10 }
+  overrides?: { producedAtOrdinal?: number; verdict?: GateVerdict },
+): Gate3Receipt {
   return stampReceiptDigest({
-    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 1, candidateId, verdict: overrides?.verdict ?? 'pass',
+    schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 3, candidateId, verdict: overrides?.verdict ?? 'pass',
     producedAtOrdinal: overrides?.producedAtOrdinal ?? 44, producedBy: { opId: 'test' },
-    perAxisScore: { headline: score, elementIdentity: score, value: score, opClass: score,
-      sideEffect: score, loop: score },
-    corpusVersion: { corpusDigest: overrides?.corpusDigest ?? 'c'.repeat(64), partitionVersion: 2,
-      gateSetSize: 10, excludedCount: 0, minimumGateSet: 1 },
-    samples: { k: 1, seeds: [1], seedHonored: true, modelCalls: 0 }, crossCheck: 'held',
+    runId: 'marked-run', mark: 'confirmed-bug',
   })
 }
 
@@ -61,7 +42,6 @@ export function createPromotionFloorFixture({ knowledgeRoot }: { knowledgeRoot: 
     const published = publishBundleForTest({
       knowledgeRoot,
       productKey: 'storefront',
-      commitArtifacts: 'none',
       writerLeaseId: 'promotion-floor-fixture',
     }, {
       draft,

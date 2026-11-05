@@ -129,7 +129,6 @@ describe('createAuthoringReader dense retrieval', () => {
     const store: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'authoring-reader-dense',
     }
     const outcome = publishBundle(store, {
@@ -222,7 +221,7 @@ describe('createAuthoringReader dense retrieval', () => {
       .resolves.toEqual(lexicalBrief)
   })
 
-  it('joins id-different-from-name projection and discovery into one verified exemplar (WR-02)', async () => {
+  it('joins id-different-from-name projection and discovery into one verified exemplar', async () => {
     const filePath = join(root, 'tests', 'guest-checkout.yaml')
     const testId = 'checkout-guest-1'
     const testName = 'Guest checkout with promo'
@@ -352,7 +351,7 @@ describe('createAuthoringReader dense retrieval', () => {
     expect(brief.exemplars[0]).not.toHaveProperty('passRate')
   })
 
-  it('keeps anchors tuple-true for old-colliding file/test names (WR-01, ABRF-02)', async () => {
+  it('keeps anchors tuple-true for old-colliding file/test names', async () => {
     foldOutcomeHandoff(knowledgeRoot, outcomeHandoff({
       runId: 'run-collide-one',
       scope: SCOPE,
@@ -464,10 +463,7 @@ describe('createAuthoringReader dense retrieval', () => {
     expect(brief.exemplars).toEqual([])
   })
 
-  // 390 D-02 — the exemplar quarantine exclude used to read a DERIVED column the projection
-  // stamped from a lifetime flake threshold. That column is gone: the committed ledger is now the
-  // one thing called "quarantined", and every case below varies exactly ONE input (the ledger
-  // bytes, or the clock the fold is asked about) while the projection rows stay identical.
+  // Each case varies one input, the ledger bytes or the clock; the projection rows stay identical.
   describe('quarantine exclusion re-sourced to the committed ledger', () => {
     const QUARANTINED_REF = {
       filePath: 'tests/ledger-quarantined.yaml',
@@ -483,7 +479,7 @@ describe('createAuthoringReader dense retrieval', () => {
     const EXPIRES_AT = '2026-08-15T00:00:00.000Z'
     /** Inside the window the `entered` event opened. */
     const BEFORE_EXPIRY = '2026-08-05T00:00:00.000Z'
-    /** One day past the deadline — the fold COMPUTES 'expired' from this, D-11. */
+    // One day past the deadline; the fold computes `expired` from it.
     const AFTER_EXPIRY = '2026-08-16T00:00:00.000Z'
 
     function foldExemplar(
@@ -536,7 +532,7 @@ describe('createAuthoringReader dense retrieval', () => {
       foldExemplar(CONTROL_REF, { runId: 'run-ledger-control', buildOrdinal: 41 })
     })
 
-    it('serves both tests when the ledger is absent (the FLAK-03 empty-input floor)', async () => {
+    it('serves both tests when the ledger is absent (the empty-input floor)', async () => {
       expect(await exemplarNames(BEFORE_EXPIRY)).toEqual([
         CONTROL_REF.testName,
         QUARANTINED_REF.testName,
@@ -549,7 +545,7 @@ describe('createAuthoringReader dense retrieval', () => {
       expect(await exemplarNames(BEFORE_EXPIRY)).toEqual([CONTROL_REF.testName])
     })
 
-    it('stops excluding once the deadline lapses — expiry is COMPUTED from now (D-11)', async () => {
+    it('stops excluding once the deadline lapses — expiry is COMPUTED from now', async () => {
       writeLedger([ledgerEvent({})])
 
       expect(await exemplarNames(AFTER_EXPIRY)).toEqual([

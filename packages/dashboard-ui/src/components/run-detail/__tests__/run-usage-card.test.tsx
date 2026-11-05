@@ -1,17 +1,6 @@
 // @vitest-environment jsdom
 
-// THE USAGE CARD A PERSON ACTUALLY OPENS (425-05 · D-21..D-24, UI-SPEC S6/E5).
-//
-// WHY THESE CELLS MOUNT THE REAL RADIX PRIMITIVES. The card IS a `TooltipContent`, so a mock would
-// replace the one thing under test — that the content opens from the trigger, portals out of the
-// header and carries its contract attributes. The component deliberately carries no provider (the
-// page owns the single one), so every mount wraps it in `TooltipProvider delayDuration={0}`, and
-// the card is read off `document` rather than the container because it is portalled.
-//
-// EVERY LINE IS A FACT SOMEBODY REPORTED. The cells below are mostly ABSENCE claims — no cached
-// line without a provider report, no coverage line on a fully measured run, no model line on a
-// pre-423 run — because a card that states a line it has no fact for is the failure mode this
-// whole plan exists to prevent, and an assertion that only checks what IS rendered cannot see it.
+// The card is a `TooltipContent`, so cells mount real Radix and read it portalled off `document`.
 
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -66,17 +55,12 @@ async function openCard(tokens: RunTokenTotals, models?: RunModelSummary): Promi
 }
 
 /**
- * The card's VISIBLE lines, in render order, as `[kind, text]` pairs.
+ * The card's lines, in render order, as `[kind, text]` pairs.
  *
- * Radix renders the content twice — once for the eye and once inside a visually-hidden
- * `role="tooltip"` node so a screen reader announces it — so an unfiltered query returns every
- * line twice. The duplicate is the primitive's accessibility mechanism, not a second card: what
- * these cells are about is the line SET, so the announced copy is excluded here and the fact that
- * it exists at all is the primitive's own contract.
+ * Radix renders the content once, as the `role="tooltip"` node itself, so each line is read once.
  */
 function lines(card: HTMLElement): [string, string][] {
   return [...card.querySelectorAll<HTMLElement>("[data-usage-line]")]
-    .filter(el => el.closest('[role="tooltip"]') === null)
     .map(el => [el.getAttribute("data-usage-line") ?? "", el.textContent ?? ""])
 }
 
@@ -92,7 +76,7 @@ const ONE_MODEL: RunModelSummary = {
   declared: [{ provider: "openai", modelId: "gpt-5.6-terra", stepCount: 3 }],
 }
 
-describe("the usage card says the total and the identity (425-05 · D-24, UI-SPEC E5 populated)", () => {
+describe("the usage card says the total and the identity", () => {
   it("USAGE-CARD-POPULATED: a fully measured single-model run is two lines and no caveats", async () => {
     const card = await openCard(MEASURED, ONE_MODEL)
 
@@ -104,7 +88,7 @@ describe("the usage card says the total and the identity (425-05 · D-24, UI-SPE
     expect(card.className).toContain("max-w-[320px]")
   })
 
-  it("USAGE-CARD-POPULATED: the card holds no per-step table, no link and no cost (D-24)", async () => {
+  it("USAGE-CARD-POPULATED: the card holds no per-step table, no link and no cost", async () => {
     const card = await openCard(MEASURED, ONE_MODEL)
 
     expect(card.querySelector("table")).toBeNull()
@@ -113,7 +97,7 @@ describe("the usage card says the total and the identity (425-05 · D-24, UI-SPE
   })
 })
 
-describe("the card states a caveat only when there is one (425-05 · D-22/D-24, UI-SPEC E5 partial)", () => {
+describe("the card states a caveat only when there is one", () => {
   it("USAGE-CARD-PARTIAL: an undercount and a narrower cache window are stated, in reading order", async () => {
     const card = await openCard({
       measuredSteps: 2,
@@ -143,8 +127,7 @@ describe("the card states a caveat only when there is one (425-05 · D-22/D-24, 
     ])
   })
 
-  // RESEARCH reconciliation 4: a run whose steps were served from the EXECUTION cache reports no
-  // provider caching at all, and the card must say nothing rather than borrow the other fact.
+  // Execution cache hits are not provider caching, so the card says nothing about cached input.
   it("CACHED-ONLY-WHEN-REPORTED: execution cache hits with no provider report render no cached line", async () => {
     const card = await openCard(MEASURED, ONE_MODEL)
 
@@ -153,11 +136,11 @@ describe("the card states a caveat only when there is one (425-05 · D-22/D-24, 
   })
 })
 
-describe("an unmeasured run still says what it knows (425-05 · UI-SPEC E5 empty)", () => {
+describe("an unmeasured run still says what it knows", () => {
   it("USAGE-CARD-UNMEASURED: the totals line reads the label and the model line survives", async () => {
     const card = await openCard({ measuredSteps: 0, unmeasuredSteps: 3 }, ONE_MODEL)
 
-    // No coverage line (425-14 · WR-02): a run nobody measured has no total to be an undercount of.
+    // No coverage line: a run nobody measured has no total to be an undercount of.
     expect(lines(card)).toEqual([
       ["totals", TOKENS_NOT_MEASURED_LABEL],
       ["model", "Model gpt-5.6-terra (openai)"],
@@ -165,7 +148,7 @@ describe("an unmeasured run still says what it knows (425-05 · UI-SPEC E5 empty
     expect(usageTotalsLine({ measuredSteps: 0, unmeasuredSteps: 3 })).toBe(TOKENS_NOT_MEASURED_LABEL)
   })
 
-  it("USAGE-CARD-UNMEASURED: a pre-423 run renders the label and no model line at all", async () => {
+  it("USAGE-CARD-UNMEASURED: a run with no measured step renders the label and no model line at all", async () => {
     const card = await openCard({ measuredSteps: 0, unmeasuredSteps: 3 })
 
     expect(lines(card).map(([kind]) => kind)).toEqual(["totals"])
@@ -174,7 +157,7 @@ describe("an unmeasured run still says what it knows (425-05 · UI-SPEC E5 empty
   })
 })
 
-describe("who answered this run (425-05 · D-23, UI-SPEC E5 zero-one-many)", () => {
+describe("who answered this run, for no, one or many models", () => {
   it("USAGE-MODEL-LINES: a differing responding id is named under the declared one", async () => {
     const card = await openCard(MEASURED, {
       ...ONE_MODEL,
@@ -205,8 +188,8 @@ describe("who answered this run (425-05 · D-23, UI-SPEC E5 zero-one-many)", () 
   })
 })
 
-// T-425-05-01: a model id is a PRODUCER string, rendered as the stored text (D-28).
-describe("producer ids render as the stored text (425-05 · T-425-05-01)", () => {
+// A model id is a producer string, rendered as the stored text.
+describe("producer ids render as the stored text", () => {
   it("USAGE-MODEL-LINES: a stored [secret:<name>] model id renders as text, with no chip", async () => {
     const card = await openCard(MEASURED, {
       declared: [{ provider: "openai", modelId: "[secret:MODEL_ID]", stepCount: 3 }],

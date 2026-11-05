@@ -1,9 +1,4 @@
-// THE CONFIG PAGE'S CLOSED VOCABULARY (429 D-02/D-03/D-04 · PXH-CONF-01).
-//
-// One pure module owns every tab id, section id and UI state word the Config page, the command
-// palette and the product tour share, plus the total map from the 21 live legacy `bucket:item`
-// links to the new structure. Each closed set is a union, then a prettier-ignore array pinned
-// with satisfies, so the mutation engine can match it line by line. Labels live in config-copy.ts.
+// One module owns every Config tab id, section id and state word the page, palette and tour share.
 
 import { CONFIG_SECTION_LABELS } from './config-copy'
 
@@ -23,7 +18,6 @@ export type ConfigSectionId =
   | 'planner-limits'
   | 'targets'
   | 'devices'
-  | 'device-farms'
   | 'login-states'
   | 'mobile-app-state'
   | 'browser'
@@ -40,7 +34,6 @@ export type ConfigSectionId =
   | 'logging'
   | 'pass-rate-scope'
   | 'mcp'
-  | 'eval'
   | 'config-file'
 // prettier-ignore
 export const CONFIG_SECTION_IDS = [
@@ -49,7 +42,6 @@ export const CONFIG_SECTION_IDS = [
   'planner-limits',
   'targets',
   'devices',
-  'device-farms',
   'login-states',
   'mobile-app-state',
   'browser',
@@ -66,43 +58,40 @@ export const CONFIG_SECTION_IDS = [
   'logging',
   'pass-rate-scope',
   'mcp',
-  'eval',
   'config-file',
 ] as const satisfies readonly ConfigSectionId[]
 
 export const CONFIG_SECTIONS = {
   models: ['models', 'screenshot-size', 'planner-limits'],
-  targets: ['targets', 'devices', 'device-farms', 'login-states', 'mobile-app-state'],
+  targets: ['targets', 'devices', 'login-states', 'mobile-app-state'],
   execution: ['browser', 'timeouts', 'runs', 'cache', 'recording', 'accessibility', 'log-capture'],
   project: ['test-discovery', 'files', 'knowledge', 'dashboard', 'logging', 'pass-rate-scope'],
-  advanced: ['mcp', 'eval', 'config-file'],
+  advanced: ['mcp', 'config-file'],
 } as const satisfies Record<ConfigTab, readonly ConfigSectionId[]>
 
-/** Palette words beside each section label, re-homed from the retired bucket map: no bucket names, no dotted paths. */
+// Palette words beside each section label: no bucket names, no dotted paths.
 export const CONFIG_SECTION_ALIASES = {
   models: ['model', 'llm', 'llms', 'default model', 'default llm', 'providers', 'api key', 'sign in'],
   'screenshot-size': ['vision', 'screenshot', 'resolution'],
   'planner-limits': ['planner', 'sub actions', 'history limit'],
   targets: ['target', 'urls', 'bundle id', 'app package'],
-  devices: ['device', 'device profiles', 'transport'],
-  'device-farms': ['device farm', 'farm', 'access key'],
+  devices: ['device', 'device profiles'],
   'login-states': ['login state', 'auth state', 'auth states', 'saved auth'],
   'mobile-app-state': ['mobile', 'app state', 'app data', 'reset app data', 'preserve app data'],
   browser: ['viewport', 'headless', 'browser headless', 'engine'],
   timeouts: ['timeout', 'navigation timeout', 'step timeout'],
-  runs: ['parallel', 'workers', 'build tag', 'production', 'allow production'],
-  cache: ['cache dir', 'cache directory', 'ttl'],
+  runs: ['parallel', 'workers', 'build tag'],
+  cache: ['cache dir', 'cache directory'],
   recording: ['record', 'video'],
   accessibility: ['a11y', 'wcag'],
   'log-capture': ['console capture', 'network capture'],
   'test-discovery': ['tests', 'discovery', 'test match', 'suite match', 'ignore patterns'],
   files: ['hooks file', 'env file', 'environment file', 'secrets file'],
-  knowledge: ['knowledge dir', 'commit artifacts', 'context budget'],
+  knowledge: ['knowledge dir'],
   dashboard: ['port', 'db path', 'database', 'artifacts', 'artifacts dir', 'runs db'],
   logging: ['log level'],
   'pass-rate-scope': ['pass rate', 'scope', 'attributes', 'flakiness'],
-  mcp: ['mcp host', 'mcp port', 'mcp path'],
-  eval: ['eval', 'judge', 'judges', 'gate', 'adversarial', 'seeding', 'canary'],
+  mcp: ['mcp port'],
   'config-file': ['yaml', 'config file path', 'raw config'],
 } as const satisfies Record<ConfigSectionId, readonly string[]>
 
@@ -120,7 +109,6 @@ export type LegacyConfigPair =
   | 'registry:llms'
   | 'registry:targets'
   | 'registry:devices'
-  | 'registry:providers'
   | 'use:browser'
   | 'use:timeouts'
   | 'use:planner'
@@ -143,7 +131,6 @@ export const LEGACY_CONFIG_PAIRS = [
   'registry:llms',
   'registry:targets',
   'registry:devices',
-  'registry:providers',
   'use:browser',
   'use:timeouts',
   'use:planner',
@@ -153,7 +140,7 @@ export const LEGACY_CONFIG_PAIRS = [
   'analytics:pass-rate-scope',
 ] as const satisfies readonly LegacyConfigPair[]
 
-/** UI-SPEC S1: registry:llms and use:execution-defaults both land on the model list by design. */
+/** `registry:llms` and `use:execution-defaults` both land on the model list by design. */
 export const LEGACY_CONFIG_LINKS = {
   'registry:llms': { tab: 'models', section: 'models' },
   'use:execution-defaults': { tab: 'models', section: 'models' },
@@ -161,7 +148,6 @@ export const LEGACY_CONFIG_LINKS = {
   'use:planner': { tab: 'models', section: 'planner-limits' },
   'registry:targets': { tab: 'targets', section: 'targets' },
   'registry:devices': { tab: 'targets', section: 'devices' },
-  'registry:providers': { tab: 'targets', section: 'device-farms' },
   'services:auth-states': { tab: 'targets', section: 'login-states' },
   'use:mobile': { tab: 'targets', section: 'mobile-app-state' },
   'use:browser': { tab: 'execution', section: 'browser' },
@@ -243,7 +229,6 @@ export type ExplicitActionKind =
   | 'delete-model'
   | 'delete-target'
   | 'delete-device'
-  | 'delete-device-farm'
   | 'sign-out'
   | 'remove-key'
   | 'change-knowledge-dir'
@@ -254,7 +239,6 @@ export const EXPLICIT_ACTION_KINDS = [
   'delete-model',
   'delete-target',
   'delete-device',
-  'delete-device-farm',
   'sign-out',
   'remove-key',
   'change-knowledge-dir',

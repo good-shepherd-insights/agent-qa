@@ -40,13 +40,10 @@ export const EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION = 2
 export const EMBEDDER_WORKER_SOCKET_PATH_BUDGET_BYTES = 100
 export const MAX_EMBEDDER_WORKER_BODY_BYTES = 4_194_304
 
-/** D-15 provisional request deadline; retune from daemon telemetry without adding config. */
 export const EMBEDDER_WORKER_REQUEST_TIMEOUT_MS = 30_000
 
-/** D-15 provisional child-readiness deadline; retune from daemon telemetry without adding config. */
 export const EMBEDDER_WORKER_START_TIMEOUT_MS = 15_000
 
-/** D-15 provisional TERM grace; retune from daemon telemetry without adding config. */
 export const EMBEDDER_WORKER_TERM_GRACE_MS = 5_000
 
 export type EmbedderWorkerTimeoutPhase = 'request' | 'start' | 'terminate'
@@ -76,14 +73,14 @@ export const embeddingProfileSchema = z
     doc_prefix: z.string(),
     backend: z.enum(['node', 'static']),
     session_options: z.record(z.string(), z.unknown()),
-    tau_dense: z.number().finite(),
+    tau_dense: z.number(),
   })
   .strict()
 
 export const embedderWorkerRegistrationSchema = z
   .object({
     schemaVersion: z.literal(EMBEDDER_WORKER_REGISTRATION_SCHEMA_VERSION),
-    instanceId: z.string().uuid(),
+    instanceId: z.uuid(),
     pid: z.number().int().positive(),
     socketPath: z.string().min(1),
     profile: embeddingProfileSchema,
@@ -138,7 +135,7 @@ export type EmbedderWorkerRequest = z.infer<typeof embedderWorkerRequestSchema>
 export const embedderWorkerResponseSchema = z
   .object({
     schemaVersion: z.literal(EMBEDDER_WORKER_PROTOCOL_SCHEMA_VERSION),
-    vectors: z.array(z.array(z.number().finite())),
+    vectors: z.array(z.array(z.number())),
   })
   .strict()
 
@@ -157,7 +154,7 @@ export function embedderWorkerRegistrationPath(agentQaRoot: string): string {
 }
 
 function instanceDiscriminator(instanceId: string): string {
-  const validated = z.string().uuid().parse(instanceId)
+  const validated = z.uuid().parse(instanceId)
   return createHash('sha256').update(validated).digest('hex').slice(0, 12)
 }
 
@@ -426,10 +423,7 @@ function requestWorker(
             }
             const parsedBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
             if (response.statusCode !== 200) {
-              const message = z
-                .object({ error: z.string() })
-                .passthrough()
-                .safeParse(parsedBody)
+              const message = z.looseObject({ error: z.string() }).safeParse(parsedBody)
               throw new Error(
                 message.success
                   ? `Embedder worker rejected the request: ${message.data.error}`

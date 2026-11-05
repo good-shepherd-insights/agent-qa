@@ -1,29 +1,4 @@
-// THE FN/CHAT/MCP DOOR'S `runs.start` GATE (Phase 401 plan 05 — D-01/D-05/D-06/D-07/D-16).
-//
-// SINCE 432-13 there is no gate on this road: the op-level gate and the core's `evaluate()` are
-// gone, and the one refusal left is an un-opted-in production target. The history below is kept
-// as written; the cells were re-spelled where they measured a decision that no longer exists.
-//
-// WHAT IS UNDER TEST is the door a caller actually reaches: `composeCliLocalAgent` → the 384
-// registry → `invokeFunction` → the REAL op-level gate → the bound run invocation → this host's
-// DEFAULT run execution → the in-process drive → the core's ONE `evaluate()`. Nothing on that path
-// is substituted. `input.runExecution` is never supplied by any cell in this file, because the
-// subject IS the default: a cell that injected a port would be measuring its own argument.
-//
-// THE RED BASELINE, measured on the pre-change build and pasted into the plan's SUMMARY rather
-// than paraphrased. Before Task 1 this host's default was `createCliRunExecution` — a child
-// process — and the two cells that discriminate could not pass:
-//
-//   FN-DOOR DENIAL  expected RunDeniedError, received RunProducedNoEventsError
-//                   (the child denied, exited 2, and the gate's reason died in its stderr)
-//   TWO GATES       expected 2 audit rows across 2 files, received 1
-//                   (the child's run-dir row was written under ITS OWN minted run id, and the
-//                    parent never saw a `run:start` decision at all)
-//
-// A DENIAL'S ASSERTION SURFACE IS FIVE ARTIFACTS, never an exit code or a message alone (401-03's
-// Mutation B): the audit row's `outcome`, no run events, no build-ordinal ledger, zero requests at
-// the target, and the reason read BACK off the row. Every denial cell below asserts all five and
-// is paired with an allow control differing in EXACTLY ONE field.
+// No gate on this road: a well-formed request with a free run id is never refused.
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs'
@@ -33,7 +8,6 @@ import { Readable, Writable } from 'node:stream'
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-// 2026-10-19 (444.1-24, D-39): each drive and its detached tail are awaited before removal.
 const tails = vi.hoisted(() => [] as Array<Promise<void>>)
 
 vi.mock('../in-process-run-execution.js', async (importOriginal) => {
@@ -50,11 +24,7 @@ vi.mock('../in-process-run-execution.js', async (importOriginal) => {
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { generateRunId } from '@vostride/agent-qa-ids'
-import {
-  RunDeniedError,
-  RunIdAlreadyInUseError,
-  RunIdNotMintedError,
-} from '@vostride/agent-qa-agent-local'
+import { RunIdAlreadyInUseError, RunIdNotMintedError } from '@vostride/agent-qa-agent-local'
 import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
@@ -83,15 +53,7 @@ afterAll(() => {
   if (pinnedTmpdir !== undefined) removeTempRoots([pinnedTmpdir.root])
 })
 
-/**
- * The audit row, plus the one field this plan's cells turned on. Since 432-13 no row is written on
- * this road at all; the type stays because `opAuditRows` still reads the file to say so.
- *
- * `trustSource` is what `resolveAsk` stamps when a standing approval, a credential or session trust
- * carried an ask — the ONLY trace a consumed grant leaves on a row, and therefore the whole of the
- * grant-isolation measurement below. Widened HERE rather than on the shared fixture's `AuditRow`
- * (401-04's), because a helper two other plans read should not grow a field for one plan's cells.
- */
+// No row is written on this road; the type stays because `opAuditRows` reads the file to say so.
 type GateAuditRow = AuditRow & { readonly trustSource?: string }
 
 type Fixture = ReturnType<typeof createInProcessFixture>
@@ -157,13 +119,7 @@ async function invokeRunsStartOutcome(
   }
 }
 
-// ---- ambient channels, varied against the door's own answer (D-07) ---------------------------
-//
-// Two of them, because there are two and a cell that defeated one would pass under a door reading
-// the other: `getActiveExecutionContext` is the process-global the OP gate falls back to, and the
-// CI marker is what `resolveRunExecutionContext()` — this door's OWN fallback — reads. Varying
-// both, against a door that supplies its context explicitly, is what makes "the injected value
-// wins" a measurement instead of a coincidence.
+// Both ambient channels are varied, so a door reading either one cannot pass by coincidence.
 
 const shippedExecutionContextResolver = getActiveExecutionContext
 let restoreAmbient: (() => void) | undefined
@@ -190,15 +146,13 @@ function pinAmbient(value: 'ci' | 'local-interactive' | 'local-headless', ciMark
   }
 }
 
-// 432-13 (D-01/D-14/D-15): the fn/chat/MCP door's runs.start asks nobody. An undeclared or shared
-// target starts from a CI or headless context with the one call, and no decision row is written at
-// either gate because neither gate exists.
-describe('C432-DOOR-NONPRODUCTION — the host door starts a non-production run in one call (432-13)', () => {
+// The fn, chat and MCP door asks nobody: a non-production run starts in one call, with no row.
+describe('the host door starts a non-production run in one call', () => {
   it.each([
     ['undeclared', undefined, 'ci'],
     ['shared', 'shared', 'local-headless'],
   ] as const)(
-    'C432-DOOR-NONPRODUCTION: a %s target (environment %s) from %s starts and is acknowledged, with no gate row',
+    'a %s target (environment %s) from %s starts and is acknowledged, with no gate row',
     async (_label, environment, context) => {
       const target = new CountingTarget()
       await target.listen()
@@ -231,48 +185,9 @@ describe('C432-DOOR-NONPRODUCTION — the host door starts a non-production run 
   )
 })
 
-// RE-SPELLED 2026-09-30 (432-13). This describe was the run gate's five-artifact denial and its
-// allow control, the D-07 crossing pair, the MCP posture (`confirm: undefined` refuses to ask), the
-// two-gates adjacency cell and the grant-name mechanism pair. Every one of them measured a decision
-// that no longer exists: the op carries no gate (C432-INVOKE-DIRECT), the run core evaluates nothing
-// (C432-PRODUCTION-BEFORE-EFFECTS), and no door builds a confirm port. What survives is the one
-// refusal left and its five artifacts, paired with an allow control differing in one field, plus the
-// stdout-silence half of the MCP posture — which is now a property of every door, not of a flag.
-describe('the fn/MCP door refuses only an un-opted-in production run (401-05, D-16; 432-13)', () => {
-  it('THE FN-DOOR DENIAL — a PRODUCTION target the config has not opted into, five artifacts', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
-      pinAmbient('local-interactive', false)
-
-      const { ack, error } = await invokeRunsStartOutcome(
-        fixture,
-        { patterns: [fixture.testPattern] },
-        { resolveExecutionContext: () => 'local-headless' },
-      )
-
-      expect(ack).toBeUndefined()
-      expect(error).toBeInstanceOf(RunDeniedError)
-      const denial = error as RunDeniedError
-      expect(denial.neutralReason.length).toBeGreaterThan(0)
-      // (a) no decision row at either gate
-      expect(auditRows(fixture)).toEqual([])
-      expect(opAuditRows(fixture)).toEqual([])
-      // (b) the run never started
-      expect(eventTypes(fixture)).toEqual([])
-      // (c) the durable assembly side effect never happened
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      // (d) nobody knocked on the target
-      expect(target.hits).toEqual([])
-      // (e) the reason names the production target
-      expect(denial.reason).toContain(fixture.targetName)
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  it('THE ALLOW CONTROL — one field different (environment: shared) and the run is acknowledged', async () => {
+// The stdout-silence half of the MCP posture is a property of every door: nothing asks.
+describe('the fn/MCP door starts a run and asks nothing', () => {
+  it('a shared target from a headless door is acknowledged with no decision row', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -300,9 +215,7 @@ describe('the fn/MCP door refuses only an un-opted-in production run (401-05, D-
   }, 120_000)
 
   it('THE MCP POSTURE — a door on a live terminal starts the run and writes NOTHING to stdout', async () => {
-    // The stdout-silence half of the retired posture cell. Writing a prompt onto the process whose
-    // stdout is the JSON-RPC channel breaks the connection; since 432-13 no door can prompt at all,
-    // and this measures it on a terminal that would have accepted the bytes.
+    // A prompt on the process whose stdout is the JSON-RPC channel breaks it; no door prompts.
     const target = new CountingTarget()
     await target.listen()
     const realStdin = process.stdin
@@ -342,33 +255,8 @@ describe('the fn/MCP door refuses only an un-opted-in production run (401-05, D-
   }, 120_000)
 })
 
-describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)', () => {
-  // RE-SPELLED 2026-09-30 (432-13): was '... and denies on class alone' over an undeclared target.
-  // An undeclared target now starts; production is the class that still refuses an empty request.
-  it('AN ARGUMENT-LESS runs.start RESOLVES THE CONFIGURED DEFAULT SET — and refuses production on it', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
-      pinAmbient('local-interactive', false)
-
-      const { error } = await invokeRunsStartOutcome(
-        fixture,
-        {},
-        { resolveExecutionContext: () => 'local-headless' },
-      )
-
-      expect(error).toBeInstanceOf(RunDeniedError)
-      expect(eventTypes(fixture)).toEqual([])
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      expect(target.hits).toEqual([])
-      expect((error as RunDeniedError).reason).toContain(fixture.targetName)
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  it('THE SAME EMPTY REQUEST, target declared local — the default set RAN, both members of it', async () => {
+describe('the empty-input and suite edges of a bare runs.start', () => {
+  it('an argument-less runs.start resolves the configured default set, and both members ran', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -409,9 +297,7 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
       expect(ack).toBeDefined()
       const events = eventTypes(fixture)
       expect(events).toContain('runStarted')
-      // THE MEMBER RAN. Without this, a dispatcher that took the test path and assembled zero
-      // members would pass on `runStarted` alone — which is the shape the retiring wire could
-      // produce, because it forwarded patterns with no mode flag and let the child decide.
+      // The member ran; `runStarted` alone would pass a dispatcher that assembled zero members.
       expect(events).toContain('testStarted')
       expect(ack!.testCount).toBe(1)
       expect(target.hits).toEqual(['/in-process-thing'])
@@ -420,7 +306,7 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
     }
   }, 120_000)
 
-  it('AN UNHONOURABLE FIELD IS REFUSED BEFORE ANYTHING IS READ', async () => {
+  it('an input naming scope is refused by the input check before anything is read', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -433,15 +319,12 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
         { resolveExecutionContext: () => 'local-headless' },
       )
 
-      expect((error as Error).name).toBe('RunRequestFieldRefusedError')
+      expect((error as Error).name).toBe('FunctionInputError')
       expect((error as Error).message).toContain('scope')
-      // NOTHING WAS READ, NOTHING WAS DECIDED, NOTHING WAS MINTED. The core states this ordering;
-      // a drive standing in front of it is where the property is actually kept, because everything
-      // before the core resolves the caller's config and loads its auth plugins.
+      // The strict input check runs before the binding, so nothing was read, decided or minted.
       expect(runDirs(fixture)).toEqual([])
       expect(buildOrdinalsExist(fixture)).toBe(false)
       expect(target.hits).toEqual([])
-      // 432-13: the op has no gate, so no op row either.
       expect(opAuditRows(fixture)).toEqual([])
       expect(auditRows(fixture)).toEqual([])
     } finally {
@@ -450,14 +333,7 @@ describe('the empty-input and suite edges of a bare runs.start (401-05, INVK-02)
   }, 120_000)
 })
 
-// ---------------------------------------------------------------------------------------------
-// THE TYPED DOOR'S IDENTITY REFUSALS, AND THE DOOR CENSUS (2026-08-23, plan 20 · CR-04).
-//
-// D-16's rule applied to a new refusal: reaching through the same seam is MEASURED per door, never
-// assumed. The environment door is measured on the process a person starts
-// (`commands/__tests__/run-gate.e2e.test.ts`); this file measures the typed door, where a caller
-// gets a typed refusal instead of a stderr line and where a PATH-SHAPED id is answered by a
-// different mechanism entirely — the codec, at parse, before the op is invoked at all.
+// A path-shaped id is refused by the codec at parse, before the op runs.
 
 /** The digest of every file in a run's directory. "Untouched" has to be a claim about bytes. */
 function digestsUnder(dir: string): Record<string, string> {
@@ -471,7 +347,7 @@ function digestsUnder(dir: string): Record<string, string> {
   return digests
 }
 
-describe('the typed door refuses a malformed or colliding run id (CR-04)', () => {
+describe('the typed door refuses a malformed or colliding run id', () => {
   it('a PATH-SHAPED id is refused by the CODEC, before the op runs at all', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -487,13 +363,11 @@ describe('the typed door refuses a malformed or colliding run id (CR-04)', () =>
 
       expect(ack).toBeUndefined()
       expect(error).toBeDefined()
-      // Pre-fix this exact request was ACKNOWLEDGED, naming `../../escape`, with the run's own
-      // artifacts written into `.agent-qa/runs/escape/`.
+      // A traversal id is refused before the run writes any artifact.
       expect(runDirs(fixture)).toEqual([])
       expect(existsSync(join(fixture.project, '.agent-qa', 'runs', 'escape'))).toBe(false)
       expect(target.hits).toEqual([])
-      // 432-13: the op-gate row that discriminated this cell from the next is gone with the gate;
-      // the next cell's typed `RunIdNotMintedError` is what tells the two refusals apart now.
+      // The typed `RunIdNotMintedError` in the next cell tells the refusals apart.
       expect(opAuditRows(fixture)).toEqual([])
     } finally {
       await target.close()
@@ -516,8 +390,7 @@ describe('the typed door refuses a malformed or colliding run id (CR-04)', () =>
       expect(ack).toBeUndefined()
       expect(error).toBeInstanceOf(RunIdNotMintedError)
       expect((error as Error).message).toContain('not-a-minted-id')
-      // It passed the CODEC — `not-a-minted-id` is a perfectly good path segment — so the op DID
-      // run (432-13: with no gate row). The run itself never started.
+      // `not-a-minted-id` passes the codec, so the op runs with no row; the run never starts.
       expect(opAuditRows(fixture)).toEqual([])
       expect(runDirs(fixture)).toEqual([])
       expect(buildOrdinalsExist(fixture)).toBe(false)
@@ -557,8 +430,6 @@ describe('the typed door refuses a malformed or colliding run id (CR-04)', () =>
       expect(ack).toBeUndefined()
       expect(error).toBeInstanceOf(RunIdAlreadyInUseError)
       expect((error as Error).message).toContain(victimId)
-      // THE WHOLE CLAIM, at bytes. Measured pre-fix through this very door: `events.jsonl` grew
-      // 2111 → 4221 bytes (7 → 14 envelopes) and `handoff.json` was overwritten in place.
       expect(digestsUnder(victimDir)).toEqual(before)
       // No SECOND run directory either — the refusal did not divert the run elsewhere.
       expect(runDirs(fixture).map((dir) => dir.split('/').pop())).toEqual([victimId])
@@ -614,16 +485,10 @@ describe('the typed door refuses a malformed or colliding run id (CR-04)', () =>
 // `daemon/host.ts`, and 10,575 of `android/src/adapter.ts`. Measured: under the two-pass stripper
 // E1 below returns SIX files and the daemon door is not one of them. Under the one-pass
 // alternation it returns seven. A census cannot be more complete than its stripper.
-describe('the door census — every way a caller can name a run id (CR-04)', () => {
+describe('the door census — every way a caller can name a run id', () => {
   const PACKAGES_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..')
 
-  /**
-   * ONE PASS, so neither comment form can begin inside the other.
-   *
-   * The residual limitation, stated rather than left to be discovered: a comment opener inside a
-   * STRING literal is still mistaken for one. What changes is the blast radius — a `/*` in a
-   * string no longer swallows every byte up to the next `*` + `/`, it loses that one line.
-   */
+  // One pass, so neither comment form begins inside the other; an opener in a string still counts.
   function stripComments(source: string): string {
     return source.replace(
       /\/\*[\s\S]*?\*\/|(^|[^:])\/\/.*$/gm,
@@ -657,7 +522,7 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
   const REQUEST_RUN_ID_RE = /runId:\s*(?:asRunId\(|opts\.runId|request\.runId\b)/
   const ENV_RUN_ID_RE = /AGENT_QA_RUN_ID/
 
-  /** Files the census MUST range, named rather than read off the scan (the 399/400 scar). */
+  /** Files the census must range, named rather than read off the scan. */
   const REQUIRED_MEMBERS = [
     join('cli', 'src', 'commands', 'run.ts'),
     join('cli', 'src', 'commands', 'dashboard.ts'),
@@ -694,7 +559,7 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
       reaches: true,
       verdict:
         "names the enqueued row's id on a `RunsStartInput` and goes through `invokeFunction` — "
-        + 'deliberately, per D-10, so it cannot skip the op gate. Same parse, same core.',
+        + 'deliberately, so it cannot skip the op gate. Same parse, same core.',
     },
     'cli/src/daemon/host.ts': {
       role: 'door: the daemon RPC',
@@ -757,7 +622,7 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
     expect(stripComments("const u = 'https://example.com' // t")).toContain('https://example.com')
   })
 
-  it('E1 — every production site naming a runId on a run request carries a role', () => {
+  it('every production site naming a runId on a run request carries a role', () => {
     // Self-check first: the predicate can see the forms the doors actually use.
     expect(REQUEST_RUN_ID_RE.test('        runId: asRunId(runId),')).toBe(true)
     expect(REQUEST_RUN_ID_RE.test("  runId: opts.runId as RunsStartInput['runId'],")).toBe(true)
@@ -775,7 +640,7 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
     }
   })
 
-  it('E2 — the environment door has exactly one production origin, and it is a listed site', () => {
+  it('the environment door has exactly one production origin, and it is a listed site', () => {
     const found = shippedSourceFiles()
       .filter((path) => ENV_RUN_ID_RE.test(stripComments(readFileSync(path, 'utf8'))))
       .map((path) => relative(PACKAGES_ROOT, path).replaceAll(sep, '/'))
@@ -790,7 +655,7 @@ describe('the door census — every way a caller can name a run id (CR-04)', () 
     expect(source).not.toContain('RunsStartInputSchema')
   })
 
-  it('E1 — the evidence-read hook stays scanned and is classified as unable to start a run', () => {
+  it('the evidence-read hook stays scanned and is classified as unable to start a run', () => {
     const file = 'dashboard-ui/src/hooks/use-evidence-records.ts'
     const source = stripComments(readFileSync(join(PACKAGES_ROOT, file), 'utf8'))
     expect(shippedSourceFiles()).toContain(join(PACKAGES_ROOT, file))

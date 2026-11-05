@@ -1,10 +1,17 @@
 import { spawnSync } from 'node:child_process'
-import { afterEach, expect, it, vi } from 'vitest'
+import { installSdkWarningLogger } from '@vostride/agent-qa-agent-local'
+import { reserveStdoutForData } from '@vostride/agent-qa-core/run-text-output'
+import type { LogWarningsFunction } from 'ai'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { installEvalWarningLogger } from '../eval-warning-logger.js'
 
 const original = globalThis.AI_SDK_LOG_WARNINGS
-afterEach(() => { globalThis.AI_SDK_LOG_WARNINGS = original })
+afterEach(() => {
+  globalThis.AI_SDK_LOG_WARNINGS = original
+  vi.unstubAllEnvs()
+  vi.restoreAllMocks()
+})
 
 it('keeps the real installed SDK first warning off stdout and retains returned warnings', () => {
   // A fresh process guarantees the installed SDK's one-time warning state is uninitialized.
@@ -15,7 +22,7 @@ it('keeps the real installed SDK first warning off stdout and retains returned w
     const restore = installEvalWarningLogger();
     const warning = { type: 'unsupported', feature: 'seed' };
     const result = await generateText({ prompt: 'ok', seed: 11, model: {
-      specificationVersion: 'v3', provider: 'warning-fixture', modelId: 'warning-fixture', supportedUrls: {},
+      specificationVersion: 'v4', provider: 'warning-fixture', modelId: 'warning-fixture', supportedUrls: {},
       doStream() { throw new Error('stream forbidden'); },
       async doGenerate() { return { content: [{ type: 'text', text: 'ok' }],
         finishReason: { unified: 'stop', raw: 'stop' },
@@ -43,4 +50,124 @@ it('preserves deliberate logging configuration and restores the default after ev
   expect(globalThis.AI_SDK_LOG_WARNINGS).toBeTypeOf('function')
   restore()
   expect(globalThis.AI_SDK_LOG_WARNINGS).toBeUndefined()
+})
+
+it('takes over from the logger every command starts with, then hands it back', () => {
+  globalThis.AI_SDK_LOG_WARNINGS = undefined
+  installSdkWarningLogger()
+  const started = globalThis.AI_SDK_LOG_WARNINGS
+
+  const restore = installEvalWarningLogger()
+  expect(globalThis.AI_SDK_LOG_WARNINGS).toBeTypeOf('function')
+  expect(globalThis.AI_SDK_LOG_WARNINGS).not.toBe(started)
+  restore()
+  expect(globalThis.AI_SDK_LOG_WARNINGS).toBe(started)
+})
+
+describe('the eval warning routing', () => {
+  function currentLogger(): LogWarningsFunction {
+    const logger = globalThis.AI_SDK_LOG_WARNINGS
+    if (typeof logger !== 'function') throw new Error('expected an AI SDK warning logger')
+    return logger
+  }
+
+  function logWarnings(calls: Parameters<LogWarningsFunction>[0][]): string[] {
+    const stderr: string[] = []
+    vi.stubEnv('GITHUB_ACTIONS', '')
+    vi.stubEnv('AGENT_QA_DEBUG_LLM', '')
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderr.push(String(chunk))
+      return true
+    })
+    globalThis.AI_SDK_LOG_WARNINGS = undefined
+    const restore = installEvalWarningLogger()
+    try {
+      const logger = currentLogger()
+      for (const call of calls) logger(call)
+    } finally {
+      restore()
+    }
+    return stderr
+  }
+
+  it('keeps a provider adaptation off the terminal', () => {
+    expect(logWarnings([{
+      warnings: [{ type: 'unsupported', feature: 'temperature' }],
+      provider: 'anthropic.messages',
+      model: 'claude-sonnet-5-5',
+    }])).toEqual([])
+  })
+
+  it('prints a deprecation once, without a provider scope', () => {
+    const deprecated = { type: 'deprecated', setting: 'streamObject', message: 'Use it.' } as const
+    expect(logWarnings([{ warnings: [deprecated] }, { warnings: [deprecated] }])).toEqual([
+      `AI SDK Warning: ${JSON.stringify(deprecated)}\n`,
+    ])
+  })
+})
+
+describe('an AI SDK warning prints as text under GitHub Actions', () => {
+  const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+  const warnings = [{ type: 'other', message: '::add-mask::x' }] as const
+
+  function installedLogger(): LogWarningsFunction {
+    const logger = globalThis.AI_SDK_LOG_WARNINGS
+    expect(logger).toBeTypeOf('function')
+    return logger as LogWarningsFunction
+  }
+
+  function logWarning(): { stdout: string[]; stderr: string[] } {
+    const stdout: string[] = []
+    const stderr: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdout.push(String(chunk))
+      return true
+    })
+    vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+      stderr.push(String(chunk))
+      return true
+    })
+    globalThis.AI_SDK_LOG_WARNINGS = undefined
+    const restore = installEvalWarningLogger()
+    const logger = installedLogger()
+    try {
+      logger({ warnings: [...warnings], provider: 'fixture', model: 'fixture-model' })
+    } finally {
+      restore()
+    }
+    return { stdout, stderr }
+  }
+
+  it('writes the warning once to stdout inside a pair', () => {
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+    const { stdout, stderr } = logWarning()
+    expect(stdout).toHaveLength(1)
+    expect(stdout[0]).toMatch(PAIR)
+    expect(stdout[0]).toContain('AI SDK Warning (')
+    expect(stdout[0]).toContain('::add-mask::x')
+    expect(stderr).toEqual([])
+  })
+
+  it('keeps the wrapped warning on stderr while stdout is reserved for data', () => {
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+    const release = reserveStdoutForData()
+    try {
+      const { stdout, stderr } = logWarning()
+      expect(stdout).toEqual([])
+      expect(stderr).toHaveLength(1)
+      expect(stderr[0]).toMatch(PAIR)
+      expect(stderr[0]).toContain('AI SDK Warning (fixture / fixture-model)')
+    } finally {
+      release()
+    }
+  })
+
+  it('writes the plain line to stderr off GitHub Actions', () => {
+    vi.stubEnv('GITHUB_ACTIONS', '')
+    const { stdout, stderr } = logWarning()
+    expect(stdout).toEqual([])
+    expect(stderr).toEqual([
+      `AI SDK Warning (fixture / fixture-model): ${JSON.stringify(warnings[0])}\n`,
+    ])
+  })
 })

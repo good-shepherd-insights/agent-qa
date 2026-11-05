@@ -1,6 +1,4 @@
 import { emptyCanaryCreditCounters } from '../canary-credit.js'
-import { curateCompletedRun, readCurationTailReceipt, type CurationTailOperations } from '../curation-tail.js'
-import { readCompletedCanaryAblations } from '../canary-run-state.js'
 import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -78,7 +76,7 @@ const PROCEDURE_ANCHORS: Anchor[] = [
   { t: 'page', route: '/login' },
 ]
 
-describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no credit (418 D-02/D-05)', () => {
+describe('the shipped positive-on-any-anchor-match fixture earns no credit', () => {
   let creditRunDir: string
   afterEach(() => rmSync(creditRunDir, { recursive: true, force: true }))
   it('declares exactly the three non-signal classes, in declaration order', () => {
@@ -88,41 +86,30 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     expect(isNonSignalClass('product')).toBe(false)
   })
 
-  it.each(['passed', 'failed'] as const)('418 SC4 excludes all sources of a %s rerun member while its sibling attributes', async outcome => {
+  it.each(['passed', 'failed'] as const)('excludes all sources of a %s rerun member while its sibling attributes', async outcome => {
     const input = handoff([step({ pass: outcome === 'passed', planSource: replaySource() })], rootCause('app_bug'))
     input.tests[0] = { ...input.tests[0], outcome, isRerun: true, rerunAttempt: 2 }
     input.tests.push({ ...input.tests[0], isRerun: undefined, rerunAttempt: undefined,
       testIndex: 1, testId: 'checkout::sibling', steps: [step()] })
     const emit = vi.fn()
-    const ablate = vi.fn(async () => ({ kind: 'no-eval-root' as const }))
-    const isNovel = vi.fn(async () => true)
-    const stageFeedback = vi.fn(async () => ({ kind: 'staged' as const }))
     const report = await emitCanaryOutcomes({ handoff: input,
-      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
-      credit: { ablation: { isNovel, stage: stageFeedback, ablate, corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
+      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit })
     expect(report.canary.rerunExcluded).toBe(1)
     expect(report.details[0]).toEqual({ testId: input.tests[0].testId, testIndex: 0,
       outcome: { kind: 'rerun-excluded' } })
     expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
-    expect(ablate).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
-    expect(isNovel).toHaveBeenCalledTimes(1)
-    expect(stageFeedback).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 1 }))
     expect(report).toMatchObject({ refused: 0, unresolved: 0, procedure: { emitted: 0 } })
   })
 
-  it('418 SC4 counts typed non-signal classes and keeps unknown failures visible', async () => {
+  it('counts typed non-signal classes and keeps unknown failures visible', async () => {
     const input = handoff([step({ pass: false })], rootCause('environment'))
     input.tests = (['environment', 'timeout', 'flake', 'unknown'] as const).map((value, index) => ({
       ...input.tests[0], testIndex: index, testId: `checkout::class-${index}`,
       rootCause: { ...rootCause(value), perTest: index },
     }))
     const emit = vi.fn()
-    const isNovel = vi.fn(async () => true)
-    const stageFeedback = vi.fn(async () => ({ kind: 'staged' as const }))
     const report = await emitCanaryOutcomes({ handoff: input,
-      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
-      credit: { maxAblations: 1, ablation: { isNovel, stage: stageFeedback,
-        ablate: async () => ({ kind: 'no-eval-root' }), corpusDigest: async () => ({ kind: 'no-eval-root' }) } } })
+      knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit })
     expect(report.canary.nonSignal.environment).toBe(1)
     expect(report.canary.nonSignal.timeout).toBe(1)
     expect(report.canary.nonSignal.flake).toBe(1)
@@ -132,8 +119,6 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
       { kind: 'non-signal', class: 'flake' },
     ])
     expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 3, runOutcome: 'negative' }))
-    expect(isNovel).toHaveBeenCalledTimes(1)
-    expect(stageFeedback).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ testIndex: 3 }))
     expect(report).toMatchObject({ refused: 0, unresolved: 0 })
     expect(project(input, lookupSpy.anchorsById)).toHaveLength(1)
   })
@@ -143,128 +128,15 @@ describe('SC2 — the shipped positive-on-any-anchor-match fixture earns no cred
     lookupSpy.invalidById.clear()
     lookupSpy.anchorsById.set(CANDIDATE, [{ t: 'el', role: 'button', name: 'checkout', ordinal: 0 }])
   })
-  it('418 exposes a moved corpus digest in emit detail while preserving the ablation citation', async () => {
+  it('emits a positive served row as uncredited ride-along with unknown state validity', async () => {
     const emit = vi.fn()
     const report = await emitCanaryOutcomes({
       handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
-      credit: { maxAblations: 1, ablation: {
-        isNovel: async () => true, stage: async () => ({ kind: 'staged' }),
-        corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'a'.repeat(64) }),
-        ablate: async () => ({ kind: 'ablated', crossCheck: 'flipped', corpusDigest: 'b'.repeat(64),
-          k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: false,
-          spend: { modelCalls: 5, screens: 5, promptTokens: 10, completionTokens: 2 }, gate2Dir: '/tmp/gate2' }),
-      } },
     })
-    expect(report.details[0]).toMatchObject({ benefit: 'exercised-benefited', corpusDigestMoved: true })
-    expect(report.details[0]).toMatchObject({ staged: true })
-    expect(report.canary.staged).toBe(1)
-    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ corpusDigest: 'b'.repeat(64),
-      ablation: expect.objectContaining({ seeds: [11, 12, 13], seedHonored: false }) }))
-  })
-  it.each(['absent', 'held', 'throws'] as const)('reports %s capability without certifying benefit', async mode => {
-    const emit = vi.fn()
-    const report = await emitCanaryOutcomes({
-      handoff: handoff([step()]), knowledgeRoot: '/tmp/agent-qa-knowledge', runDir: creditRunDir, emit,
-      ...(mode === 'absent' ? {} : { credit: { ablation: {
-        isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' as const }),
-        corpusDigest: async () => ({ kind: 'digest' as const, corpusDigest: 'c'.repeat(64) }),
-        ablate: async () => {
-          if (mode === 'throws') throw new Error('fixture failure')
-          return { kind: 'ablated' as const, crossCheck: 'held' as const, corpusDigest: 'c'.repeat(64),
-            k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: true,
-            spend: { modelCalls: 5, screens: 5, promptTokens: 0, completionTokens: 0 }, gate2Dir: '/tmp/gate2' }
-        },
-      } } }),
-    })
-    expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ benefit: 'rode-along', stateValidity: 'unknown' }))
-    expect(report.canary.credited).toBe(0)
-    expect(report.canary[mode === 'absent' ? 'rideAlongUncredited' : mode === 'held' ? 'ablationHeld' : 'ablationError']).toBe(1)
+    expect(emit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ benefit: 'rode-along' }))
+    expect(report.canary.rideAlongUncredited).toBe(1)
     expect(report.refused).toBe(0)
-    expect(report.details[0]?.crossCheck).toBe(mode === 'held' ? 'held' : 'not-run')
-  })
-  it.each(['projection', 'drain'].flatMap(failure => ['ablated', 'error', 'throws', 'unavailable', 'no-eval-root'].map(resultKind => ({ failure, resultKind }))))('reuses a handled $resultKind attempt on ordinary incomplete-fold retry after $failure failure', async ({ failure, resultKind }) => {
-    lookupSpy.anchorsById.set(OTHER_CANDIDATE, lookupSpy.anchorsById.get(CANDIDATE)!)
-    const completed = handoff([step({ candidateIds: [CANDIDATE, OTHER_CANDIDATE] })])
-    const emitted: CanaryOutcome[] = []
-    const ablate = vi.fn(async () => {
-      if (resultKind === 'throws') throw new Error('private fixture provider detail')
-      if (resultKind === 'error') return { kind: 'error' as const, message: 'private fixture provider detail' }
-      if (resultKind === 'unavailable') return { kind: 'unavailable' as const, reason: 'private fixture provider detail' }
-      if (resultKind === 'no-eval-root') return { kind: 'no-eval-root' as const }
-      return { kind: 'ablated' as const,
-      crossCheck: 'flipped' as const, corpusDigest: 'c'.repeat(64), k: 3, baseSeed: 11,
-      seeds: [11, 12, 13], seedHonored: true, spend: { modelCalls: 5, screens: 5, promptTokens: 10, completionTokens: 2 }, gate2Dir: creditRunDir }
-    })
-    let first = true
-    const operations: Partial<CurationTailOperations> = {
-      canaryAblation: { ablate, isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' }),
-        corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'c'.repeat(64) }) },
-      runSafetyScope: (_input, fn) => fn(),
-      emitCurationCandidates: () => ({ enqueued: 0, coalesced: 0, refused: 0, capExceeded: 0, details: [] }),
-      openKnowledgeReader: () => ({ emitCanaryOutcome: (outcome: CanaryOutcome) => emitted.push(structuredClone(outcome)) }) as unknown as ReturnType<CurationTailOperations['openKnowledgeReader']>,
-      foldRunOutcomes: () => {
-        if (first && failure === 'projection') throw new Error('fixture projection unavailable after completed replay')
-        return { kind: 'applied', tests: 1, quarantine: { kind: 'not-evaluated', reason: 'not-requested' } }
-      },
-      drainQueue: async () => ({ kind: 'drained', jobsProcessed: 0, committed: 0,
-        downgraded: 0, withheld: 0, quarantined: 0, requeued: first && failure === 'drain' ? 1 : 0,
-        failures: first && failure === 'drain' ? 1 : 0, failureDetails: [], noops: 0, noopDetails: [],
-        remaining: 0, remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
-        reconcile: undefined, writerPass: { kind: 'not-requested' }, gc: { kind: 'not-run' } }),
-    }
-    const fold = () => curateCompletedRun({ handoff: completed, runDir: creditRunDir,
-      knowledgeRoot: '/tmp/agent-qa-knowledge', agentQaRoot: creditRunDir, maxAblations: 1,
-      operations, log: { warn: vi.fn() } })
-    expect(await fold()).toMatchObject({ complete: false })
-    expect(readCurationTailReceipt(creditRunDir)).toBeUndefined()
-    const evidence = readCompletedCanaryAblations(creditRunDir, String(completed.runId))
-    expect(evidence).toHaveLength(1)
-    expect(JSON.stringify(evidence)).not.toContain('private fixture provider detail')
-    expect(ablate).toHaveBeenCalledOnce()
-    first = false
-    expect(await fold()).toMatchObject({ complete: true })
-    expect(ablate).toHaveBeenCalledOnce()
-    expect(emitted.slice(2)).toEqual(emitted.slice(0, 2))
-    expect(readCompletedCanaryAblations(creditRunDir, String(completed.runId))).toEqual(evidence)
-    expect(readCurationTailReceipt(creditRunDir)?.canary).toMatchObject({
-      credited: resultKind === 'ablated' ? 1 : 0, ablationCapExceeded: 1,
-      ablationError: resultKind === 'error' || resultKind === 'throws' ? 1 : 0,
-      ablationInconclusive: resultKind === 'unavailable' ? 1 : 0,
-      rideAlongUncredited: resultKind === 'no-eval-root' ? 1 : 0,
-    })
-    const badPath = join(creditRunDir, 'canary-completions', 'invalid.json')
-    writeFileSync(badPath, '{}')
-    await expect(fold()).rejects.toThrow('completed canary evidence invalid')
-    expect(ablate).toHaveBeenCalledOnce()
-  })
-
-  // 2026-09-30, 432-10 D-05/D-22: the hold is presented from evidence; nothing is filed or read.
-  it('C432-CANARY-HOLD-PRESENTATION: a gate-inconsistent canary hold renders as its held line, with no proposal or inbox', async () => {
-    const completed = handoff([step()])
-    const info = vi.fn()
-    const drainQueue = vi.fn(async (_options: object) => ({ kind: 'drained' as const, jobsProcessed: 1, committed: 1,
-      downgraded: 0, withheld: 0, quarantined: 0, requeued: 0, failures: 0, failureDetails: [],
-      noops: 0, noopDetails: [], remaining: 0, remainingWork: { queued: 0, claimedNonterminal: 0, quarantined: 0 },
-      reconcile: undefined, writerPass: { kind: 'not-requested' as const }, gc: { kind: 'not-run' as const },
-      promotions: [{ candidateId: CANDIDATE, promotionHoldReason: 'gate-inconsistent' as const }] }))
-    const operations: Partial<CurationTailOperations> = {
-      canaryAblation: { ablate: async () => ({ kind: 'no-eval-root' }), isNovel: async () => false,
-        stage: async () => ({ kind: 'no-eval-root' }), corpusDigest: async () => ({ kind: 'no-eval-root' }) },
-      runSafetyScope: (_input, fn) => fn(),
-      emitCurationCandidates: () => ({ enqueued: 0, coalesced: 0, refused: 0, capExceeded: 0, details: [] }),
-      openKnowledgeReader: () => ({ emitCanaryOutcome: () => undefined }) as unknown as ReturnType<CurationTailOperations['openKnowledgeReader']>,
-      foldRunOutcomes: () => ({ kind: 'applied', tests: 1, quarantine: { kind: 'not-evaluated', reason: 'not-requested' } }),
-      drainQueue: drainQueue as unknown as CurationTailOperations['drainQueue'],
-    }
-    const report = await curateCompletedRun({ handoff: completed, runDir: creditRunDir,
-      knowledgeRoot: '/tmp/agent-qa-knowledge', agentQaRoot: creditRunDir, maxAblations: 1,
-      operations, log: { warn: vi.fn(), info } })
-    expect(report).toMatchObject({ complete: true, curated: 1 })
-    const lines = info.mock.calls.map(([line]) => String(line))
-    expect(lines).toContain(`curation: ${CANDIDATE} held: gate-inconsistent`)
-    expect(lines.filter(line => /proposal|review with/.test(line))).toEqual([])
-    expect(drainQueue).toHaveBeenCalledOnce()
-    expect(drainQueue.mock.calls[0]![0]).not.toHaveProperty('agentQaRoot')
+    expect(report.details[0]).toEqual(expect.objectContaining({ benefit: 'rode-along', outcome: { kind: 'emitted' } }))
   })
 })
 
@@ -473,7 +345,7 @@ function project(
   })
 }
 
-describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
+describe('projectCanaryOutcomes', () => {
   it('attributes a normalized resolved-element contact to one positive step outcome', async () => {
     const outcomes = project(handoff([step()]), new Map([[CANDIDATE, [{
       t: 'el',
@@ -486,7 +358,6 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
       candidateId: CANDIDATE,
       runOutcome: 'positive',
       benefit: 'rode-along',
-      stateValidity: 'unknown',
       runId: 'run-canary-1',
       testId: 'checkout::happy-path',
       testIndex: 0,
@@ -568,7 +439,6 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
       expect.objectContaining({
         runOutcome: 'positive',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
         exercisedAnchor: { t: 'page', route: '/checkout?mode=fast' },
       }),
     ])
@@ -621,7 +491,6 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
         stepIndex: 0,
         runOutcome: 'positive',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
       }),
       expect.objectContaining({
         testId: 'checkout::declined-card',
@@ -629,7 +498,6 @@ describe('projectCanaryOutcomes (PROM-02/D-21)', () => {
         stepIndex: 0,
         runOutcome: 'negative',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
       }),
     ])
     expect(outcomes[0]?.attribution).toContain('test 0 (checkout::happy-path) step 0')
@@ -676,7 +544,7 @@ describe('emitCanaryOutcomes', () => {
       procedure: { emitted: 0, refused: 0, unresolved: 0 },
       details: [
         {
-          benefit: 'rode-along', crossCheck: 'not-run',
+          benefit: 'rode-along',
           candidateId: CANDIDATE,
           testId: 'checkout::happy-path',
           testIndex: 0,
@@ -684,7 +552,7 @@ describe('emitCanaryOutcomes', () => {
           outcome: { kind: 'refused', reason: 'emit-error' },
         },
         {
-          benefit: 'rode-along', crossCheck: 'not-run',
+          benefit: 'rode-along',
           candidateId: CANDIDATE,
           testId: 'checkout::happy-path',
           testIndex: 0,
@@ -752,7 +620,7 @@ describe('emitCanaryOutcomes', () => {
   )
 })
 
-describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () => {
+describe('projectCanaryOutcomes planSource attribution', () => {
   const procedureAnchors = new Map([[PROCEDURE, PROCEDURE_ANCHORS]])
 
   it('projects a positive procedure outcome for a verified-PASS replayed step', async () => {
@@ -765,7 +633,6 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
       candidateId: PROCEDURE,
       runOutcome: 'positive',
       benefit: 'rode-along',
-      stateValidity: 'unknown',
       runId: 'run-canary-1',
       testId: 'checkout::happy-path',
       testIndex: 0,
@@ -803,7 +670,6 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
         candidateId: PROCEDURE,
         runOutcome: 'positive',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
       }),
     ])
   })
@@ -987,7 +853,7 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
     }
   })
 
-  it('projects channel1 and planSource outcomes independently from one step (Pin 1)', async () => {
+  it('projects channel1 and planSource outcomes independently from one step', async () => {
     const outcomes = project(
       handoff([step({ planSource: replaySource() })]),
       new Map<string, Anchor[]>([
@@ -1001,14 +867,12 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
         candidateId: CANDIDATE,
         runOutcome: 'positive',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
         exercisedAnchor: { t: 'el', role: 'button', name: 'checkout', ordinal: 0 },
       }),
       expect.objectContaining({
         candidateId: PROCEDURE,
         runOutcome: 'positive',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
         exercisedAnchor: normalizeAnchor({ t: 'flow', name: 'Sign in flow' }),
       }),
     ])
@@ -1025,19 +889,8 @@ describe('projectCanaryOutcomes planSource attribution (PROC-02/D-11/D-12)', () 
   })
 })
 
-/**
- * F-381-51-1 observation 3 (Plan 381-53, G-381-2 round 13): the FAILED round-12 rung-D
- * run r_meng-mater-con-seit-acle-lade-gor-craft-abies-extern still recorded a POSITIVE
- * `confirmed` canary event (buildOrdinal 31) because step 0's verifier passed before the
- * test died at step 1. The fixture is the VERBATIM handoff of that run (byte-identical
- * copy, digest-asserted below). The rows assert the DESIRED contract — positive
- * procedure-replay canaries adopt D-01's per-trajectory passing gate — so the
- * failed-test row is RED on the shipped build. Polarity pins P1-P5 pin what must NOT
- * change: per-step positives on passing tests (380 D-21), guard-earned negatives and
- * the root-cause classifier gate (D-11), the PROC-01 zero-replay empty projection, and
- * Pin 1 (served-brief) attribution.
- */
-describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)', () => {
+// A failed test's positive canaries are withheld; per-step positives on passing tests stay.
+describe('verdict-gated positive procedure canaries', () => {
   const FIXTURE_PROCEDURE = asRecordId(
     'procedure-flow-t-posing-clock-inject-pill-adds-i-29ff61a3638ac355',
   )
@@ -1054,7 +907,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
   const fixturePath = join(
     dirname(fileURLToPath(import.meta.url)),
     'fixtures',
-    'f-381-51-1-run',
+    'canary-outcome-run',
     HANDOFF_FILE,
   )
 
@@ -1096,13 +949,12 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
       return test?.outcome !== 'passed' && evidence?.planSource?.kind === 'procedure-replay'
     })
     expect(positivesFromUnpassedTests).toEqual([])
-    // Suppression, never inversion (D-11): the withheld positive must not surface as a
-    // negative either — the failed run contributes NOTHING to the confirmation counter.
+    // Suppression, never inversion: the failed run adds nothing to the confirmation counter.
     expect(outcomes.filter(({ candidateId }) => candidateId === FIXTURE_PROCEDURE))
       .toEqual([])
   })
 
-  it('P1: a passing test keeps one positive per verified-PASS replayed step (380 D-21)', async () => {
+  it('a passing test keeps one positive per verified-PASS replayed step', async () => {
     const outcomes = project(
       handoff([
         step({ stepIndex: 0, candidateIds: [], planSource: replaySource() }),
@@ -1116,20 +968,18 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
         candidateId: PROCEDURE,
         runOutcome: 'positive',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
         stepIndex: 0,
       }),
       expect.objectContaining({
         candidateId: PROCEDURE,
         runOutcome: 'positive',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
         stepIndex: 1,
       }),
     ])
   })
 
-  it('P2: a staleness miss in a failed test still projects a negative (D-11)', async () => {
+  it('a staleness miss in a failed test still projects a negative', async () => {
     const outcomes = project(
       handoff(
         [step({
@@ -1147,7 +997,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
     ])
   })
 
-  it('P3: the classifier gate keeps misses silent on non-attributable failures', async () => {
+  it('the classifier gate keeps misses silent on non-attributable failures', async () => {
     for (const excluded of ['environment', 'timeout', 'flake'] as const) {
       expect(project(
         handoff(
@@ -1163,7 +1013,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
     }
   })
 
-  it('P4: zero procedure-replay steps project zero procedure attributions (PROC-01 empty edge)', async () => {
+  it('zero procedure-replay steps project zero procedure attributions', async () => {
     const outcomes = project(
       handoff([step({ stepIndex: 0 }), step({ stepIndex: 1, pass: false })]),
       new Map<string, Anchor[]>([
@@ -1179,7 +1029,7 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
       .toHaveLength(2)
   })
 
-  it('P5: served-brief (Pin 1) attribution over the verbatim fixture keeps its exact counts', async () => {
+  it('served-brief attribution over the verbatim fixture keeps its exact counts', async () => {
     const fixture = loadCompletedRunHandoff(fixturePath)
     const outcomes = project(fixture, fixtureAnchors())
 
@@ -1193,7 +1043,6 @@ describe('F-381-51-1 obs 3: verdict-gated positive procedure canaries (381-53)',
         candidateId: FIXTURE_PAGE_FACT,
         runOutcome: 'negative',
         benefit: 'rode-along',
-        stateValidity: 'unknown',
         testIndex: 0,
         stepIndex: 1,
       }),
@@ -1257,9 +1106,7 @@ describe('emitCanaryOutcomes procedure counters', () => {
   })
 })
 
-// ————— 389-06: the D-10 attribution rewire + the SC2 cross-run supersession differential —————
-
-describe('SC2 — the cross-run supersession differential (389-06, D-10)', () => {
+describe('the cross-run supersession differential', () => {
   const RUN_A = 'run-supersession-aaa'
   const RUN_B = 'run-supersession-bbb'
   const CANDIDATE_ANCHOR: Anchor = { t: 'el', role: 'button', name: 'checkout', ordinal: 0 }
@@ -1283,18 +1130,13 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     return dir
   }
 
-  /**
-   * One failing test (verifier-failed step 0, canary served, anchors matched), NO rootCause
-   * — the deterministic floor resolves it to the minted `unknown`, which IS attributable.
-   * Both halves of the differential are pinned BY ID (the 388 two-sided-contract law):
-   * single-run fixtures cannot see a cross-instance attribution defect.
-   */
+  // Both halves are pinned by id, because single-run fixtures cannot see a cross-instance defect.
   function failingHandoffFor(runId: string): CompletedRunHandoff {
     const base = handoff([step({ stepIndex: 0, pass: false })])
     return { ...base, runId: asRunId(runId) }
   }
 
-  /** The 389 supersession: the author upgraded the floor's unknown to flake (non-attributable). */
+  /** The supersession: the author upgrades the floor's unknown to flake (non-attributable). */
   function flakeArtifact(runId: string): RunAnalysisArtifact {
     return {
       schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
@@ -1331,7 +1173,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     })
   }
 
-  it('no-artifact leg: fold output byte-identical to the handoff-only baseline (regression pin)', async () => {
+  it('no-artifact leg: fold output is the handoff-only projection with the credit pass evidence', async () => {
     const collected: CanaryOutcome[] = []
     const report = await foldInto(collected, failingHandoffFor(RUN_A), tempRunDir())
 
@@ -1340,14 +1182,14 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
       candidateId: CANDIDATE,
       runId: RUN_A,
       runOutcome: 'negative',
-      benefit: 'rode-along',
-      stateValidity: 'unknown',
+      benefit: 'exercised-harmed',
       testId: 'checkout::happy-path',
     })
-    // Byte-identity with the pure projection over the same handoff — the pre-rewire baseline.
-    expect(canonicalJson(collected)).toBe(canonicalJson(
-      project(failingHandoffFor(RUN_A), new Map([[CANDIDATE, [CANDIDATE_ANCHOR]]])),
-    ))
+    // The pure projection over the same handoff, plus the credit pass's benefit.
+    expect(collected).toEqual(
+      project(failingHandoffFor(RUN_A), new Map([[CANDIDATE, [CANDIDATE_ANCHOR]]]))
+        .map(outcome => ({ ...outcome, benefit: 'exercised-harmed' })),
+    )
   })
 
   it('the artifact supersedes the deterministic unknown and the RESOLVED class flips attribution', async () => {
@@ -1361,15 +1203,14 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     const collected: CanaryOutcome[] = []
     const report = await foldInto(collected, failingHandoffFor(RUN_A), runDir)
 
-    // unknown → flake: flake is non-attributable (D-11), so the fold that reads the
-    // resolved verdict emits NOTHING for this test — the outcome log cannot contradict it.
+    // Unknown resolves to flake, which is non-attributable, so the fold emits nothing for it.
     expect(collected).toEqual([])
     expect(report.emitted).toBe(0)
     expect(report.refused).toBe(0)
     expect(report.unresolved).toBe(0)
   })
 
-  it('SC2: two runs and a supersession — exactly ONE attributed observation per (runId, testId)', async () => {
+  it('two runs and a supersession — exactly ONE attributed observation per (runId, testId)', async () => {
     const log: CanaryOutcome[] = []
     const dirA = tempRunDir()
     const dirB = tempRunDir()
@@ -1406,7 +1247,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     for (const outcome of log) expect(outcome.runOutcome).toBe('negative')
   })
 
-  it('a foreign artifact on run B\'s OWN dir never flips B\'s attribution (G-389-3A)', async () => {
+  it("a foreign artifact on run B's OWN dir never flips B's attribution", async () => {
     // The two-sided-contract pin law again, at the fold's loader: the file is PRESENT on
     // B's own runDir in BOTH legs — only the recorded runId varies. A copied/restored run
     // directory is run A's bytes on B's path; admission by identity keeps B on its floor.
@@ -1433,7 +1274,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     expect(controlReport.unresolved).toBe(0)
   })
 
-  it('reads verdicts through the D-10 accessor only (source pin + grep gate)', async () => {
+  it('reads verdicts through resolveRunVerdicts only (source pin + grep gate)', async () => {
     const source = readFileSync(
       new URL('../emit-canary-outcomes.ts', import.meta.url),
       'utf8',
@@ -1444,7 +1285,7 @@ describe('SC2 — the cross-run supersession differential (389-06, D-10)', () =>
     expect(source.split('test.rootCause').length - 1).toBe(0)
   })
 
-  it('run_outcome_applied_runs holds through the upgrade — a re-fold never double-counts (T-389-15)', async () => {
+  it('run_outcome_applied_runs holds through the upgrade — a re-fold never double-counts', async () => {
     const { applyRunOutcomes, indexDbPath, projectRunOutcomes, readTestOutcomeHistory } =
       await vi.importActual<typeof import('@vostride/agent-qa-knowledge-local')>(
         '@vostride/agent-qa-knowledge-local',

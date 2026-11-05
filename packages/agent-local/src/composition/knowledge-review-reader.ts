@@ -1,26 +1,7 @@
-// The function layer's knowledge READ port, bound over the physically read-only entry
-// (Phase 387, KREV-01 / FUNC-04 / D-01).
-//
-// This file exists so the read half of the review-verb family has a home that CANNOT name the
-// writer-gated entry. It is registered in the arch reader carve-out's pinned file list, which
-// means the lint fails this file for naming anything but the `/reader` subpath — the same rule
-// that already binds `knowledge-read.ts` and the run-scoped serving reader. The alternative,
-// leaving the binding inside the composition root (which legitimately names the writer entry,
-// because it also binds the curator), would have put five read verbs inside the one file in
-// the workspace where a write import is legal. The rule would still have passed and the
-// separation would have been discipline rather than structure.
-//
-// D-01 LIST-VERB SIGHTING. Entity ids discovered by listing and single-record verbs go to the
-// injected `sightMemoryEntities` callback. The callback is INJECTED rather than constructed
-// here for the reason above: minting reaches the durable addressing ledger, whose module lives
-// on the writer-gated entry, so a version of this file that could mint could not be a reader
-// file. The composition root — which may name that entry — supplies it. The callback is a side
-// effect on the ledger and never on the answer: every projection below is byte-identical
-// whether or not one is supplied, which is what keeps the wiring-parity claim true.
+// On the reader carve-out list, so this file cannot name the writer entry; sighting is injected.
 
 import {
   canaryAttributionsFor,
-  candidateInjectionFor,
   gateReceiptsFor,
   diffSince,
   inspectRecords,
@@ -29,7 +10,6 @@ import {
   showRecords,
 } from '@vostride/agent-qa-knowledge-local/reader'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
-import type { ResolvePromotionPosture, TrustPriorTable } from '@vostride/agent-qa-schema'
 
 /**
  * Hand every entity id an output surfaced to the addressing ledger's sighting seam.
@@ -42,7 +22,6 @@ import type { ResolvePromotionPosture, TrustPriorTable } from '@vostride/agent-q
 export type SightMemoryEntities = (bundleIds: readonly string[]) => Promise<void>
 
 export interface ConstructKnowledgeReaderPortInput {
-  resolveTrustPriors?: () => TrustPriorTable | undefined
   /**
    * Which knowledge root this invocation serves from, resolved per call.
    *
@@ -51,9 +30,7 @@ export interface ConstructKnowledgeReaderPortInput {
    * makes differently from a terminal.
    */
   resolveKnowledgeRoot: () => Promise<string> | string
-  /** Host preparation may await; the returned per-candidate resolver is synchronous. */
-  resolvePromotionPosture?: () => Promise<ResolvePromotionPosture | undefined> | ResolvePromotionPosture | undefined
-  /** The D-01 sighting site. Absent in hosts that bind no addressing ledger. */
+  // The sighting site; absent in hosts that bind no addressing ledger.
   sightMemoryEntities?: SightMemoryEntities
 }
 
@@ -70,30 +47,20 @@ export function createKnowledgeReaderPort(
   }
 
   return {
-    // 2026-09-07, 417 D-01: forward the candidate DATA verbatim. Since 441-41 (D-06) nothing here
-    // scans it; the chat and MCP doors mask declared values in every op result.
-    async candidateInjection({ candidateId }) {
-      return candidateInjectionFor({
-        ...(input.resolveTrustPriors === undefined ? {} : { priors: input.resolveTrustPriors() }),
-        knowledgeRoot: await input.resolveKnowledgeRoot(), candidateId,
-      })
-    },
-    // 416 D-17: the caller supplied the identity; forward the reader's answer verbatim.
+    // The caller supplied the identity; forward the reader's answer verbatim.
     async gateReceipts({ candidateId }) {
       return gateReceiptsFor({
         knowledgeRoot: await input.resolveKnowledgeRoot(),
         candidateId,
-        resolvePromotionPosture: await input.resolvePromotionPosture?.(),
       })
     },
     async listBundles() {
-      const rows = listBundles(await input.resolveKnowledgeRoot(), input.resolveTrustPriors?.())
+      const rows = listBundles(await input.resolveKnowledgeRoot())
       await sight(rows.map((row) => row.bundleId))
       return rows
     },
     async inspectRecords({ filter }) {
       const records = inspectRecords({
-        ...(input.resolveTrustPriors === undefined ? {} : { priors: input.resolveTrustPriors() }),
         knowledgeRoot: await input.resolveKnowledgeRoot(),
         filter,
       })
@@ -114,7 +81,6 @@ export function createKnowledgeReaderPort(
     },
     async showRecord({ recordId }) {
       const result = showRecord({
-        ...(input.resolveTrustPriors === undefined ? {} : { priors: input.resolveTrustPriors() }),
         knowledgeRoot: await input.resolveKnowledgeRoot(),
         recordId,
       })
@@ -126,19 +92,7 @@ export function createKnowledgeReaderPort(
     async showRecords({ recordIds }) {
       return showRecords({ knowledgeRoot: await input.resolveKnowledgeRoot(), recordIds })
     },
-    /**
-     * 407 D-08: what became of the canary lines one run served.
-     *
-     * Resolved per call like its four siblings, and NOT sighted. The caller already holds every
-     * candidate id in the tuples it passes — it read them off its own run's evidence — so a
-     * sighting here would record that the reader was handed ids rather than that an entity was
-     * surfaced to anyone, which is the distinction the ledger exists to keep.
-     *
-     * The reader entry's answer is forwarded VERBATIM, `skippedBundles` included (407-19, REVIEW
-     * WR-03). This binding neither counts nor interprets: how much of the store went unread is a
-     * fact only the walk knows, and a composition that dropped it here would hand the op a
-     * clean-looking answer over a half-read store.
-     */
+    // Not sighted; `skippedBundles` is forwarded verbatim so a half-read store never looks clean.
     async canaryAttributions({ runId, tuples }) {
       return canaryAttributionsFor({
         knowledgeRoot: await input.resolveKnowledgeRoot(),

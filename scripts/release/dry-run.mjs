@@ -4,7 +4,6 @@ import { createDockerTags, validateDockerReleasePlan } from './docker.mjs'
 import { createPublishCommands } from './publish.mjs'
 import { redactSecret, renderPosthogProjectFile } from './posthog.mjs'
 import { assertSharedPublicVersion, computeTargetVersion, rewriteInternalWorkspaceRanges } from './version.mjs'
-import { buildReleaseGatePlan } from './verify.mjs'
 
 const dryRunPosthogKey = 'POSTHOG_PROJECT_KEY_DRY_RUN_PLACEHOLDER'
 
@@ -61,21 +60,6 @@ export function buildReleaseDryRunPlan(options = {}) {
     bump,
     currentVersion,
     targetVersion,
-    releaseGatePlan: buildReleaseGatePlan(bump),
-    localValidation: [
-      'pnpm install --frozen-lockfile',
-      'pnpm typecheck',
-      'pnpm test',
-      'pnpm build',
-      'pnpm run validate:skills',
-      'pnpm run validate:agents',
-      'pnpm run validate:publish',
-      'pnpm run validate:tools',
-      'pnpm run validate:arch',
-      'pnpm run validate:safety',
-      `pnpm exec node scripts/release/stage-packages.mjs --target-version ${targetVersion} --out .release/staged-packages`,
-      `pnpm exec node scripts/release/verify.mjs --bump ${bump} --stage postbuild --target-version ${targetVersion} --staged-dir .release/staged-packages`,
-    ],
     npm: {
       trustedPublishing: true,
       usesNpmToken: false,
@@ -90,7 +74,7 @@ export function buildReleaseDryRunPlan(options = {}) {
     docker: {
       namespace: docker.namespace,
       version: docker.version,
-      validationCommand: `pnpm exec node scripts/release/docker.mjs --check-local --version ${targetVersion} --namespace ${docker.namespace}`,
+      validationCommand: `pnpm exec node scripts/release/docker.mjs --version ${targetVersion} --namespace ${docker.namespace}`,
       images: docker.images.map(image => ({
         id: image.id,
         image: image.image,
@@ -153,12 +137,6 @@ function renderText(plan) {
     `Version: ${plan.currentVersion} -> ${plan.targetVersion}`,
     'Mutates external state: no',
     'Writes files: no',
-    '',
-    'Release gate:',
-    ...plan.releaseGatePlan.map((step, index) => `  ${index + 1}. ${step}`),
-    '',
-    'Local validation:',
-    ...plan.localValidation.map(command => `  - ${command}`),
     '',
     'npm publish command preview:',
     ...plan.npm.publishCommands.map(command => `  - ${command.package}: ${command.command} (${command.cwd})`),

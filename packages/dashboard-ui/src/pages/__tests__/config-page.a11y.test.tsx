@@ -1,8 +1,6 @@
 // @vitest-environment jsdom
 
-// Law 7 (accessibility is correctness), PXH-CONF-05 and D-24: on every Config tab, in its open
-// states, every control has an accessible name, every glyph is hidden from assistive tech, and
-// nothing is a dialog.
+// On every Config tab, every control has a name, every glyph is hidden, and nothing is a dialog.
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -36,15 +34,14 @@ const { fullConfig } = vi.hoisted(() => ({
       envFile: '.env.local',
       secretsFile: '.env.secrets.local',
     },
-    allowProduction: true,
-    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none', contextBudgetTokens: 4000 },
+    knowledge: { dir: 'agent-qa-knowledge' },
     services: {
       dashboard: {
         port: 4173,
         dbPath: '.agent-qa/runs.db',
         artifactsDir: '.agent-qa/artifacts',
       },
-      cache: { dir: '.agent-qa/cache', ttl: '7d' },
+      cache: { dir: '.agent-qa/cache' },
       logging: { level: 'info' },
       recording: { enabled: true, keepFailuresOnly: false },
       accessibility: {
@@ -58,7 +55,6 @@ const { fullConfig } = vi.hoisted(() => ({
       vision: { screenshotSize: '256k', effectiveResolution: 768 },
       mcp: {
         enabled: true,
-        transport: 'http',
         port: 4174,
       },
     },
@@ -81,11 +77,10 @@ const { fullConfig } = vi.hoisted(() => ({
           platform: 'android',
           appPackage: 'com.example.shop',
           appActivity: '.MainActivity',
-          app: { path: 'apps/shop.apk', browserstack: 'bs://shop' },
+          app: { path: 'apps/shop.apk' },
         },
       },
-      devices: { iosLocal: { platform: 'ios', transport: 'local', match: { udid: 'abc' } } },
-      providers: { browserstack: { username: 'qa-team' } },
+      devices: { iosLocal: { platform: 'ios', match: { udid: 'abc' } } },
     },
     use: {
       browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
@@ -101,10 +96,6 @@ const { fullConfig } = vi.hoisted(() => ({
     analytics: {
       privacy: true,
       passRateScope: { attributes: { 'git.branch': 'master', 'user.email': { regex: '^ci@' } } },
-    },
-    eval: {
-      judges: ['claude-proxy', 'gemini-fast'],
-      gate2: { canaryHorizonBuilds: 3 },
     },
   },
 }))
@@ -346,18 +337,18 @@ async function openTab(tab: ConfigTab) {
   }
 }
 
-async function deleteDeviceFarm() {
+async function deleteDevice() {
   vi.mocked(applyConfigChanges).mockResolvedValueOnce({
     revision: 'rev-2',
-    undo: { token: 'tok-farm', expiresAt: Date.now() + 30_000 },
+    undo: { token: 'tok-device', expiresAt: Date.now() + 30_000 },
   } as never)
   await renderAt('/config/targets')
   const remove = (Array.from(panel('targets').querySelectorAll('button')) as HTMLButtonElement[]).find(
-    (button) => button.getAttribute('aria-label') === deleteActionName('delete-device-farm', 'browserstack'),
+    (button) => button.getAttribute('aria-label') === deleteActionName('delete-device', 'iosLocal'),
   )
-  expect(remove, 'the device farm delete button').toBeDefined()
+  expect(remove, 'the device delete button').toBeDefined()
   await click(remove!)
-  expect(container!.textContent).toContain(undoLine('delete-device-farm', 'browserstack'))
+  expect(container!.textContent).toContain(undoLine('delete-device', 'iosLocal'))
 }
 
 describe('ConfigPage accessibility', () => {
@@ -381,7 +372,7 @@ describe('ConfigPage accessibility', () => {
       expect.arrayContaining(['tab', 'switch', 'radio', 'combobox']),
     )
 
-    await deleteDeviceFarm()
+    await deleteDevice()
     const unnamed = unnamedControls()
     expect(unnamed, `after a delete: unnamed controls:\n${unnamed.join('\n')}`).toEqual([])
     expect(unhiddenGlyphs()).toEqual([])
@@ -397,7 +388,7 @@ describe('ConfigPage accessibility', () => {
       container = null
     }
 
-    await deleteDeviceFarm()
+    await deleteDevice()
     expect(dialogs(), 'after a delete').toEqual([])
   })
 })

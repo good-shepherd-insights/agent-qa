@@ -94,7 +94,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'pixel-7',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2', platformVersion: '14', serial: 'RZCT90BCMWW' },
         },
       }
@@ -137,7 +136,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2' },
         },
         appPath: '/tmp/wikipedia.apk',
@@ -156,7 +154,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2' },
         },
       })
@@ -173,7 +170,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-chrome',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2', browserName: 'Chrome' },
         },
       })
@@ -190,7 +186,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2', noReset: true },
         },
       })
@@ -206,7 +201,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-chrome',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2', browserName: 'Chrome' },
         },
         appPath: '/tmp/wikipedia.apk',
@@ -222,7 +216,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'org.wikipedia.alpha',
@@ -237,7 +230,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
@@ -257,7 +249,6 @@ describe('AndroidPlatformAdapter', () => {
           device: {
             name: 'android-emu',
             platform: 'android',
-            transport: 'local',
             match: { automationName: 'UiAutomator2' },
           },
           appPackage: 'app.linear',
@@ -280,7 +271,7 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  describe('C444.1-SESSION-START', () => {
+  describe('session start activates the app only when it is not already in the foreground', () => {
     const appPackage = 'dev.example.deeplinked'
 
     it('an app already in the foreground is not activated again', async () => {
@@ -386,7 +377,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
@@ -399,8 +389,7 @@ describe('AndroidPlatformAdapter', () => {
 
     it('observes a webview when the context belongs to the target app package', async () => {
       mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
-      // Reworked WEB_OBSERVER_SCRIPT emits serializable interim nodes only (Pitfall #5):
-      // no refs, no tree text — the shared builder mints refs and renders the tree.
+      // The observer script emits serializable interim nodes only; the shared builder mints refs.
       mockDriver.execute.mockResolvedValueOnce({
         nodes: [{
           role: 'button',
@@ -420,7 +409,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
@@ -458,7 +446,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-chrome',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2', browserName: 'Chrome' },
         },
       })
@@ -469,7 +456,7 @@ describe('AndroidPlatformAdapter', () => {
       expect(state.tree).toContain('link "Example"')
     })
 
-    it('shape-validates attacker-shaped WEB_OBSERVER_SCRIPT results (T-352-11)', async () => {
+    it('shape-validates attacker-shaped WEB_OBSERVER_SCRIPT results', async () => {
       mockDriver.getContexts.mockResolvedValue(['NATIVE_APP', 'WEBVIEW_app.linear'])
       // Non-array nodes + a malformed record must never reach the builder: the whole
       // payload is rejected (nodes not an array) → falls back to native observation.
@@ -480,7 +467,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          transport: 'local',
           match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
@@ -527,8 +513,7 @@ describe('AndroidPlatformAdapter', () => {
       const usernameEl = state.elements.find(e => e.name === 'Username')
       expect(usernameEl).toBeDefined()
 
-      // Mock the focused element finder — the compound re-reads via getText() and probes
-      // getAttribute('password') for the secure lane. The showing-hint probe (437-05) matches nothing.
+      // The compound re-reads via `getText()` and probes `password`; the hint probe finds nothing.
       const mockElement = {
         isExisting: vi.fn().mockResolvedValue(true),
         setValue: vi.fn().mockResolvedValue(undefined),
@@ -621,7 +606,6 @@ describe('AndroidPlatformAdapter', () => {
   })
 
   describe('execute — scroll', () => {
-    // 2026-10-07 (436-02): a native scroll is the driver's scrollGesture, not a raw touch swipe.
     it('performs one scrollGesture over the screen area in the specified direction', async () => {
       await adapter.setup({ platform: 'android' })
       await adapter.observe()
@@ -632,8 +616,7 @@ describe('AndroidPlatformAdapter', () => {
 
       const gestures = mockDriver.execute.mock.calls.filter((c: unknown[]) => c[0] === 'mobile: scrollGesture')
       expect(gestures).toHaveLength(1)
-      // viewport 1080x1920; content direction is passed as-is; halfPage halves the 0.75 page percent.
-      // 436-12 (live A1): the area is the middle 60% of the swipe axis, clear of the gesture zones.
+      // The area is the middle 60% of the swipe axis, clear of the system gesture zones.
       expect(gestures[0][1]).toEqual({ left: 0, top: 384, width: 1080, height: 1152, direction: 'down', percent: 0.375 })
       expect(mockDriver.action).not.toHaveBeenCalled()
     })
@@ -665,8 +648,6 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  // openLink retired (D-19) — the deep-link-open behavior re-keys onto the typed `intent` verb
-  // (mobile: startActivity). Exhaustive hostile-input pins live in catalog.test.ts.
   describe('execute — intent', () => {
     it('maps action + data + package to typed mobile: startActivity args (uri, never a shell string)', async () => {
       await adapter.setup({ platform: 'android' })
@@ -730,7 +711,7 @@ describe('AndroidPlatformAdapter', () => {
       expect(mockDriver.getPageSource).toHaveBeenCalled()
     })
 
-    it('returns a §7.1 web-only error for on:selector (no selector waiting on native)', async () => {
+    it('returns a structured web-only error for on:selector (no selector waiting on native)', async () => {
       await adapter.setup({ platform: 'android' })
       const result = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 })
       expect(result.success).toBe(false)
@@ -782,7 +763,7 @@ describe('AndroidPlatformAdapter', () => {
   })
 
   describe('execute — keypress mode gating', () => {
-    it('returns a §7.1 press-only error for mode:down (web-only key hold/release)', async () => {
+    it('returns a structured press-only error for mode:down (web-only key hold/release)', async () => {
       await adapter.setup({ platform: 'android' })
       const down = await adapter.execute({ type: 'keypress', keys: ['Shift'], mode: 'down' })
       expect(down.success).toBe(false)
@@ -790,9 +771,6 @@ describe('AndroidPlatformAdapter', () => {
       expect(mockDriver.keys).not.toHaveBeenCalled()
     })
   })
-
-  // assert retired (D-19) — deterministic checks now route through the runner-side assertValue
-  // comparator and claim-shaped checks through assertAI; there is no adapter assert case.
 
   describe('screenshot', () => {
     it('returns PNG buffer from base64', async () => {
@@ -808,7 +786,7 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  describe('C444.1-WEBVIEW-SCREENSHOT', () => {
+  describe('WebView screenshots paint an unset background white', () => {
     // sharp is runner-local's dependency, not android's, so it is resolved from there.
     const runnerLocal = createRequire(import.meta.url).resolve('@vostride/agent-qa-runner-local')
     const sharp = createRequire(runnerLocal)('sharp') as any
@@ -1026,7 +1004,7 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  describe('screenshot — action-space alignment assertion (D-06)', () => {
+  describe('screenshot — action-space alignment assertion', () => {
     it('returns screenshot buffer without warning when dimensions match getWindowSize', async () => {
       await adapter.setup({ platform: 'android' })
       // SCREENSHOT_BASE64 is a 1x1 PNG, window is 1080x1920 → will warn but not throw
@@ -1043,7 +1021,7 @@ describe('AndroidPlatformAdapter', () => {
     })
   })
 
-  describe('liveStream (428 D-11)', () => {
+  describe('liveStream', () => {
     function contextSpies() {
       const spies = {
         getContext: vi.fn().mockResolvedValue('NATIVE_APP'),

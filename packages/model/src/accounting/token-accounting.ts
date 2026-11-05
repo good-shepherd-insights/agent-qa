@@ -1,15 +1,11 @@
-// The conversation-scoped token-accounting instance (CTXB-03, D-01/D-02/D-04/D-07/D-12).
-// Closure-state factory: options in, closure-captured anchor
-// state, an object of methods out. Provider-neutral: operates only on AI SDK `ModelMessage[]`.
+// Closure-state factory over AI SDK `ModelMessage[]` only; provider-neutral.
 
 import type { ModelMessage } from 'ai'
 
-import { degrade as pureDegrade } from './degrade.js'
+import { isImageMediaType, degrade as pureDegrade } from './degrade.js'
 import type { DegradeOptions, DegradeOutcome, TokenAccounting, TokenAccountingOptions } from './types.js'
 
-// Anthropic's large-image ceiling ≈ (1568×1568)/750 ≈ 1,533 tokens at v2 downscaled capture
-// sizes; 1,600 is the safe conservative over-estimate (RESEARCH Q8/D-12). Injectable, never
-// user-facing config. Over-charging degrades slightly early — the safe direction (T-354-10).
+// A conservative over-estimate of a large image; over-charging degrades early, the safe direction.
 const DEFAULT_PER_IMAGE_TOKENS = 1600
 
 interface Anchor {
@@ -54,8 +50,7 @@ export function createTokenAccounting(options: TokenAccountingOptions): TokenAcc
   return { estimate, recordUsage, getCeilings, degrade }
 }
 
-/** The anchored prefix still matches when messages are ≥ the anchored length and the leading
- * `prefixLength` messages hash identically — an identity, never an array cursor (D-01/Pitfall 6). */
+// An identity match on the hashed prefix, never an array cursor.
 function prefixMatches(messages: ModelMessage[], anchor: Anchor): boolean {
   if (messages.length < anchor.prefixLength) return false
   const prefix = messages.length === anchor.prefixLength ? messages : messages.slice(0, anchor.prefixLength)
@@ -85,34 +80,58 @@ function outputTextChars(output: unknown): number {
   if (output.type === 'content' && Array.isArray(output.value)) {
     let total = 0
     for (const item of output.value) {
-      if (isRecord(item) && item.type === 'text' && typeof item.text === 'string') total += item.text.length
+      if (!isRecord(item)) continue
+      if (item.type === 'text' && typeof item.text === 'string') {
+        total += item.text.length
+      } else if (item.type === 'file' && !isImageMediaType(item.mediaType)) {
+        total += fileDataChars(item.data)
+      }
     }
     return total
   }
   return 0
 }
 
-/** One flat charge per image part — inline user `ImagePart`s and historical `ToolResultOutput
- * { type:'content' }` `image-data`/`media` parts alike; base64 length is never read (RESEARCH Q8). */
+// Base64 carries six bits a character, so charging it as text over-charges the decoded bytes.
+function fileDataChars(data: unknown): number {
+  if (!isRecord(data)) return 0
+  if (data.type === 'text' && typeof data.text === 'string') return data.text.length
+  if (data.type !== 'data') return 0
+  if (typeof data.data === 'string') return data.data.length
+  if (data.data instanceof ArrayBuffer || ArrayBuffer.isView(data.data)) {
+    return Math.ceil(data.data.byteLength / 3) * 4
+  }
+  return 0
+}
+
+// One flat charge per image part, inline or in tool output; base64 length is never read.
 function messageImageCount(message: ModelMessage): number {
   const content = message.content
   if (typeof content === 'string') return 0
   let count = 0
   for (const part of content as unknown[]) {
     if (!isRecord(part)) continue
-    if (part.type === 'image') count += 1
+    if (part.type === 'image' || isImageFile(part)) count += 1
     else if (part.type === 'tool-result') count += outputImageCount(part.output)
   }
   return count
+}
+
+function isImageFile(part: Record<string, unknown>): boolean {
+  return part.type === 'file' && isImageMediaType(part.mediaType)
 }
 
 function outputImageCount(output: unknown): number {
   if (!isRecord(output) || output.type !== 'content' || !Array.isArray(output.value)) return 0
   let count = 0
   for (const item of output.value) {
-    if (isRecord(item) && (item.type === 'image-data' || item.type === 'media')) count += 1
+    if (isRecord(item) && (item.type === 'image-data' || isInlineImageFile(item))) count += 1
   }
   return count
+}
+
+function isInlineImageFile(item: Record<string, unknown>): boolean {
+  return isImageFile(item) && isRecord(item.data) && item.data.type === 'data'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

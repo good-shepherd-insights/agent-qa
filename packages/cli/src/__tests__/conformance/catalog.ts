@@ -1,27 +1,4 @@
-// The capability catalog: the projection, the alias probe table, and the comparator
-// (Phase 398 plan 01 — XPLN-01, D-01 / D-03 / D-05 / D-06 / D-07 / D-08).
-//
-// WHAT THE CATALOG IS FOR. The golden ledger next door answers "did a capability's contract move".
-// This artifact answers "what can this product do, in the words a person reads" — and it is the
-// ONE data source behind `init --agent`, the chat `/` type-ahead, the starter prompts and the
-// `explain` op. Because those four all project one artifact, "the manifest and the type-ahead
-// agree" stops being a promise and becomes an identity.
-//
-// PRODUCED, NEVER AUTHORED. Every value in a row comes out of a live seam: op rows from the
-// declarations of a REAL `composeCliLocalAgent()` composition, surfaces from the shipped
-// `mapping.ts` partition, alias targets from the shipped resolver table's own resolution, skill
-// rows from the shipped SKILL.md frontmatter. Nothing below states an op id, a tool name or a
-// scope. A hand-written catalog can encode a capability the product does not have, and the
-// freshness leg would then red only on that impossible row while agreeing about everything real.
-//
-// THE REGEN CANNOT BE ONE KEYSTROKE. There is no snapshot here and no `--update` path: this module
-// offers the regen script a PRINT between sentinels (see {@link CATALOG_EMIT_BEGIN}), never a
-// write. The ONE writer is `scripts/398-regen-catalog.sh --write`, which refuses to run while any
-// other leg of this suite is red and whose `--selftest` proves that refusal fires.
-//
-// ONE RECIPE. The script and the freshness leg call the same {@link capabilityCatalogFromRoot}, and
-// the composition it walks is the golden's own {@link withGoldenRootDeclarations} — so the two
-// committed projections cannot disagree about which registry they were taken from.
+// Produced from live seams, never authored; `regen-capability-catalog.sh --write` writes it.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -29,7 +6,6 @@ import { fileURLToPath } from 'node:url'
 
 import type { FunctionDeclaration } from '@vostride/agent-qa-agent'
 import { CHAT_RESOLVER_TABLE } from '@vostride/agent-qa-agent'
-import { V1_TOOL_MIGRATION_MAP, type V1ToolMigrationEntry } from '@vostride/agent-qa-mcp'
 import {
   canonicalJson,
   catalogRowKey,
@@ -38,7 +14,6 @@ import {
   type CapabilityCatalog,
   type CatalogAliasRow,
   type CatalogExampleCall,
-  type CatalogMigrationEntry,
   type CatalogOpRow,
   type CatalogRow,
   type CatalogSkillRow,
@@ -70,14 +45,7 @@ const CONFORMANCE_DIR = dirname(fileURLToPath(import.meta.url))
  */
 export const CATALOG_PATH = resolveCapabilityCatalogPath(CONFORMANCE_DIR)
 
-/**
- * The agent-qa root, found by the workspace marker.
- *
- * Doc paths are REPO-RELATIVE (D-07) and the artifact is byte-compared across machines, so an
- * absolute path anywhere in a row would make the committed file a property of whoever last ran the
- * script. The walk stops at the file that defines the workspace rather than counting `..` segments,
- * which is a count that goes wrong silently when a directory is added.
- */
+// Found by the workspace marker: doc paths are repo-relative, and counting `..` breaks silently.
 export function agentQaRoot(startDir: string = CONFORMANCE_DIR): string {
   let current = startDir
   while (true) {
@@ -100,63 +68,34 @@ function repoRelative(absolutePath: string): string {
 
 // ---- The note the committed file carries ---------------------------------------------------------
 
-/**
- * PRODUCED from this constant rather than typed into the JSON, so a hand-edit to the note reds like
- * any other row. Somebody who opens a generated file should learn what changing it means without
- * having to find the phase directory.
- */
+// Produced from this constant, so a hand-edit to the note reds like any other row.
 export const CATALOG_NOTE: readonly string[] = Object.freeze([
-  'GENERATED — the capability catalog for Phase 398 (XPLN-01, D-01/D-03/D-05).',
+  'GENERATED — the capability catalog.',
   'One row per registry capability, per chat alias and per shipped skill. This artifact is the ONE',
   'data source behind `init --agent`, the chat `/` type-ahead, the starter prompts and `explain`.',
   `DO NOT EDIT BY HAND: regenerate with "bash ${CATALOG_REGEN_SCRIPT} --write" and commit the`,
   'result as a deliberate, reviewed change. The script refuses to run while any other leg of the',
   'conformance suite is red, so a regeneration cannot launder an unrelated failure, and no',
   'test-runner update flag reaches this file.',
-  'IT DESCRIBES, IT DOES NOT GATE. Nothing here allows or withholds a capability, and since',
-  '2026-10-01 (432 D-12) nothing anywhere does: no caller is shown or refused a capability',
-  'by who it is.',
-  '`migrationMap` is the v1 -> v2 tool-name adjudication (XPLN-03), projected verbatim from',
-  '`packages/mcp`. It is retired HISTORY, not capability: nothing in it is callable today.',
+  'IT DESCRIBES, IT DOES NOT GATE. Nothing here allows or withholds a capability, and nothing',
+  'anywhere does: no caller is shown or refused a capability by who it is.',
   'Each op row\'s `exampleCall` is DERIVED from that row\'s own `params` — a null arm with a stated',
   'reason means the contract carries a construct a placeholder could not be shown to satisfy.',
 ])
 
-// ---- Doc-path adjudication (D-07) ----------------------------------------------------------------
+// ---- Doc-path adjudication ----------------------------------------------------------------
 
-/**
- * Why a row carries no doc yet.
- *
- * The honest default, and the reason it is a CONSTANT rather than prose repeated per row: the
- * shipped doc surface is four files, almost no capability has a canonical page, and the demand
- * signal for writing one is XPLN-02's coverage log — not a column somebody felt obliged to fill.
- * A guessed or placeholder URL would be worse than an absence, because the existence cell would
- * pass on it right up until a person clicked it.
- */
+// A guessed doc URL passes the existence cell until a person clicks it, so absence is the default.
 export const CATALOG_DOC_ABSENT_REASON =
-  'D-07 (dated 2026-08-16): no canonical doc ships for this capability yet. The explicit absence is '
-  + 'the honest state — a guessed path would existence-check green and mislead a reader — and the '
-  + 'abstention coverage log is the demand signal for writing one.'
+  'No canonical doc ships for this capability yet. A guessed path would pass the existence check '
+  + 'and mislead a reader, and the abstention coverage log is the demand signal for writing one.'
 
-/** A row's doc: a real page, or a dated reason there is none. The third state does not exist. */
+/** A row's doc: a real page, or a reason there is none. The third state does not exist. */
 export type CatalogDocAdjudication =
   | { readonly path: string; readonly anchor?: string }
   | { readonly absentReason: string }
 
-/**
- * Every registry op's doc adjudication, one entry each (D-07).
- *
- * WHY A DECLARED TABLE AND NOT A DERIVATION. There is nothing in a `FunctionSpec` that says which
- * page documents it, and there is no honest way to guess: a path assembled from an op id would
- * existence-check green for exactly as long as somebody happened to have named a file that way. So
- * the adjudication is written, and the census below forces it to be MADE — an op that lands without
- * an entry here is a named RED, which is the only mechanism that keeps "we will document it later"
- * from becoming a column of silent blanks.
- *
- * THE HONEST DEFAULT IS ABSENCE. The shipped doc surface is four pages; almost no capability has a
- * canonical one. Filling this column by writing pages to fit it would invert the demand signal —
- * XPLN-02's abstention coverage log is what says which docs a person actually wanted.
- */
+// Written, not derived: nothing in a `FunctionSpec` says which page documents it.
 export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudication])[] =
   Object.freeze([
     // The real links. Each documents the CAPABILITY, rather than mentioning it in passing. The
@@ -185,19 +124,14 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
 
     // …and the explicit absences, one per remaining op.
     Object.freeze(['agent.ask', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-08-17 (398 D-07/D-09): an EXPLICIT, DATED absence for the op that was added this phase,
-    // and the reason is its own rather than the shared constant. `agent.explain` is the capability
-    // whose abstentions FEED the coverage log that decides which docs get written — so pointing it
-    // at a page that does not exist would be this file guessing at the very artifact the feature
-    // exists to stop guessing about. It documents itself by answering; when the log shows demand
-    // for a written page, this row is where the link lands.
+    // `agent.explain` documents itself by answering, so its absence carries its own reason.
     Object.freeze([
       'agent.explain',
       Object.freeze({
         absentReason:
-          'no shipped page documents this capability (dated 2026-08-17, 398 D-07). It is the op '
-          + 'whose abstention log IS the demand signal for writing docs, so a guessed link here '
-          + 'would be the invention the whole feature refuses.',
+          'No shipped page documents this capability. It is the op whose abstention log is the '
+          + 'demand signal for writing docs, so a guessed link here would be the invention the '
+          + 'feature refuses.',
       }),
     ] as const),
     Object.freeze(['authoring.draft.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
@@ -211,23 +145,19 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['config.project.scaffold', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.target.create', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['config.target.edit', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-09-25 (428, D-07): in SORT position after `config.undo.propose` (deleted 2026-10-01,
-    // 432-17), an explicit dated absence on `runs.liveurl`'s idiom.
     Object.freeze([
       'editor.liveurl',
       Object.freeze({
         absentReason:
-          'no shipped page documents the editor mint (dated 2026-09-25, 428 D-07); a person meets '
-          + 'it through Test → Live on the dashboard, which is the only door that dispatches it.',
+          'No shipped page documents the editor mint; a person meets it through Test → Live on the '
+          + 'dashboard, which is the only door that dispatches it.',
       }),
     ] as const),
     Object.freeze(['entities.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['entities.resolve', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-10-01 (432-18): `grants.list` and `grants.revoke` left with the grant ledger.
     Object.freeze(['knowledge.accept', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.brief.why', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.bundles.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-09-06, 416 D-17: the new history read has no shipped documentation page yet.
     Object.freeze(['knowledge.gates.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.forget', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['knowledge.record.show', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
@@ -237,35 +167,17 @@ export const CATALOG_DOC_PATHS: readonly (readonly [string, CatalogDocAdjudicati
     Object.freeze(['quarantine.add', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['quarantine.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['quarantine.release', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-08-27 (405-01, D-03): in SORT position before `runs.digest`. The run-detail READ has
-    // no shipped documentation page — the surface a person meets it through is the dashboard's
-    // run-detail page, which 405-06/08/11 build — so this is the same honest absence its `runs.`
-    // read siblings carry, not a link to a page that describes something else.
-    // 2026-08-27 (405-05, D-12/D-13): in SORT position before `runs.detail`. The ref-resolving
-    // read has no shipped documentation page — a person meets it as an `<img src>` on the
-    // run-detail page 405-06/08/11 build, never as a call they make — so this is the same honest
-    // absence its `runs.` read siblings carry.
     Object.freeze(['runs.artifact', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.detail', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.events', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-09-15 (423-21, D-04): in SORT position after `runs.events`. The typed evidence read has
-    // no shipped documentation page; a person meets it through the run-detail evidence tabs.
     Object.freeze(['runs.evidence', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.get', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-08-29 (407-01, D-05): in SORT position after `runs.get`. The used-and-learned READ has
-    // no shipped documentation page — the surface a person meets it through is the dashboard's
-    // Knowledge tab, which 407-06/09/10 build — so this is the same honest absence its `runs.`
-    // read siblings above carry, not a link to a page that describes something else.
     Object.freeze(['runs.knowledge', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.liveurl', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.list', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-09-08, 419-11: the mark door has no shipped documentation page yet.
     Object.freeze(['runs.mark', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-09-15 (423-21, D-18): the two feedback reads have no shipped documentation page yet.
     Object.freeze(['runs.mark.preview', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
     Object.freeze(['runs.marks.history', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
-    // 2026-09-29 (431-08, D-06): the run overview has no shipped documentation page yet; the
-    // agent guide and skill that name it land later in this phase.
     Object.freeze(['runs.overview', Object.freeze({ absentReason: CATALOG_DOC_ABSENT_REASON })] as const),
   ])
 
@@ -285,7 +197,7 @@ export function catalogDocFieldsOf(opId: string): {
   if (entry === undefined) {
     throw new Error(
       `${opId} has no entry in CATALOG_DOC_PATHS — every registry op adjudicates its doc presence, `
-      + 'either a repo-relative path or a dated reason there is none (D-07)',
+      + 'either a doc path or a reason there is none',
     )
   }
   const adjudication = entry[1]
@@ -298,7 +210,7 @@ export function catalogDocFieldsOf(opId: string): {
   return { docPath: null, docAbsentReason: adjudication.absentReason }
 }
 
-// ---- Example-call derivation (spec §3.3, D-08) ---------------------------------------------------
+// ---- Example-call derivation ----
 
 /**
  * The JSON-Schema keywords this derivation knows how to honour.
@@ -534,14 +446,7 @@ function derivedValueOf(schema: unknown, propertyName: string, path: string): De
   }
 }
 
-/**
- * The example-call fields of one op row, DERIVED from that op's params and nothing else (D-08).
- *
- * The absence arm mirrors {@link CATALOG_DOC_ABSENT_REASON}'s discipline one column over: an
- * explicit, dated reason naming the construct, never a blank and never a guess. It is the honest
- * answer for the four shipped ops whose ids carry a regular expression — and the census cell in
- * `manifest.test.ts` pins that membership, so the arm cannot quietly widen into an escape hatch.
- */
+// An op whose id carries a regular expression gets an explicit absence reason, never a guess.
 export function catalogExampleCallOf(params: Record<string, unknown>, opId: string): {
   readonly exampleCall: CatalogExampleCall | null
   readonly exampleCallAbsentReason?: string
@@ -551,72 +456,22 @@ export function catalogExampleCallOf(params: Record<string, unknown>, opId: stri
     return {
       exampleCall: null,
       exampleCallAbsentReason:
-        `D-08 (dated 2026-08-17): no example call is derivable for ${opId} — ${derived.why}. The `
-        + 'explicit absence is the honest state; an example an agent copies and is refused for is '
-        + 'worse than a column that says there is none.',
+        `No example call is derivable for ${opId}: ${derived.why}. An example an agent copies and `
+        + 'is refused for is worse than a column that says there is none.',
     }
   }
   if (typeof derived.value !== 'object' || derived.value === null || Array.isArray(derived.value)) {
     return {
       exampleCall: null,
       exampleCallAbsentReason:
-        `D-08 (dated 2026-08-17): no example call is derivable for ${opId} — its params do not `
-        + 'project an object, so there is no argument set to show.',
+        `No example call is derivable for ${opId}: its params do not project an object, so there `
+        + 'is no argument set to show.',
     }
   }
   return { exampleCall: { arguments: derived.value as Record<string, unknown> } }
 }
 
-// ---- The migration map projection (D-14) ---------------------------------------------------------
-
-/**
- * One shipped map entry, as the catalog carries it.
- *
- * THIS SIGNATURE IS HALF OF THE ARM TIE, and it is deliberate rather than incidental: it takes the
- * `mcp` package's own entry type and returns the `schema` package's DTO, so an arm minted in the
- * map and absent from `CatalogMigrationArmSchema` does not COMPILE. The other half — an arm spelled
- * in the DTO that the shipped map does not carry — is the census cell in `manifest.test.ts`. A
- * second spelling held by neither side is the drift D-14 is about.
- *
- * VERBATIM, field for field. A projection free to re-word a `route` would be a second place the
- * product answers a v1 caller, and the two would agree right up until somebody improved one.
- */
-function catalogMigrationEntryOf(entry: V1ToolMigrationEntry): CatalogMigrationEntry {
-  return {
-    v1Name: entry.v1Name,
-    arm: entry.arm,
-    ...(entry.v2Tool === undefined ? {} : { v2Tool: entry.v2Tool }),
-    note: entry.note,
-    ...(entry.route === undefined ? {} : { route: entry.route }),
-    ...(entry.owner === undefined ? {} : { owner: entry.owner }),
-  }
-}
-
-/**
- * The migration section, sorted by v1 name.
- *
- * SORTED HERE AND NOT IN THE SOURCE. The shipped map is in the inventory document's row order so
- * the two can be read side by side; the committed artifact is byte-compared, so a source re-order
- * that changed nothing must produce a zero-line diff here. Two orders, each right where it is.
- */
-export function buildCatalogMigrationEntries(): readonly CatalogMigrationEntry[] {
-  const projected = V1_TOOL_MIGRATION_MAP.map(catalogMigrationEntryOf)
-  const seen = new Set<string>()
-  for (const entry of projected) {
-    if (seen.has(entry.v1Name)) {
-      throw new Error(
-        `the shipped migration map carries "${entry.v1Name}" twice — a duplicated v1 name would `
-        + 'project two answers for one call, and the both-directions census cannot see it because '
-        + 'the duplicate is on both sides',
-      )
-    }
-    seen.add(entry.v1Name)
-  }
-  return [...projected].sort((left, right) =>
-    left.v1Name < right.v1Name ? -1 : left.v1Name > right.v1Name ? 1 : 0)
-}
-
-// ---- The alias probe table (D-05) ----------------------------------------------------------------
+// ---- The alias probe table ----------------------------------------------------------------
 
 /**
  * What one shipped resolver row is, and the clause that shows it.
@@ -654,7 +509,6 @@ export interface ChatAliasProbe {
  * differ prove the binding TRACKS THE INPUT — the producer asserts the two answers differ, so the
  * passthrough is recognised by its behaviour rather than by its name.
  */
-// 2026-10-01 (432-17): `proposals.list` was the alternate until it was deleted with the inbox.
 const PASSTHROUGH_PROBE_ALTERNATE = '/fn quarantine.list'
 
 export const CHAT_ALIAS_PROBES: readonly ChatAliasProbe[] = Object.freeze([
@@ -670,7 +524,6 @@ export const CHAT_ALIAS_PROBES: readonly ChatAliasProbe[] = Object.freeze([
       'a session directive: it changes how THIS session behaves and maps to no registry op, so a '
       + 'catalog row would advertise a capability that does not exist',
   } as const),
-  // 432-13 (C432-CHAT-DIRECT): the `proposals` alias and the `/pin` directive left the table.
   Object.freeze({
     alias: 'fn',
     clause: '/fn runs.list',
@@ -696,19 +549,7 @@ export const CHAT_ALIAS_PROBES: readonly ChatAliasProbe[] = Object.freeze([
 
 // ---- The projection ------------------------------------------------------------------------------
 
-/**
- * The MCP half of an op row, folded out of the SAME partition the golden ledger records.
- *
- * 2026-08-16 — THE SURFACE VOCABULARY IS THE ROSTER, AND IT FLOWS (D-06). `chat` and `mcp` are the
- * two surfaces `roster.ts` pins and `parity.test.ts` measures. A THIRD rostered surface does not
- * need a change here beyond its own arm: the catalog's job is to never claim a surface the parity
- * suite does not measure, and the way that stays true is that this function reads the shipped
- * partition rather than a list of surfaces written in this file.
- *
- * THE CLI STAYS OUT, deliberately (397 D-03). Its handlers are not a measured surface — they
- * compose the same registry the chat host does — so a `cli` member here would be the catalog
- * asserting a parity claim nobody checks.
- */
+// Surfaces come from the shipped partition, so the catalog never claims one the parity suite skips.
 function mcpFieldsOf(opId: string): {
   readonly surfaces: readonly CatalogSurface[]
   readonly mcpTool?: string
@@ -744,8 +585,7 @@ export function catalogOpRowOf(declaration: FunctionDeclaration): CatalogOpRow {
     kind: 'op',
     id: declaration.id,
     description: declaration.summary,
-    // VERBATIM. `declaration.input` is already an inert projection through the ONE shipped
-    // zod->JSON-Schema lens (396 D-16); converting again here would be a second recipe.
+    // `declaration.input` is already projected through the shipped zod-to-JSON-Schema lens.
     params: declaration.input as Record<string, unknown>,
     surfaces: [...mcp.surfaces],
     ...(mcp.mcpTool === undefined ? {} : { mcpTool: mcp.mcpTool }),
@@ -755,9 +595,7 @@ export function catalogOpRowOf(declaration: FunctionDeclaration): CatalogOpRow {
     docPath: doc.docPath,
     ...(doc.docAnchor === undefined ? {} : { docAnchor: doc.docAnchor }),
     ...(doc.docAbsentReason === undefined ? {} : { docAbsentReason: doc.docAbsentReason }),
-    // 2026-10-01 (432-20, D-12): no `requiredScopes` column; declarations carry no scopes.
-    // DERIVED FROM `declaration.input`, which is the same value `params` above carries — so the
-    // example and the contract it exemplifies are one document read twice, never two.
+    // Derived from `declaration.input`, as `params` is, so the example matches its contract.
     exampleCall: example.exampleCall,
     ...(example.exampleCallAbsentReason === undefined
       ? {}
@@ -975,40 +813,20 @@ export function buildCatalogRows(
   ].sort(catalogRowOrder)
 }
 
-/**
- * THE document recipe, over an explicit row set.
- *
- * SPLIT OUT OF {@link capabilityCatalogOf} BY 398-07, and the reason is SC-2 rather than tidiness.
- * D-12 requires the empty-catalog abstention to be proven against a catalog that came out of the
- * PRODUCER and back through the loader — not a typed literal, which can prove things about inputs
- * the producer could never emit. There was no seam that could mint a zero-row document: the row
- * builder always contributes the shipped skills and the resolver table's aliases, so
- * `capabilityCatalogOf([])` is not an empty catalog, it is a catalog missing its ops.
- *
- * Taking the rows as an ARGUMENT is what makes the fixture produced: `rowCount` and `rowsDigest`
- * are minted here by the one recipe, and `capabilityCatalogText` serializes it, so the zero-row
- * bytes the differential writes are bytes this producer emits. Respelling
- * `sha256hex(canonicalJson(rows))` in a test would have been the second spelling of the digest
- * rule, and a fixture whose digest was computed by a copy proves nothing about the original.
- */
-export function capabilityCatalogDocumentOf(
-  rows: readonly CatalogRow[],
-  migrationMap: readonly CatalogMigrationEntry[],
-): CapabilityCatalog {
+// Rows are an argument, so a zero-row document is minted by the one recipe the loader reads back.
+export function capabilityCatalogDocumentOf(rows: readonly CatalogRow[]): CapabilityCatalog {
   return {
     $note: [...CATALOG_NOTE],
     rowCount: rows.length,
     rowsDigest: sha256hex(canonicalJson(rows)),
     rows: [...rows],
-    migrationMap: [...migrationMap],
-    migrationCount: migrationMap.length,
   }
 }
 
 export function capabilityCatalogOf(
   declarations: readonly FunctionDeclaration[],
 ): CapabilityCatalog {
-  return capabilityCatalogDocumentOf(buildCatalogRows(declarations), buildCatalogMigrationEntries())
+  return capabilityCatalogDocumentOf(buildCatalogRows(declarations))
 }
 
 /** THE recipe, shared by the regen script and the freshness leg. */
@@ -1021,7 +839,7 @@ export function capabilityCatalogText(catalog: CapabilityCatalog): string {
   return committedFileText(catalog)
 }
 
-// ---- The comparator (D-03) -----------------------------------------------------------------------
+// ---- The comparator -----------------------------------------------------------------------
 
 /** One disagreement between the live catalog and the committed one, named by row and field. */
 export interface CatalogFinding {
@@ -1041,13 +859,7 @@ function rowIndex(rows: readonly CatalogRow[]): ReadonlyMap<string, CatalogRow> 
   return new Map(rows.map((row) => [`${row.kind}:${catalogRowKey(row)}`, row]))
 }
 
-/**
- * Every field on every row that disagrees, as data.
- *
- * PURE, TOTAL AND DRIVABLE. The named-RED requirement (D-03) is that a mismatch identifies WHICH
- * ROW and WHICH FIELD rather than announcing that two documents differ, and a comparator that only
- * threw could not be shown to do that without breaking the committed file.
- */
+// Pure and total, so a mismatch names its row and field without breaking the committed file.
 export function catalogFindings(
   live: readonly CatalogRow[],
   committed: readonly CatalogRow[],
@@ -1107,14 +919,14 @@ export function catalogFindings(
  * The env flag under which the suite PRINTS a freshly minted catalog, and never writes one.
  *
  * A PRINT AND NOT A WRITE, deliberately — the golden's mechanism, for the golden's reason.
- * `scripts/398-regen-catalog.sh` runs the suite with this set, lifts the text out from between the
- * sentinels and writes the file ITSELF, only after its refuse-while-red gate has passed and only
- * under `--write`. So there is no value of any environment variable, and no runner flag, that
- * causes a test run to bless this artifact.
+ * `scripts/regen-capability-catalog.sh` runs the suite with this set, lifts the text out from
+ * between the sentinels and writes the file ITSELF, only after its refuse-while-red gate has passed
+ * and only under `--write`. So there is no value of any environment variable, and no runner flag,
+ * that causes a test run to bless this artifact.
  */
-export const CATALOG_EMIT_FLAG = 'AGENT_QA_398_CATALOG_EMIT'
-export const CATALOG_EMIT_BEGIN = '<<<398-01-CATALOG-BEGIN>>>'
-export const CATALOG_EMIT_END = '<<<398-01-CATALOG-END>>>'
+export const CATALOG_EMIT_FLAG = 'AGENT_QA_CATALOG_EMIT'
+export const CATALOG_EMIT_BEGIN = '<<<CATALOG-BEGIN>>>'
+export const CATALOG_EMIT_END = '<<<CATALOG-END>>>'
 
 /** True when the regen script asked for the text. Nothing else in the product reads this flag. */
 export function catalogEmitRequested(env: NodeJS.ProcessEnv = process.env): boolean {

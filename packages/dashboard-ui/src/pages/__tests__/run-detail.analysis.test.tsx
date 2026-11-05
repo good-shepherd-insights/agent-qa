@@ -1,31 +1,5 @@
 // @vitest-environment jsdom
-//
-// THE FAILURE VIEW ON THE PAGE (406-01 · DETL-04, D-03 / D-05 / D-10).
-//
-// FOUR CLAIMS, ALL ABOUT WHAT A PERSON SEES AND WHEN:
-//
-//   1. the page reads `/analysis` once at mount and again on EVERY analysis-chip TRANSITION, and
-//      never on a frame whose word did not change (D-03);
-//   2. a failed member's group carries the op's sentence VERBATIM, with the provenance chip built
-//      from that verdict's own producer and confidence (D-05/D-10);
-//   3. a member with no verdict — a passed one — carries no block at all;
-//   4. a sentence containing markup renders as a TEXT NODE, never an element (T-406-02).
-//
-// AND FIVE MORE, ADDED IN 406-06, all about what the chip word and the op's evidence DO to the page:
-//
-//   5. the marker follows the chip through its whole lifecycle — provisional while the chain is
-//      running, gone when it is done, and the sentence is swapped IN PLACE (D-09);
-//   6. a permanently failed chain marks every failed member's block while the verdict itself is not
-//      re-graded — the producer stays the deterministic classifier (D-11);
-//   7. a cited step selects that step in the tree, through the page's existing `Selection` and the
-//      existing scroll effect — no new id spelling and no second scroller (D-02);
-//   8. a cluster sibling link narrows the member filter to that sibling's own group (D-08);
-//   9. EVERY member wears an outcome badge and only the failed one carries a block (D-07/D-05).
-//
-// THE MOCK BLOCK IS `run-detail.members.test.tsx`'S, with one addition: `watchPostProcessing`
-// CAPTURES its `onRead` so a cell can push frames. The real watcher constructs an `EventSource`
-// and a 3 s interval against a `fetch` these cells do not stub; its own behaviour is measured in
-// `run-detail.post-processing.test.tsx`.
+// The real watcher would open a socket and poll, so `watchPostProcessing` captures `onRead`.
 
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -43,8 +17,6 @@ import {
   ANALYSIS_FAILED_FALLBACK_TEXT,
   ANALYSIS_PROVISIONAL_TEXT,
   DETERMINISTIC_FALLBACK_LABEL,
-  MISDIRECTION_DECLARED_ONLY_TEXT,
-  MISDIRECTION_HELD_TEXT,
   missingEvidenceLine,
   provenanceLabel,
   siblingLine,
@@ -53,7 +25,7 @@ import { EVIDENCE_INCOMPLETE_LABEL } from "@/lib/run-detail-view"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
-const RUN_ID = "run-406"
+const RUN_ID = "run-analysis"
 /** The op's sentence, spelled once. Every assertion below compares against THIS string. */
 const FLOOR_SENTENCE =
   'observed (step 0): "Error: element \\"Submit\\" not found" — root cause undetermined'
@@ -66,9 +38,7 @@ const {
   fetchExecutionLogsMock,
   pushPostProcessing,
 } = vi.hoisted(() => {
-  // The captured `onRead`, module-level so a cell can push a frame after mount (RESEARCH
-  // Pitfall 8). A watcher double that dropped its callback would make every transition cell
-  // vacuous — it would assert on a channel nothing can ever send down.
+  // The captured `onRead` lets a cell push a frame after mount; a dropped one makes cells vacuous.
   let onRead: ((read: unknown) => void) | undefined
   return {
     fetchRunMock: vi.fn(),
@@ -195,7 +165,7 @@ const CHIP_RUNNING = { kind: "read", status: { runId: RUN_ID, chips: { analysis:
 const CHIP_DONE = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'complete', curation: 'pending' } } }
 /** The SAME analysis word, a different curation word — a frame that must trigger nothing. */
 const CHIP_DONE_AGAIN = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'complete', curation: 'complete' } } }
-/** The chain fell over for good: the floor sentences are what exists (spec §1.2, D-11). */
+// The chain fell over for good: the floor sentences are what exists.
 const CHIP_FAILED = { kind: "read", status: { runId: RUN_ID, chips: { analysis: 'failed', curation: 'pending' } } }
 
 /** Member 0 failed with TWO steps — a cited step that is not the page's default selection. */
@@ -227,14 +197,12 @@ function runRow(id: string) {
     endedAt: "2026-08-28T00:00:10.000Z",
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: "s_suite",
     platform: "web",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
     attemptNumber: 1,
     retryCount: 0,
     maxRetries: 0,
@@ -302,7 +270,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe("the page re-reads analysis on chip TRANSITIONS and on nothing else (D-03)", () => {
+describe("the page re-reads analysis on chip TRANSITIONS and on nothing else", () => {
   it("reads once at mount, again per changed chip word, and NOT on a repeated frame", async () => {
     await renderPage()
     expect(fetchRunAnalysisMock, "one read at mount").toHaveBeenCalledTimes(1)
@@ -326,7 +294,7 @@ describe("the page re-reads analysis on chip TRANSITIONS and on nothing else (D-
   })
 })
 
-describe("a failed member's group carries the op's sentence and its provenance (D-05/D-10)", () => {
+describe("a failed member's group carries the op's sentence and its provenance", () => {
   it("paints the sentence VERBATIM under the failed member, with the floor's provenance chip", async () => {
     const view = await renderPage()
 
@@ -366,7 +334,7 @@ describe("a failed member's group carries the op's sentence and its provenance (
       .toBe(provenanceLabel("analyze-run", 0.86))
   })
 
-  it("renders a sentence carrying markup as TEXT, never as an element (T-406-02)", async () => {
+  it("renders a sentence carrying markup as TEXT, never as an element", async () => {
     const hostile = '<img src=x onerror=alert(1)> observed (step 0): "boom"'
     fetchRunAnalysisMock.mockResolvedValue(analysisOf({
       sentences: [{ perTest: 0, testId: "t_checkout", sentence: hostile }],
@@ -391,7 +359,7 @@ describe("a failed member's group carries the op's sentence and its provenance (
   })
 })
 
-describe("the sentence's lifecycle is painted from the chip word (D-09/D-11)", () => {
+describe("the sentence's lifecycle is painted from the chip word", () => {
   it("marks the floor provisional while the chain runs, then swaps the sentence IN PLACE", async () => {
     const view = await renderPage()
 
@@ -402,8 +370,7 @@ describe("the sentence's lifecycle is painted from the chip word (D-09/D-11)", (
     expect(view.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer"))
       .toBe("deterministic-classifier")
 
-    // The chain finishes and the op now answers an LLM verdict. D-03's re-read is the swap: the
-    // same block, a new sentence, and no marker — nothing here waits for a reload.
+    // The chain finishes and the op answers an LLM verdict: same block, new sentence, no marker.
     const upgraded = 'the Submit button never became enabled — the cart total never rendered'
     fetchRunAnalysisMock.mockResolvedValue(analysisOf({
       verdicts: [
@@ -419,7 +386,7 @@ describe("the sentence's lifecycle is painted from the chip word (D-09/D-11)", (
       .toBe("analyze-run")
   })
 
-  it("marks a permanently failed chain in the TREE, and does not re-grade the verdict (D-11)", async () => {
+  it("marks a permanently failed chain in the TREE, and does not re-grade the verdict", async () => {
     // THE CHIP IS IN THE HEADER AND THE MARKER IS IN THE TREE, which is the whole decision: a
     // reader scrolled into a 40-member suite must not have to look up to learn that the sentence
     // beside them is the deterministic floor and is never going to improve.
@@ -438,7 +405,7 @@ describe("the sentence's lifecycle is painted from the chip word (D-09/D-11)", (
   })
 })
 
-describe("the block's links do something (D-02, D-08)", () => {
+describe("the block's links do something", () => {
   it("selects the cited step in the tree, by the tree's own key", async () => {
     fetchRunDetailMock.mockResolvedValue(TWO_STEP_MEMBER)
     fetchRunAnalysisMock.mockResolvedValue(analysisOf({
@@ -512,7 +479,7 @@ describe("the block's links do something (D-02, D-08)", () => {
   })
 })
 
-describe("every member wears its outcome, and only a graded one carries a block (D-07/D-05)", () => {
+describe("every member wears its outcome, and only a graded one carries a block", () => {
   it("badges the passed member and the failed one, and blocks only the failed one", async () => {
     const view = await renderPage()
 
@@ -520,7 +487,7 @@ describe("every member wears its outcome, and only a graded one carries a block 
       .toBe("failed")
     expect(
       view.querySelector('[data-member="1"] [data-member-outcome]')?.getAttribute("data-member-outcome"),
-      "a passed member says PASSED — the D-07 reversal, on the page",
+      "a passed member says PASSED, on the page",
     ).toBe("passed")
 
     expect(view.querySelectorAll('[data-member="0"] [data-verdict-block]').length).toBe(1)
@@ -531,7 +498,7 @@ describe("every member wears its outcome, and only a graded one carries a block 
   })
 })
 
-describe("evidence the durable read found MISSING is said so, and changes nothing else (D-19)", () => {
+describe("evidence the durable read found MISSING is said so, and changes nothing else", () => {
   /** 64-hex content addresses; the second one's bytes are gone at read time (`present: false`). */
   const SHA_PRESENT = "a".repeat(64)
   const SHA_GONE = "b".repeat(64)
@@ -587,8 +554,7 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
   })
 
   it("says nothing about evidence when presence is UNKNOWN — an omission is not a deletion", async () => {
-    // 406-03's rule, on the page: a host that cannot cheaply stat its own blobs omits `present`,
-    // and `!present` would render that omission as a claimed deletion.
+    // A host that cannot stat its blobs omits `present`, which must not render as a deletion.
     fetchRunAnalysisMock.mockResolvedValue(analysisOf({
       verdicts: [
         {
@@ -609,23 +575,9 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
   })
 })
 
-// ----------------------------------------------------------------------------------------------
-// ONE RUN'S VERDICTS NEVER PAINT UNDER ANOTHER RUN'S MEMBERS (CR-02, measured 2026-08-29, phase
-// 406 review).
-//
-// The route is `/runs/:id`, so React Router changes the param WITHOUT remounting this page. The
-// analysis read held its answer across that change and `projectAnalysisView` keys on
-// `perTest` / `testIndex` — an integer both runs have — so every member of run B whose index
-// matched a failed member of run A wore run A's sentence, provenance, confidence, cited steps and
-// cited artifact shas.
-//
-// It is not a one-round-trip window either: `request()` throws on any non-2xx and the read answers
-// 404 for a run with no handoff, so navigating from a run WITH an analysis to one WITHOUT left the
-// first run's sentences on the second run's page indefinitely — including, on the local human
-// door, its RESTORED secret values, attributed to the wrong test.
-// ----------------------------------------------------------------------------------------------
+// The route param changes without a remount, so a stale analysis must not paint the next run.
 
-const RUN_B = "run-406-b"
+const RUN_B = "run-b"
 
 /** Run B's own projection: the SAME member indexes, which is exactly why a stale join is silent. */
 const TWO_MEMBERS_B: RunDetailProjection = { ...TWO_MEMBERS, runId: RUN_B }
@@ -675,7 +627,7 @@ async function goToRunB(view: HTMLElement) {
   await flushRender()
 }
 
-describe("the analysis read is forgotten when the run id changes (CR-02)", () => {
+describe("the analysis read is forgotten when the run id changes", () => {
   beforeEach(() => {
     fetchRunDetailMock.mockImplementation(async (id: string) =>
       id === RUN_B ? TWO_MEMBERS_B : TWO_MEMBERS,
@@ -743,41 +695,27 @@ describe("the analysis read is forgotten when the run id changes (CR-02)", () =>
   })
 })
 
-// ----------------------------------------------------------------------------------------------
-// 422 D-17/D-20: THE STORED CIRCULARITY FIELDS REACH THE VISIBLE MEMBER, AND ONLY THAT MEMBER.
-//
-// The page is where a per-verdict fact becomes a per-ROW fact, and the join that does it is the
-// same `perTest` key CR-02 above proved can silently pair the wrong things. A member that inherits
-// its sibling's attribution tells a person which memory record broke THEIR test, and names the
-// wrong one; a member that inherits a `declared-only` claim tells them their verdict carries D-19's
-// BYOM exemption when it never received one. Both are read through the REAL DTO-to-view path here:
-// the page's own `projectAnalysisView`, the real `VerdictBlock`, and `analysis.get`'s own shape.
-//
-// THE THIRD CELL IS THE ADDITIVE ONE, and it is the reason the other two are safe to add at all:
-// a run whose arbiter never ran — every run written before 422, and every gated run whose verdict
-// carried no ledger — paints the page it painted before, with no circularity element anywhere on it
-// and no invented held result.
-// ----------------------------------------------------------------------------------------------
+// The records a verdict declared on its failing path reach that member's row and no other.
 
-const REC_HELD = "rec_held_0001"
-const REC_FLIPPED = "rec_flipped_01"
+const REC_CANDIDATE = "rec_cand_0001"
+const REC_CANARY = "rec_canary_01"
 
 /** Both members failed, so both carry a block — the shape a leakage claim needs. */
 function twoFailedVerdicts(
-  zero: AnalysisGetOutput["verdicts"][number]["misdirection"],
-  one: AnalysisGetOutput["verdicts"][number]["misdirection"],
+  zero: AnalysisGetOutput["verdicts"][number]["memoryOnPath"],
+  one: AnalysisGetOutput["verdicts"][number]["memoryOnPath"],
 ): AnalysisGetOutput {
   return analysisOf({
     verdicts: [
       {
         perTest: 0, testId: "t_checkout", class: "unknown",
         producer: "deterministic-classifier", confidence: 0,
-        ...(zero === undefined ? {} : { misdirection: zero }),
+        ...(zero === undefined ? {} : { memoryOnPath: zero }),
       },
       {
         perTest: 1, testId: "t_login", class: "unknown",
         producer: "deterministic-classifier", confidence: 0,
-        ...(one === undefined ? {} : { misdirection: one }),
+        ...(one === undefined ? {} : { memoryOnPath: one }),
       },
     ],
     sentences: [
@@ -787,90 +725,41 @@ function twoFailedVerdicts(
   })
 }
 
-describe("stored circularity fields reach the visible member and no other (422 D-17/D-20)", () => {
+describe("the records on the failing path reach the visible member and no other", () => {
   beforeEach(() => { fetchRunDetailMock.mockResolvedValue(CLUSTERED_MEMBERS) })
-
-  const stateOf = (view: HTMLElement, member: number) =>
-    view.querySelector(`[data-member="${String(member)}"] [data-misdirection]`)
-      ?.getAttribute("data-misdirection")
 
   const recordsOf = (view: HTMLElement, member: number, attribute: string) =>
     [...view.querySelectorAll(`[data-member="${String(member)}"] [${attribute}]`)]
       .map((element) => element.getAttribute(attribute))
 
-  it("paints the affected member's attribution and lets no sibling inherit it", async () => {
+  it("lists each member's declared records under that member only", async () => {
     fetchRunAnalysisMock.mockResolvedValue(twoFailedVerdicts(
-      {
-        state: "measured", crossCheck: "flipped",
-        results: [
-          { recordId: REC_HELD, crossCheck: "held" },
-          { recordId: REC_FLIPPED, crossCheck: "flipped" },
-        ],
-        memoryOnPath: [
-          { recordId: REC_HELD, trust: "candidate" },
-          { recordId: REC_FLIPPED, trust: "low-trust-active" },
-        ],
-      },
-      { state: "declared-only", crossCheck: "not-run", results: [], backing: "declared-only", memoryOnPath: [] },
+      [
+        { recordId: REC_CANDIDATE, trust: "candidate" },
+        { recordId: REC_CANARY, trust: "candidate" },
+      ],
+      [],
     ))
     const view = await renderPage()
 
     expect(view.querySelectorAll("[data-verdict-block]").length, "both members failed").toBe(2)
-    expect(stateOf(view, 0)).toBe("flipped")
-    expect(stateOf(view, 1), "and it is NOT the sibling's attribution").toBe("declared-only")
-
-    // The causal record is named under member 0 and nowhere else.
-    expect(recordsOf(view, 0, "data-misdirection-causal-record")).toEqual([REC_FLIPPED])
-    expect(recordsOf(view, 1, "data-misdirection-causal-record")).toEqual([])
-    // The exposure row is member 0's too; member 1 declared an EMPTY set and shows no chips.
-    expect(recordsOf(view, 0, "data-misdirection-on-path-record")).toEqual([REC_HELD, REC_FLIPPED])
-    expect(recordsOf(view, 1, "data-misdirection-on-path-record")).toEqual([])
-    // And member 1's declared-only claim does not travel back up to member 0.
-    expect(
-      view.querySelector('[data-member="0"]')?.textContent,
-      "no member borrows a BYOM exemption it never received",
-    ).not.toContain(MISDIRECTION_DECLARED_ONLY_TEXT)
+    expect(recordsOf(view, 0, "data-misdirection-on-path-record")).toEqual([REC_CANDIDATE, REC_CANARY])
+    expect(recordsOf(view, 1, "data-misdirection-on-path-record"), "member 1 declared none").toEqual([])
+    expect(view.querySelector('[data-member="1"] [data-misdirection-on-path]')).not.toBeNull()
   })
 
-  it("leaves a member whose verdict carried NO ledger with no circularity element at all", async () => {
+  it("leaves a member whose verdict declared nothing with no on-path element", async () => {
     fetchRunAnalysisMock.mockResolvedValue(twoFailedVerdicts(
-      {
-        state: "measured", crossCheck: "held",
-        results: [{ recordId: REC_HELD, crossCheck: "held" }],
-        memoryOnPath: [{ recordId: REC_HELD, trust: "candidate" }],
-      },
+      [{ recordId: REC_CANDIDATE, trust: "candidate" }],
       undefined,
     ))
     const view = await renderPage()
 
-    expect(stateOf(view, 0)).toBe("held")
-    expect(stateOf(view, 1), "absent on the wire is absent on the page").toBeUndefined()
-    // The sibling's block is otherwise whole — this is an ABSENCE, not a suppression.
+    expect(recordsOf(view, 0, "data-misdirection-on-path-record")).toEqual([REC_CANDIDATE])
+    expect(view.querySelector('[data-member="1"] [data-misdirection-on-path]')).toBeNull()
     expect(view.querySelector('[data-member="1"] [data-verdict-sentence]')?.textContent)
       .toBe('observed (step 0): "Login timed out"')
-    expect(
-      view.querySelector('[data-member="1"] [data-verdict-provenance]')?.textContent,
-      "and its provenance still reads",
-    ).toBe(DETERMINISTIC_FALLBACK_LABEL)
-    expect(
-      view.querySelector('[data-member="1"]')?.textContent,
-      "no held result is invented for a member that measured nothing",
-    ).not.toContain(MISDIRECTION_HELD_TEXT)
-  })
-
-  it("renders a HISTORICAL analysis exactly as before: readable provenance, no circularity anywhere", async () => {
-    // `analysisOf()` is the pre-422 wire shape, byte for byte — the op emits no `misdirection`
-    // member for a verdict that made no claim.
-    const view = await renderPage()
-
-    expect(view.querySelectorAll("[data-verdict-block]").length).toBe(1)
-    expect(view.querySelectorAll("[data-misdirection]").length, "not one element").toBe(0)
-    expect(view.querySelectorAll("[data-misdirection-causal-record]").length).toBe(0)
-    expect(view.querySelectorAll("[data-misdirection-on-path-record]").length).toBe(0)
-    expect(view.querySelector('[data-member="0"] [data-verdict-sentence]')?.textContent)
-      .toBe(FLOOR_SENTENCE)
-    expect(view.querySelector('[data-member="0"] [data-verdict-provenance]')?.textContent)
+    expect(view.querySelector('[data-member="1"] [data-verdict-provenance]')?.textContent)
       .toBe(DETERMINISTIC_FALLBACK_LABEL)
-    expect(view.textContent, "and no invented held result").not.toContain(MISDIRECTION_HELD_TEXT)
   })
 })

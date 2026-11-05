@@ -1,13 +1,4 @@
-/**
- * IDX-01's derived-index writer over canonical Phase 374 bundles.
- *
- * D-02 keeps an absent embedder as a successful all-pending posture; D-05 indexes the bundle's
- * committed embeddingInput; D-10 stores every vector canonically in records before optionally
- * accelerating it through vec0. Per 374 D-03, loadBundle + deriveBundleTrust are the only bundle
- * projection faces. Relation edges are emitted from the complete integrity-valid walk in a second
- * pass so bundle ordering cannot change dangling-target behavior and late targets heal without
- * re-projecting an unchanged source.
- */
+// Edges come from a second pass over the whole valid walk, so bundle order cannot change dangling.
 import { existsSync, readFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
@@ -16,7 +7,6 @@ import {
   anchorGraphNode,
   canonicalJson,
   guardDistilledObservation,
-  guardTrustPriorTable,
   recordGraphNode,
 } from '@vostride/agent-qa-schema'
 import type {
@@ -26,7 +16,6 @@ import type {
   GraphNodeNaturalKey,
   GraphNodeType,
   Platform,
-  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
@@ -68,7 +57,6 @@ import {
 } from './lease/writer-lease.js'
 import { clearRebuildRequest } from './rebuild-marker.js'
 import { effectivePriorDigest } from './trust-prior-context.js'
-import { snapshotTrustPriors } from './promotion-gate-input.js'
 
 export interface RebuildReport {
   projected: number
@@ -100,7 +88,6 @@ export interface RebuildIndexHooks {
 
 export interface RebuildIndexOptions {
   knowledgeRoot: string
-  priors?: TrustPriorTable
   embedder?: EmbedderPort
   vecLoadablePath?: string
   writerAuthority?: WriterLeaseAuthority
@@ -109,7 +96,6 @@ export interface RebuildIndexOptions {
 
 export interface ProjectBundleIndexRowOptions {
   knowledgeRoot: string
-  priors?: TrustPriorTable
   bundleId: string
   /** Required whenever the same content-addressed id exists in more than one product. */
   product?: string
@@ -117,18 +103,9 @@ export interface ProjectBundleIndexRowOptions {
 
 export const EMBED_STATUS_PENDING = 'pending'
 export const EMBED_STATUS_PRESENT = 'present'
-/**
- * SAFE-02 terminal state: lexical projection exists, but dense bytes must never be backfilled.
- * 2026-10-15 (441-24, D-27): nothing writes it now; rows indexed before 441 may still hold it.
- */
+// No writer emits it; a legacy row holding it keeps its lexical projection and is never backfilled.
 export const EMBED_STATUS_SUPPRESSED = 'suppressed'
-/**
- * Structurally-dead dense suppression (Deprecate/Supersede scrub), distinct from the SAFE-02
- * terminal above. The contract pair: structural death is reversible — projecting the record live
- * again (e.g. a rollback restore) resets this value to pending so ordinary backfill re-embeds it —
- * while a row already holding EMBED_STATUS_SUPPRESSED stays terminal, including through a
- * death-and-revival cycle.
- */
+// Reversible: projecting the record live again resets it to pending, unlike the terminal value.
 export const EMBED_STATUS_SCRUBBED = 'scrubbed'
 
 export interface PendingEmbeddingRow {
@@ -344,10 +321,9 @@ function upsertRecord(
   db: DatabaseSync,
   bundle: LoadedBundle,
   product: string,
-  priors?: TrustPriorTable,
 ): { recordRowid: number; status: BundleStatus } {
-  const trust = deriveBundleTrust(bundle, priors)
-  const digest = effectivePriorDigest(priors)
+  const trust = deriveBundleTrust(bundle)
+  const digest = effectivePriorDigest()
   // A delta may change one row to another epoch, but cannot certify the full index.
   db.prepare("DELETE FROM meta WHERE k = 'trust_prior_digest' AND v != ?").run(digest)
   db.prepare(`
@@ -585,12 +561,7 @@ function deleteOrphanGraphNodes(db: DatabaseSync): void {
   `)
 }
 
-/**
- * 379 D-10/D-11 structural forgetting lives inside the canonical projection unit. Every full or
- * single-bundle projection therefore re-derives the scrub: lexical/vector/graph recall rows die,
- * while records and anchors deliberately survive for includeSuperseded/as-of audit reads. The
- * status pre-filter remains the second wall during the commit-to-projection gap.
- */
+// Recall rows of dead bundles die, while records and anchors stay for superseded and as-of reads.
 function scrubDeadRecallRows(
   db: DatabaseSync,
   bundle: LoadedBundle,
@@ -598,16 +569,7 @@ function scrubDeadRecallRows(
 ): void {
   db.prepare('DELETE FROM fts_records WHERE rowid = ?').run(recordRowid)
   deleteRecordFromAllSchemaVecTables(db, recordRowid)
-  /**
-   * RATIFICATION (revised, round 4): the round-1 ratification reused SAFE-02's terminal suppressed
-   * state here. Round-4 verification proved that conflation makes a rollback-restored supersession
-   * victim permanently lose dense recall — the restore re-projection cannot distinguish structural
-   * death from governed redaction, and D-15 requires the scrub effect to be invertible. Structural
-   * death therefore takes its own reversible scrubbed value, while a row already redacted under
-   * SAFE-02 before dying keeps the terminal value through death (terminal wins) so revival can
-   * never resurrect redacted content. While dead, both values stay outside the pending backfill
-   * selector, rendering refresh, and present-only reconciliation exactly as before the split.
-   */
+  // Structural death has its own reversible value; a row already suppressed keeps the terminal one.
   db.prepare(`
     UPDATE records
     SET embedding = NULL,
@@ -633,26 +595,19 @@ function projectBundle(
   authority?: MutationAuthorityContext,
   beforeCommit?: () => void,
   hooks?: RebuildIndexHooks,
-  priors?: TrustPriorTable,
 ): void {
   transaction(db, () => {
     const { recordRowid, status } = upsertRecord(
       db,
       projected.bundle,
       projected.product,
-      priors,
     )
     replaceFtsAndAnchors(db, projected.bundle, projected.product, recordRowid)
     if (isDeadStatus(status)) {
       scrubDeadRecallRows(db, projected.bundle, recordRowid)
       return
     }
-    /**
-     * D-15 revival seam: a rollback restore re-projects through applyIndexDeltaForBundle, so the
-     * reset lives on this default projection path. The WHERE clause makes it a no-op for
-     * pending/present rows and deliberately unable to match the SAFE-02 terminal value — only a
-     * structurally scrubbed row projecting live again re-enters the ordinary backfill pipeline.
-     */
+    // Restore resets only scrubbed rows to pending; the WHERE clause cannot match the terminal one.
     db.prepare(`
       UPDATE records
       SET embed_status = ?
@@ -683,7 +638,6 @@ function projectBundleIndexRowWithAuthority(
   opts: ProjectBundleIndexRowOptions,
   authority?: MutationAuthorityContext,
 ): void {
-  const priors = opts.priors === undefined ? undefined : guardTrustPriorTable(opts.priors)
   const target = resolveProductQualifiedBundleDir({
     knowledgeRoot: opts.knowledgeRoot,
     recordId: opts.bundleId,
@@ -709,7 +663,7 @@ function projectBundleIndexRowWithAuthority(
   const writer = openIndexWriter(opts.knowledgeRoot)
   const activeProfile = resolveActiveProfile(writer.db)
   try {
-    projectBundle(writer.db, writer.vec, projected, activeProfile, authority, undefined, undefined, priors)
+    projectBundle(writer.db, writer.vec, projected, activeProfile, authority)
     emitRelationEdges(writer.db, [projected], authority)
     const scanIssues: string[] = []
     emitObservationEdges(
@@ -761,11 +715,7 @@ function emitRelationEdges(
         ) {
           continue
         }
-        /**
-         * D-22: `renamed-from` is the one intentional dead-target relation. The live replacement
-         * owns the edge, so audit expansion can still traverse new → old after the victim's own
-         * recall rows and edges are structurally scrubbed. Every other dead target stays omitted.
-         */
+        // `renamed-from` keeps its dead target so audit expansion reaches the old record.
         const targetKind = targetRow.kind as LoadedBundle['frontmatter']['kind']
         const targetNode = recordGraphNode(targetKind, relation.targetId)
         insertGraphNode(db, targetNode, product)
@@ -1113,11 +1063,7 @@ function removeMissingBundles(
   return missing.length
 }
 
-/**
- * WR-01 record-scoped healing: delete the total projection set for exactly the supplied bundle
- * ids inside one transaction and return the number of records removed. An absent index db,
- * empty ids, and ids without records rows are no-ops; embed_cache is untouched (purge-only A4).
- */
+// No-op for an absent index or ids without records; `embed_cache` is untouched.
 export function removeBundleProjectionRows(
   knowledgeRoot: string,
   bundleIds: readonly string[],
@@ -1278,10 +1224,8 @@ function reconcileVecRows(
   }, authority)
 }
 
-/** Hash-selected projection plus the independent D-02 backfill and D-10 reconciliation passes. */
 export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildReport> {
-  const priors = snapshotTrustPriors(opts.priors)
-  const digest = effectivePriorDigest(priors)
+  const digest = effectivePriorDigest()
   const writerAuthority = opts.writerAuthority
   if (
     writerAuthority !== undefined
@@ -1355,11 +1299,10 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
       processedBundles += 1
       if (current?.mutable_state_hash === outcome.bundle.manifest.mutableStateHash) {
         if (current.trust_prior_digest !== digest) {
-          // Trust-only reprojection must not undo SAFE-02 lexical redaction or disturb
-          // rendering, graph, embedding provenance, counters or lifecycle fields.
+          // Trust-only reprojection keeps redaction, rendering, graph, embeddings and counters.
           transaction(writer.db, () => {
             writer.db.prepare('UPDATE records SET trust = ?, trust_prior_digest = ? WHERE bundle_id = ?')
-              .run(deriveBundleTrust(outcome.bundle, priors).trust, digest, outcome.bundle.manifest.id)
+              .run(deriveBundleTrust(outcome.bundle).trust, digest, outcome.bundle.manifest.id)
           }, authority, opts.hooks?.beforeTransactionCommit, { family: 'project-bundle', hooks: opts.hooks })
           report.projected += 1
         }
@@ -1382,7 +1325,6 @@ export async function rebuildIndex(opts: RebuildIndexOptions): Promise<RebuildRe
         authority,
         opts.hooks?.beforeTransactionCommit,
         opts.hooks,
-        priors,
       )
       projected.push(item)
       report.projected += 1

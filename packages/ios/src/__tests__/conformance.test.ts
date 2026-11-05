@@ -8,11 +8,7 @@ import {
 import { deriveMobileScroll, parseMobileSource } from '@vostride/agent-qa-core'
 import { screenIdentityHash } from '@vostride/agent-qa-schema'
 
-// iOS side of the shared adapter conformance spec (D-09). The XCUITest page source is
-// lifted into platform-neutral interim nodes by parseMobileSource, then the ONE shared
-// builder assembles the schema v2 ScreenState — so every case here runs against exactly
-// the pipeline the live iOS observe() uses. The Android mirror of the cross-platform
-// identity check lives in the android package (352-06); this file is self-sufficient.
+// Runs the same parser and shared builder the live iOS `observe()` uses.
 
 const VIEWPORT = { width: 390, height: 844 }
 const TIMESTAMP = 1_700_000_000_000
@@ -76,7 +72,7 @@ describe('iOS adapter conformance — shared spec against the real parse→build
   }
 })
 
-describe('iOS D-08 attribute pins — truthful mapping, no fabrication', () => {
+describe('iOS attribute mapping — truthful, no fabrication', () => {
   const make = makeIosInput(IOS_PINS_XML)
   const build = () => buildScreenState({ platform: 'ios', nodes: make().nodes, ...make().buildInput })
 
@@ -97,7 +93,7 @@ describe('iOS D-08 attribute pins — truthful mapping, no fabrication', () => {
     expect(disabled!.state.enabled).toBe(false)
   })
 
-  it('lifts a switch value "1" to checked true and renders [checked] (437 D-03)', () => {
+  it('lifts a switch value "1" to checked true and renders [checked]', () => {
     const { state } = build()
     const wifi = state.elements.find(e => e.name === 'Wifi')
     expect(wifi!.state.checked).toBe(true)
@@ -124,7 +120,7 @@ describe('iOS D-08 attribute pins — truthful mapping, no fabrication', () => {
     expect(cell!.hierarchy?.childRefs).toContain(email!.ref)
   })
 
-  it('flows the best-effort deriveMobileScroll approximation into metadata.scroll (D-10)', () => {
+  it('flows the best-effort deriveMobileScroll approximation into metadata.scroll', () => {
     const input = make()
     const { state } = buildScreenState({ platform: 'ios', nodes: input.nodes, ...input.buildInput })
     const expected = deriveMobileScroll(input.nodes, VIEWPORT)
@@ -135,7 +131,7 @@ describe('iOS D-08 attribute pins — truthful mapping, no fabrication', () => {
   })
 })
 
-describe('D-09 cross-platform identity — one builder, not the platform walker', () => {
+describe('cross-platform identity — one builder, not the platform walker', () => {
   const IDENTITY_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <AppiumAUT>
   <XCUIElementTypeApplication name="App" label="App" x="0" y="0" width="390" height="844">

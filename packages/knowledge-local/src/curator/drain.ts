@@ -10,8 +10,6 @@ import {
   type IndexEntry,
   type PromotionGateHoldReason,
   type PromotionPath,
-  type ResolvePromotionPosture,
-  type TrustPriorTable,
   type CurationSnapshot,
   type CurationSnapshotChange,
 } from '@vostride/agent-qa-schema'
@@ -88,7 +86,6 @@ import {
 import type { DispositionDrainState } from './disposition.js'
 import { constructFallbackDeltas } from './fallback.js'
 import { createLocalKnowledgeStore } from './knowledge-store.js'
-import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import type { CanaryAuthorityHooks } from './knowledge-store.js'
 import {
   runMaintenanceTail,
@@ -99,13 +96,13 @@ import {
 
 export type { GcPassReport, WriterPassReport } from './maintenance.js'
 
-/** Ratified M2 one-shot budget. A run's tail aborts an author request in flight at its end. */
+/** One-shot budget; a run's tail aborts an author request in flight at its end. */
 export const DRAIN_BUDGET_MS = 60_000
 
 /** Provisional §7.4 cap over distinct search-before-create query targets. */
 export const SEARCH_BEFORE_CREATE_MAX_QUERIES = 5
 
-/** Provisional 376 D-14 per-job breaker before a vector-deferred commit is forced. */
+// Per-job embed crashes before a vector-deferred commit is forced.
 export const EMBED_CRASH_VECTORLESS_THRESHOLD = 2
 
 const SEARCH_BEFORE_CREATE_RESULTS_PER_QUERY = 8
@@ -133,18 +130,11 @@ export interface DrainFailure {
   candidateId?: string
 }
 
-/**
- * A commit that decided there was nothing to apply. Legitimate reasons exist (evidence-token
- * dedup), so a noop is never a failure — but dropping it on the floor made live procedure
- * extraction die silently for 13 UAT runs (G-381-1). Visibility, never a gate.
- */
+// Visibility only: a noop is never a failure, but dropping it silently hides dead extraction.
 export interface DrainNoop {
   candidateId: string
   reason: string
-  /**
-   * 381-47: present only on delta-noop entries — distinguishes a defeated extraction
-   * (`fallback-*`) from a deliberate authored Noop; benign dedup carries no cause.
-   */
+  // Only on delta-noop entries; benign dedup carries no cause.
   emptyDeltaCause?: EmptyDeltaCause
 }
 
@@ -166,18 +156,9 @@ interface DrainReportBase {
   snapshotFoldFailed?: true
   jobsProcessed: number
   committed: number
-  // 2026-10-19 (444.1-16, D-25): the canary evidence commits in `committed`; no bucket counts them.
+  // Canary evidence commits count in `committed`, in no bucket of its own.
   evidenceCommitted?: number
-  /**
-   * Committed deltas whose kind was `Deprecate` (388-02).
-   *
-   * OPTIONAL because the drain report is constructed by fault-injection fakes across four
-   * packages and a required field would make every one of them a compile error over a number
-   * they have no opinion about. The real drain always sets it, so a production report saying
-   * `deprecated: 0` is a measurement rather than an absence — which is what the post-run
-   * chain's notification (D-11) needs in order to tell a drain that deprecated nothing apart
-   * from a drain that never ran at all.
-   */
+  // Optional for fakes; the real drain always sets it, so `0` means it ran and deprecated nothing.
   deprecated?: number
   /** Optional for fault-injection fakes; the real drain always sets this measurement. */
   promotions?: readonly DrainPromotionOutcome[]
@@ -238,7 +219,7 @@ export interface DrainOperations extends MaintenanceOperations {
   hasIndexRow(knowledgeRoot: string, bundleId: string): boolean
   applyIndexDeltaForBundle: typeof applyIndexDeltaForBundle
   deriveIndexRowFromBundle: typeof deriveIndexRowFromBundle
-  /** CR-02 takeover barriers for the canary branch; production omits them. */
+  // Takeover barriers for the canary branch; production omits them.
   canaryAuthorityHooks?: CanaryAuthorityHooks
 }
 
@@ -255,16 +236,12 @@ export interface DrainOptions {
   executionContext: ExecutionContext
   /** Host-resolved posture; daemon sessions pass worker-required capability here. */
   embeddingCapability?: AcquireEmbedderOutcome
-  /** Built once per drain on the host; synchronous per candidate inside the gate. */
-  resolvePromotionPosture?: ResolvePromotionPosture
-  /** Already-resolved host snapshot; the host retains this data across queue retries. */
-  priors?: TrustPriorTable
   /** Default inline preserves one-shot behavior; daemon sessions skip for their own cadence. */
   maintenance?: 'inline' | 'skip'
   signal?: AbortSignal
   /** Synchronous durable-boundary observer; daemon hosts append these facts before proceeding. */
   onJobLifecycle?: (event: CurationDrainLifecycleEvent) => void
-  /** D-06 test seam. Production uses the one wall clock only at drain boundaries. */
+  // Test seam; production reads the wall clock only at drain boundaries.
   now?: () => number
   /** Fault-injection seam; production callers must omit it. */
   operations?: Partial<DrainOperations>
@@ -345,10 +322,6 @@ function readClaimedCanaryOutcome(
       candidateId: asRecordId(read.payload.candidateId),
       runOutcome: read.payload.outcome,
       benefit: read.payload.benefit,
-      stateValidity: read.payload.stateValidity,
-      ...(read.payload.corpusDigest === undefined ? {} : { corpusDigest: read.payload.corpusDigest }),
-      ...(read.payload.observedStateDigest === undefined ? {} : { observedStateDigest: read.payload.observedStateDigest }),
-      ...(read.payload.ablation === undefined ? {} : { ablation: read.payload.ablation }),
       runId: read.payload.runId,
       testId: read.payload.testId,
       testIndex: read.payload.testIndex,
@@ -855,19 +828,16 @@ function reconcileDependencies(
   operations: DrainOperations,
   knowledgeRoot: string,
   writerAuthority: CurrentWriterAuthority,
-  priors?: TrustPriorTable,
 ) {
   return {
     knowledgeRoot,
     writerAuthority,
     hasIndexRow: (bundleId: string) => operations.hasIndexRow(knowledgeRoot, bundleId),
     applyIndexDelta: (intent: CommitIntent) => {
-      operations.applyIndexDeltaForBundle({ knowledgeRoot, bundleId: intent.bundleId,
-        ...(priors === undefined ? {} : { priors }) })
+      operations.applyIndexDeltaForBundle({ knowledgeRoot, bundleId: intent.bundleId })
     },
     deriveIndexRowFromBundle: (bundleId: string) => {
-      operations.deriveIndexRowFromBundle({ knowledgeRoot, bundleId,
-        ...(priors === undefined ? {} : { priors }) })
+      operations.deriveIndexRowFromBundle({ knowledgeRoot, bundleId })
     },
   }
 }
@@ -887,7 +857,6 @@ function budgetMs(options: DrainOptions): number {
  * boundaries; an in-flight model request is cut off only by the host's own author signal.
  */
 export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
-  const priors = snapshotTrustPriors(options.priors)
   const operations: DrainOperations = { ...DEFAULT_OPERATIONS, ...options.operations }
   const now = options.now ?? Date.now
   const startedAt = now()
@@ -923,7 +892,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
   try {
     try {
       result.reconcile = operations.reconcileOnDrainStart(
-        reconcileDependencies(operations, options.knowledgeRoot, lease, priors),
+        reconcileDependencies(operations, options.knowledgeRoot, lease),
       )
     } catch (error) {
       recordFailure(result, 'reconcile', error)
@@ -957,8 +926,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       const executionContext = claimedExecutionContext(claimed, options.executionContext)
 
       if (drainOwnsLease) {
-        // A beat that throws (the lease guard stayed busy for its whole wait, or was refused) is
-        // a heartbeat failure like a refusal, never a throw out of the loop (WR-11).
+        // A beat that throws is a heartbeat failure like a refusal, never a throw out of the loop.
         let heartbeat: HeartbeatLeaseOutcome
         try {
           heartbeat = operations.heartbeatLease({
@@ -976,9 +944,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
       }
 
       if (claimed.kind === 'malformed') {
-        // D-22: the strict sibling payload branches before checkpoint lookup, retrieval, or
-        // author construction. A canary job therefore has no control-flow path to an LLM and
-        // consumes none of the search-before-create query budget.
+        // Canary jobs branch before checkpoint lookup, so they never reach a model.
         const canaryOutcome = readClaimedCanaryOutcome(claimed)
         if (canaryOutcome === undefined) {
           recordFailure(
@@ -1006,17 +972,8 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
             sourceRunId: canaryOutcome.runId,
             sourceJobId: claimed.candidateId,
             writerLeaseId: lease.leaseId,
-            ...(priors === undefined ? {} : { resolveTrustPriors: () => priors }),
-            ...(options.resolvePromotionPosture === undefined
-              ? {}
-              : { resolvePromotionPosture: options.resolvePromotionPosture }),
             onPromotionOutcome: outcome => result.promotions.push(outcome),
-            /**
-             * CR-02: the terminal transition joins the canary tail's own held section through
-             * the within-held form. Calling the fenced writeJobState here would re-enter
-             * withCurrentWriterAuthority against a BEGIN IMMEDIATE the tail already holds and
-             * deadlock (the Plan 25/28 within-held idiom).
-             */
+            // Within-held form: the fenced write would re-enter the held transaction and deadlock.
             onCanaryTailWithinCurrentAuthority: () => {
               writeJobStateWithinCurrentAuthority({
                 knowledgeRoot: options.knowledgeRoot,
@@ -1123,9 +1080,7 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
         }
       }
 
-      // D-02: dispose each authored delta independently through the one commit boundary.
-      // Only the final delta completes the queue job so earlier disposals keep the claimed
-      // candidate directory (and its artifacts) available.
+      // Only the last delta completes the job, so the candidate directory stays for the rest.
       const vectorless = embedCrashCount >= EMBED_CRASH_VECTORLESS_THRESHOLD
       const slices = sliceAuthoredCheckpoint(checkpoint)
       let stopDrain = false
@@ -1148,10 +1103,6 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
               epoch: lease.epoch,
               profile: resolveDispositionProfile(executionContext),
               drainState,
-              ...(priors === undefined ? {} : { priors }),
-              ...(options.resolvePromotionPosture === undefined
-                ? {}
-                : { resolvePromotionPosture: options.resolvePromotionPosture }),
               ...(!finalDelta || anySliceFailed ? { deferCompletion: true } : {}),
             },
             claimed,
@@ -1236,7 +1187,6 @@ export async function drainQueue(options: DrainOptions): Promise<DrainReport> {
     } else {
       const maintenance = await runMaintenanceTail({
         knowledgeRoot: options.knowledgeRoot,
-        ...(priors === undefined ? {} : { priors }),
         lease,
         ...(options.embeddingCapability === undefined
           ? {}

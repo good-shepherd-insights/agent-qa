@@ -74,14 +74,14 @@ export async function runOneShotLeg(): Promise<void> {
         emitted: 0,
         refused: 0,
         unresolved: 0,
-        canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+        canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
         procedure: { emitted: 0, refused: 0, unresolved: 0 },
         details: [],
       }),
       foldRunOutcomes: () => ({
           kind: 'applied',
           tests: 0,
-          // 390 D-08: this stub asks for no detection, so the fold declares it skipped.
+          // This stub asks for no detection, so the fold declares it skipped.
           quarantine: { kind: 'not-evaluated', reason: 'not-requested' },
         }),
       buildCuratorAuthor: () => author,

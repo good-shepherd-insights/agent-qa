@@ -1,13 +1,4 @@
-// The capability catalog's freshness and loader legs (Phase 398 plan 01 — XPLN-01, D-03).
-//
-// These legs JOIN the 397 conformance suite rather than standing beside it: they run in the same
-// directory, under the same CI job, on every PR, and the regen script's refuse-while-red gate reads
-// the whole directory's result. One suite, one denominator (397 D-10).
-//
-// WHAT THE FRESHNESS LEG IS. The committed artifact is a photograph of the live seams. The leg
-// re-takes the photograph in memory and compares — and when they disagree it names WHICH ROW and
-// WHICH FIELD, because "the catalog is stale" is not something a person can act on and
-// "runs.digest.description moved" is.
+// The freshness leg re-takes the catalog in memory and names the row and field that moved.
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -64,7 +55,7 @@ describe('the capability catalog', () => {
     if (catalogEmitRequested()) emitCatalogText(capabilityCatalogText(live))
   })
 
-  it('regenerates byte-identically from the live seams into the committed artifact (D-03)', () => {
+  it('regenerates byte-identically from the live seams into the committed artifact', () => {
     const committed = loadCapabilityCatalog(CATALOG_PATH)
 
     const findings = catalogFindings(live.rows, committed.rows)
@@ -109,8 +100,8 @@ describe('the capability catalog', () => {
 })
 
 describe('the capability catalog loader', () => {
-  it('fails loud on a missing artifact, naming the regen script (edge XPLN-01/empty)', () => {
-    const absent = join(tmpdir(), 'agent-qa-398-no-such-catalog', 'capability-catalog.json')
+  it('fails loud on a missing artifact, naming the regen script', () => {
+    const absent = join(tmpdir(), 'agent-qa-no-such-catalog', 'capability-catalog.json')
     let thrown: unknown
     try {
       loadCapabilityCatalog(absent)
@@ -127,7 +118,7 @@ describe('the capability catalog loader', () => {
   })
 
   it('fails loud on an unparseable artifact rather than reading past the damage', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'agent-qa-398-torn-'))
+    const dir = mkdtempSync(join(tmpdir(), 'agent-qa-torn-'))
     try {
       const path = join(dir, 'capability-catalog.json')
       writeFileSync(path, '{ "rows": [', 'utf8')
@@ -137,7 +128,7 @@ describe('the capability catalog loader', () => {
     }
   })
 
-  it('is never written from the suite: the only writer is the regen script (D-01)', () => {
+  it('is never written from the suite: the only writer is the regen script', () => {
     // THE PROHIBITION, AS SOURCE — the golden's own cell next door, applied to this artifact. The
     // sweep ranges every `.ts` file in this directory INCLUDING ONE ADDED TOMORROW, because "the
     // catalog must not be one keystroke from silently blessed" is a claim about what this directory
@@ -166,12 +157,12 @@ describe('the capability catalog loader', () => {
     }
   })
 
-  it('loads a PRODUCED zero-row catalog as a valid zero-row catalog (edge XPLN-01/empty)', () => {
+  it('loads a PRODUCED zero-row catalog as a valid zero-row catalog', () => {
     // PRODUCED, NOT LITERAL: the fixture goes out through the same canonical serializer the
     // committed artifact does and comes back through the same parser, so it is a document the
     // producer could actually emit. A hand-typed `{"rows":[]}` would prove only that the parser
     // accepts something nobody can generate.
-    const dir = mkdtempSync(join(tmpdir(), 'agent-qa-398-empty-'))
+    const dir = mkdtempSync(join(tmpdir(), 'agent-qa-empty-'))
     try {
       const path = join(dir, 'capability-catalog.json')
       const empty: CapabilityCatalog = {
@@ -179,11 +170,6 @@ describe('the capability catalog loader', () => {
         rowCount: 0,
         rowsDigest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
         rows: [],
-        // The migration section takes the same zero arm. A catalog produced from an empty tree
-        // describes no capabilities and rewrites no history; the edge this cell pins is that BOTH
-        // empty sections load as themselves rather than as a broken artifact (398-08).
-        migrationMap: [],
-        migrationCount: 0,
       }
       writeFileSync(path, committedFileText(empty), 'utf8')
 
@@ -196,17 +182,7 @@ describe('the capability catalog loader', () => {
   })
 })
 
-// ---- The censuses (D-01 / D-05 / D-06 / D-07) ----------------------------------------------------
-//
-// THE LAW, RESTATED FOR THIS ARTIFACT. `scenario-table.ts` states it once for the registry: two
-// enumerations of one universe are asserted set-equal in BOTH directions, so a member that lands on
-// either side alone is a named RED on every PR. Every cell below is that law applied to a different
-// pair — the catalog against the golden, the alias rows against the shipped resolver table, the
-// skill rows against the skills directory, the doc table against the registry.
-//
-// ONE-DIRECTION EQUALITY IS THE FAILURE THIS PREVENTS. A cell asserting only that every catalog row
-// has a golden row would stay green through a capability that shipped without a catalog entry —
-// which is precisely the drift D-01 exists to make impossible.
+// Each census asserts two enumerations of one universe set-equal in both directions.
 
 describe('the capability catalog census', () => {
   let catalog: CapabilityCatalog
@@ -225,7 +201,7 @@ describe('the capability catalog census', () => {
     catalog.rows.filter((row): row is CatalogSkillRow => row.kind === 'skill')
   const sorted = (values: readonly string[]): readonly string[] => [...values].sort()
 
-  it('carries exactly the capabilities the committed golden ledger records (D-01)', () => {
+  it('carries exactly the capabilities the committed golden ledger records', () => {
     // Against the COMMITTED golden, not a freshly minted one: the claim is that the two committed
     // projections cannot drift, and comparing two live mints would compare the tree to itself.
     const golden = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8')) as { rows: { id: string }[] }
@@ -240,7 +216,7 @@ describe('the capability catalog census', () => {
       .toEqual(goldenIds)
   })
 
-  it('joins every alias to a live registry op, and every op-alias to a row (D-05)', () => {
+  it('joins every alias to a live registry op, and every op-alias to a row', () => {
     const registryIds = sorted(declarations.map((declaration) => declaration.id))
 
     // Direction 1: no alias points at a capability that does not exist. An alias naming a
@@ -267,7 +243,7 @@ describe('the capability catalog census', () => {
     expect(aliasRows().length, 'an alias is carried more than once').toBe(shippedOpAliases.length)
   })
 
-  it('carries exactly the skills the shipped skills directory holds (D-05)', () => {
+  it('carries exactly the skills the shipped skills directory holds', () => {
     const directories = sorted(shippedSkillDirectoryNames())
     expect(directories.length, 'the skills directory read back empty').toBeGreaterThan(0)
     expect(sorted(skillRows().map((row) => row.name)), 'the skill rows and the skills directory '
@@ -275,7 +251,7 @@ describe('the capability catalog census', () => {
       + 'half of that identity').toEqual(directories)
   })
 
-  it('produces every surface claim from the shipped mapping, never from a written list (D-06)', () => {
+  it('produces every surface claim from the shipped mapping, never from a written list', () => {
     const projectedTools = new Map<string, string>()
     for (const projection of AGENT_QA_TOOL_PROJECTIONS) {
       for (const opId of projection.ops) projectedTools.set(opId, projection.name)
@@ -286,8 +262,7 @@ describe('the capability catalog census', () => {
       const tool = projectedTools.get(row.id)
       const unprojected = UNPROJECTED_OPS.find((entry) => entry.opId === row.id)
 
-      // Exactly one of the two arms, per row. Both present would be a row claiming a door and a
-      // dated decision not to have one; neither would be the blank D-06 replaces with a reason.
+      // Exactly one arm per row: a door, or the reason it has none.
       const arms = [row.mcpTool, row.mcpUnprojectedReasonKey].filter((value) => value !== undefined)
       if (arms.length !== 1) {
         disagreements.push(`${row.id}: ${arms.length} mcp arms present, expected exactly 1`)
@@ -315,7 +290,7 @@ describe('the capability catalog census', () => {
         }
       }
 
-      // Every op is reachable in chat 1:1 (392 D-07/D-08), so the chat surface is on every row.
+      // Every op is reachable in chat 1:1, so the chat surface is on every row.
       if (!row.surfaces.includes('chat')) {
         disagreements.push(`${row.id}: the row omits the chat surface`)
       }
@@ -323,7 +298,7 @@ describe('the capability catalog census', () => {
     expect(disagreements, 'op rows disagree with the shipped mapping').toEqual([])
   })
 
-  it('adjudicates a doc for every registry capability, and for no other (D-07)', () => {
+  it('adjudicates a doc for every registry capability, and for no other', () => {
     const registryIds = sorted(declarations.map((declaration) => declaration.id))
     const adjudicated = sorted(CATALOG_DOC_PATHS.map(([id]) => id))
 
@@ -337,7 +312,7 @@ describe('the capability catalog census', () => {
       .toBe(new Set(adjudicated).size)
   })
 
-  it('links only into repository files that exist, at headings that exist, or into the published docs (D-07)', () => {
+  it('links only into repository files that exist, at headings that exist, or into the published docs', () => {
     const root = agentQaRoot()
     const broken: string[] = []
     let filesChecked = 0
@@ -373,8 +348,7 @@ describe('the capability catalog census', () => {
         continue
       }
       if (row.docPath === null) {
-        // The explicit-absent arm is only honest if it says WHY. A null with no reason is the
-        // blank D-07 refuses.
+        // An explicit absence needs a reason.
         if ((row.docAbsentReason ?? '').trim() === '') {
           broken.push(`${label}: carries a null docPath with no reason`)
         }

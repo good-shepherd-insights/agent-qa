@@ -172,9 +172,7 @@ describe('safe init filesystem primitives', () => {
     }
 
     it('refuses a parent and its child when an unrelated sibling sorts between them', () => {
-      // The exact three-path set the round-7 review and verification both drove to NO THROW.
-      // `-` (0x2D) sorts below `/` (0x2F), so `tests-extra.md` lands strictly between `tests`
-      // and `tests/example-pass.yaml` and an adjacent-pair comparison never sees the overlap.
+      // `-` (0x2D) sorts below `/` (0x2F), so an adjacent-pair comparison never sees this overlap.
       const root = tempRoot()
       expect(() => preflightPaths(root, [
         'tests',
@@ -338,12 +336,7 @@ describe('safe init filesystem primitives', () => {
     expect(readFileSync(gitignorePath, 'utf8')).toBe(unsafeBytes)
   })
 
-  // The closing clause of these refusals is a claim about the operator's tree, and round 9
-  // made it false: `upsertManagedGitignoreBlock` became the FIRST write of the run and
-  // executes immediately before the target-root verification, so "no files were changed" was
-  // untrue there and untrue of the whole scaffold at the post-loop knowledge-root call. The
-  // literals below are hand-copied from the module, one per recorded outcome, so a branch
-  // that silently acquires another's wording reddens rather than reading plausibly.
+  // Literals are copied from the module, one per outcome, so borrowed wording fails the cell.
   const UNCHANGED_CLAUSES = {
     nothing: 'no files were changed',
     'managed-gitignore':
@@ -365,13 +358,7 @@ describe('safe init filesystem primitives', () => {
     '.*.agent-qa-init-*.tmp',
   ]
 
-  /**
-   * 2026-10-02 (quick 261002-lse follow-up): the writer-lease guard must sit under a rule every
-   * scaffolded knowledge repository already has. Existing `.gitignore` files are the user's and are
-   * never rewritten (D-22), so a guard outside them would show up as an untracked file. The path is
-   * caught from a REAL beat, mid-section, rather than spelled here, so a guard moved anywhere else
-   * reddens this cell.
-   */
+  // The lease guard is caught from a real beat, so a guard outside the scaffolded rules reddens.
   it('keeps the writer-lease guard ignored by the scaffolded knowledge rules while a beat holds it', () => {
     const root = tempRoot()
     initializeGit(root)
@@ -727,9 +714,7 @@ function octal(mode: number): string {
 
 const UNAPPLIED_MODE_REASON = /requested mode \d{4} was not applied/
 
-// Fragments of the two disposition sentences the module appends after every refusal reason
-// (D-22). Fragments rather than whole sentences, so incidental punctuation does not churn
-// these tests — but chosen so that no single message can ever match both.
+// Fragments of each disposition sentence, chosen so no message matches more than one.
 const REMOVED_DISPOSITION_PATTERN = /it was unlinked[\s\S]*are not recoverable/
 const RETAINED_DISPOSITION_PATTERN = /the destination was not removed or rewritten/
 
@@ -1149,10 +1134,7 @@ describe('atomic-replacement publication confirmation', () => {
         expect(message).toMatch(REMOVED_DISPOSITION_PATTERN)
         expect(message).not.toMatch(RETAINED_DISPOSITION_PATTERN)
         expect(fired).toEqual([...ATOMIC_REPLACE_HOOK_NAMES])
-        // Fail-closed disposition: the rename already consumed the original bytes, so the
-        // unconfirmed destination is removed rather than left at an unconfirmed mode. That
-        // disposition is now STATED in the thrown message and documented on the exported
-        // entry point (D-22); it is unchanged, only made deliberate and legible.
+        // The rename consumed the original bytes, so the unconfirmed destination is removed.
         expect(existsSync(plan.path)).toBe(false)
         expect(listInitTemporaries(root)).toEqual([])
       },
@@ -1375,19 +1357,7 @@ function capturedRefusalMessage(run: () => void): string {
   return errorMessage(capturedRefusal(run))
 }
 
-// The bytes the MODULE appended, isolated from the reason it appended them to.
-//
-// Every disposition-bearing refusal is built as `${reason} ${disposition}` with the reason
-// error kept as the `cause`, so what this module added is exactly the suffix past the deepest
-// cause's message. Measuring THERE rather than over the whole message is what makes the
-// measurement unforgeable: the destination path is a caller-supplied value embedded in the
-// reason, and the reason is precisely the part sliced away. A message-wide scan cannot tell a
-// disposition this module appended from one a directory name happens to spell — which is the
-// round-7 defect restated as a measurement problem, and the reason the walk below can now be
-// pointed at paths that spell the marker.
-//
-// An error that was never wrapped has no cause and returns '' — a refusal that escaped bare
-// reads as carrying no disposition, which is what it is.
+// The module's suffix past the deepest cause, so a path spelling a disposition cannot forge it.
 function moduleAppendedDisposition(error: unknown): string {
   const message = errorMessage(error)
   let root: unknown = error
@@ -1400,9 +1370,7 @@ function moduleAppendedDisposition(error: unknown): string {
   return message.slice(reason.length)
 }
 
-// The disposition sentences are NOT exported — D-22 forbids new API surface, and a
-// test-only export is still surface. Distinctness is therefore asserted against the two
-// sentences as they appear in real refusal messages the module itself produced.
+// The disposition sentences are not exported, so distinctness is read from real refusal messages.
 function dispositionSentence(message: string): string {
   const index = message.indexOf('Disposition:')
   if (index === -1) {
@@ -1505,10 +1473,7 @@ describe('refusal disposition distinctness', () => {
     },
   )
 
-  // Parameterised over the throw VALUE, not only over the arm. Every fixture in this loop used
-  // to throw an `Error`, which is exactly why the primitive arm went unexercised for two
-  // rounds while `markPassthrough` dropped non-objects on the floor and the retained wrap then
-  // stamped a factual claim about the destination onto the consumer's own throw.
+  // Parameterised over the throw value, not only the arm, so a primitive throw is exercised too.
   const PASSTHROUGH_THROW_VALUES = [
     {
       label: 'an Error instance',
@@ -1661,12 +1626,7 @@ function markerBearingRoot(component: string): string {
   return root
 }
 
-// The walk's fixture factory. Round 7's walk drew every path from the two root helpers, so no
-// cell it could build was able to carry the disposition marker — the same defect class as a
-// matrix generated from the vocabulary the implementation already satisfies, one layer up, and
-// the reason fifteen green cells reported a universal that a caller-supplied path falsified in
-// all three of its clauses. Crossing these roots with the entries below is what lets the walk
-// GENERATE the inputs that break its own invariant instead of merely sampling around them.
+// Crossed with the walk's entries so the walk builds paths that carry the disposition marker.
 const REFUSAL_WALK_ROOTS = [
   {
     name: 'ordinary root',
@@ -1819,7 +1779,6 @@ const REFUSAL_PATH_WALK = [
     },
   },
   {
-    // Round-6 gap 3: this is the path the verifier reproduced escaping with NO disposition.
     name: 'durable temporary: replacement-path PRE-RENAME mode revert',
     disposition: 'retained',
     run: (root: string) => {
@@ -1913,10 +1872,7 @@ describe('every refusal writeScaffoldFileAtomic can raise carries exactly one di
           expect(appended).not.toMatch(opposite)
 
           if (!rootVariant.carriesMarker) {
-            // Under an ordinary root nothing but the module can spell a disposition, so the
-            // whole message carries exactly the claim the module made. This is round 7's
-            // assertion, kept beside the marker-bearing cells rather than replaced by them —
-            // the comparison between the two is what makes the pin mean anything.
+            // Under an ordinary root only the module spells a disposition.
             const message = errorMessage(error)
             expect(dispositionSentenceCount(message)).toBe(1)
             expect(message).toMatch(expected)
@@ -1957,10 +1913,7 @@ describe('every refusal writeScaffoldFileAtomic can raise carries exactly one di
       expect(variant.make().includes(lead)).toBe(variant.carriesMarker)
     }
 
-    // And the removal-sentence root spells a WHOLE disposition rather than only its lead
-    // token, which is what made the round-7 inversion — a retained refusal reading as a
-    // destroyed destination — possible in the first place. Looked up by name rather than by
-    // index so that dropping the variant fails this assertion instead of crashing on it.
+    // The removal-sentence root spells a whole disposition, and is looked up by name, not index.
     const removalVariant = REFUSAL_WALK_ROOTS
       .find(variant => variant.name === 'root directory named after the removal sentence')
     expect(removalVariant).toBeDefined()
@@ -2030,12 +1983,7 @@ describe('platform-qualified mode-enforcement contract', () => {
   })
 })
 
-// `writeDurableTemporary` writes the destination's planned content — for the secrets file,
-// live credential bytes — into a mode-carrying SIBLING of the destination before publishing
-// it. The round-8 verifier measured that sibling VISIBLE to real git and surviving a failed
-// cleanup permanently. Everything below is measured against real `git check-ignore` and the
-// real module rather than against the entry list, because a rule is an intention and only
-// git's own answer is the fact.
+// The temporary sibling carries live credential bytes, so real `git check-ignore` must hide it.
 const DURABLE_TEMPORARY_PATTERN = /^\..+\.agent-qa-init-\d+-[0-9a-f-]{36}\.tmp$/
 
 function durableTemporaryNameFor(destinationBasename: string): string {
@@ -2105,10 +2053,7 @@ function publishWithFailingCleanup(
   if (arm === 'replacement') writeFileSync(path, 'ORIGINAL=1\n', { mode: 0o600 })
 
   const abortPublication = (destination: string): never => {
-    // Wedge the directory first, then abort the publication itself. The primary failure is
-    // the abort; the cleanup's unlink is what fails afterwards. That is the exact ordering
-    // the round-8 reproduction had, and the one in which a throwing `finally` discards the
-    // in-flight refusal and hands the operator the unlink error instead.
+    // Wedge first, then abort, so a throwing `finally` would hand over the unlink error instead.
     chmodSync(directory, 0o500)
     throw new Error(`Refusing init destination ${destination}: injected publication abort`)
   }
@@ -2223,8 +2168,7 @@ describe('the durable temporary is invisible to a commit', () => {
     )).toHaveLength(1)
   })
 
-  // 431-09: the managed-block writer's per-target lock. An interrupted writer can leave it
-  // behind for the operator to delete, so it sits in the same covered namespace.
+  // An interrupted writer can leave its per-target lock, so it sits in the covered namespace.
   it('covers a managed-block lock left beside a target with the same managed rule', () => {
     const root = tempRoot()
     initializeGit(root)
@@ -2320,11 +2264,7 @@ describe('the durable temporary is invisible to a commit', () => {
     expect(records.every(record => record.targetCovered)).toBe(true)
     expect(records.length).toBeGreaterThan(1)
 
-    // KNOWLEDGE ROOT. Round 9 measured coverage against the target root's git only and
-    // recorded the .gitignore's own temporary as the only uncovered one in the whole run.
-    // That holds per ROOT, not per run: a nested repository does not inherit the parent's
-    // rules (the control below measures it), so the knowledge tree needs the same
-    // first-write property, and the assertion is that PROPERTY rather than any index.
+    // A nested repository ignores the parent's rules, so the knowledge tree needs it too.
     const firstKnowledgeWrite = records.findIndex(
       record => record.path.startsWith(`${knowledgeRoot}${sep}`),
     )
@@ -2380,10 +2320,7 @@ describe('the durable temporary is invisible to a commit', () => {
   it.skipIf(!canWedgeDirectory)(
     'reports a failed post-link removal rather than stamping a created destination retained',
     () => {
-      // `linkSync` has already succeeded when the wedge lands, so the destination EXISTS
-      // with the published content. Measured before this fix, the removal's EACCES escaped
-      // unmarked and the backstop appended "the destination was not removed or rewritten —
-      // if it still exists it retains its original contents at an unconfirmed mode" to it.
+      // `linkSync` has succeeded when the wedge lands, so the destination holds the content.
       const wedgeAfterLink = (directory: string): InitFilesystemHooks => ({
         afterExclusiveLink: () => { chmodSync(directory, 0o500) },
       })
@@ -2444,11 +2381,7 @@ describe('the durable temporary is invisible to a commit', () => {
       }
       expect(errorMessage(modeRefusal)).toContain(modePath)
 
-      // ARM 3 — the bounding control this fix is scoped by: on a path where the publication
-      // has NOT succeeded, the refusal is still a refusal. The abort's own message survives
-      // the same failing cleanup that ARM 1 now degrades to a warning, so the conversion did
-      // not leak past the one site. (A hook's error is passthrough by design and carries no
-      // disposition — that is the module's contract, not a gap; ARM 4 covers the floor.)
+      // Arm 3: where publication has not succeeded, the abort's own message survives the cleanup.
       const abortedRoot = tempRoot()
       const { error } = publishWithFailingCleanup(abortedRoot, 'exclusive')
       expect(error.message).toContain('injected publication abort')
@@ -2490,17 +2423,7 @@ describe('the durable temporary is invisible to a commit', () => {
     },
   )
 
-  // WR-03. The cleanup-failure warning used to end with "It is covered by the managed
-  // .gitignore rule, so it cannot enter a commit" UNCONDITIONALLY — false for exactly the
-  // temporaries the module's own correction names as uncovered, because the rule that would
-  // cover a `.gitignore` temporary is the thing that temporary is on its way to writing.
-  //
-  // THE THREE CASES BELOW ARE EACH OTHER'S NON-VACUITY CONTROLS. Case B alone would prove
-  // only that a second sentence exists; case A alone would prove only that the first one
-  // survived. Together, in ONE repository at the two moments of a real run — before its
-  // `.gitignore` is written and after — they prove the predicate DISCRIMINATES, and case C
-  // proves it does not silently fall back to either claim when git cannot be asked. Deleting
-  // any one of the three makes the others vacuous.
+  // The cases control each other: before and after `.gitignore` is written, and with no git.
   it.skipIf(!canWedgeDirectory)(
     'tells the truth about whether a leftover temporary can enter a commit, decided by real git',
     () => {

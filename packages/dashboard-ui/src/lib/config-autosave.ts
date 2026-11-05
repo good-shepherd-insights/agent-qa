@@ -1,9 +1,4 @@
-// THE CONFIG PAGE'S SAVE STATE (429 D-19/D-20/D-21/D-24 · PXH-CONF-04).
-//
-// One pure, total machine owns what the page's one status may say. Every clock is a parameter,
-// the reduceLivePreview idiom: no timers, no storage and no network here, the hook owns effects.
-// The truthfulness rules live in the reducer: only write-succeeded reaches saved, and a failed
-// write keeps every value it carried.
+// One pure machine with every clock a parameter; only write-succeeded reaches saved.
 
 import { SAVED_VISIBLE_MS, undoLine } from './config-copy'
 import type { ExplicitActionKind, FieldState, SaveState } from './config-tabs'
@@ -37,7 +32,6 @@ export interface PendingUndo {
   name: string
   token: string
   expiresAt: number
-  judge?: boolean
 }
 
 export interface ConfigAutosaveState {
@@ -61,7 +55,7 @@ export type ConfigAutosaveEvent =
   | { type: 'write-succeeded'; id: string }
   | { type: 'write-failed'; id: string; issues: readonly ConfigAutosaveIssue[]; message?: string }
   | { type: 'retry' }
-  | { type: 'undo-offered'; kind: ExplicitActionKind; name: string; token: string; expiresAt: number; judge?: boolean }
+  | { type: 'undo-offered'; kind: ExplicitActionKind; name: string; token: string; expiresAt: number }
   | { type: 'undo-finished' }
   | { type: 'drafts-restored'; entries: readonly RestoredDraft[] }
   | { type: 'draft-cleared'; fieldKey: string }
@@ -182,7 +176,6 @@ function reduceEvent(
           name: event.name,
           token: event.token,
           expiresAt: event.expiresAt,
-          ...(event.judge === undefined ? {} : { judge: event.judge }),
         },
       }
     case 'undo-finished':
@@ -237,11 +230,7 @@ export function deriveSaveStatus(state: ConfigAutosaveState, now: number): Confi
   }
   const undo = state.undo
   if (undo !== undefined && now < undo.expiresAt) {
-    const line = undoLine(
-      undo.kind,
-      undo.name,
-      undo.judge === undefined ? {} : { judge: undo.judge },
-    )
+    const line = undoLine(undo.kind, undo.name)
     return { ...status('undo'), undo: { line, name: undo.name, token: undo.token } }
   }
   if (state.write !== undefined) return status('saving')

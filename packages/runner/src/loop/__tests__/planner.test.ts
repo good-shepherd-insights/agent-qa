@@ -1,10 +1,3 @@
-// Unit tests for the runner-owned LLMPlanner (353-02 Task 1, D-02). Ported from v1's
-// scripted-fake-LanguageModel pattern: a mocked `ai.generateText` returns a scripted
-// tool call and the planner projects it into a PlanResult. `tool` stays real (only
-// generateText is replaced) so buildTools produces the true v45 slice. Behaviors:
-//   1. a scripted tool-call response → PlanResult with the parsed ActionPlan envelope
-//   2. screenshot send failure → retry once without the image, prompt annotated
-//   3. arg extraction tolerates the args/input SDK key variants
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -29,7 +22,7 @@ function makeSpyLogger(): LoopScopedLogger & { warnCalls: LoggedCall[]; errorCal
   }
 }
 
-// The codex Responses 400 exactly like the live RUNX-01 capture, duck-typed onto an Error.
+// A codex Responses 400 as the provider returns it, duck-typed onto an Error.
 function makeApiCallError(): Error & { statusCode: number; responseBody: string } {
   return Object.assign(new Error('Bad Request'), {
     statusCode: 400,
@@ -67,7 +60,7 @@ describe('LLMPlanner', () => {
     vi.clearAllMocks()
   })
 
-  it('projects a scripted tool call into a PlanResult with the v45 envelope intact (D-09)', async () => {
+  it('projects a scripted tool call into a PlanResult with the plan envelope intact', async () => {
     const { generateText } = await import('ai')
     vi.mocked(generateText).mockResolvedValueOnce({
       toolCalls: [{ toolName: 'web_click', input: { ref: 'e1', ...CLICK_ENVELOPE } }],
@@ -101,7 +94,9 @@ describe('LLMPlanner', () => {
     // first call carried the image; the fallback turn retries with a text-only user
     // message carrying the note (the planning turn always drives via `messages`).
     const fallbackArgs = mock.mock.calls[1][0] as { messages?: { content?: unknown }[] }
-    expect(JSON.stringify(fallbackArgs.messages)).toContain('Visual screenshot is unavailable')
+    expect(JSON.stringify(fallbackArgs.messages)).toContain(
+      '[Note: Visual screenshot is unavailable for this step. Rely on the accessibility tree for element identification.]',
+    )
     expect(result.plan.action.type).toBe('click')
   })
 
@@ -119,9 +114,7 @@ describe('LLMPlanner', () => {
     expect(result.plan.action.ref).toBe('e2')
   })
 
-  // 363-15 checkpoint fix (grounding regression): an ungroundable action must self-describe
-  // in the logs — the diagnostic that revealed the "both ref+target" live regression. Element
-  // handles only (ref/target), never a fill's text/value.
+  // An ungroundable action logs which handles it supplied, never a fill's text or value.
   it('logs a diagnostic warn (tool + which handles were supplied) when an action fails grounding', async () => {
     const { generateText } = await import('ai')
     vi.mocked(generateText).mockResolvedValue({
@@ -140,9 +133,7 @@ describe('LLMPlanner', () => {
     expect(diag?.meta?.hasTarget).toBe(true)
   })
 
-  // Phase 355-01 (CTXB-04 / D-10) — RED until Plan 05 injects the TokenAccounting port
-  // into LLMPlanner and feeds recordUsage(result.usage, messages) after each response.
-  it('feeds the injected TokenAccounting recordUsage exactly once per response (D-10)', async () => {
+  it('feeds the injected TokenAccounting recordUsage exactly once per response', async () => {
     const { generateText } = await import('ai')
     vi.mocked(generateText).mockResolvedValueOnce({
       toolCalls: [{ toolName: 'web_click', input: { ref: 'e1', ...CLICK_ENVELOPE } }],
@@ -157,9 +148,6 @@ describe('LLMPlanner', () => {
     expect(accounting.recordUsageCalls[0].messages.length).toBeGreaterThan(0)
   })
 
-  // RUNX-04 (planner half): the swallowed provider-error catch must no longer collapse an
-  // APICallError to a bare "Bad Request" — statusCode + responseBody must survive the runner
-  // boundary so the codex 400 is diagnosable without a temporary patch.
   it('surfaces a provider APICallError statusCode + responseBody through the log meta and rethrown message', async () => {
     const { generateText } = await import('ai')
     const apiError = makeApiCallError()
@@ -211,7 +199,7 @@ describe('LLMPlanner', () => {
   })
 })
 
-describe('C444.1-PLANNER-CANCEL', () => {
+describe('LLMPlanner cancellation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })

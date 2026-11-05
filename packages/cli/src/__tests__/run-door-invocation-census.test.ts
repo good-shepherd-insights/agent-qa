@@ -1,35 +1,4 @@
-// The CLI door holds NO direct `startRun` — a complete-set census (Phase 401 plan 04, T-401-11).
-//
-// WHAT THE CLAIM IS, AND WHY IT NEEDS A CENSUS RATHER THAN A READING. Plan 04's first truth is a
-// COMPLETE-SET claim: "both `startRun` call sites in `run.ts` are gone; the core's is the only one
-// on the CLI door." A claim of that shape cannot be discharged by opening `run.ts` and looking,
-// because what makes it valuable is what it says about the files nobody opened. The `run` command
-// is 3.9k lines and the CLI package is 150-odd source files; "I did not see another one" and "there
-// is not another one" are different sentences.
-//
-// So: enumerate every shipped source file in this package, strip comments, and require the symbol
-// to be absent from all of them. The single legal call-site is
-// `agent-local/src/composition/run-invocation-core.ts`, one line below the one `evaluate()` — which
-// is a different package, behind the gate, and pinned by the build (`arch`'s `EVALUATE_PIN`).
-//
-// A CENSUS WHOSE PREDICATE CANNOT SEE WHAT IT FORBIDS IS GREEN AT REST, so the first cell is the
-// predicate's own self-check, and it runs before any verdict about this package is allowed:
-//
-//   (i)   every ACQUISITION FORM the symbol can arrive in is planted in synthetic source and must
-//         be seen — a static import, a destructured dynamic import, a namespace member call, a bare
-//         call. Not one remembered spelling;
-//   (ii)  a mention in prose must NOT be seen. This is the case the package actually presents:
-//         nine surviving comments across four files explain what used to happen at "the startRun
-//         site", and a raw substring scan would report them as offenders forever — or, worse, be
-//         "fixed" by deleting the explanations;
-//   (iii) the stripper must not eat code it should keep (the protocol-relative-URL trap).
-//
-// AND THE DISCOVERY PREDICATE IS PINNED TO ITS OWN KNOWN MEMBERS, not to its own output. A walker
-// with a wrong root, a wrong extension filter or an over-eager exclude returns an empty set and
-// reports every file clean — the 399/400 scar (a path constant that pointed at the wrong-but-
-// EXISTING directory, so the guard skipped itself). The scanned set is therefore required to
-// CONTAIN the two files that would hold the call if anything did, named here rather than read off
-// the scan, plus a floor on the population.
+// Comments are stripped and every source file scanned, with planted acquisition forms as controls.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
@@ -54,13 +23,7 @@ const CORE_SOURCE_PATH = join(
   '..', '..', 'agent-local', 'src', 'composition', 'run-invocation-core.ts',
 )
 
-/**
- * Drop block and line comments so a name that appears only in prose is never read as code.
- *
- * The `[^:]` guard keeps a protocol-relative URL from being mistaken for a line comment, which is
- * how this kind of stripper usually eats a file. (Same shape as the core's own hygiene census in
- * plan 03 — one stripper idiom for the phase, so a reader compares like with like.)
- */
+// Drops comments so prose is never read as code; `[^:]` spares a protocol-relative URL.
 function stripComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -112,14 +75,7 @@ const ACQUISITION_FORMS = [
   'export { startRun } from "@vostride/agent-qa-runner"',
 ] as const
 
-/**
- * Files that MUST be in the scanned set, named here rather than discovered.
- *
- * These are the two the call would live in if it lived anywhere in this package: the `run` command
- * (which held both call-sites until 401-03 and 401-04 took them) and the assembler the core calls
- * (the one CLI module that builds a `RunConfig`). If the walker stops seeing either, the census has
- * stopped ranging the thing it is about, and that must be a failure rather than a clean sweep.
- */
+// The files the call would live in, named so a walker that stops seeing them fails.
 const REQUIRED_CENSUS_MEMBERS = [
   join('commands', 'run.ts'),
   join('composition', 'run-assembly.ts'),
@@ -164,7 +120,7 @@ describe('the predicate self-check — before any verdict about this package', (
   })
 })
 
-describe('no file in the CLI package acquires startRun (T-401-11, INVK-02 criterion 2)', () => {
+describe('no file in the CLI package acquires startRun', () => {
   it('the complete set is empty — the core is the only way this door can begin a run', () => {
     const offenders = shippedSourceFiles(CLI_SRC)
       .filter((path) => acquiresStartRun(readFileSync(path, 'utf8')))
@@ -189,15 +145,7 @@ describe('no file in the CLI package acquires startRun (T-401-11, INVK-02 criter
     const driveSource = stripComments(
       readFileSync(join(CLI_SRC, 'composition', 'in-process-run-execution.ts'), 'utf8'),
     )
-    // 401-11 RESTATED THIS RATHER THAN RELAXING IT, and the restatement is strictly stronger.
-    //
-    // The two compositions this counted were the suite path's and the single-test path's — two
-    // copies of one composition, and the count existed to catch a path that quietly stopped
-    // starting runs. Both paths now call ONE in-process drive, so the pin becomes: `run.ts`
-    // composes the core ZERO times (a composition beside the drive is exactly the regrowth the old
-    // count forbade, and `0` says so where `2` could not), the drive composes it ONCE, and BOTH of
-    // the door's paths still reach that drive. A path that stopped starting runs fails on the last
-    // clause exactly as it used to fail on the count.
+    // `run.ts` composes the core nowhere; the drive composes it once and both door paths reach it.
     expect(runSource.match(/createRunInvocationCore\(/g) ?? []).toHaveLength(0)
     expect(driveSource.match(/createRunInvocationCore\(/g) ?? []).toHaveLength(1)
     expect(runSource.match(/runInProcessCliRun as typeof RunInProcessCliRun\)\(/g) ?? []).toHaveLength(2)
@@ -205,37 +153,9 @@ describe('no file in the CLI package acquires startRun (T-401-11, INVK-02 criter
 })
 
 // ---------------------------------------------------------------------------------------------
-// The other half of RESEARCH Open Q2's disposition, which is an ABSENCE and therefore needs saying.
-//
-// Three of this command's options were open questions when the core was designed: `--dry-run`,
-// `--junit-output` and `--detach`. D-02's ratified answer is that all three stay CLI-SURFACE
-// concerns the command composes AROUND the core, and that NONE of them enters `RunsStartInput`.
-// The `--dry-run` half is a behaviour, measured on the shipped binary
-// (`run-gate-suite.e2e.test.ts`). The other two are an absence: junit is a bus subscriber the door
-// attaches in `onSession`, detach gates the curation drain after `execute` returns, and neither is
-// a field a caller could name.
-//
-// AN ABSENCE ASSERTED ON THE CONTRACT ITSELF, not on a grep for the words. `RunsStartInput` is the
-// wire; its key set is the complete list of what a caller may say. Pinning the SET (rather than
-// checking three names are missing from it) is what makes this survive the next field somebody
-// adds: a fourth CLI-surface option quietly promoted to a request field fails here, and so does a
-// legitimate addition — which is correct, because a change to what a caller may ask for is a
-// contract change and should have to be written down twice.
-describe('the CLI-surface options never entered the invocation contract (Open Q2 / D-02)', () => {
-  const REQUEST_FIELDS = [
-    'patterns',
-    'runId',
-    'scope',
-    'executionContext',
-    'configPath',
-    'gateRun',
-    'excludedFromOutcomes',
-  ] as const
-
-  it('RunsStartInput is exactly these seven fields', () => {
-    expect(Object.keys(RunsStartInputSchema.shape).sort()).toEqual([...REQUEST_FIELDS].sort())
-  })
-
+// `--dry-run`, `--junit-output` and `--detach` are composed around the core by the `run` command
+// and are not fields of `RunsStartInput`: the strict input refuses a caller naming any of them.
+describe('the CLI-surface options are refused by the run-start input', () => {
   it.each(['junitOutput', 'detach', 'dryRun', 'trustSession'])(
     'a caller naming %s is REFUSED rather than silently ignored (the strict shape)',
     (option) => {

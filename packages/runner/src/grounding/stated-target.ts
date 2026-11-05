@@ -1,41 +1,9 @@
-// The stated-target judge (Phase 438, AUTO-14 · D-01/D-03/D-05).
-// CRITICAL: provider-neutral + storage-neutral. No node:* imports, no fs/sharp, no
-// core/model/adapter package imports — imports only schema types.
-//
-// Every element action carries, beside its ref, the element the planner meant: its role, its
-// name and, when a label repeats, its row words. Before dispatch the loop judges that stated
-// target against the element the ref names. Only a CLEAR contradiction is refused (D-03):
-//   - role-kind: both roles are in ROLE_KIND and their kinds differ (a textbox where a button
-//     was stated). Roles outside the map never contradict on role — mobile often exposes a
-//     pressable control as `text` or `group`.
-//   - name-no-shared-word: the element has words (name, value, aria-label, placeholder, title)
-//     and no stated name word is one of them. A nameless element never contradicts on name.
-//   - name-number: both names carry numbers and a stated number is absent from the element's name
-//     ("Invoice 947" stated, "Invoice 946" found) — the shared word "Invoice" alone would let it
-//     pass. Extra numbers in the element's name never refuse (438 gap round, WR-03, within D-03).
-//   - row: a row was stated, the element's row is known (row-text.ts) and the stated row words
-//     are not in it. An empty stated row is not stated; an unknown row never contradicts.
-// All of them read words and numbers through row-text.ts, never a second tokenizer, and compare
-// the NFKC-normalized tokens it produces (438 gap round 2, WR-11, completing WR-03; 444.1 D-16;
-// within D-03). Grouping separators: `,`, `_`, U+202F and U+00A0 before exactly three digits
-// ("1,234" equals "1234", "$1,234.50" equals "$1234.50"), and a well-formed lakh group
-// ("1,00,000" equals "100000"). Not grouping: U+2009 and U+2007 (NFKC makes them a plain space),
-// `'`, U+066C, and `.`, a decimal point. A comma run reads as a grouped number (wordTokens) or a
-// list (listWordTokens), and a rule agrees when both texts read the same way, either way, agree:
-// "Order 947" agrees with "Orders 947,948", while "Invoice 947" against "Invoice 946" and
-// "Rows 1,2" against "Rows 12" still refuse.
-// A paraphrase that shares a word ("Log in" for "Sign in") agrees; exact equality is never
-// required. A refusal names both identities and never picks a substitute element.
-//
-// M2 injection boundary: names are opaque comparison data only — never interpolated into a
-// selector or an instruction, never evaluated.
-//
-// Pure functions: no recording, no side effects. Redaction is the caller's job.
+// A refusal needs a clear contradiction and never picks a substitute; names are opaque data.
 
 import type { ElementInfo } from '@vostride/agent-qa-schema'
 import { listWordTokens, rowContains, rowTextOf, wordTokens } from './row-text.js'
 
-/** The element the planner meant beside its ref (D-01); `row` names a repeated label's row. */
+/** The element the planner meant beside its ref; `row` names a repeated label's row. */
 export interface StatedTarget {
   role?: string
   name: string
@@ -45,7 +13,7 @@ export interface StatedTarget {
 /** The element lanes an action can carry a stated target on. */
 export type StatedTargetLane = 'ref' | 'fromRef' | 'toRef'
 
-/** The stated target per element lane, kept by the gate for the pre-dispatch check (D-01, D-04). */
+/** The stated target per element lane, kept by the gate for the pre-dispatch check. */
 export type StatedTargets = Partial<Record<StatedTargetLane, StatedTarget>>
 
 export type RoleKind = 'press' | 'entry' | 'toggle' | 'choice' | 'range'
@@ -113,10 +81,7 @@ function sharesWord(statedName: string, element: ElementInfo): boolean {
   })
 }
 
-/**
- * Judge a stated target against the element its ref names (D-03). `elements` is the observation
- * the element belongs to; the element's row is read from it (D-02).
- */
+// `elements` is the observation the element belongs to; its row is read from there.
 export function judgeStatedTarget(
   stated: StatedTarget,
   element: ElementInfo,

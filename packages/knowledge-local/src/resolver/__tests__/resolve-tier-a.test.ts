@@ -1,14 +1,4 @@
-// Tier (a) of the resolver, on its own (Phase 387, plan 01 Task 2 — ENTY-01 / D-03 / D-09).
-//
-// The spine test proves tier (a) works through the whole stack; this file proves it works at
-// the edges, where the stack has nothing to say. Three of the cases are about inputs a user
-// really types and a resolver really has to refuse: an address that is well formed and names
-// nothing, an unpadded ordinal, and free text.
-//
-// The sighting source is supplied by the case rather than read off a knowledge root, which is
-// what lets a TGT chain be exercised at all — target slugs come from configuration, and the
-// configuration source lands in a later plan. What is under test here is the RESOLVER's
-// treatment of them, not where the list comes from.
+// Edge inputs: an address naming nothing, an unpadded ordinal and free text.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -113,7 +103,7 @@ describe('resolver tier (a)', () => {
     expect(await resolveEntityRef('bundle-checkou', deps)).toEqual({ kind: 'none', reason: 'no-match' })
   })
 
-  it('mints once per entity and keeps first-mention order (D-01)', async () => {
+  it('mints once per entity and keeps first-mention order', async () => {
     // Ordinals reflect first MENTION, not creation: `bundle-login` is second in the source and
     // first in the ledger because it was referenced first.
     expect(await resolveEntityRef('bundle-login', deps)).toMatchObject({
@@ -127,7 +117,7 @@ describe('resolver tier (a)', () => {
     })
   })
 
-  it('names the successor slug on a renamed target, and only once recorded (D-03)', async () => {
+  it('names the successor slug on a renamed target, and only once recorded', async () => {
     await resolveEntityRef('checkout', deps)
     const before = await resolveEntityRef('TGT-checkout', deps)
     if (before.kind !== 'resolved') throw new Error('expected the resolved arm')

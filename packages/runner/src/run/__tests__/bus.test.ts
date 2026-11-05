@@ -1,15 +1,3 @@
-// Wave-0 RED scaffold (361-01, Task 2). Pins the SESSION-02 in-memory event-bus
-// contract BEFORE any implementation exists — RED strictly on the unresolved import
-// of the not-yet-existing `../bus.js` module (right-reason RED). Turns green in Plan 04.
-//
-// Contract source: 361-CONTEXT.md D-05 (bus is pure logic in packages/runner), D-07
-// (event-log write failure ⇒ runWarning + degrade to memory-only), D-08 (subscribe /
-// replay-then-live / subscriber-error detach) + spec/v2/runner.md §2.2 (seq gap-free
-// from 1, replay from fromSeq default 1, 10,000-event / 16 MB in-memory window,
-// ~10 s heartbeat after bus silence).
-//
-// Runner package convention: `.js`-suffixed relative import specifiers. Fully faked
-// ports — no real timers, no fs, no watch mode.
 import { describe, expect, it, vi } from 'vitest'
 
 import { createRunEventBus } from '../bus.js'
@@ -87,9 +75,9 @@ describe('createRunEventBus — seq assignment (spec §2.2)', () => {
   })
 })
 
-// ---- Subscribe / replay-then-live / detach (D-08) ------------------------
+// ---- Subscribe / replay-then-live / detach ------------------------
 
-describe('subscribe — replay-then-live, per-subscriber order (D-08)', () => {
+describe('subscribe — replay-then-live, per-subscriber order', () => {
   it('replays retained events in seq order, then delivers live', () => {
     const bus = createRunEventBus({ runId: 'run-1' })
     bus.publish('runWarning', { code: 'a' })
@@ -144,9 +132,9 @@ describe('subscribe — replay-then-live, per-subscriber order (D-08)', () => {
   })
 })
 
-// ---- Event-log append + degrade-to-memory (D-06/D-07) --------------------
+// ---- Event-log append + degrade-to-memory --------------------
 
-describe('event-log append + degrade (D-06/D-07)', () => {
+describe('event-log append + degrade', () => {
   it('appends every publish to the injected EventLogPort', () => {
     const log = makeFakeEventLog()
     const bus = createRunEventBus({ runId: 'run-1', eventLog: log })

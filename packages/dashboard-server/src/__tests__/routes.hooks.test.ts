@@ -14,13 +14,12 @@ vi.mock('@vostride/agent-qa-core', async () => {
   return { ...actual }
 })
 
-// Hook execution moved to runner-local DockerHookExecutor in Phase 363 D-06; execute() is the
-// old runHookInSandbox body behind the port.
 vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
   DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
 }))
 
+import { getAgentQaVersion } from '@vostride/agent-qa-core'
 import { ConfigManager, readConfigValues } from '../config/index.js'
 import { createRouter } from '../server/routes.js'
 import { resolveWorkspacePaths, type ResolvedWorkspacePaths } from '@vostride/agent-qa-core'
@@ -50,7 +49,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
 
   process.nextTick(() => {
     if (options.body) {
@@ -932,7 +931,7 @@ describe('POST /api/hooks/:hookId/run', () => {
       variables: { RESULT: 'abc' },
       sandbox: {
         runtime: 'node',
-        image: 'vostride/agent-qa-hook-runner-node',
+        image: `vostride/agent-qa-hook-runner-node:${getAgentQaVersion()}`,
         networkMode: 'disabled',
         dockerVersion: null,
         networkLogsAvailable: false,
@@ -1051,7 +1050,7 @@ describe('POST /api/hooks/:hookId/run', () => {
     expect(JSON.parse(res.body)).toEqual(expect.objectContaining({
       sandbox: {
         runtime: 'bun',
-        image: 'vostride/agent-qa-hook-runner-bun',
+        image: `vostride/agent-qa-hook-runner-bun:${getAgentQaVersion()}`,
         networkMode: 'enabled',
         dockerVersion: null,
         networkLogsAvailable: false,

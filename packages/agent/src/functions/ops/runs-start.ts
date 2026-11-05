@@ -1,23 +1,7 @@
-// `runs.start` — the first unbound→bound transition of 384's binding vocabulary (D-16).
-//
-// Everything declared here in 384 is unchanged: the input contract (including the D-10
-// `gateRun` carrier), the acknowledgment it resolves, and the risk descriptor the classifier
-// reads. What arrived in 385 is the implementation, and with it the one line that says what the
-// implementation NEEDS — `boundThrough: 'runInvocation'`. 2026-10-01 (432-23, D-12): the `run`
-// scope it once cost is gone; every door can start a run, and the run core refuses only a
-// production target the config has not opted into (432-03, D-18).
-//
-// That is the whole of this module's say in whether it is bound. The ANSWER belongs to a
-// composition: a host that supplies a run-invocation port lists this op as `bound` and can
-// run it; a host that does not lists it as `unbound` and refuses it by name. The 384 state
-// is therefore not gone, it is one of the two states, and every registry built without an
-// executor still proves D-09's visible-unbound invariant on this very capability.
-//
-// The implementation joins TWO ports on purpose. The invocation port reports only the id of
-// the run it started; every field of the acknowledgment is then read off that run's own
-// durable record through the same reader `runs.get` answers from. A host that resolved an id
-// without running anything gets `RunNotRecordedError` here rather than a fabricated
-// acknowledgment — which is the difference between "the call returned" and "a run happened".
+// `runs.start` starts the requested tests through the run-invocation port and answers when the run
+// has its verdict. Every acknowledgement field is read off the run's own completed record, so a
+// host that reports a run it did not execute gets `RunNotRecordedError`. A host with no
+// run-invocation port lists the op as unbound.
 
 import { RunStartAcknowledgementSchema, RunsStartInputSchema } from '@vostride/agent-qa-schema'
 import type {
@@ -81,27 +65,14 @@ export const runsStartSpec: FunctionSpec<RunsStartInput, RunStartAcknowledgement
   boundThrough: 'runInvocation',
   input: RunsStartInputSchema,
   output: RunStartAcknowledgementSchema,
-  // Pitfall 10, and every field here is load-bearing:
-  //   `recognized: true` with NO `readOnly` puts the classifier's floor at mutating-local;
-  //   `declaredTier` states that tier explicitly rather than relying on the floor alone;
-  //   the name tokens (fn · runs · start) hit neither destructive lexicon, so nothing
-  //   raises the tier above what is declared.
-  // The tier was chosen when `mutating-shared` would have asked, and an ask in a fail-closed
-  // context denied, leaving the authoring loop unable to start a run in CI. 2026-10-01 (432-19/
-  // 432-23, D-12/D-15): nothing asks or denies on a tier any more; the tier stays the honest
-  // classification. Starting a run really is local: it spends this machine's resources and
-  // writes into this project's run directory. It touches nothing another party shares.
   risk: {
     name: `fn:${RUNS_START_FUNCTION_ID}`,
     recognized: true,
-    declaredTier: 'mutating-local',
   },
   /**
-   * AN ACKNOWLEDGEMENT IS A START, NOT AN OUTCOME (399.1 D-01).
-   *
-   * This op returns when the run has been ACCEPTED, long before it has a verdict — so the outcome
-   * names the run a person can follow and how much it took on, and says nothing about how it went.
-   * A refusal to start is a throw and already reaches the engine's `failed` mapping.
+   * The op answers when the run has its verdict. The outcome line names the run, how many tests it
+   * ran and its scope, and leaves how it went to the run's own record. A refusal to start is a
+   * throw.
    */
   classify(output): ClauseVerdict {
     return {
@@ -110,9 +81,7 @@ export const runsStartSpec: FunctionSpec<RunsStartInput, RunStartAcknowledgement
     }
   },
   async invoke(input, deps) {
-    // `invokeFunction` already refused this composition on the same fact, so reaching here
-    // with no port means an in-layer caller holding the spec directly. The unbound state has
-    // no back door: the refusal is the same named error either way (384, D-09).
+    // Reached with no port only by an in-layer caller; the refusal is the same named error.
     const runInvocation = deps.runInvocation
     if (runInvocation === undefined) {
       throw new FunctionNotBoundError(RUNS_START_FUNCTION_ID)

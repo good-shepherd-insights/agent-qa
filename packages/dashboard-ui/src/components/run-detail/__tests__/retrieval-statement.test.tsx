@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-// 427 · D-20..D-23 — the tab states how retrieval ran for this run, under the Knowledge used heading.
-// Views are built through the real projectKnowledgeView over schema-parsed projections.
+// Views come from the real `projectKnowledgeView` over schema-parsed projections.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -64,7 +63,7 @@ function servedStep() {
 function view(recorded: Recorded | undefined, options: { withRows?: boolean; knowledgeStore?: "bound" | "unbound" } = {}): KnowledgeView {
   const projection = RunKnowledgeProjectionSchema.parse({
     kind: "ready",
-    runId: "run-427-11-retrieval",
+    runId: "run-retrieval",
     buildOrdinal: 1,
     knowledgeStore: options.knowledgeStore ?? "bound",
     steps: options.withRows === true ? [servedStep()] : [],
@@ -105,7 +104,7 @@ function recorded(rung: LowerRung, reason: RetrievalRungReason | undefined): Rec
   return { rung, ...(reason === undefined ? {} : { reason }) }
 }
 
-describe("the tab states every lower retrieval level in plain words (D-20)", () => {
+describe("the tab states every lower retrieval level in plain words", () => {
   it.each(INFO)("TAB-STATEMENT-PER-CLASS: %s / %s reads as %s information", (rung, reason, cls, glyph) => {
     const host = usedSection(recorded(rung, reason))
     const el = statement(host)
@@ -177,7 +176,7 @@ describe("the tab states every lower retrieval level in plain words (D-20)", () 
   })
 })
 
-describe("memidex, no rung and no store say nothing; the statement sits under the heading (D-20)", () => {
+describe("memidex, no rung and no store say nothing; the statement sits under the heading", () => {
   it("MEMIDEX-NOTHING: memidex, a run with no recorded rung and an unbound store render no statement", () => {
     expect(statement(usedSection({ rung: "memidex" }, true))).toBeNull()
     act(() => { root?.unmount() })
@@ -214,7 +213,7 @@ describe("memidex, no rung and no store say nothing; the statement sits under th
     expect(absenceAt).toBeGreaterThan(statementAt)
   })
 
-  it("the statement sits in the default view, so it speaks none of Retrieval details' machinery words (SC4)", () => {
+  it("the statement sits in the default view, so it speaks none of Retrieval details' machinery words", () => {
     // knowledge-default-view.test.tsx's MACHINERY list, applied to every class's rendered text.
     const machinery = ["canary", "leg ", "rank ", "score ", "attribution", "digest", "tier ", "channel"]
     for (const [rung, reason] of [...INFO, ...WARNING]) {
@@ -228,7 +227,7 @@ describe("memidex, no rung and no store say nothing; the statement sits under th
     }
   })
 
-  it("the tab statement never truncates: it wraps and shows the whole sentence (E7)", () => {
+  it("the tab statement never truncates: it wraps and shows the whole sentence", () => {
     for (const [rung, reason] of [...INFO, ...WARNING]) {
       const host = usedSection(recorded(rung, reason))
       const el = statement(host)

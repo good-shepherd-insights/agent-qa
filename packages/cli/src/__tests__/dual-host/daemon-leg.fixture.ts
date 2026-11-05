@@ -181,22 +181,21 @@ export async function runDaemonLeg(): Promise<void> {
         emitted: 0,
         refused: 0,
         unresolved: 0,
-        canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+        canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
         procedure: { emitted: 0, refused: 0, unresolved: 0 },
         details: [],
       }),
       foldRunOutcomes: () => ({
           kind: 'applied',
           tests: 0,
-          // 390 D-08: this stub asks for no detection, so the fold declares it skipped.
+          // This stub asks for no detection, so the fold declares it skipped.
           quarantine: { kind: 'not-evaluated', reason: 'not-requested' },
         }),
       buildCuratorAuthor: () => author,
     },
   })
   progress('tail-returned')
-  // 418-12: this contender must not rebuild under the standing daemon's lease. The daemon
-  // already reconciled at acquisition; the tail discloses its typed skip and hands off.
+  // The contender must not rebuild under the daemon's lease; the tail discloses its typed skip.
   expect(warnings).toEqual(['curation: run-outcome projection not reconciled (no writer authority)'])
   await nudgeDaemon(agentQaRoot)
   progress('explicit-nudge-returned')

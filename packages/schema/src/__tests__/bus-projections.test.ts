@@ -1,14 +1,3 @@
-// Wave-0 RED scaffold (361-01, Task 1). Pins the Plan 03 masked-payload-projection
-// contract BEFORE any implementation exists — RED strictly on the unresolved import
-// of the not-yet-existing `../run/bus-projections` module (right-reason RED).
-//
-// Contract source: 361-CONTEXT.md D-09 (every projection routes through the masking
-// port; 362 activates it with zero further wiring — proven here with a synthetic mask)
-// and D-10 (one pure schema-in/schema-out projection module: StepEvidence→stepFinalized,
-// SubActionEvidence→subActionRecorded with states collapsed to screenStateHash identity,
-// PerTestOutcome→testFinished never embedding steps). spec/v2/runner.md §2.2 payload discipline.
-//
-// Schema module-discipline law: extension-less relative import specifiers, no node builtins.
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -31,8 +20,7 @@ import type { StepEvidence } from '../handoff/step-evidence'
 import type { SubActionEvidence } from '../handoff/sub-action-evidence'
 import type { PerTestOutcome } from '../handoff/per-test-outcome'
 
-const SECRET = 'SECRET-42'
-// The synthetic mask the 362 masking-context will replace (identity pre-362, D-09).
+const SECRET = 'SECRET-QZ'
 const mask: MaskFn = (value: string) => value.replaceAll(SECRET, '[masked]')
 
 const scope: ScopeKey = { tier: 'test', key: 'checkout::happy-path' }
@@ -114,7 +102,7 @@ function makePerTestOutcome(): PerTestOutcome {
   }
 }
 
-describe('projectStepFinalized (D-10, spec §2.2 step lifecycle)', () => {
+describe('projectStepFinalized (spec §2.2 step lifecycle)', () => {
   it('carries cacheStatus, verifierVerdict, a boolean selfHealOccurred, and a briefDigest string', () => {
     const payload = projectStepFinalized(
       makeStepEvidence(false),
@@ -140,7 +128,7 @@ describe('projectStepFinalized (D-10, spec §2.2 step lifecycle)', () => {
     expect(payload).not.toHaveProperty('servedBrief')
   })
 
-  it('routes evidence string fields through the mask (D-09 identity-pre-362 proof)', () => {
+  it('routes evidence string fields through the mask', () => {
     const payload = projectStepFinalized(
       makeStepEvidence(false),
       { testIndex: 0, stepIndex: 0 },
@@ -160,7 +148,7 @@ describe('projectStepFinalized (D-10, spec §2.2 step lifecycle)', () => {
   })
 })
 
-describe('projectSubActionRecorded (D-10, spec §2.2 sub-action tick)', () => {
+describe('projectSubActionRecorded (spec §2.2 sub-action tick)', () => {
   it('collapses stateBefore to a screenStateHash string and carries result as RecordedActionResult', () => {
     const sub = makeSubActionEvidence()
     const payload = projectSubActionRecorded(
@@ -185,14 +173,6 @@ describe('projectSubActionRecorded (D-10, spec §2.2 sub-action tick)', () => {
     expect(JSON.stringify(payload)).not.toContain(SECRET)
     expect(JSON.parse(JSON.stringify(payload))).toEqual(payload)
   })
-
-  // ---- 405-01 (D-14 · RESEARCH D1): the ref fold, pinned so the drop cannot silently return ----
-  //
-  // Until 2026-08-27 this projection destructured `decisionScreenshotRef` and VOIDED it. The
-  // consequence had no symptom anywhere in this file — `artifactRefs` was declared on the payload
-  // and simply never populated, so the dashboard's projection had nothing to persist and the
-  // run-detail page had no screenshot to render. Three cells below, because the fold has three
-  // states and only one of them was ever exercised.
 
   it('folds a decision screenshot ref into artifactRefs when the evidence carries no others', () => {
     const ref = { id: `decision-screenshot:${'a'.repeat(64)}`, sha: 'a'.repeat(64) }
@@ -233,7 +213,7 @@ describe('projectSubActionRecorded (D-10, spec §2.2 sub-action tick)', () => {
   })
 })
 
-describe('projectTestFinished (D-10, spec §2.2 member-test lifecycle)', () => {
+describe('projectTestFinished (spec §2.2 member-test lifecycle)', () => {
   it('carries the PerTestOutcome identity + outcome but never the embedded steps', () => {
     const payload = projectTestFinished(makePerTestOutcome(), mask)
     expect(payload.testId).toBe('checkout::happy-path')
@@ -248,11 +228,7 @@ describe('projectTestFinished (D-10, spec §2.2 member-test lifecycle)', () => {
   })
 })
 
-// Phase 363 D-01/Q-3 parity-append projections: hook lifecycle + retry visibility, plus
-// the widened optional fields on stepFinalized/testFinished. Every string routes through
-// the synthetic MaskFn (T-363-01 information-disclosure mitigation), proving the SECRET-42
-// roll-call holds for the new payloads before 362 activates the real redactor.
-describe('projectHookStarted (D-01, spec §2.2 hook lifecycle)', () => {
+describe('projectHookStarted (spec §2.2 hook lifecycle)', () => {
   it('carries hook identity + phase/scope and masks string fields', () => {
     const payload = projectHookStarted(
       {
@@ -285,7 +261,7 @@ describe('projectHookStarted (D-01, spec §2.2 hook lifecycle)', () => {
   })
 })
 
-describe('projectHookFinished (D-01, T-363-01 — captured-stream masking)', () => {
+describe('projectHookFinished (captured-stream masking)', () => {
   it('masks stdout, stderr, error, and each variables VALUE while preserving keys', () => {
     const payload = projectHookFinished(
       {
@@ -335,7 +311,7 @@ describe('projectHookFinished (D-01, T-363-01 — captured-stream masking)', () 
   })
 })
 
-describe('projectTestRetryScheduled (Q-3 — per-test attempt reset marker)', () => {
+describe('projectTestRetryScheduled (per-test attempt reset marker)', () => {
   it('carries the attempt accounting and omits an absent reason', () => {
     const payload = projectTestRetryScheduled({
       testId: 'checkout::happy-path',
@@ -362,7 +338,7 @@ describe('projectTestRetryScheduled (Q-3 — per-test attempt reset marker)', ()
   })
 })
 
-describe('projectStepFinalized widened fields (Q1 append — status/durationMs/error)', () => {
+describe('projectStepFinalized widened fields (status/durationMs/error appended)', () => {
   it('carries the additive optional fields with error masked', () => {
     const payload = projectStepFinalized(
       makeStepEvidence(false),
@@ -390,7 +366,7 @@ describe('projectStepFinalized widened fields (Q1 append — status/durationMs/e
   })
 })
 
-describe('projectStepFinalized tokenUsage (405 D-05 — absent is not zero)', () => {
+describe('projectStepFinalized tokenUsage (absent is not zero)', () => {
   it('carries the measured tokenUsage verbatim; the numbers pass the mask untouched', () => {
     const payload = projectStepFinalized(
       makeStepEvidence(false),
@@ -414,7 +390,7 @@ describe('projectStepFinalized tokenUsage (405 D-05 — absent is not zero)', ()
   })
 })
 
-describe('projectTestFinished widened fields (Q1 append — durationMs/failureSummary/retryCount)', () => {
+describe('projectTestFinished widened fields (durationMs/failureSummary/retryCount appended)', () => {
   it('carries the additive optional fields with failureSummary masked', () => {
     const payload = projectTestFinished(makePerTestOutcome(), mask, {
       durationMs: 4200,
@@ -437,7 +413,7 @@ describe('projectTestFinished widened fields (Q1 append — durationMs/failureSu
   })
 })
 
-describe('projectStepFinalized retrievalRung (407 D-14 — read from the EVIDENCE, not from extra)', () => {
+describe('projectStepFinalized retrievalRung (read from the EVIDENCE, not from extra)', () => {
   it('carries the recorded rung verbatim; the closed enum words survive the mask', () => {
     const evidence = makeStepEvidence(false)
     evidence.retrievalRung = {

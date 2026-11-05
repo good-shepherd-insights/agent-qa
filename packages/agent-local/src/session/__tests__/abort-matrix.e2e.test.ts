@@ -1,26 +1,4 @@
-// The abort matrix: ONE session survives BOTH arms of CHAT-05's repair clause (Phase 392 plan 03,
-// D-19).
-//
-// CHAT-05 says a session repairs itself on the next turn. D-19 says there are exactly two ways a
-// turn can be left open, and they are genuinely different events:
-//
-//   ARM ONE — GRACEFUL. The person pressed Ctrl+C. The process was alive enough to handle it, so
-//   it wrote its own `aborted` record and landed it. The next open must add NOTHING; a repair that
-//   "helpfully" synthesized a second abort would put two records of one interruption in an
-//   append-only file, and no later reader could tell which was the real one.
-//
-//   ARM TWO — HARD KILL. The process died mid-write. The last line is a fragment and no abort was
-//   ever written. The next open must skip the fragment AND synthesize the abort the dead process
-//   could not.
-//
-// BOTH ARMS HAPPEN TO THE SAME SESSION HERE, in sequence, because that is the only version of this
-// claim worth making. Two separate sessions would prove each arm survives a fresh file; one session
-// proves the file is still a conversation after both, which is what a person resuming their work
-// actually needs.
-//
-// AND THE ORIGINAL BYTES ARE COMPARED. "Append-only" is worth nothing as a comment: the region of
-// the file that existed before each repair is captured as bytes and compared byte for byte
-// afterwards. Repair may only ever add.
+// Both abort arms hit one session in sequence, and the pre-repair bytes are compared after each.
 
 import {
   mkdirSync,
@@ -61,12 +39,7 @@ const MASKED_CONFIG: MaskedResolvedConfig = {
   entries: [],
 }
 
-/**
- * A person, so a refusal below can only ever be the axis under test.
- *
- * 2026-10-02 (432-38, D-12): no `grantedScopes` (formerly every scope) or `safeMode`; the registry
- * reads neither (432-20), so there is no scope left to refuse.
- */
+// A person, so a refusal below can only be the axis under test.
 const HUMAN: FunctionCaller = {
   surface: 'test',
   origin: 'human',
@@ -143,7 +116,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     })
   }
 
-  it('CHAT-05/D-19: graceful Ctrl+C then hard kill, both repaired, and the session continues', async () => {
+  it('graceful Ctrl+C then hard kill, both repaired, and the session continues', async () => {
     // ---- Turn 1: an ordinary completed turn, so the file starts life healthy.
     const first = await ask('/fn quarantine.list')
     const sessionId = first.sessionId
@@ -236,7 +209,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
   // sees the fused line as a fresh tear and loses the synthesized abort with it, so the session is
   // poisoned every time it is resumed. One newline, appended before anything else, is the whole
   // fix; the fragment survives verbatim as its own line for anyone auditing the file.
-  it('CHAT-05: repair terminates the torn fragment instead of writing onto it', async () => {
+  it('repair terminates the torn fragment instead of writing onto it', async () => {
     const first = await ask('/fn quarantine.list')
     const sessionId = first.sessionId
     const path = pathOf(sessionId)
@@ -289,7 +262,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
   // The third crash shape, named so that nobody reads the two arms above as a claim about all
   // damage: a torn HEADER is refused outright. A build that guessed at an unreadable header would
   // append to a file whose grammar it does not know, in the one direction no later read can undo.
-  it('CHAT-05: a torn header refuses to open by name, and never becomes a silent new session', async () => {
+  it('a torn header refuses to open by name, and never becomes a silent new session', async () => {
     const first = await ask('/fn quarantine.list')
     const path = pathOf(first.sessionId)
     const bytes = readFileSync(path, 'utf8')
@@ -305,7 +278,7 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
     expect(readFileSync(path, 'utf8')).toBe(bytes.slice(0, 20))
   })
 
-  it('CHAT-05: the resume path names the repair — an open that skipped it would be a silent read', () => {
+  it('the resume path names the repair — an open that skipped it would be a silent read', () => {
     const source = readFileSync(join(import.meta.dirname, '..', 'jsonl-session-log.ts'), 'utf8')
     const openBody = source.slice(source.indexOf('open(sessionId?: string)'))
 
@@ -317,11 +290,8 @@ describe('the abort matrix: one session, both arms, then it carries on', () => {
   })
 })
 
-// The hook contract, which no composed host can exhibit yet because plan 06 binds it. What it
-// pins is the argument, not a convention: a degrade pass that is HANDED the replay has no other
-// input to prune, so "repair before pruning" (CHAT-05) is a fact about the type rather than an
-// ordering somebody has to remember.
-describe('CHAT-05: the compaction pass is handed an already-repaired conversation', () => {
+// A degrade pass is handed the repaired replay, so repair before pruning is fixed by the type.
+describe('the compaction pass is handed an already-repaired conversation', () => {
   let root: string
 
   beforeEach(() => {
@@ -346,8 +316,7 @@ describe('CHAT-05: the compaction pass is handed an already-repaired conversatio
       reconcile: deterministicOverrideStrategy,
       sessionLog,
       mint: { forStage: () => HUMAN },
-      // 399.1: the classified envelope, with the legacy verdict. This cell is about ABORT and
-      // replay; what an op returned is not its subject.
+      // The classified envelope with the legacy verdict; what an op returns is not under test here.
       invoke: () => Promise.resolve({ payload: {}, verdict: { status: 'executed' as const, outcome: '' }, foldLines: [] }),
       compaction: ({ replay }) => {
         seen.push(replay)
@@ -373,8 +342,7 @@ describe('CHAT-05: the compaction pass is handed an already-repaired conversatio
     // The dangling turn: a user message and nothing that closes it.
     await seeded.append({ kind: 'user_message', turnId: 'turn-dead', at: AT, text: 'digest RUN-9' })
     await seeded.turnBoundary()
-    // CLOSED BEFORE THE ENGINE RUNS (392-12): one live handle per session, so a seeding writer
-    // that kept its handle would be refused rather than silently interleaved with the turn.
+    // Closed before the engine runs: one live handle per session, so a held one is refused.
     await seeded.close()
 
     await engine.runTurn({ message: '/fn quarantine.list', sessionId })

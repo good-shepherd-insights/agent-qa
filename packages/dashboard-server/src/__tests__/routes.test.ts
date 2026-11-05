@@ -207,11 +207,7 @@ interface MockResponse {
   body: string
 }
 
-// A mock request that omits `Host` models no real client: HTTP/1.1 requires the header and every
-// browser, `curl`, `fetch` and the conformance harness sends it. The display-seam read arms
-// (405 CR-01) now refuse a request whose claimed Host is not a loopback name, so the default below
-// is what keeps these direct-invoke probes speaking the wire's own shape. An explicit `host` in
-// `options.headers` still wins, which is how the refusal itself is exercised.
+// Requests default to a loopback `Host`, because the display-seam read arms refuse any other.
 const LOOPBACK_HOST_HEADER = { host: '127.0.0.1:3470' } as const
 
 function createMockRequest(
@@ -341,7 +337,7 @@ function createWorkspacePaths(
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
-      knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+      knowledge: { dir: 'agent-qa-knowledge' },
     },
     configPath: join(workspaceDir, 'agent-qa.config.yaml'),
   })
@@ -440,7 +436,7 @@ describe('API Routes', () => {
     })
   })
 
-  describe('phase 225 live timeline storage guardrails', () => {
+  describe('live timeline storage guardrails', () => {
     it('keeps live execution timeline state out of durable schema and artifacts', async () => {
       const [schemaSource, databaseSource, routesSource] = await Promise.all([
         readFile('src/db/schema.ts', 'utf-8'),
@@ -453,10 +449,7 @@ describe('API Routes', () => {
       expect(durableSources).not.toMatch(/\blive_timeline\b/)
       expect(durableSources).not.toMatch(/\bliveEvents\b/)
       expect(durableSources).not.toMatch(/\bliveTimeline\b/)
-      // 2026-08-27 (405-07, D-19): this line asserted the live feed's route was PRESENT — the 225
-      // guardrail's way of saying "live state lives on the wire, not in the schema". The route is
-      // retired, so the assertion is inverted: the wire it names must be absent from this file too.
-      // Split needle, so this cell is not itself the grep-clean inventory's hit.
+      // Split needle, so this assertion is not itself a hit for a text search.
       expect(routesSource).not.toContain('api/' + 'execution/events')
       expect(routesSource).not.toMatch(/\/api\/runs\/[^'"]+\/live[-_]timeline/)
     })
@@ -702,7 +695,7 @@ describe('API Routes', () => {
       })
       router = createRouter(actualDb)
 
-      // 2026-10-14 (441-05, D-13): no auth-state redactor; a stored value is served as written.
+      // No auth-state redactor; a stored value is served as written.
       const [runRes, artifactRes, logsRes] = await Promise.all([
         invokeRoute(`/api/runs/${runId}`),
         invokeRoute(`/api/runs/${runId}/artifact`),
@@ -1085,10 +1078,6 @@ describe('API Routes', () => {
   })
 
   describe('GET /api/runs/:id', () => {
-    // 405-07 (D-03): the body is `{ run }` and nothing else. It used to carry `steps` off a v1
-    // projection with no producer and `attempts`/`tests` off a child-run walk over a deleted
-    // column — three keys that were structurally empty on every run this build produces. The run's
-    // members, steps and sub-actions are `GET /api/runs/:id/detail`'s, through `runs.detail`.
     it('returns the run row, and only the run row', async () => {
       const runId = insertSampleRun()
 
@@ -1108,20 +1097,8 @@ describe('API Routes', () => {
     })
   })
 
-  // 2026-08-27 (405-07, D-14): the video-serving describe is deleted with the route. Two cells
-  // stood here — one served a file under a run-id directory, one refused a flat file through a
-  // run-id URL. There is no path-addressed artifact route left and no video surface at all, because
-  // no producer mints a recording ref; `routes.traversal.test.ts` holds the containment cells for
-  // the ref-addressed route that replaced them.
-
   describe('DELETE /api/runs/:id', () => {
-    // 2026-08-27 (405-07, D-14 · T-405-27): ROWS ONLY, AND THE FILESYSTEM CLAIM IS INVERTED.
-    //
-    // The cell that stood here seeded a parent/child run tree with screenshot and video
-    // directories and asserted the delete REMOVED them. The parent link is gone, the path columns
-    // are gone, and the sweep is gone: what lives under a run's directory is the event log and the
-    // content-addressed blobs, which are the run's own record and not the dashboard's to delete.
-    // So the same fixture now asserts the opposite — every byte on disk survives.
+    // The run's event log and blobs are its own record, so deleting a run removes rows and no file.
     it('deletes the run rows, preserves token event stats, and touches no file', async () => {
       const { artifactsDir, db: actualDb } = await createDashboardWorkspace()
       const runDir = join(artifactsDir, 'runs', 'suite_run')
@@ -1181,12 +1158,6 @@ describe('API Routes', () => {
       actualDb.close()
     })
   })
-
-  // 2026-08-27 (405-07, D-03): the step-list describe is deleted with the arm. `runs.detail` is
-  // the one read for a run's members, steps and sub-actions, and it is proven end-to-end in
-  // `run-service/__tests__/run-detail-routes.test.ts`. The absence of this arm — and of the three
-  // others the census retired — is pinned in `suite-parent-debris-census.test.ts`, which drives
-  // each retired URL against a live router and requires the generic 404.
 
   describe('POST /api/queue/enqueue', () => {
     it('normalizes queued files under configured workspace.testMatch', async () => {
@@ -1310,13 +1281,7 @@ describe('API Routes', () => {
       expect(enqueue).not.toHaveBeenCalled()
     })
 
-    // ---- G-401-18-CR01 (write half): `metadata` is server-derived -----------------------------
-    //
-    // THE REJECT/ADMIT PAIR. A control that only shows the door refusing cannot tell an allowlist
-    // apart from a route that 400s on every request, and a control that only shows it admitting
-    // cannot tell one apart from a route with no validation at all. Both are here, and the ADMIT
-    // side is the one that proves the tightening validated the door rather than closing it: a
-    // caller's own labels still round-trip, through `attributes`, which is their actual door.
+    // Reject and admit together, so neither a refuse-all route nor an unvalidated one passes.
 
     it('REJECT — a client-supplied metadata key is refused by name, not silently dropped', async () => {
       const enqueue = vi.fn().mockReturnValue('run-queue-metadata')
@@ -1376,7 +1341,7 @@ describe('API Routes', () => {
         body: JSON.stringify({
           name: 'Queued admitted',
           metadata: {},
-          attributes: { 'git.branch': 'gap-401-23' },
+          attributes: { 'git.branch': 'queued-branch' },
         }),
       })
 
@@ -1385,7 +1350,7 @@ describe('API Routes', () => {
       // writes; it must not have deleted what this route writes.
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         metadata: { args: [] },
-        attributes: expect.objectContaining({ 'git.branch': 'gap-401-23' }),
+        attributes: expect.objectContaining({ 'git.branch': 'queued-branch' }),
       }))
     })
 
@@ -1472,7 +1437,7 @@ describe('API Routes', () => {
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Queued suite',
         filePath: 'suites/sample-basic.suite.yaml',
-        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        // No parent kind is minted; `metadata.isSuite` carries the identity.
         kind: 'test',
         metadata: expect.objectContaining({
           args: [join(workspaceDir, 'suites', 'sample-basic.suite.yaml')],
@@ -1574,7 +1539,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'web/15-github-trending.yaml', local: true }),
+        body: JSON.stringify({ file: 'web/15-github-trending.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -1621,7 +1586,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ patterns: ['web/*.yaml'], local: true }),
+        body: JSON.stringify({ patterns: ['web/*.yaml'] }),
       })
 
       expect(res.status).toBe(202)
@@ -1653,7 +1618,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'global-parallel.yaml', local: true, parallel: false }),
+        body: JSON.stringify({ file: 'global-parallel.yaml', parallel: false }),
       })
 
       expect(res.status).toBe(202)
@@ -1693,7 +1658,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'serial-local.yaml', local: true }),
+        body: JSON.stringify({ file: 'serial-local.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -1721,7 +1686,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ patterns: ['web/*.yaml'], local: true }),
+        body: JSON.stringify({ patterns: ['web/*.yaml'] }),
       })
 
       expect(res.status).toBe(202)
@@ -1749,7 +1714,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ patterns: [join(outsideDir, '*.yaml')], local: true }),
+        body: JSON.stringify({ patterns: [join(outsideDir, '*.yaml')] }),
       })
 
       expect(res.status).toBe(400)
@@ -1771,7 +1736,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ patterns: ['../*.yaml'], local: true }),
+        body: JSON.stringify({ patterns: ['../*.yaml'] }),
       })
 
       expect(res.status).toBe(400)
@@ -1795,7 +1760,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'web/15-github-trending.yaml', local: true }),
+        body: JSON.stringify({ file: 'web/15-github-trending.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -1823,7 +1788,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: join(outsideDir, 'outside.yaml'), local: true }),
+        body: JSON.stringify({ file: join(outsideDir, 'outside.yaml') }),
       })
 
       expect(res.status).toBe(400)
@@ -1845,7 +1810,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: '../../outside.yaml', local: true }),
+        body: JSON.stringify({ file: '../../outside.yaml' }),
       })
 
       expect(res.status).toBe(400)
@@ -1868,7 +1833,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: join(outsideDir, 'outside.suite.yaml'), local: true }),
+        body: JSON.stringify({ file: join(outsideDir, 'outside.suite.yaml') }),
       })
 
       expect(res.status).toBe(400)
@@ -1929,14 +1894,14 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'suites/slow.suite.yaml', local: true }),
+        body: JSON.stringify({ file: 'suites/slow.suite.yaml' }),
       })
 
       expect(res.status).toBe(202)
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Workspace suite',
         filePath: 'suites/slow.suite.yaml',
-        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        // No parent kind is minted; `metadata.isSuite` carries the identity.
         kind: 'test',
         metadata: expect.objectContaining({
           args: [join(workspaceDir, 'suites', 'slow.suite.yaml')],
@@ -2000,21 +1965,21 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'suites/parallel.suite.yaml', local: true }),
+        body: JSON.stringify({ file: 'suites/parallel.suite.yaml' }),
       })
 
       expect(res.status).toBe(202)
       expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({
         name: 'Parallel suite',
         filePath: 'suites/parallel.suite.yaml',
-        // 402-09 (D-11): no parent kind is minted; `metadata.isSuite` still carries the identity.
+        // No parent kind is minted; `metadata.isSuite` carries the identity.
         kind: 'test',
         parallel: true,
         metadata: expect.objectContaining({ isSuite: true }),
       }))
     })
 
-    it('passes the cache override through to the queued args and labels BrowserStack explicitly', async () => {
+    it('passes the cache override through to the queued args and labels the run local', async () => {
       const testsDir = join(tmpdir(), `agent-qa-trigger-tests-${randomUUID()}`, 'e2e-specs')
       tempDirs.push(dirname(testsDir))
       await mkdir(join(testsDir, 'web'), { recursive: true })
@@ -2033,7 +1998,6 @@ describe('API Routes', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           file: 'web/15-github-trending.yaml',
-          local: false,
           noCache: true,
         }),
       })
@@ -2043,7 +2007,7 @@ describe('API Routes', () => {
         filePath: 'web/15-github-trending.yaml',
         attributes: {
           'agent-qa.trigger': 'dashboard',
-          'agent-qa.runner': 'browserstack',
+          'agent-qa.runner': 'local',
         },
         metadata: expect.objectContaining({
           args: [
@@ -2084,7 +2048,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'android-only.yaml', local: true }),
+        body: JSON.stringify({ file: 'android-only.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -2125,7 +2089,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'slow-local.yaml', local: true }),
+        body: JSON.stringify({ file: 'slow-local.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -2174,7 +2138,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'slow.suite.yaml', local: true }),
+        body: JSON.stringify({ file: 'slow.suite.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -2207,7 +2171,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'config-timeout.yaml', local: true }),
+        body: JSON.stringify({ file: 'config-timeout.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -2236,7 +2200,7 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/runs/trigger', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'draft.yaml', local: true }),
+        body: JSON.stringify({ file: 'draft.yaml' }),
       })
 
       expect(res.status).toBe(202)
@@ -2271,7 +2235,6 @@ describe('API Routes', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           file: 'trusted-timeout.yaml',
-          local: true,
           timeout: 1,
           metadata: { timeout: 1 },
         }),
@@ -2331,7 +2294,7 @@ describe('API Routes', () => {
   })
 
   describe('POST /api/cache/purge', () => {
-    it('purges the branch-namespaced cache entries for a file request (Phase 356 layout)', async () => {
+    async function seedCacheWorkspace() {
       const testsDir = await mkdtemp(join(tmpdir(), 'agent-qa-cache-purge-tests-'))
       const cacheDir = await mkdtemp(join(tmpdir(), 'agent-qa-cache-purge-cache-'))
       tempDirs.push(testsDir, cacheDir)
@@ -2342,28 +2305,21 @@ describe('API Routes', () => {
         `    dir: ${cacheDir}`,
         'registry:',
         '  targets:',
-        '    maps-android:',
-        '      platform: android',
-        '      appPackage: com.google.android.apps.maps',
+        '    web:',
+        '      platform: web',
+        '      url: https://example.com',
         '',
       ].join('\n')
       const { configManager, configPath } = await createConfigWorkspace(configContent)
-      const testContent = [
-        'name: Android-only flow',
-        'test-id: t_android_only',
-        'target: maps-android',
-        'steps:',
-        '  - Open Google Maps',
-        '',
-      ].join('\n')
-      await writeFile(join(testsDir, 'android-only.yaml'), testContent, 'utf-8')
 
-      // Redesigned layout: <cacheRoot>/<branch-slug>/<cacheKey>.json (opaque, D-06). Seed two
-      // entries across two branch namespaces; a file purge clears the whole cache.
-      await mkdir(join(cacheDir, 'main'), { recursive: true })
-      await writeFile(join(cacheDir, 'main', 'a1b2c3d4e5f60718.json'), '{"schemaVersion":10}', 'utf-8')
-      await mkdir(join(cacheDir, 'feature-x'), { recursive: true })
-      await writeFile(join(cacheDir, 'feature-x', 'f0e1d2c3b4a59687.json'), '{"schemaVersion":10}', 'utf-8')
+      const entries = [
+        join(cacheDir, 'main', 'a1b2c3d4e5f60718.json'),
+        join(cacheDir, 'feature-x', 'f0e1d2c3b4a59687.json'),
+      ]
+      for (const entry of entries) {
+        await mkdir(dirname(entry), { recursive: true })
+        await writeFile(entry, '{"schemaVersion":10}', 'utf-8')
+      }
 
       router = createRouter({
         db: db as any,
@@ -2371,16 +2327,71 @@ describe('API Routes', () => {
         configManager,
         configPath,
       })
+      return entries
+    }
+
+    it('purges every branch-namespaced cache entry', async () => {
+      const entries = await seedCacheWorkspace()
 
       const res = await invokeRoute('/api/cache/purge', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'android-only.yaml' }),
+        body: JSON.stringify({ all: true }),
       })
 
       expect(res.status).toBe(200)
       const data = JSON.parse(res.body) as { purged: number }
       expect(data.purged).toBe(2)
+      for (const entry of entries) {
+        await expect(stat(entry)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+    })
+
+    it('leaves every file and directory the cache did not write in place', async () => {
+      const entries = await seedCacheWorkspace()
+      const cacheDir = dirname(dirname(entries[0]))
+      const kept = [
+        join(cacheDir, 'notes.txt'),
+        join(cacheDir, 'runs', 'run-1', 'handoff.json'),
+        join(cacheDir, 'runs', 'summary.json'),
+        join(cacheDir, 'main', 'README.md'),
+      ]
+      for (const path of kept) {
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, 'kept', 'utf-8')
+      }
+
+      const res = await invokeRoute('/api/cache/purge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ all: true }),
+      })
+
+      expect(res.status).toBe(200)
+      expect(JSON.parse(res.body)).toEqual({ purged: 2 })
+      for (const entry of entries) {
+        await expect(stat(entry)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+      for (const path of kept) {
+        expect(await readFile(path, 'utf-8')).toBe('kept')
+      }
+      await expect(stat(join(cacheDir, 'feature-x'))).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('refuses a purge request without all and deletes nothing', async () => {
+      const entries = await seedCacheWorkspace()
+
+      const res = await invokeRoute('/api/cache/purge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ file: 'web-flow.yaml' }),
+      })
+
+      expect(res.status).toBe(400)
+      expect(JSON.parse(res.body)).toEqual({ error: 'all is required' })
+      for (const entry of entries) {
+        await expect(stat(entry)).resolves.toBeDefined()
+      }
     })
 
     it('resolves relative services.cache.dir from the config file directory', async () => {
@@ -2401,15 +2412,6 @@ describe('API Routes', () => {
       const { configManager, configPath } = await createConfigWorkspace(configContent)
       const configDir = dirname(configPath)
       const cacheDir = join(configDir, '.agent-qa/custom-cache')
-      const testContent = [
-        'name: Web flow',
-        'test-id: t_web_flow',
-        'target: web',
-        'steps:',
-        '  - Open the homepage',
-        '',
-      ].join('\n')
-      await writeFile(join(testsDir, 'web-flow.yaml'), testContent, 'utf-8')
 
       const branchDir = join(cacheDir, 'main')
       const cacheEntryPath = join(branchDir, 'a1b2c3d4e5f60718.json')
@@ -2426,13 +2428,58 @@ describe('API Routes', () => {
       const res = await invokeRoute('/api/cache/purge', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ file: 'web-flow.yaml' }),
+        body: JSON.stringify({ all: true }),
       })
 
       expect(res.status).toBe(200)
       const data = JSON.parse(res.body) as { purged: number }
       expect(data.purged).toBe(1)
       await expect(stat(cacheEntryPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+
+    it('with no services.cache.dir, purges the run cache folder beside the config', async () => {
+      const testsDir = await mkdtemp(join(tmpdir(), 'agent-qa-cache-purge-tests-'))
+      tempDirs.push(testsDir)
+
+      const configContent = [
+        'registry:',
+        '  targets:',
+        '    web:',
+        '      platform: web',
+        '      url: https://example.com',
+        '',
+      ].join('\n')
+      const { configManager, configPath } = await createConfigWorkspace(configContent)
+      const cacheDir = join(dirname(configPath), '.agent-qa', 'cache')
+
+      const entry = join(cacheDir, 'main', 'a1b2c3d4e5f60718.json')
+      const marker = join(cacheDir, 'feature-x', 'f0e1d2c3b4a59687.json')
+      await mkdir(dirname(entry), { recursive: true })
+      await mkdir(dirname(marker), { recursive: true })
+      await writeFile(
+        entry,
+        '{"schemaVersion":3,"value":{"plannedActions":[],"groundedLocator":[],"completesStep":true}}',
+        'utf-8',
+      )
+      await writeFile(marker, '{"schemaVersion":3,"suppressed":true}', 'utf-8')
+
+      router = createRouter({
+        db: db as any,
+        ...createWorkspaceManagers(testsDir),
+        configManager,
+        configPath,
+      })
+
+      const res = await invokeRoute('/api/cache/purge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ all: true }),
+      })
+
+      expect(res.status).toBe(200)
+      expect(JSON.parse(res.body)).toEqual({ purged: 2 })
+      await expect(stat(entry)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(marker)).rejects.toMatchObject({ code: 'ENOENT' })
     })
   })
 
@@ -2462,20 +2509,19 @@ describe('API Routes', () => {
     })
   })
 
-  describe('CORS', () => {
-    it('includes CORS headers on the legacy read routes', async () => {
-      // MOVED OFF `/api/runs` BY 405 CR-01, and the move is the point. `json()`'s wildcard still
-      // serves the legacy reads — that posture is unchanged and this cell still guards it — but
-      // `/api/runs` stopped being one of them the moment 405-10 put restored cleartext on its body.
+  describe('cross-origin grants', () => {
+    it('a read carries no cross-origin grant', async () => {
       const res = await invokeRoute('/api/stats')
-      expect(res.headers['access-control-allow-origin']).toBe('*')
+      expect(res.status).toBe(200)
+      expect(res.headers['access-control-allow-origin']).toBeUndefined()
     })
 
-    it('handles OPTIONS preflight', async () => {
+    it('an admitted OPTIONS gets the router 404 with no grant', async () => {
       const res = await invokeRoute('/api/runs', { method: 'OPTIONS' })
-      expect(res.status).toBe(204)
-      expect(res.headers['access-control-allow-origin']).toBe('*')
-      expect(res.headers['access-control-allow-methods']).toContain('GET')
+      expect(res.status).toBe(404)
+      expect(JSON.parse(res.body)).toEqual({ error: 'Not found' })
+      expect(res.headers['access-control-allow-origin']).toBeUndefined()
+      expect(res.headers['access-control-allow-methods']).toBeUndefined()
     })
   })
 

@@ -1,27 +1,4 @@
-// THE ELEVEN CAUSE LABELS, HELD EQUAL ACROSS TWO DOORS (Phase 407 plan 11 · TRST-01 / TRST-02,
-// D-15 / D-18; widened by 423 D-22).
-//
-// WHY THIS CELL EXISTS AT ALL. The retrieval rung is printed by two surfaces that share no module:
-// `agent-qa doctor`'s three retrieval rows (407-08, `cli/src/commands/doctor-knowledge-checks.ts`)
-// and the run header's degradation banner (407-10, `dashboard-ui/src/lib/knowledge-view.ts`).
-// `packages/cli` cannot import a React package's lib — dashboard-ui ships a built app bundle, not
-// a library entry, and every package pins `rootDir` to its own `src` so a cross-package relative
-// import is a `tsc --noEmit` error. So the eight labels are spelled TWICE by necessity, and the
-// only thing that can stop them drifting is a cell that reads both and refuses to let them differ.
-// One wording, two doors: a label edited on either side reds HERE, naming the reason it moved.
-//
-// HOW THE DASHBOARD'S TABLE IS REACHED, AND WHY IT IS TEXT. `@vostride/agent-qa-dashboard-ui`
-// declares no `exports`/`main` — its `dist` is a Vite app, not an importable module — so there is
-// no `import()` of a built lib entry to prefer over this. The table is therefore read as SOURCE
-// TEXT and its eight `'{key}': '{label}'` pairs extracted, on `adjudications.test.ts`'s precedent
-// for reading a sibling package's source from `REPO_ROOT`. That is stated rather than implied
-// because a future reader should not have to re-derive why an import was not used.
-//
-// THE FOURTH CELL IS A PROPERTY, NOT AN EXAMPLE. It folds EVERY index face against EVERY embedder
-// outcome against both shipped profiles, drives the real `createKnowledgeChecks` with injected
-// read-only probes, and requires every retrieval `warn` a degraded host produces to be spelled out of the
-// table. A cell that checked one host's row would pass while seven of the eight labels were
-// unreachable prose.
+// Doctor and the dashboard banner both spell the labels, so this reads both and refuses drift.
 
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { readFileSync } from 'node:fs'
@@ -93,13 +70,7 @@ const RECORDED_REASONS = [...RETRIEVAL_RUNG_REASONS].sort()
 
 // ── The property cell's host matrix ──────────────────────────────────────────────────────────────
 
-/**
- * Every index face the classifier can answer with.
- *
- * Both `filePresent` arms are present because they are two different doctor rows: a file that is
- * absent is a `warn` naming the scanning cause, and a file that is present and will not open is
- * the errored subsystem D-19 reserves `fail` for.
- */
+// Both `filePresent` arms, because an absent file warns and an unopenable one fails.
 const FACES: readonly { readonly label: string; readonly face: IndexFace }[] = [
   { label: 'index', face: { source: 'index' } },
   {
@@ -171,7 +142,7 @@ const roots: string[] = []
 
 /** A project whose config names a knowledge dir that is really on disk. */
 function probedProject(): { config: Record<string, unknown>; configPath: string } {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-407-11-rung-parity-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-rung-parity-'))
   roots.push(root)
   mkdirSync(join(root, 'agent-qa-knowledge'), { recursive: true })
   return {
@@ -186,7 +157,7 @@ interface RowOutcome {
   readonly message: string
 }
 
-/** Run doctor's four knowledge rows against ONE synthetic host. */
+/** Run doctor's three knowledge rows against ONE synthetic host. */
 async function doctorRows(
   face: IndexFace,
   embedder: AcquireEmbedderOutcome,
@@ -214,7 +185,7 @@ async function doctorRows(
   return rows
 }
 
-describe('the retrieval-rung cause labels are one wording on two doors (407-11)', () => {
+describe('the retrieval-rung cause labels are one wording on two doors', () => {
   afterAll(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
@@ -270,23 +241,17 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
           const where = `${faceLabel} × ${embedderLabel} × ${profileLabel}`
           const rows = await doctorRows(face, outcome, profile)
           expect(rows.map(row => row.name)).toEqual([
-            'Knowledge store', 'Embedder', 'Retrieval rung', 'Learning mode',
+            'Knowledge store', 'Embedder', 'Retrieval rung',
           ])
-          // Learning mode describes promotion capability, independent of the retrieval fold.
-          const learning = rows[3]!
-          expect(learning.status).toBe('warn')
-          expect(learning.message).toMatch(/^deterministic-verdict-floor — no eval root at /)
 
-          for (const row of rows.slice(0, 3)) {
+          for (const row of rows) {
             if (row.status !== 'warn') continue
             if (![...labels].some((candidate) => row.message.includes(candidate))) {
               unspelled.push(`${where} → ${row.name}: ${JSON.stringify(row.message)}`)
             }
           }
 
-          // THE STRONG CLAIM, on the one row whose whole subject is the rung. D-19 forbids it from
-          // ever being a `fail`, so a degraded host's rung row is a `warn` reading exactly
-          // `{rung} — {label}` — the same two words the banner puts in its own sentence.
+          // The rung row never fails; a degraded host's row warns with exactly `{rung} — {label}`.
           const fold = foldRetrievalRung(face, outcome, profile)
           const rungRow = rows.find((row) => row.name === 'Retrieval rung')
           const expected = fold.rung === 'memidex'
@@ -300,7 +265,7 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
           if (fold.rung !== 'memidex' && rungRow?.status !== 'warn') {
             rungRowDrift.push(
               `${where} → a degraded rung must never be a \`${rungRow?.status ?? '(no row)'}\`; `
-              + 'D-19 reserves `fail` for an ERRORED subsystem, and a rung reached by design would '
+              + 'the rung table reserves `fail` for an ERRORED subsystem, and a rung reached by design would '
               + 'red the CI gate of every deliberately-degraded install.',
             )
           }
@@ -319,9 +284,6 @@ describe('the retrieval-rung cause labels are one wording on two doors (407-11)'
     ).toEqual([])
   }, 30_000)
 })
-
-// ── 423 D-22 / D-23: distinct index causes, one historical word, and doctor as current health ──
-// Plan 423-23 owns the mutation script; RUNG-LABEL-PARITY is its required named RED cell.
 
 /** Hand-spelled, never derived from `RETRIEVAL_RUNG_REASONS`. */
 const EXPECTED_REASONS = [
@@ -423,11 +385,10 @@ describe('DOCTOR-CURRENT-SEPARATE', () => {
     }
   })
 
-  it('adds no current-health read op; current health stays on agent-qa doctor (D-23)', () => {
+  it('adds no current-health read op; current health stays on agent-qa doctor', () => {
     const registry = createFunctionRegistry({
       deps: {} as unknown as FunctionDeps,
-      // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` registry option, and the listing
-      // caller carries no `grantedScopes`/`safeMode`; the registry reads neither (432-20).
+      // No `resolveExecutionContext`, `grantedScopes` or `safeMode`; the registry reads none.
     })
     const ids = registry.list({
       surface: 'test',

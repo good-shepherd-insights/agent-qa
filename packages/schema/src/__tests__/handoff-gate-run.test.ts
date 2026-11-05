@@ -1,10 +1,4 @@
-// Phase 384 plan 02, D-10: the `gateRun` carrier, minted on CompletedRunHandoff v4.
-//
-// Pins the load-boundary facts the carrier introduces: the current version, and the
-// present-implies-valid shape clause that admits only the literal marker. `gateRun` is a SECOND,
-// distinct axis beside `excludedFromOutcomes` — neither implies the other.
-//
-// Schema module-discipline law: extension-less relative import specifiers, no node builtins.
+// `gateRun` is a separate axis from `excludedFromOutcomes`; neither implies the other.
 import { describe, expect, it } from 'vitest'
 
 import { guardCompletedRunHandoff, HANDOFF_MIGRATIONS } from '../handoff/load-completed-run-handoff'
@@ -32,7 +26,7 @@ function makeHandoff(): CompletedRunHandoff {
   }
 }
 
-describe('CompletedRunHandoff gateRun carrier, minted at v4 (D-10)', () => {
+describe('CompletedRunHandoff gateRun carrier, minted at v4', () => {
   it('pins the current handoff schema version at 2', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
@@ -57,7 +51,7 @@ describe('CompletedRunHandoff gateRun carrier, minted at v4 (D-10)', () => {
     expect(() => guardCompletedRunHandoff(withString)).toThrow()
   })
 
-  it('keeps gateRun and excludedFromOutcomes independent axes (Pitfall 5)', () => {
+  it('keeps gateRun and excludedFromOutcomes independent axes', () => {
     const gateOnly = guardCompletedRunHandoff({ ...makeHandoff(), gateRun: true })
     const excludedOnly = guardCompletedRunHandoff({
       ...makeHandoff(),

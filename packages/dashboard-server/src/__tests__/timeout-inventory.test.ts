@@ -84,11 +84,6 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     rationale: 'Allows slow local prompt processing during connectivity checks without affecting real test execution.',
     allowed: true,
   },
-  // 2026-08-27 (405-07, D-19): the `15_000` SSE keepalive interval in `routes.ts` is gone with the
-  // legacy live-event route it kept open. The surviving stream — `GET /api/run-stream/:runId` —
-  // heartbeats from `run-service-routes.ts`, which carries its own inventoried literal; this row
-  // named a file that no longer holds one, and an inventory entry with no site is a claim nothing
-  // measures.
   {
     id: 'dashboard-retired-openai-oauth-session-retention',
     file: 'packages/dashboard-server/src/server/routes.ts',
@@ -134,36 +129,25 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     allowed: true,
   },
   {
-    id: 'cli-suite-navigation-timeout-fallback',
-    file: 'packages/cli/src/commands/run.ts',
-    literal: '30000',
-    contextIncludes: 'navigation:',
-    owner: 'CLI suite runner',
-    scope: 'suite navigation timeout fallback',
-    lifecycleAffecting: true,
-    rationale: 'Product fallback when neither suite nor config specifies a navigation timeout.',
-    allowed: true,
-  },
-  {
-    id: 'cli-session04-cancel-grace-default',
+    id: 'cli-cancel-grace-default',
     file: 'packages/cli/src/commands/run.ts',
     literal: '3000',
     contextIncludes: 'AGENT_QA_CANCEL_GRACE_MS',
     owner: 'CLI run shutdown',
-    scope: 'SESSION-04 force-exit backstop grace window',
+    scope: 'force-exit backstop grace window',
     lifecycleAffecting: true,
-    rationale: 'Default grace before the un-settleable-run force-exit backstop fires; overridable via AGENT_QA_CANCEL_GRACE_MS. Primary cancel guarantee is the shell settling done cleanly (Plan 361-13 Task 2); this is a hard safety net so a live Ctrl+C can never hang the CLI.',
+    rationale: 'Default grace before the un-settleable-run force-exit backstop fires; overridable via AGENT_QA_CANCEL_GRACE_MS. Primary cancel guarantee is the shell settling done cleanly; this is a hard safety net so a live Ctrl+C can never hang the CLI.',
     allowed: true,
   },
   {
-    id: 'cli-session04-cancel-force-exit-code',
+    id: 'cli-cancel-force-exit-code',
     file: 'packages/cli/src/commands/run.ts',
     literal: '130',
     contextIncludes: 'forceExit(130)',
     owner: 'CLI run shutdown',
-    scope: 'SESSION-04 force-exit backstop exit code',
+    scope: 'force-exit backstop exit code',
     lifecycleAffecting: true,
-    rationale: 'The SIGINT (130) exit code the bounded grace timer forces so a genuinely un-settleable run still exits; armed in both handleShutdown sites and cleared after session.done. Since 444-08 the timer exits through forceExit, which first closes this process\'s own still-running row.',
+    rationale: 'The SIGINT (130) exit code the bounded grace timer forces so a genuinely un-settleable run still exits; armed in both handleShutdown sites and cleared after session.done. The timer exits through forceExit, which first closes this process\'s own still-running row.',
     allowed: true,
   },
   {
@@ -174,7 +158,7 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     owner: 'dashboard execution',
     scope: 'process watchdog',
     lifecycleAffecting: true,
-    rationale: 'Retired risk: hidden dashboard fallback killed local LLM runs before configured test timeouts. Re-homed onto the successor backend at 401-07 when test-runner.ts was deleted — the entry follows the seam, not the file name.',
+    rationale: 'Retired risk: hidden dashboard fallback killed local LLM runs before configured test timeouts. The entry follows the backend seam, not a file name.',
     allowed: false,
   },
   {
@@ -207,7 +191,7 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     owner: 'dashboard routes',
     scope: 'persisted-row execution timeout positive guard',
     lifecycleAffecting: true,
-    rationale: 'G-401-18-CR01: `in-process-backend.ts` reads `opts.timeout ?? defaultTimeout` and '
+    rationale: '`in-process-backend.ts` reads `opts.timeout ?? defaultTimeout` and '
       + 'validates after, so a non-positive value DISARMS the default reclamation timer instead of '
       + 'falling back to it.',
     allowed: true,
@@ -220,22 +204,11 @@ const timeoutInventory: TimeoutInventoryEntry[] = [
     owner: 'dashboard routes',
     scope: 'persisted-row execution timeout ceiling',
     lifecycleAffecting: true,
-    rationale: 'G-401-18-CR01: a persisted `metadata.timeout` beyond a day is a reclamation timer '
+    rationale: 'a persisted `metadata.timeout` beyond a day is a reclamation timer '
       + 'that will never fire; over the ceiling the seam falls back to the backend default rather '
       + 'than arming it.',
     allowed: true,
   },
-  // Phase 401 plan 07 (D-01/D-12) — the four `test-runner.ts` entries that inventoried a CHILD
-  // PROCESS are gone with the child: the heartbeat poll cadence, the stale-silence threshold, the
-  // one-millisecond buffer that kept the threshold above the cadence, and the SIGTERM-to-SIGKILL
-  // grace. Liveness comes off the bus now and a cancel is `RunSession.cancel()`, so there is no
-  // silence to detect and no signal to escalate. The two literals with successors — the disabled
-  // sentinel and the buffer retention — are re-homed above.
-  // Phase 353-07 (D-02) — its step-deadline `: 0` disabled sentinel and the
-  // `timeout: 0` failure-artifact placeholder moved with the loop into
-  // packages/runner/src/loop/index.ts. The runner package is outside this
-  // dashboard-server scanner's curated core-execution scope, so those sentinels are
-  // no longer inventoried here.
 ]
 
 const scannedFiles = [...new Set(timeoutInventory.map(entry => entry.file))]
@@ -246,14 +219,7 @@ function normalizeLiteral(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
-/**
- * Blank out `//` line comments and `/* … *\/` block comments, replacing every comment
- * character with a space so byte offsets AND line numbers stay aligned with the original.
- * Timeout literals are executable config, never comment prose — decision-reference tags
- * (`D-03`, `D-14`) and exit-code documentation (`healed=0`, `cancelled=130`) live only in
- * comments, so numeric extraction runs over the code-only projection while context matching
- * still uses the raw lines.
- */
+// Comments are blanked to spaces so offsets and line numbers match; context still reads raw lines.
 function blankComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*/g, match =>
     match.replace(/[^\n]/g, ' '),

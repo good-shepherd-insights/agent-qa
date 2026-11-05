@@ -118,10 +118,6 @@ vi.mock('@/hooks/use-page-title', () => ({
   },
 }))
 
-vi.mock('@/hooks/use-run-config', () => ({
-  useRunConfig: () => ({ defaultRunMode: 'cloud' }),
-}))
-
 vi.mock('@/hooks/use-keyboard-shortcuts', () => ({
   useKeyboardShortcuts: () => {},
 }))
@@ -213,7 +209,7 @@ vi.mock('@/components/suite-navbar', () => ({
     isLiveActionDisabled?: boolean
     liveSessionNumber?: number | null
     runDisabled?: boolean
-    onRun?: (local: boolean) => void
+    onRun?: () => void
   }) => (
     <div data-testid="suite-navbar">
       {onLiveConnect && !hasLiveSession && (
@@ -238,7 +234,7 @@ vi.mock('@/components/suite-navbar', () => ({
         type="button"
         data-testid="run-suite"
         disabled={!!runDisabled}
-        onClick={() => onRun?.(false)}
+        onClick={() => onRun?.()}
       >
         Run Suite
       </button>
@@ -493,7 +489,7 @@ function getButtonByText(scope: ParentNode, text: string): HTMLButtonElement {
   return button
 }
 
-describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
+describe('SuiteEditorPage live hook safeguards', () => {
   it('connects a live session from the SuiteNavbar and passes entity={type:suite, id:suiteId}', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
@@ -514,7 +510,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(rootElement.textContent).toContain('Live session current')
   })
 
-  it('shows the stale banner when setup hooks diverge from the connected snapshot (D-22)', async () => {
+  it('shows the stale banner when setup hooks diverge from the connected snapshot', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))
@@ -524,7 +520,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(terminateSessionMock).not.toHaveBeenCalled()
   })
 
-  it('shows the stale banner when teardown hooks diverge (D-22)', async () => {
+  it('shows the stale banner when teardown hooks diverge', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))
@@ -533,7 +529,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(rootElement.querySelector('[data-testid="stale-banner"]')).not.toBeNull()
   })
 
-  it('does NOT show the stale banner when the test list changes during an active session (D-13 playground)', async () => {
+  it('does NOT show the stale banner when the test list changes during an active session', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))
@@ -560,13 +556,13 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     })
   })
 
-  it('allows manual setup hook re-run during an active session (D-23 divergence from test-editor)', async () => {
+  it('allows a manual setup hook re-run during an active session, unlike the test editor', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))
     await click(getButtonByText(rootElement, 'Run Setup Hook'))
 
-    // D-23: the suite-editor must NOT surface the test-editor's rejection copy
+    // The suite editor must not surface the test editor's rejection copy.
     const errorCalls = toastErrorMock.mock.calls.map((c) => String(c[0]))
     expect(
       errorCalls.some((msg) => msg.includes('Setup hooks only run when a live session starts')),
@@ -574,7 +570,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(executeHookByIdMock).toHaveBeenCalledWith('setup', SETUP_ALPHA_ID)
   })
 
-  it('allows manual teardown hook re-run during an active session (D-24)', async () => {
+  it('allows manual teardown hook re-run during an active session', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))
@@ -583,7 +579,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(executeHookByIdMock).toHaveBeenCalledWith('teardown', TEARDOWN_ALPHA_ID)
   })
 
-  it('disables Run Suite while a live session is active (D-16)', async () => {
+  it('disables Run Suite while a live session is active', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     const runButton = rootElement.querySelector('[data-testid="run-suite"]') as HTMLButtonElement | null
@@ -596,7 +592,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(runButtonAfter?.disabled).toBe(true)
   })
 
-  it('renders Session #N in the SuiteNavbar when connected (D-31)', async () => {
+  it('renders Session #N in the SuiteNavbar when connected', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))
@@ -606,7 +602,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(badge?.textContent).toBe('Session #1')
   })
 
-  it('renders Live #N — suiteName as the document title during a live session (D-31 Pitfall 5)', async () => {
+  it('renders Live #N — suiteName as the document title during a live session', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     expect(document.title).not.toMatch(/^Live #/)
@@ -616,7 +612,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     expect(document.title).toBe('Live #1 — Live Suite')
   })
 
-  it('auto-launches a live session when the URL contains ?live=1 (D-17)', async () => {
+  it('auto-launches a live session when the URL contains ?live=1', async () => {
     useSearchParamsMock.mockReturnValue([new URLSearchParams('live=1'), vi.fn()])
 
     await render(<SuiteEditorPage />)
@@ -627,7 +623,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     })
   })
 
-  it('does NOT render the Connect button in create mode (D-19 gated at prereq layer)', async () => {
+  it('does NOT render the Connect button in create mode, where its prerequisites are missing', async () => {
     useParamsMock.mockReturnValue({ 'suite-id': undefined })
     fetchSuiteFileMock.mockResolvedValue({ path: '', content: '' })
 
@@ -642,7 +638,7 @@ describe('SuiteEditorPage live hook safeguards (Wave 0)', () => {
     }
   })
 
-  it('ends the live session, clears the session number, and restores the default title (D-25/D-31)', async () => {
+  it('ends the live session, clears the session number, and restores the default title', async () => {
     const rootElement = await render(<SuiteEditorPage />)
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))

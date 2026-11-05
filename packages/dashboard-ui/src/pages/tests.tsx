@@ -4,11 +4,16 @@ import { routes } from "@/lib/routes"
 import { toast } from "sonner"
 import {
   type ColumnDef,
+  columnVisibilityFeature,
+  createPaginatedRowModel,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
+  rowPaginationFeature,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_text,
+  tableFeatures,
+  useTable,
 } from "@tanstack/react-table"
 import { useTestsSearchParams } from "@/hooks/use-tests-search-params"
 import { Plus, FileText, ArrowUpDown, Keyboard, X } from "lucide-react"
@@ -45,13 +50,12 @@ import { TestRunOptionsPopover } from "@/components/test-run-options-popover"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
 import { useSelectionQueue } from "@/hooks/use-selection-queue"
-import { useRunConfig } from "@/hooks/use-run-config"
 import {
   getSharedTestsSuitesColumnWidth,
   SHARED_TESTS_SUITES_COLUMN_IDS,
 } from "@/pages/tests-suites-table-widths"
 import { ShortcutLegend } from "@/components/shortcut-hints"
-import { deleteTestFile, deniedRunSentences, fetchTestFiles, fetchTestSummaries, purgeCache, triggerRun, type TestFileInfo, type TestSummary } from "@/lib/api"
+import { deleteTestFile, fetchTestFiles, fetchTestSummaries, purgeCache, triggerRun, type TestFileInfo, type TestSummary } from "@/lib/api"
 import { memberStatus, runStatusClass } from "@/lib/status"
 import { cn, formatDate } from "@/lib/utils"
 
@@ -61,8 +65,7 @@ interface TestRow {
   testId: string | null
   targetName: string | null
   platform: string | null
-  // 2026-10-18 (444-31, D-64): false while the batch read has not named this file; its rate and
-  // last-run cells stay empty and no status filter lists it.
+  // False until the batch read names this file; its cells stay empty and no status filter lists it.
   historyKnown: boolean
   lastRunStatus: string | null
   lastRun: TestSummary["lastRun"]
@@ -123,7 +126,16 @@ function getRowClassName({
   )
 }
 
-const columns: ColumnDef<TestRow>[] = [
+const testsTableFeatures = tableFeatures({
+  columnVisibilityFeature,
+  rowSortingFeature,
+  rowPaginationFeature,
+  sortedRowModel: createSortedRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text },
+})
+
+const columns: ColumnDef<typeof testsTableFeatures, TestRow>[] = [
   {
     accessorKey: "name",
     header: ({ column }) => (
@@ -146,12 +158,6 @@ const columns: ColumnDef<TestRow>[] = [
         </span>
       </div>
     ),
-    filterFn: (row, _columnId, filterValue: string) => {
-      const name = (row.getValue("name") as string).toLowerCase()
-      const path = row.original.path.toLowerCase()
-      const query = filterValue.toLowerCase()
-      return name.includes(query) || path.includes(query)
-    },
   },
   {
     accessorKey: "targetName",
@@ -259,7 +265,7 @@ const columns: ColumnDef<TestRow>[] = [
         </Link>
       )
     },
-    sortingFn: (rowA, rowB) => getRunTimestamp(rowA.original.lastRun).localeCompare(getRunTimestamp(rowB.original.lastRun)),
+    sortFn: (rowA, rowB) => getRunTimestamp(rowA.original.lastRun).localeCompare(getRunTimestamp(rowB.original.lastRun)),
   },
 ]
 
@@ -273,7 +279,6 @@ export default function TestsPage() {
   const [runOptionsOpen, setRunOptionsOpen] = useState(false)
   const [useCache, setUseCache] = useState(true)
   const navigate = useNavigate()
-  const { hasFarm, isLoading: isRunConfigLoading } = useRunConfig()
 
   useEffect(() => {
     let cancelled = false
@@ -324,7 +329,7 @@ export default function TestsPage() {
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const rowRefs = useRef<Array<HTMLTableRowElement | null>>([])
 
-  // 2026-10-18 (444-31, D-64): every per-row figure is the server's, over the row's viewer reference.
+  // Every per-row figure is the server's, over the row's viewer reference.
   const data: TestRow[] = useMemo(() => files.map((file) => {
     const summary = summaries?.get(normalizeTestPath(file.path))
     const lastRun = summary?.lastRun ?? null
@@ -383,7 +388,7 @@ export default function TestsPage() {
     [data, target, targetOptions],
   )
 
-  const selectColumn: ColumnDef<TestRow> = {
+  const selectColumn: ColumnDef<typeof testsTableFeatures, TestRow> = {
     id: "select",
     header: ({ table: t }) => (
       <div className="flex items-center justify-center">
@@ -406,7 +411,6 @@ export default function TestsPage() {
       />
     ),
     enableSorting: false,
-    size: 48,
   }
 
   const selectedPaths = selectionQueue.selectedIds
@@ -418,22 +422,20 @@ export default function TestsPage() {
     setUseCache(true)
   }, [selectionQueue])
 
-  const handleRunDestination = useCallback(async (local: boolean) => {
+  const handleRun = useCallback(async () => {
     if (selectedPaths.length === 0) return
     setBatchLoading(true)
     try {
       const results = await Promise.allSettled(
         selectedPaths.map((path) => triggerRun({
           file: path,
-          local,
           noCache: !useCache,
         })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
       const failed = results.length - succeeded
       if (failed > 0) {
-        const denied = deniedRunSentences(results)
-        toast.error(`${succeeded} runs queued, ${failed} failed${denied === undefined ? "" : `. ${denied}`}`)
+        toast.error(`${succeeded} runs queued, ${failed} failed`)
       } else {
         toast.success(`${succeeded} runs queued`)
       }
@@ -443,27 +445,17 @@ export default function TestsPage() {
     }
   }, [selectedPaths, useCache])
 
-  const handleBatchPurgeCache = useCallback(async () => {
-    if (selectedPaths.length === 0) return
+  const handlePurgeAllCachedPlans = useCallback(async () => {
     setBatchLoading(true)
     try {
-      const results = await Promise.allSettled(
-        selectedPaths.map((path) => purgeCache({ file: path })),
-      )
-      const succeeded = results.filter((result) => result.status === "fulfilled").length
-      const totalPurged = results
-        .filter((result): result is PromiseFulfilledResult<{ purged: number }> => result.status === "fulfilled")
-        .reduce((sum, result) => sum + result.value.purged, 0)
-      const failed = results.length - succeeded
-      if (failed > 0) {
-        toast.error(`Purged ${totalPurged} plans from ${succeeded} tests, ${failed} failed`)
-      } else {
-        toast.success(`Purged ${totalPurged} cached plan${totalPurged !== 1 ? "s" : ""}`)
-      }
+      const { purged } = await purgeCache()
+      toast.success(`Purged ${purged} cached plan${purged !== 1 ? "s" : ""}`)
+    } catch (err) {
+      toast.error(`Cache purge failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedPaths])
+  }, [])
 
   const handleBatchDelete = useCallback(async () => {
     if (selectedTests.length === 0) return
@@ -499,12 +491,10 @@ export default function TestsPage() {
     }
   }, [selectedTests, selectionQueue])
 
-  const table = useReactTable({
+  const table = useTable({
+    features: testsTableFeatures,
     data: filteredData,
     columns: [selectColumn, ...columns],
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     onSortingChange,
     onPaginationChange,
     getRowId: (row) => row.path,
@@ -789,21 +779,19 @@ export default function TestsPage() {
                 selectedCount={selectionQueue.selectedCount}
                 hiddenCount={hiddenCount}
                 useCache={useCache}
-                browserStackAvailable={!isRunConfigLoading && hasFarm}
                 open={runOptionsOpen}
                 onOpenChange={setRunOptionsOpen}
                 onUseCacheChange={setUseCache}
-                onRunLocal={() => handleRunDestination(true)}
-                onRunBrowserStack={() => handleRunDestination(false)}
+                onRun={handleRun}
                 disabled={batchLoading}
               />
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleBatchPurgeCache}
+                onClick={handlePurgeAllCachedPlans}
                 disabled={batchLoading}
               >
-                Purge cache
+                Purge all cached plans
               </Button>
             </div>
           )}

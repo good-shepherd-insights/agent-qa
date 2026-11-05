@@ -1,8 +1,4 @@
-// Q4 replay mapping · Pitfall 5 · Pitfall 9, strict since 438 D-10/D-11. Pins the cache replay
-// path: a stored role + exact name replays onto the one current element that has it at whatever
-// ref it now carries; a drifted name or two survivors invalidate → replan (never a pick);
-// multi-ref (drag) replays re-resolve BOTH per-field refs; coordinate actions are
-// non-replayable; and every grounded sub-action carries the §A8 grounding block.
+// A stored role and exact name replay onto the one current element that has them, at any ref.
 import { describe, it, expect, vi } from 'vitest'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { ElementInfo, ScreenState } from '@vostride/agent-qa-schema'
@@ -48,12 +44,12 @@ function cacheOf(value: CachedPlanValue | null, spy?: { invalidate: () => void }
   }
 }
 
-describe('replay re-ground mapping (Q4)', () => {
+describe('replay re-ground mapping', () => {
   it('exact replay: a resolving locator replays with NO planner call (preserved contract)', async () => {
     const cached: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', name: 'Log in' }],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const plannerSpy = vi.fn()
     const result = await executeStep(
@@ -66,12 +62,11 @@ describe('replay re-ground mapping (Q4)', () => {
   })
 
   it('stale ref + unique substring match ⇒ re-ground replay with the patched fresh ref (no replan)', async () => {
-    // 2026-10-09 (438-08): replay has no substring rung (D-10). The stored exact name replays
-    // onto the element that now carries it at a new ref; a drifted name does not replay.
+    // Replay has no substring rung: the exact stored name replays onto its element at a new ref.
     const cached = (): CachedPlanValue => ({
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', name: 'Log in' }],
-      verificationOutcome: 'passed',
+      completesStep: true,
     })
     const moved = screenWith([el('e7', 'button', 'Log in')])
     const plannerSpy = vi.fn()
@@ -101,9 +96,9 @@ describe('replay re-ground mapping (Q4)', () => {
     const fresh = screenWith([el('e1', 'button', 'Add'), el('e2', 'button', 'Add')])
     const ambiguous: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
-      // Two survivors of role + exact name ⇒ not-unique ⇒ a miss on the cache path (D-10).
+      // Two survivors of role + exact name ⇒ not-unique ⇒ a miss on the cache path.
       groundedLocator: [{ role: 'button', name: 'Add' } satisfies GroundedLocator],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const invalidateSpy = { invalidate: vi.fn() }
     const plannerSpy = vi.fn().mockResolvedValue({ plan: makeActionPlan({ action: { type: 'click', ref: 'e1' } }) })
@@ -117,7 +112,7 @@ describe('replay re-ground mapping (Q4)', () => {
     expect(plannerSpy).toHaveBeenCalledTimes(1) // ambiguity never first-picks — it replans
   })
 
-  it('a cached drag replays with BOTH fromRef and toRef re-resolved from per-field locators (Pitfall 5a)', async () => {
+  it('a cached drag replays with BOTH fromRef and toRef re-resolved from per-field locators', async () => {
     const fresh = screenWith([el('e5', 'listitem', 'Row one'), el('e6', 'listitem', 'Row two')])
     const cachedDrag: CachedPlanValue = {
       plannedActions: [{ type: 'drag', fromRef: 'stale-from', toRef: 'stale-to' } as unknown as CacheablePlannedAction],
@@ -125,7 +120,7 @@ describe('replay re-ground mapping (Q4)', () => {
         { role: 'listitem', name: 'Row one' },
         { role: 'listitem', name: 'Row two' },
       ],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const plannerSpy = vi.fn()
     const result = await executeStep(
@@ -143,7 +138,7 @@ describe('replay re-ground mapping (Q4)', () => {
     const cachedCoord: CachedPlanValue = {
       plannedActions: [{ type: 'tapCoordinate', coordSpace: 'viewport' } as unknown as CacheablePlannedAction],
       groundedLocator: [],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const invalidateSpy = { invalidate: vi.fn() }
     const plannerSpy = vi.fn().mockResolvedValue({ plan: makeActionPlan({ action: { type: 'tapCoordinate', x: 10, y: 20, coordSpace: 'viewport' } }) })
@@ -157,7 +152,7 @@ describe('replay re-ground mapping (Q4)', () => {
     expect(plannerSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('every grounded sub-action recorded during a live plan carries the §A8 grounding block (Pitfall 9)', async () => {
+  it('every grounded sub-action recorded during a live plan carries the §A8 grounding block', async () => {
     const result = await executeStep(
       'Click Log in',
       ports({ adapter: makeAdapter(), planner: makePlanner(), verifier: makeVerifier() }),

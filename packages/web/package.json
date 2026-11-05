@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-web",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "private": false,
   "description": "agent-qa web adapter for browser automation and accessibility checks.",
   "keywords": [
@@ -30,9 +30,14 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [
@@ -41,25 +46,25 @@
     "NOTICE.md"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "smoke:dashboard": "node ./scripts/dashboard-smoke.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@axe-core/playwright": "4.11.3",
-    "@vostride/agent-qa-core": "workspace:*",
+    "@axe-core/playwright": "4.14.0",
     "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
-    "playwright-core": "1.61.0"
+    "playwright-core": "1.64.1"
   },
   "devDependencies": {
-    "@types/node": "~24.12.2",
+    "@types/node": "~24.19.2",
     "@vostride/agent-qa-arch": "workspace:*",
-    "tsup": "~8.5.1",
-    "typescript": "~6.0.3",
-    "vitest": "~4.1.5"
+    "@vostride/agent-qa-core": "workspace:*",
+    "tsdown": "~0.23.4",
+    "typescript": "~7.0.2",
+    "vitest": "~5.0.5"
   }
 }

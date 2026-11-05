@@ -1,10 +1,4 @@
-// THE FIELD HELPERS (429-17 Task 1 · research A1, Pitfall 1 · 424 note 27).
-//
-// Five schema blocks require every sibling (plus use.browser.viewport, whose width and height are
-// both required once it exists, and services.accessibility, whose enabled is). A leaf-only write
-// into one of them while it is absent would always fail validation, so the write carries the
-// required siblings at the defaults the fields show as placeholders, and nothing optional. Each
-// added sibling is set-if-absent (429-45): the server writes it only if the file lacks it.
+// A leaf write into an absent all-required block carries its siblings, set-if-absent.
 
 import type { ConfigChange } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -28,7 +22,7 @@ const SCHEMA_REQUIRED_KEYS: Record<string, readonly string[]> = {
   'use.logCapture': ['console', 'network'],
   'use.browser': ['name', 'headless'],
   'use.browser.viewport': ['width', 'height'],
-  'services.cache': ['dir', 'ttl'],
+  'services.cache': ['dir'],
   'services.accessibility': ['enabled'],
 }
 
@@ -53,18 +47,18 @@ function added(changes: readonly ConfigChange[], result: readonly ConfigChange[]
 }
 
 describe('completeRequiredSiblings', () => {
-  it('SIBLING-COMPLETION: a set into an absent use.timeout carries test and navigation at their shown defaults', () => {
+  it('a set into an absent use.timeout carries test and navigation at their shown defaults', () => {
     const changes = [set(['use', 'timeout', 'step'], '45s')]
     const result = completeRequiredSiblings(changes, { use: { browser: { name: 'chromium', headless: true } } })
 
     expect(result.slice(0, 1)).toEqual(changes)
     expect(added(changes, result)).toEqual([
       ifAbsent(['use', 'timeout', 'test'], '10m'),
-      ifAbsent(['use', 'timeout', 'navigation'], '10s'),
+      ifAbsent(['use', 'timeout', 'navigation'], '2m'),
     ])
   })
 
-  it('SIBLING-COMPLETION: a present block, an unset, or a sibling already in the write adds nothing more', () => {
+  it('a present block, an unset, or a sibling already in the write adds nothing more', () => {
     const present = [set(['use', 'timeout', 'step'], '45s')]
     expect(completeRequiredSiblings(present, { use: { timeout: { step: '30s' } } })).toEqual(present)
 
@@ -73,7 +67,7 @@ describe('completeRequiredSiblings', () => {
 
     const both = [set(['use', 'timeout', 'step'], '45s'), set(['use', 'timeout', 'test'], '20m')]
     expect(added(both, completeRequiredSiblings(both, {}))).toEqual([
-      ifAbsent(['use', 'timeout', 'navigation'], '10s'),
+      ifAbsent(['use', 'timeout', 'navigation'], '2m'),
     ])
 
     const outside = [set(['workspace', 'envFile'], '.env')]
@@ -113,7 +107,7 @@ describe('completeRequiredSiblings', () => {
   })
 })
 
-describe('completeRequiredSiblings never overwrites (429-45 · CR-01)', () => {
+describe('completeRequiredSiblings never overwrites', () => {
   // The verifier's reproduction: the page's snapshot lacks use.planner while the file holds
   // { maxActions: 99, previousStepCount: 77 }. Only the server sees the file at merge time.
   it('SIBLING-COMPLETION-NEVER-OVERWRITES: every added sibling is set-if-absent, so the server keeps a value the snapshot missed', () => {

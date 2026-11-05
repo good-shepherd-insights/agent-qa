@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -114,7 +115,7 @@ function validateWorkspaceRanges(record, errors) {
     if (!block || typeof block !== 'object') continue
     for (const [name, version] of Object.entries(block)) {
       if (name.startsWith(scopedPrefix)) {
-        assert(version === 'workspace:*', `${label(record)} ${blockName}.${name} must remain workspace:* in Phase 256`, errors)
+        assert(version === 'workspace:*', `${label(record)} ${blockName}.${name} must remain workspace:*`, errors)
       }
     }
   }
@@ -155,6 +156,9 @@ function validatePublicPackage(record, allVersions, errors, options = { checkFil
   if (record.pkg.name === entryPackageName) {
     assert(record.pkg.bin?.['agent-qa'] === './dist/cli.js', 'agent-qa must keep bin.agent-qa pointing at ./dist/cli.js', errors)
     assert(record.pkg.files?.includes('skills'), 'agent-qa files must include skills', errors)
+    assert(record.pkg.keywords?.includes('pi-package'), 'agent-qa keywords must include pi-package for the Pi package gallery', errors)
+    assert(record.pkg.keywords?.includes('pi-skill'), 'agent-qa keywords must include pi-skill for the Pi gallery skill badge', errors)
+    assert(Array.isArray(record.pkg.pi?.skills) && record.pkg.pi.skills.includes('./skills'), 'agent-qa pi.skills must include ./skills', errors)
   } else {
     assert(typeof record.pkg.name === 'string' && record.pkg.name.startsWith(`${scopedPrefix}-`), `${name} must be scoped under @vostride/*`, errors)
   }
@@ -171,19 +175,27 @@ function validatePublicPackage(record, allVersions, errors, options = { checkFil
   validateWorkspaceRanges(record, errors)
 
   if (record.pkg.name !== entryPackageName && record.pkg.name !== '@vostride/agent-qa-dashboard-ui') {
-    assert(record.pkg.exports?.['.']?.types === './dist/index.d.ts', `${name} must export dist types`, errors)
-    assert(record.pkg.exports?.['.']?.import === './dist/index.js', `${name} must export dist ESM`, errors)
-    assert(record.pkg.exports?.['.']?.require === './dist/index.cjs', `${name} must export dist CJS`, errors)
+    assert(record.pkg.exports?.['.']?.import?.types === './dist/index.d.ts', `${name} must export dist ESM types`, errors)
+    assert(record.pkg.exports?.['.']?.import?.default === './dist/index.js', `${name} must export dist ESM`, errors)
+    assert(record.pkg.exports?.['.']?.require?.types === './dist/index.d.cts', `${name} must export dist CJS types`, errors)
+    assert(record.pkg.exports?.['.']?.require?.default === './dist/index.cjs', `${name} must export dist CJS`, errors)
   }
 
-  // 414 D-18: eval-local joined knowledge-local on a `./reader` subpath — the proposer's
-  // read-only door, walled off from the gate-side main entry by validate:arch. A per-package
-  // `if` is how a second package quietly ships an unguarded subpath, so the condition is a LIST.
-  const READER_SUBPATH_PACKAGES = ['@vostride/agent-qa-knowledge-local', '@vostride/agent-qa-eval-local']
+  // The packages that publish a `./reader` subpath beside their main entry.
+  const READER_SUBPATH_PACKAGES = ['@vostride/agent-qa-knowledge-local']
   if (READER_SUBPATH_PACKAGES.includes(record.pkg.name)) {
-    assert(record.pkg.exports?.['./reader']?.types === './dist/reader.d.ts', `${name} reader must export dist types`, errors)
-    assert(record.pkg.exports?.['./reader']?.import === './dist/reader.js', `${name} reader must export dist ESM`, errors)
-    assert(record.pkg.exports?.['./reader']?.require === './dist/reader.cjs', `${name} reader must export dist CJS`, errors)
+    assert(record.pkg.exports?.['./reader']?.import?.types === './dist/reader.d.ts', `${name} reader must export dist ESM types`, errors)
+    assert(record.pkg.exports?.['./reader']?.import?.default === './dist/reader.js', `${name} reader must export dist ESM`, errors)
+    assert(record.pkg.exports?.['./reader']?.require?.types === './dist/reader.d.cts', `${name} reader must export dist CJS types`, errors)
+    assert(record.pkg.exports?.['./reader']?.require?.default === './dist/reader.cjs', `${name} reader must export dist CJS`, errors)
+  }
+
+  // Core publishes its run-text output helper as a subpath the firewalled surfaces may import.
+  if (record.pkg.name === '@vostride/agent-qa-core') {
+    assert(record.pkg.exports?.['./run-text-output']?.import?.types === './dist/run-text-output.d.ts', `${name} run-text-output must export dist ESM types`, errors)
+    assert(record.pkg.exports?.['./run-text-output']?.import?.default === './dist/run-text-output.js', `${name} run-text-output must export dist ESM`, errors)
+    assert(record.pkg.exports?.['./run-text-output']?.require?.types === './dist/run-text-output.d.cts', `${name} run-text-output must export dist CJS types`, errors)
+    assert(record.pkg.exports?.['./run-text-output']?.require?.default === './dist/run-text-output.cjs', `${name} run-text-output must export dist CJS`, errors)
   }
 
   if (record.pkg.name === '@vostride/agent-qa-dashboard-ui') {
@@ -212,7 +224,7 @@ function validateManifestSurface(errors, options = { checkFiles: true }) {
 
 function validateNoArchSymbolInDist(errors, records = publicPackageRecords()) {
   for (const record of records) {
-    for (const file of ['dist/index.d.ts', 'dist/index.js', 'dist/index.cjs']) {
+    for (const file of ['dist/index.d.ts', 'dist/index.d.cts', 'dist/index.js', 'dist/index.cjs']) {
       const path = join(record.dir, file)
       if (!existsSync(path)) continue
 
@@ -224,6 +236,45 @@ function validateNoArchSymbolInDist(errors, records = publicPackageRecords()) {
       }
     }
   }
+}
+
+const sourceMapUrlPattern = /^(?:\/\/|\/\*)[#@] sourceMappingURL=([^\s*]+)/gm
+const sourceMappedFilePattern = /\.(?:[cm]?js|d\.[cm]?ts|css)$/
+
+function listFiles(dir) {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir, { recursive: true })
+    .map(entry => join(dir, entry))
+    .filter(path => statSync(path).isFile())
+}
+
+export function danglingSourceMapUrls(distDir) {
+  const dangling = []
+  for (const path of listFiles(distDir)) {
+    if (!sourceMappedFilePattern.test(path)) continue
+    for (const [, url] of readFileSync(path, 'utf-8').matchAll(sourceMapUrlPattern)) {
+      if (url.startsWith('data:')) continue
+      if (!existsSync(join(dirname(path), url))) dangling.push({ file: relative(distDir, path), url })
+    }
+  }
+  return dangling
+}
+
+export function builtPackageSourceMapErrors(records = publicPackageRecords()) {
+  const errors = []
+  for (const record of records) {
+    const distDir = join(record.dir, 'dist')
+    if (!existsSync(distDir)) {
+      errors.push(
+        `${label(record)} has no dist to check source map URLs in; run \`pnpm build\` first`,
+      )
+      continue
+    }
+    for (const { file, url } of danglingSourceMapUrls(distDir)) {
+      errors.push(`${label(record)} dist/${file} points at source map ${url}, which is not emitted`)
+    }
+  }
+  return errors
 }
 
 function validateCopiedSkills(errors, skillsRoot = join(root, 'packages/cli/skills')) {
@@ -474,11 +525,12 @@ function runValidation() {
   const errors = []
   validateManifestSurface(errors)
   validateNoArchSymbolInDist(errors)
+  errors.push(...builtPackageSourceMapErrors())
   validateCopiedSkills(errors)
   validateNoStaleMcpToolPrefix(errors)
   runSourceSkillsValidation(errors)
 
-  const packed = quick ? 0 : validatePackDryRuns(errors)
+  if (!quick) validatePackDryRuns(errors)
 
   if (errors.length > 0) {
     console.error('publish surface validation failed:')
@@ -490,12 +542,19 @@ function runValidation() {
   }
 
   console.log(`publish surface validation passed (${quick ? 'quick' : 'full'})`)
-  const count = { validator: 'publish', executed: packed, unit: 'packages packed' }
-  console.log(`AGENT_QA_GATE_COUNT ${JSON.stringify(count)}`)
 }
 
-if (fixtures) {
-  runFixtures()
-} else {
-  runValidation()
+// Realpaths on both sides: Node resolves symlinks in `import.meta.url` but not in `argv[1]`.
+function invokedDirectly() {
+  const entry = process.argv[1]
+  if (entry === undefined || !existsSync(entry)) return false
+  return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url))
+}
+
+if (invokedDirectly()) {
+  if (fixtures) {
+    runFixtures()
+  } else {
+    runValidation()
+  }
 }

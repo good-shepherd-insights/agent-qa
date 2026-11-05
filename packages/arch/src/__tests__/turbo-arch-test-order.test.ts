@@ -1,13 +1,4 @@
-/**
- * C-HYG-ARCH-TEST-ORDER (quick 261002-hyg, 432-14 #6): the arch tests read other packages' source,
- * and that source resolves `@vostride/agent-qa-*` through each package's built `dist`; two cells
- * read `core/dist` and `cli/dist` directly. The arch package declares none of those packages, so
- * its own `^build` orders nothing. A forced `--concurrency=2` run once started the arch tests
- * while the schema build had cleared its `dist`. This pins the task graph that prevents it: the
- * arch test waits for every package build under `packages/`, named or reached through `^build`.
- * The arch typecheck compiles the same source, so a fresh clone (no `dist` yet) needs the same
- * order for it (434-13).
- */
+// The arch test reads other packages' built `dist`, so it waits for every package build.
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -53,7 +44,6 @@ const NAMED_BUILDS = [
   '^build',
   '@vostride/agent-qa-schema#build',
   '@vostride/agent-qa-agent#build',
-  '@vostride/agent-qa-tools-local#build',
   '@vostride/agent-qa-core#build',
   'agent-qa#build',
 ]
@@ -89,12 +79,12 @@ function expectCoversEveryBuild(task: string): void {
   expect(missing, `add each to ${task}.dependsOn in turbo.json`).toEqual([])
 }
 
-describe('C-HYG-ARCH-TEST-ORDER — the arch test runs after every build it reads', () => {
-  it('C-HYG-ARCH-TEST-ORDER: names the packages it reads and covers every package build', () => {
+describe('the arch test runs after every build it reads', () => {
+  it('names the packages it reads and covers every package build', () => {
     expectCoversEveryBuild(ARCH_TEST)
   })
 
-  it('C-HYG-ARCH-TEST-ORDER: the arch typecheck also runs after every build it reads (434 D-20, fresh clone)', () => {
+  it('the arch typecheck also runs after every build it reads, in a fresh clone', () => {
     expectCoversEveryBuild(ARCH_TYPECHECK)
   })
 })

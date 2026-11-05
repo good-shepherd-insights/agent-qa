@@ -1,19 +1,3 @@
-// Stage 2 produces a PLAN and nothing else (Phase 392 plan 04, CHAT-01 / CHAT-06 / D-10).
-//
-// WHAT THE STUB MODEL IN THIS FILE IS, AND WHAT IT IS NOT. It is a TYPE-LEVEL fake of the
-// TRANSPORT seam: an object implementing the SDK's language-model interface that answers with
-// scripted content parts, so the read-back shaping can be asserted without a network. It is NOT an
-// LLM mock in the sense D-13 rules out — that rule is about scenario lanes, where a mocked model
-// would mean the corpus measures the mock's behaviour instead of a model's, and those lanes stay
-// mock-free (deterministic scenarios never reach the model at all; planner and compound scenarios
-// run live). Nothing here asserts what a model WOULD say. Every case asserts what this stage does
-// with what it is given, which is a property of this code and of no model.
-//
-// The load-bearing case is the negative one: after a turn in which the model proposed several
-// actions, NOTHING happened. That is D-10 measured rather than described — and it is measurable
-// here precisely because `projectPlannerTools` omits every execute callback, so there is no
-// function for the SDK to have called.
-
 import { describe, expect, it } from 'vitest'
 
 import { createPlannerStage, readBackPlan } from '../planner-stage.js'
@@ -26,25 +10,23 @@ import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import type { FunctionDeclaration, FunctionSchemaProjection } from '../../functions/spec.js'
 
 /**
- * The V3 half of the model type the stage accepts, and the call options it is handed.
+ * The V4 half of the model type the stage accepts, and the call options it is handed.
  *
  * Both are DERIVED rather than imported: the shapes live in the provider-contract package, which
  * this package may not name (`providerNeutral` forbids the vendor-adapter namespace, and the chat
  * rollcall pins that). Deriving them off `ChatLanguageModel` also ties this stub to the exact type
  * the stage declares, so a widening there fails here rather than passing against a stale copy.
  */
-type StubLanguageModel = Extract<ChatLanguageModel, { specificationVersion: 'v3' }>
+type StubLanguageModel = Extract<ChatLanguageModel, { specificationVersion: 'v4' }>
 type StubCallOptions = Parameters<StubLanguageModel['doGenerate']>[0]
 type StubGenerateResult = Awaited<ReturnType<StubLanguageModel['doGenerate']>>
 
-// 2026-10-01 (432-28, D-12): the retired `grantedScopes` and `safeMode` fields are dropped; nothing
-// read them.
 const CALLER: FunctionCaller = {
   surface: 'chat',
   origin: 'agent',
 }
 
-/** Every request now names its session (392 plan 13): the context a stage builds is per-session. */
+// Every request names its session, because the context a stage builds is per-session.
 const SESSION = 'session-planner-stage'
 
 const CLAUSES: readonly ChatClause[] = [
@@ -59,7 +41,7 @@ type ScriptedPart =
 /**
  * A language model that answers with exactly what it was handed.
  *
- * `doGenerate` is the whole surface `generateText` needs of a V3 model for a non-streaming call.
+ * `doGenerate` is the whole surface `generateText` needs of a V4 model for a non-streaming call.
  * The recorded call options are kept so the prompt-delivery assertions below read what the SDK
  * actually sent rather than what this file assumed it would.
  */
@@ -68,7 +50,7 @@ function stubModel(
   recorder?: { calls: StubCallOptions[] },
 ): ChatLanguageModel {
   const model: StubLanguageModel = {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'stub',
     modelId: 'stub-planner',
     supportedUrls: {},
@@ -103,7 +85,7 @@ function stubModel(
 /** A model that refuses the call the way a transport failure does. */
 function failingModel(error: Error): ChatLanguageModel {
   const model: StubLanguageModel = {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'stub',
     modelId: 'stub-planner',
     supportedUrls: {},
@@ -159,11 +141,7 @@ describe('readBackPlan: the shaping, in isolation', () => {
     ])
   })
 
-  it('carries answer_only through as a call, projecting NOTHING off it (392-14)', () => {
-    // The projection this replaced lifted the first call's `text` onto the outcome as a
-    // convenience. Once the tool contract asked for one call per answered clause that convenience
-    // carried strictly less than the calls it came from, and reconciliation trusted it — so the
-    // shaping now hands the calls over whole and the reader that needs prose reads the claim.
+  it('carries answer_only through as a call, projecting NOTHING off it', () => {
     const outcome = readBackPlan([{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'three' } }])
     expect(outcome.toolCalls).toEqual([{ toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'three' } }])
     expect('answer' in outcome).toBe(false)
@@ -181,9 +159,7 @@ describe('readBackPlan: the shaping, in isolation', () => {
   })
 
   it('keeps BOTH answer_only calls when a model emitted two', () => {
-    // The case the removed projection lost. The prompt asks for one call per answered clause, and
-    // every one of them has to survive to the merge or a clause is counted as answered while its
-    // answer is thrown away (392-VERIFICATION round 2, path (4)).
+    // Every `answer_only` call reaches the merge, or a clause counts as answered with no answer.
     const outcome = readBackPlan([
       { toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'first' } },
       { toolName: ANSWER_ONLY_TOOL_NAME, input: { text: 'second' } },
@@ -195,7 +171,7 @@ describe('readBackPlan: the shaping, in isolation', () => {
   })
 })
 
-describe('createPlannerStage: generateText in, plan out (D-10)', () => {
+describe('createPlannerStage: generateText in, plan out', () => {
   it('returns the model plan and executes NOTHING — no tool carries a callback', async () => {
     const outcome = await stage(
       stubModel([
@@ -216,7 +192,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
     }
   })
 
-  it('surfaces answer_only as a tool call for reconciliation to read (CHAT-01)', async () => {
+  it('surfaces answer_only as a tool call for reconciliation to read', async () => {
     const outcome = await stage(
       stubModel([
         {
@@ -233,7 +209,7 @@ describe('createPlannerStage: generateText in, plan out (D-10)', () => {
     expect(outcome.toolCalls[0]?.input).toEqual({ text: 'There are three proposals pending.' })
   })
 
-  it('carries mark_unhandled through untouched, for reconciliation to act on (D-08)', async () => {
+  it('carries mark_unhandled through untouched, for reconciliation to act on', async () => {
     const outcome = await stage(
       stubModel([
         {

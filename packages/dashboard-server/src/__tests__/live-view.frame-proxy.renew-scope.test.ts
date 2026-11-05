@@ -1,10 +1,4 @@
-// 428 code review WR-07 (428-REVIEW.md): a frame-socket renew is tied to what the socket greeted
-// with. A token is view-scoped to one handle, so a valid token for another handle of the same run
-// is refused, and an older token, replayed or reordered, never shortens the viewer's deadline.
-//
-// The validator is the real `validateLiveUrlToken` over a signer this file builds, as in
-// live-view.frame-proxy.test.ts; the run session is planted with no stream, which is all a renew
-// needs.
+// A renew must name the greeted handle, and a replayed older token never shortens the deadline.
 
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
@@ -16,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createFrameProxy } from '../live-view/frame-proxy.js'
 import { LIVE_VIEW_REFUSAL_CLOSE_CODE } from '../live-view/protocol.js'
 
-const SIGNING_KEY = 'zz-428-review-renew-scope-signing-key'
+const SIGNING_KEY = 'zz-review-renew-scope-signing-key'
 const BASE_TIME = 1_700_000_000_000
 
 const signer: LiveUrlSigner = {
@@ -82,12 +76,12 @@ function viewer() {
   }
 }
 
-describe('428 review: a frame-socket renew keeps to what the socket greeted with', () => {
+describe('a frame-socket renew keeps to what the socket greeted with', () => {
   afterEach(() => {
     vi.useRealTimers()
   })
 
-  it('WR-07 RENEW-KEEPS-HANDLE: a valid token for another handle of the same run is refused scope_mismatch', () => {
+  it('RENEW-KEEPS-HANDLE: a valid token for another handle of the same run is refused scope_mismatch', () => {
     vi.useFakeTimers()
     vi.setSystemTime(BASE_TIME)
     const socket = viewer()
@@ -100,7 +94,7 @@ describe('428 review: a frame-socket renew keeps to what the socket greeted with
     expect(socket.closed()?.code).toBe(LIVE_VIEW_REFUSAL_CLOSE_CODE)
   })
 
-  it('WR-07 RENEW-NEVER-SHORTENS: an older still-valid token leaves the later deadline in place', async () => {
+  it('RENEW-NEVER-SHORTENS: an older still-valid token leaves the later deadline in place', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(BASE_TIME)
     const socket = viewer()

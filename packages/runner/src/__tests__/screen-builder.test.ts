@@ -17,7 +17,6 @@ function makeInput(nodes: InterimNode[], overrides: Partial<BuildScreenStateInpu
     coordSpace: 'viewport',
     timestamp: 1700000000000,
     url: 'https://example.test/checkout',
-    domContext: 'checkout',
     ...overrides,
   }
 }
@@ -33,7 +32,7 @@ describe('buildScreenState — ref minting & binding', () => {
     )
 
     expect(state.elements.map(e => e.ref)).toEqual([asRef('e1'), asRef('e2'), asRef('e3')])
-    // 2026-10-09 (438-11): the binding carries no position (D-13).
+    // The binding carries no position.
     expect(binding[asRef('e1')]).toEqual({ index: 0 })
     expect(binding[asRef('e2')]).toEqual({ index: 1 })
     expect(binding[asRef('e3')]).toEqual({ index: 2 })
@@ -49,7 +48,7 @@ describe('buildScreenState — ref minting & binding', () => {
 
     expect(state.elements[0].nameNormalized).toBe('save')
     expect(state.elements[1].nameNormalized).toBe('save')
-    // 2026-10-09 (438-11): no position is minted anywhere, binding or ElementInfo (D-13).
+    // No position is minted anywhere, in the binding or the ElementInfo.
     expect(binding[asRef('e1')]).toEqual({ index: 0 })
     expect(binding[asRef('e2')]).toEqual({ index: 1 })
     // ElementInfo carries no ordinal field
@@ -58,7 +57,7 @@ describe('buildScreenState — ref minting & binding', () => {
   })
 })
 
-describe('buildScreenState — geometry rule (Pitfall #3)', () => {
+describe('buildScreenState — geometry rule', () => {
   it('derives center from bounds and adds a refMap entry; boundsless nodes get none', () => {
     const { state } = buildScreenState(
       makeInput([
@@ -102,7 +101,7 @@ describe('buildScreenState — geometry rule (Pitfall #3)', () => {
   })
 })
 
-describe('buildScreenState — hierarchy (Pitfall #7)', () => {
+describe('buildScreenState — hierarchy', () => {
   it('translates parentIndex to parentRef and inverts into childRefs', () => {
     const { state } = buildScreenState(
       makeInput([
@@ -124,7 +123,7 @@ describe('buildScreenState — hierarchy (Pitfall #7)', () => {
   })
 })
 
-describe('buildScreenState — state derivations (D-08)', () => {
+describe('buildScreenState — state derivations', () => {
   it('applies documented defaults and omits optional bits when no signal supplied', () => {
     const { state } = buildScreenState(makeInput([{ role: 'button', name: 'Save' }]))
     expect(state.elements[0].state).toEqual({ enabled: true, focused: false, visible: true })
@@ -141,7 +140,7 @@ describe('buildScreenState — state derivations (D-08)', () => {
 })
 
 describe('buildScreenState — metadata', () => {
-  it('stamps textOnly modality and copies scroll/viewport/coordSpace/domContext', () => {
+  it('stamps textOnly modality and copies scroll/viewport/coordSpace', () => {
     const { state } = buildScreenState(makeInput([{ role: 'button', name: 'Save' }]))
     expect(state.platform).toBe('web')
     expect(state.url).toBe('https://example.test/checkout')
@@ -152,12 +151,11 @@ describe('buildScreenState — metadata', () => {
       viewportWidth: 390,
       viewportHeight: 100,
       scroll: { offsetX: 0, offsetY: 0, contentWidth: 390, contentHeight: 320 },
-      domContext: 'checkout',
     })
   })
 })
 
-describe('renderScreenTree — pinned grammar (D-02)', () => {
+describe('renderScreenTree — pinned grammar', () => {
   it('renders the header, indented children, and all annotations exactly', () => {
     const { state } = buildScreenState(
       makeInput(
@@ -264,7 +262,7 @@ describe('renderScreenTree — pinned grammar (D-02)', () => {
   })
 })
 
-describe('C437-TREE-TOGGLE', () => {
+describe('renderScreenTree — toggle state markers', () => {
   function treeOf(nodes: InterimNode[]): string[] {
     const { state } = buildScreenState(makeInput(nodes, { viewport: { width: 200, height: 100 } }))
     return state.tree.split('\n').slice(1)
@@ -312,7 +310,7 @@ describe('C437-TREE-TOGGLE', () => {
   })
 })
 
-describe('stampCaptureMode — purity (D-11)', () => {
+describe('stampCaptureMode — purity', () => {
   it('returns a NEW full-mode state without mutating its input', () => {
     const { state } = buildScreenState(makeInput([{ role: 'button', name: 'Save' }]))
     const before = screenStateHash(state)
@@ -360,7 +358,7 @@ describe('buildScreenState — determinism (byte-equality oracle)', () => {
   })
 })
 
-describe('C438-ROW-TREE', () => {
+describe('renderScreenTree — row text', () => {
   function treeOf(nodes: InterimNode[]): string[] {
     const { state } = buildScreenState(makeInput(nodes, { viewport: { width: 200, height: 100 } }))
     return state.tree.split('\n').slice(1)
@@ -454,7 +452,7 @@ describe('C438-ROW-TREE', () => {
   })
 })
 
-describe('C438-BUILDER-NO-POSITION', () => {
+describe('buildScreenState — bindings and hashes carry no position', () => {
   const nodes: InterimNode[] = [
     { role: 'list', name: 'Cart', bounds: { x: 0, y: 0, width: 390, height: 200 } },
     {
@@ -492,7 +490,7 @@ describe('C438-BUILDER-NO-POSITION', () => {
     })
   })
 
-  it('ElementInfo and the tree are byte-identical to a56b861fe', () => {
+  it('the screen hashes and the rendered tree equal the pinned values', () => {
     const { state } = buildScreenState(input)
 
     expect(screenStateHash(state)).toBe(

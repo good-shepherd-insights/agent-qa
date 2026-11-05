@@ -1,42 +1,10 @@
-// THE HOST-TERMINATION CENSUS (Phase 401 plan 11, T-401-31).
-//
-// THE CLAIM. No module on the in-process invocation path can terminate its host. Every input
-// failure is a typed `CliRunInputError` carrying its own exit code and its own rendered lines, and
-// the DOOR — the one thing with a terminal and a process to own — decides what to do with it.
-//
-// WHY IT NEEDS A CENSUS RATHER THAN A GREP. This is a COMPLETE-SET claim over a module graph, and a
-// rule that can only refuse what it can NAME cannot be driven to zero by naming more things. So the
-// predicate is self-checked before it is allowed to judge anything, the discovery is pinned to named
-// known members with a floor, and the one file that legitimately keeps its exits is carved out
-// EXPLICITLY — with a converse witness proving it still has them, because a green census over an
-// idea somebody deleted is the 399/400 scar.
-//
-// THREE PARTS, IN ORDER:
-//
-//   (i)   the predicate self-check — every acquisition form of the host-terminating call is planted
-//         in synthetic source and must be SEEN; the same names in prose must NOT be; and the comment
-//         stripper must not eat a protocol-relative URL;
-//   (ii)  pinned discovery + the complete-set claim over the in-process module closure, with
-//         `commands/run.ts` scanned through its PINNED EXPORTS and their run.ts-local call graph
-//         TRANSITIVELY — a pinned export's body is not the code it runs;
-//   (iii) the behavioural failure-door register: every input-failure door driven for real with the
-//         host-terminating call stubbed to throw a marker, asserting the typed error arrives and
-//         the marker never does.
-//
-// WHAT PART (ii) ALREADY CAUGHT, on the run that first wrote it: `resolveSelectedAuthStateForRun`
-// and `resolveAuthStateCapturePathsForRun` both ended `console.error(...); process.exit(2)` and both
-// sit TWO calls from the in-process path (`produceMembersFromPatterns` → `produceDirectRunMembers` →
-// the member closure → here). A scan that stopped at the exported bodies would have declared the
-// path clean while a daemon serving a run with a bad auth-state config died on it. They are typed
-// refusals now. That is the transitive walk earning its keep, not a hypothetical.
+// No module on the in-process path may end its host; input failures are `CliRunInputError` values.
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
-
-import { RunDeniedError } from '@vostride/agent-qa-agent-local'
 
 import { CliRunInputError, runInProcessCliRun } from '../in-process-run-execution.js'
 import { requireReporterSelection } from '../../commands/run.js'
@@ -48,7 +16,7 @@ import {
 } from './in-process-run-fixture.js'
 import { closeTestRunRecords, testRunRecord } from './in-process-run-fixture.js'
 
-// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+// Every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
 afterAll(() => { removeInProcessFixtures() })
 
@@ -113,12 +81,7 @@ describe('(i) the scanner sees what it forbids — before any verdict about any 
     }
   })
 
-  it('does NOT fire on the name in prose — the case this codebase actually presents', () => {
-    // Drawn from a real comment in a file THIS PLAN WROTE, not invented for the cell.
-    const realComment = readFileSync(join(CLI_SRC, 'composition', 'cli-run-input-error.ts'), 'utf8')
-    expect(realComment).toContain('process.exit')
-    expect(terminationHits(realComment)).toEqual([])
-
+  it('does not fire on the name in prose', () => {
     expect(terminationHits('// this module never calls process.exit(1)\n')).toEqual([])
     expect(terminationHits('/* no process.exit(0) here */\nconst x = 1\n')).toEqual([])
   })
@@ -158,23 +121,14 @@ function inProcessModuleClosure(): string[] {
  * is what makes the carve-out a bounded allowance rather than a hole shaped like a whole file.
  */
 const PINNED_RUN_TS_IMPORTS = [
-  // 401-20 (CR-04): the mint's inverse. `isMintedRunId` is a REQUIRED core option with no default,
-  // and it travels the same relative route the mint does — a shape check invented in `agent-local`
-  // would be a second spelling of a run's identity.
+  // `isMintedRunId` is a required core option and travels the mint's relative route.
   'isMintedCliRunId',
   'mintCliRunId',
   'produceMembersFromPatterns',
   'resolveRunInvocationInputs',
 ] as const
 
-/**
- * Members of the run.ts-local reachable set that MUST be reached, pinned exactly as the discovery
- * walker is pinned.
- *
- * A walker that stops reaching them has stopped ranging the claim, and that has to FAIL rather than
- * sweep clean. All three were measured reachable, and two of them (`loadRuntimeSecrets`,
- * `discoverFilesForCliPatterns`) held terminating calls before this plan converted them.
- */
+// A walker that stops reaching these has stopped ranging the claim, so it must fail.
 const REQUIRED_REACHABLE_MEMBERS = [
   'loadRuntimeSecrets',
   'discoverFilesForCliPatterns',
@@ -235,7 +189,7 @@ function reachableFromPinnedExports(): Map<string, RunTsDeclaration> {
   return reached
 }
 
-describe('(ii) no module on the in-process path can terminate its host (T-401-31)', () => {
+describe('(ii) no module on the in-process path can terminate its host', () => {
   it('the discovery set is pinned to named members and has a floor', () => {
     const closure = inProcessModuleClosure().map((file) => file.slice(CLI_SRC.length + 1))
     // Named known members: the entry point, the assembler it composes, and the file whose producers
@@ -418,42 +372,4 @@ describe('(iii) every failure door answers with a value, and none of them kills 
       spy.mockRestore()
     }
   })
-
-  it('THE NON-INPUT CONTROL — a gate denial is a RunDeniedError, not a CliRunInputError', async () => {
-    // Without this, every row above could pass over a path that answered EVERY failure with a
-    // `CliRunInputError`, which would be a door that had stopped telling refusals apart.
-    // 432-13: the denial left to drive is the production refusal; a shared target starts now.
-    const target = new CountingTarget()
-    await target.listen()
-    const spy = vi.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error(MARKER)
-    }) as never)
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
-      const browsers = join(fixture.project, 'no-browsers')
-      if (!existsSync(browsers)) mkdirSync(browsers, { recursive: true })
-      process.env.PLAYWRIGHT_BROWSERS_PATH = browsers
-
-      let caught: unknown
-      try {
-        await runInProcessCliRun(
-          {
-            runRecord: testRunRecord(),
-            configPath: fixture.configPath,
-            agentQaRoot: fixture.agentQaRoot,
-            executionContext: 'local-headless',
-          },
-          { patterns: [fixture.testPattern] },
-        )
-      } catch (err) {
-        caught = err
-      }
-      expect(String(caught)).not.toContain(MARKER)
-      expect(caught).toBeInstanceOf(RunDeniedError)
-      expect(caught).not.toBeInstanceOf(CliRunInputError)
-    } finally {
-      spy.mockRestore()
-      await target.close()
-    }
-  }, 120_000)
 })

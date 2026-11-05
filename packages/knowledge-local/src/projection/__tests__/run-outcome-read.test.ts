@@ -123,7 +123,7 @@ function insertRawRow(db: DatabaseSync, lastOutcomesJson: string): void {
   )
 }
 
-describe('readTestOutcomeHistory (ANLZ-03, RESEARCH Pitfall 2)', () => {
+describe('readTestOutcomeHistory', () => {
   it('round-trips a row written by the real fold path, lastOutcomes ordinal-ascending', () => {
     const db = openDb()
     fold(db, { runId: 'run-b3', buildOrdinal: 3, outcome: 'failed' })
@@ -236,7 +236,7 @@ function historyOf(entries: TestOutcomeEntry[]): TestOutcomeHistory {
   }
 }
 
-describe('priorBuildOutcome (D-02 forced discriminator channel)', () => {
+describe('priorBuildOutcome (forced discriminator channel)', () => {
   const twoBuilds = historyOf([
     { buildOrdinal: 3, passed: true },
     { buildOrdinal: 5, passed: false },
@@ -258,7 +258,7 @@ describe('priorBuildOutcome (D-02 forced discriminator channel)', () => {
   })
 })
 
-describe('failureRecurrence (D-08 live recurrence join)', () => {
+describe('failureRecurrence (live recurrence join)', () => {
   const mixed = historyOf([
     { buildOrdinal: 3, passed: false },
     { buildOrdinal: 5, passed: false },
@@ -298,11 +298,7 @@ describe('knowledge-local barrel export', () => {
   })
 })
 
-// ---- listTestsInFile (394-17 · WTST-05) --------------------------------------------------------
-//
-// The neighbours side of D-14's stability read. The cross-product cell is the one that matters:
-// a query that dropped `product` would answer every application's tests under one file path, and
-// the gate-2 message would name another app's flaky test as this target's (T-394-68).
+// A query that dropped `product` would name another app's flaky test under the same file path.
 
 function insertRow(
   db: DatabaseSync,
@@ -316,7 +312,7 @@ function insertRow(
   `).run(row.product, 'product', row.product, row.filePath, row.testName)
 }
 
-describe('listTestsInFile (394-17)', () => {
+describe('listTestsInFile', () => {
   it('answers the file\'s counted identities in test_name order', () => {
     const db = openDb()
     insertRow(db, { product: PRODUCT, filePath: FILE_PATH, testName: 'zeta checkout' })

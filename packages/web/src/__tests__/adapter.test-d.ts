@@ -1,25 +1,17 @@
-import { expectTypeOf } from 'vitest'
+import { expectTypeOf, test } from 'vitest'
 import { asRef } from '@vostride/agent-qa-schema'
 import type { Ref } from '@vostride/agent-qa-schema'
 import { WebPlatformAdapter } from '../adapter.js'
-import { FarmWebAdapter } from '../farm-adapter.js'
 
-const web = new WebPlatformAdapter()
-const farm = new FarmWebAdapter()
+test('a web adapter accepts web actions and refuses mobile verbs', () => {
+  const web = new WebPlatformAdapter()
 
-void web.execute({ type: 'click', ref: asRef('e1') })
+  void web.execute({ type: 'click', ref: asRef('e1') })
 
-// @ts-expect-error tap is a mobile verb and is illegal on the web adapter.
-void web.execute({ type: 'tap', ref: asRef('e1') })
+  // @ts-expect-error tap is a mobile verb and is illegal on the web adapter.
+  void web.execute({ type: 'tap', ref: asRef('e1') })
 
-void farm.execute({ type: 'click', ref: asRef('e1') })
-
-// @ts-expect-error tap is a mobile verb and is illegal on the farm web adapter.
-void farm.execute({ type: 'tap', ref: asRef('e1') })
-
-expectTypeOf<{ type: 'click'; ref: Ref }>().toMatchTypeOf<
-  Parameters<WebPlatformAdapter['execute']>[0]
->()
-expectTypeOf<{ type: 'click'; ref: Ref }>().toMatchTypeOf<
-  Parameters<FarmWebAdapter['execute']>[0]
->()
+  expectTypeOf<{ type: 'click'; ref: Ref }>().toMatchTypeOf<
+    Parameters<WebPlatformAdapter['execute']>[0]
+  >()
+})

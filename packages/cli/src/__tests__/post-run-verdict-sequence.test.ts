@@ -1,26 +1,4 @@
-// LIFE-01 (a): exactly one `verdict`, in the right place, on real runs (Phase 404 plan 01, D-15).
-//
-// THE CLAIM, IN ONE SENTENCE: `verdict` is the exactly-once terminal event determined by test
-// execution ALONE — after the last `testFinished`, before any post-processing envelope — and it is
-// read off `events.jsonl`, the run's own durable record, never off an in-memory bus.
-//
-// WHY THE FILE AND NOT THE BUS. The bus is a live object a cell can inspect for free; the file is
-// what a person, the dashboard, the SSE replay and 408's embed all actually read. A cell over the
-// bus would be green for a shell that published correctly and a log writer that reordered, and the
-// log writer is on the path every consumer takes. So every leg here constructs a REAL `FsEventLog`
-// in a temp root (legs 2–4) or spawns the shipped binary (leg 1), and asserts by `seq` — never by
-// array position, which would make the claim about how the file happened to be flushed.
-//
-// FOUR RUN SHAPES, BECAUSE "DETERMINED BY TEST EXECUTION ALONE" IS ONLY INTERESTING AT THE EDGES.
-// A green N-member suite proves almost nothing: the interesting inputs are the ones where the run
-// ENDED for a reason other than its members finishing — a run-level cancel, a wall-clock budget
-// expiry, a fail-fast group that skipped the rest. Each still publishes exactly one verdict, and
-// each still publishes it after every member's own finish, including the finishes the shell
-// SYNTHESIZED for members it never executed.
-//
-// MUTATION CONTROL (recorded 2026-08-26, not a cell): a second `bus.publish('verdict', { verdict })`
-// inserted immediately after the shipped one in `runner/src/run/shell.ts` reds every leg below on
-// "exactly one verdict". The red line and the restored-diff proof are in 404-01-SUMMARY.md.
+// Read off `events.jsonl` by `seq`, not the bus, as a log writer could reorder the events.
 
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -34,7 +12,6 @@ import type {
   MemberTestRunContext,
   RunConfig,
   RunMemberDescriptor,
-  RunTimerPort,
 } from '@vostride/agent-qa-runner'
 import { FsEventLog, RUNS_SUBDIR, slugBranch } from '@vostride/agent-qa-runner-local'
 import type { CompletedRunHandoff, RunEventEnvelope, RunSession } from '@vostride/agent-qa-schema'
@@ -78,12 +55,7 @@ function parseEventsFile(path: string): LoggedEvent[] {
     .map(line => JSON.parse(line) as LoggedEvent)
 }
 
-/**
- * The one ordering assertion every leg makes, so four legs cannot drift into four claims.
- *
- * By `seq` throughout: the file's line order and the run's event order are two different facts, and
- * only the second one is what LIFE-01 is about.
- */
+// By `seq`: the file's line order and the run's event order are different facts.
 function assertVerdictSequence(events: LoggedEvent[], leg: string): LoggedEvent {
   const verdicts = events.filter(event => event.type === 'verdict')
   expect(verdicts, `${leg}: exactly one verdict envelope per run`).toHaveLength(1)
@@ -99,7 +71,7 @@ function assertVerdictSequence(events: LoggedEvent[], leg: string): LoggedEvent 
   return verdict
 }
 
-// ---- Legs 2-4: the shipped shell over a REAL FsEventLog -------------------------------------
+// ---- Legs 2 and 4: the shipped shell over a REAL FsEventLog ---------------------------------
 
 function passResult(name: string): TestResult {
   return {
@@ -151,22 +123,6 @@ function scriptedExecutor(
   }
 }
 
-function makeFakeTimer(): RunTimerPort & { fireLatest(): void } {
-  let scheduled: (() => void) | undefined
-  return {
-    schedule(_delayMs: number, fn: () => void) {
-      scheduled = fn
-      return () => {
-        if (scheduled === fn) scheduled = undefined
-      }
-    },
-    now: () => 1_700_000_000_000,
-    fireLatest() {
-      scheduled?.()
-    },
-  }
-}
-
 /**
  * Start a run whose events land in a real `events.jsonl`, and answer the path they landed in.
  *
@@ -179,7 +135,7 @@ function startLoggedRun(
   executor: MemberTestExecutor,
   extra: Partial<RunConfig> = {},
 ): { session: RunSession; eventsPath: string } {
-  const root = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-404-seq-')))
+  const root = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-seq-')))
   const runId = 'r_verdict-sequence-fixture-run'
   const config = {
     runId,
@@ -208,7 +164,7 @@ afterEach(() => {
   cleanupTempRoots()
 })
 
-describe('LIFE-01 (a): one verdict, after the last testFinished, on every run shape (D-15)', () => {
+describe('(a): one verdict, after the last testFinished, on every run shape', () => {
   it('leg 2 — a run-level cancel mid-member still publishes exactly one verdict, and it is cancelled', async () => {
     const calls: string[] = []
     const { session, eventsPath } = startLoggedRun(
@@ -230,28 +186,6 @@ describe('LIFE-01 (a): one verdict, after the last testFinished, on every run sh
       verdict.payload.verdict,
       'cancel: the one verdict carries the aggregate the cancel produced',
     ).toBe('cancelled')
-  })
-
-  it('leg 3 — a run-budget expiry still publishes exactly one verdict, after every member finish', async () => {
-    const timer = makeFakeTimer()
-    const calls: string[] = []
-    const { session, eventsPath } = startLoggedRun(
-      [
-        { testId: 'a', name: 'test a', filePath: 'a.test.ts' },
-        { testId: 'b', name: 'test b', filePath: 'b.test.ts' },
-      ],
-      abortableExecutor(calls),
-      { runBudgetMs: 5_000, ports: { timer } },
-    )
-    ;(session as unknown as { subscribe(from: number, h: (e: RunEventEnvelope) => void): void })
-      .subscribe(1, () => undefined)
-    timer.fireLatest()
-    const completion = await settled(session)
-    expect(completion.verdict).toBe('timeout')
-
-    const events = parseEventsFile(eventsPath)
-    const verdict = assertVerdictSequence(events, 'budget')
-    expect(verdict.payload.verdict, 'budget: the aggregate the expiry produced').toBe('timeout')
   })
 
   it('leg 4 — a fail-fast skip publishes one verdict, and EVERY skipped member finished before it', async () => {
@@ -288,7 +222,7 @@ describe('LIFE-01 (a): one verdict, after the last testFinished, on every run sh
   })
 })
 
-describePosix('LIFE-01 (a) leg 1: the shipped binary, with post-processing envelopes present', () => {
+describePosix('(a) leg 1: the shipped binary, with post-processing envelopes present', () => {
   it('a real `agent-qa run` writes one verdict, after every testFinished and BEFORE the first post-processing envelope', async () => {
     const freshness = buildFreshness(ANCHORED_BUILDS)
     expect(
@@ -328,10 +262,6 @@ describePosix('LIFE-01 (a) leg 1: the shipped binary, with post-processing envel
       })
       expect(
         tail.report.drain,
-        // 2026-08-26: the spawned run acquires the lease only if a pump of its own asks for it, and
-        // this fixture dies above its tail — so it exits leaving the lease exactly as it found it.
-        // Either way the claim this cell needs is the same one: no lease of that run's is still
-        // held, so the in-process tail can pump and emit chips.
         'the spawned run holds no lease of its own afterwards, so the in-process tail can pump and emit chips',
       ).not.toBe('handed-off')
     } finally {

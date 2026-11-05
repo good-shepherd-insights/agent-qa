@@ -1,4 +1,4 @@
-// TARGETS (429-22 · D-02, D-19, D-23, D-24 · UI-SPEC S2 "Record/list editors", S6, E6, E8).
+// The targets editor.
 //
 // Each target is a row: its name and summary, opened in place to edit its fields, which autosave
 // by leaf. Add target opens an inline draft row that writes the whole target once it is valid.
@@ -6,7 +6,6 @@
 
 import { useEffect, useId, useRef, useState, type FocusEvent } from "react"
 import { Plus } from "lucide-react"
-import { selectApprovedSaasPlaceholderSlug } from "@vostride/agent-qa-ids"
 
 import { ConfigField } from "@/components/config-manager/config-field"
 import {
@@ -36,7 +35,6 @@ import {
   TARGET_APP_PATH_ERROR,
   TARGET_APP_SUMMARY_PREFIX,
   TARGET_ENVIRONMENT_CHOICE_LABELS,
-  TARGET_ENVIRONMENT_HINTS,
   TARGET_ENVIRONMENT_LABELS,
   TARGET_ENVIRONMENT_PLACEHOLDER,
   TARGET_FIELD_LABELS,
@@ -49,6 +47,7 @@ import {
   deleteActionName,
   targetNameTakenError,
 } from "@/lib/config-copy"
+import { selectApprovedSaasPlaceholderSlug } from "@/lib/product-placeholders"
 
 type TargetPlatform = keyof typeof TARGET_PLATFORM_LABELS
 
@@ -58,7 +57,7 @@ interface TargetEntry {
   bundleId?: string
   appPackage?: string
   appActivity?: string
-  app?: { path?: string; browserstack?: string }
+  app?: { path?: string }
   url?: string
   environment?: string
 }
@@ -85,8 +84,8 @@ const ENVIRONMENT_OPTIONS = (Object.keys(TARGET_ENVIRONMENT_LABELS) as TargetEnv
 // The add row's choices: undeclared first, stored as the draft's empty string.
 const ENVIRONMENT_CHOICES = Object.keys(TARGET_ENVIRONMENT_CHOICE_LABELS) as (keyof typeof TARGET_ENVIRONMENT_CHOICE_LABELS)[]
 
-// 2026-10-03 (quick 261003-cpv, 432 review IN-33): own keys only. `in` walked the prototype chain,
-// and this guard decides whether a draft writes the field the production refusal reads.
+// Own keys only: `in` walks the prototype chain, and this guard decides whether a draft writes the
+// environment field.
 export function isTargetEnvironment(value: string): value is TargetEnvironment {
   return Object.hasOwn(TARGET_ENVIRONMENT_LABELS, value)
 }
@@ -144,8 +143,7 @@ export function summarizeTarget(target: TargetEntry): string {
     const app = [target.appPackage, target.appActivity].filter(Boolean).join(" / ")
     if (app) parts.push(app)
   }
-  const install = [target.app?.path, target.app?.browserstack].filter(Boolean).join(" / ")
-  if (install) parts.push(`${TARGET_APP_SUMMARY_PREFIX}: ${install}`)
+  if (target.app?.path) parts.push(`${TARGET_APP_SUMMARY_PREFIX}: ${target.app.path}`)
   return parts.join(" · ")
 }
 
@@ -281,22 +279,13 @@ function TargetFields({ name, target }: { name: string; target: TargetEntry }) {
         </>
       ) : null}
       {platform === "web" ? null : (
-        <>
-          <ConfigField
-            field={{ ...at("app", "path"), pattern: "registry.targets.*.app.path" }}
-            label={TARGET_FIELD_LABELS.appPath}
-            kind="text"
-            placeholder="apps/app.apk"
-            parse={parseAppPath}
-          />
-          <ConfigField
-            field={{ ...at("app", "browserstack"), pattern: "registry.targets.*.app.browserstack" }}
-            label={TARGET_FIELD_LABELS.browserstackApp}
-            kind="text"
-            placeholder="bs://…"
-            parse={parseOptional}
-          />
-        </>
+        <ConfigField
+          field={{ ...at("app", "path"), pattern: "registry.targets.*.app.path" }}
+          label={TARGET_FIELD_LABELS.appPath}
+          kind="text"
+          placeholder="apps/app.apk"
+          parse={parseAppPath}
+        />
       )}
       <ConfigField
         field={{ ...at("product"), pattern: "registry.targets.*.product" }}
@@ -466,16 +455,10 @@ function AddTargetRow({ initial, takenNames, onHold, onDiscard, onAdded }: AddTa
         >
           {ENVIRONMENT_CHOICES.map((choice) => {
             const itemId = `${baseId}-environment-${choice}`
-            const hintId = `${itemId}-hint`
             return (
-              <Label key={choice} htmlFor={itemId} data-environment-choice={choice} className="items-start font-normal">
-                <RadioGroupItem id={itemId} value={choice} aria-describedby={hintId} className="mt-0.5" />
-                <span className="min-w-0 space-y-1">
-                  <span className="block text-sm font-medium leading-normal">{TARGET_ENVIRONMENT_CHOICE_LABELS[choice]}</span>
-                  <span id={hintId} className="block text-xs text-muted-foreground break-words">
-                    {TARGET_ENVIRONMENT_HINTS[choice]}
-                  </span>
-                </span>
+              <Label key={choice} htmlFor={itemId} data-environment-choice={choice} className="font-normal">
+                <RadioGroupItem id={itemId} value={choice} />
+                {TARGET_ENVIRONMENT_CHOICE_LABELS[choice]}
               </Label>
             )
           })}

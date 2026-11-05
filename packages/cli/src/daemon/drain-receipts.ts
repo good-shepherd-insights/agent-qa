@@ -16,7 +16,7 @@ export const DRAIN_SESSION_RECEIPTS_FILE = 'drain-session-receipts.jsonl'
 export const drainSessionReceiptSchema = z
   .object({
     ts: z.string().min(1),
-    sessionId: z.string().uuid(),
+    sessionId: z.uuid(),
     holderPid: z.number().int().positive(),
     epoch: z.number().int().nonnegative(),
     candidateIds: z.array(z.string()).refine(
@@ -44,12 +44,7 @@ export interface DrainSessionReceiptLedger {
 }
 
 export interface AppendDrainSessionReceiptOptions {
-  /**
-   * Focused durability seam; production uses the best-effort platform directory fsync.
-   *
-   * Observing a directory fsync is the only way to assert WR-03 without simulating a machine
-   * crash, so the observation point is part of the API rather than a mock of `node:fs`.
-   */
+  // A seam so a test observes the directory fsync without simulating a crash.
   readonly fsyncDirectory?: (directory: string) => void
 }
 
@@ -75,15 +70,7 @@ function bestEffortFsyncDirectory(directory: string): void {
   }
 }
 
-/**
- * Append one daemon-owned drain provenance record without rewriting earlier sessions.
- *
- * WR-03: fsyncing the file makes its bytes durable, but on the append that CREATES the ledger
- * the directory entry pointing at those bytes is not. A crash in that window loses the whole
- * chain even though the append returned success, and a client waiting on the first receipt of a
- * session then times out or repeats work it cannot see was done. Later appends touch no
- * directory entry, so they pay nothing.
- */
+// The append that creates the ledger also fsyncs the directory, or a crash loses the whole chain.
 export function appendDrainSessionReceipt(
   agentQaRoot: string,
   receipt: DrainSessionReceipt,

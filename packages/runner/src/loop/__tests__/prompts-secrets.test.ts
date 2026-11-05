@@ -1,6 +1,3 @@
-// G-381-5 (Phase 381, Plan 44): the planner is taught the secret-fill contract. 2026-10-14
-// (441-01, D-10, D-16): the contract is one line; the mechanism half is pinned in secrets.test.ts
-// and 441-literal-marker.test.ts.
 import { describe, it, expect } from 'vitest'
 import { buildSystemPrompt, buildVerifierStableTier } from '../prompts.js'
 import { tokenize } from '../requested-conditions.js'
@@ -19,7 +16,7 @@ function rule23(platform: (typeof PLATFORMS)[number]): string {
   return block.slice(block.indexOf('\n23. ') + 1)
 }
 
-describe('secret placeholder prompt contract (G-381-5)', () => {
+describe('secret placeholder prompt contract', () => {
   for (const platform of PLATFORMS) {
     const label = platform ?? 'undefined (platform-neutral)'
 
@@ -39,7 +36,6 @@ describe('secret placeholder prompt contract (G-381-5)', () => {
         expect(prompt).toContain('whose value exists but is hidden from you')
       })
 
-      // T-381-106: the rule teaches the mechanism, never a value.
       it('does not disclose or request any concrete secret value', () => {
         expect(prompt).not.toMatch(/secret value is\s+\S/i)
         expect(prompt).not.toContain('ask the user for the secret')
@@ -48,7 +44,7 @@ describe('secret placeholder prompt contract (G-381-5)', () => {
   }
 })
 
-describe('C441-PROMPTS', () => {
+describe('the secret forms in prompts and the tokenizer', () => {
   it('Rule 23 is one line that names both forms and how to type a secret', () => {
     for (const platform of PLATFORMS) {
       const rule = rule23(platform)

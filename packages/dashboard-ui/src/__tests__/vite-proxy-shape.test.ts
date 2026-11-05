@@ -1,8 +1,4 @@
-// VITE-PROXY-SHAPE (428-11 · D-08). Vite expands a string proxy entry to `changeOrigin: true`,
-// which rewrites `Host` to the target. The live-editor doors and the run-detail mark POSTs run the
-// same-site guard, which compares `Origin` to `Host`, so a rewritten Host makes the dashboard's own
-// dev page look cross-site and every guarded door refuses it under `vite dev`. Object form without
-// `changeOrigin` forwards the page's own Host. The guard itself is never widened for a dev server.
+// Vite's string proxy form rewrites `Host`, so the same-site guard would refuse the dev page.
 
 import { readFileSync } from 'node:fs'
 
@@ -42,12 +38,10 @@ function proxyEntries(block: string): { key: string; valueStart: string }[] {
 }
 
 describe('VITE-PROXY-SHAPE', () => {
-  it('VITE-PROXY-SHAPE: every dev proxy entry is an object literal, never a bare target string', () => {
+  it('every dev proxy entry is an object literal, never a bare target string', () => {
     const entries = proxyEntries(proxyBlock(viteConfig))
 
-    expect(entries.map((entry) => entry.key)).toEqual(
-      expect.arrayContaining(['/api/live-editor/ws', '/api', '/screenshots', '/videos']),
-    )
+    expect(entries.map((entry) => entry.key)).toEqual(['/api/live-editor/ws', '/api'])
     for (const entry of entries) {
       expect(entry.valueStart, `${entry.key} maps to an object, so Vite does not set changeOrigin`)
         .toBe('{')

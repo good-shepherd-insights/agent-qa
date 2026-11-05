@@ -1,21 +1,4 @@
-// Resume FIDELITY of the authorship primitive, over the real store (Phase 385 plan 12, D-10).
-//
-// The agent package's own suite proves D-10's control flow: on a recorded checkpoint the author
-// is never reached. It cannot prove the other half of the same sentence — that what comes back
-// is what went in — because its store is a fake that hands a value straight back. The value has
-// to survive canonical JSON, a file, a rename and a re-read before "the recorded bytes" means
-// anything, and only the real sqlite store and the real checkpoint files do that.
-//
-// This file exists for the input the agent suite structurally cannot produce: an authored
-// `undefined`. Canonical JSON cannot represent a member whose value is `undefined`, so the
-// engine's envelope comes back one key short of the one it wrote — which is exactly the input
-// that told a structural envelope sniff "this is not an envelope". Every other authored shape
-// round-trips whether the engine unwraps conditionally or unconditionally, so a suite that
-// only ever authors objects agrees with a broken primitive perfectly.
-//
-// The assertion is deliberately IDENTITY, not truthiness: `undefined` and the engine envelope
-// are both falsy in no useful sense and both "present", so the only assertion that separates
-// the two functions the primitive must not be is "pass 2 returned what pass 1 returned".
+// Asserts identity across a resume on the real store: canonical JSON drops an `undefined`.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -55,11 +38,7 @@ const idSource: JobIdSource = {
   jobIdFor: (kind, idempotencyKey) => asJobId(`job_${sha256hex16(`${kind} ${idempotencyKey}`)}`),
 }
 
-/**
- * The capability the author is handed. It answers, so a defined-value control can be authored
- * with it; the count matters less than the AUTHOR count, because the author is what D-10 says
- * control never reaches on a resume.
- */
+// The capability answers, so a defined-value control can be authored; author count is the claim.
 const fidelityModel: JobModelCapability = {
   modelId: 'test:fidelity',
   generate: async (request) => ({ text: `authored:${request.prompt}` }),
@@ -71,7 +50,7 @@ interface Pass {
 }
 
 interface FidelityFixture {
-  /** What the author produces. Called at most once across both passes, or D-10 is breached. */
+  // What the author produces; called at most once across both passes.
   readonly author: JobAuthorCallback<unknown>
   /** Every value the primitive handed back, in pass order. */
   readonly returned: unknown[]
@@ -97,7 +76,7 @@ function fidelityDeclaration(fixture: FidelityFixture): JobKindDeclaration {
   }
 }
 
-describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-03)', () => {
+describe('recordLlmAuthorship resume fidelity over the real store', () => {
   let root: string
   let open: SqliteJobStore[]
   let clock: ClockPort
@@ -105,8 +84,7 @@ describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-0
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'agent-qa-authorship-fidelity-'))
     open = []
-    // 2026-10-19 (444.1-12, D-23): one clock for both hosts, so the second never reads a time
-    // before the first host's retry was recorded.
+    // One clock for both hosts, so the second never reads a time before the first host's retry.
     clock = createSteppingClock()
   })
 
@@ -194,9 +172,7 @@ describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-0
     return { returned, authorCalls }
   }
 
-  // THE CASE. Authored `undefined` is the one value canonical JSON cannot carry as a member, and
-  // therefore the one value that told the old structural sniff the engine's own envelope was not
-  // an envelope. Before the fix this returned `{attempt, checkpointId, jobId, recordedAt}`.
+  // Authored `undefined` is the one value canonical JSON cannot carry as a member.
   it('hands back the SAME value on resume as on the first pass when a handler authors undefined', async () => {
     const { returned, authorCalls } = await authorAcrossTwoHosts({
       author: async () => undefined,
@@ -206,9 +182,7 @@ describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-0
     expect(authorCalls).toBe(1)
     expect(returned).toHaveLength(2)
     expect(returned[0]).toBeUndefined()
-    // Stated first because its failure PRINTS what came back instead: before the fix this read
-    // `{attempt: 1, checkpointId: 'analysis', jobId: 'job_…', recordedAt: '…'}`, the engine's
-    // own envelope.
+    // Stated first because its failure prints what came back instead.
     expect(returned[1]).toBeUndefined()
     // Identity, not equality: an envelope is neither `undefined` nor deep-equal to it, and this
     // is the assertion that refuses "two functions wearing one name".
@@ -227,10 +201,7 @@ describe('recordLlmAuthorship resume fidelity over the real store (D-10 / JOBQ-0
     expect(returned).toEqual(['authored:the verdicts', 'authored:the verdicts'])
   })
 
-  // THE BOUND on the fix. Unwrapping unconditionally peels exactly one level, so an authored
-  // object that happens to look like an envelope is still returned whole — the worry the
-  // verifier checked and did not reproduce, pinned so a later "smarter" unwrap cannot introduce
-  // it.
+  // Unwrapping peels exactly one level, so an authored envelope-shaped object comes back whole.
   it('peels exactly one level, so an authored object carrying its own value key survives', async () => {
     const authored = { checkpointId: 'not-the-envelope', value: 'inner' }
     const { returned, authorCalls } = await authorAcrossTwoHosts({

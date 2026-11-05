@@ -41,9 +41,6 @@ import type {
 } from '@vostride/agent-qa-schema'
 import { Command, CommanderError } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import * as promotionPosture from '../curation/promotion-posture.js'
-import { promotionHostProof } from './promotion-host-proof.js'
-import type { ResolvePromotionPosture } from '@vostride/agent-qa-schema'
 
 const commandHarness = vi.hoisted(() => ({
   promptCalls: [] as Array<{
@@ -60,7 +57,7 @@ const commandHarness = vi.hoisted(() => ({
   authorityRefreshCalls: 0,
   drainQueueCalls: 0,
   drainInputs: [] as Record<string, unknown>[],
-  drainPromotions: undefined as Array<{ candidateId: string; promotionPath?: 'deterministic-verdict-floor'; promotionHoldReason?: 'gate1-receipt-required' }> | undefined,
+  drainPromotions: undefined as Array<{ candidateId: string; promotionPath?: 'deterministic-verdict-floor'; promotionHoldReason?: 'no-confirmed-evidence' }> | undefined,
   releaseLeaseCalls: 0,
   rebuildIndexInputs: [] as Record<string, unknown>[],
   purgeRecordInputs: [] as Record<string, unknown>[],
@@ -127,8 +124,7 @@ vi.mock('node:readline', async (importOriginal) => {
           question,
         })
         output.write(question)
-        // Phase 432 D-14: maintenance never asks. A prompt that is still wired is declined, so it
-        // fails on outcome assertions rather than hanging the worker.
+        // Maintenance never asks; a wired prompt is declined, so it fails an assertion, not hangs.
         resolveAnswer('n')
       },
     })),
@@ -303,7 +299,6 @@ function fixtureWorkspace(
       },
       knowledge: {
         dir: knowledgeDir,
-        commitArtifacts: 'none',
       },
       use: {
         mobile: { appState: 'preserve' },
@@ -390,7 +385,6 @@ function seedBundle(
   const config: BundleStoreConfig = {
     knowledgeRoot: workspace.knowledgeRoot,
     productKey: product,
-    commitArtifacts: 'none',
   }
   const published = publishBundle(config, bundleInput(options))
   if (published.kind !== 'published') {
@@ -691,45 +685,14 @@ describe('knowledge maintenance commands', () => {
     expect(daemonHarness.nudgeCalls).toEqual([])
   })
 
-  it('binds lazy replay so inline maintenance enforces receipts and the quiet rare path', async () => {
-    const workspace = fixtureWorkspace(roots)
-    const proof = promotionHostProof(workspace.configPath)
-    const build = vi.spyOn(promotionPosture, 'buildPromotionPostureResolver').mockImplementation(proof.prepare)
-    const result = await invoke(workspace, ['drain'])
-    expect(result.exitCode).toBeUndefined()
-    proof.verify(commandHarness.drainInputs[0]!.resolvePromotionPosture as ResolvePromotionPosture)
-    expect(build).toHaveBeenCalledTimes(1)
-  })
-
   it('prints promotion paths and holds in report order on stdout', async () => {
     const workspace = fixtureWorkspace(roots)
     commandHarness.drainPromotions = [
       { candidateId: 'c1', promotionPath: 'deterministic-verdict-floor' },
-      { candidateId: 'c2', promotionHoldReason: 'gate1-receipt-required' },
+      { candidateId: 'c2', promotionHoldReason: 'no-confirmed-evidence' },
     ]
     const result = await invoke(workspace, ['drain'])
-    expect(result.stdout).toContain('curation: c1 promoted via deterministic-verdict-floor\ncuration: c2 held: gate1-receipt-required')
-  })
-
-  it('passes present-root refusal posture into the drain and discloses its identity error', async () => {
-    const workspace = fixtureWorkspace(roots)
-    const floorDir = join(dirname(workspace.configPath), 'agent-qa-eval/reports/noise-floor')
-    mkdirSync(floorDir, { recursive: true })
-    writeFileSync(join(floorDir, 'any-profile.json'), '{}')
-    const result = await invoke(workspace, ['drain'])
-    expect(result.stderr).toContain('curation: posture unavailable:')
-    expect(result.stderr).toContain('use.llm is not set')
-    expect(commandHarness.drainInputs[0].resolvePromotionPosture).toBeTypeOf('function')
-  })
-
-  it('drains a present root with no noise floor on the floor without a posture warning', async () => {
-    const workspace = fixtureWorkspace(roots)
-    mkdirSync(join(dirname(workspace.configPath), 'agent-qa-eval'))
-    const result = await invoke(workspace, ['drain'])
-    expect(result.stderr).not.toContain('posture unavailable')
-    const resolvePosture = commandHarness.drainInputs[0].resolvePromotionPosture as ResolvePromotionPosture
-    expect(resolvePosture({ id: 'floorless-candidate', product: PRODUCT, scope: { tier: 'product', key: PRODUCT },
-      provenance: { runIds: [], receiptDigests: [], capturedAtOrdinals: [] } })).toBeUndefined()
+    expect(result.stdout).toContain('curation: c1 promoted via deterministic-verdict-floor\ncuration: c2 held: no-confirmed-evidence')
   })
 
   it('cleans a stale daemon registration and falls back to the same inline drain', async () => {
@@ -751,9 +714,7 @@ describe('knowledge maintenance commands', () => {
       'utf8',
     )
     expect(source).toContain('classifyDaemonRegistration')
-    // Plan 22's prohibition, and I-01's closure. This replaced a `unconditionalRemovals === 0`
-    // counter on a module mock: the counter could only ever say "not called on these schedules",
-    // while the surface itself no longer exists to be called on any schedule at all.
+    // Checked in source, because a call counter speaks only for the schedules a test drives.
     expect(source).not.toContain('removeDaemonRegistration')
     // Pinned non-vacuous: the compare-delete this command DOES use must still be here, so a
     // renamed or emptied file cannot satisfy the assertion above.
@@ -788,11 +749,9 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.drainQueueCalls).toBe(1)
   })
 
-  it('unlinks the drain-recovered generation\'s own socket (W-07)', async () => {
+  it('unlinks the drain-recovered generation\'s own socket', async () => {
     const workspace = fixtureWorkspace(roots)
-    // The address the recorded instance is REQUIRED to bind. 386-38's nonce arm demands exactly
-    // this, so a fixture that records some other in-root path measures the refusal, not the
-    // reclaim — which is how 386-33's exactness fixture came to lock a hazard in.
+    // The instance must bind exactly this address, or the fixture measures the refusal instead.
     const owned = daemonSocketPath(
       workspace.runtimeRoot,
       workspace.root,
@@ -830,7 +789,7 @@ describe('knowledge maintenance commands', () => {
     )
   }, 20_000)
 
-  it('leaves a recorded socket path the drain cannot prove it owns (W-07)', async () => {
+  it('leaves a recorded socket path the drain cannot prove it owns', async () => {
     const workspace = fixtureWorkspace(roots)
     // Drawn from OUTSIDE the ownership precondition: a real socket in its own directory, named
     // by registration bytes that are `z.string().min(1)` and therefore attacker-shaped. Obeying
@@ -858,7 +817,7 @@ describe('knowledge maintenance commands', () => {
     )
   }, 20_000)
 
-  it('refuses an in-container address that is not the recorded instance\'s own (W-07)', async () => {
+  it('refuses an in-container address that is not the recorded instance\'s own', async () => {
     const workspace = fixtureWorkspace(roots)
     // The input that separates the drain's gate from a weaker one: a real socket in the very
     // directory this project's addresses live in, which containment would happily delete and
@@ -1042,7 +1001,7 @@ describe('knowledge maintenance commands', () => {
     }
 
     appendDrainSessionReceipt(workspace.runtimeRoot, receipt, { fsyncDirectory })
-    // WR-03: the directory entry that first publishes the ledger must survive the crash window.
+    // The directory entry that first publishes the ledger must survive the crash window.
     expect(fsyncDirectory.mock.calls).toEqual([[workspace.runtimeRoot]])
 
     appendDrainSessionReceipt(
@@ -1158,18 +1117,16 @@ describe('knowledge maintenance commands', () => {
     const workspace = fixtureWorkspace(roots)
     seedPendingCandidate(workspace, SECOND_CANDIDATE_ID)
     writeRunReceipt(workspace, 'z-run-dir', {
-      canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0,
-        ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0,
-        nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+      canary: { rideAlongUncredited: 0, rerunExcluded: 0,
+        nonSignal: { environment: 0, timeout: 0, flake: 0 } },
       runId: 'run-zeta',
       drainKind: 'handed-off',
       handoffHolderPid: 404,
       candidateIds: [SECOND_CANDIDATE_ID],
     })
     writeRunReceipt(workspace, 'a-run-dir', {
-      canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0,
-        ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0,
-        nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+      canary: { rideAlongUncredited: 0, rerunExcluded: 0,
+        nonSignal: { environment: 0, timeout: 0, flake: 0 } },
       runId: 'run-alpha',
       drainKind: 'drained',
       handoffHolderPid: null,
@@ -1269,8 +1226,6 @@ describe('knowledge maintenance commands', () => {
     ].join('\n'))
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "fails closed without non-interactive
-  // confirmation". Running the command is the intent; the refusal it pinned no longer exists.
   it('applies rollback and purge non-interactively with no confirmation step', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
@@ -1290,8 +1245,6 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.promptCalls).toEqual([])
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "refuses piped stdin even when stdout is a TTY".
-  // Piped stdin is never read; each destructive mutator runs exactly once.
   it('never reads piped stdin when stdout is a TTY and invokes each mutator once', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
@@ -1310,8 +1263,6 @@ describe('knowledge maintenance commands', () => {
     expect(existsSync(bundle.dir)).toBe(false)
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "…while prompting on stderr"; the preview keeps
-  // stderr, and no prompt is written anywhere.
   it('keeps interactive rollback JSON stdout parseable while previewing on stderr', async () => {
     const workspace = fixtureWorkspace(roots)
     seedBundle(workspace)
@@ -1509,8 +1460,6 @@ describe('knowledge maintenance commands', () => {
     )
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "…while prompting on stderr"; the preview keeps
-  // stderr, and no prompt is written anywhere.
   it('keeps interactive purge JSON stdout parseable while previewing on stderr', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
@@ -1700,7 +1649,6 @@ describe('knowledge maintenance commands', () => {
       {
         knowledgeRoot: workspace.knowledgeRoot,
         productKey: secondaryProduct,
-        commitArtifacts: 'none',
       },
       asRecordId(secondary.id),
       BundleOutcomeEventSchema.parse({
@@ -1724,8 +1672,7 @@ describe('knowledge maintenance commands', () => {
 
     const result = await invoke(workspace, ['purge', primary.id, '--json'])
 
-    // 2026-10-01 (432-15, D-14): the preview is rendered before the writer lease is taken, and the
-    // purge then completes; there is no answer to abort it with.
+    // The preview renders before the writer lease is taken, and the purge then completes.
     expect(result.exitCode).toBeUndefined()
     for (const path of expectedPaths) {
       expect(stderrAtLease).toContain(path)
@@ -1738,8 +1685,7 @@ describe('knowledge maintenance commands', () => {
     expect(existsSync(secondary.dir)).toBe(false)
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "…after exact-id authorization"; the drift lands
-  // between the preview and the writer lease.
+  // The drift lands between the preview and the writer lease.
   it('refuses purge target drift after the preview and before mutation', async () => {
     const workspace = fixtureWorkspace(roots)
     const primary = seedBundle(workspace)
@@ -1765,9 +1711,7 @@ describe('knowledge maintenance commands', () => {
     expect(existsSync(drifted!.dir)).toBe(true)
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "…when interactive answers refuse". No answer can
-  // refuse any more; the surviving refusals (an invalid selector, an unknown record) keep JSON
-  // stdout empty and return non-success.
+  // The remaining refusals, an invalid selector and an unknown record, keep JSON stdout empty.
   it('keeps JSON stdout empty and returns non-success when rollback or purge refuses', async () => {
     const rollbackWorkspace = fixtureWorkspace(roots)
     seedBundle(rollbackWorkspace)
@@ -1798,8 +1742,6 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.promptCalls).toEqual([])
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "requires the exact purge id, rejects --yes…".
-  // The repeated-id confirmation is gone: --confirm is now as unknown as --yes.
   it('rejects the retired --confirm and --yes options and emits the persisted receipt verbatim', async () => {
     const workspace = fixtureWorkspace(roots)
     const bundle = seedBundle(workspace)
@@ -1889,8 +1831,6 @@ describe('knowledge maintenance commands', () => {
     })
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "…while rollback and purge await human
-  // authorization". Nothing awaits; the preview is still resolved before any lease is held.
   it('holds no writer lease while rollback and purge resolve their previews', async () => {
     const rollbackWorkspace = fixtureWorkspace(roots)
     seedBundle(rollbackWorkspace)
@@ -1913,8 +1853,6 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.promptCalls).toEqual([])
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "rejects an authorized rollback…"; nothing is
-  // authorized any more, and the fingerprint recheck under the lease is what survives.
   it('rejects a rollback when the under-lease target fingerprint changes', async () => {
     const driftProduct = 'preview-drift-product'
     const workspace = fixtureWorkspace(roots, {
@@ -1934,8 +1872,6 @@ describe('knowledge maintenance commands', () => {
     expect(commandHarness.rollbackCurationJobCalls).toBe(0)
   })
 
-  // 2026-10-01 (432-15, D-14): re-spelled from "…while the rollback preview awaits authorization";
-  // the promotion now lands between the preview and the writer lease.
   it('rejects a promotion added between the rollback preview and the writer lease', async () => {
     const workspace = fixtureWorkspace(roots)
     const baseJob = 'promotion-preview-base-job'
@@ -1943,7 +1879,6 @@ describe('knowledge maintenance commands', () => {
     const config: BundleStoreConfig = {
       knowledgeRoot: workspace.knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
     }
     expect(appendOutcomeEvent(config, asRecordId(bundle.id), {
       type: 'retracted',

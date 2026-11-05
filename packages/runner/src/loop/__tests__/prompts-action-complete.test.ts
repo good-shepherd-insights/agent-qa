@@ -1,4 +1,3 @@
-// Ported from core/src/agent/__tests__/prompts-action-complete.test.ts (353-03, D-02).
 import { describe, it, expect } from 'vitest'
 import { buildSystemPrompt } from '../prompts.js'
 
@@ -7,8 +6,8 @@ function getActionCompletionRule(systemPrompt: string): string {
   return match?.[0] ?? ''
 }
 
-// 2026-10-11 (439-03): Rule 19 asks for the requested outcome in evidence (D-01, D-11, D-18).
-describe('ACTION-COMPLETE-01 — completion needs its outcome in evidence', () => {
+// Rule 19 asks for the requested outcome in evidence.
+describe('completion needs its outcome in evidence', () => {
   const systemPrompt = buildSystemPrompt()
   const actionCompletionRule = getActionCompletionRule(systemPrompt)
 
@@ -42,7 +41,7 @@ describe('ACTION-COMPLETE-01 — completion needs its outcome in evidence', () =
     expect(actionCompletionRule).toContain('Rule 13')
   })
 
-  it('pairs Rule 19 with the outcome-evidence rule (Rule 22, 436-03)', () => {
+  it('pairs Rule 19 with the outcome-evidence rule (Rule 22)', () => {
     expect(systemPrompt).toContain('22. OUTCOME EVIDENCE:')
     expect(systemPrompt).toContain('check the requested effect')
     expect(systemPrompt).toContain('do not repeat an action unless the step asks for repetition')

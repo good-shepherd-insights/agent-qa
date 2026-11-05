@@ -1,16 +1,16 @@
 import { APICallError } from '@ai-sdk/provider'
 import { describe, expect, it } from 'vitest'
 
-import type { LanguageModelMiddleware } from 'ai'
+import type { LanguageModelMiddleware, LogWarningsFunction, Warning } from 'ai'
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3GenerateResult,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4GenerateResult,
 } from '@ai-sdk/provider'
 
-import { debugLoggingMiddleware } from '../middleware/debug-logging.js'
+import { debugLoggingMiddleware, sdkWarningLogger } from '../middleware/debug-logging.js'
 
-const fakeModel = { modelId: 'test-model' } as LanguageModelV3
+const fakeModel = { modelId: 'test-model' } as LanguageModelV4
 
 // A benign successful generate result the wrapped `doGenerate` can resolve.
 const OK_RESULT = {
@@ -21,11 +21,11 @@ const OK_RESULT = {
     outputTokens: { total: 0, text: 0, reasoning: 0 },
   },
   warnings: [],
-} as unknown as LanguageModelV3GenerateResult
+} as unknown as LanguageModelV4GenerateResult
 
 // A request carrying a secret in message content AND the maxOutputTokens param — so we can
 // prove the surface logs the SHAPE (roles/counts/param keys) without leaking the secret.
-function paramsWithSecret(): LanguageModelV3CallOptions {
+function paramsWithSecret(): LanguageModelV4CallOptions {
   return {
     prompt: [
       { role: 'system', content: 'You are a tester. secret sk-SECRET123 must not leak' },
@@ -36,10 +36,10 @@ function paramsWithSecret(): LanguageModelV3CallOptions {
     temperature: 0.5,
     maxOutputTokens: 4096,
     headers: { authorization: 'Bearer sk-SECRET123' },
-  } as unknown as LanguageModelV3CallOptions
+  } as unknown as LanguageModelV4CallOptions
 }
 
-// A codex Responses 400 exactly like the live RUNX-01 capture.
+// A codex Responses 400 shaped like a live capture.
 function makeApiCallError(): APICallError {
   return new APICallError({
     message: 'Bad Request',
@@ -57,9 +57,9 @@ function makeApiCallError(): APICallError {
 // Mimic the SDK: if the middleware wraps generate, drive it; otherwise call through.
 async function runGenerate(
   middleware: LanguageModelMiddleware,
-  doGenerate: () => Promise<LanguageModelV3GenerateResult>,
-  params: LanguageModelV3CallOptions,
-): Promise<LanguageModelV3GenerateResult> {
+  doGenerate: () => Promise<LanguageModelV4GenerateResult>,
+  params: LanguageModelV4CallOptions,
+): Promise<LanguageModelV4GenerateResult> {
   if (!middleware.wrapGenerate) return doGenerate()
   return middleware.wrapGenerate({
     doGenerate,
@@ -104,6 +104,27 @@ describe('debugLoggingMiddleware — enabled', () => {
     expect(errorLine).not.toContain('Unsupported parameter: max_output_tokens')
   })
 
+  it('logs a screenshot request without its image bytes', async () => {
+    const lines: string[] = []
+    const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => lines.push(line) })
+    const screenshot = Buffer.from('the checkout page screenshot').toString('base64')
+    const params: LanguageModelV4CallOptions = {
+      prompt: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Current screen state:' },
+          { type: 'file', mediaType: 'image/png', data: { type: 'data', data: screenshot } },
+        ],
+      }],
+    }
+
+    await runGenerate(middleware, async () => OK_RESULT, params)
+
+    expect(lines).toEqual([
+      '[agent-qa:llm] request model=test-model messages=1 roles=[user] tools=0 params=[]',
+    ])
+  })
+
   it('does not log the response body on a successful call (shape-only surface)', async () => {
     const lines: string[] = []
     const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => lines.push(line) })
@@ -116,7 +137,7 @@ describe('debugLoggingMiddleware — enabled', () => {
   })
 })
 
-describe('C441-DEBUG-LOG', () => {
+describe('the debug log leaks no credential', () => {
   const keyBody =
     '{"error":{"message":"Incorrect API key provided: sk-abc123def456","type":"invalid_request_error","code":"invalid_api_key"}}'
 
@@ -144,7 +165,7 @@ describe('C441-DEBUG-LOG', () => {
     const params = {
       ...paramsWithSecret(),
       headers: { Authorization: 'Bearer K-HEADER-1' },
-    } as LanguageModelV3CallOptions
+    } as LanguageModelV4CallOptions
     const lines: string[] = []
     const middleware = debugLoggingMiddleware({ enabled: true, sink: (line) => lines.push(line) })
 
@@ -209,5 +230,50 @@ describe('debugLoggingMiddleware — disabled (default)', () => {
       runGenerate(middleware, async () => { throw apiError }, paramsWithSecret()),
     ).rejects.toBe(apiError)
     expect(lines).toHaveLength(0)
+  })
+})
+
+describe('sdkWarningLogger', () => {
+  const adapted: Warning[] = [
+    { type: 'unsupported', feature: 'toolChoice', details: "'required' is not supported" },
+    { type: 'unsupported', feature: 'temperature' },
+    { type: 'compatibility', feature: 'maxOutputTokens', details: 'The model is unknown.' },
+  ]
+  const others: Warning[] = [
+    { type: 'unsupported', feature: 'seed' },
+    { type: 'compatibility', feature: 'JSON Schema propertyNames' },
+  ]
+  const scope = { provider: 'anthropic.messages', model: 'claude-sonnet-5-5' }
+
+  function route(enabled: boolean, options: Parameters<LogWarningsFunction>[0]) {
+    const lines: string[] = []
+    const printed: Parameters<LogWarningsFunction>[0][] = []
+    const logger = sdkWarningLogger(
+      (passed) => { printed.push(passed) }, { enabled, sink: (line) => lines.push(line) })
+    logger(options)
+    return { lines, printed }
+  }
+
+  it("logs a provider's adapted call settings and passes every other warning on", () => {
+    const { lines, printed } = route(true, { warnings: [...adapted, ...others], ...scope })
+
+    expect(lines).toEqual(adapted.map((warning) =>
+      `[agent-qa:llm] provider-warning provider=anthropic.messages model=claude-sonnet-5-5 ${
+        JSON.stringify(warning)}`))
+    expect(printed).toEqual([{ warnings: others, ...scope }])
+  })
+
+  it('logs the adapted settings nowhere while the debug log is off', () => {
+    expect(route(false, { warnings: adapted, ...scope })).toEqual({ lines: [], printed: [] })
+  })
+
+  it('passes on a warning the SDK raises without a provider', () => {
+    const deprecated: Warning = { type: 'deprecated', setting: 'streamObject', message: 'Use it.' }
+    const unscoped: Warning = { type: 'unsupported', feature: 'temperature' }
+
+    const { lines, printed } = route(true, { warnings: [deprecated, unscoped] })
+
+    expect(lines).toEqual([])
+    expect(printed).toEqual([{ warnings: [deprecated, unscoped] }])
   })
 })

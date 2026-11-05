@@ -1,14 +1,3 @@
-// RED scaffold (Wave 0, LOOP-04 · D-10/D-11 · Pitfall 7). Pins the re-ground-first
-// self-heal: a ref-resolution failure ('Unknown ref "…"') triggers re-observe → re-find the
-// prior observation's element by its role, exact name and row words (strictMatch, 438 D-08:
-// unique or nothing, no ordinal and no hierarchy tiebreak) → patch the ref → re-execute, WITH
-// NO new planning turn (planner.plan called exactly once). The heal is recorded in the
-// sub-action grounding trail only; StepEvidence.selfHeal stays reserved for replan heals
-// (D-11). Non-ref failures (a bare timeout) keep the replan-with-failure-context path (the
-// conservative classifier), and only one heal is attempted per planned action.
-//
-// Under the shipped loop a ref failure just replans (planner called twice) and never
-// records a grounding trail — the intended RED (GREEN when Plan 07 lands the heal).
 import { describe, it, expect, vi } from 'vitest'
 import type { LoopPorts } from '../ports.js'
 import type { Planner } from '../types.js'
@@ -25,7 +14,7 @@ const TIMEOUT_ERROR = 'Timeout 30000ms exceeded waiting for locator'
 
 const threeScreens = () => [makeScreenState(), makeScreenState(), makeScreenState()]
 
-describe('re-ground-first self-heal (LOOP-04 / D-10)', () => {
+describe('re-ground-first self-heal', () => {
   it('heals a ref-resolution failure by re-grounding and re-executing WITHOUT a new planning turn', async () => {
     const adapter = makeAdapter({
       observeResults: threeScreens(),
@@ -43,7 +32,7 @@ describe('re-ground-first self-heal (LOOP-04 / D-10)', () => {
     expect(plannerSpy).toHaveBeenCalledTimes(1) // re-ground heal — no replan turn
   })
 
-  it('records the heal in the grounding trail only — StepEvidence.selfHeal stays unpopulated (D-11)', async () => {
+  it('records the heal in the grounding trail only — StepEvidence.selfHeal stays unpopulated', async () => {
     const adapter = makeAdapter({
       observeResults: threeScreens(),
       executeResults: [{ success: false, error: UNKNOWN_REF_ERROR }, { success: true }],
@@ -64,7 +53,7 @@ describe('re-ground-first self-heal (LOOP-04 / D-10)', () => {
     } | undefined
     expect(healed?.grounding).toBeDefined()
     expect(healed?.grounding?.attempts.some((a) => a.stage === 'tree-search' && a.outcome === 'resolved')).toBe(true)
-    // 438 D-08: the strict heal names the exact observed identity and never a position.
+    // The strict heal names the exact observed identity, never a position.
     expect(healed?.grounding?.descriptor).toEqual({ role: 'button', name: 'Log in' })
   })
 

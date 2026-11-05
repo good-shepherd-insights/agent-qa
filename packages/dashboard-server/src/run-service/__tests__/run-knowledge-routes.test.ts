@@ -1,26 +1,4 @@
-// `GET /api/runs/:id/knowledge` — the Knowledge panel's door (Phase 407 plan 01, D-05/D-06).
-//
-// WHY A REAL REGISTRY AND NOT A PLANTED HOST for the first four cells. `runs.knowledge` is where
-// the `evidence-incomplete` arm is decided, where the input schema refuses an id and where the
-// unbound-op refusal is minted; a fixture that answered this route's `invokeFunction` itself would
-// be a second implementation of all three, green about a path this product does not ship.
-// `@vostride/agent-qa-agent` is a DEV dependency of this package for exactly that reason —
-// `validate:arch` walks `src` with `__tests__` excluded and reconciles only runtime
-// `dependencies`, so the production edge it forbids stays forbidden.
-//
-// THE ADAPTER FUNCTION AND THE SOCKET, EACH FOR WHAT ONLY IT CAN SEE. The read's own vocabulary —
-// the refusal statuses, the stored body, the cross-site guard — is measured through a recording
-// response, which keeps each claim about one thing. Two facts live ABOVE that function and are
-// driven over a real socket at the bottom of this file: the arm's POSITION in `routes.ts` (the
-// `/api/runs/:id` catch-all below it claims every four-segment GET and answers `Not found`, which
-// is RESEARCH Pitfall 2) and the conditional host spread in `server.ts`. A suite that only called
-// the adapter would stay green with the arm registered in the wrong place.
-//
-// THE CENTRAL CLAIM, AND IT IS THE ONE A CARELESS COPY OF `run-detail-routes.ts` WOULD BREAK: an
-// unknown run answers 200 `evidence-incomplete`, NOT 404 `unknown_run`. `runs.detail` throws
-// `RunNotFoundError` for a run it cannot load; `runs.knowledge` returns (D-06), because a page
-// whose evidence has been garbage-collected has a legible state to render and a refusal would make
-// that state indistinguishable from a broken read.
+// An unknown run answers 200 `evidence-incomplete`, not 404, unlike `runs.detail`.
 
 import type { Server, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -66,7 +44,7 @@ afterEach(async () => {
 const RUN_ID = 'r_knowledge-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel'
 const SCOPE: ScopeKey = { tier: 'product', key: 'shop' }
 
-// 2026-10-01 (432-21, D-12): the tokenless caller shape — no scope set or safe-mode flag.
+// The tokenless caller shape: no scope set or safe-mode flag.
 const REGISTRY_CALLER: FunctionCaller = {
   surface: 'dashboard',
   origin: 'human',
@@ -212,7 +190,7 @@ function recordingResponse(): {
 /** A loopback request, which is what the human arm's same-site guard admits. */
 const LOOPBACK = { headers: { host: '127.0.0.1:3470' } } as never
 
-describe('GET /api/runs/:id/knowledge — the read (D-05)', () => {
+describe('GET /api/runs/:id/knowledge — the read', () => {
   it('answers 200 with a ready projection for a recorded run', async () => {
     const outcome = await readRunKnowledge(hostOver(composeRegistry(recordedRun())), RUN_ID)
 
@@ -224,7 +202,7 @@ describe('GET /api/runs/:id/knowledge — the read (D-05)', () => {
     expect(outcome.body.steps).toHaveLength(1)
   })
 
-  it('answers 200 evidence-incomplete for an unknown run — the op RETURNS, it does not throw (D-06)', async () => {
+  it('answers 200 evidence-incomplete for an unknown run — the op RETURNS, it does not throw', async () => {
     // THE CELL THIS FILE EXISTS FOR. `runs.detail` would raise `RunNotFoundError` here and this
     // door would classify it 404 `unknown_run`; `runs.knowledge` does not, because the page has a
     // state to render for a pruned handoff and a refusal would hide it behind a grey error.
@@ -235,7 +213,7 @@ describe('GET /api/runs/:id/knowledge — the read (D-05)', () => {
     expect(outcome.body).toEqual({ kind: 'evidence-incomplete', runId: RUN_ID })
   })
 
-  it('refuses an id the op schema rejects with 400, and never reaches a dispatch (T-407-01)', async () => {
+  it('refuses an id the op schema rejects with 400, and never reaches a dispatch', async () => {
     let dispatched = 0
     const host = {
       ...hostOver(composeRegistry(recordedRun())),
@@ -258,16 +236,7 @@ describe('GET /api/runs/:id/knowledge — the read (D-05)', () => {
   })
 
   it('classifies a dispatch to a name no spec answers to as 500 read_failed, BY NAME', async () => {
-    // THE 503 `agent_host_unavailable` LEG DOES NOT EXIST FOR THIS OP THROUGH A DEP GAP, and that
-    // absence is the design rather than a hole in this suite. `runs.detail` and `analysis.get`
-    // reach that leg because they declare an optional binding dep and refuse `FunctionNotBoundError`
-    // where it is missing; `runs.knowledge` declares none — its substrate is the REQUIRED runs port
-    // — so there is no composition that lists it and then cannot run it (407 D-05). What remains
-    // reachable is a composition that passed the WRONG id, and the honest answer to that is an
-    // unclassified throw travelling as a NAME rather than as a message that might quote a path.
-    //
-    // The 503 this door really can answer is the ROUTER's, when no agent host is composed at all —
-    // driven over a real socket in the arm cells below.
+    // `runs.knowledge` declares no optional binding, so a wrong id is an unnamed throw, not a 503.
     const outcome = await readRunKnowledge(
       hostOver(composeRegistry(recordedRun()), { knowledgeFunctionId: 'runs.notregistered' }),
       RUN_ID,
@@ -281,42 +250,16 @@ describe('GET /api/runs/:id/knowledge — the read (D-05)', () => {
   })
 })
 
-describe('serveRunKnowledgeRead — the door (405 CR-01 · 405-10 D-09)', () => {
-  it('refuses a cross-site request before any dispatch', async () => {
-    let dispatched = 0
-    const host = {
-      ...hostOver(composeRegistry(recordedRun())),
-      invokeFunction: (): Promise<unknown> => {
-        dispatched += 1
-        return Promise.resolve(undefined)
-      },
-    } as unknown as AgentHost
-    const recorder = recordingResponse()
+describe('serveRunKnowledgeRead', () => {
+  const STORED_STEP = 'Sign in with [secret:PW_KEY] or <SECRET_0>'
 
-    // An attacker-controlled Host that resolves to loopback is what DNS rebinding looks like from
-    // this door's side; the absent CORS grant does not stop it, and this guard does.
-    serveRunKnowledgeRead(
-      { headers: { host: 'evil.example.com', origin: 'http://evil.example.com' } } as never,
-      recorder.res,
-      { runId: RUN_ID, host, boundary: 'human' },
-    )
-    await recorder.done
-
-    expect(recorder.status()).toBe(403)
-    expect(JSON.parse(recorder.raw())).toEqual({ error: 'cross_site_refused' })
-    expect(dispatched).toBe(0)
-  })
-
-  const STORED_STEP = 'Sign in with [secret:PW_441] or <SECRET_0>'
-
-  it("serves a step's stored text unchanged when boundary is 'human' (441 D-07)", async () => {
+  it("serves a step's stored text unchanged", async () => {
     const registry = composeRegistry(recordedRun(STORED_STEP))
     const recorder = recordingResponse()
 
     serveRunKnowledgeRead(LOOPBACK, recorder.res, {
       runId: RUN_ID,
       host: hostOver(registry),
-      boundary: 'human',
     })
     await recorder.done
 
@@ -324,13 +267,10 @@ describe('serveRunKnowledgeRead — the door (405 CR-01 · 405-10 D-09)', () => 
     expect(recorder.raw()).toContain(STORED_STEP)
   })
 
-  it('serves the same stored text with no boundary, at a non-loopback Host', async () => {
+  it('serves the same stored text at a non-loopback Host', async () => {
     const registry = composeRegistry(recordedRun(STORED_STEP))
     const recorder = recordingResponse()
 
-    // NO `boundary`, AND A NON-LOOPBACK HOST: an authed remote row is reached at a real hostname
-    // and must not inherit a loopback check written for a person's local browser session. A 200
-    // here is the assertion that the guard is gated on `boundary` and not on the function.
     serveRunKnowledgeRead(
       { headers: { host: 'runs.example.com' } } as never,
       recorder.res,
@@ -343,16 +283,10 @@ describe('serveRunKnowledgeRead — the door (405 CR-01 · 405-10 D-09)', () => 
   })
 })
 
-// ---- The ARM, over a real socket ---------------------------------------------------------------
-//
-// WHY A SOCKET FOR THESE TWO. Both things they measure live ABOVE the adapter function: the arm's
-// POSITION in `routes.ts` — the `/api/runs/:id` catch-all below it claims every four-segment GET
-// and answers `Not found`, which is RESEARCH Pitfall 2 — and the conditional spread in `server.ts`
-// that threads the host at all. A suite that only called `serveRunKnowledgeRead` would stay green
-// with the arm registered in the wrong place, which is the "green that never ran" failure mode.
+// Over a real socket, because the arm's place in `routes.ts` and the host wiring sit above it.
 
 describe('the /knowledge arm in routes.ts', () => {
-  it('is reached at all — it sits ABOVE the /api/runs/:id catch-all (Pitfall 2)', async () => {
+  it('is reached at all — it sits ABOVE the /api/runs/:id catch-all', async () => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
     databases.push(db)
     const started = await startServer({

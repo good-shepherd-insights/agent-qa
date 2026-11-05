@@ -1,16 +1,8 @@
-// THE THREE CHOICES, ORDERED BY THE TARGET'S OWN RECORDED RESULT (426-02 · D-11, D-12, D-14).
-//
-// A failed target offers "This should have passed" first and a passed target offers "This should have
-// failed" first, because the likelier correction is the one that contradicts what was recorded. The
-// order is keyed to the TARGET — a step reads its own verifier verdict, a test its own outcome — never
-// to the run as a whole and never to a guess at the tester's answer. These cells pin that rule, the
-// meaning line under each choice, and the closed sets, by their exported constants; the only literal
-// prose here is the locked label copy (SC2) and the S4 meaning table the spec fixes verbatim.
+// The likelier correction contradicts the target's own recorded result, so it is offered first.
 
 import { describe, expect, it } from 'vitest'
 import type {
   Mark,
-  MarkPreviewGroundTruth,
   MarkPreviewKnowledgeRecord,
   RunDetailMember,
   RunDetailStep,
@@ -38,7 +30,6 @@ import {
   FEEDBACK_ENTRY_TEST_LABEL,
   FEEDBACK_OUTCOME_CLASSES,
   FEEDBACK_PREVIEW_STATES,
-  NO_GROUND_TRUTH_TEXT,
   PREVIEW_IDLE_TEXT,
   PREVIEW_LINE_LABELS,
   PREVIEW_UPDATING_TEXT,
@@ -47,7 +38,6 @@ import {
   UNREADABLE_RECORD_TEXT,
   SUBMIT_REASON_ALREADY_MARKED,
   SUBMIT_REASON_CHECKING,
-  SUBMIT_REASON_INVALID_CORRECTION,
   SUBMIT_REASON_NO_CHOICE,
   SUBMIT_REASON_NO_UNIQUE_ADDRESS,
   SUBMIT_REASON_PREVIEW_FAILED,
@@ -68,27 +58,20 @@ import {
   APPLIED_TEST_FILE_PREFIX,
   APPLIED_UNAVAILABLE_TEXT,
   appliedRecordUnavailableText,
-  ADD_CORRECTION_LABEL,
   TECHNICAL_DETAILS_LABEL,
   TECHNICAL_DETAILS_ROW_LABELS,
   basisDetailText,
-  labelDetailText,
-  correctedActionGate,
-  correctedActionUnavailableText,
   type SubmitBlockInput,
   NO_STEP_VERDICT_TEXT,
   ONE_STEP_SCOPE_TEXT,
   RECORDED_RESULT_TEXT,
   WHOLE_TEST_SCOPE_TEXT,
   composerHeading,
-  correctedGroundTruthText,
   feedbackEntryLabel,
   feedbackOutcomeClass,
   feedbackPartsText,
   feedbackPreviewState,
-  groundTruthLine,
   knowledgeLine,
-  labelsLine,
   previewFixText,
   recordEffectLine,
   replacesLine,
@@ -113,7 +96,6 @@ import {
   HISTORY_READ_FAILED_TEXT,
   HISTORY_RETRY_ACCESSIBLE_NAME,
   REPLACEMENT_EXPLANATION,
-  correctedPresenceText,
   feedbackHistoryState,
   formatMarkTime,
   historyStateText,
@@ -139,7 +121,7 @@ function step(pass: boolean | undefined): Pick<RunDetailStep, 'verifierVerdict'>
   return (pass === undefined ? {} : { verifierVerdict: { pass, reasoning: '' } }) as Pick<RunDetailStep, 'verifierVerdict'>
 }
 
-describe('426-02 choice order and meaning', () => {
+describe('choice order and meaning', () => {
   it('CHOICE-LABELS-EXACT: the three labels are the locked plain-language copy, keyed by exactly the marks', () => {
     expect(CHOICE_LABELS).toEqual({
       'false-fail': 'This should have passed',
@@ -190,7 +172,7 @@ describe('426-02 choice order and meaning', () => {
     expect(feedbackOutcomeClass({ member: member(), step: step(undefined), runStatus: 'passed' })).toBe('passed')
   })
 
-  it('CHOICE-MEANINGS-TOTAL: every class carries a meaning for every mark, and the failed row is the S4 table', () => {
+  it('CHOICE-MEANINGS-TOTAL: every class carries a meaning for every mark, and the failed row reads word for word', () => {
     expect(Object.keys(CHOICE_MEANINGS).sort()).toEqual([...FEEDBACK_OUTCOME_CLASSES].sort())
     for (const cls of FEEDBACK_OUTCOME_CLASSES) {
       expect(Object.keys(CHOICE_MEANINGS[cls]).sort()).toEqual([...MARKS].sort())
@@ -207,7 +189,6 @@ describe('426-02 choice order and meaning', () => {
 
   it('CLOSED-SETS-RUNTIME: the outcome classes and composer states are exactly the published sets', () => {
     expect(FEEDBACK_OUTCOME_CLASSES).toEqual(['passed', 'failed'])
-    // 432-14 (D-14): no state for a mark waiting on an approval.
     expect(FEEDBACK_COMPOSER_STATES).toEqual(['composing', 'submitting', 'recorded', 'retained'])
     expect(Object.keys(FEEDBACK_CHOICE_ORDER).sort()).toEqual([...FEEDBACK_OUTCOME_CLASSES].sort())
     for (const cls of FEEDBACK_OUTCOME_CLASSES) {
@@ -216,7 +197,7 @@ describe('426-02 choice order and meaning', () => {
   })
 })
 
-describe('426-02 the composer names its target', () => {
+describe('the composer names its target', () => {
   const checkout = { testIndex: 1, name: 'checkout', outcome: 'failed' } as const
   const coupon = { stepIndex: 2, stepText: 'apply coupon', verifierVerdict: { pass: true, reasoning: '' } }
 
@@ -292,7 +273,7 @@ describe('426-02 the composer names its target', () => {
   })
 })
 
-describe('426-03 the header entry names itself', () => {
+describe('the header entry names itself', () => {
   it('ENTRY-SCOPES-RUNTIME: the entry scopes are exactly test and step', () => {
     expect([...FEEDBACK_ENTRY_SCOPES]).toEqual(['test', 'step'])
   })
@@ -310,7 +291,7 @@ describe('426-03 the header entry names itself', () => {
   })
 })
 
-describe('426-03 which test the header entry means', () => {
+describe('which test the header entry means', () => {
   const suite = (...outcomes: RunDetailMember['outcome'][]) => ({
     members: outcomes.map((outcome, testIndex) => ({ testIndex, attempts: 1, ...(outcome === undefined ? {} : { outcome }) })),
   })
@@ -332,7 +313,7 @@ describe('426-03 which test the header entry means', () => {
   })
 })
 
-describe('426-03 a test the dashboard cannot address', () => {
+describe('a test the dashboard cannot address', () => {
   const members = (...testIds: (string | undefined)[]) => ({
     members: testIds.map((testId, testIndex) => ({ testIndex, attempts: 1, ...(testId === undefined ? {} : { testId }) })),
   })
@@ -353,7 +334,7 @@ describe('426-03 a test the dashboard cannot address', () => {
   })
 })
 
-describe('426-04 the step door and the passive trace name themselves', () => {
+describe('the step door and the passive trace name themselves', () => {
   it('MARK-GLYPH-LABEL: a passive glyph reads the plain choice; the step tooltip names the step, or says it is already marked', () => {
     expect(markGlyphLabel('false-fail')).toBe('Marked: This should have passed')
     for (const kind of MARKS) expect(markGlyphLabel(kind)).toBe(`Marked: ${CHOICE_LABELS[kind]}`)
@@ -362,7 +343,7 @@ describe('426-04 the step door and the passive trace name themselves', () => {
   })
 })
 
-describe('426-05 the pinned target names both places', () => {
+describe('the pinned target names both places', () => {
   const checkout = { testIndex: 1, name: 'checkout' }
   const login = { testIndex: 0, name: 'login' }
   const test = (entry: { testIndex: number; name: string }) => `${memberDisplayName(entry)} ${memberHandleLabel(entry.testIndex)}`
@@ -388,19 +369,15 @@ describe('426-05 the pinned target names both places', () => {
     expect(unsentDraftLabel({})).toBe('Unsent draft: this test')
   })
 
-  it('PINNED-COPY: a draft is empty with no choice and all three texts empty', () => {
-    expect(isDraftEmpty({ note: '', expectation: '', actionText: '' })).toBe(true)
-    expect(isDraftEmpty({ kind: 'false-fail', note: '', expectation: '', actionText: '' })).toBe(false)
-    expect(isDraftEmpty({ note: 'x', expectation: '', actionText: '' })).toBe(false)
-    expect(isDraftEmpty({ note: '', expectation: 'x', actionText: '' })).toBe(false)
-    expect(isDraftEmpty({ note: '', expectation: '', actionText: '{' })).toBe(false)
+  it('PINNED-COPY: a draft is empty with no choice and an empty note', () => {
+    expect(isDraftEmpty({ note: '' })).toBe(true)
+    expect(isDraftEmpty({ kind: 'false-fail', note: '' })).toBe(false)
+    expect(isDraftEmpty({ note: 'x' })).toBe(false)
   })
 })
 
-// WHAT THE MARK WILL DO, IN THE READ'S OWN FACTS (426-06 · D-14, D-16, D-17). Every sentence below is
-// computed from one runs.mark.preview field and nothing else: the resolved step is keyed on the read's
-// reason, never re-derived from the steps, and a zero-count clause is dropped rather than printed as 0.
-describe('426-06 the preview names what the mark will do', () => {
+// Each sentence comes from one `runs.mark.preview` field; a zero-count clause is dropped.
+describe('the preview names what the mark will do', () => {
   it('RESOLVED-STEP-TEXT: the sentence is keyed on the read\'s reason and the kind, and a step mark has none', () => {
     expect(resolvedStepText('failing-step', 'false-fail', 3, 5)).toBe('This marks step 3 of 5 — the first step that failed.')
     for (const kind of MARKS) {
@@ -431,30 +408,10 @@ describe('426-06 the preview names what the mark will do', () => {
     }
     expect(PREVIEW_IDLE_TEXT).toBe('Choose an option above to see what this will do.')
     expect(PREVIEW_UPDATING_TEXT).toBe('Updating…')
-    expect(PREVIEW_LINE_LABELS).toEqual({ result: 'Result', labels: 'Eval labels', knowledge: 'Knowledge', change: 'Change' })
-  })
-
-  it('PREVIEW-RESULT-LINE: the step number, both verdicts and the quoted reasoning; an empty reasoning drops the quote', () => {
-    const entry: MarkPreviewGroundTruth = {
-      testIndex: 0, stepIndex: 2, verdict: 'pass', recordedVerdict: { pass: false, reasoning: 'cart total differs' }, correctedAction: false,
-    }
-    const parts = groundTruthLine(entry)
-    expect(feedbackPartsText(parts)).toBe('Step 3 will count as passed (recorded: failed — "cart total differs")')
-    expect(parts.name).toBe('cart total differs')
-    const bare = groundTruthLine({ ...entry, verdict: 'fail', recordedVerdict: { pass: true, reasoning: '' } })
-    expect(feedbackPartsText(bare)).toBe('Step 3 will count as failed (recorded: passed)')
-    expect(bare.name).toBeUndefined()
-    expect(correctedGroundTruthText(entry)).toBeUndefined()
-    expect(correctedGroundTruthText({ ...entry, correctedExpectation: 'the total matches' })).toBe('with your corrected expectation')
-    expect(correctedGroundTruthText({ ...entry, correctedAction: true })).toBe('with your corrected action')
-    expect(correctedGroundTruthText({ ...entry, correctedExpectation: 'x', correctedAction: true })).toBe('with your corrected expectation and action')
-    expect(NO_GROUND_TRUTH_TEXT).toBe('No step verdict changes.')
+    expect(PREVIEW_LINE_LABELS).toEqual({ knowledge: 'Knowledge', change: 'Change' })
   })
 
   it('PREVIEW-ZERO-ONE-MANY: one and many read differently, and a zero-count clause is omitted', () => {
-    expect(labelsLine(0)).toBe('No eval labels change')
-    expect(labelsLine(1)).toBe('1 decision becomes a held-out eval label')
-    expect(labelsLine(3)).toBe('3 decisions become held-out eval labels')
     expect(knowledgeLine({ confirmed: 1, overturned: 0 }, 1)).toBe('1 record confirmed')
     expect(knowledgeLine({ confirmed: 2, overturned: 0 }, 2)).toBe('2 records confirmed')
     expect(knowledgeLine({ confirmed: 0, overturned: 0 }, 0)).toBe('No knowledge records are reached')
@@ -481,8 +438,6 @@ describe('426-06 the preview names what the mark will do', () => {
     })
   })
 
-  // RE-SPELLED 432-09 (D-04) from 'PREVIEW-PROPOSAL-LINE: each draft kind reads its sentence, and the
-  // drafted wording is never offered': the fix is applied on send, so each line says what will change.
   it('PREVIEW-CHANGE-LINE: each fix kind reads what will change, and its wording is never offered', () => {
     const checked = { servedRecords: 0, procedureReads: 0, assertionDrift: false }
     const target = { grain: 'record' as const, recordId: 'rec-1' }
@@ -499,29 +454,25 @@ describe('426-06 the preview names what the mark will do', () => {
       ...Object.values(PREVIEW_FIX_TEXT.knowledge)]) expect(text).not.toMatch(/review|proposal|draft/i)
   })
 
-  // RE-SPELLED 432-09 (D-11) from 'PREVIEW-REPLACES-LINE: the earlier mark by ordinal and time, the
-  // withdrawal clause, and no guessed time': nothing is withdrawn; the earlier change stays.
   it('PREVIEW-REPLACES-LINE: the earlier mark by ordinal and time, that its change stays, and no guessed time', () => {
     expect(replacesLine(2, '14:05')).toBe('Replaces your earlier mark (#2, 14:05); what it changed stays')
     expect(replacesLine(2, undefined)).toBe('Replaces your earlier mark (#2); what it changed stays')
   })
 })
 
-// EVERY OTHER PREVIEW OUTCOME IS ITS OWN PLAIN STATE, AND ONE RULE DECIDES SUBMIT (426-07 · D-18, D-19).
-// A quarantined mark still records; an identical repeat, a refusal in runs.mark's own terms and a read
-// that failed never do. The sentences are UI-SPEC S5/S6's strings of record, so they are literal here.
-describe('426-07 the special arms and the failed read', () => {
+// A quarantined mark still records; a repeat, a refusal or a failed read never does.
+describe('the special arms and the failed read', () => {
   const RUN_ID = generateRunId()
 
   it('PREVIEW-QUARANTINED: each quarantine class names its cause inside the locked sentence', () => {
     expect(quarantinedText('timeout')).toBe(
-      'This test failed from a timeout, so your mark is recorded but quarantined — no labels, knowledge or tests change.',
+      'This test failed from a timeout, so your mark is recorded but quarantined — no knowledge or tests change.',
     )
     expect(quarantinedText('flake')).toBe(
-      'This test failed from a flaky run, so your mark is recorded but quarantined — no labels, knowledge or tests change.',
+      'This test failed from a flaky run, so your mark is recorded but quarantined — no knowledge or tests change.',
     )
     expect(quarantinedText('environment')).toBe(
-      'This test failed from an environment problem, so your mark is recorded but quarantined — no labels, knowledge or tests change.',
+      'This test failed from an environment problem, so your mark is recorded but quarantined — no knowledge or tests change.',
     )
   })
 
@@ -551,9 +502,6 @@ describe('426-07 the special arms and the failed read', () => {
     expect(previewRefusalText(arm({
       kind: 'ambiguous-address', candidates: [{ testIndex: 0, testId: 't_a' }, { testIndex: 1, testId: 't_a' }, { testIndex: 2 }],
     }) as never)).toBe("3 tests in this run share this address, so the mark can't be placed.")
-    expect(previewRefusalText(arm({ kind: 'ambiguous-correction', testIndex: 0, decisionCount: 4 }) as never)).toBe(
-      'A corrected action needs exactly one recorded decision; this mark covers 4. Remove the corrected action to continue.',
-    )
   })
 
   it('PREVIEW-FAILED-TEXT: each read failure is one product sentence, then the CLI escape hatch and a named Retry', () => {
@@ -579,14 +527,13 @@ describe('426-07 the special arms and the failed read', () => {
   })
 })
 
-describe('426-07 one first-match rule decides Send feedback', () => {
+describe('one first-match rule decides Send feedback', () => {
   const enabled: SubmitBlockInput = {
     noUniqueAddress: false,
     kind: 'false-fail',
     currentKey: 'k-now',
     landedKey: 'k-now',
     landedOutcome: 'consequences',
-    invalidCorrection: false,
     inFlight: false,
   }
 
@@ -599,7 +546,6 @@ describe('426-07 one first-match rule decides Send feedback', () => {
       ['failed', { landedOutcome: 'failed' }, SUBMIT_REASON_PREVIEW_FAILED],
       ...MARK_PREVIEW_REFUSALS.map((kind): [string, Partial<SubmitBlockInput>, string] => [kind, { landedOutcome: kind }, SUBMIT_REASON_REFUSED]),
       ['already-marked', { landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED],
-      ['invalid correction', { invalidCorrection: true }, SUBMIT_REASON_INVALID_CORRECTION],
       ['in flight', { inFlight: true }, SUBMIT_REASON_SENDING],
       ['quarantined', { landedOutcome: 'quarantined' }, ''],
       ['consequences', {}, ''],
@@ -610,7 +556,6 @@ describe('426-07 one first-match rule decides Send feedback', () => {
     expect(SUBMIT_REASON_PREVIEW_FAILED).toBe("Consequences couldn't be checked — retry above.")
     expect(SUBMIT_REASON_REFUSED).toBe("This mark can't be recorded — see above.")
     expect(SUBMIT_REASON_ALREADY_MARKED).toBe("You already said this — there's nothing new to record.")
-    expect(SUBMIT_REASON_INVALID_CORRECTION).toBe('Fix the corrected action JSON first.')
   })
 
   it('SUBMIT-BLOCKED-REASON-ORDER: with every blocking condition true the first row wins, and lifting each in turn hands over to the next', () => {
@@ -621,8 +566,7 @@ describe('426-07 one first-match rule decides Send feedback', () => {
       [{ landedKey: 'k-now' }, SUBMIT_REASON_PREVIEW_FAILED],
       [{ landedOutcome: 'run-not-found' }, SUBMIT_REASON_REFUSED],
       [{ landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED],
-      [{ landedOutcome: 'consequences' }, SUBMIT_REASON_INVALID_CORRECTION],
-      [{ invalidCorrection: false }, SUBMIT_REASON_SENDING],
+      [{ landedOutcome: 'consequences' }, SUBMIT_REASON_SENDING],
       [{ inFlight: false }, ''],
     ]
     let input: SubmitBlockInput = {
@@ -631,7 +575,6 @@ describe('426-07 one first-match rule decides Send feedback', () => {
       currentKey: 'k-now',
       landedKey: 'k-before',
       landedOutcome: 'failed',
-      invalidCorrection: true,
       inFlight: true,
     }
     for (const [lift, reason] of cascade) {
@@ -641,98 +584,23 @@ describe('426-07 one first-match rule decides Send feedback', () => {
   })
 })
 
-// THE CORRECTED-ACTION GATE (426-08 · D-15, UI-SPEC S4 / U7). A corrected action is scored against
-// exactly one recorded decision, so its field shows only while the landed consequences read for this
-// target and kind covers exactly one; every other state names why in its own sentence.
-describe('426-08 the corrected-action gate', () => {
-  const RUN_ID = generateRunId()
-  const read = (value: Record<string, unknown>) =>
-    ({ kind: 'read', result: RunsMarkPreviewResultSchema.parse({ runId: RUN_ID, ...value }) }) as const
-  const consequences = (markedDecisionCount: number) =>
-    read({
-      kind: 'consequences',
-      prospective: true,
-      markKind: 'false-fail',
-      member: { testIndex: 0 },
-      resolvedStep: { stepIndex: 0, reason: 'failing-step' },
-      latest: { kind: 'first' },
-      basis: { ledgerOrdinal: 0 },
-      markedDecisionCount,
-      groundTruth: [],
-      labels: [],
-      knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
-      draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
-    })
-
-  it('ACTION-GATE-STATES: each hidden state reads its own sentence, and a count names how many decisions', () => {
-    expect(ADD_CORRECTION_LABEL).toBe('Add a correction')
-    expect(correctedActionUnavailableText('no-choice')).toBe(
-      'Pick a choice first — a corrected action is only possible when the mark covers exactly one recorded decision.',
-    )
-    expect(correctedActionUnavailableText('loading')).toBe('Checking whether a corrected action is possible…')
-    expect(correctedActionUnavailableText('count', 0)).toBe(
-      "A corrected action isn't possible here — this mark covers no recorded decision.",
-    )
-    expect(correctedActionUnavailableText('count', 3)).toBe(
-      "A corrected action isn't possible here — this mark covers 3 recorded decisions, and a correction needs exactly one.",
-    )
-    expect(correctedActionUnavailableText('quarantined')).toBe("A corrected action isn't used — this mark is quarantined.")
-    expect(correctedActionUnavailableText('unavailable')).toBe(
-      "A corrected action can't be checked until the preview above answers.",
-    )
-  })
-
-  it('ACTION-GATE-STATES: the field shows only for a landed consequences read covering exactly one decision', () => {
-    expect(correctedActionGate({ kind: undefined, landedForTargetAndKind: consequences(1) })).toEqual({ shown: false, state: 'no-choice' })
-    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: undefined })).toEqual({ shown: false, state: 'loading' })
-    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: consequences(1) })).toEqual({ shown: true })
-    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: consequences(0) })).toEqual({ shown: false, state: 'count', count: 0 })
-    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: consequences(2) })).toEqual({ shown: false, state: 'count', count: 2 })
-    expect(correctedActionGate({
-      kind: 'false-fail',
-      landedForTargetAndKind: read({
-        kind: 'quarantined', prospective: true, markKind: 'false-fail', member: { testIndex: 0 },
-        resolvedStep: { stepIndex: 0, reason: 'failing-step' }, latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, class: 'flake',
-      }),
-    })).toEqual({ shown: false, state: 'quarantined' })
-    expect(correctedActionGate({
-      kind: 'false-fail',
-      landedForTargetAndKind: read({
-        kind: 'already-marked',
-        prior: { markId: 'mark_0123456789ab', kind: 'false-fail', ordinal: 1, disposition: { kind: 'confirmed-bug', confirmedRecords: 0 }, testIndex: 0 },
-        basis: { ledgerOrdinal: 1, priorMarkOrdinal: 1 },
-      }),
-    })).toEqual({ shown: false, state: 'unavailable' })
-    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: read({ kind: 'ambiguous-correction', testIndex: 0, decisionCount: 2 }) }))
-      .toEqual({ shown: false, state: 'unavailable' })
-    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: read({ kind: 'run-not-found' }) }))
-      .toEqual({ shown: false, state: 'unavailable' })
-    expect(correctedActionGate({ kind: 'false-fail', landedForTargetAndKind: { kind: 'failed', reason: 'network' } }))
-      .toEqual({ shown: false, state: 'unavailable' })
-  })
-})
-
-describe('426-08 Technical details copy', () => {
-  it('TECHNICAL-DETAILS-ROWS: the locked labels, one line per label, and the basis with its prior mark when there is one', () => {
+describe('Technical details copy', () => {
+  it('TECHNICAL-DETAILS-ROWS: the locked row labels, and the basis with its prior mark when there is one', () => {
     expect(TECHNICAL_DETAILS_LABEL).toBe('Technical details')
     expect(TECHNICAL_DETAILS_ROW_LABELS).toEqual({
       kind: 'Mark kind',
       address: 'Address',
       testId: 'Test id',
       records: 'Reached records',
-      labels: 'Labels',
       basis: 'Basis',
     })
-    expect(labelDetailText({ decisionOrdinal: 0, stepIndex: 0, channel: 'user-mark' })).toBe('decision 0 · step 1 · user-mark')
-    expect(labelDetailText({ decisionOrdinal: 4, stepIndex: 2, channel: 'overturned-verdict' })).toBe('decision 4 · step 3 · overturned-verdict')
     expect(basisDetailText({ ledgerOrdinal: 7 })).toBe('ledger ordinal 7')
     expect(basisDetailText({ ledgerOrdinal: 7, priorMarkOrdinal: 4 })).toBe('ledger ordinal 7 · prior mark #4')
   })
 })
 
-// 426-09 · D-22: the history reads as plain sentences; a time is always the browser's own format of
-// the entry's markedAt, so cells compute it through formatMarkTime and never spell a clock.
-describe('426-09 the history copy', () => {
+// A time is the browser's own format of `markedAt`, so cells compute it with `formatMarkTime`.
+describe('the history copy', () => {
   const RUN_ID = generateRunId()
 
   it('MARK-TIME-FORMAT: the month, day and 24-hour time of markedAt in the browser locale; a non-finite time has none', () => {
@@ -745,7 +613,7 @@ describe('426-09 the history copy', () => {
     expect(formatMarkTime(undefined)).toBeUndefined()
   })
 
-  it('C426-HISTORY-STATES-EXACT (runtime): the history states are exactly the published set, and each read maps to its own', () => {
+  it('(runtime): the history states are exactly the published set, and each read maps to its own', () => {
     expect(FEEDBACK_HISTORY_STATES).toEqual(['loading', 'history', 'empty', 'run-not-found', 'ledger-corrupt', 'ledger-unavailable', 'failed'])
     const read = (value: Record<string, unknown>) => ({ kind: 'read' as const, result: RunsMarksHistoryResultSchema.parse({ runId: RUN_ID, ...value }) })
     expect(feedbackHistoryState(undefined)).toBe('loading')
@@ -759,12 +627,12 @@ describe('426-09 the history copy', () => {
       entries: [{
         markId: 'mark_0123456789ab', runId: RUN_ID, testIndex: 0, kind: 'false-fail', origin: 'user', ordinal: 1, markedAt: 0,
         disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
-        gold: [], evidence: { confirmed: 0, overturned: 0 }, corrected: { expectation: false, action: false }, active: true,
+        evidence: { confirmed: 0, overturned: 0 }, active: true,
       }],
     }))).toBe('history')
   })
 
-  it('HISTORY-COPY: titles and counts, active and replaced, the one explanation, correction presence and each state sentence', () => {
+  it('HISTORY-COPY: titles and counts, active and replaced, the one explanation and each state sentence', () => {
     expect(historyTitle('step', 2)).toBe('Feedback on this step (2)')
     expect(historyTitle('test', 0)).toBe('Feedback on this test (0)')
     expect(runHistoryLabel(3)).toBe('All feedback on this run (3)')
@@ -772,10 +640,6 @@ describe('426-09 the history copy', () => {
     expect(replacedByText('Sep 23, 10:41')).toBe('Replaced by your later mark at Sep 23, 10:41')
     expect(replacedByText()).toBe('Replaced by your later mark')
     expect(REPLACEMENT_EXPLANATION).toBe('Only your latest mark on a test or step counts.')
-    expect(correctedPresenceText({ expectation: false, action: false })).toBeUndefined()
-    expect(correctedPresenceText({ expectation: true, action: false })).toBe('With a corrected expectation')
-    expect(correctedPresenceText({ expectation: false, action: true })).toBe('With a corrected action')
-    expect(correctedPresenceText({ expectation: true, action: true })).toBe('With a corrected expectation and action')
     expect(HISTORY_EMPTY_TEXT).toEqual({
       step: 'No feedback on this step yet.',
       test: 'No feedback on this test yet.',
@@ -790,14 +654,11 @@ describe('426-09 the history copy', () => {
     expect(HISTORY_RETRY_ACCESSIBLE_NAME.startsWith(RETRY_LABEL)).toBe(true)
   })
 
-  // RE-SPELLED 432-09 (D-25) from 'HISTORY-PROPOSAL-COPY: each proposal state reads its phrase after
-  // Proposal:, and an apply in flight reads being applied': history says what an applied fix changed.
   it('HISTORY-APPLIED-COPY: an applied fix says what it changed; a historical draft says its change was not recorded', () => {
     expect(APPLIED_KNOWLEDGE_PREFIX).toBe('Changed knowledge: ')
     expect(APPLIED_TEST_FILE_PREFIX).toBe('Edited the test file ')
     expect(APPLIED_UNAVAILABLE_TEXT).toBe('What this mark changed was not recorded.')
     expect(appliedRecordUnavailableText('mem_1')).toBe('mem_1 (content unavailable)')
-    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1).
     expect(dispositionText({ kind: 'drafted', fix: 'fact', proposalId: 'prop_x', proposalKind: 'knowledge' }))
       .toBe('Recorded — a fix was drafted (older mark)')
     expect(DISPOSITION_TEXT.applied).toEqual({
@@ -821,7 +682,7 @@ describe('426-09 the history copy', () => {
   })
 })
 
-describe('426-11 docked or stacked is one rule', () => {
+describe('docked or stacked is one rule', () => {
   it('LAYOUT-RULE: the open composer stacks only on a measured page narrower than 768px; closed or unmeasured is docked', () => {
     expect(FEEDBACK_STACK_BELOW_PX).toBe(768)
     expect(feedbackLayout(0, true)).toBe('docked')

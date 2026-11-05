@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { ACTION_WIRE_SCHEMAS_BY_TYPE, actionWireSchema } from '../../action/wire-schema'
 import { asRunId, runIdSchema } from '../../run/run-id'
 import {
   COMMIT_RECEIPT_SCHEMA_VERSION,
@@ -19,7 +18,7 @@ const receipt = {
   schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId, runId, testIndex: 0, runSlug: 'run-feedback',
   kind: 'false-fail', origin: 'user', ordinal: 1, markedAt: 0,
   disposition: { kind: 'quarantined', class: 'flake' },
-  gold: [], evidence: { confirmed: 0, overturned: 0 },
+  evidence: { confirmed: 0, overturned: 0 },
 }
 const planBase = {
   schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, markId,
@@ -38,24 +37,10 @@ const commitReceipt = {
   held: [{ candidateId: 'rec-2', reason: 'no receipt' }],
 }
 
-describe('Gate-3 neutral feedback contracts (419)', () => {
-  it('validates correctedAction with the exhaustive shared wire validator', () => {
-    const correctedAction = { type: 'fill', ref: 'e1', text: 'corrected', clearMode: 'replace', submit: false }
-    expect(RunsMarkInputSchema.parse({ runId, kind: 'false-pass', correctedAction }).correctedAction).toEqual(correctedAction)
-    expect(MarkReceiptSchema.parse({ ...receipt, correctedAction }).correctedAction).toEqual(correctedAction)
-    expect(Object.keys(ACTION_WIRE_SCHEMAS_BY_TYPE).length).toBeGreaterThan(20)
-    for (const action of [{ type: 'fill', ref: 'e1' }, { type: 'unknown' }, { type: 'constructor' },
-      { type: 'click', ref: 'e1', platform: 'web' }]) {
-      expect(actionWireSchema.safeParse(action).success).toBe(false)
-      expect(RunsMarkInputSchema.safeParse({ runId, kind: 'false-pass', correctedAction: action }).success).toBe(false)
-    }
-    expect(RunsMarkOutcomeSchema.parse({ kind: 'ambiguous-correction', runId, testIndex: 0, decisionCount: 2 }))
-      .toMatchObject({ kind: 'ambiguous-correction' })
-  })
+describe('neutral feedback contracts', () => {
   it('pins the quarantine, disposition and fix vocabularies in declaration order', () => {
     expect(MARK_QUARANTINE_CLASSES).toEqual(['flake', 'environment', 'timeout'])
-    // 2026-09-30, 432-09: the writer applies a fix; `drafted` is only read back (MARK_HISTORICAL_DISPOSITIONS).
-    // 2026-10-03 (quick 261003-mqc): `not-applied` closes a mark whose planned fix was refused.
+    // `drafted` is read back only, via `MARK_HISTORICAL_DISPOSITIONS`, so this list omits it.
     expect(MARK_DISPOSITIONS).toEqual(['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'not-applied'])
     expect(MARK_FIX_KINDS).toEqual(['fact', 'caution', 'procedure-hint', 'test-edit'])
   })
@@ -64,17 +49,15 @@ describe('Gate-3 neutral feedback contracts (419)', () => {
     expect(RunsMarkInputSchema.shape.runId).toBe(runIdSchema.in)
     const input = { runId, kind: 'false-fail' }
     expect(RunsMarkInputSchema.parse(input)).toEqual(input)
-    const full = { ...input, testId: 'member', stepIndex: 0, note: 'check', correctedExpectation: 'visible' }
+    const full = { ...input, testId: 'member', stepIndex: 0, note: 'check' }
     expect(RunsMarkInputSchema.parse(full)).toEqual(full)
     expect(RunsMarkInputSchema.safeParse({ ...input, extra: 1 }).success).toBe(false)
     for (const stepIndex of [-1, 1.5]) {
       expect(RunsMarkInputSchema.safeParse({ ...input, stepIndex }).success).toBe(false)
     }
     expect(RunsMarkInputSchema.safeParse({ ...input, kind: 'confirmed-pass' }).success).toBe(false)
-    for (const key of ['note', 'correctedExpectation']) {
-      expect(RunsMarkInputSchema.safeParse({ ...input, [key]: 'x'.repeat(2000) }).success).toBe(true)
-      expect(RunsMarkInputSchema.safeParse({ ...input, [key]: 'x'.repeat(2001) }).success).toBe(false)
-    }
+    expect(RunsMarkInputSchema.safeParse({ ...input, note: 'x'.repeat(2000) }).success).toBe(true)
+    expect(RunsMarkInputSchema.safeParse({ ...input, note: 'x'.repeat(2001) }).success).toBe(false)
     for (const invalid of ['', '../escape', 'a/b', 'a\\b', 'a\nb']) {
       expect(RunsMarkInputSchema.safeParse({ ...input, runId: invalid }).success).toBe(false)
     }

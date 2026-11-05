@@ -1,14 +1,6 @@
 // @vitest-environment jsdom
 
-// NO ACCESS TOKENS ON THE CONFIG PAGE (432-22 · D-12/D-18/D-22), re-spelled from 429-27 Task 1.
-//
-// This file pinned the MCP and run-service token lists: rows by name with the env-var name in clear,
-// the scope and trust-scope add rows, and the undoable delete. 432 deletes `services.mcp.tokens`,
-// `services.mcp.stdio.grantConfigWrite` and `services.dashboard.runServiceTokens`, so the lists, the
-// stdio switch and their copy are gone. What survives is pinned here: the remaining MCP and dashboard
-// controls still save through the page's autosave transaction, and `allowProduction` is an ordinary
-// switch on that same transaction. The undoable unset-by-name claim of TOKEN-DELETE-UNDO lives on in
-// model-row's DELETE-MODEL-UNDO (`registry.llms`, the one named array left).
+// The remaining MCP and dashboard controls still save through the page's autosave transaction.
 
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -26,9 +18,8 @@ import {
   configFieldControlId,
   configFieldKeyOf,
   useConfigAutosave,
-  type ConfigAutosave,
 } from '@/hooks/use-config-autosave'
-import { ApiError, applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
+import { applyConfigChanges, fetchConfig, fetchConfigRevision } from '@/lib/api'
 import * as copy from '@/lib/config-copy'
 import { CONFIG_SECTION_IDS, EXPLICIT_ACTION_KINDS } from '@/lib/config-tabs'
 
@@ -47,7 +38,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 
 const records = {
   services: {
-    mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
+    mcp: { enabled: true, port: 3471 },
     dashboard: { port: 3470 },
   },
 }
@@ -56,11 +47,8 @@ function answer(config: Record<string, unknown>) {
   return { config, provider: null, revision: 'rev-1', file: { path: CONFIG_PATH, lines: [] } }
 }
 
-let hook: ConfigAutosave | undefined
-
 function Harness() {
   const autosave = useConfigAutosave()
-  hook = autosave
   if (autosave.load.kind !== 'ready') return null
   return (
     <ConfigAutosaveProvider value={autosave}>
@@ -103,7 +91,6 @@ async function unmount() {
   root = null
   container?.remove()
   container = null
-  hook = undefined
 }
 
 function section(id: 'mcp' | 'dashboard' | 'runs') {
@@ -117,15 +104,6 @@ function fieldPaths(scope: HTMLElement | null): string[] {
 
 function control<T extends HTMLElement = HTMLInputElement>(segments: readonly string[]) {
   return document.getElementById(configFieldControlId(configFieldKeyOf(segments))) as T | null
-}
-
-async function click(element: HTMLElement | null) {
-  expect(element).not.toBeNull()
-  await act(async () => {
-    element!.focus()
-    element!.click()
-  })
-  await flush()
 }
 
 async function typeAndBlur(input: HTMLInputElement | null, value: string) {
@@ -162,17 +140,11 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('no token controls (432-22, re-spelled from 429-27 Task 1)', () => {
-  it('C432-NO-TOKEN-CONTROLS: the MCP and dashboard sections render their fields and no token list, row, add row or stdio switch', async () => {
+describe('no token controls', () => {
+  it('the MCP and dashboard sections render their fields and no token list, row, add row or stdio switch', async () => {
     await mount()
 
-    expect(fieldPaths(section('mcp'))).toEqual([
-      'services.mcp.enabled',
-      'services.mcp.transport',
-      'services.mcp.host',
-      'services.mcp.port',
-      'services.mcp.path',
-    ])
+    expect(fieldPaths(section('mcp'))).toEqual(['services.mcp.enabled', 'services.mcp.port'])
     expect(fieldPaths(section('dashboard'))).toEqual([
       'services.dashboard.port',
       'services.dashboard.host',
@@ -181,6 +153,7 @@ describe('no token controls (432-22, re-spelled from 429-27 Task 1)', () => {
       'services.dashboard.baseUrl',
       'services.dashboard.workspace',
     ])
+    expect(fieldPaths(section('runs'))).toEqual(['use.parallel', 'use.workers', 'use.buildTag'])
     for (const id of ['mcp', 'dashboard', 'runs'] as const) {
       const scope = section(id)!
       expect(scope.querySelector('[data-token-row]'), id).toBeNull()
@@ -194,7 +167,7 @@ describe('no token controls (432-22, re-spelled from 429-27 Task 1)', () => {
     }
   })
 
-  it('C432-NO-TOKEN-CONTROLS: the token list module, its copy, its section and its delete actions are gone', () => {
+  it('the token list module, its copy, its section and its delete actions are gone', () => {
     expect(existsSync(join(HERE, '..', 'token-list.tsx'))).toBe(false)
     const retiredCopy = [
       'ACCESS_TOKENS_HEADING', 'ADD_TOKEN_LABEL', 'NO_TOKENS_TEXT', 'tokenEnvLine', 'TOKEN_FIELD_LABELS',
@@ -203,15 +176,15 @@ describe('no token controls (432-22, re-spelled from 429-27 Task 1)', () => {
       'TRUST_SCOPE_LABELS',
     ]
     expect(retiredCopy.filter((name) => name in copy)).toEqual([])
-    expect(Object.keys(copy.MCP_FIELD_LABELS)).toEqual(['enabled', 'transport', 'host', 'port', 'path'])
-    expect(Object.keys(copy.MCP_FIELD_HELP)).toEqual(['enabled', 'host'])
+    expect(Object.keys(copy.MCP_FIELD_LABELS)).toEqual(['enabled', 'port'])
+    expect(Object.keys(copy.MCP_FIELD_HELP)).toEqual(['enabled'])
     expect(copy.MCP_FIELD_HELP.enabled).not.toMatch(/token/i)
     expect(CONFIG_SECTION_IDS as readonly string[]).not.toContain('run-service-tokens')
     expect(EXPLICIT_ACTION_KINDS as readonly string[]).not.toContain('delete-mcp-token')
     expect(EXPLICIT_ACTION_KINDS as readonly string[]).not.toContain('delete-run-service-token')
   })
 
-  it('C432-NO-TOKEN-CONTROLS: a retained MCP control still saves through the autosave transaction', async () => {
+  it('a retained MCP control still saves through the autosave transaction', async () => {
     await mount()
 
     await typeAndBlur(control(['services', 'mcp', 'port']), '4000')
@@ -223,48 +196,11 @@ describe('no token controls (432-22, re-spelled from 429-27 Task 1)', () => {
     ])
   })
 
-  it('ALLOW-PRODUCTION-SWITCH: allowProduction is an ordinary Runs switch, off by default, saved by the autosave transaction', async () => {
+  it('the MCP port takes 0, which asks the system for a free port', async () => {
     await mount()
 
-    expect(fieldPaths(section('runs'))).toEqual(['use.parallel', 'use.workers', 'use.buildTag', 'allowProduction'])
-    const toggle = control<HTMLButtonElement>(['allowProduction'])
-    expect(toggle?.getAttribute('role')).toBe('switch')
-    expect(toggle?.getAttribute('aria-checked')).toBe('false')
-    const row = section('runs')!.querySelector('[data-field-path="allowProduction"]')!
-    expect(row.textContent).toContain(copy.RUNS_FIELD_LABELS.allowProduction)
-    expect(row.textContent).toContain(copy.RUNS_FIELD_HELP.allowProduction)
+    await typeAndBlur(control(['services', 'mcp', 'port']), '0')
 
-    await click(toggle)
-    expect(writeCalls()).toEqual([[{ op: 'set', path: ['allowProduction'], value: true }]])
-    expect(toggle?.getAttribute('aria-checked')).toBe('true')
-
-    await click(toggle)
-    expect(writeCalls()).toEqual([
-      [{ op: 'set', path: ['allowProduction'], value: true }],
-      [{ op: 'set', path: ['allowProduction'], value: false }],
-    ])
-  })
-
-  it('ALLOW-PRODUCTION-SWITCH: a refused allowProduction write fails like any field, and Retry sends it again', async () => {
-    vi.mocked(fetchConfig).mockResolvedValue(answer({ ...records, allowProduction: false }) as never)
-    vi.mocked(applyConfigChanges).mockRejectedValueOnce(
-      new ApiError(422, 'Unprocessable', { error: 'validation_failed', issues: [] }),
-    )
-    await mount()
-
-    const toggle = control<HTMLButtonElement>(['allowProduction'])
-    expect(toggle?.getAttribute('aria-checked')).toBe('false')
-    await click(toggle)
-    expect(hook!.status.state).toBe('failed')
-
-    await act(async () => {
-      hook!.retry()
-    })
-    await flush()
-    expect(writeCalls()).toEqual([
-      [{ op: 'set', path: ['allowProduction'], value: true }],
-      [{ op: 'set', path: ['allowProduction'], value: true }],
-    ])
-    expect(hook!.status.state).not.toBe('failed')
+    expect(writeCalls()).toEqual([[{ op: 'set', path: ['services', 'mcp', 'port'], value: 0 }]])
   })
 })

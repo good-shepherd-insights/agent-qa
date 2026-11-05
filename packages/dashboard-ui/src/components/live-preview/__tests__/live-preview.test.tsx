@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-// THE SHARED LIVE PREVIEW, IN A DOM (428-15 · PXH-LIVE-01, PXH-LIVE-03, D-02/D-13/D-14/D-16/D-17).
-//
-// The embed is an opaque-origin document, so these cells stand in for it the only way a host can
-// observe it: a MessageEvent on window whose source is the rendered iframe's own contentWindow.
-// Every clock is fake, because the dot's colour is a claim about the age of a frame.
+// Cells post a `MessageEvent` whose source is the iframe's own window; clocks are fake.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -168,7 +164,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe('the preview listens only to its own embed (Q-BRIDGE, T-428-15-01)', () => {
+describe('the preview listens only to its own embed', () => {
   it('BRIDGE-SOURCE-CHECKED: a report from another window or from no window changes nothing', async () => {
     await mount(runSubject())
     expect(embed()).not.toBeNull()
@@ -193,7 +189,7 @@ describe('the preview listens only to its own embed (Q-BRIDGE, T-428-15-01)', ()
   })
 })
 
-describe('the iframe is the one sandboxed embed with the host hint (T-428-15-02, T-428-15-03)', () => {
+describe('the iframe is the one sandboxed embed with the host hint', () => {
   it('HOST-HINT-IN-SRC: the src is the minted liveUrl with the host query before the fragment', async () => {
     await mount(runSubject())
     expect(embed()?.getAttribute('src')).toBe(`http://x/live/${RUN_ID}?host=dashboard#v2.a.b.${String(BASE_TIME)}`)
@@ -206,7 +202,7 @@ describe('the iframe is the one sandboxed embed with the host hint (T-428-15-02,
   })
 })
 
-describe('renew in place, reconnect by remount (RESEARCH P8)', () => {
+describe('renew in place, reconnect by remount', () => {
   it('HALF-LIFE-RENEW-KEEPS-IFRAME: the renew changes only the fragment of the same node, and a failed renew is expired once its token runs out', async () => {
     await mount(runSubject())
     await post(frame())
@@ -220,7 +216,7 @@ describe('renew in place, reconnect by remount (RESEARCH P8)', () => {
       `http://x/live/${RUN_ID}?host=dashboard#v2.a.b.${String(BASE_TIME + TTL_MS / 2)}`,
     )
 
-    // 428 WR-04: a failed renew with time left on the token keeps the picture and asks again.
+    // A failed renew with time left on the token keeps the picture and asks again.
     fetchLiveUrlMock.mockRejectedValue(new Error('live_url_mint_failed'))
     await advance(TTL_MS / 2)
     expect(fetchLiveUrlMock).toHaveBeenCalledTimes(3)
@@ -256,7 +252,7 @@ describe('renew in place, reconnect by remount (RESEARCH P8)', () => {
   })
 })
 
-describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
+describe('the corner dot', () => {
   it('ONE-DOT-WITH-NAME-AND-TOOLTIP: one focusable button named for the state, described by its meaning', async () => {
     await mount(runSubject())
     expect(qa('[data-live-dot]'), 'no dot before the first frame').toHaveLength(0)
@@ -278,9 +274,6 @@ describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
     expect(document.activeElement).toBe(dot)
   })
 
-  // RE-SPELLED 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). Was "ASPECT-BOX: the
-  // frame box takes the reported aspect ratio and holds both the iframe and the corner". The owner
-  // moved the dot off the picture into the preview's chrome, so the box holds the picture alone.
   it('ASPECT-BOX: the frame box takes the reported aspect ratio and holds only the iframe', async () => {
     await mount(runSubject())
     await post(frame(800, 600))
@@ -295,9 +288,6 @@ describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
     }).toEqual({ dot: null, corner: null, words: null })
   })
 
-  // RE-SPELLED 2026-09-26 (owner decision 2026-09-26 (6)). Was "... puts the label in the chrome's
-  // status cluster, right after the green dot". The dot left the chrome for the top-right corner, so
-  // the label now leads the status cluster on its own while the dot stays green in its corner.
   it('SNAPSHOT-LABEL: a snapshot frame puts the label first in the chrome\'s status cluster, with the green dot in its corner', async () => {
     await mount(runSubject())
     await post(frame(800, 600))
@@ -310,7 +300,6 @@ describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
     expect(q('[data-preview-dot-corner] [data-live-dot]')?.getAttribute('data-live-dot')).toBe('green')
   })
 
-  // The words are read inside the chrome since 2026-09-26 (428-34, G-428-4); the claim is unchanged.
   it('AMBER-WORDS: a frame then nothing for the freshness window turns the dot amber with its words', async () => {
     await mount(runSubject())
     await post(frame())
@@ -325,7 +314,6 @@ describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
     }).toEqual({ state: 'delayed', dot: 'amber', words: PREVIEW_DELAYED_TEXT })
   })
 
-  // The words and the action are read inside the chrome since 2026-09-26 (428-34, G-428-4).
   it('RED-ACTION: four lost reports through their backoffs turn red with a Reconnect that mints again', async () => {
     await mount(runSubject())
     await post(frame())
@@ -368,19 +356,7 @@ describe('the corner dot (D-02, D-13, D-16, D-17 · PXH-LIVE-03)', () => {
   })
 })
 
-describe('the chrome row renders only with content (D-02)', () => {
-  // RE-SPELLED 2026-09-26 (428-33, owner decision 2026-09-26 (3), G-428-3). Was "CHROME-ONLY-WITH-
-  // CONTENT: a single-member run has no row; two handles or a host chrome node have one". The owner
-  // removed the handle selector, so a run subject never has chrome of its own; the host decides the
-  // handle. A run subject watching handle 1 of a suite still renders no row, no picker and no select.
-  //
-  // RE-SPELLED AGAIN 2026-09-26 (428-34, owner decision 2026-09-26 (4), G-428-4). Was "... a run
-  // subject renders no row and never a picker; a host chrome node has one". The status cluster now
-  // leads the chrome, so a run subject has a row once it has something to say beside the picture.
-  // Before its mint answers it has neither status nor host chrome, and so no row.
-  //
-  // RE-SPELLED 2026-09-26 (owner decision 2026-09-26 (6)): the dot alone never makes a row, so the
-  // status that makes one is loading's words, and a live green frame takes the row away again.
+describe('the chrome row renders only with content', () => {
   it('CHROME-ONLY-WITH-CONTENT: no status and no host chrome is no row; status words alone or a host chrome node alone makes one', async () => {
     const unanswered = () => new Promise<never>(() => {})
     fetchLiveUrlMock.mockImplementationOnce(unanswered)
@@ -412,11 +388,8 @@ describe('the chrome row renders only with content (D-02)', () => {
   })
 })
 
-// OWNER DECISION 2026-09-26 (6), superseding (4): "There should not be a row / border just for this
-// ... it should be at the top right of the browser container and should be very subtle". The dot
-// floats alone in the preview area's top-right corner, outside both the chrome row and the frame
-// box; the snapshot label, the words and the one action still lead the chrome when there are any.
-describe('the dot floats top-right, outside the chrome (owner decision 2026-09-26 (6))', () => {
+// The dot floats alone in the preview's top-right corner, outside the chrome row and frame box.
+describe('the dot floats top-right, outside the chrome', () => {
   it('DOT-TOP-RIGHT: the dot is in its own corner, never in the chrome, and the picture holds no status', async () => {
     const pictureStatus = () => {
       const box = q('[data-preview-frame]')
@@ -466,7 +439,7 @@ describe('the dot floats top-right, outside the chrome (owner decision 2026-09-2
   })
 })
 
-describe('the host decides the handle (G-428-3, owner decision 2026-09-26 (3))', () => {
+describe('the host decides the handle', () => {
   it('HANDLE-FROM-HOST: the preview mints for the handle it is given, and a new handle starts over with a mint for it', async () => {
     await mount(runSubject({ handle: 0 }))
     expect(fetchLiveUrlMock.mock.calls.at(-1)).toEqual([RUN_ID, 0])
@@ -485,7 +458,7 @@ describe('the host decides the handle (G-428-3, owner decision 2026-09-26 (3))',
   })
 })
 
-describe('the editor subject (D-14 · SC2)', () => {
+describe('the editor subject', () => {
   it('EDITOR-START-FRESH: a session that is gone says so, and Start fresh calls the host', async () => {
     const onStartFresh = vi.fn()
     await mount(editorSubject({ onStartFresh }))
@@ -519,11 +492,7 @@ describe('the editor subject (D-14 · SC2)', () => {
 // itself.
 const REMOVED_DOT_KEYFRAMES = 'live-' + 'dot'
 
-// RE-SPELLED 2026-09-26 (428-32, owner decision 2026-09-26 (5), G-428-5). This describe was "motion
-// (D-02, dot geometry and motion)" and its cell was REDUCED-MOTION-STILL-DOT, "only the green dot
-// pulses, and it is still under reduced motion". The owner asked for a plain dot, so the dot is still
-// under any motion preference. D-02's geometry, its three colours and its three names stay.
-describe('the still dot (D-02 geometry; owner decision 2026-09-26 (5))', () => {
+describe('the still dot', () => {
   it('DOT-IS-STILL: no .live-dot rule animates, no dot keyframes exist, and three colours and three names remain', () => {
     const css = readFileSync(resolve(__dirname, '../../../styles/globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//gu, '')
     const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/gu)].map((match) => ({
@@ -552,7 +521,7 @@ describe('the still dot (D-02 geometry; owner decision 2026-09-26 (5))', () => {
   })
 })
 
-describe('cleanup (D-14)', () => {
+describe('cleanup', () => {
   it('CLEANUP-ON-UNMOUNT: no fetch after unmount, and a late post throws nothing and changes nothing', async () => {
     await mount(runSubject())
     const win = embedWindow()

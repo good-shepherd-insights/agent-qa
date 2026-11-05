@@ -13,8 +13,8 @@ import {
 import type { AnalyticsEventName } from '../events.js'
 import { sourceModulesContaining, withoutComments } from './source-scan.js'
 
-describe('the closed event union — membership is the D-18 list, exactly (ANLY-01)', () => {
-  it('is the D-18 membership and nothing else, pinned by equality', () => {
+describe('the closed event union and its membership', () => {
+  it('is the declared membership and nothing else, pinned by equality', () => {
     expect([...ANALYTICS_EVENT_NAMES]).toEqual([
       'agent-qa.test_run.completed',
       'agent-qa.suite_run.completed',
@@ -29,9 +29,7 @@ describe('the closed event union — membership is the D-18 list, exactly (ANLY-
     ])
   })
 
-  // The dropped v33 names are named rather than merely absent. An event that "is not a member"
-  // because nobody remembered it looks identical to one that was ruled out, and the second is the
-  // only one a later phase can re-add on purpose (M5 owns the three dashboard rows).
+  // Retired names are listed, so a deliberate re-add differs from a forgotten member.
   it('carries the retired v33 names as a closed constant, disjoint from membership', () => {
     expect([...RETIRED_V33_EVENT_NAMES]).toEqual([
       'agent-qa.analytics.initialized',
@@ -57,10 +55,6 @@ describe('the closed event union — membership is the D-18 list, exactly (ANLY-
     expect([...ANALYTICS_MCP_TOOL_NAMES].sort()).toEqual(
       AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name).sort(),
     )
-    // 2026-09-15, 423-21 D-18: the two feedback read tools joined the mapping.
-    // 2026-09-29, 431-04 D-01: the eight discovery read tools joined it (MX_MAX_TOOLS = 24).
-    // 2026-09-30, 432-12 D-05: the four proposal apply/list/show tools left it and the two change
-    // tools were renamed (MX_MAX_TOOLS = 20); no retired name survives in the vocabulary.
     expect(ANALYTICS_MCP_TOOL_NAMES.length).toBe(20)
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_change_knowledge')
     expect(ANALYTICS_MCP_TOOL_NAMES).toContain('agent_qa_change_config')
@@ -75,15 +69,13 @@ describe('the closed event union — membership is the D-18 list, exactly (ANLY-
   })
 })
 
-describe('no free text is representable (D-18 / T-398-06)', () => {
+describe('no free text is representable', () => {
   // THE CLEAN SIDE. On its own this proves nothing — a checker that returns unconditionally passes
   // it too — which is why it is stated beside the planted legs rather than as the claim.
   it('the shipped union passes the range checker', () => {
     expect(() => assertNoUnconstrainedStrings(ANALYTICS_EVENT_MEMBERS)).not.toThrow()
   })
 
-  // THE VIOLATION SIDE, and the bar this checker has to clear. The planted member is the exact
-  // thing D-11 forbids reaching analytics: the abstained query's text.
   it('REDs on a planted plain string field, naming the member and the field', () => {
     const planted = z.strictObject({
       name: z.literal('agent-qa.planted.free_text'),
@@ -179,16 +171,7 @@ describe('every member REFUSES an unknown key (.strict, never .strip)', () => {
     }
   })
 
-  // 405 DETL-06 / D-21. The retired healing-attempt counter was declared on `RunCompletionShape`
-  // and produced by nothing — v49 settled that only the `healed` step status and `selfHealOccurred`
-  // are real healing facts. Deleting the field is not enough on its own: the point of the closed
-  // shape is that RE-ADDING it reds. Because every member is `.strictObject`, a payload carrying
-  // the key now fails to parse, and this cell goes green→red the moment the field comes back.
-  //
-  // THE KEY IS BUILT BY CONCATENATION, and the whole token is never spelled in this file — the
-  // `v1-retry-machinery-deleted.test.ts` convention. The phase's deletion inventory greps the
-  // workspace for that token and counts comments as hits, so a pin that spelled it would report
-  // itself as the very reappearance it exists to forbid.
+  // The key is built from two halves so the whole token never appears in source.
   it('the retired healing-attempt counter is not a key of the completion shape, and is REFUSED', () => {
     const retiredKey = 'healing_attempt' + '_count'
     const base = {
@@ -213,9 +196,7 @@ describe('every member REFUSES an unknown key (.strict, never .strip)', () => {
     ).toBe(true)
   })
 
-  // Prose about `.strip()` is not a call to it — four comments in this package explain why the v1
-  // schemas used it and this one does not, and a raw substring search reported every one of them.
-  // The scanner reads code.
+  // The scanner reads code, so a comment that names `.strip()` is not a call to it.
   it('no module in this package calls .strip()', () => {
     expect(sourceModulesContaining('.strip(')).toEqual([])
   })
@@ -243,23 +224,7 @@ describe('every member REFUSES an unknown key (.strict, never .strip)', () => {
   })
 })
 
-// ---------------------------------------------------------------------------------------------
-// 405-13 (D-21 / DETL-06) — the completion shape as a CLOSED SET, not a containment check
-// ---------------------------------------------------------------------------------------------
-//
-// WHY THE CELL ABOVE IS NOT ENOUGH. It proves a returning field is REFUSED AT PARSE, which is the
-// behaviour that matters for a payload arriving from a producer. It cannot see the field returning
-// to the DECLARATION — re-adding the key makes the strict parse ACCEPT it, and every "does the
-// shape carry X" assertion in this file stays green while the shape quietly grows. A set that got
-// smaller needs an equality, so this is the equality.
-//
-// THE KEY SET IS READ OFF THE SHIPPED SCHEMA, never retyped from `events.ts`. `RunCompletionShape`
-// is module-private on purpose (nothing outside composes it), so the shape is reached the way a
-// consumer reaches it: through the published `ANALYTICS_EVENT_SCHEMA_BY_NAME` table.
-//
-// THE RETIRED NAMES ARE BUILT FROM TWO HALVES. The phase's deletion inventory greps every package
-// `src` tree and counts a comment as a hit, so a pin that spelled one would report itself as the
-// reappearance it forbids. Same convention as the healing-counter cell above.
+// Key-set equality: the strict parse cannot see a field re-added to the declaration.
 
 /** The properties `z.strictObject` declares for a member, in declaration order. */
 function propertyKeysOf(name: AnalyticsEventName): string[] {
@@ -269,7 +234,7 @@ function propertyKeysOf(name: AnalyticsEventName): string[] {
   return Object.keys(schema.shape.properties.shape)
 }
 
-/** The shared base every member carries (D-18) — spelled once so the two pins below differ only. */
+// The shared base every member carries, spelled once for the pins below.
 const BASE_KEYS = [
   'agent_qa_version',
   'surface',
@@ -299,7 +264,7 @@ const COMPLETION_KEYS = [
   'memory_enabled',
 ]
 
-describe('the run-completion shape is a closed set (405 D-21 / DETL-06)', () => {
+describe('the run-completion shape is a closed set', () => {
   it('declares EXACTLY the base keys, the completion keys and its own discriminating id', () => {
     expect(propertyKeysOf('agent-qa.test_run.completed')).toEqual([
       ...BASE_KEYS,
@@ -321,13 +286,11 @@ describe('the run-completion shape is a closed set (405 D-21 / DETL-06)', () => 
     ])
   })
 
-  // The two deletions this phase made to the shape, named rather than merely absent — an absence
-  // nobody named looks identical to a field somebody forgot, and only the first is a decision a
-  // later reader can find the reason for.
+  // Retired fields are named, because an unnamed absence looks like a forgotten field.
   it('carries neither retired producer-less field, on EITHER completion member', () => {
     const retired = [
-      { label: 'the healing-attempt counter (405-04)', key: 'healing_attempt' + '_count' },
-      { label: 'the parent-link property (405-13)', key: 'parent_run' + '_id' },
+      { label: 'the healing-attempt counter', key: 'healing_attempt' + '_count' },
+      { label: 'the parent-link property', key: 'parent_run' + '_id' },
     ]
     for (const member of ['agent-qa.test_run.completed', 'agent-qa.suite_run.completed'] as const) {
       const keys = propertyKeysOf(member)
@@ -337,9 +300,7 @@ describe('the run-completion shape is a closed set (405 D-21 / DETL-06)', () => 
     }
   })
 
-  // NON-VACUITY, from the other direction: the three fields 405-04 gave a real producer are still
-  // declared, so the cells above cannot pass by the shape having lost its optional integers.
-  it('still declares the three token fields the D-05/D-07 producer fills', () => {
+  it('still declares the three token fields the run subscriber fills', () => {
     const keys = propertyKeysOf('agent-qa.test_run.completed')
     expect(keys).toContain('input_tokens')
     expect(keys).toContain('output_tokens')

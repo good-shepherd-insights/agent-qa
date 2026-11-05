@@ -1,9 +1,4 @@
-// The ONE fold and the ONE resolver behind TRST-01 (407-03, D-13/D-15/D-17).
-//
-// The fold table is pinned HERE, before any of its three callers exists — the runner's evidence
-// recorder (407-07), `doctor` (407-08) and, through the recorded evidence, the run header banner
-// (407-10). Three callers folding the same two axes independently is exactly how a banner and a
-// doctor row come to disagree about the same machine; a table asserted row by row is what stops it.
+// One table pins the fold its callers share, so a banner and a doctor row cannot disagree.
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -110,7 +105,7 @@ function moduleUnavailableError(): Error {
   })
 }
 
-describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
+describe('foldRetrievalRung — the index axis is folded FIRST', () => {
   it.each<[string, EmbedderAxis]>([
     ['a live native embedder', READY_NATIVE],
     ['the static floor', READY_FLOOR],
@@ -197,7 +192,7 @@ describe('foldRetrievalRung — the index axis is folded FIRST (D-17)', () => {
   })
 })
 
-describe('classifyIndexFace — the ladder as a PURE READ (T-407-10)', () => {
+describe('classifyIndexFace — the ladder as a PURE READ', () => {
   it('reports absent with filePresent false and writes NO rebuild marker', () => {
     const knowledgeRoot = scaffoldedRoot()
 

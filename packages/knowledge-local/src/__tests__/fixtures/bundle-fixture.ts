@@ -29,7 +29,7 @@ memory/index/
 memory/queue/
 .lease
 .epoch
-**/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
+**/artifacts/        # binary blobs
                      # (artifact inventories are committed and live OUTSIDE artifacts/)
 skills/.staging/
 `
@@ -156,11 +156,7 @@ export function makeBundleDraftFixture(
   }
 }
 
-/**
- * The 381-03 canonical codec-shaped procedure body: three parameterized steps aligned with
- * `makeProcedureScreenStateSequenceFixture` and the `enter-email`/`enter-password`/`submit`
- * distilled-observation natural keys used by procedure commit/disposition suites.
- */
+// Three parameterized steps aligned with `makeProcedureScreenStateSequenceFixture`'s natural keys.
 export function makeProcedureBodyPayloadFixture(
   overrides: Partial<ProcedureBodyPayload> = {},
 ): ProcedureBodyPayload {

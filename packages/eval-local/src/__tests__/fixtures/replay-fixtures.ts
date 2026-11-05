@@ -1,20 +1,4 @@
-// Fixture builders for the Phase 368 requirement-proof suites (RPLY-02 / RPLY-04).
-//
-// Every builder produces a production-shaped CompletedRunHandoff whose live decision extracts into a
-// leaf cassette through the REAL extract path (extractRunCassettes → FsCassetteStore → loadCassetteBundle),
-// so the proofs drive the ONE sanctioned helper (runCassetteReplay) over on-disk bundles — never a
-// hand-rolled cassette. The knobs cover the modality/platform/masking axes the two suites need:
-//
-//   - vision:   captureMode 'full' + a decisionScreenshotRef whose blob round-trips to disk (the
-//               vision leg); vision:false emits captureMode 'textOnly' with NO screenshot ref (the
-//               text-only leg — prompts.ts then emits zero image content parts).
-//   - platform: 'web' grounds a web_click; 'android' grounds a mobile_tap and drives the android
-//               action-tool slice at the provider boundary (RPLY-04 mobile-with-no-device).
-//   - stepText: seeds a distinctive sentinel into the recorded observation (RPLY-02 masking/guardrail).
-//   - exchanges: recorded non-action exchanges served through the real plan() tool-loop.
-//
-// The stub + profile + artifacts helpers live here too so both proof suites import the ONE fixture
-// module (no test-file cross-imports).
+// Production-shaped handoffs extracted through the real path, so proofs replay on-disk bundles.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -292,12 +276,7 @@ export function stubProfile(baseURL = 'http://localhost:1/v1'): ModelProfile {
   }
 }
 
-/**
- * A stub profile whose model id is CALLER-SUPPLIED and family-resolvable (Phase 370): the default
- * STUB_MODEL_ID resolves to NO judge family, which would make every judge ineligible under the
- * D-12 two-sided disjointness check (RESEARCH Pitfall 6). Pair it with the same id as the
- * languageModels override key on capturingStub/throwingStub so createModel serves the stub.
- */
+// Default stub ids resolve to no judge family, which makes every judge ineligible.
 export function familyStubProfile(modelId: string, baseURL = 'http://localhost:1/v1'): ModelProfile {
   return {
     provider: 'openai-compatible',
@@ -337,13 +316,7 @@ export function actionGenerateResult(
   }
 }
 
-/**
- * A structured tier-4 judge verdict as TEXT-JSON (Phase 370). Output.object consumes text
- * content parts, NOT tool-call parts — a tool-call-shaped stub (actionGenerateResult) would
- * silently exercise only the unparseable-output path. Reuses the actionGenerateResult
- * usage/finishReason/warnings skeleton (input total 10 / output total 2) so usage mapping
- * stays assertable at the port result.
- */
+// Text JSON: `Output.object` reads text parts, so a tool-call stub tests only unparseable output.
 export function judgeGenerateResult(
   verdict: 'equivalent' | 'different' | 'unsure',
   confidence: 'high' | 'medium' | 'low',
@@ -398,7 +371,7 @@ export function capturingStub(
 ): CapturingStub {
   const captured: CapturedCallOptions[] = []
   const stub: StubLanguageModel = {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'replay-proof-stub',
     modelId,
     supportedUrls: {},
@@ -420,7 +393,7 @@ export function throwingStub(
 ): { languageModels: Record<string, StubLanguageModel>; calls: () => number } {
   let calls = 0
   const stub: StubLanguageModel = {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'replay-proof-stub',
     modelId,
     supportedUrls: {},
@@ -454,14 +427,18 @@ export function allContentParts(captured: CapturedCallOptions): BoundaryContentP
   return parts
 }
 
-/** The image/file content parts at the boundary (v3 lowers an image to a `file` part). */
+/** The file content parts at the boundary, where the SDK lowers an image to a `file` part. */
 export function imageParts(captured: CapturedCallOptions): BoundaryContentPart[] {
-  return allContentParts(captured).filter((part) => part.type === 'image' || part.type === 'file')
+  return allContentParts(captured).filter((part) => part.type === 'file')
 }
 
-/** Coerce a boundary image/file part's payload to raw bytes for byte-exact comparison. */
+/** Coerce a boundary file part's inline data to raw bytes for byte-exact comparison. */
 export function imagePartBytes(part: BoundaryContentPart): Uint8Array {
-  const payload = part.type === 'image' ? part.image : part.data
+  const data = part.data as { type?: unknown; data?: unknown } | undefined
+  if (data?.type !== 'data') {
+    throw new Error(`unsupported boundary file data: ${String(data?.type)}`)
+  }
+  const payload = data.data
   if (payload instanceof Uint8Array) return new Uint8Array(payload)
   if (payload instanceof ArrayBuffer) return new Uint8Array(payload)
   if (typeof payload === 'string') return new Uint8Array(Buffer.from(payload, 'base64'))

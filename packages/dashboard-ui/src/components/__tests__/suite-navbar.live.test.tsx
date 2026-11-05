@@ -10,12 +10,12 @@ import { SuiteNavbar } from '@/components/suite-navbar'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/components/split-button', () => ({
-  SplitButton: ({ label, disabled, onRun }: { label: string; disabled?: boolean; onRun: (l: boolean) => void }) => (
+  SplitButton: ({ label, disabled, onRun }: { label: string; disabled?: boolean; onRun: () => void }) => (
     <button
       data-testid="split-button"
       data-disabled={disabled ? 'true' : 'false'}
       disabled={disabled}
-      onClick={() => onRun(true)}
+      onClick={() => onRun()}
     >
       {label}
     </button>
@@ -78,7 +78,6 @@ describe('SuiteNavbar live mode', () => {
     expect(container.textContent).not.toContain('Connecting')
   })
 
-  // D-15
   it('renders Connect Live Session button with PlayCircle icon when liveConnectionState=idle', () => {
     mount(
       <SuiteNavbar
@@ -88,7 +87,7 @@ describe('SuiteNavbar live mode', () => {
       />
     )
     expect(container.textContent).toContain('Connect Live Session')
-    // PlayCircle should have h-3.5 w-3.5 class (UI-SPEC Interaction State Table)
+    // PlayCircle carries h-3.5 w-3.5.
     const connectBtn = Array.from(container.querySelectorAll('button')).find((b) =>
       b.textContent?.includes('Connect Live Session'),
     )
@@ -97,7 +96,6 @@ describe('SuiteNavbar live mode', () => {
     expect(connectBtn!.querySelector('svg')).toBeTruthy()
   })
 
-  // D-15
   it('renders "Connecting..." with spinner when liveConnectionState=connecting', () => {
     mount(
       <SuiteNavbar
@@ -112,7 +110,6 @@ describe('SuiteNavbar live mode', () => {
     expect(spinner).toBeTruthy()
   })
 
-  // D-15
   it('renders End Live Session destructive button when hasLiveSession && liveConnectionState=connected', () => {
     mount(
       <SuiteNavbar
@@ -128,7 +125,6 @@ describe('SuiteNavbar live mode', () => {
     expect(endBtn).toBeTruthy()
   })
 
-  // D-15
   it('renders End Live Session when liveConnectionState=executing', () => {
     mount(
       <SuiteNavbar
@@ -160,7 +156,6 @@ describe('SuiteNavbar live mode', () => {
     expect((connectBtn as HTMLButtonElement).disabled).toBe(true)
   })
 
-  // D-31
   it('renders Session #3 badge when hasLiveSession && typeof liveSessionNumber === "number"', () => {
     mount(
       <SuiteNavbar
@@ -200,7 +195,7 @@ describe('SuiteNavbar live mode', () => {
     expect(container.textContent).not.toContain('Session #')
   })
 
-  // UI-SPEC Color §Accent NOT used for Session badge
+  // The Session badge uses no accent colour.
   it('Session badge uses neutral classes bg-muted/50 text-muted-foreground', () => {
     mount(
       <SuiteNavbar
@@ -230,7 +225,6 @@ describe('SuiteNavbar live mode', () => {
     expect(foundTracking).toBe(true)
   })
 
-  // D-16
   it('Run Suite split button becomes disabled when hasLiveSession=true', () => {
     mount(
       <SuiteNavbar
@@ -245,7 +239,6 @@ describe('SuiteNavbar live mode', () => {
     expect(splitBtn!.getAttribute('data-disabled')).toBe('true')
   })
 
-  // D-16
   it('Run Suite tooltip reads "End the live session to queue a new suite run." when disabled due to live session', () => {
     mount(
       <SuiteNavbar

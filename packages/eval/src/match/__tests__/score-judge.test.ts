@@ -21,7 +21,6 @@ function breakdown(axes?: Partial<DecisionAxes>): DecisionPartialBreakdown {
       value: { kind: 'scored', f1: 1, band: 'full' },
       ...axes,
     },
-    sideEffect: { kind: 'none' },
     loop: { kind: 'not-applicable' },
     tierReached: 2,
   }
@@ -181,7 +180,7 @@ describe('JudgeOutcome closed union', () => {
 })
 
 describe('unresolved-tie shape invariance', () => {
-  it('remains constructible exactly as 369 shaped it, with no judgeOutcome field', () => {
+  it('remains constructible with no judgeOutcome field', () => {
     const tie: DecisionScore = {
       kind: 'unresolved-tie',
       cause: 'value-mid-band',

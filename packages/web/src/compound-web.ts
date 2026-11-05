@@ -1,9 +1,7 @@
-// Web execute() compound behaviors shared by both web execute surfaces (adapter.ts +
-// farm-adapter.ts). Phase 359 · EXEC-01/02/03 · D-05..D-09. The runner owns the pure verdict
-// machine (compareFillReread) and loop discipline (runUntilVisibleLoop / runDirectionScroll /
-// runToEndScroll over injected ScrollPrimitives); this module supplies the Playwright primitives
-// and stitches them into ONE ActionResult per compound. Extracted here (inside packages/web/src)
-// so the two adapter classes reuse one implementation instead of copy-pasting the compound.
+// Web execute() compound behaviors used by the web adapter (adapter.ts). The runner owns the pure
+// verdict machine (compareFillReread) and loop discipline (runUntilVisibleLoop /
+// runDirectionScroll / runToEndScroll over injected ScrollPrimitives); this module supplies the
+// Playwright primitives and stitches them into ONE ActionResult per compound.
 
 import type { Frame, JSHandle, Locator, Page } from 'playwright-core'
 import type { ActionResult } from '@vostride/agent-qa-runner'
@@ -27,10 +25,7 @@ import type { RefMap } from './types.js'
 
 type BoundingBox = { x: number; y: number; width: number; height: number }
 
-// A value read of the SAME live handle. inputValue() throws for non-input/textarea/select
-// targets (Pitfall 8) — fall back to an element value/textContent evaluate; if nothing is
-// readable, return undefined so the caller degrades honestly (signal-presence law: never
-// fabricate a re-read pair).
+// `inputValue()` throws outside input, textarea and select; unreadable is `undefined`, never `''`.
 export async function safeInputValue(locator: Locator): Promise<string | undefined> {
   try {
     return await locator.inputValue()
@@ -47,16 +42,15 @@ export async function safeInputValue(locator: Locator): Promise<string | undefin
   }
 }
 
-// EXEC-01: clear→type→RE-READ→(Enter) as one compound (D-05/D-06/D-07/D-08).
 export async function runWebFillCompound(
   locator: Locator,
   boundingBox: BoundingBox | undefined,
   action: Pick<Fill, 'text' | 'clearMode' | 'submit'>,
 ): Promise<ActionResult> {
   const isAppend = action.clearMode === 'append'
-  // Prior value FIRST (append expects prior + typed, D-07) — before any typing or type probe.
+  // The prior value is read before any typing, because append expects prior plus typed.
   const prior = isAppend ? (await safeInputValue(locator)) ?? '' : ''
-  // Secure detection is web-live: the ARIA snapshot carries no input type (Pitfall 6).
+  // Secure detection is web-live: the ARIA snapshot carries no input type.
   const secure = (await locator.getAttribute('type')) === 'password'
 
   if (isAppend) {
@@ -71,7 +65,6 @@ export async function runWebFillCompound(
   const actual = await safeInputValue(locator)
   const box = boundingBox ? { boundingBox } : {}
 
-  // Unreadable value: success with no fillReread block and no Enter, recorded unverified (437 D-06).
   if (actual === undefined) {
     return { success: true, ...box, metadata: { fillVerdict: { verb: 'fill', verdict: 'unverified' } } }
   }
@@ -218,11 +211,7 @@ function readPointerChain(state: unknown): unknown {
   }
 }
 
-// The no-ref wheel lands on whatever is under the pointer, so it is judged by the scrollers under
-// it: the wheel event's target up to the document scroller (436-18 · D-25, review CR-02). The
-// pointer position is not readable through Playwright and a passive listener runs after the
-// compositor has scrolled, so the "before" offsets are a snapshot taken before the wheel and the
-// listener only names the chain. No snapshot or no observed wheel event is unknown.
+// Playwright cannot read the pointer and a passive listener runs after scrolling.
 async function wheelPointerChain(page: Page, dx: number, dy: number, axis: Axis): Promise<PointerChain | undefined> {
   let handle: JSHandle | undefined
   try {
@@ -249,24 +238,10 @@ async function wheelPointerChain(page: Page, dx: number, dy: number, axis: Axis)
 type ProbeBox = { left: number; top: number; right: number; bottom: number }
 type Judged = { state: TargetVisibility; rect?: ProbeBox }
 
-// 2026-10-08 (436-26): the longest a child frame may take to answer its liveness check (CR-08).
+// The longest a child frame may take to answer its liveness check.
 export const FRAME_PROBE_TIMEOUT_MS = 1_000
 
-// In-page judge for every candidate of one frame, in that frame's own viewport. Ancestors are
-// walked over the flat tree (assigned slot, parent element, shadow host), skipping a body whose
-// overflow propagates to the viewport. Self-contained: Playwright serializes it.
-// - hidden: computed visibility other than `visible`, opacity 0 on the element or an ancestor, a
-//   non-empty own box under 2x2 CSS px, or a box outside the viewport;
-// - unknown: a box a clipping ancestor (a nested scroller the search may not have moved) empties
-//   or shrinks under 2x2, or a hit test at its centre that lands on anything but the element (an
-//   overlay, a point removed by clip or clip-path, an approximate clip);
-// - visible: the hit lands on the element, inside it, or on an ancestor of a pointer-events:none
-//   or text-judged element. A clip is skipped once the element or a node below the clipping
-//   ancestor is fixed or absolutely positioned, since it may escape the clip; the hit test decides.
-// 2026-10-19 (444.1-01, D-04): a display:contents or zero-area element is judged by its contents'
-// client rects, and is unknown when they have no area or its own box clips them.
-// 2026-10-19 (444.1-01, D-04): the hit walks elementsFromPoint from the top, past elements that
-// are transparent: opacity 0, or unpainted (with their ::before and ::after) with no text there.
+// Self-contained: Playwright serializes this function into each frame.
 function judgeCandidates(elements: unknown[]): unknown {
   const g = globalThis as any
   const doc = g.document
@@ -486,11 +461,7 @@ async function probeChildFrame(frame: Frame, target: string): Promise<TargetVisi
 // Child-frame liveness checks still running after their bound, per search.
 type PendingFrames = WeakMap<Frame, Promise<unknown>>
 
-// A frame with no committed document, or with a liveness check still pending from earlier in this
-// search, is unknown with no evaluate. Otherwise the bound covers the liveness check only: a frame
-// that has not answered `1` within FRAME_PROBE_TIMEOUT_MS is unknown and its check is parked in
-// `pending` until it settles; a frame that answers is judged and projected with no bound.
-// 2026-10-19 (444.1-02, D-06): a slow but healthy frame is judged, not cut off (WR-24).
+// Only the liveness check is bounded; a frame that answers is judged without a bound.
 async function probeChildFrameBounded(frame: Frame, target: string, pending: PendingFrames): Promise<TargetVisibility> {
   if (frame.url() === '' || pending.has(frame)) return 'unknown'
   const liveness = frame.evaluate('1')
@@ -515,18 +486,7 @@ async function probeChildFrameBounded(frame: Frame, target: string, pending: Pen
   return 'unknown'
 }
 
-// Is any element carrying `target` (text, label, alt or title; Playwright's case-insensitive,
-// whitespace-normalized substring match) on screen now, in the main frame or any child frame?
-// Any visible candidate is visible; else any unknown is unknown; else hidden. An error on the main
-// frame answers unknown, and on a child frame makes that frame unknown (436-17 · D-24/D-25).
-// 2026-10-08 (436-22): tri-state over every frame, each child frame's candidates projected through
-// its frame elements (review CR-07). Hidden: visibility, opacity 0, a box under 2x2 or outside the
-// viewport. Unknown: a nested-scroller clip, a covered or clipped centre point, a frame target not
-// on screen inside its frame, a transformed, zoomed or covered frame (review WR-16).
-// 2026-10-08 (436-26): evaluateAll waits for a child frame's execution context, which a frame that
-// never answers never gets (review CR-08). Child frames are judged at once, each frame's liveness
-// check bounded by FRAME_PROBE_TIMEOUT_MS and sent once while it is pending; a frame with no
-// committed document is unknown at once. The main frame and a live frame's judge are unbounded.
+// `evaluateAll` waits for a frame's context, which a hung frame never gets.
 async function probeOnScreen(page: Page, target: string, pending: PendingFrames): Promise<TargetVisibility> {
   let states: TargetVisibility[]
   try {
@@ -545,13 +505,7 @@ async function probeOnScreen(page: Page, target: string, pending: PendingFrames)
   return combine(states)
 }
 
-// Light probe + swipe/native primitives. readInterimTree re-runs ONLY the aria-snapshot harvest
-// → parseAriaSnapshot(text).nodes — NO buildScreenState, NO refMap mint, NO screenshot; lastRefs
-// stays bound to the pre-compound observation. probeTargetVisible decides target visibility for
-// the loop: page-wide, every frame, and it ignores the container ref. swipeOnce reports what the
-// offsets proved; the no-ref wheel measures the scrollers under the pointer before and after.
-// 2026-10-08 (436-22): probeTargetVisible answers visible, hidden or unknown.
-// 2026-10-08 (436-26): one pending-frame memo per primitives instance, so per search (CR-08).
+// `readInterimTree` mints no refs, so `lastRefs` stays bound to the pre-compound observation.
 export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: number): ScrollPrimitives {
   const pending: PendingFrames = new WeakMap()
   return {
@@ -584,9 +538,7 @@ export function buildScrollPrimitives(page: Page, lastRefs: RefMap, magnitude: n
   }
 }
 
-// EXEC-02: both schema Scroll modes over the shared loops. ONE ActionResult carrying
-// metadata.scrollUntilVisible; the gesture itself succeeds — the outcome and what ended it ride
-// the metadata, not the success flag.
+// The gesture itself succeeds; the outcome rides `metadata.scrollUntilVisible`.
 export async function runWebScrollCompound(page: Page, lastRefs: RefMap, action: Scroll): Promise<ActionResult> {
   const viewport = page.viewportSize() ?? { width: 1280, height: 720 }
   const horizontal = action.direction === 'left' || action.direction === 'right'
@@ -620,7 +572,6 @@ export async function runWebScrollCompound(page: Page, lastRefs: RefMap, action:
   return { success: true, metadata: { scrollUntilVisible: meta } }
 }
 
-// EXEC-03 web lane (D-09): openApp is not executable on web — self-correct to navigate(url).
 export function webOpenAppError(): ActionResult {
   return {
     success: false,

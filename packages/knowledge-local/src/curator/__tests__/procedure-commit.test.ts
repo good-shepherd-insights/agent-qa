@@ -27,7 +27,7 @@ import {
   makeProcedureScreenStateSequenceFixture,
 } from '../../__tests__/fixtures/bundle-fixture.js'
 
-describe('D-02 procedure-kind commit mint contract', () => {
+describe('procedure-kind commit mint contract', () => {
   let root: string
   let knowledgeRoot: string
   let epoch: number
@@ -101,7 +101,7 @@ describe('D-02 procedure-kind commit mint contract', () => {
           ...(stepIndex === 0 ? {} : { precedes: ['enter-email', 'enter-password'][stepIndex - 1]! }),
         },
         surface: { kind: 'page', naturalKey: '/login' },
-        // 381-03 §7.1 candidacy: every covered step carries resolved-element evidence.
+        // Candidacy needs resolved-element evidence on every covered step.
         element: {
           naturalKey: ['textbox:email', 'textbox:password', 'button:sign in'][stepIndex]!,
         },

@@ -1,7 +1,4 @@
-// Bundle publication is the D-11/D-12/D-15 store seam beneath KnowledgePort (D-04).
-// It copies capped artifacts into an invisible sibling staging directory, writes every
-// committed text part with manifest.json last (§7.8), then atomically renames.
-// BNDL-02/D-05 only treats an occupied target as already-exists after full-identity equality.
+// Writes every committed part with `manifest.json` last, then renames the staging dir atomically.
 
 import { randomUUID } from 'node:crypto'
 import {
@@ -42,7 +39,6 @@ export interface BundleStoreConfig {
   /** Absolute committed-root path. Deliberately no working-directory default. */
   knowledgeRoot: string
   productKey: string
-  commitArtifacts: 'none' | 'thumbnails'
   /** Active writer identity used to attribute crash-left staging trees. */
   writerLeaseId?: string
   /** Fencing epoch embedded in reader-invisible staging names. */
@@ -207,11 +203,6 @@ export function stageBundle(
   config: BundleStoreConfig,
   input: PublishBundleInput,
 ): StageBundleOutcome {
-  if (config.commitArtifacts === 'thumbnails') {
-    throw new Error(
-      "commitArtifacts 'thumbnails' is not implemented; Phase 380 visual review owns it",
-    )
-  }
   if (!isAbsolute(config.knowledgeRoot)) {
     throw new TypeError('BundleStoreConfig.knowledgeRoot must be absolute')
   }
@@ -250,8 +241,7 @@ export function stageBundle(
   }
 
   const stagingRoot = join(bundlesDir, '.staging')
-  // 261003-mqc: a `memory/`, product or `bundles/` linked out of the knowledge root is refused
-  // before anything is staged; the rename into `bundlesDir` then stays inside it too.
+  // A `memory/`, product or `bundles/` link out of the knowledge root is refused before staging.
   assertWithinKnowledgeRoot(config.knowledgeRoot, stagingRoot)
   const stagingBasename = `.staged-epoch-${config.writerEpoch ?? 0}-${randomUUID()}`
   const stagingDir = join(stagingRoot, stagingBasename)

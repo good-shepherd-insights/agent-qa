@@ -1,22 +1,4 @@
-// The on-demand digest verb, driven as a person drives it (Phase 391 plan 06).
-//
-// `agent-qa digest` is a THIN WRAPPER: it resolves a project, builds the registry at the
-// composition root, calls `invokeFunction` with the CLI's own caller mint, and prints what comes
-// back. This file proves exactly that and nothing more generous — the whole path is real (no
-// stubbed gate, no stubbed registry), and the verb's output is asserted BYTE FOR BYTE against the
-// op result obtained through a second composition.
-//
-// The second composition is what makes the byte claim non-circular. If the printed lines were
-// built from anything the command held in memory, the value compared here — read out of a cold
-// registry over the same directories — would be free to disagree with it.
-//
-// 2026-10-01 (432-17, D-05/D-22): `agent-qa proposals` — list, show, accept, reject and the
-// `grants` subcommands it hosted — is deleted with the inbox, so the cells that drove it are
-// deleted too. Their claims transfer: the verb's absence is C432-NO-PROPOSAL-CLI
-// (conformance/help-census.test.ts), the ops' absence is C432-NO-PROPOSAL-OPS, and a pre-432
-// proposal file on disk is never read (C432-PROPOSAL-FILES-UNREAD; the digest cell below keeps
-// planting one beside the run it digests). 432-18 deleted the grant ledger and `grants.list`; an old
-// `grants.jsonl` is never read (C432-GRANTS-UNREAD-WRITER-ABSENT, agent-local grant-ledger-damage).
+// The output is compared with a cold second composition, so the byte claim is not circular.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -33,10 +15,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createDigestCommand } from '../commands/digest.js'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../composition/local-agent-host.js'
-import { filePre432KnowledgeProposal } from '../composition/__tests__/pre-432-knowledge-proposal.js'
+import { fileLeftoverKnowledgeProposal } from '../composition/__tests__/leftover-knowledge-proposal.js'
 
-const OLDER_RUN = 'run-391-06-cmd-older'
-const NEWER_RUN = 'run-391-06-cmd-newer'
+const OLDER_RUN = 'run-cmd-older'
+const NEWER_RUN = 'run-cmd-newer'
 
 const ANCHOR: Anchor = { t: 'el', role: 'Button', name: 'Checkout' }
 
@@ -46,7 +28,10 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-function rootCause(perTest: number): Verdict {
+function rootCause(
+  perTest: number,
+  rationale = 'the submit control is gone from the checkout DOM',
+): Verdict {
   return {
     class: 'app_bug',
     producer: 'deterministic-classifier',
@@ -55,14 +40,18 @@ function rootCause(perTest: number): Verdict {
       citedSteps: [0],
       citedAnchors: [],
       citedArtifacts: [],
-      rationale: 'the submit control is gone from the checkout DOM',
+      rationale,
     },
     memoryMisdirectionRuledOut: true,
     perTest,
   } as Verdict
 }
 
-function handoff(runId: string, endedAt: number): CompletedRunHandoff {
+function handoff(
+  runId: string,
+  endedAt: number,
+  rationale = 'the submit control is gone from the checkout DOM',
+): CompletedRunHandoff {
   return {
     schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
     runId: asRunId(runId),
@@ -81,7 +70,7 @@ function handoff(runId: string, endedAt: number): CompletedRunHandoff {
         testIndex: 0,
         outcome: 'failed',
         steps: [],
-        rootCause: rootCause(0),
+        rootCause: rootCause(0, rationale),
       },
     ],
   } as unknown as CompletedRunHandoff
@@ -95,7 +84,7 @@ interface Workspace {
 }
 
 function workspace(): Workspace {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-391-06-cmd-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-cmd-'))
   roots.push(root)
   const configPath = join(root, 'agent-qa.config.yaml')
   writeFileSync(
@@ -113,7 +102,7 @@ function workspace(): Workspace {
     }, null, 2)}\n`,
     'utf8',
   )
-  // 2026-10-14 (441-16, E3): `runs.list` refuses without a readable secrets file.
+  // `runs.list` refuses without a readable secrets file.
   writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
   const agentQaRoot = join(root, '.agent-qa')
   mkdirSync(agentQaRoot, { recursive: true })
@@ -131,12 +120,11 @@ function storeConfig(ws: Workspace): BundleStoreConfig {
   return {
     knowledgeRoot: ws.knowledgeRoot,
     productKey: 'Digest Command Product',
-    commitArtifacts: 'none',
   }
 }
 
-/** A real record, then a pre-432 proposal file about it planted beside it, attributed to a run. */
-async function plantPre432Proposal(ws: Workspace, runId: string, summary: string, ordinal: number): Promise<string> {
+/** A real record, then an older proposal file about it planted beside it, attributed to a run. */
+async function plantLeftoverProposal(ws: Workspace, runId: string, summary: string, ordinal: number): Promise<string> {
   const published = publishBundleForTest(storeConfig(ws), {
     draft: {
       kind: 'fact',
@@ -162,7 +150,7 @@ async function plantPre432Proposal(ws: Workspace, runId: string, summary: string
     artifacts: [],
   })
   if (published.kind !== 'published') throw new Error(`fixture publish failed: ${published.kind}`)
-  return await filePre432KnowledgeProposal({
+  return await fileLeftoverKnowledgeProposal({
     agentQaRoot: ws.agentQaRoot,
     verb: 'forget',
     target: { grain: 'record', recordId: asRecordId(published.id) },
@@ -216,10 +204,10 @@ async function digestThroughTheOp(ws: Workspace, runId: string): Promise<RunDige
   }
 }
 
-describe('agent-qa digest (D-17, the on-demand channel)', () => {
+describe('agent-qa digest, the on-demand channel', () => {
   it('prints the op result\'s lines, byte for byte, and composes nothing of its own', async () => {
     const ws = workspace()
-    await plantPre432Proposal(ws, NEWER_RUN, 'checkout button', 11)
+    await plantLeftoverProposal(ws, NEWER_RUN, 'checkout button', 11)
 
     const invocation = await run(ws, ['digest', NEWER_RUN])
     const digest = await digestThroughTheOp(ws, NEWER_RUN)
@@ -228,10 +216,7 @@ describe('agent-qa digest (D-17, the on-demand channel)', () => {
     expect(invocation.exitCode).toBeUndefined()
     // The whole claim, as one comparison: the printed bytes ARE the op's lines.
     expect(invocation.stdout).toBe(digest.lines.join('\n'))
-    // Non-vacuity — the digest has real sections to have printed. 432-09 (D-05/D-25): the
-    // proposal this fixture minted through the shipped seam is listed and counted nowhere; the
-    // marks section reads this run's own (empty) ledger. 432-17: the fixture is now planted bytes,
-    // since nothing can mint one, and it is still read nowhere.
+    // Non-vacuity: the digest has real sections; the planted proposal is read nowhere.
     expect(digest.lines.length).toBeGreaterThan(3)
     expect(invocation.stdout).toContain('marks — no changes applied')
     expect(invocation.stdout).not.toMatch(/proposal|minted/)
@@ -271,7 +256,98 @@ describe('agent-qa digest (D-17, the on-demand channel)', () => {
   })
 })
 
-describe('the surfaces own no capability of their own (L10)', () => {
+const CRAFTED_RATIONALE = '##[error]x ::set-output name=x::y'
+const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+
+function craftedWorkspace(): Workspace {
+  const ws = workspace()
+  const runDir = join(ws.agentQaRoot, RUNS_SUBDIR, slugBranch(NEWER_RUN))
+  writeFileSync(
+    join(runDir, HANDOFF_FILE),
+    `${JSON.stringify(handoff(NEWER_RUN, 900, CRAFTED_RATIONALE))}\n`,
+    'utf8',
+  )
+  return ws
+}
+
+async function runCapturingWrites(
+  ws: Workspace,
+  args: readonly string[],
+): Promise<Invocation & { writes: string[] }> {
+  const writes: string[] = []
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+    writes.push(String(chunk))
+    return true
+  })
+  try {
+    return { ...(await run(ws, args)), writes }
+  } finally {
+    write.mockRestore()
+  }
+}
+
+describe('agent-qa digest under GitHub Actions', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('prints the digest lines as one stop-commands pair on stdout', async () => {
+    const ws = craftedWorkspace()
+    const digest = await digestThroughTheOp(ws, NEWER_RUN)
+    const rendered = digest.lines.join('\n')
+    expect(rendered).toContain(CRAFTED_RATIONALE)
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const invocation = await runCapturingWrites(ws, ['digest', NEWER_RUN])
+
+    expect(invocation.stdout).toBe('')
+    expect(invocation.writes).toHaveLength(1)
+    expect(invocation.writes[0]).toMatch(PAIR)
+    expect(invocation.writes[0]).toContain(`\n${rendered}\n`)
+  })
+
+  it('prints the --json document with no # and parses back to the digest', async () => {
+    const ws = craftedWorkspace()
+    const digest = await digestThroughTheOp(ws, NEWER_RUN)
+    expect(JSON.stringify(digest)).toContain('#')
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const invocation = await runCapturingWrites(ws, ['digest', NEWER_RUN, '--json'])
+
+    expect(invocation.writes.join('')).not.toContain('::stop-commands::')
+    expect(invocation.stdout).not.toContain('#')
+    expect(invocation.stdout).not.toContain('::stop-commands::')
+    expect(JSON.parse(invocation.stdout)).toEqual(digest)
+  })
+
+  it('prints a run-derived error inside a pair on stdout', async () => {
+    const ws = craftedWorkspace()
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const invocation = await runCapturingWrites(ws, ['digest', 'run-that-never-happened'])
+
+    expect(invocation.exitCode).toBe(1)
+    expect(invocation.stderr).toBe('')
+    expect(invocation.writes).toHaveLength(1)
+    expect(invocation.writes[0]).toMatch(PAIR)
+    expect(invocation.writes[0]).toContain('RunNotFoundError')
+  })
+
+  it('prints the same lines and JSON as before without the variable', async () => {
+    const ws = craftedWorkspace()
+    const digest = await digestThroughTheOp(ws, NEWER_RUN)
+
+    const human = await runCapturingWrites(ws, ['digest', NEWER_RUN])
+    const json = await runCapturingWrites(ws, ['digest', NEWER_RUN, '--json'])
+
+    expect(human.writes).toEqual([])
+    expect(human.stdout).toBe(digest.lines.join('\n'))
+    expect(json.writes).toEqual([])
+    expect(json.stdout).toBe(JSON.stringify(digest, null, 2))
+  })
+})
+
+describe('the surfaces own no capability of their own', () => {
   it('dispatches through invokeFunction with the CLI caller mint, and holds no gate', async () => {
     const { readFileSync } = await import('node:fs')
     const { fileURLToPath } = await import('node:url')
@@ -280,14 +356,11 @@ describe('the surfaces own no capability of their own (L10)', () => {
         fileURLToPath(new URL(`../commands/${file}`, import.meta.url)),
         'utf8',
       )
-      // The ONE dispatch path, and the ONE caller. A hand-rolled caller literal here would be
-      // a surface deciding its own origin, which is the fact the whole self-grant rule turns
-      // on (D-06) — so `origin:` must not appear in it at all.
+      // One dispatch path and one caller; a hand-rolled caller lets a surface pick its own origin.
       expect(source).toContain('invokeFunction')
       expect(source).toContain('CLI_FUNCTION_CALLER')
       expect(source).not.toMatch(/origin:\s*'(human|agent)'/u)
-      // No gate, no registry construction, no store: a surface that could reach any of these
-      // would have a path around the pipeline (T-384-01).
+      // No gate, registry construction or store, or a surface has a path around the pipeline.
       expect(source).not.toContain('evaluate')
       expect(source).not.toContain('createRegistryFromSpecs')
       expect(source).not.toContain('agent-qa-knowledge-local')

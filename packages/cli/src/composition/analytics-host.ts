@@ -25,27 +25,7 @@ import { createRequire } from 'node:module'
  */
 export type CliAnalyticsSurface = NonNullable<AnalyticsRunStandardProperties['surface']>
 
-/**
- * The shipped version, read from THIS package's own manifest.
- *
- * TWO ROUTES WERE TRIED FIRST AND BOTH ARE WORSE.
- *
- *   `getAgentQaVersion()` from `@vostride/agent-qa-core` is where the rest of this repo reads it,
- *   and the FUNC-02 surface firewall does not admit core: a surface may name the function layer,
- *   the vocabulary, the composition root and this analytics package, and nothing else.
- *
- *   `VERSION` from this package's own barrel (`src/index.ts`) has core's ledger entry and compiles
- *   — but the barrel re-exports the whole host, and pulling it in here puts the local-agent
- *   composition (and its durable filesystem layer) into the module graph of every command that
- *   composes analytics. Measured 2026-08-17: `init.test.ts`, whose partial `node:fs` mock does not
- *   carry `openSync`, fails at import on that graph — the same weight the `--agent` branch of
- *   `init.ts` already dodges with a lazy import.
- *
- * So it is read here, the same way core reads it: `require('../package.json').version`. That is a
- * SECOND reader of a version, which is a real cost, and `analytics-host.test.ts` pays it down by
- * pinning this constant equal to `getAgentQaVersion()` — a drift between the two reds rather than
- * shipping a version field that disagrees with `--version`.
- */
+// Read from this package's manifest: the firewall bars core, and the barrel drags in the host.
 const require = createRequire(import.meta.url)
 
 function readCliPackageVersion(): string {
@@ -120,7 +100,7 @@ export interface CliAnalyticsHost {
 export async function composeAnalyticsHost(
   input: ComposeAnalyticsHostInput,
 ): Promise<CliAnalyticsHost> {
-  // Assigned below only when resolution succeeds; until then every capture is dropped (D-05).
+  // Assigned below only when resolution succeeds; until then every capture is dropped.
   let identity: AnalyticsIdentity | undefined
   let masking: AnalyticsMaskingContext | undefined = input.maskingContext
 
@@ -149,7 +129,7 @@ export async function composeAnalyticsHost(
   if (composed.transportKind === 'posthog') {
     const resolve = input.resolveIdentity ?? resolveAnalyticsIdentity
     try {
-      // 447-05 (D-11): CI is the run detector's answer, reached through agent-local (the firewall).
+      // CI is the run detector's answer, reached through agent-local (the firewall).
       const { resolveRunExecutionContext } = await import('@vostride/agent-qa-agent-local')
       const ci = resolveRunExecutionContext() === 'ci'
       const resolved = await withTimeout(
@@ -163,7 +143,7 @@ export async function composeAnalyticsHost(
       properties.runtime_context = resolved.runtimeContext
       if (resolved.agentProduct !== undefined) properties.agent_product = resolved.agentProduct
     } catch {
-      // Telemetry stays off for this invocation; nothing falls back to a shared id (D-05).
+      // Telemetry stays off for this invocation; nothing falls back to a shared id.
     }
   }
 

@@ -1,10 +1,5 @@
 // @vitest-environment jsdom
-// THE COMPOSER SAYS WHAT IT IS ABOUT AND OFFERS THE THREE CHOICES, PICKING NONE (426-02 · D-11, D-12, D-14).
-//
-// The order under a step follows the STEP's own verdict, so a passing step inside a failed test opens
-// with "This should have failed". All three rows render in every composer state, none disabled, each
-// radio described by its meaning line, and nothing is checked until the person picks. The heading and
-// scope line paint producer names as text nodes, never markup.
+// Under a step the order follows the step's verdict, and nothing is checked until the person picks.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -104,7 +99,7 @@ afterEach(() => {
 const rows = () => [...container.querySelectorAll<HTMLElement>('[data-feedback-choice]')]
 const radios = () => [...container.querySelectorAll<HTMLElement>('[data-feedback-choice] [role="radio"]')]
 
-describe('426-02 feedback composer', () => {
+describe('feedback composer', () => {
   it('CHOICE-ORDER-STEP-OWN-RESULT: a passing step in a failed test opens with should-have-failed; the failed test opens with should-have-passed', () => {
     render(props(singleFailed, { testIndex: 0, stepIndex: 1 }))
     expect(container.querySelector('[data-feedback-choices]')?.getAttribute('data-feedback-outcome-class')).toBe('passed')
@@ -172,9 +167,7 @@ describe('426-02 feedback composer', () => {
   })
 })
 
-// MACHINERY IS ONE DISCLOSURE AWAY (426-08 · D-13, SC2). The internal mark words and every id live only
-// under a collapsed Technical details, each row present only when its fact exists; everything else in
-// the composer speaks in plain words.
+// Mark words and ids live only under a collapsed Technical details; the rest is plain words.
 const RUN_ID = generateRunId()
 const MARKS: readonly Mark[] = ['false-fail', 'false-pass', 'confirmed-bug']
 const INTERNAL_WORD = new RegExp(`(^|[^\\w-])(${MARKS.join('|')})(?![\\w-])`)
@@ -189,9 +182,6 @@ function consequencesFor(kind: Mark, over: Record<string, unknown> = {}): RunsMa
     resolvedStep: { stepIndex: 2, reason: 'step-mark' },
     latest: { kind: 'supersedes', markId: 'mark_0123456789ab', ordinal: 4 },
     basis: { ledgerOrdinal: 7, priorMarkOrdinal: 4 },
-    markedDecisionCount: 1,
-    groundTruth: [],
-    labels: [{ testIndex: 0, stepIndex: 1, decisionOrdinal: 2, sourceCassetteId: 'cas_a', channel: 'user-mark' }],
     knowledge: {
       servedRecordIds: ['rec_alpha', 'rec_beta'],
       appendsEvidence: true,
@@ -228,18 +218,13 @@ function textNodes(root: Element): Text[] {
   return nodes
 }
 
-describe('426-08 Technical details', () => {
+describe('Technical details', () => {
   it('TECHNICAL-DETAILS-ROWS: collapsed by default; opened, one row per fact the mark has, in the locked order and words', () => {
     render(props(singleFailed, { testIndex: 0, stepIndex: 2 }, {
       selected: 'false-pass',
       previewState: 'consequences',
       previewCurrent: true,
-      previewRead: consequencesFor('false-pass', {
-        labels: [
-          { testIndex: 0, stepIndex: 1, decisionOrdinal: 2, sourceCassetteId: 'cas_a', channel: 'user-mark' },
-          { testIndex: 0, stepIndex: 2, decisionOrdinal: 3, sourceCassetteId: 'cas_b', channel: 'overturned-verdict' },
-        ],
-      }),
+      previewRead: consequencesFor('false-pass'),
       testId: 't_checkout',
     }))
     expect(technicalTrigger()?.getAttribute('aria-expanded')).toBe('false')
@@ -254,7 +239,6 @@ describe('426-08 Technical details', () => {
       ['address', TECHNICAL_DETAILS_ROW_LABELS.address, '0:2'],
       ['testId', TECHNICAL_DETAILS_ROW_LABELS.testId, 't_checkout'],
       ['records', TECHNICAL_DETAILS_ROW_LABELS.records, 'rec_alpha, rec_beta'],
-      ['labels', TECHNICAL_DETAILS_ROW_LABELS.labels, ['decision 2 · step 2 · user-mark', 'decision 3 · step 3 · overturned-verdict']],
       ['basis', TECHNICAL_DETAILS_ROW_LABELS.basis, 'ledger ordinal 7 · prior mark #4'],
     ])
     for (const dd of content!.querySelectorAll('dd')) {
@@ -308,15 +292,10 @@ describe('426-08 Technical details', () => {
   })
 })
 
-// THE MARK'S APPROVAL, INLINE (426-10 · D-20, SC4). The question the policy gate asked before a mark
-// was recorded sat in the composer's footer as a labelled group — never a dialog, never modal.
-//
-// RE-SPELLED 2026-10-01 (432-14, D-14): the question, the group and the state a mark waited in are
-// deleted. Each cell keeps its name and now pins the absence in the real composer, in every state it
-// can be in: no group, no answers, nothing that takes focus, and the submit row always present.
+// Each cell pins the absence of an approval surface in every composer state.
 const approvalSurface = () => container.querySelector('[data-feedback-approval], [data-confirm-answer], [data-confirm-outcome], [data-feedback-approval-waiting]')
 
-describe('426-10 the inline approval region', () => {
+describe('the inline approval region', () => {
   it('APPROVAL-IS-A-GROUP: a labelled group with the shipped title, the action class in mono and the preview as text', () => {
     for (const state of FEEDBACK_COMPOSER_STATES) {
       render(props(singleFailed, { testIndex: 0, stepIndex: 2 }, { state, selected: 'false-fail' }))

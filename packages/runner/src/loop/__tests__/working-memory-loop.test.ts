@@ -1,12 +1,3 @@
-// RED scaffold (Wave 0, Phase 358 · WM-01 · D-11/D-12 · Pattern 6). Pins the working-memory
-// LIFECYCLE inside executeStep BEFORE Plan 08 wires it: capture-before-navigate (by
-// construction), whole-set serving to the next planning turn, and the masked
-// StepEvidence.workingMemory snapshot recorded BESIDE (never inside) servedBrief. Uses the
-// optional-port idiom — an unbound workingMemory port leaves the loop unchanged.
-//
-// RED BY DESIGN: the shipped loop never reads a workingMemory port, so capture is never
-// invoked, context.workingMemory is never served, and evidence.workingMemory is never
-// snapshotted — those gaps ARE the intended failure (GREEN when Plan 08 lands).
 import { describe, it, expect } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
@@ -18,8 +9,7 @@ import { SecretRedactor, SecretStore } from '../secrets.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeActionPlan, makeStepContext, makeVerifier } from './loop-harness.js'
 
-// The Plan-08 WorkingMemoryPort shape (served through LoopPorts.workingMemory). Structural
-// fake — typed locally until the port lands on LoopPorts.
+// A structural fake of the WorkingMemoryPort served through `LoopPorts.workingMemory`.
 interface FakeWmPort {
   capture(entries: unknown[], provenanceCtx?: unknown): void
   entries(): unknown[]
@@ -69,7 +59,7 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
 
 const REMEMBER = [{ key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'observation' }]
 
-describe('working-memory loop lifecycle (WM-01)', () => {
+describe('working-memory loop lifecycle', () => {
   it('captures remember[] BEFORE dispatching the navigating action (capture-before-navigate)', async () => {
     const log: string[] = []
     const wm = makeWmPort(log)
@@ -112,7 +102,7 @@ describe('working-memory loop lifecycle (WM-01)', () => {
     )
     expect(result.status).toBe('passed')
     expect(call).toBeGreaterThanOrEqual(2)
-    // The second planning turn sees the entry captured in the first (whole-set serving, D-11).
+    // The second planning turn sees the entry captured in the first.
     const secondServed = served[1] as { key?: string }[] | undefined
     expect(Array.isArray(secondServed)).toBe(true)
     expect(secondServed?.some((e) => e.key === 'otp')).toBe(true)
@@ -153,7 +143,7 @@ describe('working-memory loop lifecycle (WM-01)', () => {
 
 const PW = 'Hunter-42-zz'
 const EMAIL = 'qa@example.com'
-const MARKER = '[secret:PW_441]'
+const MARKER = '[secret:PW_KEY]'
 
 function pageWithDeclaredValue(): ScreenState {
   const screen = makeScreenState()
@@ -193,7 +183,7 @@ async function runDeclaredValueStep(extra: Partial<LoopPorts> = {}) {
       planner,
       verifier,
       workingMemory: wm,
-      secretRedactor: new SecretRedactor(new SecretStore({ PW_441: PW })),
+      secretRedactor: new SecretRedactor(new SecretStore({ PW_KEY: PW })),
       carriedArtifacts: {
         downloads: [{
           stepNumber: 1,
@@ -211,7 +201,7 @@ async function runDeclaredValueStep(extra: Partial<LoopPorts> = {}) {
   return { result, recordLines, record }
 }
 
-describe('C441-RUN-RECORDS', () => {
+describe('the loop records declared values by name', () => {
   it('the loop records a declared value by name and leaves undeclared values', async () => {
     const { result, recordLines, record } = await runDeclaredValueStep()
     expect(result.status).toBe('passed')

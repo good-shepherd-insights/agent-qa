@@ -1,6 +1,3 @@
-// RED scaffold (Wave 0, CACHE-01). Determinism + per-component sensitivity +
-// branch-invariance (D-14: branch is never a key component). Fails until Plan 03
-// creates ../key.ts. Do NOT weaken any assertion to make it pass.
 import { describe, expect, it } from 'vitest'
 
 import { computeCacheKey } from '@vostride/agent-qa-schema'
@@ -37,13 +34,13 @@ function keyOf(overrides: Overrides = {}): string {
       envVars: overrides.envVars ?? envVars(),
       envSalt: overrides.envSalt ?? 'salt',
       screenIdentityHash: overrides.screenIdentityHash ?? 'screen-hash',
-      // Intentionally supplied but never a key component (D-14).
+      // Intentionally supplied but never a key component.
       branch: overrides.branch ?? 'main',
     }),
   )
 }
 
-describe('buildCacheableStepInput → computeCacheKey determinism (CACHE-01)', () => {
+describe('buildCacheableStepInput → computeCacheKey determinism', () => {
   it('the same 8-tuple yields a stable key', () => {
     expect(keyOf()).toBe(keyOf())
   })
@@ -60,7 +57,7 @@ describe('buildCacheableStepInput → computeCacheKey determinism (CACHE-01)', (
     expect(keyOf({ screenIdentityHash: 'screen-hash-2' })).not.toBe(base)
   })
 
-  it('branch is never a key component — the same tuple under two branches yields the same key (D-14)', () => {
+  it('branch is never a key component — the same tuple under two branches yields the same key', () => {
     expect(keyOf({ branch: 'main' })).toBe(keyOf({ branch: 'feature/x' }))
   })
 })

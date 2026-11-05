@@ -1,13 +1,4 @@
-// DockerHookExecutor (Phase 363 D-06) — the runner-local storageImplementation of
-// the runner `HookExecutorPort`. The sandbox-runner body moved VERBATIM from
-// core/src/hooks/sandbox-runner.ts: image pull policy, tmpdir workdir copy of
-// file + deps + packageFile, authState mount, env + secret injection, container
-// limits (512m / 1cpu / pids256 / read-only), network-none unless hook.network,
-// /tmp/agent-qa.env variable extraction, secret-valued output-variable filtering,
-// stdout/stderr redaction, and timeout→exit-124. This is the ONLY home for
-// node:child_process / node:fs on the hook path — the runner stays storageNeutral
-// (Pitfall 3: ALL sandbox-side redaction/filtering preserved; the sink mask is
-// additive, never a replacement).
+// The only child-process and fs home on the hook path; the sink mask adds to sandbox redaction.
 
 import { execFile, type ChildProcess } from 'node:child_process'
 import { readFile, mkdtemp, mkdir, rm, cp } from 'node:fs/promises'
@@ -22,7 +13,7 @@ import type {
   RuntimeAuthStateConfig,
 } from '@vostride/agent-qa-runner'
 import {
-  RUNTIME_IMAGE_MAP,
+  hookRunnerImage,
   parseEnvFile,
   AUTH_STATE_HOOK_CONTAINER_STORAGE_STATE_PATH,
   AUTH_STATE_HOOK_STORAGE_STATE_FILENAME,
@@ -35,20 +26,20 @@ import {
 const DEFAULT_DOCKER_BIN = 'docker'
 
 export interface DockerHookExecutorConfig {
+  version: string
   dockerBin?: string
   pullPolicy?: 'always' | 'if-not-present' | 'never'
 }
 
-/**
- * The D-06 hook-execution impl. Constructed once at the CLI composition root and threaded
- * into the runner `runHooks` orchestration behind the {@link HookExecutorPort}. A per-hook
- * timeout resolves a FAILED {@link HookResult} (exit-124-style error), never a throw.
- */
+// One executor per host composition root. A per-hook timeout resolves a failed result,
+// never a throw.
 export class DockerHookExecutor implements HookExecutorPort {
+  private readonly version: string
   private readonly dockerBin: string
   private readonly pullPolicy: 'always' | 'if-not-present' | 'never'
 
-  constructor(config: DockerHookExecutorConfig = {}) {
+  constructor(config: DockerHookExecutorConfig) {
+    this.version = config.version
     this.dockerBin = config.dockerBin ?? DEFAULT_DOCKER_BIN
     this.pullPolicy = config.pullPolicy ?? 'if-not-present'
   }
@@ -58,17 +49,17 @@ export class DockerHookExecutor implements HookExecutorPort {
     const pullPolicy = this.pullPolicy
     const start = Date.now()
 
-    const image = RUNTIME_IMAGE_MAP[hook.runtime]
-
-    if (pullPolicy === 'always' || pullPolicy === 'if-not-present') {
-      const needsPull = pullPolicy === 'always' || !(await imageExists(dockerBin, image))
-      if (needsPull) {
-        await pullImage(dockerBin, image)
-      }
-    }
+    const image = hookRunnerImage(hook.runtime, this.version)
 
     let workDir: string | undefined
     try {
+      if (pullPolicy === 'always' || pullPolicy === 'if-not-present') {
+        const needsPull = pullPolicy === 'always' || !(await imageExists(dockerBin, image))
+        if (needsPull) {
+          await pullImage(dockerBin, image)
+        }
+      }
+
       workDir = await mkdtemp(join(tmpdir(), 'agent-qa-hook-'))
       await mkdir(join(workDir, 'tmp'), { recursive: true })
 
@@ -143,10 +134,7 @@ export class DockerHookExecutor implements HookExecutorPort {
   }
 }
 
-/**
- * Docker availability probe (re-homed from core/src/hooks/sandbox-runner.ts). The CLI
- * `doctor` command consumes this to report whether the hook sandbox can run.
- */
+/** Docker availability probe; `doctor` reports from it whether the hook sandbox can run. */
 export async function checkDockerAvailable(dockerBin = DEFAULT_DOCKER_BIN): Promise<boolean> {
   return new Promise((resolve) => {
     execFile(dockerBin, ['info', '--format', '{{.ID}}'], { timeout: 5000 }, (err) => {
@@ -192,8 +180,7 @@ function buildDockerArgs(input: DockerArgsInput): string[] {
   }
 
   const envVars: Record<string, string> = { ...input.env }
-  // Secret values overlay normal env vars in the container (already-resolved by the
-  // composition root; the runner-local impl never touches the SecretStore, D-06).
+  // Secret values overlay normal env vars; this package never touches the SecretStore.
   Object.assign(envVars, input.secretEnv)
   Object.assign(envVars, buildAuthStateHookEnv(
     input.authState,

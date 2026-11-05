@@ -1,16 +1,7 @@
-// ONE SAVED MODEL (429-23, 429-24, 429-26 · D-10, D-11, D-12, D-17, D-23, D-24 · UI-SPEC S4, S6, E6).
-//
-// The closed row is its disclosure button: the name, the Default badge, the model line and one
-// status word derived from the credential-status read. The open panel sits inside the same row
-// and holds the connection test, whose line lives only while the row stays open, Make default,
-// the credential actions, the row's settings and Delete model. Deleting, signing out and removing
-// a key act at once and offer Undo; none asks first. The default model offers no delete. Settings
-// autosave by leaf; a key and a header value are typed into this component only and save through
-// their own buttons, never as drafts. A sign-in model that is not connected or whose sign-in expired
-// offers Sign in again, the add row's sign-in flow for the saved name, and its test runs after.
+// A key or header value lives in this component and saves through its own button, never as a draft.
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react"
-import { ChevronRight, CircleAlert, CircleCheck, LoaderCircle, LogOut, Plus, Trash2, TriangleAlert } from "lucide-react"
+import { ChevronRight, CircleAlert, CircleCheck, LoaderCircle, LogOut, Plus, Trash, TriangleAlert } from "lucide-react"
 import type { ConfigChange, ConfigPathSegment } from "@vostride/agent-qa-schema"
 
 import { ConfigField, type ConfigFieldTarget } from "@/components/config-manager/config-field"
@@ -62,7 +53,6 @@ import {
   SIGN_OUT_LABEL,
   SUBSCRIPTION_PLAN_NAMES,
   TEST_CONNECTION_LABEL,
-  USED_AS_JUDGE_LINE,
   connectedSavedText,
   connectionSentence,
   fixedFactsLine,
@@ -74,7 +64,7 @@ import {
   type CredentialKeyType,
 } from "@/lib/config-copy"
 import type { ModelStatus, TestResult } from "@/lib/config-tabs"
-import { isEvalJudge, judgeChangesAfterDelete, modelFieldSegments } from "@/lib/model-workspace"
+import { modelFieldSegments } from "@/lib/model-workspace"
 import { cn } from "@/lib/utils"
 
 export interface SavedModel {
@@ -517,7 +507,7 @@ function ModelHeaders({ model }: { model: SavedModel }) {
   )
 }
 
-/** The row's settings (UI-SPEC S4 item 2), each a leaf that autosaves; name and provider are fixed facts. */
+/** The row's settings, each a leaf that autosaves; name and provider are fixed facts. */
 function ModelSettings({ model, facts }: { model: SavedModel; facts: ProviderFacts }) {
   const target = (key: string): ConfigFieldTarget => ({
     segments: modelFieldSegments(model.name, key),
@@ -613,7 +603,6 @@ interface ModelPanelProps extends ModelRowActions {
   facts: ProviderFacts
   keyType: CredentialKeyType
   isDefault: boolean
-  evalConfig: unknown
   onMakeDefault: () => void
   header: RefObject<HTMLButtonElement | null>
   landing?: ModelLanding
@@ -626,7 +615,6 @@ function ModelPanel({
   facts,
   keyType,
   isDefault,
-  evalConfig,
   onMakeDefault,
   header,
   landing,
@@ -639,13 +627,12 @@ function ModelPanel({
   const test = useConnectionTest(model)
   const testing = test.line?.state === "testing"
   const connection = (FIXED_CONNECTION_LABELS as Record<string, string>)[model.provider] ?? facts.label
-  const judge = isEvalJudge(evalConfig, model.name)
   const signedIn = facts.signIn && status !== "not-connected"
   const keySaved = !facts.signIn && status === "key-saved"
   const [replacing, setReplacing] = useState(false)
   const replaceButton = useRef<HTMLButtonElement>(null)
   const focusReplaceNext = useRef(false)
-  // D-17: Sign in again is the add row's sign-in for the saved name; the test runs once it completes.
+  // Sign in again is the add row's sign-in for the saved name; the test runs once it completes.
   const signInFlow = useSignInFlow({
     onCompleted: () => {
       onCredentialSaved()
@@ -693,19 +680,14 @@ function ModelPanel({
     }
   }
 
-  // Computed from the freshest config and recomputed once on field_changed (D-22). Once the delete
-  // settles, Retry computes nothing: a refused delete is not sent again (UI-SPEC E2).
+  // Until the delete settles, a retried write sends the same unset again. Once it settles, Retry
+  // sends nothing, so a refused delete is not repeated.
   async function deleteModel() {
     let settled = false
-    const compute = (config: Record<string, unknown>): ConfigChange[] =>
-      settled
-        ? []
-        : [
-            { op: "unset", path: ["registry", "llms", { name: model.name }] },
-            ...judgeChangesAfterDelete(isRecord(config.eval) ? config.eval : undefined, model.name),
-          ]
+    const compute = (): ConfigChange[] =>
+      settled ? [] : [{ op: "unset", path: ["registry", "llms", { name: model.name }] }]
     onRemoveStart()
-    await autosave.runComputed(compute, { kind: "delete-model", name: model.name, judge })
+    await autosave.runComputed(compute, { kind: "delete-model", name: model.name })
     settled = true
     onRemoveEnd()
   }
@@ -794,11 +776,6 @@ function ModelPanel({
             {fixedFactsLine(connection)}
           </p>
         )}
-        {judge ? (
-          <p data-model-judge className="text-xs text-muted-foreground">
-            {USED_AS_JUDGE_LINE}
-          </p>
-        ) : null}
         <div data-model-footer>
           {isDefault ? (
             <p data-model-default-line className="text-xs text-muted-foreground">
@@ -812,7 +789,7 @@ function ModelPanel({
               className="text-muted-foreground hover:text-destructive"
               onClick={() => void deleteModel()}
             >
-              <Trash2 className="size-3.5" aria-hidden="true" />
+              <Trash className="size-3.5" aria-hidden="true" />
               {DELETE_MODEL_LABEL}
             </Button>
           )}
@@ -828,7 +805,6 @@ interface ModelRowProps extends ModelRowActions {
   facts: ProviderFacts
   keyType: CredentialKeyType
   isDefault: boolean
-  evalConfig: unknown
   open: boolean
   onToggle: () => void
   onMakeDefault: () => void
@@ -842,7 +818,6 @@ export function ModelRow({
   facts,
   keyType,
   isDefault,
-  evalConfig,
   open,
   onToggle,
   onMakeDefault,
@@ -907,7 +882,6 @@ export function ModelRow({
           facts={facts}
           keyType={keyType}
           isDefault={isDefault}
-          evalConfig={evalConfig}
           onMakeDefault={onMakeDefault}
           header={header}
           landing={landing}

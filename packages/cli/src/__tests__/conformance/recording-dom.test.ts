@@ -16,7 +16,7 @@ let seek: { length: number; end: number; requested: number; actual: number } | u
 let parent: { selected: string | null; childCount: number; sliderMatchesAction: boolean; caption: string; image: string; answered: boolean; latestFrame: boolean } | undefined
 let off: { initial: string | null; state: string | null; kind: string | null } | undefined
 
-describe('recording and parent selection on the shipped bundle (424-29)', () => {
+describe('recording and parent selection on the shipped bundle', () => {
   beforeAll(async () => {
     try {
       const fixture = await recordingFixture('recording-dom')
@@ -73,8 +73,8 @@ describe('recording and parent selection on the shipped bundle (424-29)', () => 
         }
       })
       await capture(page, 'parent-step-parks-playhead')
-      if (process.env.AGENT_QA_424_CAPTURE_DIR) writeFileSync(
-        join(process.env.AGENT_QA_424_CAPTURE_DIR, 'recording-observation.json'),
+      if (process.env.AGENT_QA_CAPTURE_DIR) writeFileSync(
+        join(process.env.AGENT_QA_CAPTURE_DIR, 'recording-observation.json'),
         JSON.stringify({ src, seek, parent, ledger: ledger.filter(response => response.url.includes('/artifacts/')) }, null, 2),
       )
       await context.close()
@@ -113,7 +113,6 @@ describe('recording and parent selection on the shipped bundle (424-29)', () => 
     expect(ranged!.range).toMatch(/^bytes \d+-\d+\/\d+$/u)
     expect(ranged!.contentType).toBe('video/webm')
     expect(ranged!.etag).toBe(`"${src.split('/').at(-1)}"`)
-    console.info('RECORDING-RANGE-206 ledger:', JSON.stringify(ranged))
   })
   it('PARENT-STEP-PARKS-PLAYHEAD', () => {
     expect(failure).toBeUndefined()

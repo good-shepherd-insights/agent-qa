@@ -234,7 +234,7 @@ const LOGIN_FILL_ELEMENT = actionAnchorElement({
   route: '/login',
 })
 
-describe('the suite-fingerprint table (393 D-15, gate 3s comparison substrate)', () => {
+describe('the suite-fingerprint table (the gate comparison substrate)', () => {
   it('writes one ordered row set per (filePath, testName) from sub-action evidence', () => {
     const db = openDb()
     foldThroughRunOutcomes(db, handoffFixture({
@@ -248,7 +248,7 @@ describe('the suite-fingerprint table (393 D-15, gate 3s comparison substrate)',
     expect(rows.every((row) => row.product === SHOP_PRODUCT)).toBe(true)
     expect(rows.every((row) => row.run_id === 'run-fp-a' && row.build_ordinal === 4)).toBe(true)
 
-    // ORDER is part of the recipe (D-13): the sequence is what a later §4.1 enrichment builds on.
+    // Order is part of the recipe.
     expect(elementsFor(db, 'suite/checkout.test.ts', 'checkout happy path')).toEqual([
       CHECKOUT_CLICK_ELEMENT,
       CHECKOUT_ASSERT_ELEMENT,
@@ -267,7 +267,7 @@ describe('the suite-fingerprint table (393 D-15, gate 3s comparison substrate)',
 
   it(
     'writes ZERO fingerprint rows for a handoff flagged excludedFromOutcomes — '
-    + 'a gate-run never seeds the union it is later compared against (WTST-06, Pitfall 8)',
+    + 'a gate-run never seeds the union it is later compared against',
     () => {
       const db = openDb()
       foldThroughRunOutcomes(db, handoffFixture({
@@ -349,7 +349,7 @@ describe('the suite-fingerprint table (393 D-15, gate 3s comparison substrate)',
     ])
   })
 
-  it('contributes no rows for a test with no usable sub-action evidence (D-16s text lane)', () => {
+  it('contributes no rows for a test with no usable sub-action evidence (the text lane)', () => {
     const db = openDb()
     foldThroughRunOutcomes(db, handoffFixture({
       runId: 'run-fp-bare',
@@ -403,7 +403,7 @@ describe('the suite-fingerprint table (393 D-15, gate 3s comparison substrate)',
   })
 })
 
-describe('the suite-fingerprint read port (393 D-15 / D-16)', () => {
+describe('the suite-fingerprint read port', () => {
   it('answers a union whose size is the distinct element count in the table', () => {
     const db = openDb()
     foldThroughRunOutcomes(db, handoffFixture({
@@ -412,9 +412,7 @@ describe('the suite-fingerprint read port (393 D-15 / D-16)', () => {
       tests: [
         CHECKOUT_TEST,
         LOGIN_TEST,
-        // A second test exercising the SAME click as CHECKOUT_TEST: three rows arrive, but the
-        // union is a set, so the repeated element counts once. The set semantics live HERE, at
-        // the consumer, exactly as the recipe's own header says (D-14).
+        // Same click as `CHECKOUT_TEST`: the union is a set, so the repeated element counts once.
         {
           filePath: 'suite/checkout.test.ts',
           testName: 'checkout with a saved card',
@@ -432,7 +430,7 @@ describe('the suite-fingerprint read port (393 D-15 / D-16)', () => {
     )
   })
 
-  it('reports the covered identities so the consumer can derive the evidence-less set (D-16)', () => {
+  it('reports the covered identities so the consumer can derive the evidence-less set', () => {
     const db = openDb()
     foldThroughRunOutcomes(db, handoffFixture({
       runId: 'run-fp-a',
@@ -458,7 +456,7 @@ describe('the suite-fingerprint read port (393 D-15 / D-16)', () => {
     ])
   })
 
-  it('answers an empty union and no covered tests over an empty table (D-16 empty-suite edge)', () => {
+  it('answers an empty union and no covered tests over an empty table (the empty-suite edge)', () => {
     const index = createSuiteFingerprintIndex(openDb(), { product: SHOP_PRODUCT })
 
     expect(index.elementUnion()).toEqual(new Set())
@@ -492,7 +490,7 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-describe('rebuild identity for the suite-fingerprint table (WTST-06 ordering, L12)', () => {
+describe('rebuild identity and ordering for the suite-fingerprint table', () => {
   /**
    * Three runs over two identities, one of them a flagged gate-run:
    *  - `run-a` (ordinal 4) covers checkout and login.

@@ -1,11 +1,4 @@
-// The deterministic closest-capability proofs (Phase 398 plan 04 — XPLN-02, D-11).
-//
-// DETERMINISM IS A TWO-SIDED CLAIM and both sides are cells here. One side is the easy one: the
-// right answer for a query. The other is the one that actually bites — that the SAME input cannot
-// produce a DIFFERENT answer on another run, another row order, or another machine's locale. So:
-// repeated invocation is deep-equal, a shuffled row array gives an identical answer (nothing here
-// depends on Map/Set iteration order), and the tie-break comparator is asserted against code-unit
-// order directly, because `localeCompare` is the machine-dependent comparison this must not be.
+// Ties break by code-unit order, never `localeCompare`, so no host locale changes the answer.
 
 import { CatalogRowSchema } from '@vostride/agent-qa-schema'
 import type { CatalogRow } from '@vostride/agent-qa-schema'
@@ -25,7 +18,7 @@ const TIED_ROWS: readonly CatalogRow[] = Object.freeze([
     mcpUnprojectedReasonKey: 'not-projected',
     docPath: null,
     docAbsentReason: 'fixture',
-    // 398-08: `params` declares no required property, so the derived example is the empty call.
+    // `params` declares no required property, so the derived example is the empty call.
     exampleCall: { arguments: {} },
   }),
   CatalogRowSchema.parse({
@@ -58,7 +51,7 @@ describe('closestCapabilities — the answer', () => {
     expect(closestCapabilities('anything at all', [], 3)).toEqual([])
   })
 
-  it('answers [] when NOTHING overlaps — an unrelated suggestion would be the invention D-11 forbids', () => {
+  it('answers [] when NOTHING overlaps — an unrelated suggestion would be an invention', () => {
     expect(closestCapabilities('zzzz qqqq wwww', CATALOG_ROWS, 3)).toEqual([])
   })
 })

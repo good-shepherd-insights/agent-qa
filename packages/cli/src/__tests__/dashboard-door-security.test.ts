@@ -1,35 +1,4 @@
-// The fourth door's security posture, DRIVEN (Phase 400 plan 14, verification gaps 6 and 7).
-//
-// WHY EVERY CELL BELOW OPENS A SOCKET. The phase's shipped CORS corpus asserted that a response
-// carried no `Access-Control-Allow-Origin`. That is an assertion about what an attacker gets to
-// READ, and the threat is what an attacker gets to DO: a CORS simple request needs no preflight,
-// so a 204-no-grant OPTIONS arm never runs, the browser sends the POST anyway, and the action
-// executes. Withholding the reply header hides the answer and not the side effect. So no cell here
-// asserts a header alone: every REJECTS cell measures the SIDE-EFFECT SURFACE — whether the request
-// reached the composed host at all — around a request written byte-by-byte onto a real socket.
-//
-// RAW SOCKETS RATHER THAN `fetch`, for two reasons that are both load-bearing. `fetch` normalises
-// a path, and gap 7's probe is a request target (`//`) that no URL builder will hand to a server.
-// And `Origin` is a forbidden header name in a browser, so a corpus that could only set the headers
-// `fetch` permits could not state the attacker's request at all.
-//
-// ACCEPTS CONTROLS ARE NOT OPTIONAL HERE. A REJECTS-only corpus is green against a door that
-// refuses everything, which is a door nobody can use. The two axes the policy allows — a
-// same-origin browser drive and an Origin-less local drive — are pinned SEPARATELY, so a fix that
-// closed either one reds a cell.
-//
-// 430 (2026-09-28): the cross-site corpus was driven on the run-confirm pair.
-//
-// 432-14 (2026-10-01, D-13/D-14): the run-confirm pair is deleted, and with it the router whose
-// method-level guards this corpus measured. The same-site refusal survives on every mutating route
-// that had one, so the corpus moves to them and is driven through the SHIPPED server
-// (`startServer` over the composed host): the mark door, which is the dashboard's own mark
-// control, and the credential and editor doors, which refuse before they touch anything. Each
-// cell below says which of its claims moved and which retired with the router.
-//
-// 430 D-02 (2026-09-28): 7a (the session-id route) and 7b-i (the turn's fold guard) are deleted
-// with the routes they drove. The generic 404 those paths now answer is carried by
-// C430-DELETED-CHAT-ROUTES-SHARED-404 and process survival's s5.
+// Raw sockets: `fetch` normalises `//` and cannot set `Origin`; each refusal reads side effects.
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -49,21 +18,18 @@ import { composeDashboardDoor } from '../commands/dashboard.js'
 const HOSTILE_ORIGIN = 'https://evil.example'
 
 /** The run the mark door is driven against. Not recorded, so the op answers `run-not-found`. */
-const MARKED_RUN = 'run-432-14-door-security'
+const MARKED_RUN = 'run-door-security'
 const MARK_PATH = `/api/runs/${MARKED_RUN}/mark`
 const MARK_BODY = JSON.stringify({ kind: 'false-fail', note: 'door security' })
 
-/** A run row the dashboard's own run read serves, so gap 7's synchronous read arm has a subject. */
-const READ_RUN = 'run-432-14-read'
-
-/** A declared production target: the live-editor arm refuses it by name, before any session. */
-const PRODUCTION_TARGET = 'door-production'
+/** A run row the dashboard's own run read serves, for the synchronous read arm's cells. */
+const READ_RUN = 'run-read'
 
 // ---- the fixture project -------------------------------------------------------------------
 
 /** The `surface-dispatch.ts` fixture project, verbatim in shape (see the door cell's own note). */
 function fixtureWorkspace(secrets = ''): string {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-400-14-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-'))
   const configPath = join(root, 'agent-qa.config.yaml')
   writeFileSync(join(root, '.env.secrets.local'), secrets, 'utf8')
   writeFileSync(
@@ -80,11 +46,6 @@ function fixtureWorkspace(secrets = ''): string {
       registry: {
         targets: {
           conformance: { platform: 'web', url: 'https://conformance.invalid' },
-          // 2026-10-03 (quick-261003-tsr, WR-07): the live-editor arm's same-origin control names
-          // this target, so the admitted create stops at the production refusal, before a browser.
-          [PRODUCTION_TARGET]: {
-            platform: 'web', url: 'https://door-production.invalid', environment: 'production',
-          },
         },
       },
     })}\n`,
@@ -106,13 +67,7 @@ interface DoorFixture {
 
 const openDoors: DoorFixture[] = []
 
-/**
- * The door as `agent-qa dashboard` composes it, served by the shipped `startServer`.
- *
- * `wrapHost` exists for gap 7's backstop cells and nothing else: it composes the SHIPPED host and
- * then replaces exactly one of its members with a throwing one, which is how a fault is injected
- * at a seam the product really has rather than by standing up a lookalike door.
- */
+/** The door `agent-qa dashboard` composes; `wrapHost` swaps one host member for a throwing one. */
 async function openDoor(options: {
   readonly wrapHost?: (host: AgentHost) => AgentHost
   readonly secrets?: string
@@ -144,8 +99,7 @@ async function openDoor(options: {
     declaredSecretMask,
     db,
     port: 0,
-    // 2026-10-03 (quick-261003-tsr, WR-07): the fixture's own config, so the config and undo arms
-    // write a temporary file rather than one resolved from the test's working directory.
+    // The fixture's own config, so the config and undo arms write a temporary file.
     configPath,
     agentHost: options.wrapHost === undefined ? counted : options.wrapHost(counted),
   })
@@ -304,15 +258,7 @@ interface SeamReading {
   readonly after: string
 }
 
-/**
- * The whole REJECTS assertion, in one place so no cell can quietly assert less than its siblings.
- *
- * STATUS IS THE WEAKEST OF THESE and it is deliberately not alone: a door that answered 403 and
- * acted anyway would pass a status-only cell. The side effect a mark has is its dispatch, so the
- * surface measured is whether the composed host was asked to do anything at all. An arm that
- * writes past the host (a file, a credential, a provider request) passes its own seam reading too
- * (2026-10-03, quick-261003-tsr WR-07).
- */
+// A door that answered 403 and acted anyway passes on status alone, so each arm's seam is read too.
 function expectNoSideEffect(
   label: string,
   door: DoorFixture,
@@ -339,14 +285,7 @@ function expectDispatchedOnce(label: string, door: DoorFixture, response: RawRes
   expect(door.invocations).toEqual([RUNS_MARK_FUNCTION_ID])
 }
 
-// ---- the retained same-site arms, each with its own side-effect seam -----------------------
-//
-// 2026-10-03 (quick-261003-tsr, WR-07): 6g used to measure only `door.invocations`, which six of
-// these seven arms never cross, and drove them with a mark body none of them could act on. Each arm
-// now names the seam it writes through, is driven with a body it WOULD act on, and has a same-origin
-// control showing that body acts. The live-editor arm is the one that cannot be driven to its write
-// here (an admitted create starts a browser), so its control stops at the production refusal, past
-// the cross-site check, and its seam is the session list.
+// Each arm names the seam it writes through and is driven with a body it would act on.
 
 /** The machine-wide credential name the credential, move and delete arms act on. */
 const PROBE_CREDENTIAL = 'door-probe'
@@ -425,7 +364,7 @@ const RETAINED_SAME_SITE_ARMS: readonly SameSiteArm[] = [
     method: 'POST',
     path: '/api/live-editor/sessions',
     seam: 'the live-editor session list',
-    arrange: () => Promise.resolve(JSON.stringify({ platform: 'web', targetName: PRODUCTION_TARGET })),
+    arrange: () => Promise.resolve(JSON.stringify({ platform: 'web', targetName: 'conformance' })),
     read: async ({ door }) => {
       const listed = await rawRequest(door.port, {
         method: 'GET', path: '/api/live-editor/sessions', headers: { origin: sameOrigin(door) },
@@ -434,11 +373,11 @@ const RETAINED_SAME_SITE_ARMS: readonly SameSiteArm[] = [
       return listed.body
     },
     admitted: async (scene, response, before) => {
-      // Past the cross-site check, the create answers its own production refusal by name.
-      expect(response.status, `6g /api/live-editor/sessions: ${response.body}`).toBe(403)
+      // Past the cross-site check, the create answers its next refusal: the fixture declares no model.
+      expect(response.status, `6g /api/live-editor/sessions: ${response.body}`).toBe(400)
       const { error } = JSON.parse(response.body) as { error: string }
       expect(error).not.toBe('cross_site_refused')
-      expect(error).toContain(PRODUCTION_TARGET)
+      expect(error).toContain('LLM not configured')
       expect(await RETAINED_SAME_SITE_ARMS[2]!.read(scene)).toBe(before)
     },
   },
@@ -517,10 +456,10 @@ async function openProviderSink(): Promise<{ readonly baseUrl: string; hits(): n
   }
 }
 
-// ---- gap 6: the cross-origin drive ---------------------------------------------------------
+// ---- the cross-origin drive ----------------------------------------------------------------
 
-describe('the fourth door refuses a cross-origin drive before anything happens (gap 6)', () => {
-  it('6a — refuses the CORS simple request, before the mark reaches the host', async () => {
+describe('the fourth door refuses a cross-origin drive before anything happens', () => {
+  it('refuses the CORS simple request, before the mark reaches the host', async () => {
     const door = await openDoor()
     // THE VERIFIER'S EXACT PROBE, on the mark door. `text/plain;charset=UTF-8` with a JSON body
     // is a CORS SIMPLE request: no preflight is sent, and an unguarded route would record a mark
@@ -532,7 +471,7 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     expectNoSideEffect('6a', door, answered, 403)
   })
 
-  it('6b — refuses a cross-origin drive that declares application/json (the Origin leg alone)', async () => {
+  it('refuses a cross-origin drive that declares application/json (the Origin leg alone)', async () => {
     const door = await openDoor()
     const answered = await driveMark(door.port, {
       'content-type': 'application/json',
@@ -541,17 +480,16 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     expectNoSideEffect('6b', door, answered, 403)
   })
 
-  // RE-SPELLED 2026-10-01 (432-14): was 'refuses a text/plain drive bearing no Origin at all (the
-  // Content-Type leg alone)'. The media-type leg belonged to the run-confirm router and was deleted
-  // with it; no surviving door has one. A browser always sends `Origin` on a cross-origin POST, so
-  // a request with none is a local client, and the mark door admits it exactly once.
-  it('6c — admits a text/plain drive bearing no Origin at all as a local client, exactly once', async () => {
+  // The media-type leg alone: with no Origin the same-site check admits the drive, and the body
+  // is refused because it does not say it is JSON.
+  it('refuses a text/plain drive bearing no Origin at all with 415, before the host', async () => {
     const door = await openDoor()
     const answered = await driveMark(door.port, { 'content-type': 'text/plain;charset=UTF-8' })
-    expectDispatchedOnce('6c', door, answered)
+    expectNoSideEffect('6c', door, answered, 415)
+    expect(JSON.parse(answered.body)).toEqual({ error: 'unsupported_media_type' })
   })
 
-  it('6d — ACCEPTS the same-origin browser drive, which dispatches the mark once', async () => {
+  it('ACCEPTS the same-origin browser drive, which dispatches the mark once', async () => {
     const door = await openDoor()
     // The dashboard's own page, marking on its own door: `Origin` equals the request's `Host`
     // origin, which is what a browser sends on a same-origin POST.
@@ -562,7 +500,7 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     expectDispatchedOnce('6d', door, answered)
   })
 
-  it('6e — ACCEPTS the Origin-less local drive (curl and local tooling, the recorded policy)', async () => {
+  it('ACCEPTS the Origin-less local drive (curl and local tooling, the recorded policy)', async () => {
     const door = await openDoor()
     // A SEPARATE AXIS from 6d and not a repetition of it: 6d varies the Origin's VALUE, this one
     // varies its PRESENCE. A guard that required an Origin would pass 6d and fail here, and it
@@ -571,11 +509,7 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     expectDispatchedOnce('6e', door, answered)
   })
 
-  // RE-SPELLED 2026-10-01 (432-14): was 'refuses a cross-origin answer to somebody else's
-  // outstanding run confirm'. There is no outstanding question to spend. The claim that survives is
-  // that the refusal is about the ORIGIN and never about the body: the byte-identical request is
-  // refused from another origin and accepted from the door's own.
-  it('6f — refuses a cross-origin mark, and the identical request from the page itself dispatches', async () => {
+  it('refuses a cross-origin mark, and the identical request from the page itself dispatches', async () => {
     const door = await openDoor()
     const refused = await driveMark(door.port, {
       'content-type': 'application/json',
@@ -590,17 +524,11 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     expectDispatchedOnce('6f', door, accepted)
   })
 
-  // RE-SPELLED 2026-10-01 (432-14): was 'refuses EVERY mutating route the router's own table
-  // declares'. The table was the run-confirm router's and is deleted. The shipped router has no
-  // table of its mutating arms, so the retained same-site arms are listed here by path; a new
-  // same-site arm must be added to this list to be ranged.
-  // RE-SPELLED 2026-10-03 (quick-261003-tsr, WR-07): was '6g — refuses EVERY retained same-site
-  // mutating arm, and reaches the mark arm same-origin'. Each arm is now driven with a body it
-  // would act on, its own seam is read around the refusal, and every arm has its accepts control.
-  it('6g — refuses EVERY retained same-site mutating arm before its own side effect, and each arm acts for its own page', async () => {
+  // The shipped router has no table of mutating arms, so a new same-site arm must be added here.
+  it('refuses every retained same-site mutating arm before its own side effect, and each arm acts for its own page', async () => {
     const door = await openDoor()
     const savedDataHome = process.env.XDG_DATA_HOME
-    const dataHome = mkdtempSync(join(tmpdir(), 'agent-qa-432-14-auth-'))
+    const dataHome = mkdtempSync(join(tmpdir(), 'agent-qa-auth-'))
     process.env.XDG_DATA_HOME = dataHome
     const sink = await openProviderSink()
     const scene: ArmScene = {
@@ -647,7 +575,7 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     }
   }, 60_000)
 
-  it('6i — refuses the literal `null` Origin, which is not the same fact as no Origin at all', async () => {
+  it('refuses the literal `null` Origin, which is not the same fact as no Origin at all', async () => {
     const door = await openDoor()
     // A SEPARATE RUNG FROM 6e AND THE ONE MOST EASILY LOST. `Origin: null` is what a sandboxed
     // iframe, a `data:` document and a cross-origin redirect send — an origin that declined to
@@ -659,7 +587,7 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
     expectNoSideEffect('6i', door, answered, 403)
   })
 
-  it('6h — refuses a same-origin-looking drive whose Sec-Fetch-Site says cross-site', async () => {
+  it('refuses a same-origin-looking drive whose Sec-Fetch-Site says cross-site', async () => {
     const door = await openDoor()
     // The third axis, varied alone: the Origin here is exactly the one 6d ACCEPTS, so nothing but
     // the fetch-metadata header can decide this request.
@@ -672,15 +600,15 @@ describe('the fourth door refuses a cross-origin drive before anything happens (
   })
 })
 
-describe('C432-RETAINED-CROSS-SITE', () => {
-  it('C432-RETAINED-CROSS-SITE: the dashboard mark control refuses another origin before dispatch and dispatches for its own page', async () => {
+describe('cross-site mark requests', () => {
+  it('the dashboard mark control refuses another origin before dispatch and dispatches for its own page', async () => {
     const door = await openDoor()
     for (const headers of [
       { 'content-type': 'text/plain;charset=UTF-8', origin: HOSTILE_ORIGIN },
       { 'content-type': 'application/json', origin: HOSTILE_ORIGIN },
     ]) {
       const refused = await driveMark(door.port, headers)
-      expectNoSideEffect(`C432-RETAINED-CROSS-SITE ${headers['content-type']}`, door, refused, 403)
+      expectNoSideEffect(`RETAINED-CROSS-SITE ${headers['content-type']}`, door, refused, 403)
       expect(JSON.parse(refused.body)).toEqual({ error: 'cross_site_refused' })
       expect(refused.headers['access-control-allow-origin']).toBeUndefined()
     }
@@ -688,16 +616,16 @@ describe('C432-RETAINED-CROSS-SITE', () => {
       'content-type': 'application/json',
       origin: sameOrigin(door),
     })
-    expectDispatchedOnce('C432-RETAINED-CROSS-SITE', door, accepted)
+    expectDispatchedOnce('RETAINED-CROSS-SITE', door, accepted)
   })
 })
 
-describe('C441-CONFIG', () => {
+describe('the declared mask the dashboard command binds', () => {
   it('the dashboard command binds the declared mask', async () => {
-    const door = await openDoor({ secrets: 'PW_441=Hunter-42-zz\n' })
+    const door = await openDoor({ secrets: 'PW_KEY=Hunter-42-zz\n' })
     const config = JSON.parse(readFileSync(door.configPath, 'utf8')) as { use: Record<string, unknown> }
     config.use.buildTag = 'Hunter-42-zz'
-    config.use.releaseNote = 'plain-441-value'
+    config.use.releaseNote = 'plain-value'
     writeFileSync(door.configPath, `${JSON.stringify(config)}\n`, 'utf8')
 
     const read = await rawRequest(door.port, { method: 'GET', path: '/api/config' })
@@ -705,13 +633,13 @@ describe('C441-CONFIG', () => {
     expect(read.status, read.body).toBe(200)
     expect(read.body).not.toContain('Hunter-42-zz')
     const body = JSON.parse(read.body) as { config: { use: Record<string, unknown> }; file: { lines: { text: string }[] } }
-    expect(body.config.use.buildTag).toBe('[secret:PW_441]')
-    expect(body.config.use.releaseNote).toBe('plain-441-value')
-    expect(body.file.lines.some((line) => line.text.includes('[secret:PW_441]'))).toBe(true)
+    expect(body.config.use.buildTag).toBe('[secret:PW_KEY]')
+    expect(body.config.use.releaseNote).toBe('plain-value')
+    expect(body.file.lines.some((line) => line.text.includes('[secret:PW_KEY]'))).toBe(true)
   })
 })
 
-// ---- gap 7: the malformed request path -----------------------------------------------------
+// ---- the malformed request path ------------------------------------------------------------
 
 /** Everything that escaped the server while a cell ran — the second half of every survival claim. */
 function watchForEscapes(): { readonly escaped: unknown[]; readonly stop: () => void } {
@@ -776,8 +704,8 @@ function unserializableAnswerOnce(message: string): (host: AgentHost) => AgentHo
   }
 }
 
-describe('the fourth door outlives every malformed request a socket can carry (gap 7)', () => {
-  it('7c — answers an unparseable request line and serves the next request', async () => {
+describe('the fourth door outlives every malformed request a socket can carry', () => {
+  it('answers an unparseable request line and serves the next request', async () => {
     const door = await openDoor()
     const watch = watchForEscapes()
     try {
@@ -798,12 +726,9 @@ describe('the fourth door outlives every malformed request a socket can carry (g
     }
   })
 
-  // RE-SPELLED 2026-10-01 (432-14): the synchronous arm was the run-confirm router's media-type
-  // refusal, deleted with it. RE-AIMED 2026-10-14 (441-15, D-07): the display unmask that carried
-  // the claim next is deleted, so the evidence read's dispatch carries it — the arm calls the host
-  // inside the router's own call stack, so only the server's one `try` can answer a throw there.
-  it('7d — a throwing SYNCHRONOUS arm is caught by the dispatch boundary', async () => {
-    const door = await openDoor({ wrapHost: throwingInvokeOnce('432-14 dispatch fault') })
+  // The arm calls the host inside the router's stack, so only the server's `try` answers a throw.
+  it('a throwing synchronous arm is caught by the dispatch boundary', async () => {
+    const door = await openDoor({ wrapHost: throwingInvokeOnce('dispatch fault') })
     const watch = watchForEscapes()
     try {
       const answered = await rawRequest(door.port, {
@@ -823,12 +748,9 @@ describe('the fourth door outlives every malformed request a socket can carry (g
     }
   })
 
-  // RE-SPELLED 2026-10-01 (432-14): was the run-confirm answer handler's rejection. RE-AIMED
-  // 2026-10-14 (441-15, D-07): the display unmask is deleted, so the fault is an answer the mark
-  // door's responder cannot serialize. It throws AFTER the body read, so it is a rejection of that
-  // handler's promise, and only the arm's own `.catch` can answer it.
-  it('7b-ii — a throwing responder is caught by the handler\'s own backstop', async () => {
-    const door = await openDoor({ wrapHost: unserializableAnswerOnce('400-14 responder fault') })
+  // The responder throws after the body read, so only the arm's own `.catch` can answer it.
+  it('a throwing responder is caught by the handler\'s own backstop', async () => {
+    const door = await openDoor({ wrapHost: unserializableAnswerOnce('responder fault') })
     const watch = watchForEscapes()
     try {
       const answered = await driveMark(door.port, { 'content-type': 'application/json' })

@@ -1,15 +1,4 @@
-// Phase 384 plan 02, D-06/D-16: the seed function-layer DTOs plans 03/04 bind their ops to.
-//
-// Three properties are pinned here, one per plan behavior:
-//  1. every exported function DTO schema is `.strict()` — an unknown key is a rejection,
-//     never a silently-carried field crossing a surface boundary;
-//  2. RunsStartInputSchema surfaces the D-10 `gateRun` carrier as an optional literal;
-//  3. every exported function DTO schema projects to JSON Schema (D-14) — the guarantee
-//     396's MCP tool catalog and 397's golden snapshot are both derived from.
-//
-// Imports come through the package barrel chain (`../index`) rather than the package name:
-// it is the same module the name resolves to, and it exercises the SOURCE barrel instead of
-// a possibly-stale `dist`.
+// Imports go through `../index`, the source barrel, rather than a possibly stale `dist`.
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -29,7 +18,7 @@ import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
 } from '../index'
 
-const DECLARED_MARKER = '[secret:PW_441]'
+const DECLARED_MARKER = '[secret:PW_KEY]'
 
 /** The complete exported function-DTO schema set, by the name the barrel publishes. */
 const functionSchemas: Record<string, z.ZodType> = {
@@ -105,7 +94,7 @@ function makeMaskedConfig() {
   }
 }
 
-describe('function DTO schemas are strict (D-16)', () => {
+describe('function DTO schemas are strict', () => {
   it('rejects an unknown key on every exported function DTO schema', () => {
     for (const [name, schema] of Object.entries(functionSchemas)) {
       const parsed = schema.safeParse({ definitelyNotAField: 1 })
@@ -128,7 +117,6 @@ describe('function DTO schemas are strict (D-16)', () => {
     expect(RunDetailSchema.safeParse({ ...makeRunDetail(), gateRun: false }).success).toBe(false)
   })
 
-  // 441-40 (D-29): a masked entry's value is its declared marker; the config placeholder is deleted.
   it('keeps every masked config entry declaring whether the declared mask changed its value', () => {
     const parsed = MaskedResolvedConfigSchema.parse(makeMaskedConfig())
     const secret = parsed.entries.find((entry) => entry.key === 'llm.apiKey')
@@ -144,7 +132,7 @@ describe('function DTO schemas are strict (D-16)', () => {
   })
 })
 
-describe('runs op inputs (D-08/D-09/D-10)', () => {
+describe('runs op inputs', () => {
   it('accepts the gateRun carrier on the runs.start input and rejects unknown keys', () => {
     expect(RunsStartInputSchema.parse({ gateRun: true }).gateRun).toBe(true)
     expect('gateRun' in RunsStartInputSchema.parse({})).toBe(false)
@@ -157,7 +145,7 @@ describe('runs op inputs (D-08/D-09/D-10)', () => {
     expect(RunsGetInputSchema.safeParse({}).success).toBe(false)
   })
 
-  it('admits a recorded bus envelope as the runs.events stream element (D-08)', () => {
+  it('admits a recorded bus envelope as the runs.events stream element', () => {
     const recorded = {
       seq: 4,
       ts: 1_700_000_000_004,
@@ -180,7 +168,7 @@ describe('runs op inputs (D-08/D-09/D-10)', () => {
   })
 })
 
-describe('JSON-Schema projectability (D-14)', () => {
+describe('JSON-Schema projectability', () => {
   it('projects every exported function DTO schema without throwing', () => {
     for (const [name, schema] of Object.entries(functionSchemas)) {
       // `io: 'input'` is the wire projection: the branded-RunId schemas carry a

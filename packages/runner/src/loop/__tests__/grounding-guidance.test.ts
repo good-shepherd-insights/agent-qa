@@ -1,27 +1,9 @@
-// 363-02 (D-14 · LOOP-05) — pins the planner GROUNDING GUIDANCE so the
-// `ungroundable_action` bare-click regression (365-VALIDATION.md:136-146) cannot silently
-// return. During the 2026-07-08 live run the planner emitted a `click` carrying NEITHER a
-// `ref` NOR a `{role,name}` target; the gate correctly minted `descriptor_invalid`, the
-// one-shot retry repeated the bare click, and the step failed structured
-// `ungroundable_action`. Root cause (RESEARCH Q8 candidate #1, evidenced by the
-// grounding-capture harness): the ref|target guidance only said "NEVER both" — it never
-// forbade emitting NEITHER, and gave no `target`-fallback mandate, so a model without a
-// confident ref emitted a bare action.
-//
-// These tests are guidance-only regression guards. They assert nothing about the gate's
-// ref-and-target rule (438 D-01 replaced exactly-one-of), the one-shot retry, or the
-// ungroundable_action shape — the shipped GROUND-01..03 contracts stay fixed.
-//
-// RED (before the prompts.ts fix): Test 1 fails — the assembled system prompt forbids only
-// "both" and never mentions "neither" nor mandates a target fallback. Tests 2 and 3 already
-// pass (the tool docs + descriptor_invalid feedback already name the two remedies) and stand
-// as guards against future weakening.
 import { describe, it, expect } from 'vitest'
 import { buildSystemPrompt } from '../prompts.js'
 import { defaultRegistry } from '../../tools/index.js'
 import { groundingError } from '../../tools/errors.js'
 
-// The STATED TARGET paragraph (438 D-01) runs from its header to the next numbered rule.
+// The STATED TARGET paragraph runs from its header to the next numbered rule.
 function targetDescriptorGuidance(platform: 'web' | 'android' | 'ios'): string {
   const sp = buildSystemPrompt(platform)
   const start = sp.indexOf('STATED TARGET')
@@ -31,10 +13,7 @@ function targetDescriptorGuidance(platform: 'web' | 'android' | 'ios'): string {
   return end > 0 ? rest.slice(0, end) : rest
 }
 
-describe('363-02 planner grounding guidance (D-14 · LOOP-05)', () => {
-  // Test 1 (behavior block Test 1): the system guidance requires ref and target on every
-  // element action (438 D-01), forbids emitting NEITHER, sends a target alone only with no
-  // confident ref, and says a clearly different ref is refused as target-mismatch.
+describe('planner grounding guidance', () => {
   it.each(['web', 'android', 'ios'] as const)(
     'system prompt mandates exactly-one ref|target and forbids neither (%s)',
     (platform) => {

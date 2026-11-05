@@ -1,20 +1,6 @@
 // @vitest-environment jsdom
 
-// THE CHIPS A PERSON ACTUALLY SEES (404-07 · LIFE-03, D-20..D-23, T-404-01).
-//
-// WHY THESE CELLS RENDER INTO `document.body` THROUGH `createRoot`. That is the call `main.tsx`
-// makes. A component mounted into a detached node can satisfy every query in a file like this one
-// while the real mount path is broken, and the cell would never know.
-//
-// THE DOM CONTRACT IS THE SUBJECT, not the styling. `data-chip`, `data-chip-status`,
-// `data-stage-state`, `data-chips-state`, `data-stage-card` and `data-stage-card-line` are what
-// 404-08's Playwright cells address on the built bundle, so every one of them is pinned here in the
-// cheap medium first. Colours are deliberately NOT asserted — a cell that pinned `text-emerald-500`
-// would go red on a design change that broke nothing a person relies on. The GLYPH NAME is asserted
-// instead, because shape is what carries the state once the colour is stripped out (SC2).
-//
-// THE ABSENCE CELLS ARE THE POINT. `never blank` and `never pending` are claims about elements that
-// must NOT exist, and an assertion that only ever checks what IS rendered cannot see either one.
+// Glyph names are asserted instead of colours, because shape carries the state without colour.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -113,13 +99,7 @@ async function cardOf(host: HTMLElement, stage: "analysis" | "curation"): Promis
   return card
 }
 
-/**
- * One card line, addressed through the component's OWN published selector (425-08).
- *
- * The cells and the bundle-level Playwright legs must reach the same elements; importing the
- * selector rather than re-spelling it is what stops a kind moving in the renderer and a hand-typed
- * string here quietly matching nothing and reporting an absence as a pass.
- */
+// Imports the component's published selector, so a moved kind never passes as an absence.
 function lineOf(card: HTMLElement, kind: CardLineKind): string | undefined {
   return card.querySelector(STAGE_CARD_LINE_SELECTORS[kind])?.textContent ?? undefined
 }
@@ -138,8 +118,7 @@ describe("two chips, in the ratified order, each saying its own word", () => {
     const stages = [...host.querySelectorAll("[data-chip]")].map((el) => el.getAttribute("data-chip"))
     expect(stages).toEqual(["analysis", "curation"])
     expect(chip(host, "analysis").getAttribute("data-chip-status")).toBe("running")
-    // The raw word rides the attribute; the VISIBLE word is the indicator's own, and the state is
-    // said again in the accessible name (D-07).
+    // The raw word rides the attribute; the visible word is the indicator's, the name the state.
     expect(chip(host, "analysis").textContent).toContain(STAGE_INDICATOR_WORDS.analysis.running)
     expect(chip(host, "analysis").querySelector(".sr-only")?.textContent).toContain("running")
     expect(chip(host, "curation").getAttribute("data-chip-status")).toBe("pending")
@@ -153,7 +132,7 @@ describe("two chips, in the ratified order, each saying its own word", () => {
     ))
     for (const stage of ["analysis", "curation"] as const) {
       const el = chip(host, stage)
-      // The detail left header chrome entirely (D-09/D-12): the root is a glyph and a word.
+      // The root is a glyph and a word.
       expect(el.querySelectorAll("span").length).toBe(2)
       const card = await cardOf(host, stage)
       expect(lineOf(card, "note")).toBeUndefined()
@@ -163,10 +142,8 @@ describe("two chips, in the ratified order, each saying its own word", () => {
   })
 })
 
-// THE TRACER (425-01 · D-06/D-07/D-10/D-13, UI-SPEC S3/S4). One indicator, end to end: the glyph
-// and the word a person sees, the focusable root that reaches the card by keyboard, and the card's
-// first line — the phase's copy cell. Every later state hangs off this anatomy.
-describe("a settled analysis indicator explains itself (D-13, roadmap SC3)", () => {
+// One indicator end to end: glyph and word, the focusable root and the card's first line.
+describe("a settled analysis indicator explains itself", () => {
   it("TRACER-PASSING-ANALYSIS-CARD: glyph plus word on a focusable root, card line 1 is the sentence", async () => {
     const host = render(chipsView(
       {
@@ -196,7 +173,7 @@ describe("a settled analysis indicator explains itself (D-13, roadmap SC3)", () 
   })
 })
 
-describe("a pending chip says who is going to move it (D-22)", () => {
+describe("a pending chip says who is going to move it", () => {
   it("renders the posture the projection published, verbatim", async () => {
     const queued = (stage: "Analysis" | "Curation") => ({
       status: "pending",
@@ -218,7 +195,7 @@ describe("a pending chip says who is going to move it (D-22)", () => {
   })
 })
 
-describe("a terminal chip says what it committed (D-21)", () => {
+describe("a terminal chip says what it committed", () => {
   it("renders curation's counts in its card, and never on the analysis card", async () => {
     const host = render(chipsView(
       { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
@@ -229,7 +206,7 @@ describe("a terminal chip says what it committed (D-21)", () => {
     expect(lineOf(await cardOf(host, "analysis"), "outcome")).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
   })
 
-  it("renders the counts-absent line in the SAME slot — a `complete` chip is never silent about counts (D-12)", async () => {
+  it("renders the counts-absent line in the SAME slot — a `complete` chip is never silent about counts", async () => {
     const host = render(chipsView(
       { status: "complete" },
       { status: "complete", card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` } },
@@ -239,9 +216,8 @@ describe("a terminal chip says what it committed (D-21)", () => {
   })
 })
 
-// THE LEGACY COUNT SENTENCE LEAVES HEADER CHROME (D-16, PXH-RUN-04). RED under return: restore the
-// old `curated N facts, deprecated M` line anywhere in the chips DOM or in a card and this goes red.
-describe("`curated N facts, deprecated M` is gone from the header (D-16)", () => {
+// The legacy `curated N facts, deprecated M` line appears nowhere in the chips or a card.
+describe("`curated N facts, deprecated M` is gone from the header", () => {
   const LEGACY = /curated \d+ facts?, deprecated/
 
   it("HEADER-NO-LEGACY-COUNT: neither a snapshot-bearing nor a legacy-pair read spells it", async () => {
@@ -265,10 +241,8 @@ describe("`curated N facts, deprecated M` is gone from the header (D-16)", () =>
   })
 })
 
-// THE CHIP AS A DOOR (D-01). The chip stays PRESENTATIONAL: it is handed a callback and calls it.
-// It does not know a tab, a route or a run. Absent the callback it is exactly the shipped `<span>` —
-// a header rendered without a page behind it must not grow an affordance that goes nowhere.
-describe("the curation chip is a click-through into the Knowledge tab (D-01)", () => {
+// The chip only calls its callback; without one it is a plain `<span>`, so no dead control appears.
+describe("the curation chip is a click-through into the Knowledge tab", () => {
   const SETTLED_CURATION = {
     status: "complete",
     card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` },
@@ -289,14 +263,14 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
 
     expect(root.tagName).toBe("BUTTON")
     expect(root.getAttribute("type")).toBe("button")
-    // A native tooltip beside a Radix one is two treatments of one concept (UI-SPEC S3).
+    // A native tooltip beside a Radix one is two treatments of one concept.
     expect(root.getAttribute("title")).toBeNull()
     expect(root.getAttribute("aria-label")).toBe(
       stageIndicatorAccessibleName("curation", "complete", SETTLED_CURATION.card.outcome, "knowledge"),
     )
   })
 
-  it("closes its card with the door line — the indicator itself is the control (D-10)", async () => {
+  it("closes its card with the door line — the indicator itself is the control", async () => {
     const host = renderWithClick(vi.fn())
     const card = await cardOf(host, "curation")
 
@@ -344,12 +318,8 @@ describe("the curation chip is a click-through into the Knowledge tab (D-01)", (
   })
 })
 
-// THE OTHER DOOR (425-09 · D-11, UI-SPEC S4). Curation always has a half of the Knowledge tab to
-// open; analysis has somewhere to go only on a run that produced a verdict, and only the PAGE can
-// know that. So the affordance is the presence of the callback and nothing else — the component
-// makes no judgement about run status, which is the rule `onCurationClick` has carried since
-// 407-09 and the reason a header rendered without a page behind it grows no dead control.
-describe("the analysis indicator is the door to the verdict when the page gave it one (D-11)", () => {
+// Only the page knows whether a verdict exists, so the callback's presence is the affordance.
+describe("the analysis indicator is the door to the verdict when the page gave it one", () => {
   const FAILED_ANALYSIS = {
     status: "failed",
     card: { outcome: `Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}` },
@@ -393,9 +363,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     expect(root.getAttribute("aria-label")).toBe(
       stageIndicatorAccessibleName("analysis", "failed", FAILED_ANALYSIS.card.outcome, "verdict"),
     )
-    // Spelled out as well as composed: the spoken clause is the contract UI-SPEC S3 names, and a
-    // change to the joiner that kept `stageIndicatorAccessibleName` self-consistent would be
-    // invisible to an equality against that same function.
+    // Spelled out as well as composed, so a joiner change cannot hide behind self-consistency.
     expect(root.getAttribute("aria-label")!.endsWith(" — open verdict")).toBe(true)
     // The root swaps ELEMENT, never contract.
     expect(root.getAttribute("data-chip")).toBe("analysis")
@@ -406,7 +374,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     expect(lineOf(card, "door")).toBe(OPEN_VERDICT_TEXT)
     expect([...card.querySelectorAll("[data-stage-card-line]")].at(-1)?.getAttribute("data-stage-card-line"))
       .toBe("door")
-    // Text only inside the card: the indicator the reader is already on IS the control (D-10).
+    // Text only inside the card: the indicator the reader is on is the control.
     expect(card.querySelector("a, button")).toBeNull()
 
     act(() => { root.click() })
@@ -439,9 +407,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     )
     expect(lineOf(await cardOf(host, "analysis"), "door")).toBeUndefined()
 
-    // THE FALSIFICATION, IN THE SAME SCENE. "Still a span" was true before this plan existed and
-    // on its own proves nothing about the rule; the same component WITH a door must read
-    // differently, or the absence above is not what makes this root a span.
+    // The same component with a door must read differently, or the absence above proves nothing.
     const aside = mountAside(chipsWithDoor(vi.fn()))
     try {
       expect(chip(aside.host, "analysis").tagName).toBe("BUTTON")
@@ -480,7 +446,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
   })
 })
 
-describe("a failed chip is never blank (D-21 as narrowed)", () => {
+describe("a failed chip is never blank", () => {
   it("renders the producer's text VERBATIM and says whether the chain will try again", async () => {
     const host = render(chipsView(
       {
@@ -492,8 +458,7 @@ describe("a failed chip is never blank (D-21 as narrowed)", () => {
     const card = await cardOf(host, "analysis")
     expect(lineOf(card, "outcome")).toBe("Analysis failed — analysis stage blew up on step 3")
     expect(lineOf(card, "retry")).toBe("Will retry")
-    // The reason never sits beside the indicator again (D-09): the VISIBLE root is a glyph and a
-    // word. The accessible name still carries the outcome clause, which is where it belongs.
+    // The visible root is a glyph and a word; the accessible name carries the outcome clause.
     expect(visibleTextOf(chip(host, "analysis"))).toBe(STAGE_INDICATOR_WORDS.analysis.failed)
   })
 
@@ -508,7 +473,7 @@ describe("a failed chip is never blank (D-21 as narrowed)", () => {
     expect(visibleTextOf(chip(host, "analysis"))).toBe(STAGE_INDICATOR_WORDS.analysis.failed)
   })
 
-  it("the failure text is a TEXT NODE — markup in it is escaped, never parsed (T-404-01)", async () => {
+  it("the failure text is a TEXT NODE — markup in it is escaped, never parsed", async () => {
     const host = render(chipsView(
       { status: "failed", card: { outcome: "Analysis failed — <img src=x onerror=alert(1)>" } },
       { status: "pending", card: { outcome: "Curation queued" } },
@@ -520,7 +485,7 @@ describe("a failed chip is never blank (D-21 as narrowed)", () => {
   })
 })
 
-describe("a refusal is its own state, and it is not a chip (D-23)", () => {
+describe("a refusal is its own state, and it is not a chip", () => {
   it("renders ONE unavailable element naming the refusal, and zero chips", () => {
     const host = render({ kind: "unavailable", error: "job_store_schema_version", reason: "stamped by another build" })
     const state = host.querySelectorAll('[data-chips-state="unavailable"]')
@@ -529,12 +494,12 @@ describe("a refusal is its own state, and it is not a chip (D-23)", () => {
     expect(state[0]!.getAttribute("data-stage-state")).toBe("unavailable")
     expect(state[0]!.getAttribute("tabindex")).toBe("0")
     expect(state[0]!.getAttribute("title")).toBeNull()
-    // The detail LEAVES header chrome (D-09): the root names the refusal, the card carries why.
+    // The root names the refusal and the card carries why.
     expect(state[0]!.textContent).not.toContain("job_store_schema_version")
     expect(host.querySelectorAll("[data-chip]")).toHaveLength(0)
   })
 
-  it("moves the refusal's error and reason into its card, each on its own line (D-09)", async () => {
+  it("moves the refusal's error and reason into its card, each on its own line", async () => {
     const host = render({ kind: "unavailable", error: "job_store_schema_version", reason: "stamped by another build" })
     const root = host.querySelector<HTMLElement>('[data-chips-state="unavailable"]')!
 
@@ -550,18 +515,15 @@ describe("a refusal is its own state, and it is not a chip (D-23)", () => {
     const host = render(undefined)
     const loading = host.querySelectorAll('[data-chips-state="loading"]')
     expect(loading).toHaveLength(1)
-    // An ellipsis is nothing at all to a screen reader; the wait is announced (UI-SPEC S3).
+    // An ellipsis is nothing to a screen reader, so the wait is announced.
     expect(loading[0]!.getAttribute("role")).toBe("status")
     expect(loading[0]!.querySelector(".sr-only")?.textContent).toBe(POST_PROCESSING_LOADING_LABEL)
     expect(host.querySelectorAll("[data-chip]")).toHaveLength(0)
   })
 })
 
-// COLOUR IS NEVER ALONE (425 D-06, roadmap SC2). Six states, six distinguishable pairs of shape and
-// word — the claim a grayscale render makes good on. `excluded` and `unavailable` share the dash
-// glyph ON PURPOSE, so their words are what separate them, which this cell measures rather than
-// asserts by eye.
-describe("every indicator state is readable with the colour stripped out (D-06, SC2)", () => {
+// `excluded` and `unavailable` share the dash glyph, so their words are what separate them.
+describe("every indicator state is readable with the colour stripped out", () => {
   /** Mount one view, read the analysis root's shape-and-word pair, unmount before the next. */
   function lookOf(loose: Record<string, unknown>): { glyph: string; words: string } {
     const host = render(chipsView(loose, loose))
@@ -618,23 +580,18 @@ describe("every indicator state is readable with the colour stripped out (D-06, 
   })
 })
 
-// THE CARD'S NEW LINES, IN READING ORDER (425-08 · D-12/D-14, UI-SPEC S4).
+// THE CARD'S LINES, IN READING ORDER.
 //
 // The component composes NO prose: it paints the lines the projection built, keyed by kind, so the
-// reading order lives in one place and a cell can address a line without parsing a paragraph. The
-// proposals line carries a PRODUCER string, so it is measured as a text node for the same reason
-// the failure reason is (T-425-08-02, the T-404-01 idiom).
-describe("a card explains timing and the chip-less stage on their own lines (D-12/D-14)", () => {
-  // Radix paints the content TWICE — once visibly, once inside a visually-hidden `role="tooltip"`
-  // node for announcement — so an unfiltered walk reports every line twice and an order claim built
-  // on it would pass for the wrong reason.
+// reading order lives in one place and a cell can address a line without parsing a paragraph.
+describe("a card explains timing on its own line", () => {
+  // Radix paints the content once, as the `role="tooltip"` node itself, so every line is read once.
   function kindsOf(card: HTMLElement): (string | null)[] {
     return [...card.querySelectorAll("[data-stage-card-line]")]
-      .filter((el) => el.closest('[role="tooltip"]') === null)
       .map((el) => el.getAttribute("data-stage-card-line"))
   }
 
-  it("STAGE-CARD-LINES: timing and proposals paint as their own lines, and only where they belong", async () => {
+  it("STAGE-CARD-LINES: timing paints as its own line on each card", async () => {
     const host = render(chipsView(
       {
         status: "complete",
@@ -645,7 +602,6 @@ describe("a card explains timing and the chip-less stage on their own lines (D-1
         card: {
           outcome: "Curation complete — 2 added",
           timing: "Queued 10:41:09 · finished in 2s",
-          proposals: "Proposals failed — <img src=x onerror=alert(1)>",
         },
       },
     ))
@@ -655,14 +611,11 @@ describe("a card explains timing and the chip-less stage on their own lines (D-1
     expect(lineOf(analysis, "timing")).toBe("Queued 10:41:02 · finished in 5s")
 
     const curation = await cardOf(host, "curation")
-    expect(kindsOf(curation)).toEqual(["outcome", "timing", "proposals"])
-
-    const proposals = curation.querySelector(STAGE_CARD_LINE_SELECTORS.proposals)
-    expect(proposals?.textContent).toBe("Proposals failed — <img src=x onerror=alert(1)>")
-    expect(proposals?.querySelector("img")).toBeNull()
+    expect(kindsOf(curation)).toEqual(["outcome", "timing"])
+    expect(lineOf(curation, "timing")).toBe("Queued 10:41:09 · finished in 2s")
   })
 
-  it("STAGE-CARD-LINES: they sit between the outcome and the retry and door lines", async () => {
+  it("STAGE-CARD-LINES: timing sits between the outcome and the retry and door lines", async () => {
     const host = mount(
       <PostProcessingChips
         view={chipsView(
@@ -673,7 +626,6 @@ describe("a card explains timing and the chip-less stage on their own lines (D-1
               outcome: "Curation failed — the bundle would not commit",
               note: BREAKDOWN_NOT_RECORDED_TEXT,
               timing: "Queued 10:41:02 · started after 1s · 2 attempts",
-              proposals: "Proposals: 2 staged for review",
               retry: "Will retry",
             },
           },
@@ -682,17 +634,12 @@ describe("a card explains timing and the chip-less stage on their own lines (D-1
       />,
     )
     expect(kindsOf(await cardOf(host, "curation")))
-      .toEqual(["outcome", "note", "timing", "proposals", "retry", "door"])
+      .toEqual(["outcome", "note", "timing", "retry", "door"])
   })
 })
 
-// A SKIPPED CHAIN READS NEUTRAL, AND THE STORE'S OWN WORDS SURVIVE UNDERNEATH (425-08 · D-08, SC2).
-//
-// The reason rides the CONTAINER as its own attribute rather than being spelled into a sentence a
-// cell would have to parse, and `data-chip-status` keeps the raw chip word on each root — so the
-// four-word vocabulary census still sees four words on a gate run, and a surface that does not know
-// about the skipped fact still reads exactly what the store said.
-describe("a run the chain never enqueued reads skipped on both indicators (D-08)", () => {
+// The skip reason rides the container's attribute and `data-chip-status` keeps the raw chip word.
+describe("a run the chain never enqueued reads skipped on both indicators", () => {
   function skippedView(reason: PostProcessingSkipReason): PostProcessingView {
     const chipFor = (stage: "analysis" | "curation") => ({
       status: "pending",
@@ -718,7 +665,7 @@ describe("a run the chain never enqueued reads skipped on both indicators (D-08)
     for (const stage of ["analysis", "curation"] as const) {
       const root = chip(host, stage)
       expect(root.getAttribute("data-stage-state")).toBe("skipped")
-      // The store said `pending` and the store is still quoted verbatim (404 D-01).
+      // The store said `pending` and the store is still quoted verbatim.
       expect(root.getAttribute("data-chip-status")).toBe("pending")
       expect(root.tagName).toBe("SPAN")
       expect(visibleTextOf(root)).toBe(STAGE_INDICATOR_WORDS[stage].skipped)
@@ -756,14 +703,12 @@ function runRow(status: string): RunRow {
     endedAt: null,
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: null,
     platform: "web",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
     attemptNumber: 1,
     retryCount: 0,
     maxRetries: 0,
@@ -771,7 +716,7 @@ function runRow(status: string): RunRow {
   }
 }
 
-describe("RunNavbar puts the chips beside the verdict badge (D-20)", () => {
+describe("RunNavbar puts the chips beside the verdict badge", () => {
   it("renders the chips AFTER the verdict badge, and the badge still appears exactly once", () => {
     const host = mount(
       <MemoryRouter><RunNavbar
@@ -782,7 +727,7 @@ describe("RunNavbar puts the chips beside the verdict badge (D-20)", () => {
         postProcessing={chipsView({ status: "complete" }, { status: "running" })}
       /></MemoryRouter>,
     )
-    // The 404-06 acceptance: ONE render site for the badge, so one element carries the raw status.
+    // One render site for the badge, so one element carries the raw status.
     expect(host.querySelectorAll("[data-verdict-badge]")).toHaveLength(1)
     const badge = host.querySelector("[data-verdict-badge]")!
     const analysis = host.querySelector('[data-chip="analysis"]')!

@@ -1,18 +1,6 @@
-// Behavior tests for the bounded planning tool-loop (353-02 Task 2, D-06/D-07/D-08).
-// `ai.generateText` is mocked with a scripted response queue; `tool` stays real so
-// buildTools produces the true v45 slice and the fake non-action tools carry real
-// `ai` definitions. Zero non-action tools ship in production (D-07) — these fakes
-// prove the machinery:
-//   1. immediate action call → plan, zero exchanges (the v1-equivalent one-shot path)
-//   2. two non-action calls then an action → both executed in order, exchanges recorded
-//   3. D-08(a) the first over-budget non-action call gets the exhausted result; a further
-//      non-action-only response → planning failure, no throw
-//   4. D-08(b) text-only response → exactly one re-prompt, then planning failure
-//   5. D-08(c) [non-action, action, action] → process first, terminate on second,
-//      discard the third with a logged discard
-//   6. K injectable — with budget 0 the first non-action call gets the exhausted error
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { tool } from 'ai'
+import { MockLanguageModelV4 } from 'ai/test'
 import { z } from 'zod'
 import { buildTools, defaultRegistry } from '../../tools/index.js'
 import {
@@ -77,7 +65,7 @@ describe('executePlanningTurn', () => {
     toolCallSeq = 0
   })
 
-  it('exposes K as an internal constant defaulting to 4 (D-10)', () => {
+  it('exposes K as an internal constant defaulting to 4', () => {
     expect(DEFAULT_NON_ACTION_TOOL_BUDGET).toBe(4)
   })
 
@@ -167,7 +155,7 @@ describe('executePlanningTurn', () => {
   })
 
   it.each([
-    ['reports', { response: { modelId: 'resolved-unscoped-model' } }],
+    ['reports', { finalStep: { response: { modelId: 'resolved-unscoped-model' } } }],
     ['omits', {}],
   ] as const)('PLANNING-TURN-UNSCOPED-IDENTITY: an unscoped turn keeps the SDK response model id when it %s one', async (_label, response) => {
     await scriptResponses([{
@@ -179,7 +167,7 @@ describe('executePlanningTurn', () => {
     const res = await executePlanningTurn(turnOptions())
 
     expect(res.ok).toBe(true)
-    if ('response' in response) expect(res.callRecord?.resolvedModelId).toBe('resolved-unscoped-model')
+    if ('finalStep' in response) expect(res.callRecord?.resolvedModelId).toBe('resolved-unscoped-model')
     else expect(res.callRecord).not.toHaveProperty('resolvedModelId')
   })
 
@@ -254,7 +242,7 @@ describe('executePlanningTurn', () => {
     expect(JSON.stringify(calls[1][0].messages)).not.toContain('memory.search')
   })
 
-  it('Test 3 (D-08a): the over-budget call gets the exhausted result; a further non-action-only response fails, no throw', async () => {
+  it('Test 3: the over-budget call gets the exhausted result; a further non-action-only response fails, no throw', async () => {
     const note = fakeNonActionTool()
     const withinBudget = Array.from({ length: DEFAULT_NON_ACTION_TOOL_BUDGET }, (_, index) => ({
       toolCalls: [nonActionCall('fake_note', { q: String(index + 1) })],
@@ -280,7 +268,7 @@ describe('executePlanningTurn', () => {
     ).toContain('Tool budget exhausted')
   })
 
-  it('Test 4 (D-08b): a text-only response triggers exactly one re-prompt then a planning failure', async () => {
+  it('Test 4: a text-only response triggers exactly one re-prompt then a planning failure', async () => {
     await scriptResponses([
       { toolCalls: [], usage: USAGE },
       { toolCalls: [], usage: USAGE },
@@ -297,7 +285,141 @@ describe('executePlanningTurn', () => {
     expect(JSON.stringify(calls[1][0].messages)).toContain('must call exactly one action tool')
   })
 
-  it('Test 5 (D-08c): [non-action, action, action] processes the first, terminates on the second, discards the third', async () => {
+  it('a tool-choice violation is a text-only answer: one re-prompt, then no_action_tool_called with its usage', async () => {
+    const { generateText, ToolChoiceViolationError } = await import('ai')
+    vi.mocked(generateText).mockImplementation(async (options) => {
+      await options.onLanguageModelCallEnd?.({
+        usage: USAGE,
+        modelId: 'responding-model',
+      } as never)
+      throw new ToolChoiceViolationError({
+        toolChoice: { type: 'required' },
+        finishReason: 'stop',
+        provider: 'test',
+        modelId: 'requested-model',
+        content: [{ type: 'text', text: 'I would click the button.' }],
+      })
+    })
+
+    const res = await executePlanningTurn(turnOptions())
+
+    expect(res.ok).toBe(false)
+    if (res.ok) throw new Error('expected failure')
+    expect(res.reason).toBe('no_action_tool_called')
+    expect(generateText).toHaveBeenCalledTimes(2)
+    const calls = await generateTextCalls()
+    expect(JSON.stringify(calls[1][0].messages)).toContain('must call exactly one action tool')
+    expect(res.tokenUsage).toEqual({ promptTokens: 20, completionTokens: 4, totalTokens: 24 })
+    expect(res.callRecord?.resolvedModelId).toBe('responding-model')
+  })
+
+  it('records the unsupported features of a call that ends in a tool-choice violation', async () => {
+    const { generateText } = await import('ai')
+    const actual = await vi.importActual<typeof import('ai')>('ai')
+    vi.mocked(generateText).mockImplementation(actual.generateText)
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: 'text' as const, text: 'I would click the button.' }],
+        finishReason: { unified: 'stop' as const, raw: 'stop' },
+        usage: {
+          inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+          outputTokens: { total: 2, text: 2, reasoning: 0 },
+        },
+        warnings: [{ type: 'unsupported' as const, feature: 'toolChoice' }],
+      }),
+    })
+
+    const res = await executePlanningTurn(turnOptions({ model }))
+
+    expect(res.ok).toBe(false)
+    if (res.ok) throw new Error('expected failure')
+    expect(res.reason).toBe('no_action_tool_called')
+    expect(model.doGenerateCalls).toHaveLength(2)
+    expect(res.callRecord?.unsupportedFeatures).toEqual(['toolChoice'])
+  })
+
+  describe('the SDK warning logger', () => {
+    const warnings = [
+      { type: 'unsupported' as const, feature: 'toolChoice' },
+      { type: 'other' as const, message: 'tool use is emulated' },
+    ]
+    const usage = {
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 2, text: 2, reasoning: 0 },
+    }
+    const installed = globalThis.AI_SDK_LOG_WARNINGS
+
+    async function useRealGenerateText() {
+      const { generateText } = await import('ai')
+      const actual = await vi.importActual<typeof import('ai')>('ai')
+      vi.mocked(generateText).mockImplementation(actual.generateText)
+    }
+
+    afterEach(() => {
+      globalThis.AI_SDK_LOG_WARNINGS = installed
+    })
+
+    it('receives the warnings of each call that ends in a tool-choice violation', async () => {
+      await useRealGenerateText()
+      const log = vi.fn()
+      globalThis.AI_SDK_LOG_WARNINGS = log
+      const model = new MockLanguageModelV4({
+        doGenerate: async () => ({
+          content: [{ type: 'text' as const, text: 'I would click the button.' }],
+          finishReason: { unified: 'stop' as const, raw: 'stop' },
+          usage,
+          warnings,
+        }),
+      })
+
+      const res = await executePlanningTurn(turnOptions({ model }))
+
+      expect(res.ok).toBe(false)
+      expect(log.mock.calls).toEqual([
+        [{ warnings, provider: 'mock-provider', model: 'mock-model-id' }],
+        [{ warnings, provider: 'mock-provider', model: 'mock-model-id' }],
+      ])
+    })
+
+    it('receives the warnings of a call that picks an action once', async () => {
+      await useRealGenerateText()
+      const log = vi.fn()
+      globalThis.AI_SDK_LOG_WARNINGS = log
+      const model = new MockLanguageModelV4({
+        doGenerate: async () => ({
+          content: [
+            {
+              type: 'tool-call' as const,
+              toolCallId: 'tc-1',
+              toolName: 'web_click',
+              input: JSON.stringify({ ref: 'e1', ...ENVELOPE }),
+            },
+          ],
+          finishReason: { unified: 'tool-calls' as const, raw: 'tool_use' },
+          usage,
+          warnings,
+        }),
+      })
+
+      const res = await executePlanningTurn(turnOptions({ model }))
+
+      expect(res.ok).toBe(true)
+      expect(log.mock.calls).toEqual([
+        [{ warnings, provider: 'mock-provider', model: 'mock-model-id' }],
+      ])
+    })
+  })
+
+  it('any other model error rejects the turn unchanged', async () => {
+    const { generateText } = await import('ai')
+    const failure = new Error('provider unavailable')
+    vi.mocked(generateText).mockRejectedValue(failure)
+
+    await expect(executePlanningTurn(turnOptions())).rejects.toBe(failure)
+    expect(generateText).toHaveBeenCalledTimes(1)
+  })
+
+  it('Test 5: [non-action, action, action] processes the first, terminates on the second, discards the third', async () => {
     const note = fakeNonActionTool()
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
     await scriptResponses([
@@ -340,7 +462,7 @@ describe('executePlanningTurn', () => {
     expect(JSON.stringify(calls[1][0].messages)).toContain('Tool budget exhausted')
   })
 
-  it('436 D-08: a bound gate debits each model call and a refused debit ends the turn with planning_limit_reached', async () => {
+  it('a bound gate debits each model call and a refused debit ends the turn with planning_limit_reached', async () => {
     const note = fakeNonActionTool()
     await scriptResponses([
       { toolCalls: [nonActionCall('fake_note', { q: 'a' })], usage: USAGE },

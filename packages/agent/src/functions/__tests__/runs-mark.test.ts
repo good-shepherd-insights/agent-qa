@@ -26,10 +26,7 @@ const CALLER: FunctionCaller = {
   surface: 'mcp',
   origin: 'agent',
 }
-// 2026-10-01 (432-21, D-12): `STANDING_APPROVAL_SCOPE` is deleted with the MCP bearer credential, so
-// the legacy credential a pre-432 bearer carried is spelled as its bytes. Nothing reads it.
-// 2026-10-02 (432-39, D-02/D-12): the caller's `credential` member is deleted, so the legacy bytes
-// are smuggled past the type with a cast; the cells below still prove nothing consults them.
+// Legacy credential bytes are cast past the type; the cells prove nothing consults them.
 const TRUSTED = { ...CALLER, credential: { scope: { project: 'local-workspace' } } } as FunctionCaller
 
 function receipt(overrides: Partial<MarkReceipt> = {}): MarkReceipt {
@@ -45,7 +42,6 @@ function receipt(overrides: Partial<MarkReceipt> = {}): MarkReceipt {
     markedAt: 0,
     note: INPUT.note,
     disposition: { kind: 'quarantined', class: 'flake' },
-    gold: [],
     evidence: { confirmed: 0, overturned: 0 },
     ...overrides,
   }
@@ -80,15 +76,12 @@ function stub() {
   return { port, mark, outcome }
 }
 
-describe('runs.mark registration and binding (419 GATE3-01)', () => {
-  it('declares the lowercase-dot identity, write scope, shared risk and feedback binding', () => {
+describe('runs.mark registration and binding', () => {
+  it('declares the lowercase-dot identity, a non-read-only risk and the feedback binding', () => {
     expect(RUNS_MARK_FUNCTION_ID).toBe('runs.mark')
     expect(RUNS_MARK_FUNCTION_ID).toMatch(/^[a-z]+(?:\.[a-z]+)+$/)
     expect(runsMarkSpec.id).toBe(RUNS_MARK_FUNCTION_ID)
-    // RE-SPELLED 2026-10-01 (432-24, D-12) from `requiredScopes` equal to ['knowledge-write']: the
-    // op declares no scope; its write is stated by the shared-tier risk below.
     expect(runsMarkSpec).not.toHaveProperty('requiredScopes')
-    expect(runsMarkSpec.risk.declaredTier).toBe('mutating-shared')
     expect(runsMarkSpec.risk.readOnly).toBe(false)
     expect(runsMarkSpec).not.toHaveProperty('requiresHumanOrigin')
     expect(runsMarkSpec.boundThrough).toBe('feedback')
@@ -97,7 +90,7 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
   it('lists an unbound host by name and refuses through the registry and body', async () => {
     const registry = host()
     expect(registry.list(CALLER).find(({ id }) => id === RUNS_MARK_FUNCTION_ID)?.bindingStatus).toBe('unbound')
-    // 2026-10-02 (432-39): no gate precedes the binding check; any caller observes the named absence.
+    // No gate precedes the binding check, so any caller observes the named absence.
     await expect(invokeFunction(registry, RUNS_MARK_FUNCTION_ID, INPUT, TRUSTED)).rejects.toBeInstanceOf(FunctionNotBoundError)
     await expect(runsMarkSpec.invoke(INPUT, {} as FunctionDeps)).rejects.toBeInstanceOf(FunctionNotBoundError)
   })
@@ -109,8 +102,6 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
     expect(mark.mock.calls).toEqual([[INPUT], [INPUT]])
   })
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'requires knowledge-write even when the caller holds
-  // a standing credential'. No scope is required: a read-only caller's mark reaches the port once.
   it('marks for a caller holding only read, reaching the port once', async () => {
     const { port, mark, outcome } = stub()
     const readOnly = { ...TRUSTED, grantedScopes: ['read'] } as FunctionCaller
@@ -120,11 +111,8 @@ describe('runs.mark registration and binding (419 GATE3-01)', () => {
   })
 })
 
-// RE-SPELLED 2026-09-30 (432-13, D-04/D-14) from 'no-TTY gate on the actual mark op (419
-// D-13/D-20)'. The op gate is gone: a mark from a no-TTY caller reaches the port once, whatever
-// credential it carries or lacks, and nobody is asked.
-describe('C432-INVOKE-DIRECT — the mark op reaches its port in one call (432-13)', () => {
-  it('C432-INVOKE-DIRECT: an uncredentialed MCP agent reaches the port once, with no refusal', async () => {
+describe('the mark op reaches its port in one call', () => {
+  it('an uncredentialed MCP agent reaches the port once, with no refusal', async () => {
     const { port, mark, outcome } = stub()
     expect(await invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, CALLER)).toEqual(outcome)
     expect(mark.mock.calls).toEqual([[INPUT]])
@@ -136,7 +124,7 @@ describe('C432-INVOKE-DIRECT — the mark op reaches its port in one call (432-1
     expect(mark.mock.calls).toEqual([[INPUT]])
   })
 
-  it('C432-INVOKE-DIRECT: a mismatched credential is not consulted, and the port is reached once', async () => {
+  it('a mismatched credential is not consulted, and the port is reached once', async () => {
     const { port, mark, outcome } = stub()
     expect(await invokeFunction(host(port), RUNS_MARK_FUNCTION_ID, INPUT, {
       ...CALLER, credential: { scope: { project: 'another-workspace' } },
@@ -165,8 +153,6 @@ describe('mark outcome classifications omit producer text', () => {
     })
   })
 
-  // 432-09 (D-04): an applied fix classifies by its governed kind only; the ids, path and note it
-  // changed stay on the receipt and never reach the receipt line.
   it('classifies an applied fix by kind alone, never by the records or file it changed', () => {
     const knowledge = receipt({ disposition: { kind: 'applied', fix: 'fact',
       change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_private_record'] } } })
@@ -182,7 +168,7 @@ describe('mark outcome classifications omit producer text', () => {
   })
 })
 
-describe('runs.detail mark projection (419 D-11/D-15)', () => {
+describe('runs.detail mark projection', () => {
   const rows: RunDetailRows = {
     runId: RUN_ID,
     // Deliberately not positional: marks join by testIndex, not by array offset.

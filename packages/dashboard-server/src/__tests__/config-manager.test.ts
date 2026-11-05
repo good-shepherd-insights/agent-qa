@@ -42,10 +42,10 @@ vi.mock('@vostride/agent-qa-core', async () => {
       (config.provider === 'openai-compatible' || config.provider === 'anthropic-compatible')
       && (!config.baseURL || config.baseURL.trim() === '')
     ) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['baseURL'], message: `Base URL is required for ${config.provider} providers.` })
+      ctx.addIssue({ code: 'custom', path: ['baseURL'], message: `Base URL is required for ${config.provider} providers.` })
     }
     if (config.providerHeaders !== undefined && config.provider !== 'anthropic-compatible') {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['providerHeaders'], message: 'providerHeaders can only be used with anthropic-compatible providers.' })
+      ctx.addIssue({ code: 'custom', path: ['providerHeaders'], message: 'providerHeaders can only be used with anthropic-compatible providers.' })
     }
   }
   const ModelConfigSchema = modelConfigBaseSchema.superRefine(validateModelConfig)
@@ -73,9 +73,7 @@ vi.mock('@vostride/agent-qa-model', async () => {
   }
 })
 
-// 2026-10-03 (quick-261003-tsr, WR-12): a write failure is injected at the atomic writer's
-// rename rather than with directory permissions, which root (and Windows) ignore. Pass-through
-// unless a cell sets the flag.
+// A rename failure is injected, because root and Windows ignore directory permissions.
 const fsFault = vi.hoisted(() => ({ failRename: false }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -127,7 +125,6 @@ services:
     port: 3470
   cache:
     dir: .cache
-    ttl: 7d
 
 registry:
   llms:
@@ -193,7 +190,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
 
   process.nextTick(() => {
     if (options.body) {
@@ -283,7 +280,6 @@ services:
     port: 3470
   cache:
     dir: .cache
-    ttl: 7d
 
 registry:
   llms:
@@ -341,8 +337,7 @@ describe('ConfigManager', () => {
           .toEqual({ enabled: true, ...recording })
       }
       const beforeInvalid = await readFile(configPath, 'utf8')
-      // 429-44: the door refuses a path the schema does not describe; inside a container value
-      // the same key still meets whole-config validation.
+      // The door refuses a path the schema does not describe; in a container value it validates.
       const invalid = await patchConfig([{ op: 'set', path: ['services', 'recording', 'videoDir'], value: 'videos' }])
       expect(invalid.status).toBe(422)
       expect(JSON.parse(invalid.body)).toEqual({ error: 'path_not_writable' })
@@ -385,7 +380,7 @@ describe('ConfigManager', () => {
 
     it('applyChanges for services.cache keeps it before use block', async () => {
       expect((await manager.applyChanges([
-        { op: 'set', path: ['services', 'cache'], value: { dir: '.new-cache', ttl: '30d' } },
+        { op: 'set', path: ['services', 'cache'], value: { dir: '.new-cache' } },
       ])).kind).toBe('ok')
       const content = await readFile(configPath, 'utf-8')
       const servicesIdx = content.indexOf('services:')
@@ -396,13 +391,12 @@ describe('ConfigManager', () => {
 
     it('applyChanges persists the knowledge block as one unit', async () => {
       expect((await manager.applyChanges([
-        { op: 'set', path: ['knowledge'], value: { dir: 'agent-qa-knowledge', commitArtifacts: 'thumbnails' } },
+        { op: 'set', path: ['knowledge'], value: { dir: 'agent-qa-knowledge' } },
       ])).kind).toBe('ok')
 
       const config = await readConfig()
       expect(config.knowledge).toMatchObject({
         dir: 'agent-qa-knowledge',
-        commitArtifacts: 'thumbnails',
       })
     })
 
@@ -523,7 +517,7 @@ function llmsOf(text: string): LlmEntry[] {
   return (parseYaml(text) as { registry: { llms: LlmEntry[] } }).registry.llms
 }
 
-describe('ConfigManager.applyChanges ops and selectors (429-05)', () => {
+describe('ConfigManager.applyChanges ops and selectors', () => {
   it('UNSET-PRUNES-EMPTY-PARENTS: an unset prunes every ancestor map it empties, and keeps a sibling', async () => {
     await writeFile(configPath, writeConfig(
       WRITE_BASE_LINES,
@@ -557,7 +551,6 @@ describe('ConfigManager.applyChanges ops and selectors (429-05)', () => {
   it('APPEND-CREATES-SEQ: an append to an absent sequence creates it with one entry', async () => {
     await writeFile(configPath, writeConfig(WRITE_BASE_LINES, WRITE_MOBILE_LINES))
 
-    // 432-22: re-spelled from the deleted `services.mcp.tokens` list onto a retained absent sequence.
     const outcome = await manager.applyChanges([
       { op: 'append', path: ['workspace', 'testPathIgnore'], value: 'tests/skip/**' },
     ])
@@ -643,7 +636,7 @@ describe('ConfigManager.applyChanges ops and selectors (429-05)', () => {
 
 const BROKEN_YAML = 'a: 1\nb: [1, 2\nc: 3\n'
 
-describe('ConfigManager broken files, missing files and the mask guard (429-05)', () => {
+describe('ConfigManager broken files, missing files and the mask guard', () => {
   it('FILE-INVALID-REFUSED: a file that does not parse is refused and never rewritten', async () => {
     await writeFile(configPath, BROKEN_YAML)
 
@@ -923,7 +916,7 @@ function declaredMask(value: string, name: string): (text: string) => string {
   return (text) => text.split(value).join(`[secret:${name}]`)
 }
 
-describe('ConfigManager masked read (441-21)', () => {
+describe('ConfigManager masked read', () => {
   it('READ-MASKED-ALIASES-FAIL-CLOSED: an alias never carries a declared value past the mask', async () => {
     await writeFile(configPath, [
       'workspace:',
@@ -932,9 +925,13 @@ describe('ConfigManager masked read (441-21)', () => {
       'knowledge:',
       '  dir: *secret',
       'registry:',
-      '  providers:',
-      '    farm:',
-      '      accessKey: *plain',
+      '  llms:',
+      '    - name: router',
+      '      provider: anthropic-compatible',
+      '      model: claude-proxy',
+      '      baseURL: https://llm.example.invalid/v1',
+      '      providerHeaders:',
+      '        x-access: *plain',
       '',
     ].join('\n'))
 
@@ -945,13 +942,13 @@ describe('ConfigManager masked read (441-21)', () => {
     const config = read.config as { workspace: Record<string, string>; knowledge: { dir: string }; registry: any }
     expect(config.workspace.secretsFile).toBe('secret-[secret:LEAK].local')
     expect(config.knowledge.dir).toBe('secret-[secret:LEAK].local')
-    expect(config.registry.providers.farm.accessKey).toBe('plain-anchor.env')
+    expect(config.registry.llms[0].providerHeaders['x-access']).toBe('plain-anchor.env')
     expect(config.workspace.envFile).toBe('plain-anchor.env')
     expect(JSON.stringify(read)).not.toContain('DO-NOT-LEAK')
   })
 })
 
-describe('C441-CONFIG', () => {
+describe('declared secrets in the config editor', () => {
   it('the config editor shows an undeclared credential as written and a declared value as its marker', async () => {
     await writeFile(configPath, [
       'registry:',
@@ -961,27 +958,27 @@ describe('C441-CONFIG', () => {
       '      model: claude',
       '      baseURL: https://example.test/v1',
       '      providerHeaders:',
-      '        X-Api-Key: plain-441-value',
+      '        X-Api-Key: plain-value',
       'use:',
       '  buildTag: Hunter-42-zz',
       '',
     ].join('\n'))
 
-    const read = await new ConfigManager(configPath, declaredMask('Hunter-42-zz', 'PW_441')).readMasked()
+    const read = await new ConfigManager(configPath, declaredMask('Hunter-42-zz', 'PW_KEY')).readMasked()
 
     expect(read.kind).toBe('ok')
     if (read.kind !== 'ok') return
     const config = read.config as { registry: { llms: Array<{ providerHeaders: Record<string, string> }> }; use: Record<string, unknown> }
-    expect(config.registry.llms[0]!.providerHeaders['X-Api-Key']).toBe('plain-441-value')
-    expect(config.use.buildTag).toBe('[secret:PW_441]')
-    expect(read.lines).toContainEqual({ n: 8, text: '        X-Api-Key: plain-441-value' })
-    expect(read.lines).toContainEqual({ n: 10, text: '  buildTag: [secret:PW_441]' })
+    expect(config.registry.llms[0]!.providerHeaders['X-Api-Key']).toBe('plain-value')
+    expect(config.use.buildTag).toBe('[secret:PW_KEY]')
+    expect(read.lines).toContainEqual({ n: 8, text: '        X-Api-Key: plain-value' })
+    expect(read.lines).toContainEqual({ n: 10, text: '  buildTag: [secret:PW_KEY]' })
     expect(read.lines.every((line) => !('class' in line))).toBe(true)
     expect(JSON.stringify(read)).not.toContain('Hunter-42-zz')
   })
 
   it('a validation message shows a declared value as its marker', async () => {
-    const declared = new ConfigManager(configPath, declaredMask('Hunter-42-zz', 'PW_441'))
+    const declared = new ConfigManager(configPath, declaredMask('Hunter-42-zz', 'PW_KEY'))
     await writeFile(configPath, ORDERED_CONFIG.replace('  llm: planner', '  llm: Hunter-42-zz'))
 
     const read = await declared.readMasked()
@@ -990,7 +987,7 @@ describe('C441-CONFIG', () => {
     if (read.kind !== 'ok') return
     const readMessages = read.fileIssues.map((issue) => issue.message)
     expect(JSON.stringify(read.fileIssues)).not.toContain('Hunter-42-zz')
-    expect(readMessages.some((message) => message.includes('[secret:PW_441]')), JSON.stringify(readMessages)).toBe(true)
+    expect(readMessages.some((message) => message.includes('[secret:PW_KEY]')), JSON.stringify(readMessages)).toBe(true)
 
     await writeFile(configPath, ORDERED_CONFIG)
     const refused = await declared.applyChanges([{ op: 'set', path: ['use', 'llm'], value: 'Hunter-42-zz' }])
@@ -998,7 +995,7 @@ describe('C441-CONFIG', () => {
     if (refused.kind !== 'refused') return
     const writeMessages = (refused.issues ?? []).map((issue) => issue.message)
     expect(JSON.stringify(refused)).not.toContain('Hunter-42-zz')
-    expect(writeMessages.some((message) => message.includes('[secret:PW_441]')), JSON.stringify(writeMessages)).toBe(true)
+    expect(writeMessages.some((message) => message.includes('[secret:PW_KEY]')), JSON.stringify(writeMessages)).toBe(true)
 
     await writeFile(configPath, ORDERED_CONFIG.replace('  llm: planner', '  llm: q7'))
     const short = await declared.readMasked()
@@ -1007,23 +1004,27 @@ describe('C441-CONFIG', () => {
     expect(short.fileIssues.some((issue) => issue.message.includes('q7')), JSON.stringify(short.fileIssues)).toBe(true)
 
     await writeFile(configPath, 'a: b: compact\n')
-    const broken = await new ConfigManager(configPath, declaredMask('compact', 'PW_441')).readMasked()
+    const broken = await new ConfigManager(configPath, declaredMask('compact', 'PW_KEY')).readMasked()
     expect(broken.kind).toBe('file_invalid')
     if (broken.kind !== 'file_invalid') return
-    expect(broken.message).toContain('[secret:PW_441]')
+    expect(broken.message).toContain('[secret:PW_KEY]')
     expect(broken.message).not.toContain('compact')
     const unloadable = await new ConfigManager(configPath, () => { throw new Error('a: b: compact') }).readMasked()
     expect(unloadable).toMatchObject({ kind: 'file_invalid', message: 'The config file is not valid YAML.' })
   })
 
   it('there is no reveal route', async () => {
-    await writeFile(configPath, ORDERED_CONFIG.replace('registry:\n', 'registry:\n  providers:\n    farm:\n      accessKey: Hunter-42-zz\n'))
+    await writeFile(configPath, ORDERED_CONFIG.replace(
+      'registry:\n  llms:\n',
+      'registry:\n  llms:\n    - name: router\n      provider: anthropic-compatible\n      model: claude-proxy\n'
+        + '      baseURL: https://llm.example.invalid/v1\n      providerHeaders:\n        x-access: Hunter-42-zz\n',
+    ))
 
-    // Composed, so no package source spells the retired route (441-49's grep).
+    // Composed, so no package source spells the retired route literally.
     const answer = await invokeRoute(['/api/config', 'reveal'].join('/'), {
       method: 'POST',
       headers: { ...SELF_HOST_HEADERS, origin: `http://${SELF_HOST_HEADERS.host}`, 'sec-fetch-site': 'same-origin' },
-      body: JSON.stringify({ path: ['registry', 'providers', 'farm', 'accessKey'] }),
+      body: JSON.stringify({ path: ['registry', 'llms', 0, 'providerHeaders', 'x-access'] }),
     })
 
     expect(answer.status).toBe(404)
@@ -1032,10 +1033,8 @@ describe('C441-CONFIG', () => {
   })
 })
 
-// 2026-09-30, 432-07 D-05/D-07 (EDGE-12): the transaction queue belongs to the resolved config path,
-// so every ConfigManager in this process (the dashboard's and a co-hosted direct writer's) takes
-// turns. It is not a cross-process lock.
-describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one queue', () => {
+// The queue is per resolved config path, so in-process writers take turns; no cross-process lock.
+describe('co-hosted writers of one config path share one queue', () => {
   const QUEUE_CONFIG = writeConfig(
     ['# The owner keeps this comment.'],
     WRITE_BASE_LINES,
@@ -1170,8 +1169,7 @@ describe('C432-CONFIG-PATH-QUEUE: co-hosted writers of one config path share one
   })
 
   it('a write that fails inside its turn rejects, writes nothing, and the next writer still gets the path', async () => {
-    // The temp file is written and only its rename fails, so the cleanup that keeps "writes
-    // nothing" true is on the measured road (WR-12).
+    // Only the rename fails, so the temp-file cleanup is what keeps "writes nothing" true.
     fsFault.failRename = true
     try {
       const failed = new ConfigManager(configPath, (text) => text).applyChanges([targetChange(6)])

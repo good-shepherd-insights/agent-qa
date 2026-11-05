@@ -1,28 +1,7 @@
-// Wave-0 (test-first) scaffold for Phase 355 CTXB-04 — the dynamic output clamp
-// (max_output = max(floor, min(default, C − I − safety))), the proactive/reactive
-// degrade wiring, the observation+instruction pins, retry-once on a live overflow,
-// the recordUsage feed, and the structured cannot-fit outcome (never a crash).
-//
-// RED BY DESIGN: the '../clamp.js' module does not exist until Plan 04 authors it.
-// The whole suite is RED for exactly that reason (missing clamp module) — never a
-// typo or a wrong fixture. The fake TokenAccounting port is real (loop-harness), so
-// once Plan 04 lands clamp.ts these turn GREEN.
-//
-// Contract these tests pin (per CONTEXT D-01/D-02/D-10/D-14/D-17) for the Plan-04 clamp.ts:
-//   - computeSafety(contextWindow) → max(256, ceil(0.02 * contextWindow))  (percentage + floor, D-02)
-//   - computeMaxOutput({ contextWindow, inputTokens, defaultMaxOutput, safety?, floor? })
-//        → max(floor ?? 256, min(defaultMaxOutput, contextWindow − inputTokens − safety))   (D-01)
-//   - estimateInput(accounting, messages, toolSchemaJson?) → accounting.estimate(messages)
-//        + tool-schema tokens (the port's estimate() does NOT count tool schemas, §5.1)
-//   - executeClampedCall({ accounting, system, messages, toolSchema, pin, call, isOverflow? })
-//        → proactive pre-degrade when estimate > budget; forwards { budget, pin } to degrade;
-//          reactive isOverflow → re-degrade → retry ONCE (non-overflow rethrows); recordUsage
-//          once per successful response; surfaces the structured cannot-fit outcome (D-17).
 import { describe, it, expect, vi } from 'vitest'
 import type { ModelMessage } from 'ai'
 import { makeFakeTokenAccounting } from './loop-harness.js'
 import {
-  // Plan-04 clamp module — intentionally unresolved today (the RED reason for this suite):
   computeSafety,
   computeMaxOutput,
   estimateInput,
@@ -31,7 +10,7 @@ import {
 
 const OK_USAGE = { usage: { inputTokens: 100, outputTokens: 20 } }
 
-describe('clamp arithmetic — safety policy (CTXB-04 / D-02)', () => {
+describe('clamp arithmetic — safety policy', () => {
   it('sets safety = max(256, ceil(0.02 * C)) and scales with the window', () => {
     // 4k local model: 2% of 4096 = 82 → the 256 absolute floor wins.
     expect(computeSafety(4096)).toBe(256)
@@ -42,7 +21,7 @@ describe('clamp arithmetic — safety policy (CTXB-04 / D-02)', () => {
   })
 })
 
-describe('clamp arithmetic — maxOutput (CTXB-04 / D-01)', () => {
+describe('clamp arithmetic — maxOutput', () => {
   it('computes max(floor, min(default, C − I − safety)) for representative windows', () => {
     // 4k-window local model: headroom comfortably above default.
     expect(
@@ -62,7 +41,7 @@ describe('clamp arithmetic — maxOutput (CTXB-04 / D-01)', () => {
   })
 })
 
-describe('input estimate includes tool schemas (CTXB-04 / §5.1)', () => {
+describe('input estimate includes tool schemas (§5.1)', () => {
   it('adds tool-schema tokens to I, lowering the resulting maxOutput', () => {
     const acc = makeFakeTokenAccounting({ estimate: (m) => JSON.stringify(m).length })
     const messages: ModelMessage[] = [{ role: 'user', content: 'hello' }]
@@ -78,7 +57,7 @@ describe('input estimate includes tool schemas (CTXB-04 / §5.1)', () => {
   })
 })
 
-describe('proactive degrade + pins (CTXB-04 / D-08/D-10)', () => {
+describe('proactive degrade + pins', () => {
   it('degrades before the call when estimate > budget, pinning observation + instruction', async () => {
     const observation: ModelMessage = { role: 'user', content: 'OBSERVATION: latest screen tree' }
     const instruction: ModelMessage = { role: 'user', content: 'Current step: "click Sign In"' }
@@ -104,7 +83,7 @@ describe('proactive degrade + pins (CTXB-04 / D-08/D-10)', () => {
   })
 })
 
-describe('reactive overflow retry-once (CTXB-04 / D-10)', () => {
+describe('reactive overflow retry-once', () => {
   it('re-degrades against the shrunk window and retries the call exactly once on overflow', async () => {
     const acc = makeFakeTokenAccounting({ contextWindow: 4096, maxOutput: 1024, estimate: 100 })
     const isOverflow = (e: unknown) => e instanceof Error && /context length/i.test(e.message)
@@ -135,7 +114,7 @@ describe('reactive overflow retry-once (CTXB-04 / D-10)', () => {
   })
 })
 
-describe('usage anchor (CTXB-04 / D-10)', () => {
+describe('usage anchor', () => {
   it('calls recordUsage exactly once per successful response with the full sent message set', async () => {
     const acc = makeFakeTokenAccounting({ estimate: 100 })
     const messages: ModelMessage[] = [{ role: 'user', content: 'hello' }]
@@ -155,7 +134,7 @@ describe('usage anchor (CTXB-04 / D-10)', () => {
   })
 })
 
-describe('cannot-fit outcome, never a crash (CTXB-04 / D-17)', () => {
+describe('cannot-fit outcome, never a crash', () => {
   it('surfaces the structured pinned-content-exceeds-budget outcome without throwing', async () => {
     const observation: ModelMessage = { role: 'user', content: 'OBSERVATION: latest screen' }
     const messages: ModelMessage[] = [observation]
@@ -169,7 +148,6 @@ describe('cannot-fit outcome, never a crash (CTXB-04 / D-17)', () => {
     })
     const call = vi.fn().mockResolvedValue(OK_USAGE)
 
-    // Must resolve (best-effort) and surface the structured reason — never throw (D-17).
     const res = await executeClampedCall({
       accounting: acc,
       system: [],

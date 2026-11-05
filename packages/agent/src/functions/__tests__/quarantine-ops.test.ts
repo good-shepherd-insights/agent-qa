@@ -1,24 +1,4 @@
-// The three quarantine verbs at the function layer (Phase 390, D-12/D-13 / FLAK-03).
-//
-// `quarantine.list` is the machine-readable enumeration FLAK-03 asks for; `quarantine.release`
-// and `quarantine.add` are the manual halves of the exit path. All three bind through the new
-// OPTIONAL `quarantine` dep, so this plan registers them UNBOUND by construction — the port's
-// implementation and the composition-root binding land in a later plan, and until they do a
-// host says so BY NAME rather than answering an empty list about a ledger it cannot see.
-//
-// WHAT THESE CASES PIN, AND WHY EACH ONE:
-//
-//  1. REFUSAL BY NAME, AT BOTH LAYERS. `invokeFunction` refuses on the DECLARATION before it
-//     ever reaches an implementation; each op body ALSO guards, so a direct call cannot slip
-//     past. An unbound write verb that answered a silent no-op would tell an operator their
-//     quarantine landed when nothing was written.
-//  2. THE OP ADDS NO ORDERING. D-12's triage-queue order is the implementation's law. The
-//     list op forwards the port's entries verbatim, so a second sort here could not disagree
-//     with the one that is pinned where it is implemented.
-//  3. RISK IS STATED ON THE SPEC. `list` is `readOnly: true`; `release` and `add` are
-//     `readOnly: false`. (2026-10-01, 432-25, D-12: no verb declares a scope any more, and every
-//     caller reaches all three. The scopes once hid the writes from safe-mode listings and sent
-//     them through the deleted gate as mutations; the risk descriptor still says they write.)
+// An unbound write verb refuses by name; a silent no-op would claim a quarantine landed.
 
 import type {
   FunctionCaller,
@@ -47,8 +27,6 @@ import {
 } from '../ops/quarantine-release.js'
 import type { FunctionDeps } from '../spec.js'
 
-// 2026-10-01 (432-25, D-12): the retired `grantedScopes` and `safeMode` fields are dropped; nothing
-// read them.
 const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
@@ -159,13 +137,7 @@ describe('the three quarantine verbs are registered under the locked taxonomy', 
   })
 })
 
-// ---- Risk classification -----------------------------------------------
-//
-// RE-SPELLED 2026-10-01 (432-25, D-12). This block was 'scope and risk classification (D-13)' and
-// asserted `['read']` on list and `['knowledge-write']` on release and add. No verb declares a
-// scope now; the read/write split it pinned survives on the risk descriptor, asserted unchanged.
-
-describe('risk classification (D-13)', () => {
+describe('risk classification', () => {
   it('declares list read-tier and read-only', () => {
     expect(quarantineListSpec).not.toHaveProperty('requiredScopes')
     expect(quarantineListSpec.risk.readOnly).toBe(true)
@@ -173,8 +145,6 @@ describe('risk classification (D-13)', () => {
     expect(quarantineListSpec.risk.recognized).toBe(true)
   })
 
-  // Renamed from 'declares release and add as WRITES — the same scope family the shipped write op
-  // uses' (432-25): the write claim survives on `readOnly: false`; the scope family does not.
   it('declares release and add as WRITES, with no scope', () => {
     for (const spec of [quarantineReleaseSpec, quarantineAddSpec]) {
       expect(spec, spec.id).not.toHaveProperty('requiredScopes')
@@ -246,7 +216,7 @@ describe('an unbound host refuses BY NAME, never a silent no-op', () => {
 // ---- Bound: the ops forward, and add nothing ---------------------------
 
 describe('with a port bound, each op forwards and adds nothing of its own', () => {
-  it('serves the port entries VERBATIM — the op re-sorts nothing (D-12 ordering is the port law)', async () => {
+  it('serves the port entries VERBATIM — the op re-sorts nothing (the port owns the ordering)', async () => {
     // Deliberately NOT in any order the op could have produced: unassigned last, expiry
     // descending, testName descending. A sort in the op would visibly rewrite this.
     const entries = [
@@ -319,13 +289,9 @@ describe('with a port bound, each op forwards and adds nothing of its own', () =
   })
 })
 
-// ---- C432-ALL-OPS-AVAILABLE (432-25, D-12) ------------------------------
-//
-// The two writes once required `knowledge-write`. Retried from three callers that differ in surface
-// and origin, and that carry no scope at all, each write is served every time: the port is reached
-// once per attempt, and every caller gets the same answer.
-describe('C432-ALL-OPS-AVAILABLE: the quarantine writes serve every caller', () => {
-  it('C432-ALL-OPS-AVAILABLE: a retried add and release are served alike to every caller', async () => {
+// Every caller is served, and the port is reached once per attempt.
+describe('the quarantine writes serve every caller', () => {
+  it('a retried add and release are served alike to every caller', async () => {
     const { port, added, released } = stubPort([])
     const registry = createFunctionRegistry({
       deps: deps(port),

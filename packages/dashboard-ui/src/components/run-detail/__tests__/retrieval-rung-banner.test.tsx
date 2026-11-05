@@ -1,23 +1,6 @@
 // @vitest-environment jsdom
 
-// THE ONE-LINE RUNG BANNER, IN A DOM (407-10 · TRST-01, D-13/D-14/D-15/D-16, D-19's tone).
-//
-// TWO HEADERS, ONE COMPONENT. Run-detail paints it from the durable `runs.knowledge` read and
-// live-run paints it from the first `stepFinalized` frame that carries the rung. Those are two
-// feeds and two placements, but ONE sentence — so the sentence is proven here, once, and the two
-// pages are proven only to have wired the right value into it.
-//
-// THE ABSENCE CELLS ARE THE LOAD-BEARING ONES. `memidex` is not a degradation and `undefined` is
-// "nobody has said yet"; both render NO element, because a banner that renders empty for the top
-// rung would put an amber strip on every healthy run, and one that renders "unknown" before the
-// first frame would claim a fact the page does not have. An assertion that only ever looks at what
-// IS painted cannot see either.
-//
-// THE TINT IS AMBER AND NEVER RED, and that is asserted as an ABSENCE of the red vocabulary rather
-// than as the presence of a class name. A degraded rung is a rung reached by design (D-19): the
-// static floor is the no-budget escape hatch and `lexical-only` means the floor was switched off
-// on purpose. `fail` is a doctor-only state for a subsystem that ERRORED, and the banner never
-// sees one — a run that got served got a rung.
+// Amber, never red: a degraded rung is reached by design, so red vocabulary is asserted absent.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -75,14 +58,12 @@ function runRow(): RunRow {
     endedAt: null,
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: null,
     platform: "web",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
     attemptNumber: 1,
     retryCount: 0,
     maxRetries: 0,
@@ -90,7 +71,7 @@ function runRow(): RunRow {
   }
 }
 
-describe("the top rung and the unknown rung render NOTHING (D-14, D-16)", () => {
+describe("the top rung and the unknown rung render NOTHING", () => {
   it("renders no element at all for `memidex`", () => {
     const host = mount(<RetrievalRungBanner rung="memidex" />)
     expect(banner(host)).toBeNull()
@@ -104,7 +85,7 @@ describe("the top rung and the unknown rung render NOTHING (D-14, D-16)", () => 
   })
 })
 
-describe("only a warning class paints the strip, with its statement and the doctor pointer (427 D-20, D-23)", () => {
+describe("only a warning class paints the strip, with its statement and the doctor pointer", () => {
   it("WARNING-STRIP-WITH-POINTER: a corrupt index carries the DOM contract, its class glyph and the sentence of record", () => {
     const host = mount(<RetrievalRungBanner rung="bundle-scan" reason="index-corrupt" />)
     const el = banner(host)
@@ -112,7 +93,7 @@ describe("only a warning class paints the strip, with its statement and the doct
     expect(el?.getAttribute("data-rung")).toBe("bundle-scan")
     expect(el?.getAttribute("data-rung-reason")).toBe("index-corrupt")
     expect(el?.getAttribute("data-retrieval-class")).toBe("index-problem")
-    // `status`, never `alert` — it is informational about a run, not an interruption (UI-SPEC).
+    // `status`, never `alert`: it informs about a run and does not interrupt.
     expect(el?.getAttribute("role")).toBe("status")
     expect(el?.getAttribute("class")).toContain("py-1.5")
     expect(el?.getAttribute("class")).toContain("bg-amber-500/5")
@@ -152,7 +133,7 @@ describe("only a warning class paints the strip, with its statement and the doct
   })
 })
 
-describe("the tint is amber, and it is never red (D-19's rationale on the header)", () => {
+describe("the tint is amber, and it is never red", () => {
   it("paints the class glyph amber in the navbar variant", () => {
     const host = mount(<RetrievalRungBanner rung="static-floor" reason="native-runtime-unavailable" />)
     const icon = banner(host)?.querySelector("svg")
@@ -171,7 +152,7 @@ describe("the tint is amber, and it is never red (D-19's rationale on the header
   })
 })
 
-describe("two variants, one sentence (D-14)", () => {
+describe("two variants, one sentence", () => {
   it("the live variant is a `p` in the meta strip's idiom — amber text, no icon", () => {
     const host = mount(
       <RetrievalRungBanner variant="live" rung="static-floor" reason="native-runtime-unavailable" />,
@@ -209,7 +190,7 @@ describe("two variants, one sentence (D-14)", () => {
   })
 })
 
-describe("the run header wires it as a second row, once (D-14)", () => {
+describe("the run header wires it as a second row, once", () => {
   it("renders EXACTLY ONE banner when the durable read carried a warning-class rung", () => {
     const host = mount(
       <MemoryRouter>

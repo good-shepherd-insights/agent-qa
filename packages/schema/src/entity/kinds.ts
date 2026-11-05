@@ -1,20 +1,6 @@
-// The entity kind vocabulary and the `KIND-NNN` short-ID codec (Phase 387, ENTY-01 / D-03).
-//
-// Five kinds, closed, and the closure is load-bearing rather than tidy: a short-ID is a
-// PUBLISHED address that ends up in verdict sentences, receipts and CI logs, so the set of
-// things one can name has to be something a reader can enumerate — not whatever a regex
-// happened to accept that day. Every derived table below is built OVER the one array, and
-// the `satisfies Record<EntityKind, …>` on each of them is what makes "you added a kind and
-// forgot to give it a URI segment" a type error instead of a hole nobody notices until a
-// card renders a broken link.
-//
-// Two address FORMS, not one. Four kinds are ordinal-addressed (`MEM-001`) because their
-// machine ids are opaque digests and word-ids no human would type. `TGT` is slug-addressed
-// (`TGT-checkout`) because a target's machine id ALREADY is the human name the config gave
-// it (D-03) — minting an ordinal for it would invent a second name for something that
-// already had a good one, and every later surface would have to decide which one to print.
+// `TGT` is slug-addressed because its machine id is already the name the config gave it.
 
-/** The complete kind vocabulary (ENTY-01, spec §4.4). Order is the canonical listing order. */
+// Order is the canonical listing order.
 export const ENTITY_KINDS = ['TST', 'RUN', 'MEM', 'POL', 'TGT'] as const
 
 export type EntityKind = (typeof ENTITY_KINDS)[number]
@@ -41,14 +27,7 @@ const SEGMENT_TO_KIND = new Map<string, EntityKind>(
   ENTITY_KINDS.map((kind) => [ENTITY_URI_SEGMENTS[kind], kind]),
 )
 
-/**
- * The kinds whose address body is a config-given slug rather than a minted ordinal (D-03).
- *
- * A table rather than a `kind === 'TGT'` test at each site, because the question "is this
- * one of the irregular kinds" is asked by the codec, the ledger and the resolver, and three
- * copies of a literal is three places a second slug-addressed kind would have to be
- * remembered.
- */
+// A table, so a second slug-addressed kind is added once, not at each site.
 export const SLUG_ADDRESSED_ENTITY_KINDS = {
   TST: false,
   RUN: false,
@@ -61,16 +40,7 @@ export function isSlugAddressedKind(kind: EntityKind): boolean {
   return SLUG_ADDRESSED_ENTITY_KINDS[kind]
 }
 
-/**
- * Ordinals RENDER zero-padded to three digits and PARSE at any width.
- *
- * Asymmetric on purpose. Padding is cosmetic — it makes a column of short-IDs line up and
- * makes `MEM-001` look like an identifier rather than a count — so the printed form is
- * pinned, while a human who typed `MEM-1` from memory gets the entity they meant instead of
- * a refusal that teaches them nothing. An ordinal past 999 simply renders at its natural
- * width; there is no wrap, no reflow, and no renumbering, because renumbering is exactly
- * what D-04 forbids.
- */
+// Ordinals render zero-padded to three digits and parse at any width; ids are never renumbered.
 export const ENTITY_ORDINAL_MIN_DIGITS = 3
 
 /** The first ordinal a kind ever mints. Zero is not an address. */
@@ -83,7 +53,7 @@ export function formatEntityOrdinal(ordinal: number): string {
 /** `MEM-001`. Refuses a slug-addressed kind rather than inventing an ordinal for it. */
 export function formatOrdinalShortId(kind: EntityKind, ordinal: number): string {
   if (isSlugAddressedKind(kind)) {
-    throw new TypeError(`${kind} is slug-addressed (D-03); it has no ordinal short-ID`)
+    throw new TypeError(`${kind} is slug-addressed; it has no ordinal short-ID`)
   }
   if (!Number.isSafeInteger(ordinal) || ordinal < ENTITY_FIRST_ORDINAL) {
     throw new TypeError(`entity ordinals start at ${String(ENTITY_FIRST_ORDINAL)}`)
@@ -94,7 +64,7 @@ export function formatOrdinalShortId(kind: EntityKind, ordinal: number): string 
 /** `TGT-checkout`. Refuses an ordinal-addressed kind for the same reason. */
 export function formatSlugShortId(kind: EntityKind, slug: string): string {
   if (!isSlugAddressedKind(kind)) {
-    throw new TypeError(`${kind} is ordinal-addressed (D-03); it has no slug short-ID`)
+    throw new TypeError(`${kind} is ordinal-addressed; it has no slug short-ID`)
   }
   if (!ENTITY_SLUG_RE.test(slug)) {
     throw new TypeError(`not a well-formed entity slug: ${slug}`)

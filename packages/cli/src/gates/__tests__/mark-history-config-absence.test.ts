@@ -1,5 +1,5 @@
-// 2026-10-03 (quick 261003-lgd, Phase 432 review WR-05): mark history reads on a config that does
-// not load. Its own file because the 423 mutation driver counts 423-feedback-reads.test.ts exactly.
+// Mark history reads on a config that does not load. The history reads on a config that loads are
+// in packages/cli/src/__tests__/mark-preview-history.test.ts.
 
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 
@@ -13,9 +13,8 @@ import { files, markFixture } from './feedback-fixture.js'
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
-describe('mark history on a config that does not load (WR-05)', () => {
-  // A config holding a removed key fails strictly (D-22), and the MCP server deliberately starts on
-  // one. OBSERVED RED on agent-qa 481f0a153: history() rejected with the config's own error.
+describe('mark history on a config that does not load', () => {
+  // A config holding a removed key fails strictly, yet the MCP server starts on one.
   it('answers the changed records not-bound, and the rest of the history renders', async () => {
     const f = markFixture(); roots.push(f.root)
     const marked = await createFeedbackPortForHost(f.deps).mark({ runId: f.handoff.runId, kind: 'false-fail' })

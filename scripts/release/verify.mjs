@@ -1,43 +1,20 @@
 import { execFileSync as defaultExecFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import semver from 'semver'
 import { checkGitTagAbsent as defaultCheckGitTagAbsent } from './git.mjs'
 import { getPublicPackages } from './packages.mjs'
 import { assertTrustedPublishEnvironment as defaultAssertTrustedPublishEnvironment } from './publish.mjs'
-import { checkNpmVersionsAbsent as defaultCheckNpmVersionsAbsent } from './registry.mjs'
+import {
+  checkNpmVersionsAbsent as defaultCheckNpmVersionsAbsent,
+  npmVersionPresent,
+} from './registry.mjs'
 import { discoverStagedRecords, validateStagedPackageManifests as defaultValidateStagedPackageManifests } from './stage-packages.mjs'
 import { assertAllowedBump, assertSharedPublicVersion, computeTargetVersion } from './version.mjs'
 import { validatePosthogReleaseArtifacts as defaultValidatePosthogReleaseArtifacts } from './posthog.mjs'
 
 export const subscriptionAuthPackageName = '@vostride/agent-qa-subscription-auth'
-
-export function buildReleaseGatePlan(bump) {
-  assertAllowedBump(bump)
-  return [
-    'pnpm install --frozen-lockfile',
-    'release preflight',
-    'write shared version',
-    'pnpm typecheck',
-    'pnpm test',
-    'write posthog project key',
-    'pnpm build',
-    'pnpm run validate:skills',
-    'pnpm run validate:agents',
-    'pnpm run validate:publish',
-    'pnpm run validate:tools',
-    'pnpm run validate:arch',
-    'pnpm run validate:safety',
-    'stage packages',
-    'release postbuild verification',
-    'create release commit and tag',
-    'git push',
-    'npm publish',
-    'subscription auth publish',
-    'github release publish',
-    'docker publish',
-  ]
-}
 
 function parsePackOutput(output, packageName) {
   const parsed = JSON.parse(output)
@@ -108,14 +85,91 @@ function readNpmVersion(execFileSync) {
   return execFileSync('npm', ['--version'], { encoding: 'utf8', stdio: 'pipe' }).trim()
 }
 
+function defaultReadTagCommit(version, options = {}) {
+  const execFileSync = options.execFileSync ?? defaultExecFileSync
+  const tag = `v${version}`
+  try {
+    return execFileSync('git', ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}^{commit}`], {
+      cwd: options.rootDir ?? process.cwd(),
+      encoding: 'utf8',
+      stdio: 'pipe',
+    }).trim()
+  } catch (error) {
+    if (error.status === 1) throw new Error(`git tag is missing: ${tag}`)
+    throw new Error(`could not read git tag: ${tag}`)
+  }
+}
+
+function defaultReadHeadCommit(options = {}) {
+  const execFileSync = options.execFileSync ?? defaultExecFileSync
+  return execFileSync('git', ['rev-parse', 'HEAD'], {
+    cwd: options.rootDir ?? process.cwd(),
+    encoding: 'utf8',
+    stdio: 'pipe',
+  }).trim()
+}
+
+async function runResumeVerification(options, rootDir, env) {
+  const targetVersion = options.targetVersion
+  if (!targetVersion) throw new Error('missing resume --target-version')
+  if (semver.valid(targetVersion) !== targetVersion || !targetVersion.startsWith('0.')) {
+    throw new Error(`invalid resume version: ${targetVersion} (expected 0.x semver)`)
+  }
+  const tag = `v${targetVersion}`
+  // npm provenance names the run's ref and GITHUB_SHA, so both must be the tag being published.
+  const dispatch = `gh workflow run release.yml --ref ${tag} -f npm_target_version=${targetVersion}`
+  if (env.GITHUB_REF !== `refs/tags/${tag}`) {
+    throw new Error(
+      `a resume runs on refs/tags/${tag}, not ${env.GITHUB_REF || 'an unset GITHUB_REF'}; dispatch it with: ${dispatch}`,
+    )
+  }
+  const readerOptions = { ...options, rootDir }
+  const readTagCommit = options.readTagCommit ?? defaultReadTagCommit
+  const readHeadCommit = options.readHeadCommit ?? defaultReadHeadCommit
+  const tagCommit = await readTagCommit(targetVersion, readerOptions)
+  const headCommit = await readHeadCommit(readerOptions)
+  if (!tagCommit || tagCommit !== headCommit) throw new Error(`HEAD is not the commit of ${tag}`)
+  if (env.GITHUB_SHA !== tagCommit) {
+    throw new Error(
+      `a resume runs on ${tag}'s commit ${tagCommit}, not GITHUB_SHA ${env.GITHUB_SHA || '(unset)'}; dispatch it with: ${dispatch}`,
+    )
+  }
+  const packageVersion = assertSharedPublicVersion(getPublicPackages({ rootDir }))
+  if (packageVersion !== targetVersion) {
+    throw new Error(`public package version ${packageVersion} does not match ${targetVersion}`)
+  }
+  const isNpmVersionPresent =
+    options.isNpmVersionPresent ??
+    ((name, version) => npmVersionPresent(name, version, { execFileSync: options.execFileSync }))
+  const subscriptionAuthOnNpm = isNpmVersionPresent(subscriptionAuthPackageName, targetVersion)
+  const log = options.log ?? console.log
+  if (subscriptionAuthOnNpm) {
+    log(`already on npm: ${subscriptionAuthPackageName}@${targetVersion}, so its release is skipped`)
+  }
+  if (env.GITHUB_OUTPUT) {
+    appendFileSync(
+      env.GITHUB_OUTPUT,
+      `version=${targetVersion}\nsubscription_auth_on_npm=${subscriptionAuthOnNpm}\n`,
+      'utf8',
+    )
+  }
+  return { targetVersion, subscriptionAuthOnNpm }
+}
+
 export async function runReleaseVerification(options = {}) {
   const stage = options.stage
   const bump = options.bump
   const rootDir = options.rootDir ?? process.cwd()
   const env = options.env ?? process.env
+  if (stage === 'resume') return runResumeVerification(options, rootDir, env)
   assertAllowedBump(bump)
 
   if (stage === 'preflight') {
+    if (String(env.GITHUB_REF ?? '').startsWith('refs/tags/')) {
+      throw new Error(
+        `a full release pushes its commit to the branch it runs on, so it cannot run on ${env.GITHUB_REF}; dispatch it on a branch, or set npm_target_version to finish publishing a version from its tag`,
+      )
+    }
     if (!env.POSTHOG_PROJECT_KEY?.trim()) throw new Error('POSTHOG_PROJECT_KEY is required')
     const records = getPublicPackages({ rootDir })
     const currentVersion = assertSharedPublicVersion(records)
@@ -189,6 +243,11 @@ export function parseReleaseArgs(argv = []) {
     } else {
       throw new Error(`invalid args: ${argv.join(' ')}`)
     }
+  }
+  if (stage === 'resume') {
+    if (bump || stagedDir) throw new Error('invalid args: resume accepts only --target-version')
+    if (!targetVersion) throw new Error('missing --target-version')
+    return { stage, targetVersion }
   }
   if (!bump) throw new Error('missing --bump')
   assertAllowedBump(bump)

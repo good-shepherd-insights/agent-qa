@@ -1,10 +1,4 @@
-// Secret machinery for the runner-owned step-execution loop (Phase 353, D-02).
-// CRITICAL: provider-neutral + storage-neutral. No node:* imports, no fs/sharp,
-// no model/core/adapter package imports. Moved byte-equivalently from
-// core/src/agent/secrets.ts — this is the cache-poisoning guard (Information-
-// disclosure control): the `[secret:*]` marker regex and template resolution must
-// not change behavior. `parseEnvFile` is inlined locally (was the
-// module's only cross-package import) to keep runner self-contained and pure.
+// The `[secret:*]` marker regex and template resolution guard against cache poisoning.
 
 import type { SecretRedactorPort, SecretResolver } from './ports.js'
 
@@ -45,9 +39,7 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-// Inlined from core variables.ts:parseEnvFile — pure string parsing, kept local so
-// the runner secret store has no cross-package import (storageNeutral).
-// 2026-10-14 (441-01, D-03): an ordered list, because an object would put integer-like names first.
+// An ordered list, because an object would put integer-like names first.
 function parseSecretEnvFile(content: string): Array<[string, string]> {
   const result = new Map<string, string>()
   for (const rawLine of content.split('\n')) {
@@ -180,10 +172,7 @@ export function redactSecretValue<T>(value: T, redactor?: SecretRedactorPort): T
   return value
 }
 
-/**
- * The cached-plan invalidation predicate (loop cache-poisoning guard): returns true
- * when a value contains a redacted `[secret:*]` marker. Moved from core loop.ts.
- */
+// A redacted `[secret:*]` marker invalidates a cached plan, so a redaction cannot poison it.
 export function containsRedactedSecretMarker(value: unknown): boolean {
   if (typeof value === 'string') return REDACTED_SECRET_MARKER_RE.test(value)
   if (Array.isArray(value)) return value.some((item) => containsRedactedSecretMarker(item))

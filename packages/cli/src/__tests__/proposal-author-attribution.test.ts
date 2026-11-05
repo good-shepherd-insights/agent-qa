@@ -1,25 +1,4 @@
-// Who a config-apply commit says proposed it (Phase 400 plan 05, DASH-01).
-//
-// 2026-09-30, 432-11 D-05: no door mints a config proposal any more — the config operations write
-// in the call. The apply path still read the records already on disk until 432-16/17.
-//
-// 2026-10-01, 432-16 D-07: agent-qa MAKES NO GIT COMMITS, so there is no author to attribute. The
-// one-commit config apply, its human-first preserve commit, the `Agent-QA-Proposal:` trailer and
-// the per-surface author map are deleted, and the CLI host binds no config apply port. The cells
-// that read the author off `git log` are re-spelled as the claim that replaces them: a config
-// change from every door — the co-hosted MCP endpoint included — writes the file and leaves HEAD,
-// the index and the history where they were, and a pre-432 record handed to the old accept verb
-// is refused by name without touching the file or the history.
-//
-// 430-REVIEW WR-01 IS CLOSED BY DELETION. It was a config proposal minted over the co-hosted MCP
-// endpoint committing under an unrecorded surface: the dashboard's composition supplied no minting
-// surface, so the commit's author read `unrecorded` although a known door had asked. The comment
-// this file used to carry beside cell (1) said stored `origin.surface: 'dashboard'` values came
-// only from dashboard-chat proposals; that was wrong, since co-hosted MCP proposals reached the same
-// composition with no surface at all. Neither kind of record is applied or attributed now.
-//
-// MODEL-FREE. `chatModel` is unsupplied on every composition here, which is the shipped headless
-// posture rather than a stub — `config.field.set` is a deterministic op and reaches no provider.
+// No git commits, so a config change from every door writes the file and moves no ref.
 
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -37,20 +16,17 @@ import { composeDashboardDoor } from '../commands/dashboard.js'
 import { MCP_FUNCTION_CALLER } from '../commands/mcp.js'
 import * as cliHost from '../composition/local-agent-host.js'
 import { composeCliLocalAgent, CLI_FUNCTION_CALLER } from '../composition/local-agent-host.js'
-import { filePre432ConfigProposal } from '../composition/__tests__/pre-432-config-proposal.js'
+import { fileLeftoverConfigProposal } from '../composition/__tests__/leftover-config-proposal.js'
 import { markFixture } from '../gates/__tests__/feedback-fixture.js'
 import { SURFACE_ROSTER } from './conformance/roster.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
-/** The chat door's caller surface (`CHAT_SURFACE` until 432-17 deleted it with `mintingSurface`). */
+// The chat door's caller surface.
 const CHAT_SURFACE = 'chat'
 const PACKAGES_ROOT = join(HERE, '..', '..', '..')
 
-/**
- * A pre-432 config proposal's bytes, as the shipped propose path wrote them at commit `b87b4f48`
- * (plan 400-05). No `surface` is recorded in its origin.
- */
+// An older config proposal's bytes, with no `surface` in its origin.
 const LEGACY_FIXTURE = join(HERE, 'fixtures', 'legacy-config-proposal.json')
 
 /** `config-apply-discipline.test.ts`'s seed, so the legacy record's `baseDigest` matches it. */
@@ -145,11 +121,7 @@ interface Door {
   }
 }
 
-/**
- * The doors a config change arrives through. The co-hosted MCP endpoint is the dashboard door's
- * own registry (`composeDashboardDoor`, which `mountCoHostedMcp` serves) called by an MCP caller;
- * that composition supplies no minting surface, which is the WR-01 arrangement.
- */
+// The doors a config change arrives through; co-hosted MCP serves the dashboard registry.
 const DOORS: readonly Door[] = [
   {
     name: 'cli',
@@ -169,8 +141,7 @@ const DOORS: readonly Door[] = [
   },
   {
     name: 'mcp',
-    // 432-21 (D-12): the one tokenless MCP caller. 2026-10-02 (432-39): the legacy full scope set it
-    // carried is deleted with the caller field; nothing read it.
+    // The one tokenless MCP caller.
     caller: MCP_FUNCTION_CALLER,
     compose: (workspace) => composeCliLocalAgent({
       agentQaRoot: workspace.agentQaRoot,
@@ -179,8 +150,7 @@ const DOORS: readonly Door[] = [
   },
   {
     name: 'co-hosted mcp',
-    // 432-21 (D-12): the one tokenless MCP caller. 2026-10-02 (432-39): the legacy full scope set it
-    // carried is deleted with the caller field; nothing read it.
+    // The one tokenless MCP caller.
     caller: MCP_FUNCTION_CALLER,
     compose: (workspace) => composeDashboardDoor({
       agentQaRoot: workspace.agentQaRoot,
@@ -201,8 +171,8 @@ async function changeStep(door: Door, workspace: Workspace): Promise<{ outcome: 
   }
 }
 
-/** The pre-432 accept, from the host where a person used to accept proposals. */
-async function acceptPre432(workspace: Workspace, proposalId: string): Promise<unknown> {
+/** The legacy accept, from the host where a person accepted proposals. */
+async function acceptLeftover(workspace: Workspace, proposalId: string): Promise<unknown> {
   const host = composeCliLocalAgent({
     agentQaRoot: workspace.agentQaRoot,
     configPath: workspace.configPath,
@@ -262,8 +232,8 @@ function readdirSorted(dir: string): Dirent[] {
   return readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))
 }
 
-describe('C432-NO-GIT-COMMIT: a config change has no author because it makes no commit (D-07)', () => {
-  it('C432-NO-GIT-COMMIT: the CLI host exports no commit, preserve-commit, trailer or author machinery', () => {
+describe('a config change has no author because it makes no commit', () => {
+  it('the CLI host exports no commit, preserve-commit, trailer or author machinery', () => {
     const exported = Object.keys(cliHost)
     for (const name of [
       'applyConfigProposalAsOneCommit',
@@ -292,7 +262,7 @@ describe('C432-NO-GIT-COMMIT: a config change has no author because it makes no 
     expect(exported).toContain('publishAuthoredTest')
   })
 
-  it('C432-NO-GIT-COMMIT: no product source passes git a commit, add or update-index argv', () => {
+  it('no product source passes git a commit, add or update-index argv', () => {
     // The matcher sees the shapes the deleted apply used, and not the drain's stage name.
     expect(GIT_HISTORY_ARGV.test("['commit', '--quiet', '-m', message, '--', targetPath]")).toBe(true)
     expect(GIT_HISTORY_ARGV.test("'commit', '--quiet', '-m', message,")).toBe(true)
@@ -305,7 +275,7 @@ describe('C432-NO-GIT-COMMIT: a config change has no author because it makes no 
   })
 
   it.each(DOORS.map((door) => [door.name, door] as const))(
-    'C432-NO-GIT-COMMIT: a config change over the %s door writes the file and leaves HEAD, the index and the history alone',
+    'a config change over the %s door writes the file and leaves HEAD, the index and the history alone',
     async (_name, door) => {
       const workspace = seedWorkspace()
       const before = repositoryState(workspace)
@@ -321,7 +291,7 @@ describe('C432-NO-GIT-COMMIT: a config change has no author because it makes no 
     },
   )
 
-  it('C432-NO-GIT-COMMIT: a config change lands in a dirty tree and in a directory with no repository', async () => {
+  it('a config change lands in a dirty tree and in a directory with no repository', async () => {
     const dirty = seedWorkspace()
     writeFileSync(join(dirty.root, 'notes.md'), 'a person\'s own work\n')
     writeFileSync(join(dirty.root, '.gitignore'), '.agent-qa/\nagent-qa-knowledge/\n# edited\n')
@@ -338,10 +308,9 @@ describe('C432-NO-GIT-COMMIT: a config change has no author because it makes no 
   })
 })
 
-// 432-16 task 2: the other two publications D-07 names — an authored test and a mark's fix — and
-// the retry edge of a config change, each read back off git.
-describe('C432-NO-GIT-COMMIT: every publication leaves the history alone (D-04, D-06, D-07)', () => {
-  it('C432-NO-GIT-COMMIT: a mark lands its gold, evidence and knowledge fix and leaves HEAD, the index and the history alone', async () => {
+// An authored test, a mark's fix and a config change's retry, each read back off git.
+describe('every publication leaves the history alone', () => {
+  it('a mark lands its gold, evidence and knowledge fix and leaves HEAD, the index and the history alone', async () => {
     const f = markFixture()
     roots.push(f.root)
     const git = (...args: string[]): string => execFileSync('git', args, { cwd: f.root, encoding: 'utf8' })
@@ -384,7 +353,7 @@ describe('C432-NO-GIT-COMMIT: every publication leaves the history alone (D-04, 
     expect(git('log', '--format=%an <%ae>')).not.toContain('agent-qa')
   })
 
-  it('C432-NO-GIT-COMMIT: an authored test is written to its target and leaves HEAD, the index and the history alone', () => {
+  it('an authored test is written to its target and leaves HEAD, the index and the history alone', () => {
     const workspace = seedWorkspace()
     mkdirSync(join(workspace.root, 'tests', '.agent-qa-drafts'), { recursive: true })
     writeFileSync(join(workspace.root, 'tests', '.agent-qa-drafts', 'draft.yaml'), 'name: a drafted test\n')
@@ -399,7 +368,7 @@ describe('C432-NO-GIT-COMMIT: every publication leaves the history alone (D-04, 
     expect(workspace.git('status', '--porcelain', '--', 'tests/drafted.yaml').trim()).toBe('?? tests/drafted.yaml')
   })
 
-  it('C432-NO-GIT-COMMIT: retrying the same config change answers no-change and still commits nothing', async () => {
+  it('retrying the same config change answers no-change and still commits nothing', async () => {
     const workspace = seedWorkspace()
     const before = repositoryState(workspace)
     const door = DOORS[0] as Door
@@ -413,12 +382,8 @@ describe('C432-NO-GIT-COMMIT: every publication leaves the history alone (D-04, 
   })
 })
 
-describe('a pre-432 config record is never applied or committed (D-07, D-22)', () => {
-  // RE-SPELLED 2026-10-01 (432-16): cells (1)-(4) accepted a stored record and read its author off
-  // `git log` — a dashboard-surfaced record (1), a chat-minted one (2), an unrecognised surface (4)
-  // and a legacy record with none (3). The CLI host binds no config apply port now, so each of them
-  // is refused by name before any file or ref moves. 432-17 deleted the accept verb itself, so the
-  // refusal is now `UnknownFunctionError` rather than `FunctionNotBoundError`, and still nothing moves.
+describe('an older config record is never applied or committed', () => {
+  // No config apply port or accept verb, so an older record is refused by name; nothing moves.
   const LEGACY_RECORD = JSON.parse(readFileSync(LEGACY_FIXTURE, 'utf8')) as {
     id: string
     origin: Record<string, unknown>
@@ -439,7 +404,7 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
     ['(1) a dashboard-surfaced record', 'dashboard'],
     ['(3) a legacy record with no surface', undefined],
     ['(4) a record naming a surface this build does not know', 'voice> <someone-else@example.invalid'],
-  ] as const)('C432-NO-GIT-COMMIT: %s is refused as unknown, and the file and history stay put',
+  ] as const)('%s is refused as unknown, and the file and history stay put',
     async (_label, surface) => {
       const workspace = seedWorkspace()
       const id = plantLegacy(workspace, surface)
@@ -449,7 +414,7 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
 
       vi.useFakeTimers({ toFake: ['Date'], now: Number(LEGACY_RECORD.origin.at) + 1 })
       try {
-        await expect(acceptPre432(workspace, id)).rejects.toMatchObject({ name: 'UnknownFunctionError' })
+        await expect(acceptLeftover(workspace, id)).rejects.toMatchObject({ name: 'UnknownFunctionError' })
       } finally {
         vi.useRealTimers()
       }
@@ -459,9 +424,9 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
       expect(workspace.git('status', '--porcelain').trim()).toBe('')
     })
 
-  it('C432-NO-GIT-COMMIT: (2) a chat-minted record is refused as unknown, and the file and history stay put', async () => {
+  it('(2) a chat-minted record is refused as unknown, and the file and history stay put', async () => {
     const workspace = seedWorkspace()
-    const { proposalId } = await filePre432ConfigProposal({
+    const { proposalId } = await fileLeftoverConfigProposal({
       configPath: workspace.configPath,
       agentQaRoot: workspace.agentQaRoot,
       edits: [{ path: 'use.timeout.step', value: '45s' }],
@@ -469,24 +434,22 @@ describe('a pre-432 config record is never applied or committed (D-07, D-22)', (
     })
     const before = repositoryState(workspace)
 
-    await expect(acceptPre432(workspace, proposalId)).rejects.toMatchObject({ name: 'UnknownFunctionError' })
+    await expect(acceptLeftover(workspace, proposalId)).rejects.toMatchObject({ name: 'UnknownFunctionError' })
 
     expect(readFileSync(workspace.configPath, 'utf8')).toBe(SEEDED_CONFIG)
     expect(repositoryState(workspace)).toEqual(before)
   })
 })
 
-describe('no door supplies a minting surface (432-17, D-05)', () => {
+describe('no door supplies a minting surface', () => {
   it('(5) no rostered door supplies a minting surface — the census, over the roster itself', () => {
-    // RE-SPELLED 2026-10-01 (432-17): `mintingSurface` stamped the proposal records the inbox held,
-    // and is deleted with them. The census now proves no door module still supplies one.
+    // The census proves no door module supplies a minting surface.
     const MODULE_FOR_DOOR: Readonly<Record<string, string>> = {
       chat: 'chat.ts',
       mcp: 'mcp.ts',
       fn: 'fn.ts',
     }
-    // 432-21 (D-12): the run-service door's exemption was its least-privilege scope list, deleted
-    // with its tokens. It is exempt because it has no change route at all — it starts and reads runs.
+    // The run-service door is exempt because it has no change route: it starts and reads runs.
     const CANNOT_MINT: Readonly<Record<string, string>> = {
       'run-service': 'no change route: the door starts runs and reads them',
     }

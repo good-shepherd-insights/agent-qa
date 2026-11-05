@@ -14,12 +14,15 @@ import {
   type ColumnDef,
   type OnChangeFn,
   type SortingState,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  useReactTable,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_text,
+  tableFeatures,
+  useTable,
 } from "@tanstack/react-table"
-import { ArrowUpDown, ChevronDown, ChevronRight, Plus, SlidersHorizontal, Trash2 } from "lucide-react"
+import { ArrowUpDown, ChevronDown, ChevronRight, Plus, SlidersHorizontal, Trash } from "lucide-react"
 
 import { ElapsedTimer } from "@/components/elapsed-timer"
 import { Badge } from "@/components/ui/badge"
@@ -78,7 +81,7 @@ const COLUMN_WIDTHS: Partial<Record<string, string>> = {
   createdAt: "128px",
 }
 
-// 2026-10-17 (444-16, D-05): Attributes hides when the table's scroll wrapper is under 1200px.
+// Attributes hides when the table's scroll wrapper is under 1200px.
 const HIDDEN_WHEN_NARROW = "@max-[1200px]/runs:hidden"
 
 const INTERNAL_ATTRIBUTE_ORDER = ["agent-qa.trigger", "agent-qa.runner"]
@@ -96,7 +99,7 @@ function formatTarget(run: RunRow) {
 }
 
 function isSuiteParent(run: RunRow) {
-  return run.suiteId != null && run.parentRunId == null
+  return run.suiteId != null
 }
 
 function sortAttributeEntries(
@@ -397,7 +400,7 @@ function AttributeFilterControl({
                     aria-label={`Remove ${predicate.key} filter`}
                     onClick={() => removeFilter(index)}
                   >
-                    <Trash2 className="size-3.5" />
+                    <Trash className="size-3.5" />
                   </Button>
                 </div>
               ))}
@@ -418,11 +421,17 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+const runsTableFeatures = tableFeatures({
+  rowSortingFeature,
+  sortedRowModel: createSortedRowModel(),
+  sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text },
+})
+
 function CompactSortableHeader({
   column,
   label,
 }: {
-  column: Column<RunRow, unknown>
+  column: Column<typeof runsTableFeatures, RunRow, unknown>
   label: string
 }) {
   return (
@@ -442,7 +451,7 @@ function CompactSortableHeader({
   )
 }
 
-const columns: ColumnDef<RunRow>[] = [
+const columns: ColumnDef<typeof runsTableFeatures, RunRow>[] = [
   {
     accessorKey: "status",
     header: ({ column }) => (
@@ -667,7 +676,7 @@ export function RunsTable({
   const sorting = sortingProp ?? localSorting
   const handleSortingChange = onSortingChangeProp ?? setLocalSorting
 
-  const selectColumn: ColumnDef<RunRow> = {
+  const selectColumn: ColumnDef<typeof runsTableFeatures, RunRow> = {
     id: "select",
     header: ({ table: t }) => (
       <div className="flex items-center justify-center">
@@ -692,12 +701,11 @@ export function RunsTable({
     ...columns,
   ]
 
-  const table = useReactTable({
+  const table = useTable({
+    features: runsTableFeatures,
     data: runs,
     columns: allColumns,
     getRowId: (row) => row.id,
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
     onSortingChange: handleSortingChange,
     state: {
       sorting,

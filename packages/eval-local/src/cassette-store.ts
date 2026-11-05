@@ -1,15 +1,4 @@
-// Filesystem cassette bundle store (Phase 367, D-05/D-06/D-07).
-//
-// Owns the storageImplementation write leg behind eval's in-memory ExtractedCassette contract.
-// Each deterministic bundle is recreated in full before publication:
-//
-//   <output-root>/<slugged cassette id segments>/
-//   ├── cassette.json
-//   └── blobs/<verified lowercase 64-hex sha>
-//
-// Every id segment delegates to schema's security-reviewed slugBranch sanitizer. Blob names are
-// validated and their bytes are hashed with node:crypto before path use; corrupt copy-in degrades
-// completeness loudly instead of publishing bytes under an untrue content address.
+// Blob names are validated and hashed before path use; corrupt copy-in degrades completeness.
 
 import { createHash } from 'node:crypto'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -32,8 +21,6 @@ const BLOB_SHA_RE = /^[0-9a-f]{64}$/
 export interface FsCassetteStoreConfig {
   /** Runtime root (normally the workdir's `.agent-qa` directory). */
   root: string
-  /** Optional retargeted root used by later committed-corpus composition. */
-  outputDir?: string
 }
 
 export interface WrittenCassette {
@@ -69,7 +56,7 @@ export class FsCassetteStore {
   private readonly outputRoot: string
 
   constructor(config: FsCassetteStoreConfig) {
-    this.outputRoot = config.outputDir ?? join(config.root, DEFAULT_EVAL_CASSETTES_SUBDIR)
+    this.outputRoot = join(config.root, DEFAULT_EVAL_CASSETTES_SUBDIR)
   }
 
   write(extracted: ExtractedCassette): WrittenCassette {

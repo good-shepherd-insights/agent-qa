@@ -1,15 +1,4 @@
-// THE FAILURE VIEW'S PURE PROJECTION (406-01 · DETL-04, D-05 / D-10; 406-06 · D-08..D-11 / D-19).
-//
-// The page composes no sentence. Everything a member's block shows is a byte-identical copy of an
-// `analysis.get` `sentences[].sentence`, joined to the member by `perTest`, with a provenance label
-// this product owns. These cells pin exactly that: the join key, the totality of the map over an
-// absent or empty analysis, and the two provenance readings.
-//
-// AND THE LIFECYCLE IS KEYED OFF THE CHIP WORD, NEVER OFF THE TEXT (406-06 · D-09/D-11). The
-// marker cells below include a PAIR — one sentence carrying the deterministic floor's own
-// "root cause undetermined" wording, one carrying none — and require the SAME marker for both. A
-// projection that sniffed the sentence for fallback words would pass every other cell in this file
-// and fail that pair, which is the whole reason it is written as a pair.
+// The page composes no sentence; the marker is keyed off the chip word, never the sentence text.
 
 import { describe, expect, it } from 'vitest'
 import type {
@@ -24,15 +13,8 @@ import {
   DETERMINISTIC_FALLBACK_LABEL,
   LLM_VERDICT_LABEL,
   MEMORY_ON_PATH_NONE_TEXT,
-  MEMORY_ON_PATH_NOT_RECORDED_TEXT,
-  MISDIRECTION_DECLARED_ONLY_TEXT,
-  MISDIRECTION_HELD_TEXT,
-  MISDIRECTION_NOT_RECORDED_TEXT,
-  MISDIRECTION_UNRESOLVED_TEXT,
   markerFor,
   memoryOnPathLine,
-  misdirectionAttributionLine,
-  misdirectionUnbackedLine,
   missingEvidenceLine,
   projectAnalysisView,
   provenanceLabel,
@@ -41,7 +23,7 @@ import {
 
 function analysis(over: Partial<AnalysisGetOutput> = {}): AnalysisGetOutput {
   return {
-    runId: 'run-406',
+    runId: 'run-analysis',
     verdicts: [],
     sentences: [],
     clusters: [],
@@ -70,7 +52,7 @@ function cluster(members: number[], over: Partial<AnalysisClusterView> = {}): An
   }
 }
 
-describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () => {
+describe('projectAnalysisView joins verdicts to members by perTest', () => {
   it('joins by perTest and NEVER by array position — verdicts listed out of order', () => {
     const view = projectAnalysisView(
       analysis({
@@ -104,11 +86,7 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
   })
 
   it('keys a verdict whose sentence never arrived, and drops a sentence with no verdict', () => {
-    // 406-06 SUPERSEDES 406-01 HERE, and the plan says so in as many words. The verdict is what
-    // carries `producer`, `confidence` and — through the chip — the marker; withholding the whole
-    // entry because the renderer had not answered yet would withhold the provenance chip and the
-    // "analysis running" marker too, which are exactly what a reader needs while it has not.
-    // A SENTENCE with no verdict stays dropped: there is no producer to attribute it to.
+    // A verdict without a rendered sentence still shows; a sentence with no verdict stays dropped.
     const view = projectAnalysisView(
       analysis({
         verdicts: [verdict(0)],
@@ -123,7 +101,7 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
     expect(view.get(4), 'a sentence nobody graded is not a block').toBeUndefined()
   })
 
-  it("reads provenance from the verdict's own producer and confidence (D-10)", () => {
+  it("reads provenance from the verdict's own producer and confidence", () => {
     expect(provenanceLabel('analyze-run', 0.86)).toBe(`${LLM_VERDICT_LABEL} · 0.86`)
     expect(provenanceLabel('analyze-run', 1)).toBe(`${LLM_VERDICT_LABEL} · 1.00`)
     // The classifier's confidence is 0 by construction on the floor, and printing "· 0.00" beside
@@ -141,7 +119,7 @@ describe('projectAnalysisView joins verdicts to members by perTest (D-05)', () =
   })
 })
 
-describe('the marker is the chip word and nothing else (D-09/D-11)', () => {
+describe('the marker is the chip word and nothing else', () => {
   it('maps every chip word — pending and running provisional, failed failed, complete nothing', () => {
     expect(markerFor('pending')).toBe('provisional')
     expect(markerFor('running')).toBe('provisional')
@@ -193,7 +171,7 @@ describe('the marker is the chip word and nothing else (D-09/D-11)', () => {
   })
 })
 
-describe('clusters render as a per-member sibling line (D-08)', () => {
+describe('clusters render as a per-member sibling line', () => {
   it('excludes self, keeps the producer order, and reads the plural line', () => {
     const view = projectAnalysisView(
       analysis({
@@ -254,7 +232,7 @@ describe('clusters render as a per-member sibling line (D-08)', () => {
   })
 })
 
-describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)', () => {
+describe('cited evidence rides the verdict, and absence is counted', () => {
   it('forwards citedSteps verbatim and answers an empty list when the op sent no evidence', () => {
     const view = projectAnalysisView(
       analysis({
@@ -271,14 +249,13 @@ describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)',
     )
 
     expect(view.get(0)?.citedSteps).toEqual([2, 3])
-    expect(view.get(1)?.citedSteps, 'a reader compiled before 406 sent nothing').toEqual([])
+    expect(view.get(1)?.citedSteps, 'an older reader sent nothing').toEqual([])
     expect(view.get(1)?.citedArtifacts).toEqual([])
     expect(view.get(1)?.missingEvidence).toBeUndefined()
   })
 
   it('marks a ref incomplete from EITHER absence fact, and never from presence-unknown', () => {
-    // `present` ABSENT IS NOT `present: false` (406-03). A host that cannot stat its blobs omits
-    // the key, and rendering that as a claimed absence would invent a deletion nobody measured.
+    // An absent `present` is not `present: false`: a host that cannot stat its blobs omits the key.
     const view = projectAnalysisView(
       analysis({
         verdicts: [
@@ -329,178 +306,48 @@ describe('cited evidence rides the verdict, and absence is counted (D-01/D-19)',
     expect(view.get(0)?.missingEvidenceText).toBeUndefined()
   })
 
-  it('says "cited artifact" in the singular and "cited artifacts" in the plural (D-19)', () => {
+  it('says "cited artifact" in the singular and "cited artifacts" in the plural', () => {
     expect(missingEvidenceLine({ missing: 1, total: 1 })).toBe('1 of 1 cited artifact unavailable')
     expect(missingEvidenceLine({ missing: 1, total: 2 })).toBe('1 of 2 cited artifacts unavailable')
     expect(missingEvidenceLine({ missing: 3, total: 3 })).toBe('3 of 3 cited artifacts unavailable')
   })
 })
 
-// ── 422 D-17/D-19/D-20: THE CIRCULARITY EVIDENCE, AS THE FAILURE VIEW READS IT.
-//
-// THREE UPSTREAM SOURCES ARE DELIBERATELY THREE-VALUED AND A UI IS WHERE THEY GET FLATTENED.
-// 422-15's guard can be stamped, absent or refused; 422-12's readers keep absent distinct from
-// empty at every boundary; 422-17 established that a guard backed by the fail-closed `eval-root`
-// posture must NOT be presented as `declared-only`. A badge reading "ruled out" over evidence that
-// was never produced is the failure these cells exist to prevent, and #427 makes it the live case
-// rather than a hypothetical: no composition binds the posture reader, so every gated run today
-// resolves fail-closed.
-//
-// AND THE WHOLE ADDITION IS ADDITIVE. The last cell in this block hands the projection the same
-// bytes a pre-422 run serves and requires NO evidence member at all — a historical failure view
-// paints exactly what it painted before.
+describe('the projection lists the records a verdict declared on its failing path', () => {
+  const CANDIDATE = 'rec_cand_0001'
+  const CANARY = 'rec_canary_01'
 
-describe('the projection reads circularity evidence and invents none (422 D-17/D-19/D-20)', () => {
-  const HELD = 'rec_held_0001'
-  const FLIPPED = 'rec_flipped_01'
-
-  function withMisdirection(misdirection: AnalysisResolvedVerdict['misdirection']) {
+  function withMemoryOnPath(memoryOnPath: AnalysisResolvedVerdict['memoryOnPath']) {
     return projectAnalysisView(
       analysis({
-        verdicts: [verdict(0, misdirection === undefined ? {} : { misdirection })],
+        verdicts: [verdict(0, memoryOnPath === undefined ? {} : { memoryOnPath })],
         sentences: [{ perTest: 0, testId: 't_0', sentence: 'observed (step 0): "boom"' }],
       }),
       'complete',
-    ).get(0)?.misdirectionEvidence
+    ).get(0)?.memoryOnPath
   }
 
-  it('reads an all-HELD ledger as cross-check held, and names no causal record', () => {
-    const evidence = withMisdirection({
-      state: 'measured',
-      crossCheck: 'held',
-      results: [{ recordId: HELD, crossCheck: 'held' }],
-      memoryOnPath: [{ recordId: HELD, trust: 'candidate' }],
-    })
+  it('carries every declared record with its trust word and counts them', () => {
+    const view = withMemoryOnPath([
+      { recordId: CANDIDATE, trust: 'candidate' },
+      { recordId: CANARY, trust: 'candidate' },
+    ])
 
-    expect(evidence?.state).toBe('held')
-    expect(evidence?.text).toBe(MISDIRECTION_HELD_TEXT)
-    expect(evidence?.causalRecords, 'nothing flipped, so nothing is attributed').toEqual([])
-    expect(evidence?.onPath).toEqual([{ recordId: HELD, trust: 'candidate' }])
-    expect(evidence?.onPathText).toBe(memoryOnPathLine(1))
+    expect(view?.onPath).toEqual([
+      { recordId: CANDIDATE, trust: 'candidate' },
+      { recordId: CANARY, trust: 'candidate' },
+    ])
+    expect(view?.onPathText).toBe(memoryOnPathLine(2))
   })
 
-  it('names the FLIPPED records as the causal attribution, apart from every exposed record', () => {
-    const evidence = withMisdirection({
-      state: 'measured',
-      crossCheck: 'flipped',
-      results: [
-        { recordId: HELD, crossCheck: 'held' },
-        { recordId: FLIPPED, crossCheck: 'flipped' },
-      ],
-      memoryOnPath: [
-        { recordId: HELD, trust: 'candidate' },
-        { recordId: FLIPPED, trust: 'low-trust-active' },
-      ],
-    })
+  it('reads an empty declaration as none declared', () => {
+    const view = withMemoryOnPath([])
 
-    expect(evidence?.state).toBe('flipped')
-    expect(evidence?.text).toBe(misdirectionAttributionLine(1))
-    // THE TWO SETS ARE DIFFERENT SETS. Causal names what the cross-check FLIPPED; on-path names
-    // every low-trust record the run put in front of this member. Folding them would attribute the
-    // failure to a record whose check HELD.
-    expect(evidence?.causalRecords).toEqual([FLIPPED])
-    expect(evidence?.onPath?.map((entry) => entry.recordId)).toEqual([HELD, FLIPPED])
+    expect(view?.onPath).toEqual([])
+    expect(view?.onPathText).toBe(MEMORY_ON_PATH_NONE_TEXT)
   })
 
-  it('refuses to soften a flipped ROW under a block word that says held', () => {
-    const evidence = withMisdirection({
-      state: 'measured',
-      crossCheck: 'held',
-      results: [{ recordId: FLIPPED, crossCheck: 'flipped' }],
-    })
-
-    expect(evidence?.state, 'the row wins, in the safe direction only').toBe('flipped')
-    expect(evidence?.causalRecords).toEqual([FLIPPED])
-  })
-
-  it('retains every result and unresolved reason when another record flipped', () => {
-    const results = [
-      { recordId: HELD, crossCheck: 'held' as const },
-      { recordId: FLIPPED, crossCheck: 'flipped' as const },
-      { recordId: 'rec_capped', crossCheck: 'not-run' as const, reason: 'cap-exceeded' as const },
-      { recordId: 'rec_interrupted', crossCheck: 'inconclusive' as const, reason: 'interrupted' as const },
-    ]
-    const evidence = withMisdirection({ state: 'measured', crossCheck: 'flipped', results })
-
-    expect(evidence?.results, 'an aggregate attribution must not discard other recorded outcomes')
-      .toEqual(results)
-    expect(evidence?.state).toBe('flipped')
-    expect(evidence?.causalRecords).toEqual([FLIPPED])
-    expect(evidence?.onPath, 'the ledger does not invent an exposure declaration').toBeUndefined()
-    expect(withMisdirection({ state: 'not-recorded' })?.results).toBeUndefined()
-    expect(withMisdirection({ state: 'declared-only', crossCheck: 'not-run', results: [] })?.results)
-      .toEqual([])
-  })
-
-  it('renders the D-19 declared-only backing as its own state, never as a measurement', () => {
-    const evidence = withMisdirection({
-      state: 'declared-only',
-      crossCheck: 'not-run',
-      results: [],
-      backing: 'declared-only',
-      memoryOnPath: [],
-    })
-
-    expect(evidence?.state).toBe('declared-only')
-    expect(evidence?.text).toBe(MISDIRECTION_DECLARED_ONLY_TEXT)
-    expect(evidence?.text, 'a declaration is not a result').not.toContain('held')
-    expect(evidence?.causalRecords).toEqual([])
-    // `[]` is the author declaring NO records; the absence cell below is a different claim.
-    expect(evidence?.onPathText).toBe(MEMORY_ON_PATH_NONE_TEXT)
-  })
-
-  it('reports a BROKEN root as unresolved with its disclosed word, never as declared-only', () => {
-    // D-19's one exemption is ABSENCE, not breakage. A root that exists and cannot be read leaves
-    // the same empty ledger as one that is absent and has NOT earned the BYOM exemption.
-    const evidence = withMisdirection({
-      state: 'measured',
-      crossCheck: 'not-run',
-      results: [{ recordId: HELD, crossCheck: 'not-run', reason: 'posture-unavailable' }],
-      memoryOnPath: [{ recordId: HELD, trust: 'candidate' }],
-    })
-
-    expect(evidence?.state).toBe('unresolved')
-    expect(evidence?.text).toBe(MISDIRECTION_UNRESOLVED_TEXT)
-    expect(evidence?.text).not.toContain('declared-only')
-    expect(evidence?.unbackedReason).toBe('posture-unavailable')
-    expect(evidence?.unbackedText).toBe(misdirectionUnbackedLine('posture-unavailable'))
-  })
-
-  it('reports a CAP-EXCEEDED row as unbacked too, with its own word', () => {
-    const evidence = withMisdirection({
-      state: 'measured',
-      crossCheck: 'not-run',
-      results: [{ recordId: HELD, crossCheck: 'not-run', reason: 'cap-exceeded' }],
-    })
-
-    expect(evidence?.state).toBe('unresolved')
-    expect(evidence?.unbackedReason).toBe('cap-exceeded')
-    expect(evidence?.unbackedText).toBe(misdirectionUnbackedLine('cap-exceeded'))
-  })
-
-  it('keeps a DECLARED path with no ledger at not recorded, and absent apart from empty', () => {
-    const declared = withMisdirection({
-      state: 'not-recorded',
-      memoryOnPath: [{ recordId: HELD, trust: 'candidate' }],
-    })
-    expect(declared?.state).toBe('not-recorded')
-    expect(declared?.text).toBe(MISDIRECTION_NOT_RECORDED_TEXT)
-    expect(declared?.causalRecords).toEqual([])
-    expect(declared?.onPath).toEqual([{ recordId: HELD, trust: 'candidate' }])
-
-    // ABSENT IS NOT EMPTY, at the last reader as at every one before it (422-12).
-    const undeclared = withMisdirection({ state: 'not-recorded' })
-    expect(undeclared?.onPath, 'the author declared NOTHING').toBeUndefined()
-    expect(undeclared?.onPathText).toBe(MEMORY_ON_PATH_NOT_RECORDED_TEXT)
-
-    const empty = withMisdirection({ state: 'not-recorded', memoryOnPath: [] })
-    expect(empty?.onPath, 'the author declared NO records').toEqual([])
-    expect(empty?.onPathText).toBe(MEMORY_ON_PATH_NONE_TEXT)
-  })
-
-  it('projects a verdict with NO circularity member to NO evidence at all', () => {
-    // THE ADDITIVE CLAIM, and it is measured rather than assumed: the bytes below are exactly what
-    // `analysis.get` serves for every run written before 422 and for the deterministic floor.
-    expect(withMisdirection(undefined), 'a historical run renders as it always did').toBeUndefined()
+  it('projects a verdict that declared nothing to no member at all', () => {
+    expect(withMemoryOnPath(undefined)).toBeUndefined()
   })
 })

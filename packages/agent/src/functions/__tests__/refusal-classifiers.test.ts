@@ -1,18 +1,4 @@
-// Every op whose output union carries a REFUSAL ARM folds that arm to `refused` (399.1-03 · D-01/D-02).
-//
-// WHAT THIS FILE IS THE ACCEPTANCE BAR FOR. Phase 399's UAT measured a credential-blocked config
-// mutation reporting `executed` in green on the chat surface, because the engine derived the receipt
-// status from throw-versus-return and every arm of a typed refusal RETURNS. Plan 01 closed that on
-// one op (`config.field.set`); this file closes it on every op whose own union can say no.
-//
-// THE FIXTURES ARE PARSED, NEVER TYPED. Each one goes through the op's declared output schema before
-// it reaches a classifier, so a fixture describing a shape the contract cannot produce fails HERE
-// rather than certifying a fold over an impossible input (the produced-not-literal law).
-//
-// THE REFUSAL-BEARING SET IS SPELLED ONCE, here, as the specs themselves. Plan 04 makes `classify`
-// required across all 42 ops and owns the registry census; until then this file is the roster, and
-// an op that grows a refusal arm without a classifier is a named red rather than a silent
-// `executed`.
+// Typed refusals return rather than throw, so each refusal arm must fold to `refused`.
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -53,10 +39,7 @@ import { classifyBodies, executableSource, scanFile, scanText } from './op-sourc
 
 // ---- fixtures, produced through the contracts ---------------------------------------------------
 
-// 2026-09-30, 432-11 D-05: the config ops answer what they WROTE. Their blocked and refused arms
-// carry the same report with no record reference, and two arms are new: applied and interrupted.
-// 2026-10-01, 432-17 D-05/D-09: `config.undo.propose` and the proposal union it alone still answered
-// are deleted, and with them the fixtures parsed through that union.
+// The config ops answer what they wrote; blocked and refused arms carry no record reference.
 
 const directBlockedBySchema: ConfigChangeOutput = ConfigChangeOutputSchema.parse({
   outcome: 'blocked',
@@ -123,8 +106,7 @@ const authoringRefused: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSch
   }),
 })
 
-// RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a drafted invocation carries its written-test
-// receipt by rule, so the fixture says which file it wrote.
+// A drafted invocation carries its written-test receipt, so the fixture names the file.
 const authoringDrafted: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSchema.parse({
   outcome: 'drafted',
   draftRef: {
@@ -143,14 +125,7 @@ const authoringDrafted: AuthoringDraftWriteOutput = AuthoringDraftWriteOutputSch
 
 // ---- the config-mutation family: six ops, one union ---------------------------------------------
 
-/**
- * The six ops that answer with `ConfigChangeOutput` (432-11). 2026-10-01 (432-17): the seventh,
- * `config.undo.propose`, is deleted with the proposal union it answered.
- *
- * SPELLED AS THE SPECS THEMSELVES rather than as ids looked up in a registry, so an op that stops
- * declaring a classifier is a compile-adjacent red here and not a row that quietly reports the
- * legacy verdict.
- */
+// Spelled as the specs themselves, so an op that drops its classifier fails here, not quietly.
 const CONFIG_CHANGE_OPS: readonly FunctionSpec<never, ConfigChangeOutput>[] = [
   configAuthSetSpec,
   configFieldSetSpec,
@@ -160,11 +135,9 @@ const CONFIG_CHANGE_OPS: readonly FunctionSpec<never, ConfigChangeOutput>[] = [
   configTargetEditSpec,
 ] as unknown as readonly FunctionSpec<never, ConfigChangeOutput>[]
 
-describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal arms', () => {
-  // RE-SPELLED 2026-10-01 (432-17): seven ops became six with the undo's deletion.
+describe('the config-mutation family folds its own refusal arms', () => {
   it('declares a classifier on every one of the six ops sharing the union', () => {
-    // Non-vacuity for every cell below: a spec with no classifier reports the LEGACY verdict, and
-    // `executed` is exactly what this phase exists to stop it saying over a refusal.
+    // Non-vacuity: a spec with no classifier would report `executed` over a refusal.
     expect(CONFIG_CHANGE_OPS.length).toBe(6)
     for (const spec of CONFIG_CHANGE_OPS) {
       expect(spec.classify, `${spec.id} declares no classifier`).toBeTypeOf('function')
@@ -185,17 +158,14 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
     }
   })
 
-  // 2026-10-01 (432-17): 'folds a filed proposal to executed, naming the id a person decides on' is
-  // deleted with the one op that still filed a proposal.
-
-  it('C432-CONFIG-APPLIED-OUTPUT: folds an applied change to executed, naming the files it wrote', () => {
+  it('folds an applied change to executed, naming the files it wrote', () => {
     for (const spec of CONFIG_CHANGE_OPS) {
       expect(spec.classify?.(applied as never), spec.id)
         .toEqual({ status: 'executed', outcome: 'applied: agent-qa.config.yaml' })
     }
   })
 
-  it('C432-CONFIG-MULTIFILE-TRUTH: folds an interrupted publication to failed, never executed', () => {
+  it('folds an interrupted publication to failed, never executed', () => {
     for (const spec of CONFIG_CHANGE_OPS) {
       expect(spec.classify?.(interrupted as never), spec.id)
         .toEqual({ status: 'failed', outcome: 'interrupted at agent-qa.config.yaml: file-changed' })
@@ -211,7 +181,7 @@ describe('399.1 D-01/D-02 — the config-mutation family folds its own refusal a
   })
 })
 
-// ---- the knowledge changes: applied, absent or refused (432-12, D-05) ---------------------------
+// ---- the knowledge changes: applied, absent or refused ---------------------------
 
 const KNOWLEDGE_CHANGE_OPS: readonly FunctionSpec<never, KnowledgeChangeOutput>[] = [
   knowledgeAcceptSpec,
@@ -221,11 +191,10 @@ const KNOWLEDGE_CHANGE_OPS: readonly FunctionSpec<never, KnowledgeChangeOutput>[
 
 const OPERATION_ID = '2c4e6a8b-0d1f-4a3b-8c5d-7e9f1a2b3c4d'
 
-describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes fold their own answer', () => {
-  it('C432-KNOWLEDGE-CHANGE-OPS: an applied change is executed, a typed absence is executed, and a writer refusal is refused', () => {
+describe('the three knowledge changes fold their own answer', () => {
+  it('an applied change is executed, a typed absence is executed, and a writer refusal is refused', () => {
     for (const spec of KNOWLEDGE_CHANGE_OPS) {
       const verb = spec.id.split('.')[1] as 'accept' | 'reject' | 'forget'
-      // RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a forget carries its receipt by rule.
       const applied = KnowledgeChangeOutputSchema.parse({
         outcome: 'applied', verb, operationId: OPERATION_ID, recordIds: ['rec-1', 'rec-2'],
         ...(verb === 'forget'
@@ -256,20 +225,15 @@ describe('C432-KNOWLEDGE-CHANGE-OPS: the three knowledge changes fold their own 
   })
 })
 
-// ---- authoring.draft.write: the RC-1b witness ---------------------------------------------------
+// ---- authoring.draft.write folds its refusal arm -----------------------------------------------
 
-describe('399.1 D-01/D-02 — authoring.draft.write folds its dedup refusal', () => {
+describe('authoring.draft.write folds its dedup refusal', () => {
   it('reports refused, and names the test the intent duplicates', () => {
-    // THE MEASURED WITNESS. 399's todo recorded this op returning its refusal arm while chat printed
-    // `executed  authoring.draft.write completed`: the screen refused to author, and the person was
-    // told it had. The reference is what makes the refusal actionable — refuse AND LINK (394 D-04).
+    // The refusal's reference makes it actionable: the fold refuses and links.
     const verdict = authoringDraftWriteSpec.classify?.(authoringRefused)
     expect(verdict?.status).toBe('refused')
     expect(verdict?.outcome).toContain(`duplicate-of:${DUPLICATE_REF}`)
-    // AND THE FAN-OUT RIDES THE SAME LINE (394-14, migrated onto this verdict by 399.1-03). A
-    // refusal's report is `NO_RUNS_FAN_OUT_BOUND` — "this invocation ran nothing" — and the
-    // contract makes it required on EVERY arm precisely so "nobody counted" and "nothing ran"
-    // cannot read the same. Composed by the renderer, never restated.
+    // The fan-out report is required on every arm, so "nobody counted" never reads "nothing ran".
     expect(verdict?.outcome).toContain(renderFanOutReport(authoringRefused.fanOut))
   })
 
@@ -281,7 +245,7 @@ describe('399.1 D-01/D-02 — authoring.draft.write folds its dedup refusal', ()
   })
 })
 
-// 2026-10-12 (440-03, D-09): a stated-value refusal is its own line, ahead of the duplicate one.
+// A stated-value refusal is its own line, ahead of the duplicate one.
 
 const noRunsFanOut = buildFanOutReport({ previewed: NO_RUNS_FAN_OUT_BOUND, runs: [] })
 
@@ -309,7 +273,7 @@ const authoringKeepRefused: AuthoringDraftWriteOutput = AuthoringDraftWriteOutpu
   fanOut: happyFanOut,
 })
 
-describe('C440-REFUSAL-FIELD', () => {
+describe('the draft-write refusal fold names its stage', () => {
   it('a stated-value refusal folds to refused, naming its stage and values, never a duplicate', () => {
     const verdict = authoringDraftWriteSpec.classify?.(authoringCompileRefused)
     expect(verdict?.status).toBe('refused')
@@ -332,15 +296,9 @@ describe('C440-REFUSAL-FIELD', () => {
   })
 })
 
-// ---- proposals.accept: the census finding beyond the plan's floor -------------------------------
+// A result nobody can read is `failed`, never `executed`.
 
-// 2026-10-01 (432-17, D-05): the `proposals.accept` describe ('reports refused when the record is a
-// blocked one…', 'reports refused when the lifecycle declined an expired proposal') is deleted with
-// the op; C432-NO-PROPOSAL-OPS pins its absence from the registry.
-
-// ---- D-03: a result nobody can read is `failed`, never `executed` -------------------------------
-
-describe('399.1 D-03 — the fail-closed wrapper, driven', () => {
+describe('the fail-closed wrapper, driven', () => {
   /** A registry over the real specs, so the fold under test is the one the composition root runs. */
   const registry = createRegistryFromSpecs(
     [configFieldSetSpec as FunctionSpec],
@@ -376,24 +334,8 @@ describe('399.1 D-03 — the fail-closed wrapper, driven', () => {
   })
 })
 
-// ---- D-03, the two branches plan 01 shipped undriven (399.1-04 discharges them) -----------------
-
-/**
- * The fail-closed branches that needed a SYNTHETIC spec to reach, driven at last.
- *
- * WHY THEY WERE UNDRIVEN FOR TWO PLANS, AND WHY THAT ENDED HERE. Plan 01 filed them; plan 03 drove
- * two of the four with a shipped op (a hand-mutated discriminant, and `null`) and left the rest,
- * because a shipped classifier is TOTAL over its own union and cannot be made to answer a
- * structurally-valid non-verdict, nor to be absent. Plan 04 is the plan that makes `classify`
- * REQUIRED — which is precisely the change that turns "an op with no fold" from an ordinary
- * expected state into a cast that got past both enforcement layers, and gives the branch an input
- * a test can construct.
- *
- * EVERY FIXTURE HERE IS A SPEC THIS PROJECT WOULD NEVER SHIP, AND THAT IS THE POINT. A guard
- * against op-authored code going wrong cannot be measured with op-authored code that is right. The
- * casts below are the same casts the guard exists to survive.
- */
-describe('399.1-04 D-03 — the fail-closed branches a shipped op cannot reach', () => {
+// Synthetic specs reach the branches a shipped op's total classifier never can.
+describe('the fail-closed branches a shipped op cannot reach', () => {
   const SYNTHETIC_ID = 'synthetic.fold-probe'
 
   /** A registry over one hand-built spec, so each cell chooses what the classifier answers. */
@@ -420,20 +362,14 @@ describe('399.1-04 D-03 — the fail-closed branches a shipped op cannot reach',
   }
 
   it('reports failed/unclassifiable-result for an op that declares NO fold at all', () => {
-    // THE BRANCH THE REQUIRED MEMBER CREATED. Until 399.1-04 this answered the legacy
-    // `{ status: 'executed', outcome: '' }`, which was the honest report while an op without a fold
-    // was an expected state. It is not one any more: `classify` is required, so an absent one means
-    // a cast got past `tsc` AND past the conformance census, and `executed` would be the receipt
-    // certifying a claim nothing substantiates.
+    // `classify` is required, so an absent one means a cast slipped past `tsc` and the census.
     const folded = foldFunctionResult(registryAnswering(undefined), SYNTHETIC_ID, { ok: true })
 
     expect(folded.verdict).toEqual({ status: 'failed', outcome: 'unclassifiable-result' })
   })
 
   it('reports failed/unclassifiable-result for a WELL-FORMED answer that is not a verdict', () => {
-    // Plan 01's remaining stub, named there: "a classifier answering an object that is not a
-    // verdict". `status` is a word no surface knows how to render; a cast instead of a check would
-    // put it on a receipt, into the session log and into the goldens.
+    // A status no surface can render would reach the receipt, the session log and the goldens.
     const folded = foldFunctionResult(
       registryAnswering(() => ({ status: 'sideways', outcome: 'the fold invented a fourth word' })),
       SYNTHETIC_ID,
@@ -478,18 +414,8 @@ describe('399.1-04 D-03 — the fail-closed branches a shipped op cannot reach',
   })
 })
 
-// ---- D-01's rejected alternative, pinned in the source -----------------------------------------
-
-/**
- * The classifier reads its OWN union's discriminant, and never the CONTENT of a value.
- *
- * D-01 rejected chat-side value-pattern matching BY NAME — "a rule that can only refuse what it can
- * NAME cannot be driven to zero" — and a classifier that sniffed its payload's strings would be that
- * same door-enumeration failure moved one file over, wearing the declaration's clothes. The scan
- * runs over EXECUTABLE text (comments and string literals stripped by `executableSource`) so a
- * header explaining what the fold may not do is not read as the fold doing it.
- */
-describe('399.1 D-01 — no classifier pattern-matches a value', () => {
+// A classifier reads its union's discriminant, never a value's content.
+describe('no classifier pattern-matches a value', () => {
   const VALUE_SNIFFING = [
     '.includes(',
     '.startsWith(',
@@ -516,7 +442,7 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     expect(scan.hits).toEqual([])
   })
 
-  // ---- the same claim, over EVERY fold in the directory (399.1-04) ------------------------------
+  // The same claim, over every fold in the directory.
 
   /** The ops directory, read from disk — never a list of file names somebody maintains. */
   const OPS_DIR = new URL('../ops/', import.meta.url).pathname
@@ -544,8 +470,7 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
     // `classify` for the seven ops that point at it.
     const unaccounted = specFiles().filter((name) => {
       const text = readFileSync(join(OPS_DIR, name), 'utf8')
-      // 2026-10-03 (quick 261003-cpv, IN-04): the knowledge changes' shared fold is the second
-      // shared module, and the cell below scans its whole file on the config fold's terms.
+      // The knowledge changes' shared fold is a second shared module, scanned whole like config's.
       return classifyBodies(text).length === 0 && !text.includes('config-propose-verdict.js')
         && !text.includes('knowledge-change-verdict.js')
     })
@@ -562,11 +487,7 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
   })
 
   it('no fold in the ops directory inspects value CONTENT — every body, brace-matched', () => {
-    // The 399.1-03 three-file list widened to the whole directory, at the granularity that makes
-    // the widening possible: the fold BODY. A whole-file scan cannot be used here and the reason is
-    // recorded on `classifyBodies` — `authoring-verify-draft.ts` matches a draft file EXTENSION in
-    // a helper the fold never calls, and exempting it by name would be the door enumeration this
-    // rule exists to refuse.
+    // Scans fold bodies, not files: a whole-file scan flags a helper's file-extension check.
     const offenders: string[] = []
     let bodiesScanned = 0
 
@@ -582,65 +503,11 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
 
     expect(
       offenders,
-      'a fold that sniffs its payload\'s content is the chat-side value matching D-01 rejected, '
+      'a fold that sniffs its payload\'s content is chat-side value matching, '
         + 'moved one file over and wearing the declaration\'s clothes',
     ).toEqual([])
 
-    // Non-vacuity, and it is the load-bearing half: an extractor that returned nothing would make
-    // the loop above pass over an empty set forever. The number is the census's own arithmetic,
-    // measured 2026-08-20: 42 registered ops minus the SEVEN that delegate to
-    // `config-propose-verdict.ts` leaves 35 folds written as a spec member. The shared module's
-    // `classifyConfigProposeOutput` is a named exported function rather than a `classify(` member,
-    // so this extractor does not see it and the whole-file scan above does. An equality rather
-    // than a floor, because an op deleting its fold and this scan quietly ranging one body fewer
-    // is the drift a floor cannot see.
-    //
-    // 2026-08-25 (403-01 D-03): 36. `runs.liveurl` arrives with its own `classify` member, and it
-    // is a fold this scan MUST range — the whole reason it declares one explicitly is that its
-    // result carries a live credential its outcome sentence may never interpolate.
-    //
-    // 2026-08-27 (405-01 D-03): 37. `runs.detail` arrives with its own `classify` member, and it
-    // is a fold this scan MUST range for a reason of its own: its result is a whole run's
-    // projection — plan text, planned actions, error strings, sha-keyed refs — so a fold that
-    // reached into that payload for its outcome sentence would put a run's content on a receipt.
-    // It counts the three collections and interpolates nothing from inside them.
-    //
-    // 2026-08-27 (405-05 D-12/D-13): 38. `runs.artifact` arrives with its own `classify` member,
-    // and it is a fold this scan MUST range for the sharpest reason on this list: its result IS a
-    // payload — a base64 blob — so a fold that reached into it would put a screenshot's bytes on a
-    // receipt kept forever. It interpolates the sniffed type, the DECLARED `byteLength` and the
-    // run id, which is why that length is a field on the result rather than something to measure.
-    //
-    // 2026-08-29 (407-01 D-05): 39. `runs.knowledge` arrives with its own `classify` member, and it
-    // is a fold this scan MUST range on `runs.detail`'s reasoning made sharper: its result carries
-    // every step's text AND every served brief line's summary — producer prose that is masked at
-    // rest — so a fold that reached into that payload for its outcome sentence would put a run's
-    // knowledge content, possibly masked material, onto a receipt. It counts steps, served lines
-    // and learned changes, and interpolates nothing from inside any of them.
-    // 2026-09-06 (416 D-17): 40. `knowledge.gates.list` adds a fold over the receipt count
-    // and declared verdict/path/reason. Gate evidence payloads remain inside the scanned
-    // boundary: this classifier may not inspect their content to derive its outcome.
-    // 2026-09-08 (419 GATE3-01): 41. runs.mark folds only governed kinds and address indexes.
-    // 2026-09-14 (423-29 D-04): 42 source/spec bodies. runs.evidence folds only its outcome;
-    // registration is owned by 423-09, and evidence document content stays outside receipts.
-    // 2026-09-15 (423-36 D-19): 43. runs.marks.history folds its outcome kind, the entry count
-    // and the corrupt line number; notes, producers and proposal reasons never reach a receipt.
-    // 2026-09-15 (423-37 D-16): 44. runs.mark.preview folds the mark kind, draft kind, decision
-    // count and quarantine class, and delegates refusals to runs.mark's fold; no reasoning or
-    // corrected expectation reaches a receipt.
-    // 2026-09-25 (428 D-07): 45. editor.liveurl arrives with its own classify member for the same
-    // reason runs.liveurl declares one — its result carries a live credential its outcome sentence
-    // may never interpolate.
-    // 2026-09-28 (431 D-06): 46. runs.overview folds only its test and step counts; labels,
-    // record summaries and addresses never reach a receipt.
-    // 2026-10-01 (432-17 D-05/D-09): 40. Six folds leave with their ops: proposals.list, .show,
-    // .accept and .reject, knowledge.proposal.apply and config.proposal.apply (config.undo.propose
-    // delegated to the shared fold and had no body of its own).
-    // 2026-10-01 (432-18 D-14/D-15): 38. `grants.list` and `grants.revoke` leave with the grant
-    // ledger, and each carried one classify body.
-    // 2026-10-03 (quick 261003-cpv, 432 review IN-04): 35. `knowledge.accept`, `.reject` and
-    // `.forget` carried three byte-identical bodies and now point at `knowledge-change-verdict.ts`,
-    // whose named function this extractor does not see and the whole-file scan below does.
+    // An exact count, so an extractor that drops a fold or finds none fails here.
     expect(bodiesScanned, 'no classify bodies were extracted — this scan ranges nothing').toBe(35)
   })
 
@@ -691,10 +558,9 @@ describe('399.1 D-01 — no classifier pattern-matches a value', () => {
   })
 })
 
-// 2026-10-03 (quick 261003-cpv, 432 review IN-04): the three knowledge changes share ONE fold, the
-// `classifyConfigChangeOutput` precedent, so a later edit cannot teach one door a different report.
-describe('C261003-CPV-ONE-KNOWLEDGE-FOLD: the three knowledge changes fold through one function', () => {
-  it('C261003-CPV-ONE-KNOWLEDGE-FOLD: the shared fold inspects no value content and switches on the outcome', () => {
+// The knowledge change ops share one fold, so no door can report differently.
+describe('the three knowledge changes fold through one function', () => {
+  it('the shared fold inspects no value content and switches on the outcome', () => {
     const path = new URL('../../../src/functions/ops/knowledge-change-verdict.ts', import.meta.url).pathname
     const scan = scanFile(path, ['.includes(', '.startsWith(', '.endsWith(', '.indexOf(', '.match(',
       '.search(', '.toLowerCase(', '.toUpperCase(', 'RegExp'])
@@ -703,7 +569,7 @@ describe('C261003-CPV-ONE-KNOWLEDGE-FOLD: the three knowledge changes fold throu
     expect(executableSource(readFileSync(path, 'utf8'))).toContain('switch (output.outcome)')
   })
 
-  it('C261003-CPV-ONE-KNOWLEDGE-FOLD: every knowledge change spec declares the shared fold itself', async () => {
+  it('every knowledge change spec declares the shared fold itself', async () => {
     const shared = (await import('../ops/knowledge-change-verdict.js')).classifyKnowledgeChangeOutput
     expect(shared).toBeTypeOf('function')
     for (const spec of KNOWLEDGE_CHANGE_OPS) expect(spec.classify, spec.id).toBe(shared)

@@ -1,15 +1,4 @@
-// C-HYG-CHAT-DISPATCH-CENSUS (quick 261002-hyg, 432-45 #4): chat has no private powers, measured on
-// the dispatch path rather than on one render cell.
-//
-// Every clause the turn engine carries out must cross the `ChatInvokeBinding` the composition root
-// supplies, because that binding is the one door to `invokeFunction` (input validation, binding,
-// read scope). 432-45 found that a `quarantine.list` answered from inside the engine red nothing in
-// the conformance directory: the drives counted a filed result, and the short-circuit still files
-// one. This census drives every clause kind through the REAL resolver table, splitter and
-// reconciliation strategy, with the invoke seat a spy, and holds one invariant for each turn: the
-// ops whose receipts the session log records as carried out are exactly the ops the spy was asked
-// for, one call each, in order. Kinds: every registry op through the `/fn` passthrough, the four
-// table aliases, a compound utterance, a planner-bound clause, and the write_test route's scaffold.
+// Every carried-out clause must cross the `ChatInvokeBinding`: one spy call per receipt, in order.
 
 import { describe, expect, it } from 'vitest'
 
@@ -134,8 +123,8 @@ async function expectOneInvokePerClause(
   return result
 }
 
-describe('C-HYG-CHAT-DISPATCH-CENSUS — every clause chat carries out crosses deps.invoke', () => {
-  it('C-HYG-CHAT-DISPATCH-CENSUS: the registry is the census denominator', () => {
+describe('every clause chat carries out crosses deps.invoke', () => {
+  it('the registry is the census denominator', () => {
     expect(REGISTRY_IDS.length).toBeGreaterThanOrEqual(40)
     expect(REGISTRY_IDS).toContain('quarantine.list')
     expect(REGISTRY_IDS).toContain('config.get')
@@ -162,7 +151,7 @@ describe('C-HYG-CHAT-DISPATCH-CENSUS — every clause chat carries out crosses d
     },
   )
 
-  it('C-HYG-CHAT-DISPATCH-CENSUS: a compound utterance dispatches each clause once, in order', async () => {
+  it('a compound utterance dispatches each clause once, in order', async () => {
     await expectOneInvokePerClause(
       census(),
       '/fn quarantine.list and status and /fn config.get',
@@ -170,7 +159,7 @@ describe('C-HYG-CHAT-DISPATCH-CENSUS — every clause chat carries out crosses d
     )
   })
 
-  it('C-HYG-CHAT-DISPATCH-CENSUS: a planner-bound clause dispatches once beside a table clause', async () => {
+  it('a planner-bound clause dispatches once beside a table clause', async () => {
     const target = census({
       planned: () => ({ toolCalls: [{ toolName: toToolName('quarantine.list'), input: {} }] }),
     })
@@ -181,7 +170,7 @@ describe('C-HYG-CHAT-DISPATCH-CENSUS — every clause chat carries out crosses d
     )
   })
 
-  it('C-HYG-CHAT-DISPATCH-CENSUS: the write_test route scaffolds and authors via deps.invoke', async () => {
+  it('the write_test route scaffolds and authors via deps.invoke', async () => {
     const target = census({
       targets: [],
       planned: (clauses) => ({

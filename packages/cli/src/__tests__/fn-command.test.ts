@@ -1,8 +1,4 @@
-// End-to-end tracer for the 384 function layer (Plan 01, D-05/D-06/D-11).
-//
-// `agent-qa fn runs.list` must resolve through the WHOLE path — composition-built
-// registry → invokeFunction → evaluate() → injected run-dir reader → RunSummary[] —
-// against a real on-disk fixture. Nothing here stubs the gate or the registry.
+// `agent-qa fn runs.list` through the whole path against a real fixture; nothing is stubbed.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,8 +25,7 @@ import { createFnCommand } from '../commands/fn.js'
 const FIXTURE_API_KEY = 'sk-live-DO-NOT-LEAK-4242'
 const FIXTURE_API_KEY_MARKER = '[secret:ACME_API_KEY]'
 
-// 2026-10-15 (441-20, D-29): every other credential-shaped value below is undeclared, so
-// `config.get` shows it as written. They stay in the fixture as the undeclared corpus.
+// Every other credential-shaped value below is undeclared, so `config.get` shows it as written.
 const FIXTURE_HEADER_KEY = 'sk-live-HEADER-KEY-DO-NOT-LEAK-1111'
 const FIXTURE_HEADER_CRED = 'sk-live-HEADER-CRED-DO-NOT-LEAK-2222'
 const FIXTURE_HEADER_PWD = 'sk-live-HEADER-PWD-DO-NOT-LEAK-3333'
@@ -62,33 +57,26 @@ const FIXTURE_CSS_SELECTOR = '#cookie-banner'
 
 const FIXTURE_CLEAN_TARGET_URL = 'https://clean.acme.test'
 
-/** Ten values under `registry.devices.<name>.match`, a free-form record. */
+/** Credential-shaped values under every key an android device's `match` allows. */
 const FIXTURE_DEVICE_MATCH_CREDENTIALS: Record<string, string> = {
-  jwt: 'sk-live-JWT-DO-NOT-LEAK-0001',
-  pem: 'sk-live-PEM-DO-NOT-LEAK-0002',
-  pfx: 'sk-live-PFX-DO-NOT-LEAK-0003',
-  dsn: 'sk-live-DSN-DO-NOT-LEAK-0004',
-  otp: 'sk-live-OTP-DO-NOT-LEAK-0005',
-  mnemonic: 'sk-live-MNEMONIC-DO-NOT-LEAK-0006',
-  seedPhrase: 'sk-live-SEEDPHRASE-DO-NOT-LEAK-0007',
-  connectionString: 'sk-live-CONNSTR-DO-NOT-LEAK-0008',
-  signingKey: 'sk-live-SIGNINGKEY-DO-NOT-LEAK-0009',
-  hmacKey: 'sk-live-HMACKEY-DO-NOT-LEAK-0010',
+  avd: 'sk-live-AVD-DO-NOT-LEAK-0001',
+  serial: 'sk-live-SERIAL-DO-NOT-LEAK-0002',
+  appPackage: 'sk-live-APPPACKAGE-DO-NOT-LEAK-0003',
+  appActivity: 'sk-live-APPACTIVITY-DO-NOT-LEAK-0004',
+  automationName: 'sk-live-AUTOMATION-DO-NOT-LEAK-0005',
+  browserName: 'sk-live-BROWSER-DO-NOT-LEAK-0006',
+  platformVersion: 'sk-live-PLATFORMVERSION-DO-NOT-LEAK-0007',
 }
 
-/**
- * Two plugin package names, which are the opposite claim (Plan 10 / M-01).
- *
- * Both name packages that load in-process with full Node access, so both belong in the
- * output of the one capability whose purpose is configuration triage. Round 2 hid the first
- * and showed the second, purely because the word `auth` appeared in one path.
- */
+// Two plugin package names: both load in-process with full Node access, so both are shown.
 const FIXTURE_AUTH_PLUGIN_PACKAGE = '@acme/auth-plugin-SHOW-ME-1234'
 const FIXTURE_PROVIDER_PLUGIN_PACKAGE = '@acme/provider-plugin-SHOW-ME-5678'
 
 interface InvocationResult {
   stdout: string
   stderr: string
+  writes: string[]
+  errorWrites: string[]
   exitCode: typeof process.exitCode
 }
 
@@ -107,8 +95,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
     configPath,
     `${JSON.stringify({
       workspace: {
-        // A required field whose value carries the standard glob wildcard, and an ignore
-        // glob carrying a '#'. Round 5 masked both (CR-02).
+        // A required field carrying the glob wildcard, and an ignore glob carrying a `#`.
         testMatch: [FIXTURE_GLOB_WILDCARD],
         testPathIgnore: [FIXTURE_IGNORE_GLOB],
         suiteMatch: ['suites/**/*.suite.yaml'],
@@ -116,7 +103,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
-      // A CSS selector on the field that takes CSS selectors — the third CR-02 value.
+      // A CSS selector on the field that takes CSS selectors.
       services: {
         accessibility: { enabled: false, exclude: [FIXTURE_CSS_SELECTOR] },
       },
@@ -137,11 +124,12 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
               'x-key': FIXTURE_HEADER_KEY,
               'x-cred': FIXTURE_HEADER_CRED,
               'x-pwd': FIXTURE_HEADER_PWD,
+              'x-acme-access': FIXTURE_API_KEY,
+              'x-acme-key': FIXTURE_PROVIDER_KEY,
+              'x-acme-origin': 'https://acme.test',
             },
           },
-          // Two more schema-legal entries carrying baseURLs the URL parser will NOT resolve
-          // absolutely (round-4 CR-01). `anthropic-compatible` requires a baseURL and the
-          // schema puts no URL format on it, so these are shapes a real config file holds.
+          // Schema-legal baseURLs the URL parser does not resolve absolutely.
           {
             name: 'host-relative-judge',
             provider: 'anthropic-compatible',
@@ -157,21 +145,13 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             baseURL: `ops:${FIXTURE_OPAQUE_SCHEME_SECRET}@llm.acme.test/v1`,
           },
           {
-            // A key written into the PATH of an absolute base — the component rounds 3 and 4
-            // both KEPT. Appended last so the round-4 indices above stay stable.
+            // A key in the path of an absolute base; last, so the indices above stay stable.
             name: 'key-in-path-judge',
             provider: 'anthropic-compatible',
             model: 'claude-fixture',
             baseURL: `https://ops.acme.test/v1/keys/${FIXTURE_KEY_IN_PATH_SECRET}`,
           },
         ],
-        providers: {
-          acme: {
-            apiKey: FIXTURE_API_KEY,
-            key: FIXTURE_PROVIDER_KEY,
-            baseURL: 'https://acme.test',
-          },
-        },
         // A web target requires a url, so this is the schema-legal shape the SECOND
         // credential-bearing visible field arrives in.
         targets: {
@@ -179,9 +159,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             platform: 'web',
             url: `https://x.test/checkout?sso=${FIXTURE_TARGET_URL_SECRET}`,
           },
-          // A protocol-relative url carrying all three no-key parts at once, and a
-          // path-relative one carrying a query — neither resolves without a base, so round
-          // 3's rule never looked at either (round-4 CR-01).
+          // A protocol-relative url with every no-key part, and a relative one with a query.
           'protocol-relative': {
             platform: 'web',
             url: `//opsx:${FIXTURE_PROTOREL_USERINFO_SECRET}@x.test/checkout`
@@ -192,8 +170,7 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
             platform: 'web',
             url: `/checkout?lanyard=${FIXTURE_PATH_RELATIVE_SECRET}`,
           },
-          // A webhook token in the PATH of an absolute url, and the same in a
-          // protocol-relative one — the round-5 CR-03 pair.
+          // A webhook token in the path of an absolute url, and in a protocol-relative one.
           hook: {
             platform: 'web',
             url: `https://hooks.acme.test/services/T00/B00/${FIXTURE_PATH_BORNE_TARGET_SECRET}`,
@@ -207,9 +184,6 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
         devices: {
           pixel: {
             platform: 'android',
-            // A non-'local' transport is what leaves the `match` keys unrestricted, so
-            // this is the schema-legal shape a device-farm credential arrives in.
-            transport: 'browserstack',
             match: FIXTURE_DEVICE_MATCH_CREDENTIALS,
           },
         },
@@ -240,7 +214,6 @@ function seedKnowledgeBundle(workspace: FixtureWorkspace): string {
     {
       knowledgeRoot: workspace.knowledgeRoot,
       productKey: 'shop',
-      commitArtifacts: 'none',
     },
     {
       draft: {
@@ -318,11 +291,7 @@ function envelope(runId: string, seq: number, type: RunEventType): RunEventEnvel
   return { seq, ts: 1_700_000_000_000 + seq, runId, type, payload: {} }
 }
 
-/**
- * Write a real `events.jsonl` in the exact layout the v49 `FsEventLog` appends — one JSON
- * envelope per line, seq-ordered and gap-free at 1. The stream op reads it back through the
- * same concrete store the runner writes it with, so the CLI leg is a genuine replay.
- */
+// Writes `events.jsonl` in the layout `FsEventLog` appends, so the CLI leg is a genuine replay.
 function seedEvents(
   workspace: FixtureWorkspace,
   runId: string,
@@ -360,6 +329,16 @@ async function invoke(
   const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
     stderr.push(values.map(String).join(' '))
   })
+  const writes: string[] = []
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+    writes.push(String(chunk))
+    return true
+  })
+  const errorWrites: string[] = []
+  const errorWrite = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+    errorWrites.push(String(chunk))
+    return true
+  })
   process.exitCode = undefined
 
   try {
@@ -375,10 +354,18 @@ async function invoke(
       'fn',
       ...args,
     ])
-    return { stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode: process.exitCode }
+    return {
+      stdout: stdout.join('\n'),
+      stderr: stderr.join('\n'),
+      writes,
+      errorWrites,
+      exitCode: process.exitCode,
+    }
   } finally {
     log.mockRestore()
     error.mockRestore()
+    write.mockRestore()
+    errorWrite.mockRestore()
   }
 }
 
@@ -414,7 +401,7 @@ describe('agent-qa fn (generic function invoker)', () => {
       aggregateVerdict: string
       testCount: number
     }[]
-    // 431 D-08: newest finished first; the fixture's run-beta ended after run-alpha.
+    // Newest finished first; the fixture's run-beta ended after run-alpha.
     expect(summaries.map((summary) => summary.runId)).toEqual(['run-beta', 'run-alpha'])
     expect(summaries[1]).toMatchObject({
       runId: 'run-alpha',
@@ -438,8 +425,6 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(first).toEqual(second)
   })
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'lists every registered function id with its scopes,
-  // result kind and binding'. Declarations carry no scopes, so the listing has no scope column.
   it('lists every registered function id with its result kind and binding, and no scope column', async () => {
     const workspace = fixtureWorkspace(roots)
 
@@ -453,81 +438,38 @@ describe('agent-qa fn (generic function invoker)', () => {
       resultKind: string
       bindingStatus: string
     }[]
-    // The registered capability set verbatim: the four D-06 seed reads, the D-08 stream op,
-    // 387-01's two `entities.` reads, and 387-06's three `knowledge.` review reads.
-    // `resultKind` and `bindingStatus` are part of the
-    // published contract, so the listing is asserted as an exact table rather than a shape
-    // check — a contains check would let an op join the catalogue unnoticed, which is the one
-    // drift direction this case exists to catch. Every phase that adds an op repins it here on
-    // purpose; 387-06 and 387-08 each add more and will each have to.
+    // An exact table, because a contains check would let an op join the catalogue unnoticed.
     expect(Object.fromEntries(declarations.map((declaration) => [declaration.id, {
       resultKind: declaration.resultKind,
       bindingStatus: declaration.bindingStatus,
     }]))).toEqual({
-      // 392 D-24: the chat turn entry, BOUND on this host because `composeLocalAgent` assembles a
-      // turn engine in every local composition. Its presence in the CLI's own catalog is the L10
-      // claim made observable: `agent-qa ask` reaches the turn through the same registry listing
-      // this test reads, so the REPL holds no capability the catalogue does not declare.
+      // Bound because `composeLocalAgent` assembles a turn engine in every local composition.
       'agent.ask': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 398 D-09: the catalog explainer. BOUND on this host, and — like `runs.start` below — not
-      // because a literal was flipped: `composeCliLocalAgent` constructs the catalog port
-      // unconditionally, because a CLI always ships beside the committed capability catalog. It
-      // read `unbound` between 398-07's Task 1 and Task 2, which is the whole point of computing
-      // the column: the capability was registered before this host could run it, and the ledger
-      // said so for exactly that long.
+      // Bound because `composeCliLocalAgent` always constructs the catalog port.
       'agent.explain': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 389 D-11: THE analysis read — verdicts + sentences + clusters. BOUND since plan 06:
-      // the composition root binds the artifact reader over `agentQaRoot` in every local
-      // composition, so an artifact-less run answers the floor rather than a refusal.
+      // Bound: every local composition binds the artifact reader; no artifact answers the floor.
       'analysis.get': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 393 D-01: the keep-gate evaluator. BOUND on this host, and — like `runs.start` below — not
-      // because a literal was flipped: this composition supplies BOTH halves the binding needs, a
-      // run executor and the draft-authoring port over `parseTestFile`, and `bindingStatus` reports
-      // what THIS host can do. The same capability still lists `unbound` from a composition missing
-      // either, which is what agent's `parity-coverage.test.ts` and 393-07's e2e both assert.
-      //
-      // It declares BOTH `run` and `read` because the evaluation starts gate-runs and reads their
-      // records back through the sibling ops (D-02, op-calls-op), which also makes it non-read and
-      // therefore filtered out of safe mode with `runs.start`.
+      // Bound because this host supplies a run executor and the draft-authoring port.
       'authoring.draft.verify': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 394 D-01: the authoring loop's one public entry, BOUND on this host for the reason its
-      // sibling above is — the CLI supplies the draft-authoring port and a run executor, which is
-      // the same condition both halves of the loop bind under. It declares a THIRD scope,
-      // `test-write`, because it writes a file where its sibling only starts runs; 394-01 minted
-      // that scope for exactly this declaration, and it is what a listing shows a person who asks
-      // what authoring a test costs them.
+      // Bound for its sibling's reason: the draft-authoring port and a run executor.
       'authoring.draft.write': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 394-09 D-21 · WTST-07: the user-facing edit. BOUND on this host for its siblings' reason —
-      // the CLI supplies the draft-authoring port and the draft evaluation, which are the two
-      // halves this op checks. It declares TWO scopes and NOT `run`: it edits a committed test and
-      // starts nothing, so a listing shows a person that letting the agent edit their tests does
-      // not also buy it the power to spend their machine on runs.
+      // Bound because the CLI supplies the draft-authoring port and the draft evaluation.
       'authoring.draft.edit': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 394-07 D-12/D-13 · WTST-05: the honesty funnel read. BOUND on this host and — unlike its
-      // two authoring siblings above — bound UNCONDITIONALLY, because it is a read over records
-      // this composition owns by owning the agent-qa runtime root rather than a capability that
-      // needs a model and a run executor. It declares `read` ALONE, which is what a listing shows
-      // a person who asks what reading their own authoring history costs them; the exposure it
-      // implies is stated in the op's own header so a reviewer can object to the tier.
+      // Bound unconditionally: a read over records under the runtime root this composition owns.
       'authoring.funnel.get': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 395-01 D-01/D-03 · CFGM-01/03: both BOUND on this composition — the CLI host binds the
-      // config-file, validation and apply ports unconditionally, because a CLI always has a config
-      // path and therefore a checkout root. Both declare `config-write` and NOT `read`, which is
-      // what a listing shows a person who asks what editing their configuration costs them: the
-      // propose op carries the write scope because the scope describes what the CAPABILITY is
-      // about, not what one call happens to reach.
+      // Bound because the CLI host binds the config-file, validation and apply ports always.
       'config.auth.set': {
         resultKind: 'unary',
         bindingStatus: 'bound',
@@ -541,19 +483,12 @@ describe('agent-qa fn (generic function invoker)', () => {
         bindingStatus: 'bound',
       },
       'config.get': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 395-08 D-04: BOUND, because `scaffoldContent` needs no filesystem and no repository — it is
-      // a pure render of the one producer `agent-qa init` writes from, so there is no CLI posture
-      // in which the scaffold is unavailable.
+      // Bound because `scaffoldContent` is a pure render needing no filesystem or repository.
       'config.project.scaffold': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 2026-10-01 (432-17 D-05): `config.proposal.apply`, `config.undo.propose`,
-      // `knowledge.proposal.apply` and the four `proposals.*` verbs are deleted, so they are not listed.
-      // 395-05 D-01: the rest of the closed action class, BOUND on this composition for the reason
-      // above — the CLI host binds the config ports unconditionally. Both carry `config-write` and
-      // nothing else, which is what a listing shows a person who asks what letting the agent edit
-      // their configuration costs them.
+      // Bound because the CLI host binds the config ports unconditionally.
       'config.target.create': {
         resultKind: 'unary',
         bindingStatus: 'bound',
@@ -562,27 +497,22 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // BOUND because `entities` is a REQUIRED FunctionDeps port (387-01 D-4): this
-      // composition supplies an entity directory, so both read at the `read` tier.
+      // Bound because this composition supplies the required `entities` directory.
       'entities.get': { resultKind: 'unary', bindingStatus: 'bound' },
       'entities.resolve': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 391 PROP-01 / D-03's `grants.list` and `grants.revoke` rows left with the ops (432-18).
       'knowledge.bundles.list': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 416 D-10: gate receipts are a read over the same bound knowledge reader.
+      // Gate receipts are a read over the same bound knowledge reader.
       'knowledge.gates.list': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 387-06 KREV-01: the read half of the review-verb family. BOUND for the same reason
-      // the entity pair is — they dispatch through the REQUIRED `knowledge` port, so no
-      // composition lists them and then refuses. 387-08's mutating verbs go through the
-      // OPTIONAL `knowledgeReview` dep and are the first rows here that can read `unbound`.
+      // Bound because they dispatch through the required `knowledge` port.
       'knowledge.brief.why': {
         resultKind: 'unary',
         bindingStatus: 'bound',
@@ -599,12 +529,7 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 387-08 KREV-01 D-17: the MUTATING half — `knowledge-write` tier, and BOUND here because
-      // the CLI composes a local host that owns the knowledge root it serves from. They are the
-      // first rows in this table whose binding is a statement about the HOST rather than about
-      // the required-port set: a read-only composition lists these same four `unbound`, which is
-      // asserted directly in agent-local's `review-verbs.test.ts`.
-      // 2026-09-30, 432-12 (D-05): the three changes apply in the call and lose `.propose`.
+      // Bound because this host owns the knowledge root; a read-only one lists `unbound`.
       'knowledge.accept': {
         resultKind: 'unary',
         bindingStatus: 'bound',
@@ -617,12 +542,7 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 390 D-12/D-13: the three quarantine verbs, FLIPPED to bound by plan 06 (plan 04
-      // registered the specs and left this row saying so). BOUND here for the same reason the
-      // knowledge-write rows above are — the CLI composes a local host that owns the committed
-      // knowledge root the ledger lives at — and the binding is a statement about THIS host: a
-      // composition supplying no quarantine port still lists all three `unbound` and refuses
-      // them by name, which is what agent's `parity-coverage.test.ts` asserts.
+      // Bound because this host owns the ledger's root; with no quarantine port, `unbound`.
       'quarantine.add': {
         resultKind: 'unary',
         bindingStatus: 'bound',
@@ -635,49 +555,35 @@ describe('agent-qa fn (generic function invoker)', () => {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // 391 D-16: BOUND on every local host. Read-tier, so it survives safe mode. (Its inbox dep
-      // was deleted in 432-17; the digest never read it after 432-09.)
-      // 405-05 D-12/D-13: BOUND here: a run's evidence blobs live under the runtime root EVERY
-      // local host has.
+      // Bound: a run's evidence blobs live under the runtime root every local host has.
       'runs.artifact': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
+      // Bound whenever the config parses; before the runs database exists it answers not recorded.
       'runs.detail': { resultKind: 'unary', bindingStatus: 'bound' },
       'runs.digest': { resultKind: 'unary', bindingStatus: 'bound' },
       'runs.events': { resultKind: 'stream', bindingStatus: 'bound' },
-      // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
+      // Bound whenever the config parses; before the runs database exists it answers not recorded.
       'runs.evidence': { resultKind: 'unary', bindingStatus: 'bound' },
       'runs.get': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 407-01 D-05: `bound` rather than `unbound`, and that is the row worth reading. The op
-      // declares no optional-dep binding key — its substrate is the REQUIRED runs port — so unlike
-      // `runs.detail` beside it there is no composition that lists this verb and then refuses it.
+      // Bound: its substrate is the required runs port, so no composition lists it and refuses.
       'runs.knowledge': { resultKind: 'unary', bindingStatus: 'bound' },
       'runs.list': { resultKind: 'unary', bindingStatus: 'bound' },
       'runs.mark': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 423 D-16: the consequence preview binds through the same read host, read-tier beside the writer.
+      // The consequence preview binds through the same read host, read-tier beside the writer.
       'runs.mark.preview': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 423 D-19: bound through the CLI's dedicated read host, read-tier beside the writer.
+      // Bound through the CLI's dedicated read host, read-tier beside the writer.
       'runs.marks.history': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 431-15: bound — this host binds a reader over the configured or default runs database path whenever the config parses; a read before that file exists answers not recorded in it.
+      // Bound whenever the config parses; before the runs database exists it answers not recorded.
       'runs.overview': { resultKind: 'unary', bindingStatus: 'bound' },
-      // 403 D-03: UNBOUND from this composition, and that is the honest answer rather than an
-      // oversight. `runs.liveurl` mints a viewing credential for a LIVE run, so it binds only where
-      // a live-view port exists — `agent-qa dashboard`'s `composeLiveView`. A CLI host with no
-      // server to serve the embed page from has nothing to mint a link TO, and says so.
+      // Unbound: `runs.liveurl` binds only where a live-view port exists, in `agent-qa dashboard`.
       'runs.liveurl': { resultKind: 'unary', bindingStatus: 'unbound' },
-      // 428 D-07: UNBOUND here on runs.liveurl's reasoning. A live editor binds only where the
-      // dashboard serves one, so a plain CLI host has no editor session to mint a link for.
+      // Unbound: a live editor binds only where the dashboard serves one.
       'editor.liveurl': { resultKind: 'unary', bindingStatus: 'unbound' },
-      // 388 D-14: BOUND on every local host, and NOT gated on whether this one drains the
-      // chain — the two are different questions, and a host that only ever reads is exactly
-      // the caller that most needs durable chip truth. Read-tier, so it survives safe mode.
+      // Bound on every local host, draining or not; a read-only host needs chip truth too.
       'runs.postprocessing': {
         resultKind: 'unary',
         bindingStatus: 'bound',
       },
-      // BOUND since 385 plan 10 (D-16). Not because a literal was flipped — because this
-      // composition supplies a run executor, and `bindingStatus` reports what THIS host can
-      // do. The same capability still lists `unbound` from a composition without one, which
-      // is what compose-local-agent.test.ts and the agent-layer suites assert.
+      // Bound because this composition supplies a run executor; one without it lists `unbound`.
       'runs.start': { resultKind: 'unary', bindingStatus: 'bound' },
     })
     // Sorted lexicographically by id, so a catalog projection is deterministic.
@@ -706,22 +612,7 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(JSON.parse(result.stdout)).toEqual([])
   })
 
-  it('no longer refuses runs.start by binding — the refusal is now the HOST executor speaking', async () => {
-    // The 384 version of this case asserted `FunctionNotBoundError` from this exact command.
-    // It cannot be asserted here any more, and its replacement has to prove the same two
-    // things it did: that the refusal is distinguishable from an unknown id, and that the
-    // capability is reached rather than short-circuited.
-    //
-    // `scope` is a field the run command has no way to carry, so the host's executor refuses it
-    // BEFORE launching anything — which makes this a zero-child-process proof that the invocation
-    // crossed the gate, cleared the binding check, and reached the port the composition bound. A
-    // composition that still refused by binding would report `FunctionNotBoundError` here instead,
-    // and it is asserted absent.
-    //
-    // IT USED TO BE `gateRun`, and 393 moved it. Both durable markers left the unsupported list
-    // when the run command grew `--gate-run` / `--excluded-from-outcomes`, so asking for one is now
-    // an ordinary accepted request and would have launched a child. `scope` and `executionContext`
-    // are what remain, and they belong to the run-invocation work rather than to this phase.
+  it('refuses a runs.start input naming scope at the input check, before anything is read', async () => {
     const workspace = fixtureWorkspace(roots)
 
     const result = await invoke(
@@ -731,18 +622,11 @@ describe('agent-qa fn (generic function invoker)', () => {
 
     expect(result.exitCode).toBe(1)
     expect(result.stdout).toBe('')
-    // 401-05: the SUCCESSOR name. The refusal moved from the spawn port's own pre-filter to the
-    // in-process drive, reading the core's exported field set — `UnsupportedRunRequestError` dies
-    // with `createCliRunExecution` in 401-10 and is no longer on this path.
-    expect(result.stderr).toContain('RunRequestFieldRefusedError')
+    expect(result.stderr).toContain('Invalid input for runs.start')
     expect(result.stderr).toContain('scope')
-    expect(result.stderr).not.toContain('FunctionNotBoundError')
     expect(result.stderr).not.toContain('Unknown function')
-    // AND NOTHING WAS READ ON THE WAY TO IT, which is the half a name change could have quietly
-    // dropped. This fixture's config declares an auth plugin that is NOT installed, so a refusal
-    // that arrived after the project's config resolution would report `PluginNotInstalledError`
-    // here — third-party code loaded for a request this seam was always going to refuse. That is
-    // the exact regression the drive's own hoisted check exists to hold.
+    // This fixture's config declares an auth plugin that is not installed, so a refusal that came
+    // after the project's config was resolved would report the plugin's error instead.
     expect(result.stderr).not.toContain('PluginNotInstalledError')
   })
 
@@ -851,7 +735,7 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(JSON.parse(result.stdout)).toEqual([])
   })
 
-  it('resolves config.get and never renders the raw secret (T-384-07)', async () => {
+  it('resolves config.get and never renders the raw secret', async () => {
     const workspace = fixtureWorkspace(roots)
 
     const result = await invoke(workspace, ['config.get', '--json'])
@@ -866,17 +750,17 @@ describe('agent-qa fn (generic function invoker)', () => {
     const config = JSON.parse(result.stdout) as MaskedResolvedConfig
     expect(config.configPath).toBe(workspace.configPath)
     const apiKey = config.entries.find(
-      (entry) => entry.key === 'registry.providers.acme.apiKey',
+      (entry) => entry.key === 'registry.llms.0.providerHeaders.x-acme-access',
     )
     expect(apiKey).toEqual({
-      key: 'registry.providers.acme.apiKey',
+      key: 'registry.llms.0.providerHeaders.x-acme-access',
       value: FIXTURE_API_KEY_MARKER,
       source: 'config-file',
       masked: true,
     })
     // A neighbouring undeclared leaf in the same record is shown as written.
     expect(config.entries).toContainEqual({
-      key: 'registry.providers.acme.baseURL',
+      key: 'registry.llms.0.providerHeaders.x-acme-origin',
       value: 'https://acme.test',
       source: 'config-file',
       masked: false,
@@ -890,7 +774,7 @@ describe('agent-qa fn (generic function invoker)', () => {
     })
   })
 
-  it('shows undeclared credential-named and credential-shaped values as written (D-29)', async () => {
+  it('shows undeclared credential-named and credential-shaped values as written', async () => {
     const workspace = fixtureWorkspace(roots)
 
     const result = await invoke(workspace, ['config.get', '--json'])
@@ -904,7 +788,7 @@ describe('agent-qa fn (generic function invoker)', () => {
       ['registry.llms.0.providerHeaders.x-key', FIXTURE_HEADER_KEY],
       ['registry.llms.0.providerHeaders.x-cred', FIXTURE_HEADER_CRED],
       ['registry.llms.0.providerHeaders.x-pwd', FIXTURE_HEADER_PWD],
-      ['registry.providers.acme.key', FIXTURE_PROVIDER_KEY],
+      ['registry.llms.0.providerHeaders.x-acme-key', FIXTURE_PROVIDER_KEY],
       [
         'registry.llms.0.baseURL',
         `https://ops:${FIXTURE_URL_PASSWORD}@llm.acme.test/v1?ticket=${FIXTURE_URL_QUERY_SECRET}#assertion=${FIXTURE_URL_FRAGMENT_SECRET}`,
@@ -933,10 +817,10 @@ describe('agent-qa fn (generic function invoker)', () => {
       expect(byKey[key], key).toEqual({ key, value, source: 'config-file', masked: false })
     }
     expect(config.entries.filter((entry) => entry.masked).map((entry) => entry.key))
-      .toEqual(['registry.providers.acme.apiKey'])
+      .toEqual(['registry.llms.0.providerHeaders.x-acme-access'])
   })
 
-  it('shows which packages load in-process, for BOTH plugin kinds (M-01)', async () => {
+  it('shows which packages load in-process, for BOTH plugin kinds', async () => {
     const workspace = fixtureWorkspace(roots)
 
     const result = await invoke(workspace, ['config.get', '--json'])
@@ -944,9 +828,7 @@ describe('agent-qa fn (generic function invoker)', () => {
     expect(result.stderr).toBe('')
     expect(result.exitCode).toBeUndefined()
 
-    // The round-2 asymmetry: one of these was hidden and the other shown, because the word
-    // `auth` appeared in one path. Both are schema-constrained package names identifying
-    // code that runs with full Node access, and `config.get` exists to show them.
+    // Both are package names for code with full Node access, and `config.get` shows both.
     expect(result.stdout).toContain(FIXTURE_AUTH_PLUGIN_PACKAGE)
     expect(result.stdout).toContain(FIXTURE_PROVIDER_PLUGIN_PACKAGE)
 
@@ -967,7 +849,7 @@ describe('agent-qa fn (generic function invoker)', () => {
   })
 })
 
-describe('agent-qa fn runs.events (the D-08 stream kind)', () => {
+describe('agent-qa fn runs.events (the stream kind)', () => {
   const roots: string[] = []
   let originalExitCode: typeof process.exitCode
 
@@ -1081,14 +963,14 @@ describe('agent-qa fn runs.events (the D-08 stream kind)', () => {
       '--json',
     ])
 
-    // An absent log is an ordinary empty replay, never an error (the v49 read contract).
+    // An absent log is an ordinary empty replay, never an error.
     expect(result.stderr).toBe('')
     expect(result.exitCode).toBeUndefined()
     expect(result.stdout).toBe('')
   })
 })
 
-describe('C441-DISPLAY', () => {
+describe('fn output masks declared secrets', () => {
   const roots: string[] = []
   let originalExitCode: typeof process.exitCode
 
@@ -1105,7 +987,7 @@ describe('C441-DISPLAY', () => {
 
   it('fn prints a declared value in an op result as its named marker', async () => {
     const workspace = fixtureWorkspace(roots)
-    writeFileSync(join(workspace.root, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n', 'utf8')
+    writeFileSync(join(workspace.root, '.env.secrets.local'), 'PW_KEY=Hunter-42-zz\n', 'utf8')
     seedRuns(workspace, [
       handoff({
         runId: 'run-secret',
@@ -1128,12 +1010,12 @@ describe('C441-DISPLAY', () => {
 
     for (const result of [human, json]) {
       expect(result.exitCode).toBeUndefined()
-      expect(result.stdout).toContain('log in with [secret:PW_441]')
+      expect(result.stdout).toContain('log in with [secret:PW_KEY]')
       expect(`${result.stdout}\n${result.stderr}`).not.toContain('Hunter-42-zz')
     }
     expect(JSON.parse(json.stdout)).toMatchObject({
       runId: 'run-secret',
-      tests: [{ testName: 'log in with [secret:PW_441]' }],
+      tests: [{ testName: 'log in with [secret:PW_KEY]' }],
     })
   })
 
@@ -1152,7 +1034,7 @@ describe('C441-DISPLAY', () => {
   })
 })
 
-describe('C441-GAP-DISPLAY', () => {
+describe('fn masks a declared value holding a quote and a backslash', () => {
   const roots: string[] = []
   let originalExitCode: typeof process.exitCode
 
@@ -1169,7 +1051,7 @@ describe('C441-GAP-DISPLAY', () => {
 
   it('fn prints a declared value holding a quote and a backslash only as its marker', async () => {
     const workspace = fixtureWorkspace(roots)
-    writeFileSync(join(workspace.root, '.env.secrets.local'), 'PW_441=pa"ss\\x\n', 'utf8')
+    writeFileSync(join(workspace.root, '.env.secrets.local'), 'PW_KEY=pa"ss\\x\n', 'utf8')
     seedRuns(workspace, [
       handoff({
         runId: 'run-escaped',
@@ -1193,7 +1075,7 @@ describe('C441-GAP-DISPLAY', () => {
     for (const result of [human, json]) {
       const printed = `${result.stdout}\n${result.stderr}`
       expect(result.exitCode).toBeUndefined()
-      expect(result.stdout).toContain('log in with [secret:PW_441]')
+      expect(result.stdout).toContain('log in with [secret:PW_KEY]')
       expect(printed).not.toContain('pa"ss')
       expect(printed).not.toContain('pa\\"ss')
       expect(printed).not.toContain('ss\\\\x')
@@ -1201,7 +1083,7 @@ describe('C441-GAP-DISPLAY', () => {
   })
 })
 
-describe('C441-GAP2-DISPLAY', () => {
+describe('fn runs.events --json masking', () => {
   const roots: string[] = []
   let originalExitCode: typeof process.exitCode
 
@@ -1218,7 +1100,7 @@ describe('C441-GAP2-DISPLAY', () => {
 
   it('fn runs.events --json keeps each line\'s seq and type and masks its payload', async () => {
     const workspace = fixtureWorkspace(roots)
-    writeFileSync(join(workspace.root, '.env.secrets.local'), 'E_441=e\nPW_441=Hunter-42-zz\n', 'utf8')
+    writeFileSync(join(workspace.root, '.env.secrets.local'), 'E_KEY=e\nPW_KEY=Hunter-42-zz\n', 'utf8')
     seedEvents(workspace, 'run-alpha', fiveEvents().map((event) => ({
       ...event, payload: { note: 'log in with Hunter-42-zz' } as never,
     })))
@@ -1240,7 +1122,173 @@ describe('C441-GAP2-DISPLAY', () => {
     ])
     expect(lines.map((line) => line.ts)).toEqual(fiveEvents().map((event) => event.ts))
     expect(lines.map((line) => line.runId)).toEqual(Array(5).fill('run-alpha'))
-    expect(JSON.stringify(lines)).toContain('[secret:PW_441]')
+    expect(JSON.stringify(lines)).toContain('[secret:PW_KEY]')
     expect(result.stdout).not.toContain('Hunter-42-zz')
+  })
+})
+
+describe('agent-qa fn under GitHub Actions', () => {
+  const CRAFTED = '##[error]x ::set-output name=x::y'
+  const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+  const roots: string[] = []
+  let originalExitCode: typeof process.exitCode
+
+  beforeEach(() => {
+    originalExitCode = process.exitCode
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    process.exitCode = originalExitCode
+    for (const root of roots.splice(0)) {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  function craftedRun(): FixtureWorkspace {
+    const workspace = fixtureWorkspace(roots)
+    seedRuns(workspace, [handoff({
+      runId: 'run-alpha',
+      buildOrdinal: 11,
+      aggregateVerdict: 'failed',
+      tests: [{
+        testId: 'test-1',
+        testName: CRAFTED,
+        filePath: 'tests/crafted.yaml',
+        testIndex: 0,
+        outcome: 'failed',
+        steps: [],
+      }],
+    })])
+    return workspace
+  }
+
+  const getAlpha = ['runs.get', '--input', JSON.stringify({ runId: 'run-alpha' })]
+
+  it('prints a unary result as text inside one stop-commands pair', async () => {
+    const workspace = craftedRun()
+    const plain = await invoke(workspace, getAlpha)
+    expect(plain.stdout).toContain(CRAFTED)
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, getAlpha)
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toBe('')
+    expect(result.writes).toHaveLength(1)
+    expect(result.writes[0]).toMatch(PAIR)
+    expect(result.writes[0]).toContain(`\n${plain.stdout}\n`)
+  })
+
+  it('prints a --json result with no # that parses back to the same value', async () => {
+    const workspace = craftedRun()
+    const plain = await invoke(workspace, [...getAlpha, '--json'])
+    expect(plain.stdout).toContain('#')
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, [...getAlpha, '--json'])
+
+    expect(result.writes).toEqual([])
+    expect(result.stdout).not.toContain('#')
+    expect(result.stdout).not.toContain('::stop-commands::')
+    expect(JSON.parse(result.stdout)).toEqual(JSON.parse(plain.stdout))
+  })
+
+  it('prints each NDJSON stream line with no # and the same parsed element', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedEvents(workspace, 'run-alpha', fiveEvents().map((event) => ({
+      ...event, payload: { note: CRAFTED } as never,
+    })))
+    const args = ['runs.events', '--input', JSON.stringify({ runId: 'run-alpha' }), '--json']
+    const plain = await invoke(workspace, args)
+    expect(plain.stdout).toContain('#')
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, args)
+
+    expect(result.writes).toEqual([])
+    expect(result.stdout).not.toContain('#')
+    expect(result.stdout).not.toContain('::stop-commands::')
+    const lines = result.stdout.split('\n').filter((line) => line.length > 0)
+    const plainLines = plain.stdout.split('\n').filter((line) => line.length > 0)
+    expect(lines).toHaveLength(5)
+    expect(lines.map((line) => JSON.parse(line) as unknown))
+      .toEqual(plainLines.map((line) => JSON.parse(line) as unknown))
+  })
+
+  it('prints the human stream labels and footer inside pairs', async () => {
+    const workspace = fixtureWorkspace(roots)
+    seedEvents(workspace, 'run-alpha', fiveEvents())
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, [
+      'runs.events', '--input', JSON.stringify({ runId: 'run-alpha' }),
+    ])
+
+    expect(result.stdout).toBe('')
+    expect(result.writes).toHaveLength(6)
+    for (const write of result.writes) expect(write).toMatch(PAIR)
+    expect(result.writes[5]).toContain('last seq 5')
+  })
+
+  it('a --json failure prints its message inside a pair on stderr, not stdout', async () => {
+    const workspace = fixtureWorkspace(roots)
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, [CRAFTED, '--json'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toBe('')
+    expect(result.writes).toEqual([])
+    expect(result.stderr).toBe('')
+    expect(result.errorWrites).toHaveLength(1)
+    expect(result.errorWrites[0]).toMatch(/^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u)
+    expect(result.errorWrites[0]).toContain(CRAFTED)
+  })
+
+  it('a secrets file it cannot read is reported inside one pair', async () => {
+    const workspace = fixtureWorkspace(roots)
+    rmSync(join(workspace.root, '.env.secrets.local'))
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, ['runs.list'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toBe('')
+    expect(result.writes).toHaveLength(1)
+    expect(result.writes[0]).toMatch(PAIR)
+    expect(result.writes[0]).toContain(
+      `Secrets file not found: ${join(workspace.root, '.env.secrets.local')}`,
+    )
+    expect(result.writes[0]).toContain('Create the file before running tests.')
+  })
+
+  it('a failure without --json prints its message inside a pair on stdout', async () => {
+    const workspace = fixtureWorkspace(roots)
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await invoke(workspace, [CRAFTED])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toBe('')
+    expect(result.writes).toHaveLength(1)
+    expect(result.writes[0]).toMatch(PAIR)
+    expect(result.writes[0]).toContain(CRAFTED)
+  })
+
+  it('prints a unary result and a failure exactly as before off GitHub Actions', async () => {
+    const workspace = craftedRun()
+
+    const result = await invoke(workspace, getAlpha)
+    const failure = await invoke(workspace, [
+      'runs.get', '--input', JSON.stringify({ runId: 'run-missing' }), '--json',
+    ])
+
+    expect(result.writes).toEqual([])
+    expect(result.stdout).toContain(CRAFTED)
+    expect(result.stdout).not.toContain('::stop-commands::')
+    expect(failure.writes).toEqual([])
+    expect(failure.stderr).toContain('Function error [RunNotFoundError]')
+    expect(failure.stderr).not.toContain('::stop-commands::')
   })
 })

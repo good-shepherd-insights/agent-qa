@@ -6,7 +6,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -263,8 +262,6 @@ interface ProductionDrainHarness extends ScheduledHostHarness {
 function startProductionDrainHost(options: {
   paths: ReturnType<typeof makeRoot>
   author: () => CuratorAuthor | Promise<CuratorAuthor>
-  configPath?: string
-  onCompose?: (input: ComposeLocalAgentInput) => void
 }): ProductionDrainHarness {
   const signals = new Map<NodeJS.Signals, () => void>()
   const intervals = new Map<number, { callback: () => void; intervalMs: number }>()
@@ -277,10 +274,7 @@ function startProductionDrainHost(options: {
   })
   const operations = {
     composeJobRecovery: (_input: ComposeJobRecoveryInput) => fakeRecovery(),
-    composeLocalAgent: (input: ComposeLocalAgentInput) => {
-      options.onCompose?.(input)
-      return fakeLocalAgent()
-    },
+    composeLocalAgent: (_input: ComposeLocalAgentInput) => fakeLocalAgent(),
     // Keep the production drainer while disabling the unrelated embedder-child lifecycle.
     drainQueue,
     setInterval: (callback: () => void, intervalMs: number) => {
@@ -307,7 +301,6 @@ function startProductionDrainHost(options: {
   const running = runDaemonHost({
     agentQaRoot: options.paths.agentQaRoot,
     knowledgeRoot: options.paths.knowledgeRoot,
-    ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
     config: CONFIG,
     model: () => MODEL,
     author: options.author,
@@ -436,40 +429,6 @@ afterEach(() => {
 })
 
 describe('daemon curation serving tracer', () => {
-  it('refreshes the daemon-owned posture preparation when the eval root appears and disappears', async () => {
-    const paths = makeRoot()
-    const configPath = join(paths.root, 'agent-qa.config.yaml')
-    writeFileSync(configPath, JSON.stringify({
-      workspace: { testMatch: ['tests/**/*.yaml'], suiteMatch: ['suites/**/*.suite.yaml'],
-        hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local' },
-      use: { mobile: { appState: 'preserve' } },
-    }))
-    let composed: ComposeLocalAgentInput | undefined
-    const host = startProductionDrainHost({ paths, configPath,
-      author: () => async () => ({ kind: 'fallback-required', reason: 'no-model' }),
-      onCompose: input => { composed = input },
-    })
-    await waitUntil(() => composed !== undefined, 'daemon did not compose its read port')
-    try {
-      const candidate = { id: CANDIDATE_ID, product: 'shop',
-        scope: { tier: 'product' as const, key: 'shop' },
-        provenance: { runIds: ['freshness'], receiptDigests: [], capturedAtOrdinals: [1] },
-      }
-      const prepare = composed!.resolvePromotionPosture!
-      expect((await prepare())?.(candidate)).toBeUndefined()
-      const committedRoot = join(paths.root, 'agent-qa-eval')
-      mkdirSync(join(committedRoot, 'reports/noise-floor'), { recursive: true })
-      expect((await prepare())?.(candidate)).toBeUndefined()
-      writeFileSync(join(committedRoot, 'reports/noise-floor/any-profile.json'), '{}')
-      expect((await prepare())?.(candidate)).toMatchObject({ kind: 'unavailable' })
-      rmSync(committedRoot, { recursive: true })
-      expect((await prepare())?.(candidate)).toBeUndefined()
-    } finally {
-      host.signal('SIGTERM')
-      expect(await host.running).toBe(0)
-    }
-  })
-
   it('receipts a handed-off tail, nudges once, drains under standing authority, and receipts the session', async () => {
     const paths = makeRoot()
     const queued = new Set<string>()
@@ -589,14 +548,14 @@ describe('daemon curation serving tracer', () => {
           emitted: 0,
           refused: 0,
           unresolved: 0,
-          canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+          canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }),
         foldRunOutcomes: () => ({
           kind: 'applied',
           tests: 0,
-          // 390 D-08: this stub asks for no detection, so the fold declares it skipped.
+          // This stub asks for no detection, so the fold declares it skipped.
           quarantine: { kind: 'not-evaluated', reason: 'not-requested' },
         }),
         drainQueue: async () => ({

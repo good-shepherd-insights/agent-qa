@@ -2,64 +2,7 @@
 // The DOM lib is referenced HERE because this file's `page.evaluate` callbacks are compiled as
 // TypeScript and EXECUTED in a browser — `dashboard-dom.test.ts`'s reasoning, unchanged.
 
-// RUN DETAIL, IN THE MEDIUM A PERSON LOOKS AT (Phase 405 plan 12 · DETL-01/02/03, D-04 and D-11).
-//
-// WHAT THIS FILE IS FOR, AND WHY NOTHING ELSE IN THE REPOSITORY DOES IT. Every other 405 cell
-// proves one leg: the subscriber writes a row, the op reads it, the route serves it, the component
-// renders it. CONTEXT.md D-04 rejects that stack as the acceptance in as many words — "subscriber
-// unit cells over fixture envelopes alone (blind to the op, the route and the page)". Two prior
-// plans left the same gap open BY NAME: 405-01's coverage item D6 (`human_judgment: true`, "no cell
-// starts the shipped binary and reads the binding from it") and 405-04's identical caveat for the
-// token path. This file is the cell both of them named. It drives the BUILT dashboard bundle served
-// by the SHIPPED `agent-qa dashboard` binary, over a real socket, in a real headless Chromium,
-// against a run that really ran — 405-09's populated-run producer — and asserts on pixels and on
-// network responses the browser actually received.
-//
-// A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP — `live-view-dom.test.ts`'s law, and this
-// file contains no conditional skip for the same reason: a skipped visual suite exits 0 having
-// measured nothing, and the thing it measured nothing about is the phase's entire acceptance.
-//
-// THE DRIVING HAPPENS ONCE, IN `beforeAll`, AND THE CELLS ASSERT ON WHAT IT RECORDED —
-// `post-processing-dom.test.ts`'s idiom, for its load-bearing reason: the phase's mutation driver
-// (since removed) needed each named claim to be the only red under its own mutation. A cell that drove
-// its own run would take the whole file down with it and a mutation run would be measuring
-// blast radius instead of a property. The drive RECORDS and never asserts.
-//
-// ── THE TWO SECRET LANES, AND WHY CRITERION 2 IS SPLIT ACROSS TWO CELLS (WINDOWS #286).
-//
-// 405-09 measured a fact this file must not paper over. There are TWO ways a value becomes secret
-// to this product and they have DIFFERENT observable fates on this page:
-//
-//   (A) A credential-shaped value handed to the run in an environment variable and NOT declared
-//       in the fixture's secrets file. Only declared values are masked (D-01, D-12), so the run
-//       records it as written and the page shows it as written. Cells (2a)/(2d) are its acceptance.
-//
-//   (B) A value DECLARED in the fixture's secrets file (`.env.secrets.local`). The runner builds a `SecretRedactor` from
-//       that store and rewrites the value to its named `[secret:<name>]` marker INSIDE THE LOOP, at
-//       `plan: reasoning`, before any evidence is recorded. By the time the bus projection masks
-//       anything there is no value left to mask, so no placeholder is ever minted and the seam has
-//       nothing to match a digest against. The page renders an IRREVERSIBLE `[secret:<name>]`
-//       where a value belongs.
-//
-// Criterion 2 as CONTEXT.md D-11 phrases it — "the rebuilt page never renders a masked placeholder
-// where a value belongs" — is TRUE for lane (A) and NOT TRUE for lane (B), and a cell that only
-// ever exercised (A) would let a reader believe it held for both. So cell (2e) measures lane (B)
-// as it actually is: the declared value is absent from the page (which is the at-rest claim
-// holding) and the named marker is what a person sees. That is the honest floor, it is the
-// evidence WINDOWS #286 asks the verifier to rule on, and it is deliberately NOT written as a
-// failure — the behaviour is correct for a redactor; what is unsettled is whether criterion 2 was
-// ever meant to range over it.
-//
-// ── WHAT THIS FILE DELIBERATELY DOES NOT ASSERT, STATED RATHER THAN IMPLIED.
-//
-// A/B SCREENSHOT SIDE-SELECTION (WINDOWS #284). 405-11 retired it: the bus records ONE decision
-// screenshot per sub-action and no post-action capture, so there is no second side to select. This
-// file asserts one `<img>` and one real 200, and nothing about a pair.
-//
-// THE ARIA-TREE TAB has its own Phase 423/424 evidence probes. Owner screenshots on 2026-09-21
-// (424-33) retire the duplicate Overview token and hash/state rows. Cells (1d)/(1e) now protect
-// the authoritative source facts plus the old DOM's absence; they no longer claim those facts
-// are visibly painted on Overview. Run-level accounting remains independently observed.
+// A declared secret becomes `[secret:<name>]` inside the loop, so the page shows that.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -87,14 +30,11 @@ import {
   PACKAGES_ROOT,
   buildFreshness,
   cleanupTempRoots,
-  reserveEphemeralPort,
   spawnDashboard,
 } from './spawned-chat.js'
 import type { SpawnedDashboard } from './spawned-chat.js'
 
-// NO PLATFORM SKIP, on `populated-run.test.ts`'s law applied to itself: a conditional `describe`
-// that exits 0 having measured nothing is indistinguishable from one that measured everything, and
-// this file is the phase's acceptance. Windows is a recorded drive failure naming the reason.
+// No platform skip: on Windows the drive fails with a recorded reason, never a silent exit 0.
 const WINDOWS_REFUSAL =
   'the spawned-binary cells in this directory are POSIX-only: the dashboard child is stopped with '
   + 'SIGTERM and the run writes a POSIX runtime root. This file reds rather than skipping on '
@@ -118,7 +58,7 @@ const BROWSER_INSTALL_INSTRUCTION =
 /** How long the page has to mount, paint the tree and settle the overview. */
 const PAGE_BUDGET_MS = 60_000
 
-/** How long the respawned dashboard has to say it is listening on the same port. */
+/** How long the respawned dashboard has to say it is listening. */
 const RESPAWN_BUDGET_MS = 60_000
 
 /** How long the detached post-run tail is given before the dashboard is stopped for the scan. */
@@ -127,13 +67,7 @@ const TAIL_GRACE_MS = 2_000
 /** How long a focused token line is given to open its usage card before the absence is taken as real. */
 const USAGE_CARD_OPEN_BUDGET_MS = 5_000
 
-/**
- * The artifact route a decision screenshot's `<img>` must be addressed through (D-12).
- *
- * SPELLED AS A SHAPE RATHER THAN AS THE MINTER'S OUTPUT, deliberately: this cell's claim is that
- * the browser requested the RUN-SCOPED, CONTENT-ADDRESSED route and got bytes back, and a check
- * that rebuilt the same string the page built would pass for any string both agreed on.
- */
+// A shape, not the minter's output: rebuilding the page's own string would pass any agreed string.
 const ARTIFACT_ROUTE_RE = new RegExp('/api/runs/[^/]+/artifacts/[0-9a-f]{64}$', 'u')
 
 /**
@@ -197,7 +131,7 @@ interface RecordedResponse {
 
 /** Everything one page visit recorded. */
 interface PageObservation {
-  /** Where the browser ended up — a D-07 bounce to `/live` would show here rather than as a hang. */
+  // Where the browser ended up; a bounce to `/live` shows here rather than as a hang.
   readonly finalUrl: string
   /** Why the tree never attached, when it never did. Recorded, so the cells red on the FACT. */
   readonly waitFailure?: string
@@ -214,21 +148,16 @@ interface PageObservation {
   readonly initialPlayerSource?: string
   /** The decision screenshot's `src`, if the page rendered an `<img>` at all. */
   readonly screenshotSrc?: string
-  /** Retired Overview metadata must stay absent (owner correction 424-33). */
+  // Retired Overview metadata must stay absent.
   readonly tokenSummary?: string
   readonly stepTokens?: number
   /** The `[data-run-token-summary]` sentence from the navbar, as painted. */
   readonly runTokenSummary?: string
-  /**
-   * The run's token totals off the SAME `/detail` response the page rendered from.
-   *
-   * The sentence above has been captured since 405 and asserted by nobody; comparing it to a
-   * sentence composed here from this record is what turns it into a claim (425 D-21).
-   */
+  // The run's token totals off the same `/detail` response the page rendered from.
   readonly runTokens?: import('@vostride/agent-qa-schema').RunTokenTotals
   /** Whether focusing `[data-run-token-summary]` attached `[data-usage-card]` inside the budget. */
   readonly usageCardOpened?: boolean
-  /** Every visible `[data-usage-line]` in the opened card, in document order, kind beside text. */
+  /** Every `[data-usage-line]` in the opened card, in document order, kind beside text. */
   readonly usageCardLines?: readonly { readonly kind: string; readonly text: string }[]
   /** Recorded source fact, independent of its retired Overview chip. */
   readonly screenStateHash?: string
@@ -254,7 +183,7 @@ interface Recorded {
   envelopeTypes: string[]
   /** The first visit, on the process that executed the run. */
   first?: PageObservation
-  /** The second visit, on a dashboard process that has never seen this run execute (D-08). */
+  /** The second visit, on a dashboard process that has never seen this run execute. */
   afterRestart?: PageObservation
   /** Every run-stream frame the drive collected, serialised — the masked-side wire scan. */
   sseFrames?: string
@@ -365,20 +294,7 @@ async function waitUntil(
   }
 }
 
-/**
- * Open one run's detail page, select the recorded sub-action, and harvest what a person can see.
- *
- * THE SUB-ACTION IS CLICKED RATHER THAN DEEP-LINKED. Run detail's default selection is the first
- * STEP, and the overview renders no reasoning, no screenshot and no screen context for a step
- * selection — those three facts belong to a sub-action. A `?sub=` deep link would reach the same
- * panel while skipping the interaction a person actually performs, and the click is one of the
- * things D-04 says the acceptance must exercise.
- *
- * THE ARTIFACT RESPONSE IS WAITED FOR, NOT ASSUMED. `<img src>` is a request the BROWSER issues
- * after the element mounts; harvesting the moment the pane appears would read the src off an
- * element whose bytes are still in flight, and the network half of cell (1c) would then be a claim
- * about a request nobody watched complete.
- */
+// The sub-action is clicked, not deep-linked, and the artifact response is awaited before harvest.
 async function observeRunDetail(
   context_: BrowserContext,
   origin: string,
@@ -500,10 +416,7 @@ async function observeRunDetail(
     const treeActionFamily = await attributeOf('[data-sub-action] [data-action-family]', 'data-action-family')
     const treePlanCount = await page.locator('[data-sub-action] [data-sub-action-plan]').count()
     const tokenSummary = await textOf('[data-token-summary]')
-    // THE TOKEN ROOT CARRIES ITS OWN ACCESSIBLE NAME (425-05 · D-21). The header's token line is a
-    // focusable tooltip trigger with an `sr-only` sibling naming it, so the root's `textContent` is
-    // the sentence AND that name run together. `(1f)` is a claim about the sentence a person reads,
-    // so the name is dropped here rather than pattern-matched around downstream.
+    // The token root's text includes its `sr-only` name, which is dropped to read the sentence.
     const runTokenSummary = await page.evaluate(() => {
       const root = document.querySelector('[data-run-token-summary]')
       if (root === null) return undefined
@@ -512,17 +425,7 @@ async function observeRunDetail(
       return (clone.textContent ?? '').trim()
     })
     const screenStateChip = await attributeOf('[data-screen-state]', 'data-screen-state')
-    // THE USAGE CARD IS OPENED FROM THE CONTROL A PERSON USES (425 D-21/D-24 · WR-05), with the
-    // stage-card idiom from `post-processing-dom.test.ts`: focus rather than hover, because the page
-    // mounts one `TooltipProvider` with `delayDuration = 0` and Radix opens on focus with no delay.
-    //
-    // THE CARD IS PORTALLED, so it is located on the document rather than under the trigger. Radix
-    // also paints the content's children a SECOND time inside a visually-hidden `role="tooltip"` node
-    // that lives INSIDE `[data-usage-card]`; those copies are dropped, or every line would read twice
-    // and "exactly one totals line" would be a claim about the screen-reader duplicate.
-    //
-    // This runs after every text and attribute read above, so opening a card cannot disturb what the
-    // harvest already recorded, and a card that never opens is a reading rather than a timeout.
+    // Opened by focus; Radix renders the portalled card once, as the tooltip itself.
     let usageCardOpened: boolean | undefined
     let usageCardLines: { kind: string; text: string }[] | undefined
     const usageTrigger = page.locator('[data-run-token-summary]').first()
@@ -535,7 +438,6 @@ async function observeRunDetail(
       if (usageCardOpened) {
         usageCardLines = await page.evaluate(() =>
           Array.from(document.querySelectorAll('[data-usage-card] [data-usage-line]'))
-            .filter((line) => line.closest('[role="tooltip"]') === null)
             .map((line) => ({
               kind: line.getAttribute('data-usage-line') ?? '?',
               text: (line as HTMLElement).innerText.trim(),
@@ -581,7 +483,7 @@ async function observeRunDetail(
   }
 }
 
-describe('the shipped dashboard renders run detail populated and unmasked (405-12)', () => {
+describe('the shipped dashboard renders run detail populated and unmasked', () => {
   beforeAll(async () => {
     if (process.platform === 'win32') {
       recorded.failure = WINDOWS_REFUSAL
@@ -621,14 +523,9 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       targetUrl: targetServer.url,
     })
 
-    // THE SAME PORT ACROSS THE RESTART, so the second dashboard is the same door at the same
-    // address and the only thing that changed is the PROCESS — which is precisely the fact the
-    // re-derivation claim (D-08) rests on.
-    const port = await reserveEphemeralPort()
     dashboard = await spawnDashboard(
       project.root,
       project.configPath,
-      port,
       60_000,
       populatedRunSpawnEnv(),
     )
@@ -647,17 +544,12 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       contexts.push(firstContext)
       recorded.first = await observeRunDetail(firstContext, dashboard.origin, recorded.drive.runId)
 
-      // ── THE RESTART LEG. The process that masked these strings, held the run's in-memory masking
-      // map and wrote the sidecar is KILLED. The replacement has never seen this run execute; every
-      // value it puts back it re-derived from the host's CURRENT sources and matched against the
-      // run's recorded digests. That is the whole of D-08, and it is the only way to tell a real
-      // re-derivation from a process that simply still remembered.
+      // The masking process is killed; its replacement never saw the run, so it cannot remember.
       recorded.dashboardStderr = dashboard.stderr()
       await dashboard.stop()
       respawned = await spawnDashboard(
         project.root,
         project.configPath,
-        port,
         RESPAWN_BUDGET_MS,
         populatedRunSpawnEnv(),
       )
@@ -767,8 +659,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toBe(true)
   })
 
-  // Owner screenshots, 2026-09-21 / 424-33: remove the duplicate Overview row. The
-  // producer fact still matters: M2 must RED when final step publication drops usage.
+  // The Overview row is gone, but a final step publication dropping usage must still red.
   it('(1d) token usage: recorded step spend survives removal of the redundant Overview row', () => {
     const observed = firstVisit()
     expect(
@@ -786,20 +677,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(observed.tokenSummary).toBeUndefined()
   })
 
-  /**
-   * THE HEADER PAIR, ON THE SHIPPED BUNDLE (425 D-21, as corrected by 425 RESEARCH pitfall 2).
-   *
-   * `[data-run-token-summary]` has been captured into this observation since 405 and asserted by
-   * NOBODY, which is why the phase's mutation driver's M2/M2L legs (since removed) stayed green straight through
-   * the header's rewrite — M2's required cell is `(1d)`, over `[data-token-summary]`, a different
-   * root carrying a different number. This cell is additive and leaves both legs exactly as they
-   * were; it is the first thing in the repository to hold the header's own sentence to account.
-   *
-   * THE EXPECTED SENTENCE IS COMPOSED HERE, from the same `/detail` response the page rendered
-   * from, with the same `Intl` formatter `format.ts` constructs. The cli package cannot import
-   * dashboard-ui, so the two spellings are compared rather than shared — which is the stronger
-   * arrangement anyway: a page that quietly started rounding differently reds here.
-   */
+  // The header sentence is composed from the same `/detail` response and `Intl` format.
   it("(1f) header token pair: the navbar spells the run's in/out pair from the detail read", () => {
     const observed = firstVisit()
     const tokens = observed.runTokens
@@ -824,25 +702,13 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toBe(expected)
     expect(
       observed.runTokenSummary ?? '',
-      'and the coverage caveat stays OUT of the header sentence (D-22). "of N steps" is a caveat '
+      'and the coverage caveat stays OUT of the header sentence. "of N steps" is a caveat '
       + 'about the number rather than the number, and the header is a glance; it belongs in the '
       + `usage card, where a reader who wants it is already looking.${context()}`,
     ).not.toMatch(/of \d+ steps/u)
-    console.log(
-      `[425-11] (1f) header token pair ${JSON.stringify(observed.runTokenSummary)} `
-      + `from ${JSON.stringify(tokens)}`,
-    )
   })
 
-  /**
-   * THE USAGE CARD, OPENED FROM ITS REAL TRIGGER ON THE SHIPPED BUNDLE (425 D-21/D-24 · WR-05).
-   *
-   * `run-usage-card.test.tsx` already mounts the real Radix primitives under a real provider and
-   * drives `focus()`, so what this cell adds is the one link nothing else holds: the header's actual
-   * `[data-run-token-summary]` trigger, on the built product, opening the portalled card. The totals
-   * sentence is composed here from the same `/detail` response the page rendered from, in `(1f)`'s
-   * idiom — compared rather than shared, because the cli package cannot import dashboard-ui.
-   */
+  // The real header trigger on the built product opens the card with the run's own totals.
   it('(1g) usage card: the header trigger opens the portalled card and its lines carry the run\'s own totals', () => {
     const observed = firstVisit()
     const tokens = observed.runTokens
@@ -863,8 +729,8 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(
       totals.length,
       'the card must carry exactly one totals line: none means the one sentence every run has is '
-      + 'missing, and two means the card is stating the spend twice or the harvest read the '
-      + `screen-reader duplicate. lines: ${JSON.stringify(lines)}${context()}`,
+      + 'missing, and two means the card is stating the spend twice. '
+      + `lines: ${JSON.stringify(lines)}${context()}`,
     ).toBe(1)
 
     const full = new Intl.NumberFormat('en-US')
@@ -887,13 +753,10 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       expect(
         lines.filter((line) => line.kind === 'coverage'),
         'the card said nobody measured this run and then followed it with a coverage caveat about '
-        + 'totals that do not exist (WR-02): an undercount of nothing is the absent-vs-zero collapse. '
+        + 'totals that do not exist: an undercount of nothing is the absent-vs-zero collapse. '
         + `lines: ${JSON.stringify(lines)}${context()}`,
       ).toEqual([])
     }
-    console.log(
-      `[425-15] (1g) usage card lines ${JSON.stringify(lines)} from ${JSON.stringify(tokens)}`,
-    )
   })
 
   it('(1e) screen context: recorded hash survives removal of the redundant Overview chip', () => {
@@ -914,8 +777,8 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(
       observed.bodyText.includes(POPULATED_SECRET_VALUE),
       'the `_SECRET`-named environment credential is NOT visible on run detail. It is not a '
-      + 'declared secret, so the run records it as written and the page shows it as written '
-      + `(D-07, D-23).${context()}`,
+      + 'declared secret, so the run records it as written and the page shows it as written'
+      + `.${context()}`,
     ).toBe(true)
 
     // THE TWO VALUES SHARE ONE SENTENCE, and this is where that is held: without it, (2a) and (2e)
@@ -962,7 +825,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + `(${recorded.scannedDbFiles.join(', ')}).${context()}`,
     ).toBe(false)
 
-    // Undeclared values are recorded as written (D-01, D-12, D-23).
+    // Undeclared values are recorded as written.
     for (const [what, value] of [
       ['the env credential', POPULATED_SECRET_VALUE],
       ['the planted email address', POPULATED_EMAIL],
@@ -982,7 +845,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     const observed = firstVisit()
     expect(
       observed.bodyText.includes(POPULATED_EMAIL),
-      `the planted address is not shown as written on the page (D-23).${context()}`,
+      `the planted address is not shown as written on the page.${context()}`,
     ).toBe(true)
     expect(
       observed.maskedCategories,
@@ -1004,11 +867,11 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     expect(
       (observed as PageObservation).bodyText.includes(POPULATED_SECRET_VALUE),
       'the env credential is not shown as written by a dashboard that never saw this run execute; '
-      + `the run recorded it as written, so the page reads it from the record (D-07).${context()}`,
+      + `the run recorded it as written, so the page reads it from the record.${context()}`,
     ).toBe(true)
   })
 
-  it('(2e) the DECLARED-secret lane is irreversible: the value is absent and its named marker is what a person sees (WINDOWS #286)', () => {
+  it('(2e) the DECLARED-secret lane is irreversible: the value is absent and its named marker is what a person sees', () => {
     const observed = firstVisit()
     const marker = DECLARED_SECRET_MARKER
 
@@ -1020,12 +883,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       + `redactor is supposed to have consumed it before anything was recorded.${context()}`,
     ).toBe(false)
 
-    // And the half that does NOT hold, measured rather than argued. The redactor rewrote the value
-    // to its named marker inside the loop, before any evidence existed, so no placeholder was ever
-    // minted and the display seam has no digest to match. What a person sees where a value belongs
-    // is this marker, and no restart, config or key can turn it back. Recorded as WINDOWS #286 for
-    // the verifier to rule on: criterion 2's "never renders a masked placeholder where a value
-    // belongs" is satisfiable for the name-seeded lane and unsatisfiable for this one.
+    // The redactor writes the marker before evidence exists, so nothing can restore the value.
     expect(
       observed.planText,
       'the declared step credential no longer resolves to the redactor\'s named marker in the '
@@ -1035,13 +893,13 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
     ).toContain(marker)
   })
 
-  describe('C441-DISPLAY', () => {
+  describe('declared markers on run detail', () => {
     it('run detail shows a declared marker as text', () => {
       const observed = firstVisit()
       expect(
         observed.stepRowText,
         'the step row does not show the declared value\'s stored `[secret:<name>]` as text. The '
-        + `step text references the value declared in the fixture's secrets file (D-28).${context()}`,
+        + `step text references the value declared in the fixture's secrets file.${context()}`,
       ).toContain(DECLARED_SECRET_MARKER)
       expect(
         observed.textNodes.some((text) => text.includes(DECLARED_SECRET_MARKER)),
@@ -1049,7 +907,7 @@ describe('the shipped dashboard renders run detail populated and unmasked (405-1
       ).toBe(true)
       expect(
         observed.maskedCategories,
-        `the page painted a masked-value chip; a stored marker is shown as text (D-28).${context()}`,
+        `the page painted a masked-value chip; a stored marker is shown as text.${context()}`,
       ).toEqual([])
       expect(observed.bodyText, context()).not.toMatch(/masked (?:secret|email)/u)
     })

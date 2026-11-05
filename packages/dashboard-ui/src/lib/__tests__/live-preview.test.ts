@@ -1,8 +1,4 @@
-// THE LIVE PREVIEW'S ONE MACHINE, PROVEN WHERE TIME IS FREE (428 D-14/D-15/D-16/D-17 · SC2, SC3).
-//
-// Every clock is a parameter: `reduceLivePreview(state, event, now)` and `deriveLivePreview(state,
-// now)`. The window cells below sit on either side of a half-open boundary, the shape a wall clock
-// would turn into a flake.
+// Every clock is a parameter, so window cells sit on either side of the half-open boundary.
 
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -51,8 +47,8 @@ import {
   type LivePreviewView,
 } from '../live-preview'
 
-describe('the preview vocabulary (428-14 Task 1)', () => {
-  it('CLOSED-SETS-428: the states, dots, report events and actions are exactly the published sets', () => {
+describe('the preview vocabulary', () => {
+  it('the states, dots, report events and actions are exactly the published sets', () => {
     expect(LIVE_PREVIEW_STATES).toEqual([
       'loading',
       'waiting',
@@ -93,7 +89,7 @@ describe('the preview vocabulary (428-14 Task 1)', () => {
     }
   })
 
-  it('COPY-428: the constants and the corner copy are the recorded defaults', () => {
+  it('the constants and the corner copy are the recorded defaults', () => {
     expect(LIVE_FRESHNESS_WINDOW_MS).toBe(5_000)
     expect(LIVE_RECONNECT_BACKOFF_MS).toEqual([1_000, 2_000, 4_000])
     expect(NO_STREAM_RETRY_MS).toBe(2_500)
@@ -245,7 +241,7 @@ function oneMachineScript(memberAnswered: boolean): LivePreviewView[] {
 
 const size = { width: W, height: H }
 
-describe('one machine for both entry points (428-14 Task 2)', () => {
+describe('one machine for both entry points', () => {
   describe.each(ENTRY_POINTS)('the $subject.kind subject', ({ memberAnswered }) => {
     it('ONE-MACHINE-BOTH-ENTRY-POINTS: the same event script derives the same corner, step by step', () => {
       const trace = oneMachineScript(memberAnswered)
@@ -339,7 +335,7 @@ describe('one machine for both entry points (428-14 Task 2)', () => {
     expect(deriveLivePreview(snap, T + 1_000)).toMatchObject({ state: 'live', dot: 'green', snapshot: true })
 
     const fallback = reduceLivePreview(embedded(T, 'cdp-screencast'), frame(T, 'snapshot'), T)
-    expect(deriveLivePreview(fallback, T + 1_000).snapshot, 'the D-12 fallback under a screencast declaration').toBe(true)
+    expect(deriveLivePreview(fallback, T + 1_000).snapshot, 'the snapshot fallback under a screencast declaration').toBe(true)
     const back = reduceLivePreview(fallback, frame(T + 1_000, 'cdp-screencast'), T + 1_000)
     expect(deriveLivePreview(back, T + 1_500).snapshot).toBe(false)
 

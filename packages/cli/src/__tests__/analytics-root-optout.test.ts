@@ -1,25 +1,7 @@
-// `analytics.privacy: true`, honoured AT EVERY COMPOSITION ROOT (Phase 398 plan 14, D-19 · ANLY-01).
-//
-// WHY THIS FILE EXISTS BESIDE A GREEN ZERO-NETWORK DIFFERENTIAL. `packages/analytics` already
-// proves that `composeAnalytics` returns a walled transport when a config declares privacy. That
-// differential enters ONE LAYER BELOW the seam that was broken: two shipped roots (`chat`, `init`)
-// composed their host WITHOUT handing over the config at all, so the decision was correct and its
-// input never arrived. A user who set the flag still emitted chat aggregates and init events, and
-// every existing cell stayed green. These cells enter at the HOST layer — the shipped command's own
-// action — which is the only altitude from which a dropped argument is visible.
-//
-// THE VACUITY TRAP, AND WHY EVERY CELL ASSERTS `optOutReasons`. `composeAnalytics` returns no
-// transport in TWO states: the caller opted out, AND the PostHog project key is blank. The
-// committed key file ships blank and the release pipeline fills it, so in this test process
-// `transportKind` is `'none'` ALREADY, on every host, with or without a config. A cell asserting
-// only `transportKind === 'none'` would be GREEN ON THE BROKEN BUILD. `optOutReasons` is computed
-// by `composeAnalytics` purely from the config, independently of any project key, and carries
-// `'config-privacy'` exactly when `config.analytics.privacy === true` REACHED the decision. Every
-// cell below therefore asserts the reason on the privacy arm and its ABSENCE on a
-// control arm, and asserts `transportKind` beside it — with a non-blank `projectKey` injected
-// wherever the seam admits one, so the transport assertion is load-bearing too.
+// The project key ships blank, so `transportKind` is `none` anyway; cells assert `optOutReasons`.
 
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -31,7 +13,7 @@ import { createChatCommand } from '../commands/chat.js'
 import { createDaemonCommand } from '../commands/daemon.js'
 import type { DaemonCommandDeps } from '../commands/daemon.js'
 import { createInitCommand } from '../commands/init.js'
-import { createMcpCommand } from '../commands/mcp.js'
+import { MCP_HTTP_BIND_HOST, createMcpCommand } from '../commands/mcp.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import type {
   CliAnalyticsHost,
@@ -45,12 +27,8 @@ const CELL_PROJECT_KEY = 'phc_root_optout_cell'
 /**
  * A project on disk, with or without the one boolean under measurement.
  *
- * The shape is the minimal one `chat-command.test.ts` already writes, PLUS `use.mobile.appState`.
- * That addition is load-bearing and was measured, not guessed: `chat-command.test.ts`'s fixture is
- * accepted by the lazy masked reader inside the composition but REJECTED by `resolveConfig`
- * (`use.mobile.appState is required and must be one of: preserve | reset`). A cell built on it
- * would take the tolerant read's `undefined` branch and then assert the privacy arm — proving only
- * that an invalid config is not honoured, which is the availability posture rather than the fix.
+ * The config is a minimal valid one: `resolveConfig` accepts it, so the cells measure the privacy
+ * arm rather than the tolerant read's `undefined` branch.
  *
  * The privacy arm adds the shipped `analytics.privacy` field from
  * `packages/core/src/schema/analytics-schema.ts`.
@@ -79,19 +57,17 @@ function fixtureProject(
     })}\n`,
     'utf8',
   )
-  // 2026-10-14 (441-06, E3): chat refuses a project whose secrets file is missing.
+  // Chat refuses a project whose secrets file is missing.
   writeFileSync(join(dir, '.env.secrets.local'), '', 'utf8')
   return { dir, configPath }
 }
 
 /**
  * A project whose config DECLARES privacy and is REJECTED by `resolveConfig` for an unrelated
- * reason (Phase 398 gap round, finding F-1 / review CR-01).
+ * reason.
  *
- * `use.mobile.appState` is omitted deliberately — that is the exact rejection `fixtureProject`'s
- * own header records as measured (`use.mobile.appState is required and must be one of:
- * preserve | reset`), so this fixture reaches the tolerant read's failure branch by the same door
- * a real user's typo does, rather than by a rejection invented for the cell.
+ * It declares a `use.mobile` block without `appState`, which the schema refuses, so this fixture
+ * reaches the tolerant read's failure branch by the same door a real user's mistake does.
  *
  * The declaration itself is untouched and unambiguous: `analytics.privacy: true` sits in the
  * document exactly where the shipped schema puts it. The whole question is whether a root that
@@ -121,7 +97,7 @@ function invalidConfigDeclaringPrivacy(
         envFile: '.env',
         secretsFile: '.env.secrets.local',
       },
-      // `use.mobile.appState` OMITTED — this is what makes `resolveConfig` throw.
+      // A declared `use.mobile` without `appState` is what makes `resolveConfig` throw.
       use: { mobile: {} },
       ...(options.privacy === true ? { analytics: { privacy: true } } : {}),
     })}\n`,
@@ -219,7 +195,7 @@ async function runChat(
   }
 }
 
-describe('the chat composition root honours analytics.privacy (398-14, D-19)', () => {
+describe('the chat composition root honours analytics.privacy', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -265,20 +241,9 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
     expect(host?.transportKind).toBe('posthog')
   })
 
-  // 2026-10-14 (441-06, E3): `still opens a session in a directory with NO config file` is
-  // deleted with its subject; chat refuses at start when no secrets file can be read.
+  // Reading one boolean out of a document is not validating it, so an invalid config opts out.
 
-  // ── Finding F-1 / review CR-01 (Phase 398 gap round) ──────────────────────────────────────
-  //
-  // The tolerant read collapsed TWO states into one `undefined`: "there is no config" and "there
-  // is a config, it declares privacy, and it failed validation for an unrelated reason". The
-  // second is a user who set a shipped privacy control and was transmitted anyway, silently.
-  //
-  // Availability is NOT the thing being traded here, and these cells assert that too: the session
-  // still opens on a document that cannot be validated. Reading one boolean out of a document is
-  // not the same act as validating it, and only the second one was ever failing.
-
-  it('honours analytics.privacy: true even when the config FAILS validation (F-1)', async () => {
+  it('honours analytics.privacy: true even when the config FAILS validation', async () => {
     const { configPath } = invalidConfigDeclaringPrivacy(roots, { privacy: true })
     const recorder = recordingCompose()
 
@@ -297,7 +262,7 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
     expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
   })
 
-  it('does NOT report the config reason when an INVALID config declares no privacy (F-1 control)', async () => {
+  it('does NOT report the config reason when an INVALID config declares no privacy', async () => {
     const { configPath } = invalidConfigDeclaringPrivacy(roots)
     const recorder = recordingCompose()
 
@@ -310,15 +275,13 @@ describe('the chat composition root honours analytics.privacy (398-14, D-19)', (
     expect(recorder.hosts[0]?.transportKind).toBe('posthog')
   })
 
-  it('fails CLOSED when a config file exists but cannot be parsed at all (F-1)', async () => {
+  it('fails CLOSED when a config file exists but cannot be parsed at all', async () => {
     const { configPath } = invalidConfigDeclaringPrivacy(roots, { unparseable: true })
     const recorder = recordingCompose()
 
     const result = await runChat(configPath, ['/quit'], { composeAnalytics: recorder.compose })
 
-    // A document we cannot read MIGHT carry the declaration, so the doubt resolves toward the user.
-    // 2026-10-14 (441-06, E3): the secrets declaration cannot be read either, so chat refuses at
-    // start and composes no analytics host at all: nothing can be transmitted.
+    // Chat cannot read the secrets declaration either, so it refuses at start and composes no host.
     expect(recorder.hosts).toHaveLength(0)
     expect(result.exitCode).toBe(1)
   })
@@ -350,7 +313,7 @@ async function runInit(
   }
 }
 
-describe('the init composition root honours analytics.privacy (398-14, D-19)', () => {
+describe('the init composition root honours analytics.privacy', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -388,11 +351,8 @@ describe('the init composition root honours analytics.privacy (398-14, D-19)', (
     expect(host?.transportKind).toBe('posthog')
   })
 
-  // Finding F-1 / review CR-01, at the second root. `init` matters here for a reason chat does
-  // not: it is frequently the FIRST command a user runs against a directory they have just hand-
-  // edited, which is exactly when a config is most likely to be both privacy-declaring and
-  // schema-invalid.
-  it('honours analytics.privacy: true even when the config FAILS validation (F-1)', async () => {
+  // `init` often runs first on a hand-edited directory, when an invalid privacy config is likely.
+  it('honours analytics.privacy: true even when the config FAILS validation', async () => {
     const { dir } = invalidConfigDeclaringPrivacy(roots, { privacy: true })
     const recorder = recordingCompose()
 
@@ -412,7 +372,7 @@ describe('the init composition root honours analytics.privacy (398-14, D-19)', (
     expect(result.exitCode === undefined || result.exitCode === 0).toBe(true)
   })
 
-  it('does NOT report the config reason when an INVALID config declares no privacy (F-1 control)', async () => {
+  it('does NOT report the config reason when an INVALID config declares no privacy', async () => {
     const { dir } = invalidConfigDeclaringPrivacy(roots)
     const recorder = recordingCompose()
 
@@ -424,10 +384,7 @@ describe('the init composition root honours analytics.privacy (398-14, D-19)', (
   })
 
   it('still scaffolds and still emits in a FRESH directory with no config yet', async () => {
-    // The ordinary first run. There is genuinely no declaration to honour before the scaffold
-    // writes one, so the absence of the config reason here is the honest posture, not a gap — and
-    // the availability half of T-398-32: the tolerant read cannot turn a missing config into a
-    // refusal to scaffold.
+    // With no config there is no declaration to honour, and no config must not stop the scaffold.
     const { dir } = fixtureProject(roots, { withConfig: false })
     const recorder = recordingCompose()
 
@@ -495,7 +452,7 @@ async function runDaemon(configPath: string): Promise<CliAnalyticsHost | undefin
   }
 }
 
-describe('the daemon root — the control that shows the assertion discriminates (398-14)', () => {
+describe('the daemon root — the control that shows the assertion discriminates', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -538,7 +495,7 @@ const CI_MARKERS = [
   'TEAMCITY_VERSION',
 ]
 
-describe('C447-IDENTITY-STORAGE-FAILURE', () => {
+describe('an identity location that cannot be written', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -549,7 +506,7 @@ describe('C447-IDENTITY-STORAGE-FAILURE', () => {
   it('an identity location that cannot be written composes a host that sends nothing and init still exits 0', async () => {
     for (const name of CI_MARKERS) vi.stubEnv(name, '')
     const { dir } = fixtureProject(roots, { withConfig: false })
-    const home = mkdtempSync(join(tmpdir(), 'agent-qa-447-xdg-'))
+    const home = mkdtempSync(join(tmpdir(), 'agent-qa-xdg-'))
     roots.push(home)
     // A regular file where the data directory should be: mkdir under it fails for every user.
     const xdgFile = join(home, 'xdg-file')
@@ -587,28 +544,34 @@ describe('C447-IDENTITY-STORAGE-FAILURE', () => {
   })
 })
 
-// 2026-10-21 (447-06, D-09): `--http 0` is refused inside the serve `try`, so the action composes
-// its analytics and its host, then returns through its own `finally` and `catch` without serving.
+// A port already held on loopback fails the bind after analytics compose, so nothing is served.
 async function runMcp(
   configPath: string,
   deps: { composeAnalytics: typeof composeAnalyticsHost },
 ): Promise<void> {
+  const held = createServer()
+  await new Promise<void>((listening) => held.listen(0, MCP_HTTP_BIND_HOST, () => listening()))
+  const address = held.address()
+  const port = typeof address === 'object' && address !== null ? address.port : 0
   const error = vi.spyOn(console, 'error').mockImplementation(() => {})
   const previousExitCode = process.exitCode
   process.exitCode = undefined
   try {
     const program = new Command()
       .option('--config <path>', 'config file path')
-      .addCommand((createMcpCommand as (deps: unknown) => Command)(deps))
+      .addCommand(createMcpCommand(deps))
     program.exitOverride()
-    await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'mcp', '--http', '0'])
+    await program.parseAsync([
+      'node', 'agent-qa', '--config', configPath, 'mcp', '--http', String(port),
+    ])
   } finally {
     process.exitCode = previousExitCode
     error.mockRestore()
+    await new Promise<void>((closed) => held.close(() => closed()))
   }
 }
 
-describe('C447-MCP-PRIVACY', () => {
+describe('agent-qa mcp analytics privacy with an invalid config', () => {
   const roots: string[] = []
 
   afterEach(() => {

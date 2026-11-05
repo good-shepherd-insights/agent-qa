@@ -1,23 +1,4 @@
-// CFGM-01's blocked road, measured on RENDERS through the production composition (395-04 · D-10).
-//
-// 2026-09-30, 432-11 D-05: a blocked change is ANSWERED and nothing is kept, so the surfaces a
-// person reads are the answer itself and the runtime root, which must hold nothing about the block.
-// 2026-10-01 (432-17): the `proposals` verb is deleted, so the runtime root is read directly.
-//
-// 2026-10-14 (441-18, D-15/D-23): a config change is not scanned for secrets. The cells whose
-// subject was the construction scan — its seeded half, the context-line and range blocks, the
-// environment-slice control and the guardrail no-write cell — are deleted with it. What remains is
-// the validation road: a yaml parse failure names WHERE and never WHAT, and nothing is kept.
-//
-// Nothing here is stubbed: the registry, the validator and the writer are the shipped ones, over a
-// real workspace, with `composeCliLocalAgent` building the host.
-//
-//   (G) POSITION — 395-10 plus WR-11. A yaml parse failure whose issue string is built from the
-//                  LIBRARY'S error text: the vendored `yaml` package pretty-prints its parse errors
-//                  with an excerpt of the offending source line, so `errorText(error)` would publish
-//                  whatever that line held. The channel is closed by REDUCING the issue to its
-//                  position. It also pins WR-11: the answer's `paths` names the file the issue is
-//                  about.
+// A blocked change is answered and nothing is kept; a yaml parse failure names where, never what.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -115,7 +96,7 @@ async function propose(input: {
   }
 }
 
-describe('CFGM-01 on the surfaces a person reads (D-10)', () => {
+describe('on the surfaces a person reads', () => {
   it('(G) a yaml parse failure names WHERE, never WHAT — and the record names the right file',
     async () => {
       const marker = 'zeta-nine-deploy-marker'
@@ -141,16 +122,14 @@ hooks:
         new RegExp(`^${HOOKS_FILE}: not readable as YAML at line \\d+, column \\d+$`),
       )
 
-      // WR-11: the record points a person at the file the issue is ABOUT, unioned with the file the
-      // change diffed.
+      // The answer points at the file the issue is about, unioned with the file the change diffed.
       expect(answer.paths).toContain(HOOKS_FILE)
       expect(answer.paths).toContain(CONFIG_FILE)
 
       const returned = JSON.stringify(answer)
       const persisted = persistedText(agentQaRoot)
 
-      // PRESENCE FIRST: the answer really reports this refusal, its reason, and the issue about
-      // this file. 432-11: nothing is persisted about it.
+      // Presence first: the answer reports this refusal, its reason and the issue about this file.
       expect(returned).toContain('schema-fail')
       expect(returned).toContain(HOOKS_FILE)
       expect(returned).toContain('not readable as YAML at line')
@@ -162,12 +141,7 @@ hooks:
     })
 })
 
-// ---- 432-11 D-05: a blocked change is an answer in the call, and nothing is kept ---------------
-//
-// C432-CONFIG-BLOCKED-NO-WRITE  through the production composition: a blocked change answers the
-//                               report with no record reference, writes no proposal file anywhere
-//                               under the runtime root, and leaves the config byte-for-byte as it
-//                               was. A clean change beside it is written in the same call.
+// A blocked change writes no proposal file anywhere; a clean change beside it is written.
 
 function proposalFiles(): string[] {
   const dir = join(agentQaRoot, 'proposals')
@@ -178,8 +152,8 @@ function proposalFiles(): string[] {
   }
 }
 
-describe('C432-CONFIG-BLOCKED-NO-WRITE: a blocked change is refused in the call and leaves no record', () => {
-  it('C432-CONFIG-BLOCKED-NO-WRITE: a schema failure answers position-only issues and files nothing',
+describe('a blocked change is refused in the call and leaves no record', () => {
+  it('a schema failure answers position-only issues and files nothing',
     async () => {
       const marker = 'zeta-nine-deploy-marker'
       writeFileSync(configPath, configText({ note: 'nothing to see here' }))
@@ -193,7 +167,7 @@ describe('C432-CONFIG-BLOCKED-NO-WRITE: a blocked change is refused in the call 
       expect(readFileSync(configPath, 'utf8')).toBe(configText({ note: 'nothing to see here' }))
     })
 
-  it('C432-CONFIG-BLOCKED-NO-WRITE: CONTROL: the same edit on a clean config is written in the call', async () => {
+  it('CONTROL: the same edit on a clean config is written in the call', async () => {
     writeFileSync(configPath, configText({ note: 'nothing to see here' }))
     const answer = await propose({ path: 'use.timeout.step', value: '45s' }) as Record<string, unknown>
 

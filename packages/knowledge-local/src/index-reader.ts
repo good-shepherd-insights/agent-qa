@@ -1,19 +1,4 @@
-/**
- * D-06/D-07/D-08 degrading reader facade for IDX-02 and memory.md §8.2.
- *
- * Index health is resolved at open and every later index operation is guarded. Any unhealthy state
- * permanently swaps the facade to an authoritative bundle scan plus a durable rebuild request,
- * while healthy readers stay read-only and query-only through openIndexReaderConnection. This
- * module never acquires the writer role or rebuilds inline.
- *
- * ONE ladder, ONE core, two callers (407 D-17, 407-13 CR-02): `classifyIndexFaceWithConnection`
- * runs the degrade ladder exactly once per call and hands back the live connection on the healthy
- * arm. `classifyIndexFace` is the PROBE wrapper — it releases that connection and writes nothing,
- * so `doctor`, the retrieval-rung resolver and the local composition root can ask about the index
- * without mutating it or leaking a handle. `openKnowledgeReader` is the SERVING facade — it KEEPS
- * the connection the ladder blessed and owns the marker write. The facade never closes what it is
- * about to reopen, so there is no window in which contention can degrade a healthy index.
- */
+// The probe releases its connection and writes nothing; the serving facade keeps the blessed one.
 import { existsSync, statSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
@@ -27,7 +12,6 @@ import type {
   BundleRelation,
   OriginClass,
   ScopeKey,
-  TrustPriorTable,
   VettedCandidateInput,
 } from '@vostride/agent-qa-schema'
 
@@ -51,7 +35,7 @@ import type { IndexReaderConnection, VecCapability } from './index-open.js'
 import { requestRebuild } from './rebuild-marker.js'
 import type { RebuildReason } from './rebuild-marker.js'
 import { buildLexicalMatchExpression } from './retrieval/fts-match.js'
-import { assemblePromotionGateInput, snapshotTrustPriors } from './promotion-gate-input.js'
+import { assemblePromotionGateInput } from './promotion-gate-input.js'
 import {
   effectivePriorDigest,
   indexTrustEpochMatches,
@@ -104,7 +88,6 @@ export type AuthoritativeKnowledgeHit<THit extends KnowledgeHit = KnowledgeHit> 
 /** Internal snapshot context that lets the public retrieve function compose on this facade. */
 export interface KnowledgeRetrievalContext {
   readonly knowledgeRoot: string
-  readonly priors?: TrustPriorTable
   readonly source: 'index' | 'scan'
   readonly vec: VecCapability | 'none'
   readonly connection: IndexReaderConnection | undefined
@@ -154,9 +137,7 @@ const RECORD_COLUMNS = `
 const MAX_SQL_LIMIT = 2_147_483_647
 
 export interface OpenKnowledgeReaderOptions {
-  /** Neutral host data retained across every read and index-to-scan transition. */
-  priors?: TrustPriorTable
-  /** D-12 test seam. Production callers resolve sqlite-vec's pinned prebuild. */
+  // Test seam; production resolves sqlite-vec's pinned prebuild.
   vecLoadablePath?: string
 }
 
@@ -176,7 +157,7 @@ function requestRebuildBestEffort(
   try {
     requestRebuild({ knowledgeRoot, reason, detail })
   } catch {
-    // D-07 is an operations signal, not a serving gate. Bundle truth remains available.
+    // A degraded index is an operations signal, not a serving gate; bundle truth stays available.
   }
 }
 
@@ -241,12 +222,11 @@ function safeBundleDir(knowledgeRoot: string, hit: KnowledgeHit): string | undef
   return join(knowledgeRoot, 'memory', hit.product, 'bundles', hit.bundleId)
 }
 
-/** D-09: refresh complete truth from a digest-verified bundle and preserve ranking metadata. */
+// Refreshes full truth from a digest-verified bundle and keeps ranking metadata.
 function recheckAuthoritativeHits<THit extends KnowledgeHit>(
   knowledgeRoot: string,
   hits: readonly THit[],
   audit: boolean,
-  priors?: TrustPriorTable,
 ): Array<AuthoritativeKnowledgeHit<THit>> {
   const refreshed: Array<AuthoritativeKnowledgeHit<THit>> = []
   for (const hit of hits) {
@@ -257,7 +237,7 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
       if (!verifyBundleIntegrity(bundleDir).ok) continue
       const outcome = loadBundle(bundleDir)
       if (outcome.kind !== 'loaded' || outcome.bundle.manifest.id !== hit.bundleId) continue
-      const trust = deriveBundleTrust(outcome.bundle, priors)
+      const trust = deriveBundleTrust(outcome.bundle)
       if (!audit && !isServable(trust)) continue
 
       refreshed.push({
@@ -279,7 +259,6 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
           knowledgeRoot,
           bundleDir,
           bundle: outcome.bundle,
-          priors,
         }),
       } as AuthoritativeKnowledgeHit<THit>)
     } catch {
@@ -293,9 +272,8 @@ function recheckAuthoritativeHits<THit extends KnowledgeHit>(
 function recheckHits<THit extends KnowledgeHit>(
   knowledgeRoot: string,
   hits: readonly THit[],
-  priors?: TrustPriorTable,
 ): Array<RefreshedHit<THit>> {
-  return recheckAuthoritativeHits(knowledgeRoot, hits, false, priors).map((hit) => {
+  return recheckAuthoritativeHits(knowledgeRoot, hits, false).map((hit) => {
     const {
       anchors: _anchors,
       scope: _scope,
@@ -382,26 +360,25 @@ function cosineDistance(query: Float32Array, candidate: Float32Array): number | 
   return 1 - dot
 }
 
-function scanReader(knowledgeRoot: string, priors?: TrustPriorTable): InternalKnowledgeReader {
+function scanReader(knowledgeRoot: string): InternalKnowledgeReader {
   const reader: InternalKnowledgeReader = {
     source: 'scan',
     vec: 'none',
     getById(bundleId): KnowledgeHit | undefined {
-      return scanBundleById({ knowledgeRoot, bundleId, priors })
+      return scanBundleById({ knowledgeRoot, bundleId })
     },
     searchLexical(text, opts = {}): KnowledgeHit[] {
-      return scanBundles({ knowledgeRoot, text, ...opts, priors })
+      return scanBundles({ knowledgeRoot, text, ...opts })
     },
     lookupAnchor(anchor, opts = {}): KnowledgeHit[] {
-      // D-16: vec:none is the only reader rung allowed to widen beyond full identity.
-      // Normalize through the schema authority before the scan compares role + name.
-      return scanBundles({ knowledgeRoot, anchor: normalizeAnchor(anchor), ...opts, priors })
+      // `vec: none` alone widens past full identity, so the anchor is normalized before the scan.
+      return scanBundles({ knowledgeRoot, anchor: normalizeAnchor(anchor), ...opts })
     },
     searchDense(): DenseHit[] {
       return []
     },
     recheck(hits): KnowledgeHit[] {
-      return recheckHits(knowledgeRoot, hits, priors)
+      return recheckHits(knowledgeRoot, hits)
     },
     close(): void {},
     async [RUN_RETRIEVAL]<TResult>(
@@ -409,18 +386,16 @@ function scanReader(knowledgeRoot: string, priors?: TrustPriorTable): InternalKn
     ): Promise<TResult> {
       return operation({
         knowledgeRoot,
-        priors,
         source: 'scan',
         vec: 'none',
         connection: undefined,
         reader,
         scan: (text, anchor) => scanBundlesForRetrieval({
           knowledgeRoot,
-          priors,
           ...(text === undefined ? {} : { text }),
           ...(anchor === undefined ? {} : { anchor }),
         }),
-        recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit, priors),
+        recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit),
       })
     },
   }
@@ -430,12 +405,11 @@ function scanReader(knowledgeRoot: string, priors?: TrustPriorTable): InternalKn
 function indexReader(
   knowledgeRoot: string,
   connection: IndexReaderConnection,
-  priors?: TrustPriorTable,
 ): InternalKnowledgeReader {
   let closed = false
   const { db } = connection
   const activeProfile = resolveActiveProfile(db)
-  const priorDigest = effectivePriorDigest(priors)
+  const priorDigest = effectivePriorDigest()
   let snapshotDepth = 0
 
   function assertTrustEpoch(): void {
@@ -459,7 +433,7 @@ function indexReader(
   function recheckCurrent<THit extends KnowledgeHit>(
     hits: readonly THit[],
   ): Array<RefreshedHit<THit>> {
-    return recheckHits(knowledgeRoot, hits, priors)
+    return recheckHits(knowledgeRoot, hits)
   }
 
   function denseVec0(embedding: Float32Array, opts: DenseSearchOptions): DenseHit[] {
@@ -662,13 +636,12 @@ function indexReader(
         try {
           return await operation({
             knowledgeRoot,
-            priors,
             source: 'index',
             vec: connection.vec,
             connection,
             reader: snapshotReader,
             scan: undefined,
-            recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit, priors),
+            recheck: (hits, audit) => recheckAuthoritativeHits(knowledgeRoot, hits, audit),
           })
         } finally {
           snapshotDepth -= 1
@@ -693,9 +666,8 @@ function indexReader(
 function operationDegradingReader(
   knowledgeRoot: string,
   connection: IndexReaderConnection,
-  priors?: TrustPriorTable,
 ): InternalKnowledgeReader {
-  let delegate = indexReader(knowledgeRoot, connection, priors)
+  let delegate = indexReader(knowledgeRoot, connection)
   let closed = false
 
   function invoke<TResult>(operation: (reader: KnowledgeReader) => TResult): TResult {
@@ -712,7 +684,7 @@ function operationDegradingReader(
           `derived index operation failed: ${errorMessage(error)}`,
         )
       }
-      delegate = scanReader(knowledgeRoot, priors)
+      delegate = scanReader(knowledgeRoot)
       return operation(delegate)
     }
   }
@@ -733,7 +705,7 @@ function operationDegradingReader(
           `derived index operation failed: ${errorMessage(error)}`,
         )
       }
-      delegate = scanReader(knowledgeRoot, priors)
+      delegate = scanReader(knowledgeRoot)
       return operation(delegate)
     }
   }
@@ -798,19 +770,12 @@ function degrade(
   knowledgeRoot: string,
   reason: RebuildReason,
   detail: string,
-  priors?: TrustPriorTable,
 ): KnowledgeReader {
   requestRebuildBestEffort(knowledgeRoot, reason, detail)
-  return scanReader(knowledgeRoot, priors)
+  return scanReader(knowledgeRoot)
 }
 
-/**
- * Which face the derived index presents to a reader RIGHT NOW (407 D-17).
- *
- * `scan` carries the reason the ladder degraded, the detail the rebuild request would have
- * quoted, and whether the file was there at all — `absent` and `corrupt` are the same word to a
- * serving caller but different operator situations, and `doctor` says which.
- */
+// `absent` and `corrupt` read alike to a serving caller but not an operator; `doctor` splits them.
 export type IndexFace =
   | { source: 'index' }
   | {
@@ -820,19 +785,7 @@ export type IndexFace =
       filePresent: boolean
     }
 
-/**
- * The degrade ladder, ONE core, with the live connection on the healthy arm (407-13, CR-02).
- *
- * The healthy arm returns the connection it just probed WITHOUT closing it, because the caller
- * that is about to serve from the index must keep the very connection the ladder blessed. Closing
- * here and reopening in the facade opened a TOCTOU window: a writer, a drain or a sibling reader
- * holding the database across it made the reopen throw SQLITE_BUSY, which the facade could only
- * read as a `locked` degrade — a durable rebuild request plus a process-lifetime swap to bundle
- * scan, for an index that was healthy the whole time. The trust surface must never report a
- * degradation the trust surface itself caused.
- *
- * Unhealthy arms still close: nothing downstream wants a connection to an index that just failed.
- */
+// The healthy arm keeps its connection: reopening in the facade lets contention fake a degrade.
 type ClassifiedIndex =
   | { face: { source: 'index' }; connection: IndexReaderConnection }
   | { face: Extract<IndexFace, { source: 'scan' }>; connection?: undefined }
@@ -889,19 +842,7 @@ function classifyIndexFaceWithConnection(
   return { face: { source: 'index' }, connection }
 }
 
-/**
- * The degrade ladder as a PURE READ (407 D-17, T-407-10).
- *
- * ONE ladder, ONE core, two callers. {@link openKnowledgeReader} below is the SERVING facade: it
- * keeps the connection the core blessed and keeps the side effect — a degraded open still writes
- * the durable D-07 rebuild request. This function is the PROBE half: the identical checks in the
- * identical order over the identical core, but it releases the connection and writes no marker,
- * because its other callers are the retrieval-rung resolver that `doctor` and the runner's
- * evidence recorder invoke, and the local composition root's knowledge probes. A probe that
- * requested a rebuild would make merely ASKING about the index a mutation of the knowledge root;
- * a probe that returned a live handle would make every `doctor` call a connection leak. The probe
- * hands back a face, never a handle — only the serving facade holds a connection.
- */
+// The probe half: same checks, but it releases the connection and writes no rebuild marker.
 export function classifyIndexFace(
   knowledgeRoot: string,
   opts: ClassifyIndexFaceOptions = {},
@@ -949,35 +890,18 @@ function indexFileFingerprint(knowledgeRoot: string): IndexFileFingerprint | und
   }
 }
 
-/**
- * 2026-10-03 (quick 261003-lgd, Phase 432 review IN-26): the immutable probe's check and its open
- * are not one step. A writer that opened the index in between (its `-wal` is now there), or that
- * checkpointed while the probe read (the main file changed), changed bytes under a connection
- * SQLite was told cannot change, so a failure read that way is a busy index, not a corrupt one.
- * Only `stat` and `existsSync` are used here: the probe still creates no `-wal`/`-shm`.
- */
+// A writer opening or checkpointing during the immutable probe means busy, not corrupt; stat only.
 function indexFileChangedSince(knowledgeRoot: string, before: IndexFileFingerprint): boolean {
   const after = indexFileFingerprint(knowledgeRoot)
   return after === undefined || after.walPresent || after.mtimeMs !== before.mtimeMs
     || after.ctimeMs !== before.ctimeMs || after.size !== before.size || after.ino !== before.ino
 }
 
-/**
- * The SERVING facade: classify once, then serve from the connection the classifier blessed.
- *
- * 407-13 (CR-02): this used to call the pure probe and then open a SECOND connection of its own,
- * so a lock acquired in the gap between the probe's close and this open degraded a healthy index
- * — writing the durable rebuild marker and dropping every later retrieval in the process to
- * bundle scan on nothing but contention. It also let `resolveRetrievalRung` report `memidex` while
- * the reader it was describing served `bundle-scan`, the exact banner/reality disagreement D-17's
- * one-fold rule exists to prevent. The facade must never close what it is about to reopen: there
- * is one open on the healthy path and no window for a lock to arrive in.
- */
+// Serves from the classifier's connection; a second open lets contention degrade a healthy index.
 export function openKnowledgeReader(
   knowledgeRoot: string,
   opts: OpenKnowledgeReaderOptions = {},
 ): KnowledgeReader {
-  const priors = snapshotTrustPriors(opts.priors)
   const result = classifyIndexFaceWithConnection(knowledgeRoot, {
     ...opts,
     inspectCheckpointedImmutably: false,
@@ -985,8 +909,8 @@ export function openKnowledgeReader(
   if (result.connection === undefined) {
     // The marker write lives HERE, in the serving facade, and not in the classifier: requesting a
     // rebuild is what a reader that just failed to serve from the index owes the drainer.
-    return degrade(knowledgeRoot, result.face.reason, result.face.detail, priors)
+    return degrade(knowledgeRoot, result.face.reason, result.face.detail)
   }
 
-  return operationDegradingReader(knowledgeRoot, result.connection, priors)
+  return operationDegradingReader(knowledgeRoot, result.connection)
 }

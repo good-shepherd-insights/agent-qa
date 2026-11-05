@@ -1,29 +1,4 @@
-// The config-mutation vocabulary's acceptance bar (Phase 395-02, D-02 / D-03 / D-10 / D-11).
-//
-// WHAT MAKES EACH CELL RED, stated per cell rather than claimed for the file:
-//
-//   the strictness census   — any of these schemas minted without `.strict()`. These inputs are
-//                             filled by a language model, so an unrecognised key is either a
-//                             hallucinated field the op silently ignores or a value smuggled past
-//                             the shape the guard reasons about.
-//   the refs-only keyset    — a field capable of carrying a credential value added to
-//                             `ConfigAuthSetInputSchema` (D-11's law expressed as a shape). The
-//                             name predicate is proven able to FIRE by a control keyset below, so
-//                             the passing assertion is not a `not.toContain` over a channel that
-//                             never carried the marker.
-//   the blocked-arm cells   — a blocked payload minted with a diff or content field, or minted
-//                             without `.strict()` so one could be smuggled in beside the report.
-//                             D-10 is that the persisted blocked record stores the REPORT and never
-//                             the secret-bearing payload, and it is structural here.
-//   the reason-vocabulary   — `crossBoundaryReasons` widened back to `string`. A classifier could
-//                             then invent a fifth class that reads fine in an inbox and matches
-//                             nothing on the grant machinery's enforcement side.
-//   the round-trip cell     — a producer/record disagreement about field names or encodings. The
-//                             payload is PRODUCED through `renderConfigDiff` and `base64Encode`,
-//                             never written as a literal, so a shape that no producer can fill is
-//                             not something this cell can be satisfied by.
-//   the subtree matcher     — a matcher that compared paths exactly (the `workspace.envFile`-child
-//                             case reds) or that ignored the `*` segment (the target case reds).
+// These inputs come from a model, so each schema is `.strict()`: an unknown key is refused.
 
 import { describe, expect, it } from 'vitest'
 
@@ -38,7 +13,6 @@ import {
   ConfigProjectScaffoldInputSchema,
   ConfigTargetCreateInputSchema,
   ConfigTargetEditInputSchema,
-  // 2026-09-30, 432-11: the blocked vocabulary moved beside the direct answer that also carries it.
   CONFIG_BLOCKED_REASONS,
 } from '../actions'
 import { base64Encode } from '../base64'
@@ -50,10 +24,6 @@ import {
 import { renderConfigDiff } from '../diff-digest'
 import { ConfigChangeFoldInputSchema, ConfigChangeFoldOutputSchema } from '../../functions/tool-folds'
 
-// RE-SPELLED 2026-10-01 (432-17, D-05/D-07/D-09). The config proposal payloads, the propose union,
-// the apply and undo inputs and the git-commit apply receipts are deleted with the inbox. Each claim
-// below that survives moves onto the direct change answer (`ConfigChangeOutputSchema`) or the change
-// file (`ConfigChangeFileSchema`) under its old name; the apply/undo cells become absence cells.
 const RETIRED_ACTION_EXPORTS = [
   'ConfigUndoProposeInputSchema',
   'ConfigProposalApplyInputSchema',
@@ -70,13 +40,7 @@ function changeArm(outcome: string): ChangeArm {
 }
 import { utf8Encode } from '../utf8'
 
-/**
- * Every object schema this phase mints, with one value that parses.
- *
- * A CENSUS RATHER THAN A CELL PER SCHEMA, because the claim is about the SET: a schema added to
- * this vocabulary later and left non-strict is exactly the omission this table exists to make
- * visible, and it can only do that if adding a schema means adding a row.
- */
+// Each object schema with one value that parses, so every one is checked for `.strict()`.
 const STRICT_SCHEMAS = [
   ['ConfigTargetCreateInputSchema', ConfigTargetCreateInputSchema,
     { name: 'shop', platform: 'web', url: 'https://example.com' }],
@@ -124,11 +88,11 @@ describe('the six action inputs and the change file', () => {
     }).success).toBe(false)
   })
 
-  it('the undo and apply inputs and the apply receipts are deleted with their ops (D-07, D-09)', () => {
+  it('the undo and apply inputs and the apply receipts are deleted with their ops', () => {
     expect(RETIRED_ACTION_EXPORTS.filter((name) => name in actions)).toEqual([])
   })
 
-  it('the scaffold input carries the domain and nothing a model could invent (D-13)', () => {
+  it('the scaffold input carries the domain and nothing a model could invent', () => {
     expect(Object.keys(ConfigProjectScaffoldInputSchema.shape)).toEqual(['domain'])
   })
 
@@ -144,7 +108,7 @@ function namesAValueBearingField(keys: readonly string[]): string[] {
   return keys.filter((key) => /secret|password|token|credential|apikey|value|\bkey$/i.test(key))
 }
 
-describe('set_auth is refs-only by shape, not by discipline (D-11)', () => {
+describe('set_auth is refs-only by shape, not by discipline', () => {
   const keys = Object.keys(ConfigAuthSetInputSchema.shape)
 
   it('the predicate can fire — a control keyset carrying a credential field is caught', () => {
@@ -153,8 +117,6 @@ describe('set_auth is refs-only by shape, not by discipline (D-11)', () => {
     expect(namesAValueBearingField(['target', 'authStateSecret'])).toEqual(['authStateSecret'])
   })
 
-  // RE-SPELLED 2026-10-02 (quick 261002-ctr): was '… exactly the four references …'. `authStateName`
-  // is gone: it wrote `use.authState`, a key the committed configuration refuses.
   it('the keyset is exactly the three references, in the order the shape declares them', () => {
     expect(keys).toEqual(['target', 'pluginPackage', 'envVarName'])
   })
@@ -171,10 +133,8 @@ describe('set_auth is refs-only by shape, not by discipline (D-11)', () => {
   })
 })
 
-describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
-  // RE-SPELLED 2026-10-14 (441-39, D-15): the fixture was a guardrail block carrying scan findings.
-  // A config change is no longer scanned, so the only blocked answer is a schema failure. The retired
-  // names are spelled in parts so the phase's census grep for them finds no live spelling.
+describe('the blocked arm cannot carry the payload it blocked', () => {
+  // Spelled in parts so a grep for the retired name finds no live spelling.
   const RETIRED_REASON = ['guardrail', 'hit'].join('-')
   const RETIRED_FIELD = ['scan', 'Findings'].join('')
   const RETIRED_SCHEMA = ['Config', 'Scan', 'Finding', 'Schema'].join('')
@@ -187,7 +147,7 @@ describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
   }
   const finding = {
     path: 'agent-qa.config.yaml',
-    field: 'registry.providers.farm.accessKey',
+    field: 'workspace.secretsFile',
     detector: 'known-secret',
     redactedFingerprint: 'sha256:9f86…0a08',
   }
@@ -231,8 +191,7 @@ describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
     ])
   })
 
-  // RE-SPELLED 2026-10-14 (441-39, D-15): was 'names one posture and two reasons (CFGM-01)'.
-  it('names one posture and one reason, and the guardrail reason is gone (CFGM-01, D-15)', () => {
+  it('names one posture and one reason, and the guardrail reason is gone', () => {
     expect([...CONFIG_BLOCKED_REASONS]).toEqual(['schema-fail'])
     expect(ConfigChangeOutputSchema.safeParse({ ...blocked, blockedReason: 'other' }).success)
       .toBe(false)
@@ -248,7 +207,7 @@ describe('the blocked arm cannot carry the payload it blocked (D-10)', () => {
       .toBe(false)
   })
 
-  it('the finding schema is deleted with the scan (D-15)', () => {
+  it('the finding schema is deleted with the scan', () => {
     expect(RETIRED_SCHEMA in actions).toBe(false)
   })
 })
@@ -283,17 +242,8 @@ describe('a produced applyable payload round-trips through its own schema', () =
   })
 })
 
-describe('(S1) the proposed arm cannot carry an EMPTY rendered diff (395-22 · CFGM-05)', () => {
-  // THE TWO HALVES OF THE SAME LAW, SPELLED ONCE EACH. `shownDiffBase64` on the stored payload has
-  // carried `.min(1)` since D-19 — the bytes a person was shown may not be nothing — and the
-  // proposed arm's `shownDiff` is the TEXT of exactly those bytes on its way to a surface. It
-  // carried no lower bound, so an empty rendered diff satisfied every presence check between the
-  // producer and the confirm: a summary line above nothing at all, then an approval prompt.
-  //
-  // 395-22's engine precondition refuses that state at the choke point for every host. This cell is
-  // the other closure: with `.min(1)` here it is UNREPRESENTABLE through the real producer, so the
-  // engine check covers hosts and futures rather than today's one op. Two independent closures on
-  // one road, which is why the mutation leg that tears out the engine's half leaves this green.
+describe('the proposed arm cannot carry an EMPTY rendered diff', () => {
+  // `shownDiff` carries `.min(1)`, so an empty rendered diff cannot reach a surface.
   const proposed = {
     outcome: 'applied' as const,
     summaryLine: 'configure this project for https://booking.com as target booking-com',
@@ -314,21 +264,15 @@ describe('(S1) the proposed arm cannot carry an EMPTY rendered diff (395-22 · C
     expect(ConfigChangeOutputSchema.safeParse({ ...proposed, shownDiff: '-' }).success).toBe(true)
   })
 
-  // RE-SPELLED 2026-10-01 (432-17): the relation to the stored payload's `.min(1)` left with the
-  // stored payload; the applied arm's own bound above is the one surface that prints the diff.
 })
 
-describe('the cross-boundary reason vocabulary is closed (D-02)', () => {
-  // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432 review WR-01/WR-10): the two production members are
-  // added as provenance on the applied receipt (D-18 makes production a declaration any door writes).
-  it('bounds exactly the four classes D-02 names plus the two production members', () => {
+describe('the cross-boundary reason vocabulary is closed', () => {
+  it('bounds exactly the four classes', () => {
     expect([...CROSS_BOUNDARY_REASONS]).toEqual([
       'secret-adjacent-field',
       'new-origin',
       'hook-added',
       'out-of-set-path',
-      'production-opt-in',
-      'production-declassified',
     ])
   })
 
@@ -360,22 +304,16 @@ describe('the cross-boundary reason vocabulary is closed (D-02)', () => {
   })
 })
 
-describe('the secret-adjacent field set is roots, and matching is by subtree (D-03)', () => {
-  it('names the eight roots', () => {
+describe('the secret-adjacent field set is roots, and matching is by subtree', () => {
+  it('names the roots', () => {
     expect([...SECRET_ADJACENT_CONFIG_FIELDS]).toEqual([
       'workspace.envFile',
       'workspace.secretsFile',
       'services.authState',
       'plugins.auth',
       'plugins.providers',
-      'registry.providers',
       'registry.targets.*.authState',
-      // 395-05 added this one WITH THE FIELD THAT SHOWED IT, which is what the constant's retune
-      // comment asks for. `registry.targets.*.authState` above came from `WebPlatformConfig`, the
-      // RESOLVED platform configuration a run computes; `core`'s `TargetSchema` is `.strict()` and
-      // has no `authState` key, so nothing can ever be committed at that path. The committed
-      // configuration binds an auth state at `use.authState`, which was unflagged — meaning every
-      // op that binds an identity would have produced a proposal a standing grant could cover.
+      // The committed config binds an auth state at `use.authState`, not under targets.
       'use.authState',
     ])
   })
@@ -403,7 +341,7 @@ describe('the secret-adjacent field set is roots, and matching is by subtree (D-
       'services.authState.dir',
       'plugins.auth.0.package',
       'plugins.providers.0.path',
-      'registry.providers.farm.accessKey',
+      'use.authState.capture',
       'registry.targets.shop.authState.name',
     ]) {
       expect({ path, flagged: isSecretAdjacentConfigField(path) }).toEqual({ path, flagged: true })
@@ -443,11 +381,8 @@ describe('the secret-adjacent field set is roots, and matching is by subtree (D-
   })
 })
 
-// 2026-09-30, 432-12 (D-05/D-09): the config change tool folds the six direct actions only. The undo
-// arm left with the proposal round, so the fold answers the one change contract and an undo call is
-// not an arm of it. 432-17 deleted the undo op and its input.
-describe('C432-MCP-TWENTY-TOOLS: the config change fold has six arms and no undo arm', () => {
-  it('C432-MCP-TWENTY-TOOLS: advertises the direct change contract alone and refuses the undo arm', () => {
+describe('the config change fold has six arms and no undo arm', () => {
+  it('advertises the direct change contract alone and refuses the undo arm', () => {
     expect(ConfigChangeFoldOutputSchema).toBe(ConfigChangeOutputSchema)
     expect(ConfigChangeFoldInputSchema.safeParse({ action: 'config.undo.propose' }).success).toBe(false)
     expect(ConfigChangeFoldInputSchema.safeParse({
@@ -456,7 +391,6 @@ describe('C432-MCP-TWENTY-TOOLS: the config change fold has six arms and no undo
     expect(ConfigChangeFoldInputSchema.safeParse({
       action: 'config.field.set', path: 'use.timeout.step', value: '45s', confirmed: true,
     }).success).toBe(false)
-    // 2026-10-01 (432-17): the undo input is deleted with its op.
     expect('ConfigUndoProposeInputSchema' in actions).toBe(false)
   })
 })

@@ -1,9 +1,4 @@
-// WHICH MEMBER THE LIVE PREVIEW WATCHES (428-33 · G-428-3, owner decision 2026-09-26 (3)).
-//
-// The owner asked for the preview to follow the running member of a suite by itself. The rule's
-// details are this plan's defaults: stickiness while the watched member runs, the lowest handle
-// among concurrent runners, and holding the last watched member between members, so the next
-// member's testStarted is what moves the preview. Each rule is one cell.
+// The preview sticks to a running member, picks the lowest running handle, holds between members.
 
 import { describe, expect, it } from 'vitest'
 
@@ -43,7 +38,7 @@ function reduced(...envelopes: readonly RunEventEnvelope[]): RunStreamState {
   return envelopes.reduce((state, one) => reduceRunStream(state, one, 0), createInitialRunStreamState())
 }
 
-describe('the live preview watches the running member (G-428-3)', () => {
+describe('the live preview watches the running member', () => {
   it('WATCH-FIRST-HANDLE-BEFORE-ANY-START: with no member rows, the first roster handle, else 0', () => {
     expect({
       roster01: watchedHandleOf({ handles: [0, 1], members: {} }, undefined),

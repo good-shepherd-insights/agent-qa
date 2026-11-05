@@ -7,7 +7,7 @@ import {
 } from 'ai'
 
 import type { LanguageModelMiddleware } from 'ai'
-import type { LanguageModelV3, LanguageModelV3StreamPart, ProviderV3 } from '@ai-sdk/provider'
+import type { LanguageModelV4, LanguageModelV4StreamPart, ProviderV4 } from '@ai-sdk/provider'
 import type { MaskFn, ModelProfile } from '@vostride/agent-qa-schema'
 import { createMaskingMiddleware } from '@vostride/agent-qa-safety'
 
@@ -22,6 +22,8 @@ import { extractJsonStrategy } from './middleware/extract-json.js'
 import { repairMiddleware } from './middleware/repair.js'
 import { retryMiddleware } from './middleware/retry.js'
 import { stripUnsupportedParamsMiddleware } from './middleware/strip-unsupported-params.js'
+import { objectRootToolSchemaMiddleware } from './middleware/object-root-tool-schema.js'
+import { dropPropertyNamesMiddleware } from './middleware/drop-property-names.js'
 import { toolSchemaMiddleware } from './middleware.js'
 import { getProvider, listProviders } from './providers/registry.js'
 import { validateProfile } from './validate.js'
@@ -33,7 +35,7 @@ import type { ModelCallEvent, ModelCallObservation, ModelCallReportOrigin } from
 export type { ModelCallObservation } from './provider-call-report.js'
 
 // The per-call array createModel builds ends with the declared-secret mask after this array,
-// so it is the last transform before the wire (validate:safety (a)).
+// so it is the last transform before the wire (the safety package tests check it).
 const MIDDLEWARE: LanguageModelMiddleware[] = [
   retryMiddleware(),
   repairMiddleware(),
@@ -41,14 +43,14 @@ const MIDDLEWARE: LanguageModelMiddleware[] = [
   toolSchemaMiddleware,
   deriveExamplesMiddleware(),
   addToolInputExamplesMiddleware(),
-  // RUNX-04: flag-gated debug logging (AGENT_QA_DEBUG_LLM); catches the raw APICallError first.
+  // Flag-gated by `AGENT_QA_DEBUG_LLM`; first, so it catches the raw `APICallError`.
   debugLoggingMiddleware(),
-  // RUNX-01: strip empty-content messages just before the wire.
+  // Strips empty-content messages just before the wire.
   dropEmptyMessagesMiddleware(),
 ]
 
 export interface ModelProviderOverrides {
-  languageModels?: Record<string, LanguageModelV3>
+  languageModels?: Record<string, LanguageModelV4>
   /** Trusted custom/override adapter assertion; omitted means no cache/model authority. */
   providerReportOrigin?: ModelCallReportOrigin
 }
@@ -59,7 +61,7 @@ export function createModel(
   mask: MaskFn,
   overrides: ModelProviderOverrides = {},
   observation: ModelCallObservation = {},
-): LanguageModelV3 {
+): LanguageModelV4 {
   validateProfile(profile)
 
   profile.capabilities ??= resolveCapabilities(profile)
@@ -72,8 +74,8 @@ export function createModel(
     )
   }
 
-  const baseProvider = toProviderV3((modelId) => descriptor.adapter(transport, modelId))
-  const provider: ProviderV3 = customProvider({
+  const baseProvider = toProviderV4((modelId) => descriptor.adapter(transport, modelId))
+  const provider: ProviderV4 = customProvider({
     languageModels: overrides.languageModels ?? {},
     fallbackProvider: baseProvider,
   })
@@ -108,7 +110,7 @@ export function createModel(
   const observedProvider = onProviderCall === undefined && onCall === undefined ? provider : wrapProvider({
     provider,
     languageModelMiddleware: {
-      specificationVersion: 'v3',
+      specificationVersion: 'v4',
       wrapGenerate: async ({ doGenerate }) => {
         start()
         try {
@@ -141,7 +143,7 @@ export function createModel(
           }
           return {
             ...result,
-            stream: new ReadableStream<LanguageModelV3StreamPart>({
+            stream: new ReadableStream<LanguageModelV4StreamPart>({
               async pull(controller) {
                 try {
                   const next = await reader.read()
@@ -182,12 +184,17 @@ export function createModel(
       },
     },
   })
-  // The masking middleware must stay last (validate:safety (a)).
+  // The masking middleware must stay last (the safety package tests check it).
   const middleware = [
     capabilityUpdateMiddleware(profile),
     ...(descriptor.unsupportedParams?.length
       ? [stripUnsupportedParamsMiddleware(descriptor.unsupportedParams)]
       : []),
+    // The Messages API refuses a tool input_schema with a top-level oneOf, anyOf or allOf; this
+    // flattens an object oneOf or anyOf, and an allOf still reaches the API as it is.
+    ...(descriptor.modelAdapter === 'anthropic-messages' ? [objectRootToolSchemaMiddleware] : []),
+    // Both OpenAI transports, Chat and Responses: the provider warns as it drops `propertyNames`.
+    ...(descriptor.modelAdapter === 'openai-responses' ? [dropPropertyNamesMiddleware] : []),
     ...MIDDLEWARE,
     createMaskingMiddleware(mask),
   ]
@@ -199,9 +206,9 @@ export function createModel(
   return registry.languageModel(`${profile.provider}:${profile.model}`)
 }
 
-function toProviderV3(build: (modelId: string) => LanguageModelV3): ProviderV3 {
+function toProviderV4(build: (modelId: string) => LanguageModelV4): ProviderV4 {
   return {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     languageModel: build,
     embeddingModel(modelId) {
       throw new Error(`No embedding model for provider model "${modelId}"`)

@@ -16,11 +16,7 @@ import {
 import { AGENT_JOB_STORE_DB_FILE } from '../store/sqlite-job-store.js'
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 
-/**
- * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
- * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
- * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
- */
+// Passthrough: this fixture already speaks canonical workspace-relative bytes.
 const MINT_IDENTITY = (filePath: string): string => filePath
 
 const TEST_MODEL: JobModelCapability = {
@@ -77,7 +73,7 @@ afterEach(() => {
   }
 })
 
-describe('composeLocalAgent job-store lifecycle (WR-03)', () => {
+describe('composeLocalAgent job-store lifecycle', () => {
   it('waits for a superseded open, closes its late store, and never publishes it', async () => {
     const root = makeRoot('race')
     const model = deferred<JobModelCapability>()

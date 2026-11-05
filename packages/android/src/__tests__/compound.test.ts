@@ -1,19 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// ---------------------------------------------------------------------------
-// Wave-0 RED scaffold — Phase 359 Plan 02, Task 2 (EXEC-01/02/03; D-05..D-08,
-// D-10..D-12, Pitfall 9). Pins the ANDROID adapter fill/scroll/openApp compound
-// sequences against a call-logging mocked webdriverio driver — no live Appium.
-//
-// RED convention: these fail on not-yet-implemented compound behavior (the current
-// `case 'fill'` sets a value but never re-reads via getText(); `case 'scroll'` has
-// no native `mobile: scroll` rung; `openApp` is not a handled action). They MUST NOT
-// fail on compile errors — execution-shaped action literals are cast via
-// `as unknown as Parameters<typeof adapter.execute>[0]`.
-//
-// The pre-existing adapter.test.ts and conformance.test.ts stay GREEN (standalone
-// file; legacy `fill {value}` / `scroll {value}` contracts untouched).
-// ---------------------------------------------------------------------------
+// Compound fill, scroll and openApp sequences against a call-logging mocked driver; no live Appium.
 
 const ANDROID_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
@@ -97,8 +84,7 @@ function createMockDriver() {
     getContexts: vi.fn().mockResolvedValue(['NATIVE_APP']),
     switchContext: vi.fn().mockResolvedValue(undefined),
     url: vi.fn().mockRejectedValue(new Error('not supported')),
-    // 437-05: only the focused-node lookup finds the field; the showing-hint and multiline probes
-    // match nothing, so the field reads as a non-empty single value.
+    // Only the focused-node lookup finds the field, so it reads as a non-empty single value.
     $: vi.fn().mockImplementation((selector: string) =>
       Promise.resolve(selector === '//*[@focused="true"]' ? mockElement : { isExisting: () => Promise.resolve(false) })),
     _pointerAction: pointerAction,
@@ -112,7 +98,7 @@ import { WEBVIEW_SCROLLERS_SCRIPT } from '@vostride/agent-qa-core'
 
 type ExecAction = Parameters<AndroidPlatformAdapter['execute']>[0]
 
-describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
+describe('AndroidPlatformAdapter compound behaviors', () => {
   let adapter: AndroidPlatformAdapter
   let mockDriver: ReturnType<typeof createMockDriver>
 
@@ -141,7 +127,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     return el.ref
   }
 
-  describe('EXEC-01 fill compound (D-05/D-06/D-07/D-08)', () => {
+  describe('fill compound', () => {
     it('replace mode types via setValue then re-reads getText() from the SAME focused handle, in order', async () => {
       await adapter.setup({ platform: 'android' })
       const ref = await refFor('Username')
@@ -162,7 +148,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       })
     })
 
-    it('append mode captures prior getText() BEFORE typing and uses addValue (A1)', async () => {
+    it('append mode captures prior getText() BEFORE typing and uses addValue', async () => {
       await adapter.setup({ platform: 'android' })
       const ref = await refFor('Username')
       focusedGetTextReturn = 'abc'
@@ -184,7 +170,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact', path: 'native' })
     })
 
-    it('submit=true presses KEYCODE_ENTER (mobile: pressKey keycode 66) AFTER the re-read (A4); submit=false does not', async () => {
+    it('submit=true presses KEYCODE_ENTER (mobile: pressKey keycode 66) AFTER the re-read; submit=false does not', async () => {
       await adapter.setup({ platform: 'android' })
       const ref = await refFor('Username')
       focusedGetTextReturn = 'hello'
@@ -204,7 +190,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(unsubmitted.metadata).not.toHaveProperty('fillSubmit')
     })
 
-    it('437 D-09: an unreadable re-read is unverified and still sends the requested Enter, after setValue and the read attempt', async () => {
+    it('an unreadable re-read is unverified and still sends the requested Enter, after setValue and the read attempt', async () => {
       await adapter.setup({ platform: 'android' })
       const ref = await refFor('Username')
       mockElement.getText.mockImplementation(() => { calls.push('getText'); return Promise.reject(new Error('stale element')) })
@@ -226,7 +212,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       })
     })
 
-    it('mismatch yields success:false + §7.1 error + fillReread meta, single-shot typing (D-08)', async () => {
+    it('mismatch yields success:false + error + fillReread meta, single-shot typing', async () => {
       await adapter.setup({ platform: 'android' })
       const ref = await refFor('Username')
       focusedGetTextReturn = 'wrong'
@@ -257,7 +243,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
-  describe('EXEC-02 scroll untilVisible (Pitfall 9 selector-injection)', () => {
+  describe('scroll untilVisible escapes or refuses a hostile selector target', () => {
     it('tries native mobile: scroll with the -android uiautomator strategy FIRST', async () => {
       await adapter.setup({ platform: 'android' })
       await adapter.observe()
@@ -304,7 +290,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
-  describe('C436-SCROLL Android scroll signals (436-02 · D-25)', () => {
+  describe('Android scroll signals', () => {
     type Primitives = { swipeOnce(direction: string, ref?: string): Promise<string> }
     const primitivesOf = (a: AndroidPlatformAdapter): Promise<Primitives> =>
       (a as unknown as { buildAndroidScrollPrimitives(d: string, m: number): Promise<Primitives> })
@@ -319,8 +305,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
 
       expect(await p.swipeOnce('down')).toBe('moved')
       expect(gestureCalls()).toHaveLength(1)
-      // 436-12 (live A1): the area keeps to the middle 60% of the swipe axis, clear of the system
-      // gesture zones.
+      // The area keeps to the middle 60% of the swipe axis, clear of the system gesture zones.
       expect(gestureCalls()[0][1]).toEqual({ left: 0, top: 384, width: 1080, height: 1152, direction: 'down', percent: 0.75 })
 
       expect(await p.swipeOnce('up', ref)).toBe('at-boundary')
@@ -353,7 +338,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       })
       await adapter.setup({
         platform: 'android',
-        device: { name: 'android-emu', platform: 'android', transport: 'local', match: { automationName: 'UiAutomator2' } },
+        device: { name: 'android-emu', platform: 'android', match: { automationName: 'UiAutomator2' } },
         appPackage: 'app.linear',
       } as never)
       await adapter.observe()
@@ -403,10 +388,10 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
-  describe('C436-SCROLL-WEBVIEW a WebView touch swipe is judged over every WebView scroller (436-18 · D-25)', () => {
+  describe('a WebView touch swipe is judged over every WebView scroller', () => {
     type Primitives = { swipeOnce(direction: string, ref?: string): Promise<string> }
     type Member = { id: string; x: number; y: number; maxX: number; maxY: number }
-    // 2026-10-08 (436-23): members carry an identity; the document scroller is always `document`.
+    // Members carry an identity; the document scroller is always `document`.
     const doc = (y: number, maxY: number, x = 0, maxX = 0): Member => ({ id: 'document', x, y, maxX, maxY })
     const el = (id: string, y: number, maxY: number, x = 0, maxX = 0): Member => ({ id, x, y, maxX, maxY })
     const LIST = '0/1/0|div#list.feed'
@@ -424,7 +409,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       })
       await adapter.setup({
         platform: 'android',
-        device: { name: 'android-emu', platform: 'android', transport: 'local', match: { automationName: 'UiAutomator2' } },
+        device: { name: 'android-emu', platform: 'android', match: { automationName: 'UiAutomator2' } },
         appPackage: 'app.linear',
       } as never)
       await adapter.observe()
@@ -449,7 +434,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
         [doc(700, 700), el(LIST, 300, 1200)], [doc(700, 700), el(LIST, 300, 1200)],
       ])
       expect(await p.swipeOnce('down')).toBe('at-boundary')
-      // HARN-03 adjacency: the document at its end with a nested scroller short of its end.
+      // The document at its end with a nested scroller short of its end.
       expect(await p.swipeOnce('down')).toBe('unknown')
     })
 
@@ -475,7 +460,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
 
     it('a WebView with a frame on screen reads unknown', async () => {
-      // The shared script answers null when a frame intersects the viewport (436-23 · WR-20).
+      // The shared script answers null when a frame intersects the viewport.
       const p = await webView([null, null])
       expect(await p.swipeOnce('down')).toBe('unknown')
       expect(mockDriver._pointerAction.perform).toHaveBeenCalledTimes(1)
@@ -516,7 +501,7 @@ describe('AndroidPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
-  describe('EXEC-03 openApp resolution (D-10/D-11/D-12)', () => {
+  describe('openApp resolution', () => {
     it('enumerates via mobile: listApps exactly ONCE across two consecutive resolutions (session cache)', async () => {
       listAppsReturn = { 'com.google.android.calendar': {}, 'com.android.settings': {} }
       await adapter.setup({ platform: 'android' })

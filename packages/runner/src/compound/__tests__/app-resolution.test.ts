@@ -1,27 +1,7 @@
-// RED scaffold (Wave 0, Phase 359 · EXEC-03 · D-11/D-12 · Pattern 4 · spec §12.14/§7.1).
-// Pins the pure openApp name→id resolution ladder + scorer BEFORE Plan 03 vendors it. The
-// scorer is deterministic (no fuse.js, D-11): normalize → exact > prefix > substring >
-// token-overlap > bounded edit distance, over the union of full ids, tokenized id segments,
-// and any labels. A fuzzy match launches ONLY when the top candidate clears the threshold AND
-// leads the runner-up by a margin (D-12) — otherwise ambiguous ⇒ candidates, never a coin-flip
-// launch (T-359-04). Thresholds/margins/bounds are internal constants, injectable for tests
-// (353 K=2), never user-facing config.
-//
-// RED BY DESIGN: `../app-resolution.js` does not exist until Plan 03 — the unresolved import IS
-// the intended failure (vitest strips types; `tsc -p .` stays green via @ts-expect-error).
-//
-// Pinned contract (Plan 03 implements to it exactly):
-//   resolveAppName(name, registry: AppRegistryEntry[], opts?: ScorerOptions)
-//     → { kind: 'exact' | 'fuzzy'; id: string }
-//     | { kind: 'ambiguous' | 'unknown'; candidates: { id: string }[] }
-//   DEFAULT_FUZZY_THRESHOLD / DEFAULT_FUZZY_MARGIN / DEFAULT_EDIT_DISTANCE_BOUND /
-//   DEFAULT_CANDIDATE_COUNT are exported injectable constants (candidate count === 3).
 import { describe, it, expect } from 'vitest'
 import { resolveAppName as resolveAppNameImpl, DEFAULT_CANDIDATE_COUNT } from '../app-resolution.js'
 
-// Plan 01 pinned the loose runtime shape (id + candidates read directly); the shipped
-// resolveAppName returns a discriminated union. This flat view lets the pinned assertions read
-// id/candidates off the runtime object without per-branch narrowing — assertions unchanged.
+// A flat view so the assertions read id and candidates off the union without per-branch narrowing.
 type ResolveView = {
   kind: 'exact' | 'fuzzy' | 'ambiguous' | 'unknown'
   id?: string
@@ -30,8 +10,7 @@ type ResolveView = {
 const resolveAppName = (...args: Parameters<typeof resolveAppNameImpl>): ResolveView =>
   resolveAppNameImpl(...args) as unknown as ResolveView
 
-// A small fixture registry modeling the D-10 corpus: full ids everywhere, labels only where a
-// single enumeration call yields them.
+// A small fixture registry: full ids everywhere, labels only where one enumeration yields them.
 const registry = [
   { id: 'com.google.android.calendar' },
   { id: 'com.google.android.deskclock', label: 'Clock' },
@@ -39,7 +18,7 @@ const registry = [
   { id: 'com.android.settings' },
 ]
 
-describe('resolveAppName — the exact rung (D-11)', () => {
+describe('resolveAppName — the exact rung', () => {
   it('(1) an exact id match resolves kind=exact', () => {
     const r = resolveAppName('com.android.settings', registry)
     expect(r.kind).toBe('exact')
@@ -58,7 +37,7 @@ describe('resolveAppName — the exact rung (D-11)', () => {
   })
 })
 
-describe('resolveAppName — the fuzzy ladder ordering (D-11)', () => {
+describe('resolveAppName — the fuzzy ladder ordering', () => {
   it('(4) a prefix candidate beats a substring candidate', () => {
     const ladder = [
       { id: 'a.prefix', label: 'Firefox' }, // 'firefox' starts with 'fire' (prefix)
@@ -78,7 +57,7 @@ describe('resolveAppName — the fuzzy ladder ordering (D-11)', () => {
   })
 })
 
-describe('resolveAppName — margin + candidate rules (D-12, T-359-04)', () => {
+describe('resolveAppName — margin + candidate rules', () => {
   it('(5) two near-equal candidates within the margin resolve ambiguous with NO launch winner', () => {
     const ambiguous = [
       { id: 'x.reddit', label: 'Reddit' },
@@ -99,7 +78,7 @@ describe('resolveAppName — margin + candidate rules (D-12, T-359-04)', () => {
     for (const candidate of r.candidates) expect(typeof candidate.id).toBe('string')
   })
 
-  it('(7) ScorerOptions injection overrides the defaults and changes an outcome (353 K=2)', () => {
+  it('(7) ScorerOptions injection overrides the defaults and changes an outcome', () => {
     const wide = resolveAppName('zzzz-nonexistent-app', registry)
     const narrow = resolveAppName('zzzz-nonexistent-app', registry, { candidateCount: 1 })
     expect(narrow.candidates.length).toBeLessThanOrEqual(1)

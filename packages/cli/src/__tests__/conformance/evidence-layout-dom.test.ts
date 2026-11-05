@@ -8,7 +8,7 @@ import { chromium, type BrowserContext, type Page } from 'playwright-core'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { capture, recordingFixture, zoomFixtureTab, type RecordingFixture } from './recording-dom-fixture.js'
 import { populatedRunSpawnEnv, POPULATED_SECRET_ENV_VAR } from './populated-run-fixture.js'
-import { cleanupTempRoots, reserveEphemeralPort, spawnDashboard, trackTempRoot } from './spawned-chat.js'
+import { cleanupTempRoots, spawnDashboard, trackTempRoot } from './spawned-chat.js'
 
 // Real producer + shipped bundle. Only historical/orphan test arrangements edit the temporary
 // durable fixture, explicitly below; no route mocks, fake media, skips or user-workspace captures.
@@ -59,7 +59,7 @@ async function measureTabs(page: Page, name: string) {
   await list.evaluate(list => { list.scrollLeft = 0 })
 }
 
-describe('evidence layout backstops on the shipped bundle (424-29)', () => {
+describe('evidence layout backstops on the shipped bundle', () => {
   beforeAll(async () => {
     try {
       fixture = await recordingFixture('evidence-layout', false, true)
@@ -79,13 +79,12 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       if (!settled) throw new Error('Post-run writer did not settle')
       await fixture.dashboard.stop()
       const env = populatedRunSpawnEnv()
-      // A cold reader without the original environment: the fill value is not a declared secret,
-      // so the run recorded it as typed and the page renders it as written (D-12, D-23).
+      // The fill value is no declared secret, so the page renders it as typed.
       delete env[POPULATED_SECRET_ENV_VAR]
-      const port = await reserveEphemeralPort()
-      reader = await spawnDashboard(fixture.project.root, fixture.project.configPath, port, 60_000, env)
+      reader = await spawnDashboard(fixture.project.root, fixture.project.configPath, 60_000, env)
       if (!reader.ready) throw new Error(reader.stderr())
-      const url = `${reader.origin}/runs/${encodeURIComponent(fixture.drive.runId)}`
+      const runPath = `/runs/${encodeURIComponent(fixture.drive.runId)}`
+      let url = `${reader.origin}${runPath}`
       const context = await fixture.browser.newContext({ viewport: { width: 400, height: 800 } })
       const page = await context.newPage()
       await page.goto(url)
@@ -125,7 +124,7 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       await densePage.goto(url)
       await measureTabs(densePage, 'tab-strip-desktop-2x-density')
       await dense.close()
-      const zoomRoot = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-424-zoom-')))
+      const zoomRoot = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-zoom-')))
       const extension = join(zoomRoot, 'extension')
       mkdirSync(extension)
       writeFileSync(join(extension, 'manifest.json'), JSON.stringify({ manifest_version: 3,
@@ -148,15 +147,16 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       await zoomContext.close()
       zoomContext = undefined
 
-      // Historical fixture: SQL NULL in the existing additive fields is precisely the migrated
-      // pre-424 shape. Keep the real decision images, steps and identities; invent no new data.
+      // SQL NULL in the additive fields is the migrated older shape; no new data is invented.
       await reader.stop()
       const db = new DatabaseSync(join(fixture.project.agentQaRoot, 'runs.db'))
       db.prepare('UPDATE run_members SET recording_json = NULL WHERE run_id = ?').run(fixture.drive.runId)
       db.prepare('UPDATE run_steps SET evidence_json = NULL WHERE run_id = ?').run(fixture.drive.runId)
       db.prepare('UPDATE run_sub_actions SET evidence_state_json = NULL, recording_offset_ms = NULL WHERE run_id = ?').run(fixture.drive.runId)
       db.close()
-      reader = await spawnDashboard(fixture.project.root, fixture.project.configPath, port, 60_000, env)
+      reader = await spawnDashboard(fixture.project.root, fixture.project.configPath, 60_000, env)
+      if (!reader.ready) throw new Error(reader.stderr())
+      url = `${reader.origin}${runPath}`
       await page.goto(url)
       await page.locator('[data-run-notice]').waitFor()
       await page.getByRole('tab', { name: /^Variables/ }).click()
@@ -198,7 +198,9 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
       artifact.parts = []
       guardRunAnalysisArtifact(artifact)
       writeFileSync(analysisPath, JSON.stringify(artifact))
-      reader = await spawnDashboard(fixture.project.root, fixture.project.configPath, port, 60_000, env)
+      reader = await spawnDashboard(fixture.project.root, fixture.project.configPath, 60_000, env)
+      if (!reader.ready) throw new Error(reader.stderr())
+      url = `${reader.origin}${runPath}`
       for (const width of [400, 1280]) {
         await page.setViewportSize({ width, height: 800 })
         await page.goto(url)
@@ -219,7 +221,7 @@ describe('evidence layout backstops on the shipped bundle (424-29)', () => {
         await page.getByRole('button', { name: 'Close screenshot', exact: true }).click()
         await page.locator('[data-player-lightbox]').waitFor({ state: 'hidden' })
       }
-      if (process.env.AGENT_QA_424_CAPTURE_DIR) writeFileSync(join(process.env.AGENT_QA_424_CAPTURE_DIR, 'layout-observation.json'), JSON.stringify({ timeline, tabs, zoom, notice, lightboxes, inputTexts }, null, 2))
+      if (process.env.AGENT_QA_CAPTURE_DIR) writeFileSync(join(process.env.AGENT_QA_CAPTURE_DIR, 'layout-observation.json'), JSON.stringify({ timeline, tabs, zoom, notice, lightboxes, inputTexts }, null, 2))
       await context.close()
     } catch (error) { failures.drive = String(error) }
   }, 360_000)

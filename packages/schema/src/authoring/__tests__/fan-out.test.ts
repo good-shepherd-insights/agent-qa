@@ -1,20 +1,4 @@
-// The fan-out bound's cells (394-08, D-03/D-10 · WTST-08).
-//
-// THE NUMBER THIS FILE PINS IS A DISCLOSURE, NOT A STATISTIC. WTST-08's owner decision is preview
-// and honest reporting with NO enforced pre-dispatch budget, so the mitigation for an unbounded
-// fan-out is the number a person is shown before they approve. That makes an UNDER-COUNT a consent
-// defect rather than a rounding choice: a loop that can exceed its own preview has taken more of a
-// person's compute than they agreed to, and no amount of "close enough" repairs that. Every cell
-// below exists to make an under-count impossible to ship quietly.
-//
-// THE TWO N TERMS ARE THE TRAP. The bound is `initial N + K probes + final N`, and with the shipped
-// constants both N terms are 3 — so a collapse to `2 * N` is INVISIBLE under default values and any
-// cell that only checked the total would certify it. The two-N cells therefore use a configuration
-// where the terms DIFFER (draft mode: the initial gate takes one run, the final gate takes the
-// pinned N), which is a real production configuration rather than an invented one.
-//
-// THE SUBJECT IS RESOLVED PER CELL rather than imported at the top, so a run taken before
-// `fan-out.ts` exists reds as a LIST OF NAMED ROWS instead of one file that failed to load.
+// The two N terms differ only in draft mode, so the cells use it to catch a collapse to `2 * N`.
 
 import { describe, expect, it } from 'vitest'
 
@@ -235,10 +219,7 @@ describe('FanOutReport: what was previewed, beside what was actually consumed', 
       ],
     })
 
-    // NOT CLAMPED and NOT THROWN. A clamp turns a consent defect into a silent correctness bug —
-    // the artifact would report the number the preview promised rather than the number that was
-    // spent — and a throw would destroy the very receipt that carries the evidence. The excess is
-    // reported as a FLAG, and every path this phase exercises asserts the flag is false.
+    // Not clamped and not thrown: a throw would destroy the receipt that carries the evidence.
     expect(report.consumedTotal).toBe(2)
     expect(report.previewed.total).toBe(1)
     expect(report.exceedsPreview).toBe(true)
@@ -318,9 +299,6 @@ describe('the rendered preview, which is the thing a person actually consents on
       runs: [{ runId: 'r_1', purpose: 'gate', completedAt: 1 }],
     })
 
-    // 394-07 exported this screen precisely so a LATER surface composing a block around a number
-    // checks its own wording against the same pinned lexicon. Both of this plan's renders are
-    // screened as COMPOSED blocks, not line by line.
     expect(successFramingViolations(renderFanOutPreview(previewed))).toEqual([])
     expect(successFramingViolations(renderFanOutReport(report))).toEqual([])
   })
@@ -338,8 +316,7 @@ describe('the rendered preview, which is the thing a person actually consents on
 
     const line = renderFanOutReport(report)
 
-    // Both numbers, in one line. The actual alone leaves the disclosure unfalsifiable; the preview
-    // alone is the defect WTST-08 exists to prevent.
+    // The actual alone cannot be checked, and the preview alone under-reports.
     expect(line).toContain('2')
     expect(line).toContain('9')
     expect(line).toMatch(/previewed/i)
@@ -355,13 +332,7 @@ describe('the rendered preview, which is the thing a person actually consents on
   })
 })
 
-// ---- the wire mirror: the schemas accept what the functions PRODUCE (394-14) ------------------
-//
-// `authoring.draft.write` now carries the report on its `.strict()` output contract, so these
-// shapes are validated at a trust boundary rather than merely described. Every cell here parses a
-// value the shipped FUNCTION produced — never a hand-typed literal — because a literal fixture can
-// pin a shape the producer would not answer with, and the mirror would then certify a schema that
-// refuses real reports and accepts impossible ones.
+// Every cell parses a value the shipped function produced, never a hand-typed literal.
 
 describe('the zod mirrors parse what the fan-out functions actually produce', () => {
   it('FanOutReportSchema parses a PRODUCED report, run refs and all', async () => {

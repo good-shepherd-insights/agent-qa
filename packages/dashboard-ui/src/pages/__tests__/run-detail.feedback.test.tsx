@@ -36,14 +36,12 @@ import {
   SENDING_STATUS,
   SUBMIT_REASON_ALREADY_MARKED,
   SUBMIT_REASON_CHECKING,
-  SUBMIT_REASON_INVALID_CORRECTION,
   SUBMIT_REASON_NO_CHOICE,
   SUBMIT_REASON_NO_UNIQUE_ADDRESS,
   SUBMIT_REASON_PREVIEW_FAILED,
   SUBMIT_REASON_REFUSED,
   SUBMIT_REASON_SENDING,
   alreadyMarkedText,
-  correctedActionUnavailableText,
   feedbackReadFailureReason,
   noteCounterText,
   previewRefusalText,
@@ -64,7 +62,6 @@ import {
   feedbackDefaultLayout,
 } from '@/lib/feedback-view'
 import { memberDisplayName, memberHandleLabel } from '@/lib/run-detail-view'
-import { CORRECTED_ACTION_EXAMPLE, CORRECTED_ACTION_LABEL } from '@/components/run-detail/mark-correction-fields'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -116,10 +113,9 @@ vi.mock('@/components/page-skeleton', () => ({ DetailSkeleton: () => <div>Loadin
 vi.mock('@/components/empty-state', () => ({
   EmptyState: ({ title }: { title: string }) => <div>{title}</div>,
 }))
-// Module-level mount counters: a layout change that remounts the tree or the evidence resets what
-// the person was inspecting (426-11 NO-REMOUNT-ON-LAYOUT-CHANGE).
+// Module-level mount counters: a layout change that remounts the tree or evidence loses inspection.
 const mounts = vi.hoisted(() => ({ tabPanels: 0, stepTree: 0 }))
-// The tab double renders the evidence strip's active tab, the composer's last focus fallback (D-07).
+// The tab double renders the evidence strip's active tab, the composer's last focus fallback.
 vi.mock('@/components/run-detail/tab-panels', async () => {
   const React = await vi.importActual<typeof import('react')>('react')
   return {
@@ -170,8 +166,7 @@ vi.mock('@/components/ui/select', async () => {
     },
   }
 })
-// Pitfall 7: the panel double renders the props the layout cells read, JSON-encoded so a numeric
-// size and a string size stay distinguishable.
+// The panel double JSON-encodes its props so a numeric and a string size stay distinguishable.
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanelGroup: ({ children, defaultLayout, orientation }: {
     children: ReactNode
@@ -216,8 +211,7 @@ vi.mock('@/components/ui/scroll-area', () => ({
 vi.mock('@/components/ui/badge', () => ({
   Badge: ({ children, ...rest }: { children: ReactNode }) => <span {...rest}>{children}</span>,
 }))
-// Pitfall 7: every prop but the variant styling passes through, so data-*, aria-* and onClick reach
-// the DOM the cells read.
+// Every prop but variant styling passes through, so data-*, aria-* and onClick reach the DOM.
 vi.mock('@/components/ui/button', () => ({
   Button: ({ children, variant: _variant, size: _size, asChild: _asChild, ...rest }: {
     children: ReactNode
@@ -270,14 +264,12 @@ function runRow(id: string) {
     endedAt: '2026-09-23T00:00:10.000Z',
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: null,
     platform: 'web',
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
     attemptNumber: 1,
     retryCount: 0,
     maxRetries: 0,
@@ -289,7 +281,7 @@ const initial = projection({
   members: [member(0, { testId: TEST_ID, outcome: 'failed', marks: [] })],
   steps: [step(0, 0, 'Open cart')],
 })
-// 432-09 (D-04): a mark's receipt names the knowledge it changed; history joins that record.
+// A mark's receipt names the knowledge it changed; history joins that record.
 const receipt: RunDetailMemberMark = {
   markId: 'mark_0123456789ab',
   kind: 'false-fail',
@@ -310,9 +302,6 @@ const CONSEQUENCES = RunsMarkPreviewResultSchema.parse({
   resolvedStep: { stepIndex: 0, reason: 'failing-step' },
   latest: { kind: 'first' },
   basis: { ledgerOrdinal: 0 },
-  markedDecisionCount: 1,
-  groundTruth: [],
-  labels: [],
   knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
   draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
 })
@@ -397,7 +386,7 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-describe('426-01 contextual feedback tracer', () => {
+describe('contextual feedback tracer', () => {
   it('TRACER-HEADER-ENTRY-TO-RECORDED: header entry → current preview → Send feedback → announced receipt', async () => {
     fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? refreshed : initial)
     markRunMock.mockResolvedValue({ kind: 'marked', receipt })
@@ -468,7 +457,7 @@ describe('426-01 contextual feedback tracer', () => {
     expect(previewBody).toBeDefined()
     expect(markBody).toBeDefined()
     expect(previewBody!.runId).toBe(RUN_ID)
-    // 432-14 (D-14): the page holds no confirm scope, so the mark body carries none to remove.
+    // The page holds no confirm scope, so the mark body carries none.
     expect(markBody).not.toHaveProperty('confirm' + 'Scope')
     const { runId: _runId, ...previewRest } = previewBody!
     const { note: _note, ...markRest } = markBody!
@@ -530,7 +519,7 @@ function suiteDetail(member0: Partial<RunDetailMember> = {}): RunDetailProjectio
   })
 }
 
-describe('426-03 the header entry in a suite', () => {
+describe('the header entry in a suite', () => {
   it('SUITE-HEADER-TARGET-ON-LOAD: the auto-selected first step makes member 0 the target though member 1 failed', async () => {
     fetchRunDetailMock.mockResolvedValue(suiteDetail())
     await renderAt(`/runs/${RUN_ID}`)
@@ -577,7 +566,7 @@ describe('426-03 the header entry in a suite', () => {
   })
 })
 
-describe('426-03 the composer names, switches and refuses its test', () => {
+describe('the composer names, switches and refuses its test', () => {
   it('SWITCHER-RETARGETS: choosing another test re-targets the composer and leaves the filter and selection alone', async () => {
     fetchRunDetailMock.mockResolvedValue(suiteDetail())
     await renderAt(`/runs/${RUN_ID}?member=0`)
@@ -638,9 +627,7 @@ describe('426-03 the composer names, switches and refuses its test', () => {
   })
 })
 
-// THE STEP DOOR AND THE PAGE'S DOOR COUNT (426-04 · SC1, D-04, D-06). The page auto-selects the first
-// step, so on load there is the header door and the selected row's door; clearing the selection or
-// selecting a hook leaves the header door alone. The pills are gone (426-15), so these are the only doors.
+// The page auto-selects the first step, so on load there are the header door and that row's door.
 const SETUP_HOOK = {
   id: 'hook-setup-1', runId: RUN_ID, stepId: null, type: 'hook', name: 'Seed catalog', hookId: 'seed',
   phase: 'setup', status: 'passed', duration: 120, stdout: null, stderr: null, returnData: null,
@@ -648,7 +635,7 @@ const SETUP_HOOK = {
 }
 const doors = () => container!.querySelectorAll('[data-feedback-entry]')
 
-describe('426-04 the step door on the page', () => {
+describe('the step door on the page', () => {
   it('TRIGGER-COUNT: two doors with a step selected, one with no selection, one with a hook selected', async () => {
     fetchExecutionLogsMock.mockResolvedValue({ logs: [SETUP_HOOK] })
     await renderAt(`/runs/${RUN_ID}`)
@@ -717,7 +704,7 @@ describe('426-04 the step door on the page', () => {
   })
 })
 
-describe('426-04 the passive trace on a member header', () => {
+describe('the passive trace on a member header', () => {
   it('MEMBER-GLYPH: a whole-test mark puts one named glyph after the member handle and before its outcome badge', async () => {
     fetchRunDetailMock.mockResolvedValue(suiteDetail({ marks: [receipt] }))
     await renderAt(`/runs/${RUN_ID}`)
@@ -740,9 +727,7 @@ describe('426-04 the passive trace on a member header', () => {
   })
 })
 
-// THE COMPOSER IS A DOCKED COMPANION (426-05 · D-08, D-09). The target is pinned to what the person
-// opened it for; the selection moves freely, and only an explicit act re-addresses the draft. Every
-// address keeps its own draft for the page session, in page state only.
+// The target stays pinned while the selection moves; each address keeps its draft in page state.
 const fourSteps = projection({
   members: [member(0, { testId: TEST_ID, outcome: 'failed', marks: [] })],
   steps: [step(0, 0, 'Open cart'), step(0, 1, 'Apply coupon'), step(0, 2, 'Pay'), step(0, 3, 'See receipt')],
@@ -771,7 +756,7 @@ async function openStep(address: string) {
   expect(composerTarget()).toBe(address)
 }
 
-describe('426-05 the pinned target and per-address drafts', () => {
+describe('the pinned target and per-address drafts', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
     fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES })
@@ -866,9 +851,7 @@ describe('426-05 the pinned target and per-address drafts', () => {
   })
 })
 
-// FOCUS, KEYS AND THE RETAINED DRAFT (426-05 · D-07, D-09, 419-15). The composer takes focus when it
-// opens and gives it back when it closes; it never lets a key reach the page's shortcut map; and a
-// retained outcome keeps the draft with its status and denial on its own address only.
+// The composer takes focus on open, returns it on close, and lets no key reach the page shortcuts.
 const heading = () => {
   const composer = q('[data-feedback-composer]')
   return composer === null ? null : document.getElementById(composer.getAttribute('aria-labelledby')!)
@@ -886,7 +869,7 @@ function suiteHalfMarked(): RunDetailProjection {
   return { ...suite, members: [suite.members[0]!, { ...suite.members[1]!, marks: undefined }] }
 }
 
-describe('426-05 focus in and out, and the page keys', () => {
+describe('focus in and out, and the page keys', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
     fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES })
@@ -1016,10 +999,10 @@ describe('426-05 focus in and out, and the page keys', () => {
   })
 })
 
-/** The page's own sentence for a mark that failed (2026-10-02, 432-42: no typed denial is left). */
+// The page's own sentence for a mark that failed.
 const MARK_FAILED_TEXT = 'Could not complete the mark or refresh its receipt.'
 
-describe('426-05 the retained draft, per address', () => {
+describe('the retained draft, per address', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
   })
@@ -1028,8 +1011,7 @@ describe('426-05 the retained draft, per address', () => {
     await click('[data-feedback-entry="test"]')
     await pickFirstChoiceAndLandPreview(Promise.resolve({ kind: 'read', result: CONSEQUENCES }))
     await typeNote('keep this note')
-    // 2026-10-02 (432-42, D-15): no typed denial exists; a refused mark is a failed request, and the
-    // page answers it in its own words (MARK_FAILED_TEXT), so `reason` is only the error's message.
+    // A refused mark is a failed request the page words itself, so `reason` is just the message.
     markRunMock.mockRejectedValue(new Error(reason))
     await click('[data-feedback-submit]')
     await flushRender()
@@ -1068,11 +1050,7 @@ describe('426-05 the retained draft, per address', () => {
   })
 })
 
-// WHERE A TEST-LEVEL MARK LANDS, AND WHICH PREVIEW MAY AUTHORISE IT (426-06 · D-14, D-16, D-19). The
-// resolved step is the read's own answer — its reason keys the sentence and nothing on the page scans
-// the steps. The preview on screen is exact: a note never re-fetches, an older answer never overwrites
-// a newer one, and Send feedback waits for the read computed for the form as it is now, while the last
-// read stays on screen, dimmed, instead of blanking.
+// Send feedback waits for the read computed for the current form; the last read stays, dimmed.
 function previewOf(over: Record<string, unknown>): RunsMarkPreviewResult {
   return RunsMarkPreviewResultSchema.parse({
     kind: 'consequences',
@@ -1083,9 +1061,6 @@ function previewOf(over: Record<string, unknown>): RunsMarkPreviewResult {
     resolvedStep: { stepIndex: 2, reason: 'failing-step' },
     latest: { kind: 'first' },
     basis: { ledgerOrdinal: 0 },
-    markedDecisionCount: 1,
-    groundTruth: [],
-    labels: [],
     knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
     draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
     ...over,
@@ -1116,7 +1091,7 @@ async function pickAndAdvance(kind: string) {
   await flushRender()
 }
 
-describe('426-06 the resolved step and Show step', () => {
+describe('the resolved step and Show step', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
   })
@@ -1184,7 +1159,7 @@ describe('426-06 the resolved step and Show step', () => {
   })
 })
 
-describe('426-06 the preview on screen is exact', () => {
+describe('the preview on screen is exact', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
   })
@@ -1262,10 +1237,7 @@ describe('426-06 the preview on screen is exact', () => {
   })
 })
 
-// NO BLIND SUBMIT (426-07 · D-18, D-19). A quarantined mark still records; an identical repeat, a
-// refusal and a failed read leave Send feedback aria-disabled with its reason on the page, so the
-// button stays reachable and says why. Recording happens only on an explicit Send feedback — never
-// when a preview lands, on Enter in the note, or on Retry.
+// Only an explicit Send feedback records; a blocked button stays reachable and says why.
 const PAGE_REFUSALS: Record<(typeof MARK_PREVIEW_REFUSALS)[number], RunsMarkPreviewResult> = {
   'run-not-found': RUN_NOT_FOUND,
   'member-not-found': RunsMarkPreviewResultSchema.parse({ kind: 'member-not-found', runId: RUN_ID, testId: TEST_ID }),
@@ -1273,7 +1245,6 @@ const PAGE_REFUSALS: Record<(typeof MARK_PREVIEW_REFUSALS)[number], RunsMarkPrev
   'ambiguous-address': RunsMarkPreviewResultSchema.parse({
     kind: 'ambiguous-address', runId: RUN_ID, candidates: [{ testIndex: 0, testId: TEST_ID }, { testIndex: 1, testId: TEST_ID }],
   }),
-  'ambiguous-correction': RunsMarkPreviewResultSchema.parse({ kind: 'ambiguous-correction', runId: RUN_ID, testIndex: 0, decisionCount: 2 }),
 }
 const PAGE_READ_FAILURES = ['network', 'ledger-corrupt', 'ledger-unavailable', 'refused', 'shape'] as const satisfies readonly FeedbackReadFailure[]
 
@@ -1311,7 +1282,7 @@ async function activateWithEnter(button: HTMLButtonElement) {
   await flushRender()
 }
 
-describe('426-07 each preview arm decides Send feedback on the page', () => {
+describe('each preview arm decides Send feedback on the page', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
   })
@@ -1473,32 +1444,11 @@ describe('426-07 each preview arm decides Send feedback on the page', () => {
   })
 })
 
-// THE NOTE AND THE CORRECTION (426-08 · D-15, D-16). The note is named by its visible label and capped
-// at 2000 characters. A corrected action is scored against exactly one recorded decision, so its field
-// shows only while the landed read for this target and kind covers exactly one; while it is hidden the
-// typed text stays in the draft but reaches neither the preview nor the mark, so runs.mark never
-// receives ambiguous-correction from the dashboard.
-function labelledField(text: string) {
-  const label = [...q('[data-feedback-composer]')!.querySelectorAll('label')].find(entry => entry.textContent === text)
-  return label === undefined ? null : document.getElementById(label.htmlFor) as HTMLTextAreaElement | null
-}
-const actionField = () => labelledField(CORRECTED_ACTION_LABEL)
-const actionGate = () => q('[data-feedback-action-gate]')
-const previewBodies = () => fetchMarkPreviewMock.mock.calls.map(call => call[1] as Record<string, unknown>)
+// The note is named by its visible label and capped at 2000 characters.
 const noteCounter = () =>
   [...q('[data-feedback-composer]')!.querySelectorAll('p')].find(entry => / \/ 2000$/.test(entry.textContent ?? ''))
 
-async function typeInto(field: HTMLTextAreaElement | null, value: string) {
-  expect(field, 'no field to type into').not.toBeNull()
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
-  await act(async () => {
-    setter.call(field, value)
-    field!.dispatchEvent(new Event('input', { bubbles: true }))
-  })
-  await flushRender()
-}
-
-describe('426-08 the note and the correction in the composer', () => {
+describe('the note in the composer', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
   })
@@ -1532,145 +1482,9 @@ describe('426-08 the note and the correction in the composer', () => {
     expect(counter!.getAttribute('aria-live')).toBe('off')
     expect(counter!.className).toContain('tabular-nums')
   })
-
-  it('ACTION-GATE-ONE-DECISION: the action field shows for a read covering one decision; two decisions hide it and say why', async () => {
-    const first = deferred<MarkPreviewRead>()
-    fetchMarkPreviewMock.mockReturnValueOnce(first.promise)
-    await renderAt(`/runs/${RUN_ID}`)
-    await click('[data-feedback-entry="test"]')
-    expect(actionGate()?.getAttribute('data-feedback-action-gate')).toBe('hidden')
-    expect(actionGate()!.textContent).toBe(correctedActionUnavailableText('no-choice'))
-    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
-    expect(actionGate()!.textContent).toBe(correctedActionUnavailableText('loading'))
-    expect(actionField()).toBeNull()
-
-    await act(async () => first.resolve({ kind: 'read', result: CONSEQUENCES_STEP_3 }))
-    await flushRender()
-    expect(actionGate()!.getAttribute('data-feedback-action-gate')).toBe('shown')
-    expect(actionField(), 'no action field for one decision').not.toBeNull()
-    unmountPage()
-
-    fetchMarkPreviewMock.mockReset()
-    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: previewOf({ markedDecisionCount: 2 }) })
-    await renderAt(`/runs/${RUN_ID}`)
-    await click('[data-feedback-entry="test"]')
-    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
-    expect(actionGate()!.getAttribute('data-feedback-action-gate')).toBe('hidden')
-    expect(actionGate()!.textContent).toBe(correctedActionUnavailableText('count', 2))
-    expect(actionGate()!.textContent).toContain('covers 2 recorded decisions')
-    expect(actionField()).toBeNull()
-  })
-
-  it('HIDDEN-ACTION-NOT-SENT: a typed action reaches neither the preview nor the mark while hidden, and is restored when it shows again', async () => {
-    const [a, b] = FEEDBACK_CHOICE_ORDER.failed
-    const twoDecisions = previewOf({ markKind: 'confirmed-bug', draft: { kind: 'confirmed-bug' }, markedDecisionCount: 2 })
-    expect(b).toBe('confirmed-bug')
-    fetchMarkPreviewMock.mockImplementation(async (_runId: string, input: { kind: string }) => ({
-      kind: 'read',
-      result: input.kind === a ? CONSEQUENCES_STEP_3 : twoDecisions,
-    }))
-    markRunMock.mockResolvedValue({ kind: 'marked', receipt })
-    await renderAt(`/runs/${RUN_ID}`)
-    await click('[data-feedback-entry="test"]')
-    await pickAndAdvance(a)
-    expect(actionField(), 'no action field for one decision').not.toBeNull()
-
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    await typeInto(actionField(), CORRECTED_ACTION_EXAMPLE)
-    await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
-    vi.useRealTimers()
-    await flushRender()
-    expect(previewBodies().at(-1)!.correctedAction).toEqual({ type: 'click', ref: 'e1' })
-
-    const before = previewBodies().length
-    await pickAndAdvance(b)
-    const afterSwitch = previewBodies().slice(before)
-    expect(afterSwitch.length).toBeGreaterThan(0)
-    for (const body of afterSwitch) expect(Object.hasOwn(body, 'correctedAction')).toBe(false)
-    expect(actionGate()!.textContent).toBe(correctedActionUnavailableText('count', 2))
-    expect(submitReason()).toBe('')
-
-    await click('[data-feedback-submit]')
-    expect(markRunMock).toHaveBeenCalledTimes(1)
-    const markBody = markRunMock.mock.calls[0]![1] as Record<string, unknown>
-    expect(markBody.kind).toBe(b)
-    expect(Object.hasOwn(markBody, 'correctedAction')).toBe(false)
-
-    await pickAndAdvance(a)
-    expect(actionField(), 'the action field did not come back').not.toBeNull()
-    expect(actionField()!.value).toBe(CORRECTED_ACTION_EXAMPLE)
-  })
-
-  it('CORRECTION-IN-BOTH-BODIES: an edited expectation re-reads the preview, and the preview body is still the mark body', async () => {
-    const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
-    markRunMock.mockImplementation(actual.markRun)
-    fetchMarkPreviewMock.mockImplementation(actual.fetchMarkPreview)
-    const bodies: [string, Record<string, unknown>][] = []
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init: { body: string }) => {
-      bodies.push([url, JSON.parse(init.body) as Record<string, unknown>])
-      return new Response(JSON.stringify(url.endsWith('/mark-preview') ? CONSEQUENCES_STEP_3 : { kind: 'marked', receipt }))
-    }))
-    await renderAt(`/runs/${RUN_ID}`)
-    await click('[data-feedback-entry="test"]')
-    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    await typeInto(labelledField('Corrected expectation (optional)'), 'The cart shows 2 items')
-    await typeInto(actionField(), CORRECTED_ACTION_EXAMPLE)
-    await act(async () => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
-    vi.useRealTimers()
-    await flushRender()
-    await typeNote('seen on staging')
-    await click('[data-feedback-submit]')
-    await flushRender()
-
-    const previews = bodies.filter(([url]) => url.endsWith('/mark-preview')).map(([, body]) => body)
-    const marks = bodies.filter(([url]) => url.endsWith('/mark')).map(([, body]) => body)
-    expect(previews).toHaveLength(2)
-    expect(marks).toHaveLength(1)
-    const { runId: _runId, ...previewRest } = previews[1]!
-    const { note, ...markRest } = marks[0]!
-    expect(marks[0]).not.toHaveProperty('confirm' + 'Scope')
-    expect(note).toBe('seen on staging')
-    expect(previewRest).toEqual(markRest)
-    expect(previewRest).toMatchObject({ correctedExpectation: 'The cart shows 2 items', correctedAction: { type: 'click', ref: 'e1' } })
-  })
-
-  it('INVALID-JSON-SURVIVES-RETARGET: an unparseable action survives re-targeting and closing, stays invalid, and blocks Send feedback', async () => {
-    fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES_STEP_3 })
-    await renderAt(`/runs/${RUN_ID}`)
-    await openStep('0:1')
-    await pickAndAdvance(FEEDBACK_CHOICE_ORDER.failed[0])
-    await typeInto(actionField(), '{')
-    expect(actionField()!.getAttribute('aria-invalid')).toBe('true')
-    expect(submitReason()).toBe(SUBMIT_REASON_INVALID_CORRECTION)
-
-    await selectStep('0:3')
-    await click('[data-feedback-switch]')
-    expect(composerTarget()).toBe('0:3')
-    expect(actionField()).toBeNull()
-    await selectStep('0:1')
-    await click('[data-feedback-switch]')
-    expect(composerTarget()).toBe('0:1')
-    expect(actionField()!.value).toBe('{')
-    expect(actionField()!.getAttribute('aria-invalid')).toBe('true')
-    expect(submitReason()).toBe(SUBMIT_REASON_INVALID_CORRECTION)
-
-    await click('[data-feedback-close]')
-    await click('[data-feedback-entry="step"]')
-    expect(composerTarget()).toBe('0:1')
-    expect(actionField()!.value).toBe('{')
-    expect(actionField()!.getAttribute('aria-invalid')).toBe('true')
-    expect(submitReason()).toBe(SUBMIT_REASON_INVALID_CORRECTION)
-    await click('[data-feedback-submit]')
-    expect(markRunMock).not.toHaveBeenCalled()
-  })
 })
 
-// AFTERWARDS (426-09 · D-21, D-22). History is read when the composer opens, on every re-target and
-// after a matched receipt — never on mount — and an older read landing late is dropped. After a
-// matched receipt the composer stays open with the new mark first in the target's history. The
-// preview's replaced and already-said times come from that history, and nothing but the review
-// command ever reaches the clipboard.
+// History is read on open, re-target and matched receipt, never on mount; late older reads drop.
 const T_MARK = Date.UTC(2026, 8, 23, 10, 41)
 const historyMarkId = (n: number) => `mark_${n.toString(16).padStart(12, '0')}`
 
@@ -1689,9 +1503,7 @@ function historyOf(entries: readonly (Record<string, unknown> & { n: number })[]
         ordinal: n,
         markedAt: T_MARK + n * 60_000,
         disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
-        gold: [],
         evidence: { confirmed: 0, overturned: 0 },
-        corrected: { expectation: false, action: false },
         active: true,
         ...entry,
       })),
@@ -1702,7 +1514,7 @@ function historyOf(entries: readonly (Record<string, unknown> & { n: number })[]
 const historyEntryIds = (selector: string) =>
   [...(q(selector)?.querySelectorAll('[data-history-entry]') ?? [])].map(entry => entry.getAttribute('data-mark-id'))
 
-describe('426-09 the history read', () => {
+describe('the history read', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
     fetchMarkPreviewMock.mockResolvedValue({ kind: 'read', result: CONSEQUENCES_STEP_3 })
@@ -1758,7 +1570,7 @@ describe('426-09 the history read', () => {
   })
 })
 
-describe('426-09 the receipt shows in history', () => {
+describe('the receipt shows in history', () => {
   const PRIOR = historyMarkId(1)
   const RECEIPT: RunDetailMemberMark = {
     markId: historyMarkId(2),
@@ -1810,7 +1622,7 @@ describe('426-09 the receipt shows in history', () => {
   })
 })
 
-describe('426-09 the preview names its times from history', () => {
+describe('the preview names its times from history', () => {
   const PRIOR = 'mark_0123456789ab'
   const SUPERSEDES = previewOf({ latest: { kind: 'supersedes', markId: PRIOR, ordinal: 1 }, basis: { ledgerOrdinal: 1, priorMarkOrdinal: 1 } })
   const loaded = historyOf([{ n: 1, markId: PRIOR, markedAt: T_MARK, disposition: receipt.disposition, changedRecords: CHANGED }])
@@ -1845,10 +1657,8 @@ describe('426-09 the preview names its times from history', () => {
   })
 })
 
-// RE-SPELLED 432-09 (D-25) from '426-09 only the review command reaches the clipboard': no review
-// command remains, so nothing on the page writes the clipboard, and history names what changed.
-describe('432-09 no review command, and nothing reaches the clipboard', () => {
-  it('C432-NO-REVIEW-CTA: history names the applied change with no review control; typing a note or opening details writes nothing', async () => {
+describe('no review command, and nothing reaches the clipboard', () => {
+  it('history names the applied change with no review control; typing a note or opening details writes nothing', async () => {
     const writeText = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
     try {
@@ -1866,8 +1676,7 @@ describe('432-09 no review command, and nothing reaches the clipboard', () => {
       await flushRender()
       expect(q('[data-feedback-history="target"] [data-history-review]')).toBeNull()
       expect(q('[data-review-command]')).toBeNull()
-      // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 2): one line names the fix and
-      // what it changed.
+      // One line names the fix and what it changed.
       expect(q('[data-feedback-history="target"] [data-history-applied="knowledge"]')?.textContent)
         .toBe('Recorded — a knowledge fact was added: mem_page_1 (content unavailable)')
       expect(writeText).not.toHaveBeenCalled()
@@ -1878,10 +1687,6 @@ describe('432-09 no review command, and nothing reaches the clipboard', () => {
   })
 })
 
-// THE MARK'S APPROVAL IS ANSWERED IN THE COMPOSER (426-10 · D-20, SC4). While a mark this page started
-// is in flight the page holds the confirm channel's claim, so the question lands in the composer's
-// footer instead of the app shell's floating card — and it is page state, so closing the composer or
-// looking at another address does not strand it.
 function settleable() {
   let resolve!: (value: unknown) => void
   let reject!: (reason: unknown) => void
@@ -1889,11 +1694,8 @@ function settleable() {
   return { promise, resolve, reject }
 }
 
-// RE-SPELLED 2026-10-01 (432-14, D-14): the mark's approval — the question in the composer, the
-// claim on the page's confirm channel, the waiting link and the awaiting-approval state — is
-// deleted. Each cell keeps its subject (what the page shows while one mark is in flight, across a
-// close, across addresses, after a refusal and across a run change) and pins the one-request path.
-describe('426-10 the mark approval is answered in the composer', () => {
+// Each cell pins the one-request path while a mark is in flight, across closes, addresses and runs.
+describe('the mark approval is answered in the composer', () => {
   beforeEach(() => {
     fetchRunDetailMock.mockResolvedValue(fourSteps)
   })
@@ -2014,7 +1816,7 @@ async function resizePage(width: number) {
   await flushRender()
 }
 
-describe('426-11 the open composer stacks under the evidence below 768px', () => {
+describe('the open composer stacks under the evidence below 768px', () => {
   const group = () => q('[data-resizable-group]')!
   const panels = () => [...container!.querySelectorAll('[data-resizable-panel]')]
   const panelIds = () => panels().map(panel => panel.getAttribute('data-panel-id'))
@@ -2111,10 +1913,8 @@ describe('426-11 the open composer stacks under the evidence below 768px', () =>
   })
 })
 
-// NO PILL ANYWHERE (426-15 · SC1, SC2, D-05). The two doors are the only way to leave feedback, and the
-// internal mark names appear only under Technical details. The page tests' stand-in for collapsible
-// sections always renders Technical details, so that subtree is skipped rather than opened.
-describe('426-15 the always-visible pills are gone', () => {
+// The collapsible stand-in always renders Technical details, so that subtree is skipped.
+describe('the always-visible pills are gone', () => {
   it('NO-PILL-ANYWHERE: a marked suite with the composer open and a preview landed renders no pill and no internal mark name', async () => {
     const stepMark: RunDetailMemberMark = { markId: 'mark_0123456789ac', kind: 'confirmed-bug', ordinal: 2, stepIndex: 0,
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } }

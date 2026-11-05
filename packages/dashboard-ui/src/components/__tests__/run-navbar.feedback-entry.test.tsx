@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 
-// THE HEADER'S TEST-LEVEL FEEDBACK DOOR (426-03 · D-02, D-06, UI-SPEC S1).
-//
-// A separate file from run-navbar.test.tsx on purpose: the 425 mutation gate counts that file's
-// cells as its 'ui-navbar' instrument (RESEARCH Pitfall 9). The harness is copied from it, except
-// the tooltip, which is the real Radix primitive here — the entry's explanation must open on
-// keyboard focus, and a passthrough mock would replace the one thing under test.
+// The tooltip is the real Radix primitive, because the entry's explanation must open on focus.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -84,14 +79,12 @@ const baseRun = {
   endedAt: "2026-04-18T00:00:01.200Z",
   failureSummary: null,
   errorLog: null,
-  memoryLog: null,
   testId: null,
   suiteId: null,
   platform: "web",
   testFileContent: null,
   modelName: null,
   llmProvider: null,
-  parentRunId: null,
   attemptNumber: 1,
   retryCount: 0,
   maxRetries: 0,
@@ -127,7 +120,7 @@ function openTooltipText(): string {
     .join("|")
 }
 
-describe("426-03 the header's test-level feedback entry", () => {
+describe("the header's test-level feedback entry", () => {
   it("ENTRY-AFTER-BADGE: exactly one test entry, and it is the verdict badge's next sibling, for a test run and a suite run", () => {
     for (const run of [baseRun, suiteRun]) {
       mount(<RunNavbar run={run} shortcutsOpen={false} onToggleShortcuts={() => {}} feedbackEntry={entryProps()} />)

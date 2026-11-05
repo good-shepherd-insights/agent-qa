@@ -1,5 +1,3 @@
-// Ported from core/src/agent/__tests__/asserter.test.ts (353-03, D-02) — behavior
-// unchanged, fixtures re-pointed to the runner test-local bridge.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'

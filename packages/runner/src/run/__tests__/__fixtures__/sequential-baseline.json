@@ -1,0 +1,138 @@
+[
+  {
+    "seq": 1,
+    "type": "runStarted",
+    "runId": "run-baseline",
+    "payload": {
+      "busSchemaVersion": 2,
+      "scope": {
+        "tier": "suite",
+        "key": "checkout"
+      },
+      "executionContext": "local-headless",
+      "buildOrdinal": 7,
+      "configDigests": {
+        "suiteConfigDigest": "suite-d",
+        "testConfigDigest": "test-d"
+      },
+      "memberTestCount": 4,
+      "handles": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  {
+    "seq": 2,
+    "type": "testStarted",
+    "runId": "run-baseline",
+    "payload": {
+      "testId": "alpha",
+      "testIndex": 0,
+      "name": "alpha test",
+      "filePath": "alpha.test.ts",
+      "suiteId": "s1",
+      "suiteName": "suite one",
+      "suiteIndex": 0,
+      "suiteTotal": 1,
+      "totalSteps": 1
+    }
+  },
+  {
+    "seq": 3,
+    "type": "testFinished",
+    "runId": "run-baseline",
+    "payload": {
+      "testId": "alpha",
+      "testIndex": 0,
+      "outcome": "passed",
+      "durationMs": 1
+    }
+  },
+  {
+    "seq": 4,
+    "type": "testStarted",
+    "runId": "run-baseline",
+    "payload": {
+      "testId": "bravo",
+      "testIndex": 1,
+      "name": "bravo test",
+      "filePath": "bravo.test.ts",
+      "suiteId": "s1",
+      "suiteName": "suite one",
+      "suiteIndex": 0,
+      "suiteTotal": 1,
+      "totalSteps": 1
+    }
+  },
+  {
+    "seq": 5,
+    "type": "testFinished",
+    "runId": "run-baseline",
+    "payload": {
+      "testId": "bravo",
+      "testIndex": 1,
+      "outcome": "failed",
+      "durationMs": 1
+    }
+  },
+  {
+    "seq": 6,
+    "type": "testFinished",
+    "runId": "run-baseline",
+    "payload": {
+      "testId": "charlie",
+      "testIndex": 2,
+      "outcome": "skipped",
+      "recording": {
+        "state": "absent",
+        "reason": "not-captured"
+      },
+      "name": "charlie test",
+      "filePath": "charlie.test.ts"
+    }
+  },
+  {
+    "seq": 7,
+    "type": "testStarted",
+    "runId": "run-baseline",
+    "payload": {
+      "testId": "delta",
+      "testIndex": 3,
+      "name": "delta test",
+      "filePath": "delta.test.ts",
+      "totalSteps": 1
+    }
+  },
+  {
+    "seq": 8,
+    "type": "testFinished",
+    "runId": "run-baseline",
+    "payload": {
+      "testId": "delta",
+      "testIndex": 3,
+      "outcome": "passed",
+      "durationMs": 1
+    }
+  },
+  {
+    "seq": 9,
+    "type": "verdict",
+    "runId": "run-baseline",
+    "payload": {
+      "verdict": "failed"
+    }
+  },
+  {
+    "seq": 10,
+    "type": "runFinished",
+    "runId": "run-baseline",
+    "payload": {
+      "aggregateVerdict": "failed",
+      "disposition": "detached",
+      "finalSeq": 10
+    }
+  }
+]

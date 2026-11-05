@@ -1,28 +1,4 @@
-// The READER half of WTST-06's payload propagation (Phase 393, D-20).
-//
-// `post-run-tail.ts` copies `gateRun` and `excludedFromOutcomes` from the loaded handoff onto the
-// enqueued `analyze-run` payload, and `AnalyzeRunPayloadSchema` validates that mint on the
-// producer side. This file pins the other end: the hand-rolled reader in `kinds.ts`, which is
-// deliberately NOT the schema — it reads payloads off a DURABLE queue, where a job may have been
-// written by an older or a newer build, so refusing an unexpected shape would strand work rather
-// than protect anything. The asymmetry is the design (see the schema module's header); this suite
-// exists so nobody "fixes" it into a second strict validator.
-//
-// Three claims, and the third is the one that makes the first two non-vacuous:
-//
-//  1. BACK-COMPAT. A four-field payload — byte-for-byte what every queued job in an existing
-//     store holds — is still read, and reads with BOTH flags absent rather than `false`. Absence
-//     and `false` are different answers: `false` would let a downstream `if (payload.gateRun !==
-//     undefined)` treat a perfectly ordinary run as a gate run.
-//  2. PER-AXIS. The two markers are DISTINCT axes (C8, 384 D-10 / 388 D-14): a gate run still
-//     feeds curation, so `gateRun` without `excludedFromOutcomes` is a real combination and must
-//     not be read as an implication of its sibling.
-//  3. THE READER UNDER TEST IS THE HANDLER'S READER. Claims 1 and 2 reach an exported function;
-//     on their own they would still hold if the handler had quietly grown a second parse. So the
-//     last two cases drive the REAL analyze-run handler through the registry and read which
-//     permanent refusal comes back — a flagged payload must get PAST the shape refusal and die at
-//     the handoff load, while a genuinely shapeless payload must die at the shape refusal. Both
-//     sides move; a one-sided version of this would pass against a handler that refuses nothing.
+// The queue reader is lenient on purpose: an old four-field payload reads with both flags absent.
 
 import type { Job, JobHandlerOutcome } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -31,9 +7,9 @@ import { createRealJobKindRegistry, readAnalyzeRunPayload } from '../kinds.js'
 import type { AnalyzeRunPayload, PostRunJobCapabilities } from '../kinds.js'
 import type { JobHandlerContext } from '../kind-registry.js'
 
-const RUN_ID = 'run-393-05-payload-flags'
+const RUN_ID = 'run-payload-flags'
 
-/** Byte-for-byte the shape `post-run-tail.ts` enqueued before this plan. */
+/** Byte-for-byte the legacy shape `post-run-tail.ts` enqueued. */
 const LEGACY_PAYLOAD = {
   runId: RUN_ID,
   handoffDigest: 'sha256:2b7f0c',
@@ -82,7 +58,7 @@ async function runAnalyzeRun(payload: unknown): Promise<JobHandlerOutcome> {
   return createRealJobKindRegistry(LOAD_THROWS).require('analyze-run').handler(contextFor(payload))
 }
 
-describe('readAnalyzeRunPayload — WTST-06 D-20 flag propagation, read half', () => {
+describe('readAnalyzeRunPayload — flag propagation, read half', () => {
   it('accepts the legacy four-field payload with BOTH flags absent, never false', () => {
     const read = readAnalyzeRunPayload(LEGACY_PAYLOAD)
     expect(read).toBeDefined()
@@ -109,10 +85,8 @@ describe('readAnalyzeRunPayload — WTST-06 D-20 flag propagation, read half', (
     expect(read?.excludedFromOutcomes).toBe(true)
   })
 
-  it('reads each flag independently — the two are DISTINCT axes (C8)', () => {
-    // C8, owner-ratified: gate runs DO feed curation. So `gateRun` alone is not a half-expressed
-    // exclusion, it is the ordinary shape of a verify-before-present run whose evidence still
-    // counts. Reading either flag as implying the other would silently widen the exclusion.
+  it('reads each flag independently — the two are DISTINCT axes', () => {
+    // Gate runs still feed curation, so `gateRun` alone does not imply `excludedFromOutcomes`.
     const gateOnly = readAnalyzeRunPayload({ ...LEGACY_PAYLOAD, gateRun: true })
     expect(gateOnly?.gateRun).toBe(true)
     expect(gateOnly?.excludedFromOutcomes).toBeUndefined()
@@ -165,7 +139,7 @@ describe('readAnalyzeRunPayload — WTST-06 D-20 flag propagation, read half', (
   })
 })
 
-describe('the real analyze-run handler reads THIS reader (D-20 join)', () => {
+describe('the real analyze-run handler reads THIS reader', () => {
   it('lets a flagged payload past the shape refusal — it dies at the handoff load instead', async () => {
     const outcome = await runAnalyzeRun({
       ...LEGACY_PAYLOAD,
@@ -183,100 +157,5 @@ describe('the real analyze-run handler reads THIS reader (D-20 join)', () => {
     const outcome = await runAnalyzeRun({ gateRun: true, excludedFromOutcomes: true })
     expect(outcome.status).toBe('permanent')
     expect(String((outcome as { reason: string }).reason)).toContain('nothing for this job')
-  })
-})
-
-// ---------------------------------------------------------------------------------------
-// 422-15: the circularity copy on the wire (D-17/D-18).
-//
-// The same asymmetry as the two markers above, with one difference that matters. `gateRun` and
-// `excludedFromOutcomes` degrade to absence when they are half-expressed, because a misread
-// marker is a visibility loss. This member is a CLAIM about evidence: dropping a present-but-
-// unreadable one would re-read a gated run as a historical one and hand its no-trust-change
-// verdict the acceptance surface the ledger exists to withdraw. So absence stays tolerant and
-// unreadability becomes its own answer.
-// ---------------------------------------------------------------------------------------
-
-describe('readAnalyzeRunPayload — the 422 circularity copy', () => {
-  const ROW = {
-    runId: RUN_ID,
-    perTest: 0,
-    stepIndex: 0,
-    decisionOrdinal: 0,
-    recordId: 'rec-alpha',
-    handoffBaseDigest: 'sha256:base',
-    briefDigest: 'sha256:brief',
-    corpusDigest: 'sha256:corpus',
-    profileDigest: 'sha256:profile',
-    crossCheck: 'held',
-    seedHonored: true,
-  } as const
-
-  it('keeps the legacy four-field payload ABSENT rather than empty', () => {
-    const read = readAnalyzeRunPayload(LEGACY_PAYLOAD)
-    expect(read).toBeDefined()
-    expect('misdirectionEvidence' in (read as object)).toBe(false)
-    expect(read?.misdirectionEvidenceUnreadable).toBeUndefined()
-  })
-
-  it('keeps an EMPTY ledger empty — the arbiter ran and recorded nothing', () => {
-    const read = readAnalyzeRunPayload({ ...LEGACY_PAYLOAD, misdirectionEvidence: [] })
-    expect(read?.misdirectionEvidence).toEqual([])
-    expect(read?.misdirectionEvidenceUnreadable).toBeUndefined()
-  })
-
-  it('carries complete rows through verbatim', () => {
-    const read = readAnalyzeRunPayload({ ...LEGACY_PAYLOAD, misdirectionEvidence: [ROW] })
-    expect(read?.misdirectionEvidence).toEqual([ROW])
-  })
-
-  it('marks a half-spelled row UNREADABLE rather than dropping the claim', () => {
-    const { recordId: _dropped, ...incomplete } = ROW
-    const read = readAnalyzeRunPayload({
-      ...LEGACY_PAYLOAD,
-      misdirectionEvidence: [incomplete],
-    })
-    expect(read).toBeDefined()
-    expect(read?.misdirectionEvidence).toBeUndefined()
-    expect(read?.misdirectionEvidenceUnreadable).toBe(true)
-  })
-
-  it('marks a non-array member unreadable too — a ledger is a list or it is not one', () => {
-    const read = readAnalyzeRunPayload({
-      ...LEGACY_PAYLOAD,
-      misdirectionEvidence: { rows: [ROW] },
-    })
-    expect(read?.misdirectionEvidenceUnreadable).toBe(true)
-  })
-
-  it('refuses a word outside the closed cross-check vocabulary', () => {
-    const read = readAnalyzeRunPayload({
-      ...LEGACY_PAYLOAD,
-      misdirectionEvidence: [{ ...ROW, crossCheck: 'cleared' }],
-    })
-    expect(read?.misdirectionEvidenceUnreadable).toBe(true)
-  })
-
-  it('still ignores unknown SIBLING keys — the tolerance is about generation, not shape', () => {
-    const read = readAnalyzeRunPayload({
-      ...LEGACY_PAYLOAD,
-      misdirectionEvidence: [ROW],
-      misdirectionCapSource: 'default',
-    })
-    expect(read?.misdirectionEvidence).toEqual([ROW])
-    expect(read).not.toHaveProperty('misdirectionCapSource')
-  })
-})
-
-describe('the real analyze-run handler refuses an unreadable ledger (422 D-18)', () => {
-  it('dies at the ledger gate, not at the shape gate', async () => {
-    const outcome = await runAnalyzeRun({
-      ...LEGACY_PAYLOAD,
-      misdirectionEvidence: ['not a row'],
-    })
-    expect(outcome.status).toBe('permanent')
-    // LOAD_THROWS makes the handoff unreadable, so reaching the load message proves the payload's
-    // own shape was accepted; the ledger gate sits after the digest check and therefore after it.
-    expect(String((outcome as { reason: string }).reason)).toContain('could not be read')
   })
 })

@@ -3,7 +3,6 @@ import type { Mark, RunDetailProjection } from '@vostride/agent-qa-schema'
 import type { FeedbackComposerProps } from '@/components/run-detail/feedback-composer'
 import type { FeedbackEntryButtonProps } from '@/components/run-detail/feedback-entry'
 import type { StepTreeFeedback } from '@/components/run-detail/step-tree'
-import { parseCorrectedAction } from '@/components/run-detail/mark-correction-fields'
 import {
   fetchMarkPreview,
   fetchMarksHistory,
@@ -16,9 +15,6 @@ import {
   EMPTY_DRAFT,
   PREVIEW_DEBOUNCE_MS,
   SENDING_STATUS,
-  correctedActionField,
-  correctedActionGate,
-  decidesCorrectedActionGate,
   feedbackAddress,
   feedbackEntryLabel,
   feedbackPreviewState,
@@ -34,9 +30,7 @@ import {
   submitBlockedReason,
   switchTargetLabel,
   unsentDraftLabel,
-  type CorrectedActionGate,
   type FeedbackComposerState,
-  type FeedbackCorrection,
   type FeedbackDraft,
   type FeedbackPlace,
   type FeedbackTarget,
@@ -56,12 +50,12 @@ interface UseRunFeedbackInput {
   markDenial?: MarkDenial & FeedbackTarget
   /** The page's guarded runs.detail re-read, called on every open (a mark written elsewhere shows). */
   reloadDetail?: () => Promise<unknown>
-  /** The page's selection setter; Show step selects a step without re-targeting (D-14). */
+  /** The page's selection setter; Show step selects a step without re-targeting. */
   setSelection?: (next: Selection | null) => void
   beforeOpen?: () => void
 }
 
-/** 419-15's local announcement, kept per address so re-targeting shows each address its own. */
+// The local announcement, kept per address so re-targeting shows each address its own.
 interface AddressOutcome {
   state: FeedbackComposerState
   status: string
@@ -69,15 +63,12 @@ interface AddressOutcome {
 
 const COMPOSING: AddressOutcome = { state: 'composing', status: '' }
 
-// 2026-10-01 (432-14, D-14): the pending mark approval this page held (426-10, D-20) is deleted with
-// the confirm channel that raised it. A submission is one request; its answer is the only outcome.
-
 function targetOfAddress(address: string): FeedbackTarget {
   const [testIndex, stepIndex] = address.split(':')
   return stepIndex === 'run' ? { testIndex: Number(testIndex) } : { testIndex: Number(testIndex), stepIndex: Number(stepIndex) }
 }
 
-/** The last read that landed, with the request key, address and kind it was computed for (D-16). */
+/** The last read that landed, with the request key, address and kind it was computed for. */
 interface LandedPreview {
   key: string
   address: string
@@ -85,32 +76,7 @@ interface LandedPreview {
   read: MarkPreviewRead
 }
 
-function decisionKey(address: string, kind: Mark): string {
-  return `${address}|${kind}`
-}
-
-/**
- * D-15: the expectation whenever it has text; the action only while the gate shows and it parses. A
- * hidden action stays in the draft but is never sent, so runs.mark never sees ambiguous-correction.
- */
-function draftCorrection(entry: FeedbackDraft, gate: CorrectedActionGate): { correction?: FeedbackCorrection; invalid: boolean } {
-  const parsed = parseCorrectedAction(entry.actionText)
-  const correction: FeedbackCorrection = {
-    ...(entry.expectation === '' ? {} : { correctedExpectation: entry.expectation }),
-    ...(gate.shown && parsed.kind === 'valid' ? { correctedAction: parsed.action } : {}),
-  }
-  return {
-    ...(Object.keys(correction).length === 0 ? {} : { correction }),
-    invalid: gate.shown && parsed.kind === 'invalid',
-  }
-}
-
-/**
- * The run-detail page's feedback state (426 D-09). It lives above the composer so drafts survive the
- * composer closing and a run change discards them; the page's own `onMark` is the only writer.
- * Nothing is fetched on mount: history is read when the composer opens, re-targets or records a
- * mark, and a preview once a choice is picked.
- */
+// Drafts live above the composer so they survive it closing; nothing is fetched on mount.
 export function useRunFeedback({
   runId,
   runStatus,
@@ -131,12 +97,10 @@ export function useRunFeedback({
   const [target, setTarget] = useState<FeedbackTarget | null>(null)
   const [drafts, setDrafts] = useState<ReadonlyMap<string, FeedbackDraft>>(() => new Map())
   const [landed, setLanded] = useState<LandedPreview>()
-  // The read that decides the corrected-action gate, per address and kind; a re-fetch keeps it.
-  const [decisions, setDecisions] = useState<ReadonlyMap<string, MarkPreviewRead>>(() => new Map())
   const requestedKey = useRef<string | undefined>(undefined)
   const [retrying, setRetrying] = useState(false)
   const [outcomes, setOutcomes] = useState<ReadonlyMap<string, AddressOutcome>>(() => new Map())
-  // 419-15: each retained address keeps its own denial; the page holds only the latest one.
+  // Each retained address keeps its own denial.
   const [denials, setDenials] = useState<ReadonlyMap<string, MarkDenial>>(() => new Map())
   const [focusRequest, setFocusRequest] = useState(0)
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -169,7 +133,6 @@ export function useRunFeedback({
     setTarget(null)
     setDrafts(new Map())
     setLanded(undefined)
-    setDecisions(new Map())
     requestedKey.current = undefined
     setRetrying(false)
     setOutcomes(new Map())
@@ -181,8 +144,7 @@ export function useRunFeedback({
     }
   }, [runId])
 
-  // D-22: no live push; the last read stays on screen until a newer one lands, and a read for an
-  // earlier open or target is dropped (the page's reloadDetail idiom).
+  // No live push: a read for an earlier open or target is dropped when it lands.
   const readHistory = () => {
     const requestRunId = runRef.current
     if (requestRunId === undefined) return
@@ -199,16 +161,8 @@ export function useRunFeedback({
   // While the mark is in flight the draft it sends stays as sent.
   const busy = state === 'submitting'
   const setOutcome = (key: string, next: AddressOutcome) => setOutcomes((previous) => new Map(previous).set(key, next))
-  const gateFor = (forAddress: string | undefined, kind: Mark | undefined) =>
-    correctedActionGate({
-      kind,
-      landedForTargetAndKind: forAddress === undefined || kind === undefined ? undefined : decisions.get(decisionKey(forAddress, kind)),
-    })
-  const gate = gateFor(address, draft.kind)
-  const { correction, invalid: invalidCorrection } = draftCorrection(draft, gate)
-  const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target, ...correction })
-  // Another address's read is never shown here; this address's last read stays on screen while its
-  // re-fetch is in flight, so the section never blanks (UI-SPEC S5).
+  const currentKey = target === null || draft.kind === undefined ? '' : previewRequestKey({ kind: draft.kind, ...target })
+  // This address's last read stays on screen while its re-fetch runs, so the section never blanks.
   const shown = landed !== undefined && landed.address === address ? landed : undefined
   const landedOutcome = shown === undefined ? undefined : shown.read.kind === 'read' ? shown.read.result.kind : 'failed'
   const previewCurrent = shown !== undefined && currentKey !== '' && shown.key === currentKey
@@ -223,25 +177,21 @@ export function useRunFeedback({
     currentKey,
     landedKey: shown?.key,
     landedOutcome,
-    invalidCorrection,
     inFlight: markPending || state === 'submitting',
   })
 
-  // Every scheduled fetch takes a new generation, so an answer for anything scheduled earlier —
-  // in flight or still debounced — is dropped when it lands. A landing only ever shows a read;
-  // nothing here submits (D-19).
+  // Every scheduled fetch takes a new generation, so an answer for anything earlier is dropped.
   const schedulePreview = (
     next: FeedbackTarget,
     kind: Mark,
-    nextCorrection: FeedbackCorrection | undefined,
     delay: number = PREVIEW_DEBOUNCE_MS,
   ) => {
     clearTimeout(previewTimer.current)
     setRetrying(false)
     const generation = ++previewGeneration.current
-    const key = previewRequestKey({ kind, ...next, ...nextCorrection })
+    const key = previewRequestKey({ kind, ...next })
     requestedKey.current = key
-    // D-01: a test onMark would refuse is never previewed either.
+    // A test `onMark` would refuse is never previewed either.
     if (!hasUniqueAddress(detailRef.current, next.testIndex)) return
     const fire = () => {
       if (previewGeneration.current !== generation) return
@@ -249,14 +199,10 @@ export function useRunFeedback({
       const previewMember = detailRef.current?.members.find((entry) => entry.testIndex === next.testIndex)
       if (requestRunId === undefined || previewMember === undefined) return
       const requestAddress = feedbackAddress(next)
-      void fetchMarkPreview(requestRunId, previewInputFor(previewMember, next, kind, nextCorrection)).then((read) => {
+      void fetchMarkPreview(requestRunId, previewInputFor(previewMember, next, kind)).then((read) => {
         if (previewGeneration.current !== generation || runRef.current !== requestRunId) return
         setRetrying(false)
         setLanded({ key, address: requestAddress, kind, read })
-        const decided = decisionKey(requestAddress, kind)
-        setDecisions((previous) =>
-          decidesCorrectedActionGate(read) || !previous.has(decided) ? new Map(previous).set(decided, read) : previous,
-        )
       })
     }
     if (delay === 0) fire()
@@ -266,25 +212,20 @@ export function useRunFeedback({
   // Retry asks again for the form as it is, at once; the failed block stays, busy, until it lands.
   const retryPreview = () => {
     if (target === null || draft.kind === undefined || busy) return
-    schedulePreview(target, draft.kind, correction, 0)
+    schedulePreview(target, draft.kind, 0)
     setRetrying(true)
   }
 
-  // The preview input for an address's draft with a given kind, gated as the composer would show it.
-  const requestCorrection = (forAddress: string, kind: Mark) =>
-    draftCorrection(drafts.get(forAddress) ?? EMPTY_DRAFT, gateFor(forAddress, kind)).correction
-
-  // An edited correction, or a landed read that opens or closes the action gate, changes the request;
-  // a note never does (D-16).
+  // A request key that was not asked for yet is fetched; a note never changes the key.
   useEffect(() => {
     if (!open || target === null || draft.kind === undefined || busy) return
     if (requestedKey.current === currentKey) return
-    schedulePreview(target, draft.kind, correction)
+    schedulePreview(target, draft.kind)
     // schedulePreview reads the latest render; the request key is the only trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, currentKey])
 
-  // Re-activating the entry already open keeps it open and refocuses the heading (D-07).
+  // Re-activating the entry already open keeps it open and refocuses the heading.
   const openFeedback = (next: FeedbackTarget, openerElement: HTMLElement) => {
     beforeOpen?.()
     opener.current = openerElement
@@ -295,15 +236,14 @@ export function useRunFeedback({
       previewGeneration.current += 1
       const kind = drafts.get(nextAddress)?.kind
       if (kind === undefined) clearTimeout(previewTimer.current)
-      else schedulePreview(next, kind, requestCorrection(nextAddress, kind))
+      else schedulePreview(next, kind)
     }
     setTarget(next)
     setOpen(true)
     setFocusRequest((count) => count + 1)
   }
 
-  // D-03's switcher: the composer moves to another test's address and shows that address's draft.
-  // The page's member filter and selection are not touched.
+  // The composer moves to another test's address; the page's member filter and selection stay.
   const retarget = (next: FeedbackTarget) => {
     const nextAddress = feedbackAddress(next)
     if (state === 'submitting' || nextAddress === address) return
@@ -313,11 +253,10 @@ export function useRunFeedback({
     readHistory()
     const kind = drafts.get(nextAddress)?.kind
     if (kind === undefined) clearTimeout(previewTimer.current)
-    else schedulePreview(next, kind, requestCorrection(nextAddress, kind))
+    else schedulePreview(next, kind)
   }
 
-  // Closing keeps every draft; focus goes back to the opener, else the header entry, else the
-  // evidence strip's active tab (D-07).
+  // Closing keeps drafts; focus returns to the opener, else the header entry, else the active tab.
   const close = () => {
     setOpen(false)
     const back = opener.current?.isConnected
@@ -342,15 +281,7 @@ export function useRunFeedback({
     if (target === null || address === undefined || busy) return
     setDrafts((previous) => new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), kind }))
     composeAt(address)
-    schedulePreview(target, kind, requestCorrection(address, kind))
-  }
-
-  const editCorrection = (expectation: string, actionText: string) => {
-    if (address === undefined || busy) return
-    setDrafts((previous) =>
-      new Map(previous).set(address, { ...(previous.get(address) ?? EMPTY_DRAFT), expectation, actionText }),
-    )
-    composeAt(address)
+    schedulePreview(target, kind)
   }
 
   const submit = async () => {
@@ -364,9 +295,8 @@ export function useRunFeedback({
       next.delete(address)
       return next
     })
-    // 432-14 (D-14): the validated body goes out once, directly; nothing waits on an approval.
     try {
-      const result = await onMark(submitted.testIndex, submitted.stepIndex, draft.kind, draft.note || undefined, correction)
+      const result = await onMark(submitted.testIndex, submitted.stepIndex, draft.kind, draft.note || undefined)
       if (submission.current !== request) return
       if (result === 'refreshed') {
         setDrafts((previous) => {
@@ -387,14 +317,14 @@ export function useRunFeedback({
     }
   }
 
-  // The receipt is read from the refreshed projection, never from the POST's answer (419-15).
+  // The receipt is read from the refreshed projection, never from the POST's answer.
   const recordedMark = state !== 'recorded' || target === null
     ? undefined
     : detail?.members.find((entry) => entry.testIndex === target.testIndex)
       ?.marks?.find((entry) => entry.stepIndex === target.stepIndex)
   const statusText = state === 'recorded' ? (recordedMark === undefined ? '' : feedbackRecordedText(recordedMark.disposition)) : status
 
-  // D-17/D-18: an earlier mark's time is its history entry's own, and absent until history holds it.
+  // An earlier mark's time is its history entry's own, absent until history holds it.
   const historyEntries = history?.kind === 'read' && history.result.kind === 'history' ? history.result.entries : []
   const timeFor = (markId: string) => formatMarkTime(historyEntries.find((entry) => entry.markId === markId)?.markedAt)
 
@@ -411,8 +341,7 @@ export function useRunFeedback({
         onChange: (testIndex: number) => retarget({ testIndex }),
       }
 
-  // D-08: the target is set only by an explicit act; the selection it was opened from may move on.
-  // `selectedStep` is the step owning the selection, null for a hook or no selection.
+  // Only an explicit act sets the target; the selection it opened from may move on.
   const suite = (detail?.members.length ?? 0) > 1
   const placeMember = (testIndex: number) =>
     suite ? (members.find((entry) => entry.testIndex === testIndex) ?? { testIndex }) : undefined
@@ -440,7 +369,6 @@ export function useRunFeedback({
     member: other.stepIndex !== undefined && other.testIndex === target?.testIndex ? undefined : placeMember(other.testIndex),
   })
 
-  // D-09: every other address holding a non-empty draft is one link away.
   const unsentDrafts = [...drafts]
     .filter(([key, entry]) => key !== address && !isDraftEmpty(entry))
     .map(([key]) => {
@@ -469,10 +397,6 @@ export function useRunFeedback({
         unsentDrafts,
         note: draft.note,
         onNoteChange: editNote,
-        expectation: draft.expectation,
-        actionText: draft.actionText,
-        actionField: correctedActionField(gate),
-        onCorrectionChange: editCorrection,
         previewState,
         previewCurrent,
         previewRead: shown?.read.kind === 'read' ? shown.read.result : undefined,
@@ -499,8 +423,7 @@ export function useRunFeedback({
         onClose: close,
       }
 
-  // D-03: one test-level door per page, whatever the suite shape. Absent until the target member's
-  // marks have landed, never a disabled placeholder.
+  // One test-level door per page; absent until the target member's marks land, never disabled.
   const headerTarget = resolveHeaderFeedbackTarget({ detail, selectedStep, memberFilter, runStatus })
   const headerMember = headerTarget === undefined
     ? undefined
@@ -525,7 +448,7 @@ export function useRunFeedback({
   const openStepFeedback = (testIndex: number, stepIndex: number, openerElement: HTMLElement) =>
     openFeedback({ testIndex, stepIndex }, openerElement)
 
-  // D-04: the step door on the row owning the selection opens the composer on that row's own step.
+  // The step door on the row owning the selection opens the composer on that row's step.
   const tree: StepTreeFeedback = {
     composerId,
     expandedAddress: open && target?.stepIndex !== undefined ? address : undefined,

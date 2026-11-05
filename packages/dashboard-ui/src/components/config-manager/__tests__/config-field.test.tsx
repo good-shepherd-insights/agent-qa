@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 
-// THE ONE FIELD TREATMENT (429-17 Task 1 · UI-SPEC S2 "Field row", S3, E3 · 424 note 27).
-//
-// Every leaf renders through ConfigField and reads and writes only through the page's autosave
-// hook. These cells mount the real hook over a mocked write route, so what they pin is what a
-// person sees: placeholders for unset leaves, one write per settle, drafts that survive, and the
-// same label, help and error wiring on every field.
+// Cells mount the real autosave hook over a mocked write route, so they pin what a person sees.
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -189,7 +184,7 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('ConfigField (429-17 Task 1)', () => {
+describe('ConfigField', () => {
   it('FIELD-UNSET-SHOWS-PLACEHOLDER-WRITES-NOTHING: an absent leaf shows its default as placeholder and writes nothing on mount, focus or blur', async () => {
     vi.mocked(fetchConfig).mockResolvedValue(answer({ workspace: {} }) as never)
     await mount()
@@ -344,7 +339,7 @@ describe('ConfigField (429-17 Task 1)', () => {
     }
   })
 
-  it('SIBLING-COMPLETION: a leaf typed into an absent block writes its required siblings, each set-if-absent, in the same write', async () => {
+  it('a leaf typed into an absent block writes its required siblings, each set-if-absent, in the same write', async () => {
     vi.mocked(fetchConfig).mockResolvedValue(answer({ workspace: {} }) as never)
     await mount()
 
@@ -355,7 +350,7 @@ describe('ConfigField (429-17 Task 1)', () => {
       [
         { op: 'set', path: ['use', 'timeout', 'step'], value: '45s' },
         { op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m' },
-        { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '10s' },
+        { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '2m' },
       ],
     ])
   })

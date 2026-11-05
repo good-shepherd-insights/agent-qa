@@ -1,13 +1,4 @@
-// No ledger state authorizes anything, because nothing reads the ledger (432-18, D-14/D-15/D-22).
-//
-// RE-SPELLED 2026-10-01 (432-18). This suite pinned the standing-approval reader's fail-closed
-// posture over a DAMAGED committed ledger (Phase 391 plan 08): an intact grant came back, a folded
-// revoke returned nothing, and a revoke line damaged in place returned nothing either, because an
-// authorization file the build cannot fully read is not a licence. 432-13 removed every gate that
-// consulted the reader and 432-18 deletes the reader with the ledger, so the three cases keep their
-// fixtures and change their claim: whatever the old file holds — an active grant, a revoked one or a
-// damaged revoke line — the direct change commits exactly as it does with no file at all, and the
-// file is left byte-identical. There is no reader left to ask (C432-GRANTS-UNREAD-WRITER-ABSENT).
+// Whatever a leftover ledger holds, a direct change commits as with no file and leaves it as is.
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -61,7 +52,7 @@ describe('a legacy grant ledger authorizes nothing, in any state, because nothin
 
   function publish(summary: string): string {
     const outcome = publishBundle(
-      { knowledgeRoot, productKey: 'Grant Reader Product', commitArtifacts: 'none' },
+      { knowledgeRoot, productKey: 'Grant Reader Product' },
       {
         draft: makeBundleDraftFixture({ kind: 'fact', anchors: [ANCHOR], scope: SCOPE, summary }),
         discriminant: { kind: 'fact', subtype: 'selector', elementRef: { role: 'Button', name: summary } },
@@ -102,7 +93,7 @@ describe('a legacy grant ledger authorizes nothing, in any state, because nothin
     }, 60_000)
   }
 
-  it('C432-GRANTS-UNREAD-WRITER-ABSENT: no standing-approval reader is exported to consult it', () => {
+  it('no standing-approval reader is exported to consult it', () => {
     const exported = Object.keys(knowledgeLocal)
     expect(exported).not.toContain('createStandingApprovalReader')
     expect(exported.filter((name) => /approval|grant/i.test(name))).toEqual([])

@@ -1,14 +1,4 @@
-// The three new knowledge READ verbs (Phase 387 plan 06, KREV-01 / FUNC-04).
-//
-// `knowledge.records.inspect`, `knowledge.records.diff` and `knowledge.record.show` are WIRING
-// over functions the read-only reader entry already exports. That claim is what this file
-// checks, and the check is deliberately shaped as "the op projects what the port handed it and
-// derives nothing", not as "the op returns something plausible": a verb that recomputed trust,
-// a status, or an ordinal would look identical in a green suite that only ever compared shapes.
-//
-// Every stub port here returns rows the ops would be WRONG to pass through unchanged — reversed
-// order, equal sort keys, values no derivation could produce — because a projection test fed
-// already-correct data cannot distinguish a projection from a coincidence.
+// Stub rows are reversed and unsortable, so an op that derives anything fails the projection.
 
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION, INSPECT_RECORD_VIEW_SCHEMA_VERSION, RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
@@ -124,10 +114,6 @@ describe('the three read verbs declare read-only unary contracts', () => {
       'knowledge.records.diff',
       'knowledge.record.show',
     ])
-    // RE-SPELLED 2026-10-01 (432-23, D-12): `knowledge.records.diff` declares no scope.
-    // RE-SPELLED 2026-10-01 (432-26, D-12) from `requiredScopes` equal to ['read'] on its two
-    // siblings: none of the three declares a scope now, so the absence is pinned in the loop. The
-    // read tier the scope once named is the read-only risk pinned below.
     for (const spec of specs) {
       expect(spec, spec.id).not.toHaveProperty('requiredScopes')
       expect(spec.resultKind, spec.id).toBe('unary')
@@ -269,14 +255,12 @@ describe('Test 2 — show returns the record with its provenance, and types its 
       }),
     )
 
-    // Verbatim, and the traversal-shaped id is the point: the op neither sanitises nor rejects,
-    // because the reader resolves an id against the records it ENUMERATES and never by joining
-    // it onto a path (the T-384-08 discipline `runs.get` already carries).
+    // Verbatim: the reader resolves ids against the records it enumerates, never by a path join.
     expect(seen).toEqual(['../../etc/passwd'])
   })
 })
 
-describe('Test 3 — the empty store answers, it never throws (FUNC-04 empty edge)', () => {
+describe('Test 3 — the empty store answers, it never throws (empty edge)', () => {
   it('inspect returns an empty record list', async () => {
     expect(await knowledgeRecordsInspectSpec.invoke({ filter: {} }, deps()))
       .toEqual({ schemaVersion: 2, records: [] })
@@ -293,7 +277,7 @@ describe('Test 3 — the empty store answers, it never throws (FUNC-04 empty edg
   })
 })
 
-describe('Test 4 — each op owns a deterministic TOTAL order (the 384 convention)', () => {
+describe('Test 4 — each op owns a deterministic TOTAL order', () => {
   it('inspect sorts by record id then product, whatever order the port answered in',
     async () => {
       // Deliberately reversed, and with one record id shared across two products so the second
@@ -374,13 +358,8 @@ describe('Test 4 — each op owns a deterministic TOTAL order (the 384 conventio
   })
 })
 
-// ---- C432-DECLARATION-KEYS (432-26, D-10/D-12) --------------------------
-//
-// The ten op specs 432-26 migrates, pinned at the SPEC: declarations omit the retired keys whatever
-// a spec spells, so only the spec itself can show the key is gone. The other owners' blocks live in
-// `ops.test.ts`, which is outside 432-26's file list, so this owner's block sits beside the three
-// read verbs it covers.
-describe('C432-DECLARATION-KEYS: the 432-26 op specs carry no permission metadata', () => {
+// Declarations omit retired keys whatever a spec spells, so only the spec shows a key is gone.
+describe('the post-processing, knowledge, ask, target-create, analysis and explain op specs carry no permission metadata', () => {
   const migrated = [
     { spec: runsPostProcessingSpec, resultKind: 'unary', boundThrough: 'postProcessing',
       risk: { name: 'fn:runs.postprocessing', recognized: true, readOnly: true } },
@@ -404,7 +383,7 @@ describe('C432-DECLARATION-KEYS: the 432-26 op specs carry no permission metadat
       risk: { name: 'fn:agent.explain', recognized: true, readOnly: true } },
   ] as const
 
-  it('C432-DECLARATION-KEYS: spells neither retired permission key on any of the ten specs', () => {
+  it('spells neither retired permission key on any of the ten specs', () => {
     expect(migrated.map(({ spec }) => spec.id)).toEqual([
       'runs.postprocessing',
       'knowledge.accept',
@@ -423,7 +402,7 @@ describe('C432-DECLARATION-KEYS: the 432-26 op specs carry no permission metadat
     }
   })
 
-  it('C432-DECLARATION-KEYS: keeps each spec\'s result kind, binding need, risk descriptor and classify fold', () => {
+  it('keeps each spec\'s result kind, binding need, risk descriptor and classify fold', () => {
     for (const { spec, resultKind, boundThrough, risk } of migrated) {
       expect(spec.resultKind, spec.id).toBe(resultKind)
       expect(spec.boundThrough, spec.id).toBe(boundThrough)
@@ -438,14 +417,9 @@ describe('C432-DECLARATION-KEYS: the 432-26 op specs carry no permission metadat
   })
 })
 
-// ---- C432-ALL-OPS-AVAILABLE (432-26, D-12) ------------------------------
-//
-// `knowledge.accept` and `knowledge.reject` once required `knowledge-write`, and the two reads
-// `read`. Retried from three callers that differ in surface and origin, and that carry no scope at
-// all, each verb is served every time: the port is reached once per attempt with exactly what the
-// caller sent, every caller gets the same answer, and no audit row is written.
-describe('C432-ALL-OPS-AVAILABLE: the 432-26 knowledge verbs serve every caller', () => {
-  it('C432-ALL-OPS-AVAILABLE: a retried accept, reject, inspect and show are served alike to every caller', async () => {
+// Every caller is served; the port is reached once per attempt and no audit row is written.
+describe('the knowledge accept, reject, inspect and show verbs serve every caller', () => {
+  it('a retried accept, reject, inspect and show are served alike to every caller', async () => {
     const changes: KnowledgeChangeRequest[] = []
     const filters: unknown[] = []
     const shown: string[] = []

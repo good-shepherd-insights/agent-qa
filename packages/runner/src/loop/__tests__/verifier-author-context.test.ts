@@ -1,7 +1,3 @@
-// P2: the step verifier sees the test author's suite/test context, in the per-call turn, with
-// the exact text the planner's context tier carries. Without context the prompt bytes are
-// unchanged (pinned literal captured from prompts.ts at agent-qa 14d504bca; 439-03 moved the
-// screenshot-analysis paragraph into a turn that has an image, D-19).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { generateText } from 'ai'
 import { asRef } from '@vostride/agent-qa-schema'
@@ -62,7 +58,7 @@ const before = makeScreenState()
 const after = makeScreenState({ url: 'https://example.test/after' })
 const action: Action = { type: 'click', ref: asRef('e2') }
 
-describe('buildVerificationPrompt — author context (P2)', () => {
+describe('buildVerificationPrompt — author context', () => {
   it('produces the pinned bytes with no context', () => {
     expect(buildVerificationPrompt('Reply to the post', before, after, action, true, '', undefined)).toBe(PINNED)
   })
@@ -130,7 +126,7 @@ describe('buildVerificationPrompt — author context (P2)', () => {
   })
 })
 
-describe('LLMVerifier — author context (P2)', () => {
+describe('LLMVerifier — author context', () => {
   beforeEach(() => {
     vi.mocked(generateText).mockReset()
     vi.mocked(generateText).mockResolvedValue({
@@ -142,7 +138,7 @@ describe('LLMVerifier — author context (P2)', () => {
   function sentTurn(): { text: string; system: unknown } {
     const call = vi.mocked(generateText).mock.calls[0][0] as any
     const turn = call.messages[call.messages.length - 1]
-    return { text: turn.content[0].text, system: call.system }
+    return { text: turn.content[0].text, system: call.instructions }
   }
 
   it('sends the author section in the turn and leaves the system tier unchanged', async () => {
@@ -166,7 +162,7 @@ describe('LLMVerifier — author context (P2)', () => {
   })
 })
 
-describe('executeStep — verifier author context wiring (P2)', () => {
+describe('executeStep — verifier author context wiring', () => {
   async function ninthArgFor(context: { testContext?: string; suiteContext?: string }): Promise<unknown[]> {
     const verify = vi.fn(async (step: string, _before: ScreenState, after: ScreenState, act: Action) => ({
       verification: scriptedVerification({ step, after, action: act, pass: true, reasoning: 'done' }),

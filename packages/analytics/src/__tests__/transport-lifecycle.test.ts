@@ -1,10 +1,4 @@
-// The transport's flush/shutdown split, measured on ONE composition (Phase 398 plan 15 · CR-01).
-//
-// WHY THIS FILE EXISTS, AND WHY NOTHING ELSE COULD SEE THE DEFECT. Every other cell that builds a
-// PostHog transport constructs a fresh one per send (`masking-seam.test.ts`, `network-differential
-// .test.ts`), so a flush that tears the client down looks identical to a flush that flushes: the
-// composition is discarded straight afterwards either way. The claim `port.ts:49-51` makes is about
-// what happens to the SECOND event on the SAME composition, so that is what this cell drives.
+// Drives two events through one composition, so a flush that tears the client down shows.
 
 import { describe, expect, it } from 'vitest'
 
@@ -58,7 +52,7 @@ function composeOverCountingClient(): { client: CountingClient; port: ReturnType
   }
 }
 
-describe('the transport lifecycle on ONE composition (398-15, CR-01)', () => {
+describe('the transport lifecycle on ONE composition', () => {
   it('flushes the client at each boundary and shuts it down exactly once, at the end', async () => {
     const { client, port } = composeOverCountingClient()
 
@@ -91,7 +85,7 @@ describe('the transport lifecycle on ONE composition (398-15, CR-01)', () => {
     ).toEqual([0, 0])
   })
 
-  it('preserves EDGE ANLY-01/empty: a flush with nothing captured touches the client not at all', async () => {
+  it('a flush with nothing captured touches the client not at all', async () => {
     const { client, port } = composeOverCountingClient()
 
     await port.flush()
@@ -100,25 +94,8 @@ describe('the transport lifecycle on ONE composition (398-15, CR-01)', () => {
   })
 })
 
-// The shutdown TIME BOUND (Phase 398 security gate, T-398-35 · review WR-02).
-//
-// WHY THIS EXISTS. T-398-35 is the high-severity DoS "`agent-qa run` exiting while holding a live
-// client with an armed flush". Plan 15 mitigated it by draining at every terminal exit — and the
-// drain was `await composedAnalytics.shutdown()` with NO bound, which routes to the port's
-// `shutdown` below. posthog-node's own `shutdown` defaults to a 30 000 ms wait and races retriable
-// flushes against it, so on a released build an offline or proxied machine held every
-// `agent-qa run` at exit for up to half a minute, the error path included. The mitigation had
-// re-admitted the threat class it closed, one layer down.
-//
-// The bound lives HERE, at the port, and not at `run.ts`'s drain, because the port is the choke
-// point every host's shutdown already funnels through (run, chat, daemon, mcp, init). A bound at
-// the drain would protect the one door that was named in the review and leave the other four
-// hosts holding an unbounded await.
-//
-// A client that never resolves is the acceptance bar rather than a slow one: a threshold cell
-// against a slow client measures the threshold, while a cell against a client that NEVER settles
-// can only pass if the bound genuinely releases the caller.
-describe('the port bounds its own shutdown (T-398-35 / WR-02)', () => {
+// The port bounds shutdown for every host; a client that never settles proves the bound releases.
+describe('the port bounds its own shutdown', () => {
   function hangingClient(): PosthogAnalyticsClient & { counts: { shutdown: number } } {
     const counts = { shutdown: 0 }
     return {
@@ -151,7 +128,7 @@ describe('the port bounds its own shutdown (T-398-35 / WR-02)', () => {
     expect(
       elapsed,
       `port.shutdown() took ${elapsed}ms against a client that never settles — the caller is still `
-      + 'held, so a terminal exit still waits on the network (T-398-35 / WR-02)',
+      + 'held, so a terminal exit still waits on the network',
     ).toBeLessThan(3000)
     // It still ASKED the client to wind down — the bound releases the caller, it does not skip
     // the drain. Losing in-flight events to the bound is the trade; never attempting is not.

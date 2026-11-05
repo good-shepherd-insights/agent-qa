@@ -21,10 +21,7 @@ export interface FeedbackEntryButtonProps {
   tooltip?: string
 }
 
-/**
- * A door to the composer: it opens it and never records a mark by itself (426 D-02). The tooltip
- * opens on focus as well as hover; its provider is the page's. The step door is 28px (D-04).
- */
+// Opens the composer and never records a mark itself; the tooltip opens on focus as well as hover.
 export function FeedbackEntryButton({ scope, label, target, marked, expanded, controls, onOpen, tooltip }: FeedbackEntryButtonProps) {
   const Glyph = marked ? MessageSquare : MessageSquarePlus
   return (
@@ -58,7 +55,7 @@ export interface MarkGlyphProps {
   kind: Mark
 }
 
-/** The passive trace of a recorded mark (D-06): named, never interactive, never a second door. */
+/** The passive trace of a recorded mark: named, never interactive, never a second door. */
 export function MarkGlyph({ scope, target, kind }: MarkGlyphProps) {
   return (
     <span

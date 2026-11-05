@@ -1,7 +1,4 @@
-// The D-03 read face is the self-sufficiency oracle for committed bundles and Phase 375's
-// projection source. It strictly parses disk-owned contracts, verifies every committed digest,
-// and composes the schema fold; the LLM never supplies trust, counters, status, or validity.
-// Manifest identity and immutable semantics are re-derived across files rather than trusted.
+// Trust, counters, status and validity are re-derived from disk; the model supplies none of them.
 
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
@@ -37,7 +34,6 @@ import type {
   MeasurementObservation,
   RecordFrontmatter,
   ScreenState,
-  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 export interface LoadedBundle {
@@ -108,10 +104,7 @@ export interface Measurements {
   observations: MeasurementObservation[]
 }
 
-/**
- * Read D-03's baseline-first append stream. Absence is normal for non-measurement
- * bundles; any present malformed line fails loudly through the strict schemas.
- */
+// Absence is normal for non-measurement bundles; a malformed line fails through the strict schemas.
 export function readMeasurements(bundleDir: string): Measurements | undefined {
   const file = join(bundleDir, MEASUREMENTS_REL_PATH)
   if (!existsSync(file)) return undefined
@@ -129,7 +122,7 @@ export function readMeasurements(bundleDir: string): Measurements | undefined {
   }
 }
 
-/** 416 D-03/D-04: absence is normal; a present receipt must attest this bundle and its bytes. */
+// Absence is normal; a present receipt must attest this bundle and its bytes.
 export function readGateReceipts(bundleDir: string, bundleId: string): GateLine[] | undefined {
   const file = join(bundleDir, GATES_REL_PATH)
   if (!existsSync(file)) return undefined
@@ -392,13 +385,11 @@ export function verifyBundleIntegrity(bundleDir: string): IntegrityReport {
   return { ok: violations.length === 0, violations }
 }
 
-/**
- * Phase 375 consumes this exact disk-derived projection seam; no model-produced scalar enters it.
- */
-export function deriveBundleTrust(loaded: LoadedBundle, priors?: TrustPriorTable): DerivedTrustState {
+// Only disk-derived values enter this projection; no model-produced scalar does.
+export function deriveBundleTrust(loaded: LoadedBundle): DerivedTrustState {
   return foldBundleTrust(loaded.events, {
     originClass: loaded.provenance.originClass,
     evidenceIncomplete: loaded.manifest.evidenceIncomplete,
     createdAtOrdinal: loaded.manifest.createdAtOrdinal,
-  }, priors)
+  })
 }

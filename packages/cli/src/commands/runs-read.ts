@@ -1,10 +1,4 @@
-// The run reads under `agent-qa runs` (431 D-11/D-12/D-13).
-//
-// Each verb is a thin client: it normalizes its flags, composes the local agent, invokes the
-// canonical op with CLI_FUNCTION_CALLER and prints what came back. `--json` prints the op's whole
-// result unchanged, so it equals what the matching MCP tool returns. Without it, one compact line
-// per test, step or record carries the addresses the next command takes; bodies, traces and
-// documents stay in `--json`.
+// Thin clients: `--json` prints the op's whole result, as the MCP tool does; plain is terse.
 
 import { dirname, resolve } from 'node:path'
 
@@ -16,6 +10,11 @@ import {
   RUNS_LIST_FUNCTION_ID,
   RUNS_OVERVIEW_FUNCTION_ID,
 } from '@vostride/agent-qa-agent'
+import {
+  guardJsonText,
+  printRunText,
+  reserveStdoutForData,
+} from '@vostride/agent-qa-core/run-text-output'
 import {
   EVIDENCE_KINDS,
   POST_PROCESSING_SKIP_REASON_WORDS,
@@ -111,15 +110,25 @@ function composeFor(cmd: Command): Host {
 }
 
 /** Compose, invoke, print, and always close the host this verb opened. */
-async function withHost(verb: string, cmd: Command, body: (host: Host) => Promise<void>): Promise<void> {
+async function withHost(
+  verb: string,
+  cmd: Command,
+  json: boolean | undefined,
+  body: (host: Host) => Promise<void>,
+): Promise<void> {
   let host: Host | undefined
+  const releaseStdout = json === true ? reserveStdoutForData() : undefined
   try {
     host = composeFor(cmd)
     await body(host)
   } catch (error) {
     reportFailure(verb, error)
   } finally {
-    await host?.close()
+    try {
+      await host?.close()
+    } finally {
+      releaseStdout?.()
+    }
   }
 }
 
@@ -128,12 +137,12 @@ function reportFailure(verb: string, error: unknown): void {
   const hint = error instanceof Error && error.name === 'RunNotFoundError'
     ? ' — run `agent-qa runs list` to see completed run ids'
     : ''
-  console.error(`agent-qa runs ${verb}: ${message}${hint}`)
+  printRunText(`agent-qa runs ${verb}: ${message}${hint}`, (line) => console.error(line))
   process.exitCode = 1
 }
 
 function emitJson(value: unknown): void {
-  console.log(JSON.stringify(value, null, 2))
+  console.log(guardJsonText(JSON.stringify(value, null, 2)))
 }
 
 function iso(epochMs: number): string {
@@ -215,7 +224,7 @@ function firstPresentKind(step: RunOverviewStep): string | undefined {
     .find((kind) => evidence[kind].state === 'present')
 }
 
-// 2026-10-18 (444-26, D-61): a chain that was never enqueued reads skipped (<reason>), not its chip.
+// A chain never enqueued reads `skipped (<reason>)`, not its chip.
 function curationWord(curation: Pick<RunOverviewLearned['curation'], 'status' | 'skipped'>): string {
   return curation.skipped === undefined
     ? curation.status
@@ -422,11 +431,11 @@ export function registerRunReadCommands(command: Command): void {
     .option('--limit <n>', `at most this many runs (1-${String(RUNS_LIST_MAX_LIMIT)}, default 20)`, parseLimit)
     .option('--json', 'print the runs.list result unchanged')
     .action(async (options: ListOptions, cmd: Command) => {
-      await withHost('list', cmd, async (host) => {
+      await withHost('list', cmd, options.json, async (host) => {
         const input = listInput(options)
         const rows = await invokeFunction(host.registry, RUNS_LIST_FUNCTION_ID, input, CLI_FUNCTION_CALLER) as RunSummary[]
         if (options.json === true) emitJson(rows)
-        else console.log(renderRunList(rows, Object.keys(input).length > 0))
+        else printRunText(renderRunList(rows, Object.keys(input).length > 0))
       })
     })
 
@@ -434,11 +443,11 @@ export function registerRunReadCommands(command: Command): void {
     .description('Map one completed run: tests, steps, and the address of everything recorded')
     .option('--json', 'print the runs.overview result unchanged')
     .action(async (runId: string, options: { json?: boolean }, cmd: Command) => {
-      await withHost('overview', cmd, async (host) => {
+      await withHost('overview', cmd, options.json, async (host) => {
         const overview = await invokeFunction(host.registry, RUNS_OVERVIEW_FUNCTION_ID, { runId },
           CLI_FUNCTION_CALLER) as RunOverviewProjection
         if (options.json === true) emitJson(overview)
-        else console.log(renderRunOverview(overview))
+        else printRunText(renderRunOverview(overview))
       })
     })
 
@@ -446,11 +455,11 @@ export function registerRunReadCommands(command: Command): void {
     .description('Show what one run used and learned from the knowledge store')
     .option('--json', 'print the runs.knowledge result unchanged')
     .action(async (runId: string, options: { json?: boolean }, cmd: Command) => {
-      await withHost('knowledge', cmd, async (host) => {
+      await withHost('knowledge', cmd, options.json, async (host) => {
         const projection = await invokeFunction(host.registry, RUNS_KNOWLEDGE_FUNCTION_ID, { runId },
           CLI_FUNCTION_CALLER) as RunKnowledgeProjection
         if (options.json === true) emitJson(projection)
-        else console.log(renderRunKnowledge(projection))
+        else printRunText(renderRunKnowledge(projection))
         if (projection.kind !== 'ready') {
           console.error(`agent-qa runs knowledge: no completed run recorded for id: ${runId}`
             + ' — run `agent-qa runs list` to see completed run ids')
@@ -476,15 +485,20 @@ export function registerRunReadCommands(command: Command): void {
         request = evidenceRequest(options)
         if (request.mode === 'artifact') preflightExportDestination(request.out)
       } catch (error) {
-        reportFailure('evidence', error)
+        const releaseStdout = options.json === true ? reserveStdoutForData() : undefined
+        try {
+          reportFailure('evidence', error)
+        } finally {
+          releaseStdout?.()
+        }
         return
       }
-      await withHost('evidence', cmd, async (host) => {
+      await withHost('evidence', cmd, options.json, async (host) => {
         if (request.mode === 'document') {
           const result = await invokeFunction(host.registry, RUNS_EVIDENCE_FUNCTION_ID, { runId, ...request.input },
             CLI_FUNCTION_CALLER) as RunsEvidenceResult
           if (options.json === true) emitJson(result)
-          else console.log(renderEvidenceDocument(result))
+          else printRunText(renderEvidenceDocument(result))
           if (result.outcome === 'read-error') {
             console.error(`agent-qa runs evidence: read error ${result.code}`
               + (result.code === 'address-not-found' ? ` — run \`agent-qa runs overview ${runId}\` for recorded addresses` : ''))

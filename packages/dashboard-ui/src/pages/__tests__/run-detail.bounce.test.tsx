@@ -1,24 +1,6 @@
 // @vitest-environment jsdom
 
-// RUN DETAIL'S BOUNCE-TO-LIVE PREDICATE (404-06 · LIFE-01, D-07 / T-404-15).
-//
-// WHAT THIS FILE MEASURES, AND WHY IT IS ITS OWN FILE. Run detail owns exactly one navigation
-// decision: whether the run it was asked for belongs on the live surface instead. Until 404 that
-// decision read `/api/execution/active` — the dashboard's set of executions in flight — and D-07
-// retires that reading for a reason a unit cell can state precisely: an execution stays "active"
-// until its post-run tail is done, and the tail runs AFTER the verdict. A viewer whom the live
-// page had just moved here on the verdict (D-13) would be thrown straight back to `/live`, and the
-// live page would move them here again on the very next render. That is T-404-15, and it is a
-// ping-pong nobody can click their way out of.
-//
-// THE PREDICATE IS NOW THE ROW'S OWN STATUS, and the row is written by the dashboard subscriber's
-// `updateRun` at the SAME `verdict` envelope the live page navigated on. Those two race by design.
-// So the arrival carries one field of navigation state saying "I just watched the verdict land",
-// and an arrival carrying it NEVER bounces — it renders the row it got and re-asks on a bounded
-// cadence until the row reads terminal.
-//
-// EVERY CLOCK IS FAKE. The catch-up is 250 ms × 8; a cell that waited on a real one would be a
-// two-second sleep whose failure mode is a flake that reads as a product defect.
+// An arrival carrying the verdict state never bounces; it re-asks until the row reads terminal.
 
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -48,19 +30,12 @@ const {
   navigateMock: vi.fn(),
 }))
 
-// `fetchActiveExecutions` IS STILL EXPORTED BY THE MOCK, DELIBERATELY. The claim is that run
-// detail no longer CALLS it — a mock that omitted it would make the same cells pass by making the
-// import fail, which is a different fact wearing the same green.
+// The mock keeps `fetchActiveExecutions`, which run detail never calls, so the import resolves.
 vi.mock("@/lib/api", () => ({
   fetchRun: fetchRunMock,
-  // 2026-08-28 (405-08): the page's second read. It is STUBBED TO RESOLVE, not left off the mock:
-  // an omitted export is `undefined` at the call site, the page catches that and renders its
-  // could-not-load posture, and every cell below would then pass while the page was in an error
-  // state nobody asked for. The bounce must be measured on a page that loaded.
+  // Stubbed to resolve, or the page renders could-not-load and every cell passes on an error state.
   fetchRunDetail: fetchRunDetailMock,
-  // 2026-08-29 (406-01, D-04): the page's THIRD read — the failure view's. This whole-module
-  // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
-  // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
+  // This mock replaces `@/lib/api`, so an omitted export would kill every cell before it asserts.
   fetchRunAnalysis: () => Promise.resolve({ runId: '', verdicts: [], sentences: [], clusters: [] }),
   fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
@@ -68,12 +43,7 @@ vi.mock("@/lib/api", () => ({
   fetchExecutionLogs: fetchExecutionLogsMock,
   fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
   triggerRun: vi.fn(),
-  // 2026-08-27 (404-07): run detail now subscribes a post-processing chip client on mount. This
-  // whole-module mock REPLACES `@/lib/api`, so an omitted export is `undefined` at the call site
-  // and every cell in this file dies before it asserts. It is a no-op DOUBLE rather than the real
-  // function on purpose: the real one constructs an `EventSource` and a 3 s interval against a
-  // `fetch` these cells do not stub, which is a socket and a poll inside a test about something
-  // else. The client's own behaviour is measured in `run-detail.post-processing.test.tsx`.
+  // A no-op double: the real watcher opens an `EventSource` and polls an unstubbed `fetch`.
   watchPostProcessing: () => () => {},
 }))
 
@@ -100,7 +70,6 @@ vi.mock("@/components/run-detail/run-navbar", () => ({
 vi.mock("@/components/run-detail/step-tree", () => ({ StepTree: () => <div data-testid="step-tree" /> }))
 vi.mock("@/components/run-detail/tab-panels", () => ({ TabPanels: () => <div data-testid="tab-panels" /> }))
 vi.mock("@/components/run-detail/artifact-drawer", () => ({ ArtifactDrawer: () => <div /> }))
-vi.mock("@/components/run-detail/hook-detail-panel", () => ({ HookDetailPanel: () => <div /> }))
 vi.mock("@/components/ui/tooltip", () => ({
   TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }))
@@ -148,14 +117,12 @@ function runRow(status: string) {
     source: "cli",
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: null,
     platform: "web",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
   }
 }
 
@@ -256,7 +223,7 @@ afterEach(() => {
   vi.clearAllMocks()
 })
 
-describe("the bounce keys on the run row, and never on the active-execution set (D-07)", () => {
+describe("the bounce keys on the run row, and never on the active-execution set", () => {
   it("a `running` row bounces to /live exactly once, with `replace`", async () => {
     fetchRunMock.mockResolvedValue(answers("running"))
     await renderAt()
@@ -265,9 +232,7 @@ describe("the bounce keys on the run row, and never on the active-execution set 
     expect(navigateMock).toHaveBeenCalledWith(routes.runLive(RUN_ID), { replace: true })
   })
 
-  // ONE CELL PER TERMINAL WORD, not a loop over an array. A run that ended is the ordinary case
-  // for this page, and `cancelled` in particular is the word the retired active-set predicate got
-  // wrong most often: a cancelled run leaves the row terminal while its tail is still winding down.
+  // One cell per terminal word; a cancelled run leaves the row terminal while its tail winds down.
   for (const word of ["passed", "failed", "cancelled"] as const) {
     it(`a \`${word}\` row does not navigate, and the page renders it`, async () => {
       fetchRunMock.mockResolvedValue(answers(word))
@@ -286,13 +251,13 @@ describe("the bounce keys on the run row, and never on the active-execution set 
 
     expect(
       fetchActiveExecutionsMock.mock.calls.length,
-      "the active set says a run is in flight until its POST-RUN TAIL ends (D-07) — reading it "
+      "the active set says a run is in flight until its POST-RUN TAIL ends — reading it "
       + "here is what threw a viewer back to /live at the verdict",
     ).toBe(0)
   })
 })
 
-describe("an arrival that carries the verdict never bounces, and catches its row up (D-07 race)", () => {
+describe("an arrival that carries the verdict never bounces, and catches its row up", () => {
   it("a `running` row under `arrivedOnVerdict` does not navigate — the viewer just watched it end", async () => {
     fetchRunMock.mockResolvedValue(answers("running"))
     await renderAt({ arrivedOnVerdict: "passed" })

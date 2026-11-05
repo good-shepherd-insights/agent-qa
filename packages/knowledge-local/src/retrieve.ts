@@ -1,9 +1,4 @@
-/**
- * Public memory.md §5.5 retrieval composition.
- *
- * Usage telemetry (§5.5.9) is deferred by architecture: reader connections are query_only, so
- * counters land with Phases 378/380's writer-owned paths and are never an input to trust.
- */
+// Reader connections are `query_only`, so usage telemetry is not recorded and never feeds trust.
 import type { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -13,7 +8,6 @@ import {
   type Anchor,
   type IndexEntry,
   type ScopeKey,
-  type TrustPriorTable,
   type VettedCandidateInput,
 } from '@vostride/agent-qa-schema'
 
@@ -137,16 +131,11 @@ function thrashTriggerKey(anchor: Anchor | undefined): string | undefined {
   return match?.[1]
 }
 
-/**
- * D-07 targeted canonical lookup: a derived index may disappear, so the committed
- * unresolved unknown remains the serving switch. Only digest-verified unknowns
- * matching a retrieved fact group can suppress or enter this query.
- */
+// A derived index may vanish, so the committed unresolved unknown stays the serving switch.
 function attachMemoryOffUnknowns(
   knowledgeRoot: string,
   candidates: readonly PipelineCandidate[],
   options: RetrieveOptions,
-  priors?: TrustPriorTable,
 ): PipelineCandidate[] {
   if (auditMode(options)) return [...candidates]
 
@@ -169,7 +158,7 @@ function attachMemoryOffUnknowns(
     const loaded = loadBundle(entry.dir)
     if (loaded.kind !== 'loaded' || loaded.bundle.frontmatter.kind !== 'unknown') continue
 
-    const trust = deriveBundleTrust(loaded.bundle, priors)
+    const trust = deriveBundleTrust(loaded.bundle)
     if (
       (trust.status !== 'active' && trust.status !== 'candidate')
       || trust.validity.closedAtOrdinal !== undefined
@@ -536,7 +525,7 @@ function applyAssembly(
           }
         : {}),
   }))
-  // D-05/D-20 are ordinary serving treatments. Audit reads preserve raw authority.
+  // Audit reads keep raw authority; staleness and cold-start treatments apply to serving only.
   const treated = audit || resolvedAsOf === undefined
     ? valid
     : applyLifecycleTrustTreatments(valid, resolvedAsOf)
@@ -703,7 +692,6 @@ async function retrieveFromIndex(
     context.knowledgeRoot,
     authoritative,
     options,
-    context.priors,
   )
   const assembled = applyAssembly(
     withMemoryOffUnknowns,
@@ -841,7 +829,6 @@ async function retrieveFromScan(
     context.knowledgeRoot,
     candidates,
     options,
-    context.priors,
   )
   const assembled = applyAssembly(withMemoryOffUnknowns, [], options)
   return finalRecheck(context, assembled, scope, options).slice(0, options.n)

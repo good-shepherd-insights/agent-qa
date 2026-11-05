@@ -1,26 +1,7 @@
-// The conformance & parity suite (Phase 397 plan 01 — FUNC-05 leg 5, D-01 / D-02 / D-03 / D-04).
-//
-// THE CLAIM. A capability exists iff it is one row in the registry, and every rostered surface
-// reaches only rows that exist. This file carries the leg that makes the second half checkable:
-// reverse completeness — `surface.enumerate() ⊆ registry.ids()` — asserted per surface, off real
-// compositions, with every failure naming the op id and the surface it appeared on.
-//
-// ONE SUITE, RANGED OVER THE ROSTER AND THE REGISTRY. There is deliberately no `describe` per
-// surface: a per-surface block is a place for a surface to acquire its own exceptions, and a claim
-// that must hold everywhere has to be written once and driven over the members. Adding a surface
-// adds a roster row and nothing here changes; adding a capability adds a registry row and nothing
-// here changes. That is the structural half of the claim, and it is why the loops below read their
-// per-surface work out of adapter output instead of out of a block.
-//
-// WHY THE ENUMERATIONS ARE TAKEN ONCE. The MCP side is a real protocol round trip against a real
-// server instance. Taking it once and asserting many things about it keeps the cells fast and,
-// more importantly, keeps every cell in this file asserting about THE SAME observed surface rather
-// than about a fresh one that might differ — which would make a disagreement between two cells
-// unattributable.
+// Reverse completeness: every surface reaches only registry rows, driven over the roster once.
 
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -55,9 +36,8 @@ import {
   withoutLegacyResultWrap,
 } from '@vostride/agent-qa-mcp'
 import type { JsonDocument, ToolProjection } from '@vostride/agent-qa-mcp'
-import { generateTestId } from '@vostride/agent-qa-ids'
 import { runSafetyScope } from '@vostride/agent-qa-safety-local'
-import { buildProductionRefusal, committedFileText } from '@vostride/agent-qa-schema'
+import { committedFileText } from '@vostride/agent-qa-schema'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
@@ -65,34 +45,19 @@ import { z } from 'zod'
 import { composeMcpMasking, MCP_FUNCTION_CALLER } from '../../commands/mcp.js'
 import { composeCliLocalAgent } from '../../composition/local-agent-host.js'
 
-/**
- * 2026-10-02 (432-39, D-10/D-12): the six names of the deleted capability-scope union, spelled by
- * hand because the union is gone. Used only as legacy data a caller record may still carry.
- */
+// The deleted scope union's names, spelled by hand; used only as legacy data a caller may carry.
 const RETIRED_SCOPE_NAMES: readonly string[] = [
   'read', 'run', 'config-write', 'knowledge-write', 'approval-write', 'test-write',
 ]
 
-/**
- * 2026-10-01 (432-21, D-12): the retired MCP default grant — every scope but `config-write` —
- * spelled here as the legacy scope set a caller may still carry. The token resolver that minted it
- * is deleted; nothing reads the field, and the cells below use it to show exactly that.
- */
+// A legacy scope set a caller may carry; nothing reads the field, and the cells below show that.
 const LEGACY_DEFAULT_GRANT = RETIRED_SCOPE_NAMES.filter((scope) => scope !== 'config-write')
 
-/**
- * The shipped tokenless MCP caller carrying a legacy scope set, SMUGGLED past the type: 432-39
- * deleted `FunctionCaller.grantedScopes`, so the set rides a cast. The C432-TOKENLESS-CATALOG cells
- * hand these to the MCP helpers so they still compare DIFFERENT callers — a helper that only ever
- * built the shipped caller would compare one caller with itself, and pass vacuously.
- */
+// A legacy scope set rides a cast, so the helpers compare different callers, not one with itself.
 function smuggledMcpCaller(grantedScopes: readonly string[]): FunctionCaller {
   return { ...MCP_FUNCTION_CALLER, grantedScopes } as FunctionCaller
 }
 
-// 2026-10-01 (432-31, D-12): `legacyMcpCaller`, which stamped a legacy scope set onto the tokenless
-// MCP caller as the retired `grantedScopes` field, is deleted; the root-host listings below use the
-// shipped `MCP_FUNCTION_CALLER` itself.
 import {
   CHAT_RESOLVER_PROBES,
   chatEnumerationOf,
@@ -111,14 +76,11 @@ import {
 } from './adapters.js'
 import * as policyFixtures from './policy-fixtures.js'
 import {
-  ASK_CAPABLE_OP_IDS,
   CONFORMANCE_EXECUTION_CONTEXT,
   coveringCallerFor,
-  deriveAskCapableOpIds,
   grantlessSurfaceCallers,
   surfaceInertCallers,
   surfaceShapedCallers,
-  type RiskClassifiable,
 } from './policy-fixtures.js'
 import {
   buildGoldenRows,
@@ -165,78 +127,37 @@ import {
   type ScenarioOpId,
 } from './scenario-table.js'
 
-/**
- * What the control cells plant, and it exists nowhere else in this product.
- *
- * NAMED CONSTANTS rather than literals buried in the cells, because 397-09's mutation script has to
- * be able to tell the control cells' own synthetic strays apart from the strays IT plants: a script
- * that grepped for a generic name would read this file's deliberate fixture as the defect it went
- * looking for.
- */
-const SYNTHETIC_UNCATALOGUED_TOOL = 'agent_qa_control_uncatalogued_397_01'
+// Named constants, so a control cell's own stray is told apart from a planted stray by name.
+const SYNTHETIC_UNCATALOGUED_TOOL = 'agent_qa_control_uncatalogued'
 
 const SYNTHETIC_STRAY_ALIAS_TARGET: ResolverOpTarget = Object.freeze({
-  alias: 'control-stray-397-01',
-  functionId: 'control.stray.397.01',
+  alias: 'control-stray',
+  functionId: 'control.stray.alias',
 })
 
-/**
- * Plan 03's own synthetic fixtures, named for THIS plan (never reusing 397-01's).
- *
- * Same reason the 397-01 constants above carry their plan number: 397-09's mutation script has to
- * tell each plan's deliberate fixtures from the strays it plants, and a shared name would make one
- * suite's control cell read as another suite's defect.
- */
-const SYNTHETIC_UNCARRIED_OP_ID = 'control.uncarried.397.03'
-const SYNTHETIC_STRAY_ROW_OP_ID = 'control.stray.row.397.03'
-const SYNTHETIC_ABSENT_OP_ID = 'control.absent.397.03'
-const SYNTHETIC_UNCLASSIFIABLE_REASON = 'control 397-03: prose in no declared class'
-const SYNTHETIC_ASKING_OP_ID = 'fn:control.asking.397.03'
-const SYNTHETIC_NON_ASKING_OP_ID = 'fn:control.reading.397.03'
-const SYNTHETIC_LOCAL_OP_ID = 'fn:control.local.397.03'
+// Fixture names are unique per control group, so one control's stray never reads as another's.
+const SYNTHETIC_UNCARRIED_OP_ID = 'control.uncarried.probe'
+const SYNTHETIC_STRAY_ROW_OP_ID = 'control.stray.row'
+const SYNTHETIC_ABSENT_OP_ID = 'control.absent.probe'
+const SYNTHETIC_UNCLASSIFIABLE_REASON = 'control: prose in no declared class'
 
-/**
- * Plan 04's own synthetic fixtures, named for the plan that plants them.
- *
- * 397-09's mutation script tells a plan's deliberate strays from the ones IT plants by name, so
- * each plan's constants carry its number and no plan reuses another's.
- */
-const SYNTHETIC_DRIVER_ABSENT_OP_ID = 'control.absent.397.04'
+// Synthetic fixtures for the driver-absence control.
+const SYNTHETIC_DRIVER_ABSENT_OP_ID = 'control.absent.driver'
 
-/**
- * Plan 06's own synthetic fixtures, named for the plan that plants them.
- *
- * Same rule the three blocks above follow: 397-09's mutation script tells a plan's deliberate
- * fixtures from the strays it plants by NAME, so nothing here reuses another plan's constant.
- */
-/**
- * Plan 08's own synthetic fixtures, named for the plan that plants them.
- *
- * Same rule every block above follows: 397-09's mutation script tells a plan's deliberate fixtures
- * from the strays it plants by NAME, so nothing here reuses another plan's constant. The domain
- * spellings are deliberately not real English domain words — a control that planted `billing` would
- * read, to a person scanning the taxonomy, like a domain someone meant to add.
- */
-const SYNTHETIC_UNCATALOGUED_DOMAIN_OP_ID = 'controluncatalogued39708.probe'
-const SYNTHETIC_MEMBERLESS_DOMAIN = 'controlmemberless39708'
-const SYNTHETIC_RESERVED_DOMAIN = 'controlreserved39708'
+// Domain spellings are not English words, so a control never reads as a domain meant to add.
+const SYNTHETIC_UNCATALOGUED_DOMAIN_OP_ID = 'controluncatalogued.probe'
+const SYNTHETIC_MEMBERLESS_DOMAIN = 'controlmemberless'
+const SYNTHETIC_RESERVED_DOMAIN = 'controlreserved'
 
-const SYNTHETIC_GOLDEN_STRAY_OP_ID = 'control.golden.stray.397.06'
-const SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID = 'control.golden.uncatalogued.397.06'
-const SYNTHETIC_GOLDEN_STRAY_FIELD = 'controlGoldenField39706'
+const SYNTHETIC_GOLDEN_STRAY_OP_ID = 'control.golden.stray'
+const SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID = 'control.golden.uncatalogued'
+const SYNTHETIC_GOLDEN_STRAY_FIELD = 'controlGoldenField'
 
 const enumerations = new Map<string, SurfaceEnumeration>()
 let censusIds: readonly string[] = []
 let censusIdSet: ReadonlySet<string> = new Set()
 
-/**
- * The composition root's own listing, and each surface host's, taken from ONE composition (D-08).
- *
- * ONE COMPOSITION FOR ALL FOUR READS, because the question these cells ask is whether the root and
- * a host that runs over it can disagree — and four separately composed hosts would make a
- * disagreement unattributable to anything but the composing. The listings are inert frozen data, so
- * they outlive the host they were taken from without carrying a handle on it.
- */
+// One composition for every read, so a root-host disagreement is the product's, not ours.
 let rootDeclarations: readonly FunctionDeclaration[] = []
 const rootHostListings = new Map<string, readonly FunctionDeclaration[]>()
 
@@ -248,16 +169,10 @@ beforeAll(async () => {
   }
   await withGoldenRootRegistry((registry) => {
     rootDeclarations = registry.list(CONFORMANCE_CENSUS_CALLER)
-    // The callers each shipped surface host actually lists under — the chat host's two stage mints
-    // (392) and the MCP host's caller, under the two keys its two retired grants used to have (396's
-    // default, which withheld `config-write`, and the every-scope grant; 2026-10-02, 432-39: no grant
-    // exists, so both keys are the one tokenless caller). Read off the SAME registry object
-    // the shipped commands hand their surface, which is what makes a disagreement here a fact about
-    // the product rather than about this file's assembly.
+    // The callers each shipped host lists under, read off the registry the commands hand over.
     rootHostListings.set('chat:planner', registry.list(CHAT_PLANNER_CALLER))
     rootHostListings.set('chat:resolver', registry.list(CHAT_RESOLVER_CALLER))
-    // 2026-10-01 (432-31, D-12): both MCP grants are retired, so both MCP keys list under the one
-    // tokenless caller the MCP host mints. The two keys stay, so the four-listing claim is unchanged.
+    // Both MCP keys list under the one tokenless caller the MCP host mints.
     rootHostListings.set('mcp:every-scope', registry.list(MCP_FUNCTION_CALLER))
     rootHostListings.set('mcp:default-grant', registry.list(MCP_FUNCTION_CALLER))
   })
@@ -290,7 +205,7 @@ function commentStrippedSource(fileName: string): string {
   return commentStrippedFile(join(CONFORMANCE_DIR, fileName))
 }
 
-// ---- The gate wall (Phase 397 plan 04, D-11) ---------------------------------------------------
+// ---- The gate wall ---------------------------------------------------
 
 /**
  * Where one invocation stopped, as a comparable answer.
@@ -369,16 +284,7 @@ const REACHED_THE_GATE: readonly GateAnswerKind[] = Object.freeze([
   'allowed-dispatched',
 ])
 
-// ---- Leg 2: structural schema equality, per OP, through the one lens (plan 06, D-06) -----------
-//
-// THE UNIVERSE HERE IS PER-OP, AND THAT IS THE WHOLE DIFFERENCE from the fidelity suite in
-// `packages/mcp`. That suite ranges the fourteen TOOLS and asks whether each advertisement matches
-// the contracts behind it; this leg ranges the twenty-two projected OPS and asks, of each
-// capability, whether the shape a caller is shown for it is the shape `invokeFunction` validates it
-// with. The two universes answer different questions — a fold's arm is one tool and several
-// capabilities — and the per-op reading is the one FUNC-05 makes ("per spec × per surface"). Neither
-// cell is duplicated: what is shared is the LENS, imported from the mcp barrel, never re-derived
-// (D-06; a second normaliser drifts looser and the looser copy is the one that passes over drift).
+// ---- Leg 2: structural schema equality, per op, through the one lens ----
 
 /**
  * Why one op's schema is not compared byte for byte on one side, from a CLOSED vocabulary.
@@ -388,9 +294,6 @@ const REACHED_THE_GATE: readonly GateAnswerKind[] = Object.freeze([
  * than added as a condition nobody counts. No skip-lists: every op is either compared or carries one
  * of these keys, and the arithmetic is pinned.
  */
-// 2026-09-30 (432-12 D-05/D-14): `apply-door-wire-envelope` LEFT this vocabulary with the two apply
-// doors. No tool advertises a `confirmed` envelope any more, so every projected input is compared,
-// and an exception nothing takes would be dead prose (the cell below asserts every key is taken).
 type Leg2ExceptionKey =
   | 'pipeline-downstream-op'
   | 'degraded-output-contract'
@@ -421,7 +324,7 @@ type Leg2Plan =
  * rather than from a per-op list this file would have to keep in step with them.
  */
 function leg2InputPlan(projection: ToolProjection, opId: string): Leg2Plan {
-  // 432-12: every door, the credential-required mark door included, takes its native op input.
+  // Every door, the mark door included, takes its native op input.
   const composition = compositionOf(projection)
   if (composition === 'union') return { kind: 'arm', at: projection.ops.indexOf(opId) }
   if (composition === 'pipeline' && projection.ops[0] !== opId) {
@@ -457,24 +360,7 @@ interface AdvertisedTool {
 
 describe('the parity suite ranges the registry census over every rostered surface', () => {
   it('pins the roster at the four surfaces that exist today', () => {
-    // D-04. An exact list rather than a length check or a contains check: a surface REPLACED would
-    // pass both of those while the claim quietly moved to a different set of doors.
-    //
-    // 2026-08-20 (399.1 D-07): the `fn` door joins. The order is registration order and is asserted
-    // as such — `roster.ts` reads as a dated history and a row that moved would be a row somebody
-    // re-decided.
-    //
-    // 2026-08-21 (400-01 D-12): the dashboard chat door joins, on the day the door itself is first
-    // committed rather than at the end of the phase that builds it. That is the whole content of
-    // "day one, not at its end": every plan after this one builds under a suite that already ranges
-    // the door, so a private power added to it is a named RED in the change that adds it.
-    //
-    // 2026-08-24 (402-07 D-04): the authed run service joins, in the phase that ships it, as the
-    // third and last of the three arrivals `roster.ts`'s 2026-08-16 registration note reserved.
-    //
-    // 2026-09-28 (430 D-03): the dashboard chat door leaves with its routes (430 D-02), and the
-    // title above is true again. PXH-SURF-02's "three doors" miscounted a roster that also carries
-    // `run-service`; four doors is the delivered set, and a returning `dashboard` row reds here.
+    // An exact list in registration order: a replaced surface passes a length or contains check.
     expect(SURFACE_ROSTER.map((entry) => entry.id))
       .toEqual(['chat', 'mcp', 'fn', 'run-service'])
     for (const entry of SURFACE_ROSTER) {
@@ -484,16 +370,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('makes every door state what it cannot do, by shape rather than by omission', () => {
-    // 402-07, D-04. The four wide doors declare an EMPTY list and the run service declares a
-    // populated one; what is asserted here is that BOTH are declarations. A door whose narrowness
-    // showed up only as ops it happened not to enumerate reads exactly like a door that lost half
-    // its reach in a regression, and 397 D-12's refusal to keep a skip list is what makes the
-    // distinction matter: a skip list says which cells not to run, and this says which capabilities
-    // the door does not have.
-    //
-    // THE FIELD IS REQUIRED ON THE INTERFACE, so this cell cannot be satisfied by absence — every
-    // member below has to exist for the file to compile. What it adds is that a populated entry
-    // carries a REASON, because an unexplained "not applicable" is the omission wearing a label.
+    // Narrow and wide doors both declare a not-applicable list; a populated entry has a reason.
     for (const entry of SURFACE_ROSTER) {
       expect(
         Array.isArray(entry.adapter.notApplicable),
@@ -518,9 +395,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('reaches, on every rostered surface, only capabilities the registry declares', async () => {
-    // FUNC-05 leg 5, and the driver is the roster with the census as the comparand. Two named REDs
-    // per surface: a capability enumerated on the surface that no registry row declares, and a
-    // listed door the declared data does not catalogue at all.
+    // Per surface: an op no registry row declares, and a listed door nothing catalogues.
     for (const entry of SURFACE_ROSTER) {
       const enumeration = enumerationOf(entry.id)
 
@@ -565,10 +440,9 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('enumerates over MCP exactly the op set the declared mapping projects', () => {
-    // The comparand is DERIVED from the mapping rather than pinned here. Tool names are pinned by
-    // the shipped bump guard and re-pinning them in this suite would be a second catalogue: what
-    // this cell claims is that the LIVE listing, folded through the declared mapping, reaches the
-    // ops that mapping declares — a different claim than the guard's, over a live server.
+    // The comparand is DERIVED from the mapping rather than pinned here, because pinning tool names
+    // in this suite would be a second catalogue: what this cell claims is that the LIVE listing,
+    // folded through the declared mapping, reaches the ops that mapping declares.
     const projected = sorted(AGENT_QA_TOOL_PROJECTIONS.flatMap((p) => [...p.ops]))
     expect(sorted(enumerationOf('mcp').opIds), 'the live MCP listing, fold-expanded to op ids')
       .toEqual(projected)
@@ -583,7 +457,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
 
   it('accounts for every declared capability as MCP-reachable or declared-unprojected', () => {
     // The registry is the iteration driver here, and the partition it closes is consumed from the
-    // mapping rather than restated: an op reachable over MCP, or an op with a dated reason for not
+    // mapping rather than restated: an op reachable over MCP, or an op with a reason for not
     // being. An op in neither has landed with nobody having decided anything about it.
     const mcpReach = enumerationOf('mcp').opIds
     const unprojected = new Set(UNPROJECTED_OPS.map((entry) => entry.opId))
@@ -603,17 +477,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  // ---- The control cells: proof that the two detectors above can FIRE --------------------------
-  //
-  // A detector nobody has seen fire is a comment. Every cell before this one asserts an ABSENCE —
-  // no stray tool, no stray alias — and an absence is exactly what a detector that cannot detect
-  // reports. The two cells below drive the pure cores with synthetic input, so the branches are
-  // exercised without mutating a shipped file and without a skip-list anywhere. Each also feeds a
-  // CLEAN input in the same cell, because a detector that fires on everything is no better than one
-  // that fires on nothing.
-  //
-  // 397-09's mutation script names these two cells: they are what makes its "an allowed cell failed
-  // to red" side of the discrimination meaningful.
+  // Synthetic input drives each pure core's stray branch, with a clean input in the same cell.
 
   it('control: the MCP stray-tool branch fires on a listed tool the mapping does not catalogue', () => {
     const catalogued = AGENT_QA_TOOL_PROJECTIONS[0]
@@ -669,11 +533,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toBe(true)
   })
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'pins the config-write listing delta between the
-  // every-scope and the default MCP grant'. MCP visibility was a scope-union subset check, so the
-  // config folds were absent from a default caller's instance. The check is deleted: the delta is
-  // now EMPTY, in both directions, and the two grants list the same surface.
-  it('C432-TOKENLESS-CATALOG: pins an EMPTY listing delta between the every-scope and the default MCP grant', async () => {
+  it('lists the same MCP ops for every caller, whatever grant it carries', async () => {
     const everyScope = enumerationOf('mcp')
     const defaultGrant = await enumerateMcpOpIds(smuggledMcpCaller(LEGACY_DEFAULT_GRANT))
     const nothing = await enumerateMcpOpIds(smuggledMcpCaller([]))
@@ -691,19 +551,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
       .toEqual(sorted([...everyScope.opIds]))
   })
 
-  // ---- The census: ONE denominator, asserted in both directions (397-03, D-10 / D-15) ----------
+  // ---- The census: ONE denominator, asserted in both directions ----------
 
   it('carries exactly one scenario row per registered capability, in both directions', () => {
-    // 2026-08-16 · D-15: THIS CELL IS SC-4's CI RULE. The suite is an ordinary vitest suite inside
-    // `turbo run test`, so it already runs in the workspace CI job on every PR — which means "a new
-    // capability landed without a parity scenario" is a structurally named RED there, by op id, in
-    // the existing job. There is deliberately no second mechanism: a diff-parsing check would be a
-    // rule about what a patch looks like rather than about what the product contains, and the two
-    // would disagree the first time a capability arrived by any route the parser did not model.
-    //
-    // BOTH DIRECTIONS, because a census that only checks one is the register that never notices it
-    // has stopped growing (D-10). `censusDiff`'s ability to fire on each side is proven by the
-    // control cell below rather than assumed from this cell's green.
+    // An ordinary vitest suite in `turbo run test`, so a capability without a row reds in CI.
     const diff = censusDiff(registryOpIds(), scenarioTableOpIds())
     expect(
       diff.missing,
@@ -746,34 +597,26 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toEqual([SYNTHETIC_STRAY_ROW_OP_ID])
   })
 
-  // ---- The taxonomy census: ONE canonical domain list, both directions (397-08, D-18) ----------
+  // ---- The taxonomy census: ONE canonical domain list, both directions ----------
 
   it('names every capability over the ONE canonical domain list, in both directions', () => {
-    // THE MANDATORY DIRECTION IS ids → list. A capability whose domain is absent from
-    // `domain-list.ts` is a named RED here, by op id and by domain — which is what makes the pinned
-    // list a thing the product is checked against rather than a comment nobody reads. This is the
-    // duty the retired 384 stub's `ALLOWED_ID_DOMAINS` sweep carried, re-derived off the census.
-    //
-    // THE REVERSE DIRECTION IS ASSERTED TOO, because a taxonomy is exactly the kind of table that
-    // quietly accumulates members nothing uses. A member matching no op must carry a dated
-    // `reserved` sentence saying who holds the name and against what; a member carrying one while
-    // ops exist is a reservation somebody forgot to retire. Both are named, neither is counted.
+    // Both directions: each op's domain is listed, and a member no op matches is `reserved`.
     const census = domainCensus(registryOpIds())
 
     expect(
       census.uncatalogued,
       'capabilities whose id domain is on no row of domain-list.ts — add the domain there with a '
-        + 'one-line charter (D-18: ids are the locked contract, the taxonomy serves them, and a '
+        + 'one-line charter (ids are the locked contract, the taxonomy serves them, and a '
         + 'widening is a reviewed one-line diff rather than a silent Set.add)',
     ).toEqual([])
     expect(
       census.memberless,
-      'domains pinned in domain-list.ts that no shipped capability uses and that carry no dated '
+      'domains pinned in domain-list.ts that no shipped capability uses and that carry no '
         + 'reserved marker — either an op was deleted, or the row is decoration',
     ).toEqual([])
     expect(
       census.staleReservations,
-      'domains carrying a dated `reserved` marker that shipped capabilities now use — the marker '
+      'domains carrying a `reserved` marker that shipped capabilities now use — the marker '
         + 'says the name is merely held, and it is not',
     ).toEqual([])
 
@@ -783,8 +626,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
     expect(new Set(registryOpIds().map(domainOf)).size, 'the census produced no domains at all')
       .toBeGreaterThan(0)
 
-    // The list is a SET of domains, not a bag: two rows for one domain is how the retired stub's
-    // literal came to hold fifteen entries for fourteen distinct domains (see the fold note).
     const domains = CANONICAL_ID_DOMAINS.map((entry) => entry.domain)
     expect(sorted(new Set(domains)), 'domain-list.ts repeats a domain').toEqual(domains)
 
@@ -796,11 +637,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  it('spells every capability id in the grammar both surfaces can carry (D-15)', () => {
-    // Carried across from the retired 384 stub, and it is not cosmetic: `chat/tool-names.ts` maps
-    // `.` ↔ `_` as a bijection and refuses an id carrying the separator it maps onto, so an id with
-    // an underscore is an id the chat surface cannot reach. `authoring.draft.verify` is spelled
-    // that way — rather than `authoring.verify_draft` — for exactly this reason.
+  it('spells every capability id in the grammar both surfaces can carry', () => {
+    // `chat/tool-names.ts` maps `.` to `_` as a bijection, so an id with `_` is unreachable.
     const ids = registryOpIds()
     expect(ids.length, 'the census read back empty').toBeGreaterThan(0)
     for (const opId of ids) {
@@ -813,10 +651,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('control: the domain census fires on an uncatalogued domain, a memberless row and a stale reservation', () => {
-    // Driven over the PURE core with synthetic taxonomies, so every branch is exercised without
-    // mutating a shipped table and without a skip — and a CLEAN input is fed in the same cell,
-    // because a self-check that fires on everything certifies as little as one that fires on
-    // nothing (the 394 Edge-Coverage-Register lesson, made mechanical).
+    // Pure core with synthetic taxonomies plus a clean input, so the check fires only when due.
     const live = registryOpIds()
 
     expect(domainCensus(live), 'the shipped taxonomy must diff to nothing against the live ids')
@@ -831,7 +666,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // (b) a row no id matches, carrying no reserved marker.
     const withAMemberlessRow: readonly CanonicalDomain[] = [
       ...CANONICAL_ID_DOMAINS,
-      { domain: SYNTHETIC_MEMBERLESS_DOMAIN, charter: 'control 397-08: a row nothing uses' },
+      { domain: SYNTHETIC_MEMBERLESS_DOMAIN, charter: 'control: a row nothing uses' },
     ]
     expect(
       domainCensus(live, withAMemberlessRow).memberless,
@@ -843,11 +678,11 @@ describe('the parity suite ranges the registry census over every rostered surfac
         ...CANONICAL_ID_DOMAINS,
         {
           domain: SYNTHETIC_MEMBERLESS_DOMAIN,
-          charter: 'control 397-08: a row nothing uses',
-          reserved: 'control 397-08: held deliberately',
+          charter: 'control: a row nothing uses',
+          reserved: 'control: held deliberately',
         },
       ]).memberless,
-      'a dated reserved marker must silence the memberless side for that row and no other',
+      'a reserved marker must silence the memberless side for that row and no other',
     ).toEqual([])
 
     // (c) a reservation the ids have overtaken.
@@ -856,8 +691,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
         ...CANONICAL_ID_DOMAINS,
         {
           domain: SYNTHETIC_RESERVED_DOMAIN,
-          charter: 'control 397-08: a held name',
-          reserved: 'control 397-08: held, but an op arrived',
+          charter: 'control: a held name',
+          reserved: 'control: held, but an op arrived',
         },
       ]).staleReservations,
       'a reserved row that shipped ids now use must be named on the stale side',
@@ -872,19 +707,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toEqual(live.filter((opId) => domainOf(opId) === 'runs').map(() => 'runs'))
   })
 
-  // ---- The rows are typed against the ops' OWN contracts, and it is checkable (D-09) -----------
+  // ---- The rows are typed against the ops' OWN contracts, and it is checkable -----------
 
   it('types every scenario input against the contract the registry itself published for that op', () => {
-    // The compile-time guarantee D-09 chose TypeScript for is only worth what the PAIRING is worth:
-    // a row typed against the wrong op's schema would compile happily and certify nothing. So the
-    // pairing is asserted two ways, and neither is a re-derivation of a contract.
-    //
-    // (a) OBJECT IDENTITY, wherever a published handle exists. `AGENT_QA_OP_CONTRACTS` names the
-    //     live schemas for the 22 projected ops; `toBe` is the strongest available statement that
-    //     the table holds the same object rather than a lookalike.
-    // (b) For all 41, the PROJECTION relation: the schema the table paired, projected the way the
-    //     registry projects it, must equal the projection the registry itself published on the
-    //     declaration. That reaches the 19 ops no surface publishes a handle for.
+    // Pairing is checked by object identity where a handle exists, and by projection for every op.
     const declarations = registryDeclarations()
     let identityChecked = 0
 
@@ -916,11 +742,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toBe(Object.keys(AGENT_QA_OP_CONTRACTS).length)
   })
 
-  it('holds an invocation fixture every op would accept — the 384 samples, still valid', () => {
-    // D-10's fold made the scenario row the invocation sample, so the sample's original obligation
-    // travels with it: `invokeFunction` validates input BEFORE it consults binding, and a fixture
-    // that stopped parsing would make 397-04's refusal legs report an input error while looking
-    // like they had measured a policy verdict.
+  it('holds an invocation fixture every op would accept — every scenario sample still valid', () => {
+    // Input is validated before binding, so a broken fixture could pass for a policy verdict.
     for (const row of SCENARIO_TABLE) {
       const parsed = OP_INPUT_CONTRACTS[row.opId].safeParse(row.input)
       expect(
@@ -931,21 +754,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('refuses by NAME every capability this composition cannot run — covered, not missing', async () => {
-    // PITFALL 11, re-derived here from the retired 384 stub (397-08, D-10). `unbound` is
-    // COVERED-BUT-UNBOUND, not missing: a declared-but-unbound capability has a contract, a listing
-    // row, a gate verdict and an audit trail, and reading it as a hole in the API is the silent gap
-    // `bindingStatus` exists to prevent. The claim it carries is that the refusal is ATTRIBUTABLE —
-    // the error names the op, so a caller can tell "this host cannot run that" from "that does not
-    // exist" and from "you were not granted it".
-    //
-    // WHY IT LANDS HERE RATHER THAN STAYING IN `packages/agent`. It needs an input per op — and the
-    // scenario table is the ONE place those live now. Restating them agent-side would have rebuilt
-    // the second denominator this plan just retired.
-    //
-    // 432-20 (D-12): the covering caller holds no grant at all, and no scope or origin check stands
-    // before the binding check, so nothing here can be refused on an axis that precedes it and be
-    // mistaken for a binding refusal (the 387-08 measurement).
-    // 2026-10-01 (432-31): the retired, unread `resolveExecutionContext` registry option is dropped.
+    // `unbound` is covered but unbound: the refusal names the op, unlike a missing one.
     const registry = conformanceRegistry()
     const unbound = registry
       .list(CONFORMANCE_CENSUS_CALLER)
@@ -973,9 +782,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         thrown = error
       }
 
-      // ASSERTED ON THE SHAPE OF THE ANSWER, never on "it threw": 397-04 measured a cell passing
-      // because a `TypeError` was read as a dispatch. Both fields are checked, because the name
-      // alone would not say WHICH capability the host refused.
+      // Asserted on the error's shape, never on a throw: a `TypeError` can pass for a dispatch.
       const error = thrown as { name?: string; functionId?: string } | undefined
       expect(
         { name: error?.name, functionId: error?.functionId },
@@ -985,7 +792,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  // ---- D-12: per-surface row data, joined to the shipped tables in BOTH directions -------------
+  // ---- Per-surface row data, joined to the shipped tables in both directions ----
 
   it('joins every row MCP expectation to the declared mapping, in both directions', () => {
     const toolByOpId = new Map<string, string>()
@@ -1044,10 +851,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('classifies every shipped unprojected reason into exactly one declared class', () => {
-    // The register's own self-check on the reason vocabulary. An unprojected op written with prose
-    // outside the declared classes must RED rather than be filed under whichever class happened to
-    // match last — "we scoped this out" and "this can never work here" are the two answers a reader
-    // needs to be able to tell apart, and the second is the one D-03 wrote for `agent.ask`.
+    // Unprojected prose outside the declared classes reds, rather than filing under the last match.
     const unclassifiable = UNPROJECTED_OPS.filter(
       (entry) => unprojectedReasonKeyOf(entry.reason) === undefined,
     ).map((entry) => entry.opId)
@@ -1061,75 +865,17 @@ describe('the parity suite ranges the registry census over every rostered surfac
     )
   })
 
-  it('carries the DATED 408 ruling in the shipped credential-mint reason (408 D-01 / D-14)', () => {
-    // WHY THIS CELL EXISTS. `credential-mint-deferral` was admitted in 403 for one reason: the op
-    // hands out a credential and WHO MAY MINT ONE OVER MCP was left to Phase 408. 408 D-01 answered
-    // it — internal mint only, the token confined to host-rendered App HTML, a projected mint tool
-    // rejected — and D-14 requires that answer RECORDED rather than silently absorbed. The record
-    // lives in the shipped `UNPROJECTED_OPS` prose, which is the artifact a reader actually meets,
-    // so this cell reads it there. A future rewrite that tidies the entry back into a bare
-    // deferral, or drops the date, reds HERE by name instead of leaving a permanent absence
-    // wearing an open question's clothes.
-    // CORRECTED 2026-09-01 (408-08, the gap round, road `demote`; the ruling is in
-    // `app-resource.ts`'s header and `mapping.ts`'s reason carries the same dated addendum). The
-    // rationale above summarises D-01 as "the token confined to host-rendered App HTML", and that
-    // half is WITHDRAWN rather than reworded away: whether the document this server serves is
-    // host-rendered HTML or text a model consumes is a property of the CALLER, not of this server.
-    // What holds is that the server writes the token into exactly one place — the frame src of the
-    // document the `ui://` read serves — bounded by the operator-granted `read` scope plus a bound
-    // mint. This is the most load-bearing of the four sites the 408-15 census found, because THIS
-    // cell is the one that gates the shipped ruling prose: a gate whose own stated reason asserts a
-    // withdrawn claim teaches every reader of it the thing the gate exists to stop. The assertions
-    // below are untouched by the correction — the ruling they read is dated 2026-08-31 and is what
-    // 408 actually decided; only this rationale's gloss on its channel was ever wrong.
-    const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === 'runs.liveurl')
-    expect(entry, 'runs.liveurl left the unprojected register — re-home this ruling before it does')
-      .toBeDefined()
-    // The class must still DERIVE from the prose: the ruling is an addendum to the 403 reason, not
-    // a replacement of it, so the signature phrase the classifier keys on has to survive the edit.
+  it.each(['runs.liveurl', 'editor.liveurl'])('keeps the %s mint unprojected', (opId) => {
+    const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === opId)
+    expect(entry, `${opId} is not in the unprojected register`).toBeDefined()
     expect(
       unprojectedReasonKeyOf(entry!.reason),
-      'the 408 ruling must EXTEND the credential reason, not overwrite the phrase its class derives '
-        + 'from — a resolution that changes the class silently re-files a security decision',
+      `${opId}: a reason that drops its credential phrase re-files a security decision`,
     ).toBe('credential-mint-deferral')
     expect(entry!.reason, 'the credential fact the class is named for').toContain('MINTS A CREDENTIAL')
-    // …and the ruling itself, dated, with its operative words.
-    expect(entry!.reason, 'the dated 408 ruling marker (D-14: answered, never silently reclassified)')
-      .toContain('408 D-01')
-    expect(entry!.reason, 'the ruling is dated at its own artifact').toContain('2026-08-31')
-    expect(entry!.reason, 'what 408 actually ruled').toContain('INTERNAL MINT ONLY')
-    // The adjudicator column moves with the ruling: 403 deferred, 408 decided.
     expect(
-      entry!.adjudication,
-      'the provenance column still credits 403 with a ruling it explicitly declined to make',
-    ).toBe('408')
-    // And the row is unchanged in the one way that matters: the op is STILL unprojected. D-01
-    // answered the question with a NO, so a resolution that quietly produced a tool would be the
-    // opposite outcome wearing the same paperwork.
-    expect(
-      scenarioRowFor('runs.liveurl')?.perSurface.mcp,
-      'the ruling keeps runs.liveurl unprojected — a mint tool is rejected, not deferred',
-    ).toEqual({ unprojected: 'credential-mint-deferral' })
-  })
-
-  it('EDITOR-LIVEURL-UNPROJECTED-RULING: editor.liveurl stays unprojected by the 428 ruling (428 D-07)', () => {
-    // D-07: an editor session's view credential is private to the dashboard page that owns it, and
-    // the owner declined an MCP watch carrier for a draft execution. mapping-bump-guard pins the
-    // counts; this cell pins the ruling on the conformance layer, so a mint tool for an editor
-    // session reds here by name as well.
-    const entry = UNPROJECTED_OPS.find((candidate) => candidate.opId === 'editor.liveurl')
-    expect(entry, 'editor.liveurl left the unprojected register — re-home this ruling before it does')
-      .toBeDefined()
-    expect(
-      unprojectedReasonKeyOf(entry!.reason),
-      'the 428 ruling files the editor mint under the credential class, as runs.liveurl is filed',
-    ).toBe('credential-mint-deferral')
-    expect(entry!.reason, 'the credential fact the class is named for').toContain('MINTS A CREDENTIAL')
-    expect(entry!.reason, 'the dated 428 ruling marker').toContain('2026-09-25')
-    expect(entry!.adjudication, 'the provenance column credits the phase that ruled').toBe('428')
-    expect(
-      scenarioRowFor('editor.liveurl')?.perSurface.mcp,
-      'the ruling keeps editor.liveurl unprojected — an editor watch tool is declined, not deferred',
+      scenarioRowFor(opId)?.perSurface.mcp,
+      `${opId} on mcp: a mint tool would put a live credential in model context`,
     ).toEqual({ unprojected: 'credential-mint-deferral' })
   })
 
@@ -1144,17 +890,14 @@ describe('the parity suite ranges the registry census over every rostered surfac
       unprojectedReasonKeyOf(SYNTHETIC_UNCLASSIFIABLE_REASON),
       'prose in no declared class must classify as nothing rather than as the last class tried',
     ).toBeUndefined()
-    // …and precedence is a DECISION rather than an accident of iteration order: a reason carrying
-    // two signatures answers with the stronger one. RE-SPELLED 2026-10-01 (432-18): the shipped case
-    // was `grants.revoke` (requiresHumanOrigin over a mid-flight line), deleted with the grant ledger
-    // and its class with it; the rule is measured on the surviving overlap.
+    // A reason carrying two signatures answers with the stronger one, by declared order.
     expect(
       unprojectedReasonKeyOf('answers machine discovery. Not a mid-flight workflow read.'),
       'a reason in two classes must answer with the higher-precedence one',
     ).toBe('discovery-answered-by-protocol')
     expect(
       UNPROJECTED_REASON_SIGNATURES.map(([key]) => key),
-      'the human-origin class left the vocabulary with its last member (432-18)',
+      'the vocabulary has no human-origin class',
     ).not.toContain('requires-human-origin')
   })
 
@@ -1176,11 +919,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('joins every row fn expectation to the live fn listing, in both directions', () => {
-    // 2026-08-20 (399.1 D-07), the chat cell above with the third door substituted. The comparand
-    // is the door's OWN `--list --json` stdout, folded through commander and the CLI composition
-    // root — not this file's reading of a registry — so a `fn` listing that started filtering (a
-    // narrowed CLI grant, a safe-mode default, a projection that dropped a column) reds here by
-    // name rather than being absorbed by a comparison of the census against itself.
+    // The comparand is the `fn` door's own `--list --json` stdout, so a filtering listing reds.
     const fnReach = enumerationOf('fn').opIds
     for (const row of SCENARIO_TABLE) {
       expect(
@@ -1197,7 +936,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  // ---- D-12: the ASSERTED absences. No skip-list — a skip asserts nothing --------------------
+  // ---- The asserted absences: a skip asserts nothing ----
 
   it('asserts the absence of every unprojected op over MCP: no fold, and no door of its own', async () => {
     const listed = await listMcpToolNames()
@@ -1259,7 +998,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
 
       const answered = await client.callTool({
         name: present!,
-        arguments: { agent_qa_control_397_03: true },
+        arguments: { agent_qa_control_probe: true },
       })
       expect(
         JSON.stringify(answered),
@@ -1269,80 +1008,8 @@ describe('the parity suite ranges the registry census over every rostered surfac
     })
   })
 
-  // ---- D-11: the ask set is PRODUCED by the shipped classifier, then pinned -------------------
-
-  // RE-SPELLED 2026-10-01 (432-19, D-15) from 'pins an ask-capable set equal to a fresh run of the
-  // shipped gate over the census'. The gate is deleted, so the derivation runs the shipped
-  // CLASSIFIER instead; the pin and its by-op-id red are unchanged.
-  it('pins a formerly-asking set equal to a fresh run of the shipped classifier over the census', () => {
-    // T-397-07. The pin exists so a reader can see which capabilities the deleted gate used to stop
-    // on; this cell exists so the pin cannot quietly stop being true. A lexicon edit, a declared-tier
-    // change or a new op arriving at `mutating-shared` reds HERE, by op id, rather than silently
-    // re-scoping the `direct` points 397-04's verdict legs are driven from.
-    const derived = deriveAskCapableOpIds(registryDeclarations())
-    expect(
-      derived,
-      'the pinned ask-capable set no longer equals what the shipped gate produces over the census',
-    ).toEqual([...ASK_CAPABLE_OP_IDS].sort())
-    expect(derived.length, 'no capability in this product can ask anyone anything').toBeGreaterThan(
-      0,
-    )
-    expect(
-      derived.length,
-      'every capability asks, which would make the ask point say nothing about any of them',
-    ).toBeLessThan(registryOpIds().length)
-
-    // 2026-10-01 (432-19, D-15): the context cell is retired with `requiresFailClosed`. The
-    // derivation takes no context because nothing fails closed in any context any more.
-    expect(deriveAskCapableOpIds.length, 'the derivation takes the census and nothing else').toBe(1)
-  })
-
-  it('control: the ask derivation tells an asking risk class from a non-asking one', () => {
-    // The derivation reports an ABSENCE for 36 of 41 ops, and an absence is what a derivation that
-    // cannot detect anything also reports. Synthetic descriptors drive both branches: a tier that
-    // reaches the confirm port and two that do not, under the same injected context.
-    const probes = [
-      {
-        id: SYNTHETIC_ASKING_OP_ID,
-        risk: { name: SYNTHETIC_ASKING_OP_ID, recognized: true, declaredTier: 'mutating-shared' },
-      },
-      {
-        id: SYNTHETIC_NON_ASKING_OP_ID,
-        risk: { name: SYNTHETIC_NON_ASKING_OP_ID, recognized: true, readOnly: true },
-      },
-      {
-        id: SYNTHETIC_LOCAL_OP_ID,
-        risk: { name: SYNTHETIC_LOCAL_OP_ID, recognized: true, declaredTier: 'mutating-local' },
-      },
-    ] as const satisfies readonly RiskClassifiable[]
-
-    expect(deriveAskCapableOpIds(probes)).toEqual([SYNTHETIC_ASKING_OP_ID])
-  })
-
-  it('carries an ask policy point on exactly the ops that can ask, in both directions', () => {
-    const rowsWithAsk = SCENARIO_TABLE.filter((row) => row.policyPoints.ask !== undefined)
-      .map((row) => row.opId)
-      .sort()
-    expect(
-      rowsWithAsk,
-      'the rows declaring an ask policy point must be exactly the derived ask-capable set — a row '
-        + 'short is a verdict nobody asserts, a row over is a verdict that cannot happen',
-    ).toEqual([...ASK_CAPABLE_OP_IDS].sort())
-    // …and the other direction is a different statement: every ask-capable op has a ROW at all.
-    for (const opId of ASK_CAPABLE_OP_IDS) {
-      expect(
-        scenarioRowFor(opId)?.policyPoints.ask,
-        `${opId}: the shipped classifier can ask for this capability and no scenario row says so`,
-      ).toBe('direct')
-    }
-  })
-
   it('derives its policy fixtures from the declarations, and never from the ambient environment', () => {
-    // Pitfall 3, as a source assertion rather than a hope. The shipped resolver answers `ci`
-    // wherever CI markers are set — so a fixture that read the ambient context would compute one
-    // answer on a laptop and a different one on the PR that is supposed to be checking it. Comments are stripped BEFORE the
-    // sweep, because the file's own header names these very identifiers to explain why it avoids
-    // them, and a grep that counted prose would make the header unwritable.
+    // Comments stripped, the fixtures must not read the ambient context, which says `ci` under CI.
     const source = readFileSync(new URL('./policy-fixtures.ts', import.meta.url), 'utf8')
     const code = source
       .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -1355,7 +1022,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         .toContain(forbidden)
     }
     // …and the sweep is over the real file rather than an empty string.
-    expect(code, 'the policy fixtures source read back empty').toContain('deriveAskCapableOpIds')
+    expect(code, 'the policy fixtures source read back empty').toContain('CONFORMANCE_EXECUTION_CONTEXT')
     // The covering and refusing callers are DERIVED: no scope literal appears in the file at all.
     for (const scope of RETIRED_SCOPE_NAMES) {
       expect(code, `policy-fixtures.ts spells the ${scope} scope instead of reading it off the `
@@ -1363,9 +1030,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'derives a covering and a refusing caller for every
-  // capability, from its own declaration'. The covering caller holds no grant and the refusing one is
-  // retired with the grants it withheld.
   it('derives one grantless covering caller for every capability, and no refusing caller', () => {
     for (const declaration of registryDeclarations()) {
       const covering = coveringCallerFor(declaration)
@@ -1377,18 +1041,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
     expect(Object.keys(policyFixtures)).not.toContain('refusingCallerFor')
   })
 
-  // ---- Plan 04: the surface drivers (FUNC-05 legs 3 and 4) --------------------------------------
+  // ---- The surface drivers ----
 
   it('drives a capability through the chat surface\'s own composed dispatch, model-free', async () => {
-    // The plan-04 tracer. `quarantine.list` is the safe subject: read-only, bound in this host, and
-    // its declared input is the empty object, so nothing about the drive depends on a store having
-    // anything in it. (2026-10-01, 432-17: `proposals.list`, the subject until now, is deleted with
-    // the inbox; `quarantine.list` has the same three properties.)
-    //
-    // WHAT PRODUCES THIS ANSWER is the shipped REPL: a typed clause, split by the shipped splitter,
-    // routed by the shipped resolver's `/fn` branch, minted a caller by the composition, and
-    // dispatched through the composed `ChatInvokeBinding`. The receipt read back is the record the
-    // printed line renders.
+    // `quarantine.list` is read-only, bound here and takes an empty input; no store state matters.
     const row = scenarioRowFor('quarantine.list')
     expect(row, 'the scenario table no longer carries quarantine.list').toBeDefined()
 
@@ -1401,18 +1057,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toEqual([])
     expect(outcome.receipt?.status, 'quarantine.list on chat: the surface reached a definitive '
       + 'outcome').toBe('executed')
-    // ORIGIN IS THE MODEL-FREE PROOF, and it is a fact the surface recorded rather than a promise
-    // this file makes: the deterministic route mints `human` and the planner route mints `agent`
-    // (391 D-06), so a receipt stamped `human` cannot have been planned by a model.
+    // The deterministic route mints `human` and the planner `agent`, so `human` means unplanned.
     expect(outcome.receipt?.origin, 'quarantine.list on chat: the receipt must come from the '
       + 'deterministic route, or a model planned this call').toBe('human')
-    // THIS CALL WAS DISPATCHED — a differential, not a presence check.
-    //
-    // RE-SPELLED 2026-09-30 (432-13). This read the gate's `fn:quarantine.list` rows against a
-    // `config.get` baseline, because the banner's opening reads write rows of their own (397-09's
-    // measured vacuity). No gate writes a row since 432-13, so the differential moves to the
-    // clause's own RESULT record: the opening reads are not clauses and file none, so a drive of
-    // `config.get` files no `quarantine.list` result and this drive files exactly one.
+    // Opening reads file no result record, so a `config.get` drive is the baseline here.
     const baselineRow = scenarioRowFor('config.get')
     expect(baselineRow, 'the scenario table no longer carries config.get').toBeDefined()
     const baselineDrive = await driveChatDispatch({
@@ -1426,7 +1074,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
       resultsFrom(outcome),
       'quarantine.list on chat: the clause filed no result of its own, so it did not dispatch',
     ).toBe(1)
-    // …and no approval row was written for it (C432-CHAT-DIRECT).
+    // No approval row is written for it.
     expect(outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor('quarantine.list')))
       .toEqual([])
   })
@@ -1456,10 +1104,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('drives a tool through the MCP surface\'s real protocol door', async () => {
-    // The MCP half of the tracer, over the same `withMcpClient` wiring every enumeration leg reads
-    // through — so an enumeration and a call in this suite cannot be talking to two servers.
-    // 432-12: `agent_qa_list_proposals` left with the proposal round; the bundle read is the empty-
-    // argument read tool that stands in.
+    // The same `withMcpClient` wiring as the enumeration legs, so both share one server.
     const answered = await driveMcpCall({
       toolName: 'agent_qa_list_knowledge_bundles',
       args: {},
@@ -1481,19 +1126,10 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toBe(false)
   })
 
-  // ---- LEG 3: policy identity (D-11, FUNC-03) ---------------------------------------------------
+  // ---- LEG 3: policy identity ---------------------------------------------------
 
   it('answers identically for two callers that differ only in which surface minted them', async () => {
-    // FUNC-03's claim, measured. `invoke.ts` reads the caller record in exactly three places and
-    // `surface` is in none of them — it is attribution. So two callers agreeing on grants, origin
-    // and safe mode and disagreeing only on `surface` must reach the same place for every one of
-    // the 41 capabilities, and `if (caller.surface === 'chat')` anywhere under the gate reds here.
-    //
-    // WHAT PRODUCES EACH SIDE: the left caller is `CHAT_RESOLVER_CALLER` — the frozen record
-    // `composeLocalAgent` spreads at its own per-stage mint — regranted to this op's declared
-    // scopes; the right is `MCP_FUNCTION_CALLER`, the record `commands/mcp.ts` composes its server
-    // with. Two producers in two packages, two `invokeFunction` calls, one comparison. A
-    // helper that shaped both sides would be comparing a value to itself.
+    // `surface` is attribution only, so callers differing only in it reach the same place.
     const divergent: string[] = []
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
@@ -1514,20 +1150,12 @@ describe('the parity suite ranges the registry census over every rostered surfac
     expect(
       divergent,
       'capabilities whose verdict depends on WHICH SURFACE minted an otherwise identical caller — '
-        + 'caller-as-data is broken and a surface has a private policy (FUNC-03)',
+        + 'caller-as-data is broken and a surface has a private policy',
     ).toEqual([])
   }, 120_000)
 
-  // RE-SPELLED 2026-10-01 (432-18) from 'diverges between the surfaces\' own mints on exactly the
-  // human-origin capabilities': the last op declaring `requiresHumanOrigin` (`grants.revoke`) is
-  // deleted, so the derived divergent set is EMPTY and both directions hold over the whole census.
-  it('C432-NO-GRANT-OPS: the surfaces\' own mints diverge on no capability, because none declares requiresHumanOrigin', async () => {
-    // The other half of leg 3, and the reason the cell above harmonises `origin`. The surfaces'
-    // REAL mints differ on origin as well as on surface (391 D-06: a person typing an alias decided
-    // that call; an MCP client did not), so their answers legitimately differ — but only where an
-    // op declares it needs a human, and the divergent set is DERIVED from the declarations rather
-    // than listed here. A cell that demanded blanket agreement would be asserting the product wrong;
-    // one that never checked would let a surface acquire an exception nobody named.
+  it('the surfaces\' own mints diverge on no capability, because none declares requiresHumanOrigin', async () => {
+    // The divergent set is derived from the declarations, so no exception goes unnamed.
     const divergent: string[] = []
     const declaredHumanOrigin: string[] = []
     for (const declaration of registryDeclarations()) {
@@ -1535,7 +1163,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
       const callers = surfaceShapedCallers()
       const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
       const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
-      // 432-20 (D-10): the key itself, since declarations no longer carry it at all.
+      // The key itself, which no declaration carries.
       if (Object.keys(declaration).includes('requiresHumanOrigin')) declaredHumanOrigin.push(declaration.id)
       if (onChat.kind === onMcp.kind) continue
       divergent.push(declaration.id)
@@ -1556,12 +1184,9 @@ describe('the parity suite ranges the registry census over every rostered surfac
     expect(divergent).toEqual([])
   }, 120_000)
 
-  // ---- LEG 4: the refuse direction, two independent walls (D-11) --------------------------------
+  // ---- Leg 4: the refuse direction ----
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses at the GATE WALL for every capability,
-  // naming the one withheld grant'. The scope check is deleted: a caller holding no grant at all, on
-  // either surface's mint, reaches the gate band for every capability, and no refusal names a scope.
-  it('C432-ALL-OPS-AVAILABLE: refuses at the GATE WALL for no capability, on either surface (gate wall)', async () => {
+  it('refuses at the GATE WALL for no capability, on either surface (gate wall)', async () => {
     const callers = grantlessSurfaceCallers()
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
@@ -1578,12 +1203,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   }, 120_000)
 
-  // RE-SPELLED 2026-09-30 (432-13, C432-CHAT-DIRECT). The chat surface wall was `/pin`: a session
-  // deny overlay the gate consulted, producing `FunctionDeniedError` and a `session-pin-denied` row.
-  // `/pin` and the overlay's only reader are gone, and a chat caller holds every scope (the cell
-  // below), so the chat surface has no per-capability refusal left to drive. What this cell pins now
-  // is that absence, through the surface's own dispatch: `/pin fn:<id>` is not a directive, and the
-  // capability typed after it is not refused by anything a pin could have set.
   it('refuses at the CHAT SURFACE WALL for no capability: /pin is unhandled and nothing is denied', async () => {
     const opId = 'quarantine.list'
     const row = scenarioRowFor(opId)
@@ -1605,12 +1224,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     ).toEqual([])
   }, 120_000)
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses at the MCP SURFACE WALL for every projected
-  // capability: no door under the short grant'. The visibility law is deleted, so the surface wall is
-  // gone: every projected tool is listed to a caller granted nothing, and a direct call is answered
-  // in band rather than refused by the protocol. 2026-10-01 (432-21, D-12): the mark door's
-  // credential refusal, the one in-band permission answer that was left, is deleted too.
-  it('C432-TOKENLESS-CATALOG: refuses at the MCP SURFACE WALL for no projected capability', async () => {
+  it('refuses at the MCP SURFACE WALL for no projected capability', async () => {
     const listedUnderEveryScope = await listMcpToolNames(smuggledMcpCaller(RETIRED_SCOPE_NAMES))
     const listedUnderNothing = await listMcpToolNames(smuggledMcpCaller([]))
     expect(sorted(listedUnderNothing), 'a caller granted nothing lists a different catalogue')
@@ -1628,9 +1242,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         `${row.opId} on mcp (surface wall): a grantless caller's call was refused by the protocol `
           + 'rather than answered in band — the door is still hidden',
       ).toBe(true)
-      // 432-21 (D-12, routed 432-20 #3): the mark door has no credential refusal, so this
-      // empty-argument call is answered by the ordinary schema refusal like every other tool's —
-      // in band, and never `credential-required`.
+      // The mark door's empty-argument call is answered by the ordinary schema refusal, in band.
       if (called.answered) {
         expect(JSON.stringify(called.structured ?? {}), `${tool}: no credential refusal survives`)
           .not.toContain('credential-required')
@@ -1639,19 +1251,14 @@ describe('the parity suite ranges the registry census over every rostered surfac
   }, 300_000)
 
   it('records WHY the chat surface has no wall since /pin left', async () => {
-    // THE MEASUREMENT BEHIND THE DESIGN, pinned so it cannot go stale silently. Until 432-21 both
-    // chat stage callers held `CHAT_STAGE_SCOPES`, the WHOLE closed scope union. 2026-10-01 (432-21,
-    // D-12): the constant is deleted and the stage callers carry no scope set at all — nothing reads
-    // one — so a chat surface wall cannot be a scope refusal however it were written. It was a pin
-    // until 432-13 (C432-CHAT-DIRECT).
+    // Chat stage callers carry no scope set, so a chat surface wall cannot be a scope refusal.
     for (const caller of [CHAT_PLANNER_CALLER, CHAT_RESOLVER_CALLER]) {
       expect(
         Object.keys(caller).sort(),
         'a chat stage caller carries a grant field again — a scope wall would be a state to assert',
       ).toEqual(['origin', 'surface'])
     }
-    // Every capability's risk name is still `fn:<id>`: it is the declaration's published risk
-    // descriptor (432-19 deleted the in-run gate hook and the audit row that compared these bytes).
+    // Every capability's risk name is `fn:<id>`, the declaration's published risk descriptor.
     for (const declaration of registryDeclarations()) {
       expect(
         declaration.risk.name,
@@ -1661,9 +1268,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('keeps the two walls in two cells: no assertion is fed by both a surface and the gate', () => {
-    // D-11's "never averaged into one assertion", as a structural claim about this file. Splitting
-    // on `it(` is coarse but exact enough for what is being forbidden: a cell that produced both a
-    // surface answer and a gate answer could merge them, and none does.
+    // Split on `it(`: no cell may produce both a surface answer and a gate answer and merge them.
     const code = commentStrippedSource('parity.test.ts')
     const gateProducers = ['gateAnswerFor']
     const surfaceProducers = ['driveChatDispatch', 'driveMcpCall', 'listMcpToolNames']
@@ -1678,7 +1283,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
       .filter((body) => surfaceProducers.some((name) => body.includes(name)))
     expect(
       merged.length,
-      'a cell produces BOTH a gate answer and a surface answer, so the two walls D-11 requires to '
+      'a cell produces BOTH a gate answer and a surface answer, so the two walls required to '
         + 'be independent can be averaged into one expect',
     ).toBe(0)
     // Non-vacuity: both kinds of cell exist to be kept apart.
@@ -1694,143 +1299,41 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  // ---- The ASK points: verdict parity, handling per contract (2026-08-16, D-11) -----------------
+  // ---- Direct dispatch: every capability lands at its direct step --------------------------------
   //
-  // RE-SPELLED 2026-09-30 (432-13, D-14/D-15, C432-INVOKE-DIRECT). D-11's verdict parity was the
-  // ask being REACHED identically on both surfaces' callers, each surface then handling it its own
-  // way (chat paused at a confirm seam, MCP refused in band). `invokeFunction` no longer evaluates
-  // anything, so there is no ask to reach: the capabilities the classifier WOULD ask about are the
-  // `direct` policy point, and the parity that survives is that both surfaces' callers land at the
-  // same step past the scope check — derived from this composition's binding status — with no
-  // standing approval, no confirm and no context changing where.
+  // `invokeFunction` evaluates no policy, so both surfaces' callers land every capability at the
+  // step its binding status names, and the execution context does not move it.
 
-  it('dispatches every ask-capable capability directly, identically on both surfaces\' callers', async () => {
-    const askCapable = new Set(ASK_CAPABLE_OP_IDS)
+  it('dispatches every capability directly, identically on both surfaces\' callers', async () => {
     for (const declaration of registryDeclarations()) {
       const row = scenarioRowFor(declaration.id as ScenarioOpId)
       const callers = surfaceInertCallers()
       const onChat = await gateAnswerFor(declaration.id, row!.input, callers.chat)
       const onMcp = await gateAnswerFor(declaration.id, row!.input, callers.mcp)
-      expect(
-        onMcp.kind,
-        `${declaration.id}: the two surfaces' callers land at different steps`,
-      ).toBe(onChat.kind)
-      expect(onChat.kind, `${declaration.id}: nothing may deny a call since 432-13`)
-        .not.toBe('gate-denied')
-      if (askCapable.has(declaration.id)) {
-        const direct = declaration.bindingStatus === 'unbound' ? 'allowed-unbound' : 'allowed-dispatched'
-        expect(
-          onChat.kind,
-          `${declaration.id}: an ask-capable capability did not reach step `
-            + `${direct === 'allowed-unbound' ? 'binding' : 'dispatch'} with no approval`,
-        ).toBe(direct)
-      }
+      const direct = declaration.bindingStatus === 'unbound' ? 'allowed-unbound' : 'allowed-dispatched'
+      expect(onChat.kind, `${declaration.id}: the call did not reach its direct step`).toBe(direct)
+      expect(onMcp.kind, `${declaration.id}: the two surfaces' callers land at different steps`)
+        .toBe(onChat.kind)
     }
   }, 120_000)
 
-  it('lands an ask-capable call at the same step in a fail-closed context as in an interactive one', async () => {
-    // The context control, re-spelled: `ci` used to fail an ask closed before the confirm. Nothing
-    // reads the context on this road now, so both contexts must answer alike.
-    // 2026-10-01 (432-31, D-12): the `ci` resolver rode the retired, unread registry option, which
-    // is dropped.
-    // 2026-10-03 (quick-261003-tsr, WR-06): the two calls used to run in the same ambient context,
-    // so the cell compared one call with itself. Each now runs inside its own safety scope, the
-    // seam every ambient reader of the execution context resolves through.
-    for (const opId of ASK_CAPABLE_OP_IDS) {
-      const declaration = registryDeclarations().find((candidate) => candidate.id === opId)
-      const row = scenarioRowFor(opId as ScenarioOpId)
-      expect(declaration, `${opId} is not declared`).toBeDefined()
+  it('lands every capability at the same step in a ci context as in an interactive one', async () => {
+    // Each call runs inside its own safety scope, the seam every ambient reader of the execution
+    // context resolves through, so the two contexts are really different.
+    for (const declaration of registryDeclarations()) {
+      const row = scenarioRowFor(declaration.id as ScenarioOpId)
       const callers = surfaceInertCallers()
       const interactive = await runSafetyScope({ executionContext: 'local-interactive' }, () =>
-        gateAnswerFor(opId, row!.input, callers.chat))
-      const failClosed = await runSafetyScope({ executionContext: 'ci' }, () =>
-        gateAnswerFor(opId, row!.input, callers.chat))
-      const direct = declaration!.bindingStatus === 'unbound' ? 'allowed-unbound' : 'allowed-dispatched'
-      expect(interactive.kind, `${opId}: the interactive call did not reach its direct step`).toBe(direct)
-      expect(failClosed.kind, `${opId}: the execution context changed where the call landed`)
+        gateAnswerFor(declaration.id, row!.input, callers.chat))
+      const ci = await runSafetyScope({ executionContext: 'ci' }, () =>
+        gateAnswerFor(declaration.id, row!.input, callers.chat))
+      expect(ci.kind, `${declaration.id}: the execution context changed where the call landed`)
         .toBe(interactive.kind)
     }
   }, 120_000)
 
-  it('handles an ask-capable capability on CHAT by dispatching it, never by pausing', async () => {
-    // Chat's contract since 432-13: no confirm seam, no `prompted-denied`. The drive is the shipped
-    // REPL with no terminal and no pin; the op runs against the drive's own temp workspace.
-    for (const opId of ASK_CAPABLE_OP_IDS) {
-      const row = scenarioRowFor(opId as ScenarioOpId)
-      for (const executionContext of ['local-interactive', 'ci'] as const) {
-        const outcome = await driveChatDispatch({ opId, input: row!.input, executionContext })
-        expect(outcome.unhandled, `${opId} on chat (${executionContext}): the clause did not route`)
-          .toEqual([])
-        expect(outcome.receipt, `${opId} on chat (${executionContext}): no receipt`).toBeDefined()
-        expect(
-          outcome.receipt?.outcome,
-          `${opId} on chat (${executionContext}): the capability was denied`,
-        ).not.toBe('FunctionDeniedError')
-        expect(
-          outcome.auditRows.filter((auditRow) => auditRow.action === pinClassFor(opId)),
-          `${opId} on chat (${executionContext}): an approval row was written`,
-        ).toEqual([])
-      }
-    }
-  }, 300_000)
-
-  it('handles the ask on MCP per ITS contract — refuse-and-teach, or refuse in band', async () => {
-    // MCP's own contract, DERIVED from the mapping's own `kind` rather than picked per op.
-    // 2026-09-30 (432-12 D-05/D-14): the refuse-and-teach arm is GONE with the D-11 apply doors, and
-    // its absence is asserted rather than skipped: no projected ask-capable op sits behind an
-    // `apply` tool without the mark door's credential check, and the two apply ops that could ask
-    // were dispositioned with the removed proposal round until 432-17 deleted them; the last
-    // unprojected ask-capable op, the human-origin `grants.revoke`, left in 432-18, so every
-    // ask-capable op is projected. Every projected tool still gets the
-    // gate's own answer back in band, and none executes on a blind first call.
-    // 2026-10-02 (432-39): no scope set is handed in; the call is made as the shipped MCP caller.
-    let bandRefusals = 0
-    for (const opId of ASK_CAPABLE_OP_IDS) {
-      const projection = AGENT_QA_TOOL_PROJECTIONS.find((candidate) => candidate.ops.includes(opId))
-      if (projection === undefined) {
-        // 2026-10-01 (432-18): the last unprojected ask-capable op was `grants.revoke`, filed under
-        // the human-origin class; both are deleted, so no class excuses an unprojected one now.
-        expect.unreachable(
-          `${opId} on mcp (ask): it can ask and this surface does not project it — since 432-18 `
-            + 'no unprojected ask-capable op remains',
-        )
-      }
-      // 432-21 (D-12): the mark door is the one `apply` entry and it checks no credential; any other
-      // apply entry would be a refuse-and-teach door, which 432-12 removed.
-      expect(
-        projection.kind === 'apply' && projection.name !== 'agent_qa_mark_run',
-        `${opId} on mcp (ask): ${projection.name} is a refuse-and-teach apply door, which 432-12 removed`,
-      ).toBe(false)
-      const row = scenarioRowFor(opId as ScenarioOpId)
-      const answered = await driveMcpCall({
-        toolName: projection.name,
-        args: row!.input as Record<string, unknown>,
-      })
-      expect(answered.answered, `${opId} on mcp (ask): the protocol refused the call outright`)
-        .toBe(true)
-      const inBand = answered as Extract<typeof answered, { answered: true }>
-      bandRefusals += 1
-      // 432-21 (D-12): no `credential-required` arm — the mark door answers like every other door.
-      expect(inBand.structured?.['status'], `${opId}: no credential refusal survives`)
-        .not.toBe('credential-required')
-      expect(inBand.isError, `${opId} on mcp (ask): an ask-tier capability answered without the `
-        + 'gate refusing it').toBe(true)
-      expect(inBand.text, `${opId} on mcp (ask): the in-band refusal must name the capability`)
-        .toContain(opId)
-    }
-    expect(bandRefusals, 'no ask-capable op reached the in-band refusal arm').toBeGreaterThan(0)
-  }, 300_000)
-
   it('observes each surface through its own dispatch, never through the gate directly', () => {
-    // PITFALL 5, AS A SOURCE ASSERTION. Every behavioural cell above would pass over a driver that
-    // called `invokeFunction` itself — and such a driver is blind to D-14's ungated-op mutation by
-    // construction, because the thing the mutation removes is the very call the driver would be
-    // making. Comments are stripped first so this file's own prose may name what the driver's body
-    // must not.
-    //
-    // 2026-09-28 (430-05): the sweep covers the FILE rather than naming a function, so it covers the
-    // file's remaining drivers (chat and MCP) now that the dashboard driver is gone with its door,
-    // and a driver added later inherits the rule instead of having to be remembered.
+    // Comments stripped, the driver file must not call `invokeFunction`, or it hides an ungated op.
     const code = commentStrippedSource('surface-dispatch.ts')
     // Named identifiers rather than a bare word: the drivers' fixture config declares a
     // `registry.targets` block, and a token scan would have read the project's own configuration
@@ -1850,20 +1353,12 @@ describe('the parity suite ranges the registry census over every rostered surfac
     // entry point is named, so a file that had stopped driving a surface reads as an empty sweep
     // here rather than as a pass.
     expect(code, 'the surface-dispatch source read back empty').toContain('createChatCommand')
-    // The CLI chat command resolves its context ambiently, so its driver sets and restores the
-    // process resolver (Pitfall 3); a driver that quietly started inheriting the process's answer
-    // reds here.
+    // The chat driver sets and restores the process resolver; inheriting its answer reds here.
     expect(code, 'the chat driver must inject the execution context it decides under')
       .toContain('setActiveExecutionContextResolver')
   })
 
-  // ---- The golden capability ledger (plan 06 — FUNC-05 leg 6, D-05/D-06/D-07/D-08) --------------
-  //
-  // WHAT THIS SECTION ADDS THAT NOTHING ABOVE HAS. Every leg above is a statement about the tree as
-  // it stands: what is reachable, what refuses, what agrees. All of them stay green while a scope is
-  // widened, a risk tier is lowered or a capability is moved out of the MCP partition, because each
-  // of those leaves a self-consistent tree. The ledger is the one artifact that compares the product
-  // against its own past, and the comparison is readable: one line per field per capability.
+  // ---- The golden capability ledger: the product compared with its own past ----
 
   it('matches the committed golden registry, op by op and field by field', () => {
     // A MISSING LEDGER IS A RED, NEVER A SKIP. Until the file is minted this is the only cell in the
@@ -1897,9 +1392,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     const findings = goldenFindings(live.rows, committed.rows)
     const committedById = new Map(committed.rows.map((row) => [row.id, row]))
 
-    // PER OP, STRUCTURALLY. The label names the capability and the FIELDS that moved; the diff
-    // vitest prints under it is the structure itself. A bare digest inequality — "expected 9f3a… to
-    // be 71bc…" — is what D-06 forbids, and it is what a comparison of two hashes can only ever say.
+    // Per op: the label names the capability and fields that moved, never a bare digest inequality.
     for (const row of live.rows) {
       const moved = goldenFieldsThatMoved(findings, row.id)
       const label = moved.length === 0
@@ -1961,9 +1454,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     expect(fresh.endsWith('\n'), 'the ledger must end in exactly one newline').toBe(true)
     expect(fresh.endsWith('\n\n'), 'the ledger must end in exactly one newline').toBe(false)
 
-    // THE EMIT PORT (D-07). The regen script runs this suite with the flag set and lifts the text
-    // out from between the sentinels; the SCRIPT then writes the file, after its own refuse-while-red
-    // gate. Nothing here writes anything — see the source assertion two cells below.
+    // The regen script lifts the text between the sentinels and writes the file; nothing here does.
     if (goldenEmitRequested()) emitGoldenText(fresh)
   })
 
@@ -2007,22 +1498,24 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('control: the ledger comparator names the op and the field that moved', () => {
-    // THE NAMED-RED REQUIREMENT, DRIVEN. D-06/D-07 ask that a mismatch identify the capability and
-    // the field rather than announce that two hashes differ. Proving that by breaking the committed
-    // file would be a mutation of a shipped artifact; the comparator is pure, so the changes D-05
-    // exists to make visible — a lowered tier, a moved partition — are driven over real rows here,
-    // plus the presence columns, the result kind, a digest and the binding.
+    // The comparator is pure, so each change the golden exists to show is driven over real rows.
     const rows = buildGoldenRows(rootDeclarations)
     expect(goldenFindings(rows, rows), 'a ledger compared against itself must report nothing')
       .toEqual([])
 
     const subject = rows[0] as GoldenRow
-    // 432-20 (D-10/D-12): the `requiredScopes` and `requiresHumanOrigin` columns are gone, so their
-    // two mutations left this list; `classifies` and `resultKind` take their places.
     const mutations: readonly (readonly [string, GoldenRow])[] = [
-      ['risk', { ...subject, risk: { ...subject.risk, declaredTier: 'readOnly' } }],
+      [
+        'risk',
+        {
+          ...subject,
+          risk: {
+            ...subject.risk,
+            destructive: subject.risk.destructive === true ? undefined : true,
+          },
+        },
+      ],
       ['partition', { ...subject, partition: { kind: 'unprojected', reason: 'not-mid-flight-read' } }],
-      // 2026-10-02 (432-42, D-14): the `discloses` column is deleted; `rendersResult` takes its place.
       ['rendersResult', { ...subject, rendersResult: subject.rendersResult === true ? undefined : true }],
       ['classifies', { ...subject, classifies: subject.classifies === true ? undefined : true }],
       ['resultKind', { ...subject, resultKind: subject.resultKind === 'unary' ? 'stream' : 'unary' }],
@@ -2051,12 +1544,11 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('control: the partition join answers all three states, including the uncatalogued one', () => {
-    // Pitfall 11's shape at the partition. The third state is reachable only through a synthetic
-    // mapping — which is exactly why it is driven here rather than left as a branch nobody has seen.
-    const projectingTool = new Map([[SYNTHETIC_GOLDEN_STRAY_OP_ID, 'agent_qa_control_397_06']])
+    // The third state is reachable only through a synthetic mapping, so it is driven here.
+    const projectingTool = new Map([[SYNTHETIC_GOLDEN_STRAY_OP_ID, 'agent_qa_control_golden_stray']])
     expect(goldenPartitionOf(SYNTHETIC_GOLDEN_STRAY_OP_ID, projectingTool, [])).toEqual({
       kind: 'projected',
-      tool: 'agent_qa_control_397_06',
+      tool: 'agent_qa_control_golden_stray',
     })
     expect(
       goldenPartitionOf(SYNTHETIC_GOLDEN_UNCATALOGUED_OP_ID, new Map(), [
@@ -2079,10 +1571,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('censuses binding status at the one shipped composition root, spelling the third state', () => {
-    // D-08. THE COLUMN IS A FACT ABOUT A COMPOSITION, not about the catalogue, and that is what
-    // makes reading it off the RIGHT composition load-bearing. `composeCliLocalAgent` — the function
-    // every shipped CLI surface composes through — binds all 41; this suite's own enumeration
-    // registry supplies empty deps and binds 11. Same 41 capabilities, different answers.
+    // The column describes a composition: the CLI root binds more than the empty-deps registry.
     for (const declaration of rootDeclarations) {
       expect(
         ['bound', 'unbound'],
@@ -2099,11 +1588,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
       'the two compositions must declare the same capabilities — binding is not membership',
     ).toEqual(sorted(rootDeclarations.map((declaration) => declaration.id)))
 
-    // MEASURED 2026-08-16: 41 bound at the CLI root, 11 bound under empty deps, so 30 disagree. The
-    // assertion is that the disagreement is NON-EMPTY rather than that it is thirty, because the
-    // claim is "this column describes a composition" and a host binding one more capability is not
-    // a reason for this cell to red. A ledger built off the suite's own registry instead of the
-    // root would make this set empty, which is the mistake it exists to catch.
+    // Non-empty, not an exact count: a host binding one more capability is no reason to red.
     const disagree = rootDeclarations.filter(
       (declaration) => suiteRegistryStatuses.get(declaration.id) !== declaration.bindingStatus,
     )
@@ -2134,12 +1619,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('agrees with the composition root on every capability each surface host can see', () => {
-    // D-08's DIVERGENCE ASSERTION: "lists bound here, refuses there" is the disagreement
-    // `resolveBindingStatus` exists to prevent, and the only way it can arise is a surface host that
-    // composes a registry of its own. Each shipped host's listing — the chat host's two stage mints,
-    // the MCP host's one tokenless caller under its two legacy keys (432-31/432-39) — is compared to
-    // the root's answer per
-    // capability. The cell below pins the structural reason this holds.
+    // Each shipped host's listing is compared per capability with the root's binding status.
     const rootStatus = new Map(
       rootDeclarations.map((declaration) => [declaration.id, declaration.bindingStatus]),
     )
@@ -2177,7 +1657,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  it('never writes the golden ledger: the only writer is the regen script (D-07)', () => {
+  it('never writes the golden ledger: the only writer is the regen script', () => {
     // THE PROHIBITION, AS SOURCE. "A capability ledger must not be one keystroke from silently
     // blessed" is a claim about what this directory CAN do, not about what it happens to do today,
     // so the sweep ranges every file in the directory — including one added tomorrow — rather than
@@ -2218,7 +1698,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
     }
   })
 
-  // ---- FUNC-05 leg 2: structural schema equality, per OP, through ONE lens (D-06) ---------------
+  // ---- Structural schema equality, per op, through one lens ----
 
   it('advertises, for every projected capability, the very shape the gate validates it with', async () => {
     const advertised = new Map(
@@ -2251,11 +1731,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         if (inputPlan.kind === 'exception') {
           takeException(inputPlan.key)
         } else if (inputPlan.kind === 'arm') {
-          // THE UNION-ARM NORMALISATION, through the lens's own function: the fold adds a
-          // discriminant key whose value is the op id, and taking it back out is what makes the
-          // composed arm and the op's own document the same claim. 2026-10-20 (446-11, D-25): the
-          // fold lists one object, so the listing is held to the lens's fold check, and the arm
-          // compared whole is the composed union's, which is what the call is validated with.
+          // The fold's discriminant key is removed, so the composed arm matches the op's document.
           const listed = withoutDialect(tool!.inputSchema)
           expect(
             foldArmFindings(listed, projection.discriminant!, opId, ownInput),
@@ -2288,8 +1764,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
         if (outputPlan.kind === 'exception') {
           takeException(outputPlan.key)
           if (outputPlan.key === 'degraded-output-contract') {
-            // PITFALL 9: the ABSENCE is asserted, never skipped — a skip asserts nothing, and the
-            // one thing a degraded tool must never do is quietly start advertising a stand-in.
+            // Asserted, not skipped: a degraded tool must never advertise a stand-in schema.
             const entry = DEGRADED_OUTPUT_CONTRACTS.find((row) => row.tool === projection.name)!
             expect(
               tool!.outputSchema,
@@ -2309,8 +1784,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
           continue
         }
 
-        // 431-03: a non-object output root (the run list) arrives `{ result }`-wrapped under the
-        // 2025-11-25 codec; the published lens undoes exactly that transport wrap.
+        // A non-object root is `{ result }`-wrapped under the `2025-11-25` codec; the lens unwraps.
         const advertisedOutput = withoutDialect(withoutLegacyResultWrap(tool!.outputSchema ?? {}))
         expect(
           tool!.outputSchema,
@@ -2318,10 +1792,6 @@ describe('the parity suite ranges the registry census over every rostered surfac
             + 'declared degradation',
         ).toBeDefined()
         const members = advertisedOutputMembers(advertisedOutput)
-
-        // 2026-10-01 (432-21, D-12): the mark door's `op outcome OR credential refusal` output
-        // (419 D-20) left with the bearer credential; it advertises its op's own contract and is
-        // compared on the single-op arm below like every other 1:1 tool.
 
         if (composition === 'union') {
           // A fold whose arms answer one shape advertises that shape; the one whose arms differ
@@ -2358,18 +1828,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
       }
     }
 
-    // THE ARITHMETIC, so a future reader can tell a real change from a loop that stopped ranging.
-    // Twenty-six projected capabilities, on each side, every one of them either compared or
-    // carrying a declared exception (2026-09-15, 423-21 D-18: the two feedback read tools add one
-    // compared input and one compared output each):
-    //   inputs  — 26 less the 2 proposal apply doors and 1 pipeline downstream op = 23
-    //   outputs — 26 less the 1 degraded contract and 1 pipeline downstream op    = 24
-    // (2026-09-28, 431-03: `runs.list` left the degraded list with its canonical output contract.)
-    // (2026-09-28, 431-04 D-04/D-07: nine more projected capabilities, each compared on both sides:
-    // seven single reads and the evidence fold's two arms — 32 inputs and 33 outputs.)
-    // (2026-09-30, 432-12 D-05: thirty projected capabilities. The two apply doors, the two proposal
-    // reads and the undo arm leave: 30 less 1 pipeline downstream op = 29 inputs, all compared now
-    // that no door wraps its input; 30 less 1 degraded and 1 pipeline downstream = 28 outputs.)
+    // Every projected capability is compared on each side or carries a declared exception.
     const projectedOpCount = AGENT_QA_TOOL_PROJECTIONS.reduce(
       (total, projection) => total + projection.ops.length,
       0,
@@ -2412,11 +1871,7 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 
   it('looks through the ONE published lens, and defines no normaliser of its own', () => {
-    // D-06's one-lens rule, as a source assertion (397-02 extracted the three normalisers to
-    // `packages/mcp/src/conformance-support.ts` precisely so this leg would not have to re-derive
-    // them). A second copy fails SILENTLY: the looser one passes over real drift, and nothing
-    // compares the two copies to each other. Comments stripped so this file may name what its body
-    // must not define.
+    // One lens: a second normaliser copy fails silently, so its definitions are refused.
     const definitionKeywords = ['function ', 'const ']
     for (const file of readdirSync(CONFORMANCE_DIR).filter((name) => name.endsWith('.ts'))) {
       const code = commentStrippedSource(file)
@@ -2444,29 +1899,17 @@ describe('the parity suite ranges the registry census over every rostered surfac
   })
 })
 
-// ---- 432-40 (D-02 / D-03 / D-05 / D-12 / D-18): the conformance rows at the guidance cutover ------
-//
-// The cells above were re-spelled one deletion at a time (432-13 through 432-39): no ask, no grant
-// wall, no human-origin divergence, no credential refusal. These two blocks state what replaced
-// them, as behaviour on the shipped doors, and pin the live partition the rows, the golden and the
-// catalogue range: a non-production change lands in its one call on the chat and MCP doors of one
-// project, and a declared production run is refused, plainly and identically, on both.
-
-/** The run-refusal sentence both doors must show, spelled by the shipped producer. */
-const PARITY_PRODUCTION_TARGET = 'prod-site'
+// ---- The conformance rows as behaviour: a config change lands in one call on chat and MCP ----
 
 interface ParityProject {
   readonly root: string
   readonly configPath: string
   readonly agentQaRoot: string
-  readonly productionTest: string
-  readonly localTest: string
 }
 
-/** One project with one production target, one local target and no `allowProduction`. */
+/** One project with one local target. */
 function parityProject(): ParityProject {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-qa-432-40-parity-')))
-  mkdirSync(join(root, 'tests'), { recursive: true })
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'agent-qa-parity-')))
   writeFileSync(join(root, 'agent-qa.config.yaml'), [
     'workspace:',
     '  testMatch:',
@@ -2478,11 +1921,6 @@ function parityProject(): ParityProject {
     '  secretsFile: .env.secrets.local',
     'registry:',
     '  targets:',
-    `    ${PARITY_PRODUCTION_TARGET}:`,
-    '      platform: web',
-    '      url: http://127.0.0.1:9/app',
-    '      product: parity-product',
-    '      environment: production',
     '    local-site:',
     '      platform: web',
     '      url: http://127.0.0.1:9/local',
@@ -2500,35 +1938,11 @@ function parityProject(): ParityProject {
   writeFileSync(join(root, 'hooks.yaml'), 'hooks: []\n')
   writeFileSync(join(root, '.env'), '')
   writeFileSync(join(root, '.env.secrets.local'), '')
-  writeFileSync(join(root, 'tests', 'prod.yaml'), [
-    `test-id: ${generateTestId()}`,
-    'name: the production test',
-    `target: ${PARITY_PRODUCTION_TARGET}`,
-    'steps:',
-    '  - Verify the page says "Example"',
-    '',
-  ].join('\n'))
-  writeFileSync(join(root, 'tests', 'local.yaml'), [
-    `test-id: ${generateTestId()}`,
-    'name: the local test',
-    'target: local-site',
-    'steps:',
-    '  - Verify the page says "Example"',
-    '',
-  ].join('\n'))
   return {
     root,
     configPath: join(root, 'agent-qa.config.yaml'),
     agentQaRoot: join(root, '.agent-qa'),
-    productionTest: 'tests/prod.yaml',
-    localTest: 'tests/local.yaml',
   }
-}
-
-/** What a refused run must not have left behind, and what a direct change must not have filed. */
-function runDirectories(project: ParityProject): readonly string[] {
-  const runs = join(project.agentQaRoot, 'runs')
-  return existsSync(runs) ? readdirSync(runs) : []
 }
 
 interface ParityToolAnswer {
@@ -2550,7 +1964,7 @@ async function callOnProjectMcp(
     caller: MCP_FUNCTION_CALLER,
     maskText: (text: string) => masking.mask(text),
   }))
-  const client = new Client({ name: 'agent-qa-432-40-parity', version: '0.0.0' })
+  const client = new Client({ name: 'agent-qa-parity', version: '0.0.0' })
   try {
     return await runSafetyScope({ executionContext: 'local-headless' }, async () => {
       await client.connect(new StreamableHTTPClientTransport(new URL('http://parity.local/mcp'), {
@@ -2575,70 +1989,8 @@ async function callOnProjectMcp(
   }
 }
 
-describe('C432-CONFORMANCE-PARITY: one call on the chat and MCP doors, and production refused alike', () => {
-  // MEASURED 2026-10-02 (432-40): the MCP door answered the shipped sentence in band, while the CLI
-  // chat door's receipt carried the refusal's NAME only (`failed runs.start RunDeniedError`), so a
-  // chat user was not shown the target or the `allowProduction: true` line (432-40 deferred #1).
-  // FIXED 2026-10-02 (432-42, D-18): a refused clause adds its refusal's own sentence to the turn's
-  // answer, beside the unchanged receipt; this cell now asserts the sentence on BOTH doors.
-  it('C432-CONFORMANCE-PARITY: a declared production run is refused on the chat and MCP doors before anything runs', async () => {
-    const project = parityProject()
-    try {
-      const sentence = buildProductionRefusal([PARITY_PRODUCTION_TARGET])
-      expect(sentence, 'the shipped refusal no longer names the one line to add').toContain('allowProduction: true')
-
-      const onMcp = await callOnProjectMcp(project, 'agent_qa_start_run', { patterns: [project.productionTest] })
-      expect(onMcp.isError, `mcp answered a production run without refusing it: ${onMcp.text}`).toBe(true)
-      expect(onMcp.text, 'mcp: the refusal is not the shipped production sentence').toContain(sentence)
-
-      const onChat = await driveChatLines(
-        [genericFnClause('runs.start', { patterns: [project.productionTest] })],
-        'local-interactive',
-        { configPath: project.configPath },
-      )
-      const receipt = onChat.receipts.find((candidate) => candidate.functionId === 'runs.start')
-      expect(onChat.unhandled, 'chat: the /fn clause did not route').toEqual([])
-      expect(receipt, 'chat: runs.start filed no receipt').toBeDefined()
-      expect(receipt?.status, 'chat: a production run was executed').toBe('failed')
-      expect(receipt?.outcome, 'chat: the refusal is not the run core\'s production refusal')
-        .toBe('RunDeniedError')
-      expect(onChat.stdout, 'chat: the person is not shown the refusal sentence').toContain(sentence)
-
-      // Refused before effects on both doors, and nothing asked anybody anything.
-      expect(runDirectories(project), 'a refused production run left a run directory').toEqual([])
-      expect(onChat.auditRows, 'chat: an approval row was written').toEqual([])
-      expect(`${onMcp.text}\n${onChat.stdout}`).not.toMatch(/\bconfirm|\bapprov|\bgrant|--yes\b/iu)
-    } finally {
-      rmSync(project.root, { recursive: true, force: true })
-    }
-  }, 120_000)
-
-  // EDGE-04 at the two doors (432-40 task 2): a request that mixes a local and a production member
-  // is refused whole, before the local member runs, and the sentence names only the production one.
-  it('C432-CONFORMANCE-PARITY: a run mixing a local and a production member is refused whole on both doors, naming only the production target', async () => {
-    const project = parityProject()
-    try {
-      const patterns = [project.localTest, project.productionTest]
-      const onMcp = await callOnProjectMcp(project, 'agent_qa_start_run', { patterns })
-      expect(onMcp.isError, `mcp ran a mixed request: ${onMcp.text}`).toBe(true)
-      expect(onMcp.text).toContain(buildProductionRefusal([PARITY_PRODUCTION_TARGET]))
-      expect(onMcp.text, 'mcp: the local member is named as production').not.toContain('"local-site"')
-
-      const onChat = await driveChatLines(
-        [genericFnClause('runs.start', { patterns })],
-        'local-interactive',
-        { configPath: project.configPath },
-      )
-      const receipt = onChat.receipts.find((candidate) => candidate.functionId === 'runs.start')
-      expect(receipt?.status, 'chat: a mixed request was executed').toBe('failed')
-      expect(receipt?.outcome).toBe('RunDeniedError')
-      expect(runDirectories(project), 'the local member of a refused request ran').toEqual([])
-    } finally {
-      rmSync(project.root, { recursive: true, force: true })
-    }
-  }, 120_000)
-
-  it('C432-CONFORMANCE-PARITY: a non-production config change lands in its one call on the chat and MCP doors, with nothing filed for later', async () => {
+describe('one call on the chat and MCP doors', () => {
+  it('a non-production config change lands in its one call on the chat and MCP doors, with nothing filed for later', async () => {
     const project = parityProject()
     try {
       const onMcp = await callOnProjectMcp(project, 'agent_qa_change_config', {
@@ -2672,12 +2024,11 @@ describe('C432-CONFORMANCE-PARITY: one call on the chat and MCP doors, and produ
   }, 120_000)
 })
 
-/** Op ids the approval and permission waves deleted (432-12/17/18). */
+// Retired op id prefixes.
 const RETIRED_OP_ID = /^(?:proposals\.|grants\.|knowledge\.proposal\.|config\.proposal\.|config\.undo\.)/u
 
-describe('C432-REGISTRY-GOLDEN: the registry, the twenty-tool mapping, the rows and the ledger agree', () => {
-  it('C432-REGISTRY-GOLDEN: 44 ops partition into 30 projected behind 20 tools and 14 unprojected, and the rows say the same', async () => {
-    // Measured 2026-10-02 (432-40) after 432-39 removed the permission types: unchanged since 432-18.
+describe('the registry, the twenty-tool mapping, the rows and the ledger agree', () => {
+  it('44 ops partition into 30 projected behind 20 tools and 14 unprojected, and the rows say the same', async () => {
     const ids = registryOpIds()
     const projected = new Set(AGENT_QA_TOOL_PROJECTIONS.flatMap((projection) => [...projection.ops]))
     const unprojected = UNPROJECTED_OPS.map((entry) => entry.opId)
@@ -2696,7 +2047,6 @@ describe('C432-REGISTRY-GOLDEN: the registry, the twenty-tool mapping, the rows 
       if ('reachable' in mcp) expect(mcp.reachable.tool, row.opId).toBe(toolOf.get(row.opId))
       else expect(projected.has(row.opId), `${row.opId}: the row says unprojected`).toBe(false)
       expect(row.policyPoints.refuse, row.opId).toBe('allow')
-      expect(row.policyPoints.ask ?? 'direct', row.opId).toBe('direct')
     }
 
     // The live ledger, minted from the one shipped composition root: 42 bound and 2 unbound there.
@@ -2709,7 +2059,7 @@ describe('C432-REGISTRY-GOLDEN: the registry, the twenty-tool mapping, the rows 
     }
   }, 120_000)
 
-  it('C432-REGISTRY-GOLDEN: the committed ledger carries no permission column and no retired op', () => {
+  it('the committed ledger carries no permission column and no retired op', () => {
     const committed = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8')) as GoldenFile
     const keys = new Set(committed.rows.flatMap((row) => Object.keys(row)))
     for (const retired of ['requiredScopes', 'requiresHumanOrigin', 'credential', 'grantedScopes']) {

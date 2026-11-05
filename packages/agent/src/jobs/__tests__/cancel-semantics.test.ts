@@ -1,18 +1,4 @@
-// Engine-complete cooperative cancellation (Phase 385 plan 05, D-19).
-//
-// D-19 names TWO behaviours and the lazy implementation collapses them into one. A queued job
-// cancels immediately, because nothing is running and there is nothing to be cooperative
-// about. A CLAIMED job does not: it becomes cancel-requested and the driver honours that at
-// the next checkpoint boundary, so work already done stays done and no half-finished side
-// effect is abandoned mid-step. An implementation that cancels both immediately passes any
-// test that only asks "does cancel work", and destroys the in-flight semantics 386's daemon is
-// written against; one that only ever records the request passes any test that only checks the
-// request was recorded. Every claim below therefore carries the control that separates it from
-// its opposite.
-//
-// "The next checkpoint boundary" is a specific place and the tests pin it: the checkpoint
-// already published stays published, the next one never starts, and a cancel that arrives
-// after the last boundary does not retroactively cancel a job that finished its work.
+// A queued job cancels at once; a claimed one stops at its next checkpoint boundary.
 
 import { describe, expect, it } from 'vitest'
 
@@ -89,7 +75,7 @@ async function rowOf(store: FakeJobStore, jobId: JobId) {
   return dump.jobs.find((row) => row.id === String(jobId))
 }
 
-describe('cancel on a QUEUED job: immediate (D-19)', () => {
+describe('cancel on a QUEUED job: immediate', () => {
   it('lands the job cancelled and no later claim ever returns it', async () => {
     let handlerCalls = 0
     const harness = await harnessFor([
@@ -138,7 +124,7 @@ describe('cancel on a QUEUED job: immediate (D-19)', () => {
   })
 })
 
-describe('cancel on a CLAIMED job: requested, then honoured at a boundary (D-19)', () => {
+describe('cancel on a CLAIMED job: requested, then honoured at a boundary', () => {
   /**
    * A kind whose handler publishes its schedule step by step and cancels itself partway, the
    * way an operator's cancel would arrive while the job is in flight.
@@ -366,7 +352,7 @@ describe('cancel on a CLAIMED job: requested, then honoured at a boundary (D-19)
   })
 })
 
-describe('cancel on a TERMINAL job: refused as a typed outcome (D-19)', () => {
+describe('cancel on a TERMINAL job: refused as a typed outcome', () => {
   it.each([
     { label: 'done', script: {}, expected: 'done' },
     { label: 'failed', script: { fail: true }, expected: 'failed' },
@@ -409,7 +395,7 @@ describe('cancel on a TERMINAL job: refused as a typed outcome (D-19)', () => {
   })
 })
 
-describe('cancel crosses the fence like every other mutation (D-07, T-385-02)', () => {
+describe('cancel crosses the fence like every other mutation', () => {
   it('refuses a stale epoch, changes nothing, and the current holder still succeeds', async () => {
     const harness = await harnessFor([declaration()])
     const enqueued = await harness.queue.enqueue('curate-memory', {}, 'run-1')

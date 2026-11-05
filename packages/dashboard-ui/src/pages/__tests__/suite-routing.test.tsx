@@ -40,7 +40,6 @@ vi.mock('@/lib/api', () => ({
   }),
 }))
 
-vi.mock('@/hooks/use-run-config', () => ({ useRunConfig: () => ({ defaultRunMode: 'local' }) }))
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: () => {} }))
 vi.mock('@/hooks/use-keyboard-shortcuts', () => ({ useKeyboardShortcuts: () => {} }))
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => false }))
@@ -81,7 +80,6 @@ vi.mock('@/components/page-skeleton', () => ({
   FormSkeleton: () => <div />,
 }))
 vi.mock('@/components/split-button', () => ({ SplitButton: () => <div /> }))
-vi.mock('@/components/stat-card', () => ({ StatCard: () => <div /> }))
 vi.mock('@/components/pass-rate-chart', () => ({ PassRateChart: () => <div /> }))
 vi.mock('@/components/duration-chart', () => ({ DurationChart: () => <div /> }))
 vi.mock('@/components/shortcut-hints', () => ({ ShortcutKey: () => <span /> }))

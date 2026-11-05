@@ -1,5 +1,4 @@
-// 427 · D-15, D-16, D-17, D-19 part 2 — Memory changes as one row per affected record in 425's
-// five words, and every technical fact of those changes gathered for Retrieval details.
+// Memory changes: one row per affected record, with technical facts in Retrieval details.
 
 import { describe, expect, it } from 'vitest'
 import {
@@ -38,7 +37,7 @@ type LearnedChange = ReadyProjection['learned']['changes'][number]
 type Content = NonNullable<LearnedChange['recordContent']>
 type CurationStatus = ReadyProjection['curation']['status']
 
-const RUN = 'run-427-08-changes'
+const RUN = 'run-changes'
 const DIGEST = '0123456789abcdef'.repeat(4)
 
 function content(recordId: string, overrides: Partial<Content> = {}): Content {
@@ -110,7 +109,7 @@ function fiveBucketRun(): ReadyProjection {
   }, { curated: 4, deprecated: 1 })
 }
 
-describe('Memory changes are one row per affected record, in 425 words (D-15)', () => {
+describe('Memory changes are one row per affected record, in the curation bucket words', () => {
   it('ROWS-EQUAL-COUNTS: the five-bucket snapshot is five curation rows in snapshot order under its own breakdown', () => {
     const view = learnedView(fiveBucketRun())
     const breakdown = fiveBucketSnapshot().breakdown
@@ -203,8 +202,6 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
     expect(RECORD_CONTENT_NOT_RECORDED_LEAD).toBe("A record whose content isn't part of this run's record")
   })
 
-  // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 1): was "PROPOSED-HELD-FOR-REVIEW: a
-  // proposed row is held for review". Nothing reviews it; it is recorded and not applied.
   it('PROPOSED-NOT-APPLIED: a proposed row is recorded and not applied, and an open question says so', () => {
     const snapshot = CurationSnapshotSchema.parse({
       schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION,
@@ -257,14 +254,13 @@ describe('Memory changes are one row per affected record, in 425 words (D-15)', 
   })
 })
 
-describe('every bucket word explains itself, and the section speaks of memory changes (D-16)', () => {
+describe('every bucket word explains itself, and the section speaks of memory changes', () => {
   it('BUCKET-LABEL-MEANINGS: each of the five buckets has one meaning, and Proposed says it changed nothing agents are given', () => {
     expect(BUCKET_MEANINGS).toEqual({
       added: 'New knowledge recorded from this run.',
       confirmed: 'Existing knowledge this run backed up, including knowledge promoted to trusted.',
       superseded: 'Replaced by a newer version; agents are given the new one.',
       deprecated: 'Retired; agents are no longer given it.',
-      // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW fix 1).
       proposed: 'Recorded, but not applied: agents are not given it.',
     })
     expect(Object.keys(BUCKET_MEANINGS)).toEqual(Object.keys(BUCKET_LABELS))
@@ -287,7 +283,7 @@ describe('every bucket word explains itself, and the section speaks of memory ch
   })
 })
 
-describe('every technical fact of a changed record is gathered for Retrieval details (D-19 part 2)', () => {
+describe('every technical fact of a changed record is gathered for Retrieval details', () => {
   it('CHANGE-LEDGER-ENTRIES: one entry per changed record with its ids, raw events and provenance', () => {
     const run = fiveBucketRun()
     const snapshot = fiveBucketSnapshot()
@@ -319,7 +315,7 @@ describe('every technical fact of a changed record is gathered for Retrieval det
     }
   })
 
-  it('CLOSED-SETS-427: the bucket labels, since-then details and ledger row labels', () => {
+  it('the bucket labels, since-then details and ledger row labels', () => {
     expect(BUCKET_LABELS).toEqual({
       added: 'Added', confirmed: 'Confirmed', superseded: 'Superseded', deprecated: 'Deprecated', proposed: 'Proposed',
     })

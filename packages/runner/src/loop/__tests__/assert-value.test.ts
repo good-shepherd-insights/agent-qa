@@ -1,27 +1,8 @@
-// RED scaffold (Wave 1, Phase 360 · EXEC-07 · D-10/D-11 · spec §7.2/§12.2).
-// Pins the structured assertValue split BEFORE Plan 10 wires it:
-//   Block A — the pure runner comparator `compareAssertValue` (D-10 "runner judges"): one
-//     deterministic case per closed op in the registered assertValue schema
-//     (isNull/isDefined/equals/notEquals/gt/lt/contains); a mismatch carries both values; the
-//     outcome shape matches AssertValueEvidence with sorted keys.
-//   Block B — orchestration: the adapter reads the source and the runner comparator mints (D-10
-//     division). Since 439 D-12 a passing assertValue on a completing step no longer short-circuits
-//     the verifier: the verifier judges it with the read as evidence. Every AI-judged conclusion (assertAI or extractAI) goes through the step
-//     verifier with the author's context (quick 261004-lsa), and verdictSource 'verifier-model'
-//     is recorded only with the final verdict, so a rejection leaves it undefined. A false
-//     assertAI never calls verify; a failing assertValue and a platform-unavailable source are
-//     honest §7.1 failures the planner mediates; registered secrets arrive masked in evidence.
-//
-// RED BY DESIGN: Block A imports the not-yet-existing compound/assert-value.js
-// (compareAssertValue) — the whole file fails at collection until Plan 10 lands the module, then
-// the Block B un-wired-behavior pins take over (verdictSource / short-circuit / comparator mint).
-// readAssertValueOutcomeMeta is added to compound/metadata.ts by Plan 10. Typecheck stays green
-// via @ts-expect-error; action shapes not yet in the runner union ride the loose ActionPlan.action.
 import { describe, it, expect } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action, ActionResult } from '../../platform.js'
 import type { LoopPorts } from '../ports.js'
-import type { ActionPlan, PlanResult, Planner, StepContext, Verifier } from '../types.js'
+import type { ActionPlan, AiExtraction, AiJudgment, PlanResult, Planner, StepContext, Verifier } from '../types.js'
 import type { VerifierStepRecord } from '../step-record.js'
 import { scriptedVerification, toVerificationResult } from '../../testing/condition-verdicts.js'
 import type { ScriptedVerdict } from '../../testing/condition-verdicts.js'
@@ -29,9 +10,7 @@ import { executeStep } from '../index.js'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { makeStepContext, makePlanner, makeActionPlan } from './loop-harness.js'
 import { SecretStore, SecretRedactor } from '../secrets.js'
-// compareAssertValue landed in Plan 08 (compound/assert-value.js) — Block A goes green here.
 import { compareAssertValue } from '../../compound/assert-value.js'
-// readAssertValueOutcomeMeta landed in Plan 08 (compound/metadata.ts); the seam it reads is Plan 10.
 import { readAssertValueOutcomeMeta } from '../../compound/metadata.js'
 
 // ---------------------------------------------------------------------------
@@ -65,7 +44,7 @@ function subs(result: Awaited<ReturnType<typeof executeStep>>): LooseSub[] {
 
 interface ShortCircuitVerifier extends Verifier {
   verifyCalls: number
-  judgeClaim(claim: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<{ verdict: boolean; rationale: string }>
+  judgeClaim(claim: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<AiJudgment>
 }
 
 function makeShortCircuitVerifier(judgment: { verdict: boolean; rationale: string } = { verdict: true, rationale: 'ok' }): ShortCircuitVerifier {
@@ -76,7 +55,7 @@ function makeShortCircuitVerifier(judgment: { verdict: boolean; rationale: strin
       return { verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'ok' }) }
     },
     async judgeClaim() {
-      return judgment
+      return { outcome: 'judged', ...judgment }
     },
   }
   return v
@@ -86,8 +65,8 @@ interface ScriptedVerifier extends Verifier {
   verifyArgs: unknown[][]
   judgeClaimCalls: number
   extractCalls: number
-  judgeClaim(claim: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<{ verdict: boolean; rationale: string }>
-  extractData(query: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<Record<string, unknown>>
+  judgeClaim(claim: string, screen: ScreenState, opts?: Record<string, unknown>): Promise<AiJudgment>
+  extractData(...args: Parameters<NonNullable<Verifier['extractData']>>): Promise<AiExtraction>
 }
 
 type Verification = ScriptedVerdict
@@ -111,11 +90,11 @@ function makeScriptedVerifier(script: {
     },
     async judgeClaim() {
       v.judgeClaimCalls++
-      return script.judgment ?? { verdict: true, rationale: 'ok' }
+      return { outcome: 'judged', ...(script.judgment ?? { verdict: true, rationale: 'ok' }) }
     },
     async extractData() {
       v.extractCalls++
-      return script.extracted ?? {}
+      return { outcome: 'extracted', fields: script.extracted ?? {} }
     },
   }
   return v
@@ -147,10 +126,7 @@ interface EvidenceView {
 
 const cfg = { maxActions: 4, maxPlanningTurns: 4, previousStepCount: 0 }
 
-// ---------------------------------------------------------------------------
-// Block A — the pure comparator (D-10 "runner judges")
-// ---------------------------------------------------------------------------
-describe('Block A — compareAssertValue: one deterministic case per closed op (D-10)', () => {
+describe('compareAssertValue: one deterministic case per closed op', () => {
   it('equals / notEquals', () => {
     expect(compareAssertValue({ source: 'url', op: 'equals', expected: 'https://x.test/home', actual: 'https://x.test/home' }).passed).toBe(true)
     expect(compareAssertValue({ source: 'url', op: 'notEquals', expected: 'https://x.test/home', actual: 'https://x.test/login' }).passed).toBe(true)
@@ -161,8 +137,8 @@ describe('Block A — compareAssertValue: one deterministic case per closed op (
   })
 
   it('gt / lt (numeric)', () => {
-    expect(compareAssertValue({ source: 'expr-result', op: 'gt', expected: '10', actual: '11' }).passed).toBe(true)
-    expect(compareAssertValue({ source: 'expr-result', op: 'lt', expected: '10', actual: '9' }).passed).toBe(true)
+    expect(compareAssertValue({ source: 'expr', op: 'gt', expected: '10', actual: '11' }).passed).toBe(true)
+    expect(compareAssertValue({ source: 'expr', op: 'lt', expected: '10', actual: '9' }).passed).toBe(true)
   })
 
   it('isNull / isDefined (no expected)', () => {
@@ -179,11 +155,8 @@ describe('Block A — compareAssertValue: one deterministic case per closed op (
   })
 })
 
-// ---------------------------------------------------------------------------
-// Block B — orchestration + the D-11 verifier short-circuit
-// ---------------------------------------------------------------------------
-describe('Block B — assertValue orchestration and the deterministic verifier short-circuit (D-10/D-11)', () => {
-  it('a passing assertValue on a completing step mints a deterministic verdict with ZERO verifier.verify calls and verdictSource assert-value (D-10 adapter reads / runner judges, D-11)', async () => {
+describe('assertValue orchestration: the step verifier judges every read', () => {
+  it('a passing assertValue on a completing step is evidence the verifier judges: one verify call, verdictSource verifier-model', async () => {
     const adapter = readingAdapter(makeScreenState(), { success: true, data: 'https://x.test/home' })
     const verifier = makeShortCircuitVerifier()
     const plan = makeActionPlan({ action: { type: 'assertValue', source: 'url', op: 'contains', expected: 'home' }, stepComplete: true })
@@ -194,18 +167,18 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       makeStepContext(),
     )
 
-    // 439 D-12: the short-circuit is gone; the passing read is evidence the verifier judges.
+    // A passing read does not skip the verifier; it is evidence the verifier judges.
     expect(verifier.verifyCalls).toBe(1)
     expect(result.status).toBe('passed')
     expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('verifier-model')
     expect((result.evidence as { assertOutcome?: { passed?: boolean } }).assertOutcome?.passed).toBe(true)
   })
 
-  it('a passing assertAI does not close the step by itself — the step verifier runs once and decides, verdictSource verifier-model (quick 261004-0hc)', async () => {
+  it('a passing assertAI does not close the step by itself — the step verifier runs once and decides, verdictSource verifier-model', async () => {
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeShortCircuitVerifier({ verdict: true, rationale: 'the header is present' })
     const plan = makeActionPlan({
-      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal' },
       stepComplete: true,
     })
 
@@ -231,8 +204,6 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
         type: 'assertAI',
         claim: 'The current screen is the dedicated #caturday hashtag page, although this browser session is logged out',
         mode: 'multimodal',
-        effort: 'medium',
-        consensus: 1,
       },
       stepComplete: true,
     })
@@ -247,7 +218,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     )
 
     expect(result.status).toBe('failed')
-    // The rejected completion, then the give-up's own judgment (439 D-08).
+    // The rejected completion, then the give-up's own judgment.
     expect(verifier.verifyArgs).toHaveLength(2)
     expect(verifyCall(verifier.verifyArgs[0]).action.type).toBe('assertAI')
     expect(verifyCall(verifier.verifyArgs[0]).authorContext).toEqual({ testContext: 'Only the final screen is graded.' })
@@ -268,7 +239,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       verdict: { success: true, reasoning: 'Bluesky shows the #caturday results', isAppError: false },
     })
     const plan = makeActionPlan({
-      action: { type: 'assertAI', claim: 'Bluesky shows the #caturday results', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      action: { type: 'assertAI', claim: 'Bluesky shows the #caturday results', mode: 'multimodal' },
       stepComplete: true,
     })
 
@@ -290,7 +261,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({ judgment: { verdict: false, rationale: 'no hashtag page is visible' } })
     const assertTurn = makeActionPlan({
-      action: { type: 'assertAI', claim: 'the #caturday hashtag page is visible', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      action: { type: 'assertAI', claim: 'the #caturday hashtag page is visible', mode: 'multimodal' },
       stepComplete: true,
     })
     const bail = makeActionPlan({ action: { type: 'reportValue', value: 'n/a' }, stepComplete: false, stepFailed: true })
@@ -301,8 +272,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       makeStepContext(),
     )
 
-    // The false assertAI's completion claim is never verified; the one call is the give-up's
-    // own judgment (439 D-08).
+    // A false assertAI's completion claim is never verified; the call is the give-up's judgment.
     expect(verifier.verifyArgs).toHaveLength(1)
     expect(result.evidence?.conditionVerdicts?.ending).toBe('give-up')
     expect(result.status).toBe('failed')
@@ -310,7 +280,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect(subs(result)[0]?.result?.error).toContain('judged false')
   })
 
-  it('an extractAI-concluded step goes through the step verifier with the author context (quick 261004-lsa)', async () => {
+  it('an extractAI-concluded step goes through the step verifier with the author context', async () => {
     const adapter = readingAdapter(makeScreenState(), { success: true })
     const verifier = makeScriptedVerifier({
       extracted: { title: 'Home' },
@@ -350,7 +320,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       makeStepContext(),
     )
 
-    // The rejected completion, then the give-up's own judgment (439 D-08).
+    // The rejected completion, then the give-up's own judgment.
     expect(verifier.verifyArgs).toHaveLength(2)
     expect(verifyCall(verifier.verifyArgs[0]).action.type).toBe('extractAI')
     expect(result.evidence?.conditionVerdicts?.ending).toBe('give-up')
@@ -365,7 +335,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       verdict: { success: false, reasoning: 'The header is not visible', isAppError: false },
     })
     const plan = makeActionPlan({
-      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal' },
       stepComplete: true,
     })
 
@@ -379,7 +349,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect(result.error).toBe(
       'Stopped: action limit reached — 4 of 4 actions used — Not met: "Verify the header is shown" (The header is not visible)',
     )
-    // One call per completion claim, plus the limit stop's own judgment (439 D-08).
+    // One call per completion claim, plus the limit stop's own judgment.
     expect(verifier.verifyArgs.length).toBeLessThanOrEqual(cfg.maxActions + 1)
     expect(verifier.judgeClaimCalls).toBeLessThanOrEqual(cfg.maxActions)
     expect((result.evidence as EvidenceView).verdictSource).toBeUndefined()
@@ -395,7 +365,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       ],
     })
     const plan = makeActionPlan({
-      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal', effort: 'medium', consensus: 1 },
+      action: { type: 'assertAI', claim: 'the header is present', mode: 'multimodal' },
       stepComplete: true,
     })
     const planner = capturingPlanner([plan])
@@ -420,7 +390,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       verdict: { success: true, reasoning: 'The login was refused as the test expects', isAppError: false },
     })
     const plan = makeActionPlan({
-      action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal', effort: 'medium', consensus: 1 },
+      action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal' },
       stepComplete: true,
     })
 
@@ -441,7 +411,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
       verdict: { success: false, reasoning: 'The server returned HTTP 500', isAppError: true },
     })
     const plan = makeActionPlan({
-      action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal', effort: 'medium', consensus: 1 },
+      action: { type: 'assertAI', claim: "An 'Incorrect password' error is shown", mode: 'multimodal' },
       stepComplete: true,
     })
     const planner = capturingPlanner([plan])
@@ -473,7 +443,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect((result.evidence as { verdictSource?: string }).verdictSource).toBe('verifier-model')
   })
 
-  it('a failing assertValue is an honest §7.1 failure the planner mediates (D-10)', async () => {
+  it('a failing assertValue is an honest failure the planner mediates', async () => {
     const adapter = readingAdapter(makeScreenState(), { success: true, data: 'https://x.test/login' })
     const verifier = makeShortCircuitVerifier()
     const assertTurn = makeActionPlan({ action: { type: 'assertValue', source: 'url', op: 'contains', expected: 'home' }, stepComplete: true })
@@ -488,7 +458,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect(subs(result)[0]?.result?.success).toBe(false)
   })
 
-  it('a source unavailable on the platform surfaces a §7.1 error, never a crash (D-10)', async () => {
+  it('a source unavailable on the platform surfaces a structured error, never a crash', async () => {
     const adapter = readingAdapter(makeScreenState(), { success: false, error: 'storage source unavailable on this platform' })
     const verifier = makeShortCircuitVerifier()
     const assertTurn = makeActionPlan({ action: { type: 'assertValue', source: 'storage', op: 'isDefined' }, stepComplete: true })
@@ -503,7 +473,7 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect(result.status).toBe('failed')
   })
 
-  it('registered-secret assertValue expected/actual values arrive masked in evidence (masked-before-record, T-360-01)', async () => {
+  it('registered-secret assertValue expected/actual values arrive masked in evidence (masked before record)', async () => {
     const store = new SecretStore({ TOKEN: 'sk-live-supersecret' })
     const redactor = new SecretRedactor(store)
     const adapter = readingAdapter(makeScreenState(), { success: true, data: 'sk-live-supersecret' })
@@ -521,9 +491,32 @@ describe('Block B — assertValue orchestration and the deterministic verifier s
     expect(outcome).toBeDefined()
     expect(JSON.stringify(outcome)).not.toContain('supersecret')
   })
+
+  it('an expr assertValue records its source as expr', async () => {
+    const adapter = readingAdapter(makeScreenState(), { success: true, data: '42' })
+    const verifier = makeScriptedVerifier({})
+    const plan = makeActionPlan({
+      action: { type: 'assertValue', expr: 'document.title', op: 'equals', expected: '42' },
+      stepComplete: true,
+    })
+
+    const result = await executeStep(
+      'Assert the title is 42',
+      ports({ adapter, planner: makePlanner([plan]), verifier, plannerConfig: cfg }),
+      makeStepContext(),
+    )
+
+    expect(readAssertValueOutcomeMeta(subs(result)[0]?.result)?.source).toBe('expr')
+    expect((result.evidence as { assertOutcome?: { source?: string } }).assertOutcome?.source).toBe('expr')
+    const record = verifier.verifyArgs[0]?.[10] as VerifierStepRecord | undefined
+    expect(record?.reads).toContainEqual(expect.objectContaining({
+      kind: 'assertValue',
+      text: 'expr equals "42": passed (read "42")',
+    }))
+  })
 })
 
-describe('C441-RUN-RECORDS', () => {
+describe('assertValue judges raw reads and records declared values by name', () => {
   const PW = 'Hunter-42-zz'
   const EMAIL = 'qa@example.com'
 
@@ -563,29 +556,29 @@ describe('C441-RUN-RECORDS', () => {
 
   it('an assertValue on a declared value records its marker in the outcome and the step result', async () => {
     const { result, outcome, meta } = await runAssert(
-      { PW_441: PW },
+      { PW_KEY: PW },
       { success: true, data: `${PW} for ${EMAIL}` },
-      { source: 'storage', op: 'contains', expected: '{{secret:PW_441}}' },
+      { source: 'storage', op: 'contains', expected: '{{secret:PW_KEY}}' },
     )
     expect(result.status).toBe('passed')
-    expect(outcome?.expected).toBe('[secret:PW_441]')
-    expect(outcome?.actual).toBe(`[secret:PW_441] for ${EMAIL}`)
-    expect(meta?.expected).toBe('[secret:PW_441]')
-    expect(meta?.actual).toBe(`[secret:PW_441] for ${EMAIL}`)
+    expect(outcome?.expected).toBe('[secret:PW_KEY]')
+    expect(outcome?.actual).toBe(`[secret:PW_KEY] for ${EMAIL}`)
+    expect(meta?.expected).toBe('[secret:PW_KEY]')
+    expect(meta?.actual).toBe(`[secret:PW_KEY] for ${EMAIL}`)
     for (const text of recorded(result)) expect(text).not.toContain(PW)
     expect(JSON.stringify(result.evidence)).toContain(EMAIL)
   })
 
   it('an assertValue is judged on the raw read', async () => {
     const { result, outcome, meta } = await runAssert(
-      { PW_441: PW },
+      { PW_KEY: PW },
       { success: true, data: PW },
       { source: 'storage', op: 'contains', expected: 'Hunter' },
     )
     expect(result.status).toBe('passed')
     expect(outcome?.expected).toBe('Hunter')
-    expect(outcome?.actual).toBe('[secret:PW_441]')
-    expect(meta?.actual).toBe('[secret:PW_441]')
+    expect(outcome?.actual).toBe('[secret:PW_KEY]')
+    expect(meta?.actual).toBe('[secret:PW_KEY]')
     for (const text of recorded(result)) expect(text).not.toContain(PW)
   })
 
@@ -595,12 +588,12 @@ describe('C441-RUN-RECORDS', () => {
       { url: 'https://example.test/api/login', method: 'POST', body: `password=${PW}&user=${EMAIL}` },
     ]
     const { result, outcome, meta } = await runAssert(
-      { PW_441: PW },
+      { PW_KEY: PW },
       { success: true, data: log },
-      { source: 'network', op: 'contains', expected: '{{secret:PW_441}}' },
+      { source: 'network', op: 'contains', expected: '{{secret:PW_KEY}}' },
     )
     expect(result.status).toBe('passed')
-    expect(outcome?.actual).toContain('[secret:PW_441]')
+    expect(outcome?.actual).toContain('[secret:PW_KEY]')
     expect(outcome?.actual).toContain(EMAIL)
     expect(meta?.actual).toBe(outcome?.actual)
     for (const text of recorded(result)) expect(text).not.toContain(PW)
@@ -611,11 +604,11 @@ describe('C441-RUN-RECORDS', () => {
     const escaped = JSON.stringify(value).slice(1, -1)
     const escapedTwice = JSON.stringify(escaped).slice(1, -1)
     const { result, outcome, meta, record } = await runAssert(
-      { PW_QUOTE_441: value },
+      { PW_QUOTE_KEY: value },
       { success: true, data: { token: value, user: EMAIL } },
       { source: 'storage', op: 'contains', expected: EMAIL },
     )
-    const expectedActual = '{"token":"[secret:PW_QUOTE_441]","user":"qa@example.com"}'
+    const expectedActual = '{"token":"[secret:PW_QUOTE_KEY]","user":"qa@example.com"}'
     expect(result.status).toBe('passed')
     expect(outcome?.actual).toBe(expectedActual)
     expect(meta?.actual).toBe(expectedActual)

@@ -40,9 +40,9 @@ describe('createJunitReporter', () => {
     expect(xml).toMatch(/\[FAILED\]/)
   })
 
-  it('stays MASKED — placeholders preserved, originals never written (D-11)', async () => {
+  it('stays MASKED — placeholders preserved, originals never written', async () => {
     const { xml, fixture } = await runJunit()
-    // the declared marker survives XML-escaping (441-33: `[secret:<name>]`, not the old `<SECRET_n>`)
+    // The declared `[secret:<name>]` marker survives XML-escaping.
     expect(xml).toMatch(/\[secret:\w+\]/)
     expect(xml).not.toContain(fixture.stepSecret)
     expect(xml).not.toContain(fixture.hookSecret)
@@ -86,7 +86,7 @@ describe('createJunitReporter', () => {
 function abortSkippedStream(): RunEventEnvelope[] {
   let seq = 0
   const env = (type: RunEventType, payload: object): RunEventEnvelope =>
-    ({ seq: seq++, ts: 1_000 + seq, runId: 'run-444.1-15', type, payload }) as RunEventEnvelope
+    ({ seq: seq++, ts: 1_000 + seq, runId: 'run-junit', type, payload }) as RunEventEnvelope
   return [
     env('testStarted', { testId: 't0', testIndex: 0, name: 'Login flow', filePath: 'tests/login.yaml' }),
     env('testFinished', { testId: 't0', testIndex: 0, outcome: 'cancelled', durationMs: 500 }),
@@ -113,7 +113,7 @@ async function junitOf(envelopes: readonly RunEventEnvelope[]): Promise<string> 
   return xml
 }
 
-describe('C444.1-REPORTER-WORDS', () => {
+describe('JUnit words for abort-skipped and cancelled members', () => {
   it('JUnit names an abort-skipped member by its test', async () => {
     const xml = await junitOf(abortSkippedStream())
     expect(xml).toContain(
@@ -133,18 +133,9 @@ describe('C444.1-REPORTER-WORDS', () => {
   })
 })
 
-// ---- 390 D-15: the correct amount of red ------------------------------------------------------
-//
-// The whole point of FLAK-02 is that a quarantined test STILL RAN and STILL FAILED. A CI UI that
-// counts JUnit failures must therefore see the failure — the row is red — while the build itself is
-// green. The disposition is an ADDITIVE marker; it is never a `<skipped>`, never a rewritten
-// `outcome`, and never a decremented `failures=` count.
-//
-// Every pin below is a DIFFERENTIAL over one envelope stream with the snapshot as the only varied
-// input, because an assertion that nothing changed is only load-bearing if the same code path WOULD
-// have changed under the other input.
+// A quarantined failure stays a red row: an additive marker, never `<skipped>` or fewer failures.
 
-describe('createJunitReporter — the 390 D-15 quarantine marker', () => {
+describe('createJunitReporter — the quarantine marker', () => {
   it('keeps the REAL <failure> and adds the marker — never a <skipped>, never an outcome rewrite', async () => {
     const { xml } = await runJunit([QUARANTINED_CHECKOUT])
     // the failure element the CI UI counts is still there, unchanged in kind

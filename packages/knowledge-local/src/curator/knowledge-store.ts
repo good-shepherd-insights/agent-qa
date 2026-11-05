@@ -11,11 +11,8 @@ import {
   foldBundleTrust,
   GATE_RECEIPT_SCHEMA_VERSION,
   GateReceiptSchema,
-  GATE2_DEFAULT_STALE_CONFIRMATIONS,
-  isPromotionReceipt,
   receiptDigestOf,
   sha256hex,
-  stampReceiptDigest,
   survivingOutcomeEvents,
   strongestPromotionPath,
   strongerPromotionPath,
@@ -32,9 +29,7 @@ import type {
   PromotionOutcome,
   PromotionPath,
   RecordId,
-  ResolvePromotionPosture,
   ScreenState,
-  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { appendGateReceipt, appendOutcomeEvent, appendPromotionReceipt, type AppendOutcome } from '../bundle-append.js'
@@ -47,7 +42,6 @@ import {
 } from '../bundle-scan.js'
 import { readCurrentEpoch, withCurrentWriterAuthority } from '../lease/writer-lease.js'
 import { claimedCandidateDir } from '../queue/queue-layout.js'
-import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import {
   CURATION_QUEUE_SCHEMA_VERSION,
   buildCurationCandidateAddressFields,
@@ -72,14 +66,7 @@ import type {
   CommitCurationOutcome,
 } from './commit.js'
 
-/**
- * CR-02 takeover barriers. Test-only seams naming the three points at which a canary flow is
- * about to make canonical state durable; production callers omit them.
- *
- * The two entry barriers fire OUTSIDE the held section, which is what lets a schedule complete a
- * real takeover there and then observe the resumed writer's refusal. `beforeIndexProjection` fires
- * INSIDE it, so its schedule observes a contender blocked behind the tail instead.
- */
+// Entry barriers fire outside the held section, `beforeIndexProjection` inside it.
 export interface CanaryAuthorityHooks {
   /** Immediately before the negative arm enters its held section. */
   beforeNegativeAppend?: () => void
@@ -94,24 +81,14 @@ export interface CreateLocalKnowledgeStoreConfig {
   executionContext: ExecutionContext
   /** The holder's fresh lease epoch. Defaults to a fresh disk read for composition roots. */
   epoch?: number
-  /**
-   * The caller's real writer-lease id, paired with `epoch`.
-   *
-   * CR-02: every canonical append, promotion, and index projection this store performs carries
-   * this identity into `withCurrentWriterAuthority`, so a store constructed by someone who is not
-   * the published holder is refused at its first canonical mutation instead of laundering a
-   * fabricated id. It is required precisely so no code path can omit it and fall back to one.
-   */
+  // Required, so a store built by a non-holder is refused at its first canonical mutation.
   writerLeaseId: string
   /** Port calls lack a run ordinal; callers with run context should supply it. */
   sourceBuildOrdinal?: number
   sourceRunId?: string
-  /** 2026-09-07, 418 D-07: queue entry identity stamped as producedBy.jobId. */
+  // Queue entry identity stamped as `producedBy.jobId`.
   sourceJobId?: string
   screenStates?: readonly ScreenState[]
-  resolvePromotionPosture?: ResolvePromotionPosture
-  /** Resolved once at construction; only neutral immutable data reaches folds and projections. */
-  resolveTrustPriors?: () => TrustPriorTable | undefined
   onPromotionOutcome?: (report: PromotionOutcomeReport) => void
   /** Fault-injection seam; production callers must omit it. */
   canaryAuthorityHooks?: CanaryAuthorityHooks
@@ -133,14 +110,11 @@ export interface PromotionOutcomeReport {
   promotionHoldReason?: PromotionGateHoldReason
 }
 
-/**
- * @deprecated `recordCanaryOutcome` is implemented. The exported class remains only so code
- * compiled against the pre-380 package surface does not lose its named import.
- */
+/** @deprecated `recordCanaryOutcome` is implemented; kept so older named imports resolve. */
 export class KnowledgeStoreNotImplementedError extends Error {
   readonly operation: 'recordCanaryOutcome'
 
-  constructor(operation: 'recordCanaryOutcome', _retiredOwnerPhase?: 380) {
+  constructor(operation: 'recordCanaryOutcome') {
     super(`${operation} compatibility error is retired because the operation is implemented`)
     this.name = 'KnowledgeStoreNotImplementedError'
     this.operation = operation
@@ -175,7 +149,7 @@ export class KnowledgeCommitError extends Error {
   }
 }
 
-/** Typed WR-02 refusal for procedure drafts that require evidence this port cannot carry. */
+// Typed refusal for procedure drafts that need evidence this port cannot carry.
 export class KnowledgeUnsupportedDeltaError extends Error {
   readonly deltaKind: Delta['kind']
   readonly reason: 'procedure-evidence-unsupported'
@@ -199,7 +173,7 @@ interface ResolvedTruth {
   observedOrdinal: number
 }
 
-function resolveTruth(knowledgeRoot: string, id: RecordId, priors?: TrustPriorTable): ResolvedTruth | undefined {
+function resolveTruth(knowledgeRoot: string, id: RecordId): ResolvedTruth | undefined {
   let target: ReturnType<typeof resolveProductQualifiedBundleDir>
   try {
     target = resolveProductQualifiedBundleDir({ knowledgeRoot, recordId: id })
@@ -212,7 +186,7 @@ function resolveTruth(knowledgeRoot: string, id: RecordId, priors?: TrustPriorTa
   }
   const loaded = loadBundle(target.dir)
   if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) return undefined
-  const trust = deriveBundleTrust(loaded.bundle, priors)
+  const trust = deriveBundleTrust(loaded.bundle)
   return {
     id,
     bundle: loaded.bundle,
@@ -245,8 +219,8 @@ function draft(delta: Delta): BundleDraft | undefined {
 }
 
 /**
- * @internal The evidence token the port bridge stamps on a delta's committed event. Exported
- * only so the review writer can recognise an explicit change that already landed (432-06).
+ * The token the port bridge stamps; exported so the review writer can spot a landed change.
+ * @internal
  */
 export function syntheticEvidenceToken(delta: Delta): string {
   if (delta.kind === 'Confirm' || delta.kind === 'Supersede') return delta.evidenceToken
@@ -307,60 +281,18 @@ function currentAuthority(
   }
 }
 
-/**
- * Bridge one port delta into the commit path's job shape — computing the claimed-candidate
- * ADDRESS and materializing NOTHING.
- *
- * WHY THE BRIDGE WRITES NOTHING (CR-02″). This function used to create the candidate's artifacts
- * directory and write its `payload.json` before returning (those two statements, and this file's
- * whole `node:fs` import with them, are gone — the corpus greps this file for a filesystem write
- * and expects to find none), and `commitWithProfile` calls it BEFORE `operation(...)` — which is
- * where `disposeDelta` runs the
- * §7.3.1 checks. So a delta the store REFUSES had already left a claimed curation candidate on
- * disk, seeded from `addressFields` with the cited record's own `summarySeed`, `anchors`,
- * `bodySeed` and `kind`. Nothing unwound it on the throw: `reconcileOnDrainStart` requeued that
- * directory under the next lease (`requeueClaimedWithinCurrentAuthority` takes every
- * `/^[0-9a-f]{64}$/` name with no provenance filter) and the curator re-authored the fact a
- * reviewer had just removed, one drain later, as `origin: 'agent'`.
- *
- * The repair is NOT an unwind. An unwind enumerates the artifacts today's bridge happens to
- * write, so the next check that throws from a new position leaks whatever the enumeration missed
- * — the same one-axis-out shape this phase has paid for repeatedly. Writing nothing is a
- * property of the path instead of a property of a cleanup: a thrown check at ANY position now
- * leaves no residue, because there was never anything to leave.
- *
- * WHAT MAKES IT SAFE — the port path has no on-disk consumer of the claimed form, each half
- * verified by reading:
- *   - disposition reads no `job.candidateDir` (441-53), and procedure drafts are refused by
- *     `commitWithProfile` BEFORE this function is called, pinned by knowledge-store.test.ts's
- *     "rejects before materializing any claimed candidate" case;
- *   - `addressFields` sets `artifactInventory: []`, so `commit.ts`'s `artifactInputs` maps over
- *     an empty list and `preCopyArtifacts` copies nothing;
- *   - every completed outcome ends in `markDone` → `writeJobState('done')` →
- *     `removeClaimedCandidate`, whose `rmSync(…, { force: true })` and `removeEmptyDir` are both
- *     no-ops on an absent directory.
- * The job keeps `candidateDir` / `payloadPath` / `artifactsDir` because `CommitCurationJob`'s
- * type requires them and the drain's own run-sourced candidates — which DO exist on disk — flow
- * through the same shape. Here they name an address, not a file.
- *
- * THE MECHANISM THAT REDS THIS. The claim above is not prose: reintroducing the two write
- * statements reds `apply-review.test.ts`'s "a refused accept leaves the WHOLE knowledge root
- * byte-identical (CR-02″)" with the leaked `memory/queue/claimed/…/payload.json` printed in the
- * diff, and reds its sibling adoption case with `jobsRequeued` back at 1. Probe m1 of 387-17 is
- * exactly that mutation, run and recorded.
- */
+// Computes the claimed-candidate address and writes nothing, so a refused delta leaves no residue.
 function bridgeDelta(
   config: CreateLocalKnowledgeStoreConfig,
   delta: Delta,
-  priors?: TrustPriorTable,
 ): { job: CommitCurationJob; checkpoint: AuthoredDeltaCheckpoint } {
   const neighbors = delta.citedIds
-    .map((id) => resolveTruth(config.knowledgeRoot, id, priors))
+    .map((id) => resolveTruth(config.knowledgeRoot, id))
     .filter((truth): truth is ResolvedTruth => truth !== undefined)
   const target = targetId(delta)
   const targetTruth = target === undefined
     ? undefined
-    : neighbors.find(({ id }) => id === target) ?? resolveTruth(config.knowledgeRoot, target, priors)
+    : neighbors.find(({ id }) => id === target) ?? resolveTruth(config.knowledgeRoot, target)
   const observedOrdinals = [...neighbors, ...(targetTruth === undefined ? [] : [targetTruth])]
     .map(({ observedOrdinal }) => observedOrdinal)
   const buildOrdinal = config.sourceBuildOrdinal
@@ -429,11 +361,7 @@ function unreachableCanaryOutcome(outcome: never): never {
   throw new TypeError(`unsupported canary outcome: ${canonicalJson(outcome)}`)
 }
 
-/**
- * Who is asking for this write. `automatic` is the curator and the agent port, whose authority
- * follows the run's execution context (432 D-08: ci/cloud stay proposed). `explicit` is a
- * person's mark, accept, reject or forget, which is authority in every context (D-04/D-05).
- */
+// `automatic` follows the run context (CI and cloud propose); `explicit` is a person's review.
 type WriteAuthority = 'automatic' | 'explicit'
 
 const EXPLICIT_PROFILE: DispositionProfile = Object.freeze({ mode: 'drain-to-active' })
@@ -453,12 +381,7 @@ function dispositionProfileFor(
 /** The write face an explicit review needs: commit, gated promotion and gate receipts only. */
 export type ExplicitReviewStore = Pick<KnowledgePort, 'commit' | 'promote' | 'recordGateReceipt'>
 
-/**
- * Realizes the agent write port over the canonical mutation path. D-08 propose-only is a
- * disposition profile inside commitCurationDelta, never a second mutation path. Because the port
- * carries bare deltas, this bridge materializes the smallest queue/checkpoint envelope and resolves
- * cited neighbor truth from canonical bundles before entering disposition.
- */
+// Propose-only is a disposition profile inside `commitCurationDelta`, never a second mutation path.
 export function createLocalKnowledgeStore(
   config: CreateLocalKnowledgeStoreConfig,
 ): KnowledgePort {
@@ -466,9 +389,8 @@ export function createLocalKnowledgeStore(
 }
 
 /**
- * @internal The narrow explicit-authority entry for the review writer (432-06). Not on the
- * package barrel: only `applyReview` / `applyExplicitReview` construct it, under the caller's
- * writer lease. Canary and proposal-only doors are deliberately absent from its face.
+ * Explicit-authority entry for the review writer only; canary and proposal-only doors are absent.
+ * @internal
  */
 export function createExplicitReviewStore(
   config: CreateLocalKnowledgeStoreConfig,
@@ -481,14 +403,12 @@ function buildLocalKnowledgeStore(
   config: CreateLocalKnowledgeStoreConfig,
   authority: WriteAuthority,
 ): KnowledgePort {
-  const priors = snapshotTrustPriors(config.resolveTrustPriors?.())
   const operation = config.operations?.commitCurationDelta ?? commitCurationDelta
 
   function bundleStoreConfig(productKey: string): BundleStoreConfig {
     return {
       knowledgeRoot: config.knowledgeRoot,
       productKey,
-      commitArtifacts: 'none',
       writerLeaseId: config.writerLeaseId,
     }
   }
@@ -513,35 +433,22 @@ function buildLocalKnowledgeStore(
     candidateId: RecordId,
     profile: DispositionProfile = dispositionProfileFor(config, 'automatic'),
   ): PromotionOutcome {
-    /**
-     * D-17: later callers add evidence first, then ask this same gate to judge it. The
-     * execution posture is resolved at call time; canary evidence is always automatic, and
-     * only `promote` passes the store's own authority.
-     */
+    // The posture resolves at call time; canary evidence is always automatic.
     if (profile.mode === 'propose-only') {
       throw new KnowledgePromotionError(candidateId, 'propose-only')
     }
 
-    const resolved = resolveTruth(config.knowledgeRoot, candidateId, priors)
+    const resolved = resolveTruth(config.knowledgeRoot, candidateId)
     if (resolved === undefined) {
       throw new KnowledgePromotionError(candidateId, 'not-found')
     }
     const appendConfig = bundleStoreConfig(resolved.product)
     if (resolved.observedStatus === 'active') {
-      /**
-       * CR-01: the active fast path is a gate re-validation, never a bypass. A crash
-       * between a rollback's confirmation retraction and its Plan-23 promotion cascade
-       * leaves canonical active-with-zero-support until replay; attesting success over
-       * that stale authority would launder a rolled-back promotion. The same pure gate
-       * (D-17) is re-evaluated over the promoted-set-aside status: the status the record
-       * would hold if its promoted authority were set aside.
-       */
+      // Re-validates the gate, not trusting `active`: a crashed rollback can leave zero support.
       const gateInput = assemblePromotionGateInput({
         knowledgeRoot: config.knowledgeRoot,
         bundleDir: resolved.bundleDir,
         bundle: resolved.bundle,
-        resolvePromotionPosture: config.resolvePromotionPosture,
-        ...(priors === undefined ? {} : { priors }),
       })
       const setAside = foldBundleTrust(
         survivingOutcomeEvents(resolved.bundle.events)
@@ -551,9 +458,7 @@ function buildLocalKnowledgeStore(
           evidenceIncomplete: resolved.bundle.manifest.evidenceIncomplete,
           createdAtOrdinal: resolved.bundle.frontmatter.createdAtOrdinal,
         },
-        priors,
       )
-      // 416-DOOR: door-1-2 revalidation
       const revalidated = evaluatePromotionGate({ ...gateInput, status: setAside.status })
       if (revalidated.verdict === 'promote') {
         // Receipt strength can grow without granting a second lifecycle authority event.
@@ -570,7 +475,6 @@ function buildLocalKnowledgeStore(
         }
         // Still authorized: heal append-before-projection retries.
         applyIndexDeltaForBundleWithinCurrentAuthority({
-          ...(priors === undefined ? {} : { priors }),
           knowledgeRoot: config.knowledgeRoot,
           bundleId: candidateId,
           product: resolved.product,
@@ -603,7 +507,6 @@ function buildLocalKnowledgeStore(
         }
       }
       applyIndexDeltaForBundleWithinCurrentAuthority({
-        ...(priors === undefined ? {} : { priors }),
         knowledgeRoot: config.knowledgeRoot,
         bundleId: candidateId,
         product: resolved.product,
@@ -611,21 +514,15 @@ function buildLocalKnowledgeStore(
       throw new KnowledgePromotionError(candidateId, revalidated.reason)
     }
 
-    // 416-DOOR: door-1-2 gate
     const gate = evaluatePromotionGate(assemblePromotionGateInput({
       knowledgeRoot: config.knowledgeRoot,
       bundleDir: resolved.bundleDir,
       bundle: resolved.bundle,
-      resolvePromotionPosture: config.resolvePromotionPosture,
-      ...(priors === undefined ? {} : { priors }),
     }))
     if (gate.verdict === 'hold') {
       throw new KnowledgePromotionError(candidateId, gate.reason)
     }
-    // Keep v51's first-promotion identity, but do not reuse authority that the
-    // append-only fold has retracted. A recovery episode is keyed by the durable
-    // retractions of earlier promotions, so retries share an identity and a later
-    // hold/recovery gets a new one. Ordinary path upgrades still append no event.
+    // Reuse the first-promotion identity, but not authority the append-only fold has retracted.
     const promotedKeys = new Set(resolved.bundle.events
       .filter(event => event.type === 'promoted').map(eventDedupKey))
     const recoveryBoundary = [...new Set(resolved.bundle.events.flatMap(event =>
@@ -637,7 +534,6 @@ function buildLocalKnowledgeStore(
     const promotionSource = recoveryBoundary.length === 0 ? candidateId
       : canonicalJson({ candidateId, retractedPromotionEvents: recoveryBoundary })
     const appended = appendOutcomeEvent(appendConfig, candidateId, {
-      // 416-DOOR: door-1-2 promoted
       type: 'promoted',
       evidenceToken: derivePromotedEvidenceToken(promotionSource),
       curationJobId: `promote:${candidateId}`,
@@ -657,7 +553,6 @@ function buildLocalKnowledgeStore(
     })
     if (receipt.kind === 'not-found') throw new KnowledgePromotionError(candidateId, receipt.kind)
     applyIndexDeltaForBundleWithinCurrentAuthority({
-      ...(priors === undefined ? {} : { priors }),
       knowledgeRoot: config.knowledgeRoot,
       bundleId: candidateId,
       product: resolved.product,
@@ -666,7 +561,6 @@ function buildLocalKnowledgeStore(
     return { kind: 'promoted', promotionPath: gate.promotionPath, citedReceiptDigests: gate.citedReceiptDigests }
   }
 
-  // 419-COMMIT-DOOR: curator profile pipeline
   async function commitWithProfile(
     deltas: Delta[],
     profile: DispositionProfile,
@@ -675,26 +569,17 @@ function buildLocalKnowledgeStore(
       supersedesSeenByAnchorKey: new Map(),
     }
     for (const delta of deltas) {
-      /**
-       * WR-02 / D-02: this bridge intentionally has no durable procedure observations or
-       * capture artifacts. Disposition would therefore return a guaranteed procedure Noop,
-       * which completed() would otherwise launder into a resolved void. Reject before
-       * bridgeDelta materializes a claimed queue envelope; evidence carriage remains M4 scope.
-       */
+      // This bridge carries no procedure evidence, so a procedure is refused up front.
       if (draft(delta)?.kind === 'procedure') {
         throw new KnowledgeUnsupportedDeltaError(delta.kind)
       }
-      const { job, checkpoint } = bridgeDelta(config, delta, priors)
+      const { job, checkpoint } = bridgeDelta(config, delta)
       const outcome = operation(
         {
           knowledgeRoot: config.knowledgeRoot,
           epoch: currentAuthority(config).epoch,
           profile,
           drainState,
-          ...(priors === undefined ? {} : { priors }),
-          ...(config.resolvePromotionPosture === undefined
-            ? {}
-            : { resolvePromotionPosture: config.resolvePromotionPosture }),
         },
         job,
         checkpoint,
@@ -703,40 +588,15 @@ function buildLocalKnowledgeStore(
     }
   }
 
-  function gate2ReceiptFor(outcome: CanaryOutcome, verdict: 'pass' | 'fail' | 'abstain') {
-    if (outcome.corpusDigest === undefined) throw new TypeError('Gate-2 receipt requires a corpus digest')
-    return stampReceiptDigest({
-      schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, gate: 2 as const, candidateId: outcome.candidateId,
-      verdict, producedAtOrdinal: outcome.buildOrdinal,
-      producedBy: { ...(config.sourceJobId === undefined ? {} : { jobId: config.sourceJobId }),
-        opId: 'canary.record' },
-      attributedObservationId: canaryOutcomeObservationId(outcome),
-      corpusVersion: { corpusDigest: outcome.corpusDigest },
-      benefit: outcome.runOutcome === 'negative' ? 'exercised-harmed' as const : outcome.benefit,
-      stateValidity: outcome.stateValidity,
-      runId: outcome.runId, testIndex: outcome.testIndex, stepIndex: outcome.stepIndex,
-      attribution: outcome.attribution,
-      ...(outcome.observedStateDigest === undefined ? {} : { observedStateDigest: outcome.observedStateDigest }),
-      ...(outcome.ablation === undefined ? {} : {
-        crossCheck: outcome.ablation.crossCheck,
-        samples: { k: outcome.ablation.k, seeds: outcome.ablation.seeds,
-          seedHonored: outcome.ablation.seedHonored, modelCalls: outcome.ablation.spend.modelCalls },
-        spend: outcome.ablation.spend,
-      }),
-    })
-  }
-
   const store: KnowledgePort = {
     proposeDeltas(deltas: Delta[]): Promise<void> {
-      // 419-COMMIT-DOOR: curator propose-only
       return commitWithProfile(deltas, { mode: 'propose-only' })
     },
     commit(deltas: Delta[]): Promise<void> {
-      // 419-COMMIT-DOOR: curator disposition
       return commitWithProfile(deltas, dispositionProfileFor(config, authority))
     },
     async recordCanaryOutcome(outcome: CanaryOutcome): Promise<void> {
-      const resolved = resolveTruth(config.knowledgeRoot, outcome.candidateId, priors)
+      const resolved = resolveTruth(config.knowledgeRoot, outcome.candidateId)
       if (resolved === undefined) {
         throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
       }
@@ -750,8 +610,8 @@ function buildLocalKnowledgeStore(
 
       switch (outcome.runOutcome) {
         case 'positive': {
-          // D-22: the LLM never re-enters candidate lifecycle disposition. The one commit path
-          // appends the replay-safe Confirm before the existing promotion gate re-evaluates it.
+          // The Confirm is a deterministic system delta; the existing promotion gate then
+          // re-evaluates the candidate.
           const confirm: Extract<Delta, { kind: 'Confirm' }> = {
             kind: 'Confirm',
             origin: 'system',
@@ -764,30 +624,21 @@ function buildLocalKnowledgeStore(
               executionContext: config.executionContext,
             },
           }
-          // 419-COMMIT-DOOR: curator canary confirm
           await store.commit([confirm])
           /**
-           * CR-02: the Confirm has its own fenced commit pipeline; the promotion tail that
-           * follows it is a second, separate held section which the caller's terminal job-state
-           * write joins. A takeover between the two leaves the durable Confirm as valid replay
+           * The Confirm has its own fenced commit pipeline; the promotion tail that follows it
+           * is a second, separate held section which the caller's terminal job-state write
+           * joins. A takeover between the two leaves the durable Confirm as valid replay
            * evidence, which is exactly what lets the successor's drain finish the candidate.
            */
           config.canaryAuthorityHooks?.beforePromotionAppend?.()
           withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
-            // 2026-09-07, 418 D-05/D-06/D-07: retain evidence regardless of Gate-1 state.
-            // The observation supplies its ordinal; the shared routine decides order and reports holds.
-            if (outcome.benefit === 'exercised-benefited' && outcome.corpusDigest !== undefined) {
-              const receipt = gate2ReceiptFor(outcome, 'pass')
-              const appendConfig = bundleStoreConfig(resolved.product)
-              checkedAppend(outcome.candidateId, appendGateReceipt(appendConfig, outcome.candidateId, receipt))
-            }
             try {
               promoteWithinCurrentAuthority(outcome.candidateId)
             } catch (error) {
               // A gate hold or propose-only posture means "not yet". The durable Confirm remains
               // valid evidence and must not turn a crash replay into a permanently failing job.
               if (!expectedPromotionHold(error)) throw error
-              // 2026-09-30, 432-10 D-05: the hold is reported from evidence and nothing is filed.
               reportHold(error)
             }
             config.onCanaryTailWithinCurrentAuthority?.()
@@ -795,40 +646,17 @@ function buildLocalKnowledgeStore(
           return
         }
         case 'negative': {
-          // D-22: negative canary evidence joins the canonical outcome log and therefore reuses
-          // the existing deterministic trust/status fold; no parallel lifecycle logic is added.
+          // A single negative sample is a contradiction in the canonical outcome log, folded by
+          // the same deterministic trust and status rules as every other outcome event.
           const appendConfig = bundleStoreConfig(resolved.product)
           /**
-           * CR-02: contradicted evidence is trust/status currency, so the append, the projection
-           * it implies, and the caller's terminal job-state write are ONE held section. A
-           * takeover completed at the barrier below therefore finds nothing of this writer
-           * landed, and a contender arriving after entry is told who holds the tail instead.
+           * Contradicted evidence is trust/status currency, so the append, the projection it
+           * implies, and the caller's terminal job-state write are ONE held section. A takeover
+           * completed at the barrier below therefore finds nothing of this writer landed, and a
+           * contender arriving after entry is told who holds the tail instead.
            */
           config.canaryAuthorityHooks?.beforeNegativeAppend?.()
           withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
-            // 2026-09-07, 418 D-08/D-12: digest-less BYOM keeps v51's single-sample
-            // law BEFORE stale policy. State validity is independent of eval-root presence:
-            // retain truthful stale evidence, but never await a receipt we cannot write.
-            // Valid/unknown states likewise keep single-sample contradiction.
-            if (outcome.corpusDigest !== undefined && outcome.stateValidity === 'stale') {
-              const current = resolveTruth(config.knowledgeRoot, outcome.candidateId, priors)
-              if (current === undefined) throw new KnowledgePromotionError(outcome.candidateId, 'not-found')
-              const validity = deriveBundleTrust(current.bundle, priors).validity
-              const insideWindow = (ordinal: number) => ordinal >= validity.openedAtOrdinal
-                && (validity.closedAtOrdinal === undefined || ordinal <= validity.closedAtOrdinal)
-              const priorRuns = new Set((readGateReceipts(current.bundleDir, outcome.candidateId) ?? [])
-                .flatMap(receipt => !isPromotionReceipt(receipt) && receipt.gate === 2
-                  && receipt.verdict === 'abstain' && receipt.stateValidity === 'stale'
-                  && receipt.benefit === 'exercised-harmed' && receipt.runId !== undefined
-                  && receipt.runId !== outcome.runId && insideWindow(receipt.producedAtOrdinal)
-                  ? [receipt.runId] : []))
-              if (!insideWindow(outcome.buildOrdinal) || priorRuns.size + 1 < GATE2_DEFAULT_STALE_CONFIRMATIONS) {
-                const receipt = gate2ReceiptFor(outcome, 'abstain')
-                checkedAppend(outcome.candidateId, appendGateReceipt(appendConfig, outcome.candidateId, receipt))
-                config.onCanaryTailWithinCurrentAuthority?.()
-                return
-              }
-            }
             const appended = appendOutcomeEvent(appendConfig, outcome.candidateId, {
               type: 'contradicted',
               evidenceToken,
@@ -841,19 +669,8 @@ function buildLocalKnowledgeStore(
             if (appended.kind === 'not-found') {
               throw new KnowledgePromotionError(outcome.candidateId, appended.kind)
             }
-            if (outcome.corpusDigest !== undefined) {
-              const receipt = gate2ReceiptFor(outcome, 'fail')
-              checkedAppend(outcome.candidateId, appendGateReceipt(appendConfig, outcome.candidateId, receipt))
-              try {
-                promoteWithinCurrentAuthority(outcome.candidateId)
-              } catch (error) {
-                if (!expectedPromotionHold(error)) throw error
-                reportHold(error)
-              }
-            }
             config.canaryAuthorityHooks?.beforeIndexProjection?.()
             applyIndexDeltaForBundleWithinCurrentAuthority({
-              ...(priors === undefined ? {} : { priors }),
               knowledgeRoot: config.knowledgeRoot,
               bundleId: outcome.candidateId,
               product: resolved.product,
@@ -872,7 +689,7 @@ function buildLocalKnowledgeStore(
         if (profile.mode === 'propose-only') {
           throw new KnowledgePromotionError(candidateId, 'propose-only')
         }
-        const resolved = resolveTruth(config.knowledgeRoot, candidateId, priors)
+        const resolved = resolveTruth(config.knowledgeRoot, candidateId)
         if (resolved === undefined) throw new KnowledgePromotionError(candidateId, 'not-found')
         // Validate the entire batch before its first append; a later malformed item must not
         // leave earlier caller evidence durable. Appenders independently repeat these checks.
@@ -895,7 +712,7 @@ function buildLocalKnowledgeStore(
     async recordGateReceipt(receipt: GateReceipt): Promise<GateReceiptRecordOutcome> {
       return withCurrentWriterAuthority(config.knowledgeRoot, currentAuthority(config), () => {
         const candidateId = asRecordId(receipt.candidateId)
-        const resolved = resolveTruth(config.knowledgeRoot, candidateId, priors)
+        const resolved = resolveTruth(config.knowledgeRoot, candidateId)
         if (resolved === undefined) throw new KnowledgePromotionError(candidateId, 'not-found')
         return checkedAppend(candidateId, appendGateReceipt(bundleStoreConfig(resolved.product), candidateId, receipt))
       })

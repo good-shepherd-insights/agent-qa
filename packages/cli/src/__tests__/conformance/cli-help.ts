@@ -1,4 +1,4 @@
-// 2026-10-20 (446-05, D-16): the C445-ROUTE-HELP walk over the built CLI's help, as findings
+// The help walk over the built CLI, returned as findings.
 
 import { spawnSync } from 'node:child_process'
 
@@ -40,7 +40,7 @@ export function createHelpReader(root: string): HelpReader {
     if (cached !== undefined) return cached
     const result = spawnSync(process.execPath, [CLI_ENTRY, ...path, '--help'], {
       cwd: root,
-      env: { ...hermeticEnv(root), DO_NOT_TRACK: '1' },
+      env: hermeticEnv(root),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 60_000,

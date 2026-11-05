@@ -1,15 +1,4 @@
-// The MEM sighting source's status derivation (Phase 387 plan 11, CR-04 / ENTY-02 / D-04).
-//
-// CR-04's shape, stated so the cases below are readable as a fix for it rather than as
-// arbitrary assertions: the resolver's private status table named three strings, two of which
-// (`withdrawn`, `retired`) are not members of `BundleStatus` at all, and it omitted
-// `deprecated` — the status every forget and every reject actually produces. Its reachable
-// domain was therefore `['superseded']`, so after a forget the card said `active` while the
-// receipt handed to the same caller said `tombstoned`.
-//
-// The regression cases here walk the COMPLETE `BundleStatus` union rather than the one member
-// that failed, because a table scoped to hand-picked members of a set whose hazard belongs to
-// the whole set is the defect, and a test scoped the same way would reproduce it.
+// Walks the complete `BundleStatus` union, not just the member that failed.
 
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -72,11 +61,7 @@ describe('the bundle-status → MEM card-status mapping is total over the comple
   })
 
   it('THROWS, naming the status, for an input outside the union', () => {
-    // The cast is required and is the point of the design note in `memory-status.ts`: the
-    // parameter stays `BundleStatus` so both production call sites keep compile-time totality,
-    // which makes this arm unreachable from TypeScript and reachable only the way it is
-    // actually reachable in production — a string that arrived through a cast at a
-    // deserialization boundary. `withdrawn` is one of the two dead members the old table named.
+    // The cast reaches this arm as production can: a string cast at a deserialization boundary.
     expect(() => memoryStatusForBundle('withdrawn' as BundleStatus))
       .toThrow(UnknownBundleStatusError)
     expect(() => memoryStatusForBundle('withdrawn' as BundleStatus))
@@ -104,7 +89,6 @@ describe('the MEM sighting source reports the status the store actually derived'
     return {
       knowledgeRoot,
       productKey: 'Memory Source Product',
-      commitArtifacts: 'none',
     }
   }
 
@@ -166,12 +150,6 @@ describe('the MEM sighting source reports the status the store actually derived'
     // `deprecated`, the sighting assertion below would be a test of the fixture, not the table.
     expect(derivedStatus(recordId)).toBe('deprecated')
 
-    // OBSERVED RED (2026-08-02, before the fix, against the unmodified
-    // TOMBSTONED_BUNDLE_STATUSES = ['withdrawn', 'superseded', 'retired'] at
-    // memory-source.ts:24):
-    //   AssertionError: expected 'active' to be 'tombstoned' // Object.is equality
-    //   - Expected: "tombstoned"   + Received: "active"
-    // That is CR-04 verbatim at the sighting seam.
     expect(sight(recordId)).toBe('tombstoned')
   })
 
@@ -193,10 +171,7 @@ describe('the MEM sighting source reports the status the store actually derived'
 
     expect(derivedStatus(recordId)).toBe('superseded')
 
-    // OBSERVED GREEN BEFORE THE FIX, and kept deliberately. `superseded` was the ONE member of
-    // the old table's three that `BundleStatus` actually contains, so this case passing against
-    // the broken table is what proves the harness itself works — the sibling case above reds
-    // because of the table, not because the fixture never reached the sighting source.
+    // The control: it shows the fixture reaches the sighting source for a `superseded` record.
     expect(sight(recordId)).toBe('tombstoned')
   })
 

@@ -1,12 +1,4 @@
-// The real persistAnalysis binding (Phase 389, plan 01 Task 2 — D-09).
-//
-// Two layers, asserted separately because they fail differently. The WRITE HELPER owns the
-// durability idiom — staged `.tmp`, fsync, rename, fsync dir, no residue — copied from the
-// curation-tail receipt writer, NOT from handoff.json's plain write: this file is the truth
-// home a chip's `done` promises is fetchable, so a torn write is a lie with three consumers.
-// The COMPOSITION ROOT owns the path law: `runs/<slug(runId)>/analysis.json` derived from
-// `runId` alone through `slugBranch` (T-389-01), the same derivation as the handoff read
-// binding directly above it — never a caller-supplied path.
+// The write helper owns durability and the composition root owns the path; each fails differently.
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,14 +24,10 @@ import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../../composition/compo
 import type { LocalAgentHost, LocalAgentJobs } from '../../composition/compose-local-agent.js'
 import { writeAnalysisArtifact } from '../persist-analysis.js'
 
-/**
- * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
- * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
- * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
- */
+// Passthrough: this fixture already speaks canonical workspace-relative bytes.
 const MINT_IDENTITY = (filePath: string): string => filePath
 
-const RUN_ID = 'run-389-persist'
+const RUN_ID = 'run-persist'
 
 function artifactFor(runId: string, rationale: string): RunAnalysisArtifact {
   const verdict: Verdict = {
@@ -111,9 +99,7 @@ describe('writeAnalysisArtifact: the fsynced temp-rename write helper', () => {
 
 // ————— the composition-root binding, driven through the REAL chain —————
 
-// 389-04's author swap reaches the model for the fixture's unknown-floor member; unparseable
-// text makes the author degrade per-test to the deterministic floor (plan 04's proven posture),
-// so the artifact still persists on the D-09 path this suite pins.
+// Unparseable text degrades the author per test to the deterministic floor; the artifact persists.
 const CALLER_MODEL: JobModelCapability = {
   modelId: 'test:persist-analysis',
   generate: async () => ({ text: 'not an author payload' }),
@@ -170,7 +156,7 @@ async function pump(jobs: LocalAgentJobs, fence: { epoch: number }): Promise<voi
   throw new Error('the post-run chain did not drain within the pump bound')
 }
 
-describe('postRunCapabilities binds persistAnalysis on the D-09 path law (T-389-01)', () => {
+describe('postRunCapabilities binds persistAnalysis at the run analysis path', () => {
   it('lands the artifact at runs/<slug(runId)>/analysis.json under the real chain', async () => {
     const agentQaRoot = tempDir('agent-qa-persist-binding-')
     const handoff = fixtureHandoff(RUN_ID)

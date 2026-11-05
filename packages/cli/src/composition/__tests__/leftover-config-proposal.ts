@@ -1,0 +1,126 @@
+// A config proposal record as an old workspace holds it, planted for the refusal cells.
+
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import type { ConfigStructuredValue } from '@vostride/agent-qa-agent'
+import {
+  base64Encode,
+  renderConfigDiff,
+  utf8Decode,
+} from '@vostride/agent-qa-schema'
+import type {
+  ConfigChangeFile,
+  ConfigDiffFileInput,
+  CrossBoundaryReason,
+} from '@vostride/agent-qa-schema'
+
+import { createConfigFilesPort } from '../local-agent-host.js'
+
+/** The legacy applyable payload's shape, spelled here because no schema holds it. */
+export interface LeftoverConfigPayload {
+  readonly schemaVersion: 1
+  readonly payloadKind: 'applyable'
+  readonly action: string
+  readonly summaryLine: string
+  readonly files: readonly ConfigChangeFile[]
+  readonly shownDiffBase64: string
+  readonly shownDiffDigest: string
+  readonly crossBoundary: boolean
+  readonly crossBoundaryReasons: readonly CrossBoundaryReason[]
+}
+
+export interface LeftoverConfigProposal {
+  readonly proposalId: string
+  readonly payload: LeftoverConfigPayload
+  readonly shownDiff: string
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((byte, index) => byte === right[index])
+}
+
+// Files a legacy `config.field.set`-style proposal over the config as it stands.
+export async function fileLeftoverConfigProposal(input: {
+  readonly configPath: string
+  readonly agentQaRoot: string
+  readonly action?: string
+  readonly edits?: readonly { readonly path: string; readonly value: ConfigStructuredValue }[]
+  readonly files?: readonly { readonly path: string; readonly bytes: Uint8Array }[]
+  readonly summaryLine?: string
+  readonly crossBoundaryReasons?: readonly CrossBoundaryReason[]
+  readonly surface?: string
+  readonly now?: () => number
+}): Promise<LeftoverConfigProposal> {
+  const port = createConfigFilesPort(input.configPath)
+  const set = await port.read()
+  const config = set.files.find((file) => file.path === set.configFile)
+
+  const written = new Map<string, Uint8Array>()
+  let bytes = config?.bytes
+  for (const edit of input.edits ?? []) {
+    bytes = (await port.setField({
+      ...(bytes === undefined ? {} : { bytes }),
+      path: edit.path,
+      value: edit.value,
+    })).bytes
+  }
+  if (bytes !== undefined && config !== undefined && (input.edits ?? []).length > 0) {
+    written.set(config.path, bytes)
+  }
+  for (const file of input.files ?? []) written.set(file.path, file.bytes)
+
+  const committed = new Map(set.files.map((file) => [file.path, file.bytes]))
+  const diffInput: ConfigDiffFileInput[] = []
+  for (const [path, next] of written) {
+    const before = committed.get(path)
+    if (before !== undefined && sameBytes(before, next)) continue
+    diffInput.push({ path, ...(before === undefined ? {} : { oldBytes: before }), newBytes: next })
+  }
+  const rendered = renderConfigDiff(diffInput)
+  if (rendered.outcome !== 'changed') throw new Error('the leftover proposal fixture changes nothing')
+
+  const digests = new Map(rendered.perFileDigests.map((digest) => [digest.path, digest]))
+  const action = input.action ?? 'config.field.set'
+  const firstEdit = input.edits?.[0]
+  const reasons = [...(input.crossBoundaryReasons ?? [])]
+  const payload: LeftoverConfigPayload = {
+    schemaVersion: 1,
+    payloadKind: 'applyable',
+    action,
+    summaryLine: input.summaryLine
+      ?? (firstEdit === undefined ? `${action} change` : `set ${firstEdit.path} to ${String(firstEdit.value)}`),
+    files: rendered.changes.map((change) => {
+      const oldDigest = digests.get(change.path)?.oldDigest
+      return {
+        path: change.path,
+        changeKind: change.changeKind,
+        ...(oldDigest === undefined ? {} : { baseDigest: oldDigest }),
+        newContentBase64: base64Encode(written.get(change.path) as Uint8Array),
+      }
+    }),
+    shownDiffBase64: base64Encode(rendered.diffBytes),
+    shownDiffDigest: rendered.diffDigest,
+    crossBoundary: reasons.length > 0,
+    crossBoundaryReasons: reasons,
+  }
+
+  const now = input.now ?? Date.now
+  const proposalId = `prop_${now()}-${Math.floor(performance.now())}`
+  const record = {
+    schemaVersion: 1,
+    id: proposalId,
+    kind: 'config',
+    origin: {
+      emittedBy: action,
+      at: now(),
+      ...(input.surface === undefined ? {} : { surface: input.surface }),
+    },
+    payload,
+  }
+  const dir = join(input.agentQaRoot, 'proposals')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, `${proposalId}.json`), `${JSON.stringify(record, undefined, 2)}\n`, 'utf8')
+
+  return { proposalId, payload, shownDiff: utf8Decode(rendered.diffBytes) }
+}

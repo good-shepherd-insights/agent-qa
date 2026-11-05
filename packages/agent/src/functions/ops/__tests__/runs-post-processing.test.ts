@@ -1,17 +1,4 @@
-// `runs.postProcessing` — chip truth projected from durable job state (Phase 388, D-14/D-15).
-//
-// Two claims, and they are deliberately measured apart:
-//
-//   1. The PROJECTION is a closed, total function of the durable chain state. Driven here
-//      with hand-built row values rather than a store, because what is under test is a
-//      mapping and a store would only make the same table slower to state.
-//   2. The OP is that projection wired to a port, and the port is asked for exactly the ids
-//      `chainJobIdsForRun` derives. A projection that addressed other rows would answer
-//      confidently about a chain that is not this run's, which no assertion on the returned
-//      shape could ever catch.
-//
-// The durable half — a real sqlite store, real rows, and the pin that a status read leaves no
-// database behind — lives in `agent-local`, because this package cannot reach a store at all.
+// The projection is a total function of chain state; the op must ask for the derived ids only.
 
 import {
   asJobId,
@@ -50,10 +37,8 @@ import {
   projectPostProcessingSkipped,
 } from '../runs-post-processing.js'
 
-const RUN_ID = 'run-388-chips'
+const RUN_ID = 'run-chips'
 
-// 2026-10-01 (432-30, D-12): the retired `grantedScopes` and `safeMode` caller fields and the
-// retired `resolveExecutionContext` registry option are dropped; nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
@@ -82,7 +67,6 @@ const NOTIFICATION: RunNotification = {
   stages: {
     analysis: { status: 'done' },
     curation: { status: 'done', curated: 3, deprecated: 1 },
-    proposals: { status: 'done', proposed: 2, skipped: 1 },
   },
 }
 
@@ -167,9 +151,6 @@ const CHIP_BY_STATUS: Record<
   { readonly unclaimed: PostProcessingChipStatus; readonly claimed: PostProcessingChipStatus }
 > = {
   queued: { unclaimed: 'pending', claimed: 'running' },
-  authored: { unclaimed: 'pending', claimed: 'running' },
-  bundling: { unclaimed: 'pending', claimed: 'running' },
-  committing: { unclaimed: 'pending', claimed: 'running' },
   // Terminal: the claim was released by the transaction that ended the job, so the two columns
   // agree — and they are still both stated, because a projection that consulted the claim on a
   // terminal row would pass a table that only listed one of them.
@@ -178,27 +159,12 @@ const CHIP_BY_STATUS: Record<
   cancelled: { unclaimed: 'failed', claimed: 'failed' },
 }
 
-// ------------------------------------------------------------------------------------------
-// The CLOSED-UNION cells (Phase 404, D-04). Mutation-measured by
-// the phase's mutation driver (since removed), which re-added a third chip arm (M1) and a fifth
-// status (M2) and required each to red a cell named below.
-//
-// SET-EQUALITY, NEVER MEMBERSHIP. A cell that asserts the chips CONTAIN `analysis` and
-// `curation`, or that the vocabulary CONTAINS four words, cannot fail on an ADDITION — and an
-// addition is the direction that matters here: the whole point of the teardown is that a
-// member which no producer can produce cannot quietly come back and make every consumer render
-// a word about a slot that will never fill.
-// ------------------------------------------------------------------------------------------
+// Set equality, never membership, so an added chip or status word fails a cell.
 
-describe('the chip set and its vocabulary are closed (404 D-01/D-04)', () => {
+describe('the chip set and its vocabulary are closed', () => {
   it('projects EXACTLY the two chips, by key set', () => {
     // Read off the projection's own output rather than off the type: a type is erased before
     // anything runs, and it is the runtime object every surface iterates.
-    //
-    // 2026-09-11 (422 D-13): this cell is now also the pin that the chain's THIRD stage did not
-    // quietly become a third chip. The chips are a published vocabulary rendered by the
-    // dashboard and by chat; D-13 authorised a third chain id, not a third thing every surface
-    // has to learn to draw.
     expect(Object.keys(projectPostProcessingChips(undefined)).sort())
       .toEqual(['analysis', 'curation'])
     expect(Object.keys(projectPostProcessingChips({ analyzeRun: row('done') })).sort())
@@ -211,22 +177,9 @@ describe('the chip set and its vocabulary are closed (404 D-01/D-04)', () => {
     // order is the lifecycle.
     expect([...POST_PROCESSING_CHIP_STATUSES]).toEqual(['pending', 'running', 'complete', 'failed'])
   })
-
-  it('has no reserved-slot row left in the exhaustive status table', () => {
-    // The table below is what pins `chipFor`. A structural placeholder returning from the dead
-    // would arrive as a row here first, so the table's own key set is asserted against the job
-    // statuses it claims to range over — not against a count somebody could bump.
-    expect(Object.keys(CHIP_BY_STATUS).sort()).toEqual(
-      ['authored', 'bundling', 'cancelled', 'committing', 'done', 'failed', 'queued'],
-    )
-    const produced = new Set(
-      Object.values(CHIP_BY_STATUS).flatMap((cell) => [cell.claimed, cell.unclaimed]),
-    )
-    expect([...produced].sort()).toEqual(['complete', 'failed', 'pending', 'running'])
-  })
 })
 
-describe('projectPostProcessingChips is total over the durable chain state (D-14)', () => {
+describe('projectPostProcessingChips is total over the durable chain state', () => {
   it('maps EVERY job status, claimed and unclaimed, identically for both stages', () => {
     const produced = new Set<PostProcessingChipStatus>()
 
@@ -285,7 +238,7 @@ describe('projectPostProcessingChips is total over the durable chain state (D-14
 
 })
 
-describe('C444-STAGE-WORDS', () => {
+describe('the stage word for a finished stage', () => {
   it('the producer answers complete for a finished stage', () => {
     expect(projectPostProcessingChips({ analyzeRun: row('done'), curateMemory: row('done', true) }))
       .toEqual({ analysis: 'complete', curation: 'complete' })
@@ -296,8 +249,8 @@ describe('C444-STAGE-WORDS', () => {
   })
 })
 
-describe('the runs.postProcessing op (D-14/D-15)', () => {
-  it('asks the port for exactly the three ids chainJobIdsForRun derives', async () => {
+describe('the runs.postProcessing op', () => {
+  it('asks the port for exactly the ids chainJobIdsForRun derives', async () => {
     const reader = recordingReader({})
     await invokeFunction(
       registryWith(reader.port),
@@ -311,13 +264,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
     expect(reader.asked[0]?.ids).toEqual(chainJobIdsForRun(RUN_ID, TEST_ID_SOURCE))
     // Both sides of the line above DERIVE, so on its own it would agree with a chain of any
     // width. The literal is what makes the cell a pin rather than a tautology.
-    //
-    // 2026-09-11 (422 D-13): three ids, still TWO chips. The reader is handed the whole chain
-    // it is reading — deriving a partial chain here would make this op a second, narrower
-    // opinion about what a run's chain IS — and the projection below stays two-wide because
-    // the chip vocabulary is a published surface this phase did not widen.
-    expect(Object.keys(reader.asked[0]!.ids).sort())
-      .toEqual(['analyzeRun', 'curateMemory', 'proposeImprovements'])
+    expect(Object.keys(reader.asked[0]!.ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
   })
 
   it('projects a finished chain and attaches the notification the terminal wrote', async () => {
@@ -332,14 +279,6 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
       chips: { analysis: 'complete', curation: 'complete' },
       stageDetails: { analysis: {}, curation: {} },
       notification: toRunNotificationView(NOTIFICATION),
-    })
-    // The third stage reaches a reader through the durable RECORD, not through a chip — so the
-    // op must carry a `proposals` stage out untouched. A DTO that dropped it would leave the
-    // one surface that can report the proposal stage reporting nothing at all.
-    expect(status.notification?.stages.proposals).toEqual({
-      status: 'complete',
-      proposed: 2,
-      skipped: 1,
     })
   })
 
@@ -373,12 +312,7 @@ describe('the runs.postProcessing op (D-14/D-15)', () => {
   })
 })
 
-// ------------------------------------------------------------------------------------------
-// The SKIPPED fact (Phase 425, D-08; renamed 444 D-39). A gate run and an outcome-excluded run
-// skip the whole post-run chain, so their chip words stay `pending` and the op has to say WHY
-// from the run's durable record. The markers are the same two the enqueue skip reads — never
-// the absence of job rows, never the run's status.
-// ------------------------------------------------------------------------------------------
+// Gate and outcome-excluded runs skip the chain; the reason comes from the run's durable record.
 
 function handoff(overrides: Partial<CompletedRunHandoff> = {}): CompletedRunHandoff {
   return {

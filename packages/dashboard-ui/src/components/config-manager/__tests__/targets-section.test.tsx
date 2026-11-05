@@ -1,11 +1,6 @@
 // @vitest-environment jsdom
 
-// TARGETS AND DEVICES AS IN-ROW RECORD LISTS (429-22 Task 1 · D-02, D-08, D-19, D-23, D-24 · UI-SPEC S2, S6, E6, E8).
-//
-// Every target and device edit happens in its row and autosaves; an add is an inline draft row
-// that writes nothing until the whole entry is valid; a delete acts at once with Undo and moves
-// focus to a neighbour, else the Add button. Device match values are secret-class: each key in
-// clear, each value a SecretValue, a new setting saved only through Save setting.
+// Device match values are secret-class: keys in clear, values saved only through Save setting.
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -31,7 +26,6 @@ import {
   SAVE_SETTING_LABEL,
   SETTLE_DELAY_MS,
   TARGET_ENVIRONMENT_CHOICE_LABELS,
-  TARGET_ENVIRONMENT_HINTS,
   TARGET_ENVIRONMENT_LABELS,
   TARGET_FIELD_LABELS,
   TARGET_URL_REQUIRED_ERROR,
@@ -62,8 +56,8 @@ const records = {
       gamma: { platform: 'android', appPackage: 'com.example.gamma' },
     },
     devices: {
-      iosLocal: { platform: 'ios', transport: 'local', match: { udid: MASK } },
-      pixel: { platform: 'android', transport: 'local', match: {} },
+      iosLocal: { platform: 'ios', match: { udid: MASK } },
+      pixel: { platform: 'android', match: {} },
     },
   },
 }
@@ -212,7 +206,7 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
+describe('TargetsSection and DevicesSection', () => {
   it('TARGET-EDIT-IN-ROW-AUTOSAVES: changing a target URL in its row writes that one leaf after the pause, with no dialog', async () => {
     await mount()
 
@@ -360,7 +354,7 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
       [[{ op: 'set', path: ['registry', 'devices', 'iosLocal', 'match', 'bundleId'], value: 'device-secret' }]],
     ])
     expect(deviceRow('iosLocal')!.querySelectorAll('[data-secret-field]')).toHaveLength(2)
-    // 441-40 (D-29): the landed write is mirrored as written.
+    // The landed write is mirrored as written.
     expect(container!.textContent).toContain('device-secret')
   })
 
@@ -396,7 +390,7 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
     expect(hook!.draftTabs.has('targets')).toBe(false)
   })
 
-  it('C432-TARGET-CREATE-UI: the add row offers Undeclared, Local, Shared and Production with one line each, keeps typed labels, and saves the class', async () => {
+  it('the add row offers Undeclared, Local, Shared and Production as plain choices, keeps typed labels, and saves the class', async () => {
     await mount()
 
     await click(buttonIn(section('targets'), ADD_TARGET_LABEL))
@@ -412,14 +406,10 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
       item.getAttribute('data-environment-choice'))).toEqual([...choices])
     for (const choice of choices) {
       const item = group!.querySelector(`[data-environment-choice="${choice}"]`) as HTMLElement
-      expect(item.textContent).toContain(labels[choice])
+      expect(item.textContent).toBe(labels[choice])
       const radio = item.querySelector('[role="radio"]') as HTMLElement
-      const hint = document.getElementById(radio.getAttribute('aria-describedby') ?? '')
-      expect(hint?.textContent).toBe(TARGET_ENVIRONMENT_HINTS[choice])
+      expect(radio.hasAttribute('aria-describedby')).toBe(false)
     }
-    // RE-SPELLED 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1): the hint names the switch's
-    // own label, not the raw config key.
-    expect(TARGET_ENVIRONMENT_HINTS.production).toBe('Runs need "Allow production runs" turned on (Execution tab).')
     const radioFor = (choice: (typeof choices)[number]) =>
       group!.querySelector(`[data-environment-choice="${choice}"] [role="radio"]`) as HTMLElement
     expect(radioFor('undeclared').getAttribute('aria-checked')).toBe('true')
@@ -471,7 +461,7 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
     expect(environment?.textContent).toContain(TARGET_ENVIRONMENT_LABELS.production)
   })
 
-  it('C432-TARGET-CREATE-UI: Undeclared saves no environment key, and the compact row wraps its choices', async () => {
+  it('Undeclared saves no environment key, and the compact row wraps its choices', async () => {
     await mount()
 
     await click(buttonIn(section('targets'), ADD_TARGET_LABEL))
@@ -494,7 +484,7 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
     ])
   })
 
-  it('C432-TARGET-CREATE-UI: an existing production target reads back as Production when its row is edited', async () => {
+  it('an existing production target reads back as Production when its row is edited', async () => {
     vi.mocked(fetchConfig).mockResolvedValue(answer({
       registry: {
         targets: {
@@ -521,7 +511,7 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
     ])
   })
 
-  it('C432-TARGET-CREATE-UI: the chosen class is held with the draft, beside the typed name', async () => {
+  it('the chosen class is held with the draft, beside the typed name', async () => {
     await mount()
 
     await click(buttonIn(section('targets'), ADD_TARGET_LABEL))
@@ -536,10 +526,9 @@ describe('TargetsSection and DevicesSection (429-22 Task 1)', () => {
   })
 })
 
-// 2026-10-03 (quick 261003-cpv, 432 review IN-33): the guard that decides whether a draft writes
-// `registry.targets.<name>.environment` admits the three classes and nothing a prototype carries.
-describe('C261003-CPV-ENVIRONMENT-GUARD', () => {
-  it('C261003-CPV-ENVIRONMENT-GUARD: admits local, shared and production, and no inherited key', async () => {
+// The environment guard admits the target classes and nothing a prototype carries.
+describe('the target environment guard', () => {
+  it('admits local, shared and production, and no inherited key', async () => {
     const { isTargetEnvironment } = await import('@/components/config-manager/targets-section')
     expect(typeof isTargetEnvironment).toBe('function')
     for (const value of ['local', 'shared', 'production']) expect(isTargetEnvironment(value), value).toBe(true)

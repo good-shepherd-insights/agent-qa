@@ -42,7 +42,7 @@ const TARGET_ANCHOR = {
   name: 'Degradation sentinel',
 } satisfies Anchor
 
-describe('IDX-02 authoritative degradation ladder', () => {
+describe('authoritative degradation ladder', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -60,7 +60,6 @@ describe('IDX-02 authoritative degradation ladder', () => {
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
     }
   }
 

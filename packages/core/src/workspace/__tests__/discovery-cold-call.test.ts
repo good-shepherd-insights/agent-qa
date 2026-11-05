@@ -9,10 +9,7 @@ import {
   resolveWorkspacePaths,
 } from '../workspace-paths.js'
 
-// RUNX-06 regression: the intermittent "0 of 0 tests" empty run was suspected to originate in a
-// cold-call `glob` returning empty on the first discovery. This locks the invariant that
-// `discoverWorkspaceFiles` is DETERMINISTIC and NON-EMPTY for an existing matching target — so a
-// future change to the glob options/cache can never silently reintroduce a spurious empty result.
+// `discoverWorkspaceFiles` is deterministic and non-empty for an existing matching target.
 
 const tempRoots: string[] = []
 
@@ -36,7 +33,7 @@ async function makeFixture(): Promise<{ config: AgentQaConfig; configPath: strin
     },
   } as AgentQaConfig
 
-  // Exactly one matching test file (mirrors the demo's `run tests/example-pass.yaml` target).
+  // Exactly one matching test file, the `tests/example-pass.yaml` that `init` scaffolds.
   await writeFile_(root, 'tests/example-pass.yaml', 'name: Example\nsteps: []\n')
   await writeFile_(root, 'hooks.yaml', '')
   await writeFile_(root, '.env', '')
@@ -49,7 +46,7 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
-describe('discoverWorkspaceFiles — cold-call determinism (RUNX-06)', () => {
+describe('discoverWorkspaceFiles — cold-call determinism', () => {
   it('finds exactly the one existing matching test on the FIRST call (no cold-call empty)', async () => {
     const { config, configPath } = await makeFixture()
     const workspace = resolveWorkspacePaths({ config, configPath })

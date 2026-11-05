@@ -35,7 +35,6 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { useLiveEditor } from "@/hooks/use-live-editor"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePageTitle } from "@/hooks/use-page-title"
-import { useRunConfig } from "@/hooks/use-run-config"
 import { useTargetDetails, type TargetDetail } from "@/hooks/use-target-details"
 import {
   ApiError,
@@ -87,7 +86,7 @@ function formatValidationErrors(errors: TestValidationResult["errors"]): string 
     .join("\n")
 }
 
-// The save routes answer 400 `invalid_test_file` with the validator's own errors (G-433-2).
+// The save routes answer 400 `invalid_test_file` with the validator's own errors.
 function readRefusedSaveErrors(error: unknown): TestValidationResult["errors"] | null {
   if (!(error instanceof ApiError) || error.payload?.error !== "invalid_test_file") return null
   const errors = error.payload.errors
@@ -203,7 +202,6 @@ export default function TestEditorPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isMobile = useIsMobile()
-  const { defaultRunMode } = useRunConfig()
   const { targets, globalUse, isLoading: isLoadingTargets } = useTargetDetails()
   const testId = t_id ?? ''
   const { suggestions: variableSuggestions } = useVariableSuggestions(testId || null)
@@ -323,7 +321,7 @@ export default function TestEditorPage() {
     steps: liveSteps,
     setupHooks: liveHookConfig.setup,
     teardownHooks: liveHookConfig.teardown,
-    // The server detaches a dropped session for its idle window, so a drop resumes it (428 D-09).
+    // The server detaches a dropped session for its idle window, so a drop resumes it.
     allowReconnect: true,
   })
   const terminateLiveSession = liveEditor.terminateSession
@@ -398,7 +396,7 @@ export default function TestEditorPage() {
     || isLoadingTargets
   )
 
-  // Save asks the same validator Validate does and shows its verdict the same way (G-433-2).
+  // Save asks the same validator Validate does and shows its verdict the same way.
   const refuseInvalidContent = useCallback(async (): Promise<boolean> => {
     const result = await validateTestContent(content, filePath || filename.trim())
     if (result.valid) return false
@@ -643,7 +641,7 @@ export default function TestEditorPage() {
     }
   }
 
-  const handleRun = useCallback(async (local: boolean) => {
+  const handleRun = useCallback(async () => {
     if (isRunning) return
 
     // Auto-save first
@@ -676,7 +674,7 @@ export default function TestEditorPage() {
 
     setIsRunning(true)
     try {
-      const result = await triggerRun({ file: filePath, local })
+      const result = await triggerRun({ file: filePath })
       setRunId(result.runId)
       toast.success("Run started")
     } catch (err) {
@@ -736,7 +734,7 @@ export default function TestEditorPage() {
     }
   }, [])
 
-  // A session the server no longer holds stays on the pane, whose preview names it (428 D-09).
+  // A session the server dropped stays on the pane, whose preview names it.
   useEffect(() => {
     if (!liveSessionId) return
     if (liveConnectionState !== "disconnected") return
@@ -809,13 +807,13 @@ export default function TestEditorPage() {
   const shortcuts = useMemo(
     () => ({
       r: () => {
-        if (!isCreateMode) handleRun(defaultRunMode === 'local')
+        if (!isCreateMode) handleRun()
       },
       escape: () => {
         if (runId) handleRunClose()
       },
     }),
-    [isCreateMode, runId, handleRun, handleRunClose, defaultRunMode],
+    [isCreateMode, runId, handleRun, handleRunClose],
   )
   useKeyboardShortcuts(shortcuts)
 

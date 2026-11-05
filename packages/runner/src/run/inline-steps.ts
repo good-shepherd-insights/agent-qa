@@ -1,18 +1,8 @@
-// Inline-DSL step preprocessing — the PURE parsing half of core's hook-inline /
-// runjs-inline / appium-inline (Phase 363 D-05, RESEARCH Q2). Moved verbatim from
-// core/src/agent/{hook-inline,runjs-inline,appium-inline}.ts; the EXECUTION halves
-// (Docker hook run, page.evaluate, adapter.execute) do NOT live here — they touch
-// adapter/host internals and ride injected handlers on `MemberRunConfig` (Q-2/Q-4).
-//
-// CRITICAL: provider-neutral + storage-neutral. No node:* imports, no fs/sharp, no
-// core/model/adapter package imports — pure string work only. The canonical-hook-id
-// gate is a runner-local pure-regex equivalent of `@vostride/agent-qa-ids`
-// `isCanonicalHookId` (the runner does not depend on agent-qa-ids): a hook id is the
-// `h_` prefix plus exactly ten hyphen-separated lowercase word segments.
+// Pure string work; the canonical hook id check mirrors agent-qa-ids without depending on it.
 
 import type { Action } from '../platform.js'
 
-// ---- inline hook directives (from hook-inline.ts) --------------------------
+// ---- inline hook directives -----------------------------------------------
 
 const RUNHOOK_RE = /\{\{runHook:"([^"]+)"\}\}/g
 // Runner-local canonical hook-id shape: `h_` + 10 hyphen-joined lowercase words.
@@ -42,7 +32,7 @@ export function stripHookInline(text: string): string {
   return text.replace(RUNHOOK_RE, '').replace(/\s{2,}/g, ' ').trim()
 }
 
-// ---- inline runJS directives (from runjs-inline.ts) ------------------------
+// ---- inline runJS directives ----------------------------------------------
 
 const RUNJS_DBL_RE = /\{\{runJS:"((?:[^"\\]|\\.)*)"\}\}/g
 const RUNJS_SGL_RE = /\{\{runJS:'((?:[^'\\]|\\.)*)'\}\}/g
@@ -76,7 +66,7 @@ export function coerceRunJSResult(value: unknown): string {
   return String(value)
 }
 
-// ---- inline appium directives (from appium-inline.ts) ----------------------
+// ---- inline appium directives ---------------------------------------------
 
 const APPIUM_INLINE_RE = /\{\{appium:\s*(.+?)\}\}/
 

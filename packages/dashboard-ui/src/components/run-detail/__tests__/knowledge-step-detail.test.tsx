@@ -1,26 +1,6 @@
 // @vitest-environment jsdom
 
-// THE EXPANDED STEP ROW A PERSON ACTUALLY SEES (407-06 · LERN-01, D-03/D-04/D-07/D-08, T-407-14).
-//
-// WHAT THIS FILE IS FOR. `tab-knowledge.test.tsx` pins the COLLAPSED row and the five page states;
-// this file pins what is behind the chevron — the three channels, the per-line why-trace, the cut
-// ledger, the procedure outcome and the canary attribution. They are separate files because they
-// are separate subjects: the shell is about which state the tab is in, and this is about whether
-// a line that was served can be explained.
-//
-// THE DOM CONTRACT IS THE SUBJECT, not the styling. `data-served-channel`, `data-served-as-canary`,
-// `data-canary-outcome`, `data-trace-state`, `data-cut-candidates`, `data-plan-source-outcome` and
-// `data-channel-show-all` are what a later Playwright cell addresses on the built bundle, so each
-// is pinned here in the cheap medium first. Badge tints are NOT asserted — a cell pinning
-// `bg-emerald-500/15` would go red on a palette change that broke nothing a person relies on.
-//
-// EVERY NO-TRACE ARM GETS ITS OWN CELL, because D-04's whole claim is that nothing silently drops.
-// A step that served a line the trace cannot explain must SAY which of the three absences applies;
-// three arms collapsed into one silent branch is the failure these cells exist to catch.
-//
-// THE COPY IS ASSERTED BY ITS EXPORTED CONSTANT (403-05 D-5), never by literal prose — except
-// where a cell is deliberately pinning the SENTENCE OF RECORD from the Copywriting Contract, in
-// which case the literal IS the claim.
+// Every no-trace arm has its own cell, so no served line silently loses its explanation.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -88,10 +68,7 @@ function line(overrides: Partial<BriefLineView> = {}): BriefLineView {
   }
 }
 
-/**
- * The retired per-line disclosure's trigger copy (427 D-19). Spelled here as a literal because the
- * constant is deleted once no surface paints it; the cells below prove no element carries it.
- */
+// Spelled as a literal because no constant holds the copy; the cells prove no element carries it.
 const RETIRED_WHY_TRIGGER = "Why this line?"
 
 function detail(overrides: Partial<StepDetailView> = {}): StepDetailView {
@@ -103,21 +80,7 @@ function linesOf(view: HTMLElement, channel: "1" | "2" | "3"): HTMLElement[] {
   return Array.from(view.querySelectorAll(`li[data-served-channel="${channel}"]`))
 }
 
-/**
- * The element whose text content is exactly `text` and which CONTAINS NO OTHER SUCH ELEMENT — the
- * box that actually paints it.
- *
- * Addressing the painted node by its CONTENT rather than by position keeps a styling cell honest
- * if the row is later rearranged: a positional query would happily go on measuring whatever moved
- * into the slot.
- *
- * THE RULE IS CONTAINMENT, NOT POSITION. This helper used to take the LAST match in document
- * order. That is right only while the subtree holds ONE match chain: document order puts an
- * ancestor before its descendant, so "last" and "deepest" coincide along a single chain. A LATER
- * SIBLING subtree painting the same exact string is also "last", and the helper would measure that
- * unrelated box instead. The expanded step row now mounts several same-shaped nodes in sibling
- * subtrees at once, so the coincidence can no longer be relied on.
- */
+// Containment, not document order: sibling subtrees can paint the same string after the match.
 function deepestWithText(view: HTMLElement, text: string): HTMLElement | null {
   const matches = Array.from(view.querySelectorAll<HTMLElement>("*")).filter(
     (el) => el.textContent === text,
@@ -125,7 +88,7 @@ function deepestWithText(view: HTMLElement, text: string): HTMLElement | null {
   return matches.find((el) => !matches.some((other) => other !== el && el.contains(other))) ?? null
 }
 
-describe("the painted node is the one no other match contains (407-28 · IN-05)", () => {
+describe("the painted node is the one no other match contains", () => {
   const TARGET = "fact-page-https-example-com-9f2c1ad4"
 
   /** A `wrapper > leaf` chain whose leaf paints exactly `text`, tagged so a failure names it. */
@@ -156,8 +119,8 @@ describe("the painted node is the one no other match contains (407-28 · IN-05)"
   })
 })
 
-describe("a served line carries the trace that explains it, inline (D-04)", () => {
-  // 427 D-19: Retrieval details is already a disclosure, so the trace reads on the line itself.
+describe("a served line carries the trace that explains it, inline", () => {
+  // Retrieval details is already a disclosure, so the trace reads on the line itself.
   it("LEDGER-TRACE-INLINE: marks the line answered and prints its leg, rank and score inline, behind no trigger", () => {
     const view = mount(<KnowledgeBriefLine line={line()} />)
 
@@ -207,19 +170,8 @@ describe("a served line carries the trace that explains it, inline (D-04)", () =
   })
 })
 
-/**
- * AN UNBROKEN TOKEN HAS TO BE ABLE TO SHRINK ITS OWN BOX (407-23 · G-407-2, LERN-01).
- *
- * A brief summary is a producer string and is regularly ONE UNBROKEN TOKEN — a URL, a selector
- * literal, a content-derived record id. `break-words` (`overflow-wrap: break-word`) offers such a
- * token a break opportunity only once the box has ALREADY been sized, and a flex item sized from
- * its own content never gets that far: the UAT measured the summary span grown to 895px inside a
- * 639px parent with `break-word` already computed on it. `overflow-wrap: anywhere` is the one that
- * reduces min-content width, so the item can shrink and the break opportunity is actually reached.
- *
- * These cells therefore pin the PROPERTY THAT SIZES, not the property that merely permits a break.
- */
-describe("a content-derived brief line can shrink its own box, not merely overflow it (G-407-2)", () => {
+// `overflow-wrap: anywhere` cuts min-content width; `break-word` alone lets a flex item overflow.
+describe("a content-derived brief line can shrink its own box, not merely overflow it", () => {
   const UNBROKEN_SUMMARY = "x".repeat(120)
   const UNBROKEN_ID = "fact-el-textbox-password-9a05ce7d3b1f4c28e6a09d5417bc32ea6f81d40c"
 
@@ -240,20 +192,8 @@ describe("a content-derived brief line can shrink its own box, not merely overfl
   })
 })
 
-/**
- * THE SAME LAW, EVERY CHANNEL OF THE EXPANDED ROW (407-28 · G-407-13, LERN-01).
- *
- * The block above pins channel 1 by mounting `KnowledgeBriefLine` alone — which is structurally
- * incapable of reaching channels 2 and 3, and is exactly why the identical nodes there went
- * unfixed. These cells mount the WHOLE step detail and drive ONE table over every node in it that
- * paints a content-derived token, so the next such node added to any channel is caught by an
- * existing rule rather than by another review round.
- *
- * The four subject strings are deliberately DISTINCT from one another: `deepestWithText` addresses
- * by exact text, and two identical strings in sibling subtrees is an ambiguity the helper's own
- * cells (below) exist to remove.
- */
-describe("every unbroken token in the expanded row can shrink its own box, whichever channel served it (G-407-13)", () => {
+// Mounts the whole step detail so every channel's content-derived token is held to the same rule.
+describe("every unbroken token in the expanded row can shrink its own box, whichever channel served it", () => {
   const CHANNEL2_ID = "fact-page-https-automationexercise-com-view-cart-376e539e6c7b4e75"
   const CHANNEL3_SUMMARY = "https://automationexercise.com/product_details/44?variant=very-long-unbroken-query-string"
   const CHANNEL3_ID = "caution-el-button-add-to-cart-20f5876cc5299c11a4d0e93b7c6182fa"
@@ -301,7 +241,7 @@ describe("every unbroken token in the expanded row can shrink its own box, which
   })
 })
 
-describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)", () => {
+describe("a canary line is marked ALWAYS, and its outcome is never blank", () => {
   /** The painted node for `text`, which must be plain 12px text and never a tinted Badge. */
   function plainWord(view: HTMLElement, text: string): HTMLElement {
     const painted = deepestWithText(view, text)
@@ -311,7 +251,7 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
     return painted as HTMLElement
   }
 
-  // 427 D-19: the marker reads "on trial (canary)" and the store's word reads as plain text.
+  // The marker reads `on trial (canary)` and the store's word reads as plain text.
   it("wears the on-trial marker and the attributed outcome once curation settled", () => {
     const view = mount(
       <KnowledgeBriefLine line={line({ servedAsCanary: true, canaryOutcome: "confirmed" })} />,
@@ -349,11 +289,7 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
     plainWord(view, NOT_ATTRIBUTED_TEXT)
   })
 
-  /**
-   * REVIEW WR-02 AT THE MOUNT. `not attributed` claims the store answered; on a partial read
-   * nobody asked it. The look is the SAME muted text — the degradation is explained by the
-   * Memory changes read note, not by a warning tint over here.
-   */
+  // A partial read leaves the store's answer unknown, so the line says so in the same muted text.
   it("says ATTRIBUTION UNKNOWN when the read that would have answered was partial", () => {
     const view = mount(
       <KnowledgeBriefLine line={line({ servedAsCanary: true, canaryOutcome: "unknown" })} />,
@@ -380,7 +316,7 @@ describe("a canary line is marked ALWAYS, and its outcome is never blank (D-08)"
   })
 })
 
-describe("each channel the step was served is named, and an empty one is left out (427 D-19)", () => {
+describe("each channel the step was served is named, and an empty one is left out", () => {
   it("LEDGER-OMITS-EMPTY-CHANNEL: a step served only channel 1 names channel 1 in a 12px eyebrow and nothing else", () => {
     const view = mount(<KnowledgeStepDetail detail={detail({ channel1: [line()] })} />)
 
@@ -421,7 +357,7 @@ describe("each channel the step was served is named, and an empty one is left ou
   })
 })
 
-describe("the cut ledger answers why it did NOT say something (D-04)", () => {
+describe("the cut ledger answers why it did NOT say something", () => {
   it("carries the ledger size on the disclosure and the producer cap in its label", () => {
     const view = mount(<KnowledgeStepDetail detail={detail({
       cut: {
@@ -450,8 +386,8 @@ describe("the cut ledger answers why it did NOT say something (D-04)", () => {
   })
 })
 
-describe("a replay states its guard outcome and a hint states its demotion (D-07)", () => {
-  /** The plan-source row, which states its procedure and its sentence in plain text (427 D-19). */
+describe("a replay states its guard outcome and a hint states its demotion", () => {
+  /** The plan-source row, which states its procedure and its sentence in plain text. */
   function planSourceRow(view: HTMLElement, procedureId: string): Element | null {
     const row = view.querySelector("[data-plan-source-outcome]")
     expect(row?.querySelector('[data-slot="badge"]')).toBeNull()
@@ -487,7 +423,7 @@ describe("a replay states its guard outcome and a hint states its demotion (D-07
     expect(row?.textContent).toContain("replayed 5/5")
   })
 
-  it("keeps a demoted hint tellable apart from an ordinary one (G-381-4)", () => {
+  it("keeps a demoted hint tellable apart from an ordinary one", () => {
     const view = mount(<KnowledgeStepDetail detail={detail({
       planSource: { kind: "procedure-hint", procedureId: "procedure-flow-search-12cd", sentence: PROCEDURE_HINT_DEMOTED_TEXT, tone: "hint" },
     })} />)
@@ -529,7 +465,7 @@ describe("a channel longer than the page shows a page, and offers the rest", () 
   })
 })
 
-describe("producer text reaches the DOM as TEXT, never as markup (T-407-14)", () => {
+describe("producer text reaches the DOM as TEXT, never as markup", () => {
   it("renders a hostile brief summary as a text node — no element is created from it", () => {
     const hostile = '<img src=x onerror=alert(1)>'
     const view = mount(<KnowledgeStepDetail detail={detail({ channel1: [line({ summary: hostile })] })} />)

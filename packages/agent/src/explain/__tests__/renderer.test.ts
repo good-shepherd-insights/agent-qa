@@ -1,16 +1,4 @@
-// The cite-and-resolve proofs (Phase 398 plan 04 — XPLN-02, D-10 / D-12; T-398-09, T-398-10).
-//
-// WHAT THIS FILE HAS TO PROVE is not that the renderer refuses a list of bad shapes — a guard that
-// can only refuse what it can NAME cannot be driven to zero by naming more things. It is anchored
-// at the choke point instead, and the choke point is stated as two total properties:
-//
-//   1. EVERY quoted form in an answer resolves to a cited catalog row (the `answerQuotedForms`
-//      cell ranges the WHOLE output, not a sample of forbidden shapes).
-//   2. Model prose is INERT: the output is a total function of (resolved rows, cited order), so
-//      the property is quantified over arbitrary prose rather than over prose we thought to write.
-//
-// Together those say the thing D-10 says: there is no path by which a string the model wrote
-// becomes a command a person reads.
+// Every quoted form resolves to a cited row, and the output is a function of rows and order alone.
 
 import { ExplainOutputSchema } from '@vostride/agent-qa-schema'
 import type { CatalogRow, ExplainCitation, ExplainOutput } from '@vostride/agent-qa-schema'
@@ -107,7 +95,7 @@ describe('renderExplainOutput — the answer arm', () => {
 })
 
 describe('renderExplainOutput — invention is impossible by construction', () => {
-  it('a ghost id abstains rather than answering (T-398-10)', () => {
+  it('a ghost id abstains rather than answering', () => {
     const output = render({ citedRowIds: ['op:runs.deploy'] })
     expect(output.kind).toBe('abstention')
   })
@@ -118,13 +106,7 @@ describe('renderExplainOutput — invention is impossible by construction', () =
     if (output.kind !== 'abstention') throw new Error('unreachable')
     expect(output).not.toHaveProperty('citations')
 
-    // The stronger statement, and the one that is actually true: the abstention arm is
-    // INDEPENDENT of what the model cited. The first draft of this cell asserted that
-    // `/fn runs.start` appears nowhere in the output, and it failed — because the deterministic
-    // scorer, ranking the QUERY against the rows, suggests that very row. That is not the resolved
-    // citation leaking through; it is the abstention's own suggestion, and asserting its absence
-    // would have pinned a law the design does not hold. So: the closest set must be the scorer's
-    // answer to (query, rows) and nothing else, unchanged when the citation is replaced wholesale.
+    // The abstention's closest set is the scorer's answer to (query, rows), whatever was cited.
     const citationFree = render({ citedRowIds: ['op:entirely.different.ghost'] })
     if (citationFree.kind !== 'abstention') throw new Error('unreachable')
     expect(output.closestRowIds).toEqual(citationFree.closestRowIds)
@@ -136,7 +118,7 @@ describe('renderExplainOutput — invention is impossible by construction', () =
     expect(render({ citedRowIds: [] }).kind).toBe('abstention')
   })
 
-  it('an EMPTY catalog abstains regardless of what was cited (SC-2, D-12)', () => {
+  it('an EMPTY catalog abstains regardless of what was cited', () => {
     for (const citation of [
       { citedRowIds: [] },
       { citedRowIds: ['op:runs.start'] },
@@ -177,7 +159,7 @@ describe('renderExplainOutput — invention is impossible by construction', () =
   })
 })
 
-describe('renderExplainOutput — the abstention arm (D-11, prohibition P2)', () => {
+describe('renderExplainOutput — the abstention arm', () => {
   it('states uncertainty plainly, names the deterministic closest, and names the docs-gap path', () => {
     const output = render({ citedRowIds: ['op:runs.ghost'] }, CATALOG_ROWS, {
       query: 'how do I start a run',
@@ -218,7 +200,7 @@ describe('renderExplainOutput — the abstention arm (D-11, prohibition P2)', ()
     expect(output.renderedLines).toContain(EXPLAIN_ABSTENTION_TEMPLATES.noClose)
   })
 
-  it('P2: every abstention line comes from the FROZEN template set, and that set carries no blame', () => {
+  it('every abstention line comes from the FROZEN template set, and that set carries no blame', () => {
     // The vocabulary scan below is weak in general and total here: the templates are a closed,
     // frozen set, so scanning it ranges the complete surface a person can be shown — not a sample
     // of it. The composed closest-line is the one exception and it is row-derived, asserted above.

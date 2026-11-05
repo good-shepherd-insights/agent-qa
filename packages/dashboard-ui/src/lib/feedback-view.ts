@@ -1,8 +1,4 @@
-// THE FEEDBACK COMPOSER'S COPY AND RULES (426 D-01, D-11, D-12, D-14, D-16, D-19, D-21, D-22).
-//
-// Pure and total: no I/O, no clock, no React. Every sentence a person reads in the composer is an
-// exported constant or a pure function here, so cells assert against the constant and copy moves in
-// one place.
+// Every composer sentence is an exported constant or pure function here.
 
 import { MARK_PREVIEW_REFUSALS, markAddressKey } from '@vostride/agent-qa-schema'
 import type {
@@ -14,10 +10,8 @@ import type {
   MarkPreviewBasis,
   MarkPreviewDraft,
   MarkPreviewEvidenceEffect,
-  MarkPreviewGroundTruth,
   MarkPreviewKnowledge,
   MarkPreviewKnowledgeRecord,
-  MarkPreviewLabel,
   MarkQuarantineClass,
   MemberTestOutcome,
   RunDetailMember,
@@ -32,34 +26,29 @@ import type { FeedbackReadFailure, MarksHistoryRead } from './api'
 import { UNNAMED_STEP_LABEL } from './display-step'
 import { memberDisplayName, memberHandleLabel } from './run-detail-view'
 
-/** A UI pointer to a mark address, never a new identity (419 D-11). */
+/** A UI pointer to a mark address, never a new identity. */
 export interface FeedbackTarget {
   testIndex: number
   stepIndex?: number
 }
 
-/** Raw text, so an invalid corrected action survives re-targeting and closing. */
+/** What the composer holds for one address while it is retargeted or closed. */
 export interface FeedbackDraft {
   kind?: Mark
   note: string
-  expectation: string
-  actionText: string
 }
 
-export const EMPTY_DRAFT: FeedbackDraft = { note: '', expectation: '', actionText: '' }
+export const EMPTY_DRAFT: FeedbackDraft = { note: '' }
 
 export function feedbackAddress(target: FeedbackTarget): string {
   return markAddressKey(target)
 }
 
 export function isDraftEmpty(draft: FeedbackDraft): boolean {
-  return draft.kind === undefined && draft.note === '' && draft.expectation === '' && draft.actionText === ''
+  return draft.kind === undefined && draft.note === ''
 }
 
-/**
- * A place the composer can name (D-08, D-09): a step by number, a test by name and handle. `member`
- * is given only in a suite; without it a test is "this test".
- */
+// `member` is given only in a suite; without it a test is `this test`.
 export interface FeedbackPlace {
   stepIndex?: number
   member?: Pick<RunDetailMember, 'testIndex' | 'name'>
@@ -95,72 +84,6 @@ export const NOTE_COUNTER_FROM = 1800
 
 export function noteCounterText(length: number): string {
   return `${String(length)} / ${String(NOTE_MAX_LENGTH)}`
-}
-
-export const ADD_CORRECTION_LABEL = 'Add a correction'
-
-/** Why the corrected-action field is hidden (UI-SPEC S4; quarantined and unavailable are U7's rows). */
-export type CorrectedActionGateState = 'no-choice' | 'loading' | 'count' | 'quarantined' | 'unavailable'
-
-export function correctedActionUnavailableText(state: CorrectedActionGateState, count = 0): string {
-  switch (state) {
-    case 'no-choice':
-      return 'Pick a choice first — a corrected action is only possible when the mark covers exactly one recorded decision.'
-    case 'loading':
-      return 'Checking whether a corrected action is possible…'
-    case 'count':
-      return count === 0
-        ? "A corrected action isn't possible here — this mark covers no recorded decision."
-        : `A corrected action isn't possible here — this mark covers ${String(count)} recorded decisions, and a correction needs exactly one.`
-    case 'quarantined':
-      return "A corrected action isn't used — this mark is quarantined."
-    case 'unavailable':
-      return "A corrected action can't be checked until the preview above answers."
-    default:
-      return state satisfies never
-  }
-}
-
-export type CorrectedActionGate =
-  | { shown: true }
-  | { shown: false; state: Exclude<CorrectedActionGateState, 'count'> }
-  | { shown: false; state: 'count'; count: number }
-
-export interface CorrectedActionGateInput {
-  kind: Mark | undefined
-  /**
-   * The last read that landed for this target and kind, current or not: a re-fetch in flight keeps
-   * the landed decision, so the field never disappears mid-typing.
-   */
-  landedForTargetAndKind:
-    | { kind: 'read'; result: RunsMarkPreviewResult }
-    | { kind: 'failed'; reason: string }
-    | undefined
-}
-
-/**
- * D-15: a corrected action is scored against exactly one recorded decision, so the field shows only
- * for a consequences read whose markedDecisionCount is 1 — runs.mark never receives
- * ambiguous-correction from the dashboard.
- */
-export function correctedActionGate({ kind, landedForTargetAndKind: landed }: CorrectedActionGateInput): CorrectedActionGate {
-  if (kind === undefined) return { shown: false, state: 'no-choice' }
-  if (landed === undefined) return { shown: false, state: 'loading' }
-  if (landed.kind === 'failed') return { shown: false, state: 'unavailable' }
-  const read = landed.result
-  if (read.kind === 'quarantined') return { shown: false, state: 'quarantined' }
-  if (read.kind !== 'consequences') return { shown: false, state: 'unavailable' }
-  return read.markedDecisionCount === 1 ? { shown: true } : { shown: false, state: 'count', count: read.markedDecisionCount }
-}
-
-/** Only consequences and quarantined reads say how many decisions a mark covers; the rest keep what is known. */
-export function decidesCorrectedActionGate(read: CorrectedActionGateInput['landedForTargetAndKind']): boolean {
-  return read?.kind === 'read' && (read.result.kind === 'consequences' || read.result.kind === 'quarantined')
-}
-
-export function correctedActionField(gate: CorrectedActionGate): { shown: true } | { shown: false; reason: string } {
-  if (gate.shown) return gate
-  return { shown: false, reason: correctedActionUnavailableText(gate.state, gate.state === 'count' ? gate.count : undefined) }
 }
 
 export const CHOICE_LABELS = {
@@ -227,9 +150,9 @@ export interface FeedbackOutcomeInput {
   runStatus: string | undefined
 }
 
-/** The target's own recorded result: a step reads its verifier verdict, a test its outcome (D-11). */
+/** The target's own recorded result: a step reads its verifier verdict, a test its outcome. */
 export function feedbackOutcomeClass({ member, step, runStatus }: FeedbackOutcomeInput): FeedbackOutcomeClass {
-  // verifierVerdict is required by the schema, but fetchRunDetail does not parse (UI-SPEC U9).
+  // `verifierVerdict` is required by the schema, but `fetchRunDetail` does not parse.
   const verdict = step?.verifierVerdict
   if (verdict != null) return verdict.pass ? 'passed' : 'failed'
   return memberOutcomeClass(member?.outcome, runStatus)
@@ -280,7 +203,7 @@ export interface ComposerHeadingInput {
   suite: boolean
 }
 
-/** D-14: the exact step or test the composer is about; step numbers are stepIndex + 1. */
+// The exact step or test the composer is about; step numbers are `stepIndex + 1`.
 export function composerHeading({ member, step, stepCount, suite }: ComposerHeadingInput): FeedbackTextParts {
   if (step !== undefined) {
     return {
@@ -367,11 +290,7 @@ export interface HeaderFeedbackTargetInput {
   runStatus: string | undefined
 }
 
-/**
- * D-03: the test the header entry means. A suite resolves, in order, to the selected step's test, the
- * member filter's test, the first failed member, then the first member — "first" in handle order.
- * The page auto-selects the first visible step, so on load rung 1 wins (RESEARCH Pitfall 5).
- */
+// Resolves to the selected step's test, the filtered member, the first failed, then the first.
 export function resolveHeaderFeedbackTarget({
   detail,
   selectedStep,
@@ -394,10 +313,7 @@ export function resolveHeaderFeedbackTarget({
 export const TEST_SWITCHER_LABEL = 'Test'
 export const NO_UNIQUE_ADDRESS_TEXT = "This test has no unique address in this run, so feedback can't be recorded for it."
 
-/**
- * D-01, inherited from onMark's refusal: the wire addresses a suite member by testId, so a member
- * needs a truthy testId no other member holds. A single-test run needs none.
- */
+// The wire addresses a suite member by `testId`, so it needs a truthy one no other member holds.
 export function hasUniqueAddress(detail: Pick<RunDetailProjection, 'members'> | null | undefined, testIndex: number): boolean {
   const members = detail?.members ?? []
   const member = members.find((entry) => entry.testIndex === testIndex)
@@ -406,8 +322,6 @@ export function hasUniqueAddress(detail: Pick<RunDetailProjection, 'members'> | 
   return Boolean(member.testId) && members.filter((entry) => entry.testId === member.testId).length === 1
 }
 
-// 2026-10-01 (432-14, D-14): the state a mark sat in while its approval was asked is deleted with
-// the approval. A submission is composing, in flight, recorded or retained, and nothing else.
 export type FeedbackComposerState =
   | 'composing'
   | 'submitting'
@@ -432,7 +346,7 @@ export const FEEDBACK_LAYOUTS = [
   'stacked',
 ] as const satisfies readonly FeedbackLayout[]
 
-/** 48rem, 425's first header step (the header moved to 64rem for #480): below it the open composer stacks under the evidence (D-10). */
+// 48rem: below it the open composer stacks under the evidence.
 export const FEEDBACK_STACK_BELOW_PX = 768
 
 /** An unmeasured page (width 0) and a closed composer are always docked, so the closed layout never moves. */
@@ -458,10 +372,7 @@ const FEEDBACK_STACKED_PANEL_IDS = {
   feedback: 'run-feedback-stacked',
 } as const satisfies FeedbackPanelIds
 
-/**
- * Each arrangement has its own panel ids (RESEARCH Pattern 3), so react-resizable-panels keeps a
- * remembered layout per orientation and the Group never needs a key change to reset.
- */
+// Each arrangement has its own panel ids, so each orientation keeps a remembered layout.
 export function feedbackPanelIds(layout: FeedbackLayout): FeedbackPanelIds {
   return layout === 'stacked' ? FEEDBACK_STACKED_PANEL_IDS : FEEDBACK_PANEL_IDS
 }
@@ -483,24 +394,20 @@ export function feedbackDefaultLayout(layout: FeedbackLayout, width: number): Re
   }
 }
 
-export type FeedbackCorrection = Pick<RunsMarkInput, 'correctedExpectation' | 'correctedAction'>
-
-/** The preview input, composed exactly as the page's onMark composes its markRun body (D-16). */
+/** The preview input, composed exactly as the page's onMark composes its markRun body. */
 export function previewInputFor(
   member: Pick<RunDetailMember, 'testId'>,
   target: FeedbackTarget,
   kind: Mark,
-  correction?: FeedbackCorrection,
 ): Omit<RunsMarkInput, 'runId' | 'note'> {
   return {
     kind,
     ...(member.testId ? { testId: member.testId } : {}),
     ...(target.stepIndex === undefined ? {} : { stepIndex: target.stepIndex }),
-    ...correction,
   }
 }
 
-export interface PreviewRequest extends FeedbackTarget, FeedbackCorrection {
+export interface PreviewRequest extends FeedbackTarget {
   kind: Mark
 }
 
@@ -510,8 +417,6 @@ export function previewRequestKey(input: PreviewRequest): string {
     input.kind,
     input.testIndex,
     input.stepIndex ?? 'run',
-    input.correctedExpectation ?? null,
-    input.correctedAction ?? null,
   ])
 }
 
@@ -523,7 +428,6 @@ export const SUBMIT_REASON_CHECKING = 'Checking what this will do…'
 export const SUBMIT_REASON_PREVIEW_FAILED = "Consequences couldn't be checked — retry above."
 export const SUBMIT_REASON_REFUSED = "This mark can't be recorded — see above."
 export const SUBMIT_REASON_ALREADY_MARKED = "You already said this — there's nothing new to record."
-export const SUBMIT_REASON_INVALID_CORRECTION = 'Fix the corrected action JSON first.'
 export const SUBMIT_REASON_SENDING = 'Sending…'
 
 export interface SubmitBlockInput {
@@ -533,13 +437,9 @@ export interface SubmitBlockInput {
   landedOutcome: RunsMarkPreviewResult['kind'] | 'failed' | undefined
   inFlight: boolean
   noUniqueAddress?: boolean
-  invalidCorrection?: boolean
 }
 
-/**
- * First match wins; '' means Send feedback is available (D-19, UI-SPEC S6). Only a current
- * consequences or quarantined read gets past the preview rows: there is no blind submit.
- */
+// First match wins and `''` means sendable; only a current consequences or quarantined read passes.
 export function submitBlockedReason(input: SubmitBlockInput): string {
   if (input.noUniqueAddress === true) return SUBMIT_REASON_NO_UNIQUE_ADDRESS
   if (input.kind === undefined) return SUBMIT_REASON_NO_CHOICE
@@ -548,7 +448,6 @@ export function submitBlockedReason(input: SubmitBlockInput): string {
   if (outcome === 'failed') return SUBMIT_REASON_PREVIEW_FAILED
   if (PREVIEW_REFUSAL_KINDS.has(outcome)) return SUBMIT_REASON_REFUSED
   if (outcome !== 'consequences' && outcome !== 'quarantined') return SUBMIT_REASON_ALREADY_MARKED
-  if (input.invalidCorrection === true) return SUBMIT_REASON_INVALID_CORRECTION
   if (input.inFlight) return SUBMIT_REASON_SENDING
   return ''
 }
@@ -597,13 +496,12 @@ export function stepTriggerTooltip(stepNumber: number, marked: boolean): string 
     : `Give feedback on step ${String(stepNumber)}`
 }
 
-/** D-06: a passive trace names the plain choice, never the internal word. */
+// A passive trace names the plain choice, never the internal word.
 export function markGlyphLabel(kind: Mark): string {
   return `Marked: ${CHOICE_LABELS[kind]}`
 }
 
-// 2026-09-30, 432-09 (D-04/D-25): a mark applies its fix in the call, so a receipt says what was
-// added or edited. `drafted` is a pre-432 receipt read back from an existing ledger.
+// A mark applies its fix in the call; `drafted` is an older receipt read back from a ledger.
 export const DISPOSITION_TEXT = {
   applied: {
     fact: 'Recorded — a knowledge fact was added',
@@ -611,11 +509,10 @@ export const DISPOSITION_TEXT = {
     'procedure-hint': 'Recorded — a procedure hint was added',
     'test-edit': 'Recorded — the test file was edited',
   } satisfies Record<MarkFixKind, string>,
-  // 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW pillar 1): a historical reader's wording.
   drafted: 'Recorded — a fix was drafted (older mark)',
   'no-draftable-fix': 'Recorded — no fix could be drafted',
   'confirmed-bug': 'Recorded — kept as a real product bug; nothing changed',
-  // 2026-10-03 (quick 261003-mqc): the mark stands; its planned fix was refused, nothing changed.
+  // The mark stands; its planned fix is refused and nothing changes.
   'not-applied': {
     'target-not-found': 'Recorded — the fix was not applied: the knowledge it replaces is gone',
     'policy-materialize-refused': 'Recorded — the fix was not applied: its policy text was refused',
@@ -646,7 +543,7 @@ export function feedbackRecordedText(disposition: MarkDisposition): string {
   return `Feedback recorded — ${dispositionText(disposition).replace(/^Recorded — /, '')}.`
 }
 
-// 426 D-16..D-19: the consequence preview. Every line is one runs.mark.preview field in plain words.
+// The consequence preview: every line is one `runs.mark.preview` field in plain words.
 
 export type FeedbackPreviewState =
   | 'idle'
@@ -688,37 +585,9 @@ export const PREVIEW_UPDATING_TEXT = 'Updating…'
 export const PREVIEW_IDLE_TEXT = 'Choose an option above to see what this will do.'
 
 export const PREVIEW_LINE_LABELS = {
-  result: 'Result',
-  labels: 'Eval labels',
   knowledge: 'Knowledge',
   change: 'Change',
 } as const
-
-const VERDICT_WORD = { pass: 'passed', fail: 'failed' } as const
-
-/** D-17: n is stepIndex + 1; the reasoning is the producer part and is dropped with its quote when empty. */
-export function groundTruthLine(entry: MarkPreviewGroundTruth): FeedbackTextParts {
-  const head = `Step ${String(entry.stepIndex + 1)} will count as ${VERDICT_WORD[entry.verdict]} (recorded: ${
-    VERDICT_WORD[entry.recordedVerdict.pass ? 'pass' : 'fail']
-  }`
-  const { reasoning } = entry.recordedVerdict
-  return reasoning === '' ? { prefix: `${head})` } : { prefix: `${head} — "`, name: reasoning, suffix: '")' }
-}
-
-export function correctedGroundTruthText(entry: MarkPreviewGroundTruth): string | undefined {
-  const expectation = entry.correctedExpectation !== undefined
-  if (expectation && entry.correctedAction) return 'with your corrected expectation and action'
-  if (expectation) return 'with your corrected expectation'
-  if (entry.correctedAction) return 'with your corrected action'
-  return undefined
-}
-
-export const NO_GROUND_TRUTH_TEXT = 'No step verdict changes.'
-
-export function labelsLine(count: number): string {
-  if (count === 0) return 'No eval labels change'
-  return count === 1 ? '1 decision becomes a held-out eval label' : `${String(count)} decisions become held-out eval labels`
-}
 
 /**
  * Zero-count clauses are omitted. Records reached with no effect at all are all unreadable (a record
@@ -764,7 +633,7 @@ export const CONTENT_ABSENCE_TEXT = {
   'not-bound': "Record content isn't available on this host",
 } satisfies Record<RunKnowledgeContentAbsence['reason'], string>
 
-// 432-09 (D-04): the preview says what sending will change, in the future tense of an applied fix.
+// The preview says what sending will change, in the future tense of an applied fix.
 export const PREVIEW_FIX_TEXT = {
   knowledge: {
     fact: 'A knowledge fact will be added',
@@ -800,7 +669,7 @@ export function draftHasWording(draft: MarkPreviewDraft): boolean {
 
 /**
  * The time is the history entry's own; without history the clause drops rather than guessing.
- * 432-09 (D-11): a later mark replaces the earlier one's gold case, and what it changed stays.
+ * A later mark replaces the earlier one, and what it changed stays.
  */
 export function replacesLine(ordinal: number, time: string | undefined): string {
   const at = time === undefined ? `#${String(ordinal)}` : `#${String(ordinal)}, ${time}`
@@ -809,7 +678,7 @@ export function replacesLine(ordinal: number, time: string | undefined): string 
 
 export type MarkTargetReason = Extract<RunsMarkPreviewResult, { kind: 'consequences' }>['resolvedStep']['reason']
 
-/** D-14: keyed on the read's reason and the kind, never re-derived; a step mark needs no line. */
+// Keyed on the read's reason and the kind, never re-derived; a step mark needs no line.
 export function resolvedStepText(reason: MarkTargetReason, kind: Mark, stepNumber: number, total: number): string | undefined {
   const lead = `This marks step ${String(stepNumber)} of ${String(total)} — `
   switch (reason) {
@@ -828,8 +697,7 @@ export function showStepLabel(stepNumber: number): string {
   return `Show step ${String(stepNumber)}`
 }
 
-// D-18: the two arms that are not consequences. A quarantined mark still records; an identical repeat
-// does not, because a note alone never changes what a mark does (isIdenticalRepeat).
+// A quarantined mark still records; an identical repeat does not, as a note alone changes nothing.
 
 export const QUARANTINE_CAUSE_TEXT = {
   timeout: 'a timeout',
@@ -838,7 +706,7 @@ export const QUARANTINE_CAUSE_TEXT = {
 } satisfies Record<MarkQuarantineClass, string>
 
 export function quarantinedText(cls: MarkQuarantineClass): string {
-  return `This test failed from ${QUARANTINE_CAUSE_TEXT[cls]}, so your mark is recorded but quarantined — no labels, knowledge or tests change.`
+  return `This test failed from ${QUARANTINE_CAUSE_TEXT[cls]}, so your mark is recorded but quarantined — no knowledge or tests change.`
 }
 
 /** The time is the prior mark's history entry; without history the parenthetical drops. */
@@ -846,7 +714,7 @@ export function alreadyMarkedText(time?: string): string {
   return `You already said this${time === undefined ? '' : ` (${time})`}. A new note alone isn't recorded.`
 }
 
-// D-19: a refusal is runs.mark's own arm, read from its own fields; a failed read names why.
+// A refusal is `runs.mark`'s own arm, read from its fields; a failed read names why.
 
 export type PreviewRefusalKind = (typeof MARK_PREVIEW_REFUSALS)[number]
 export type PreviewRefusalArm<K extends PreviewRefusalKind = PreviewRefusalKind> = Extract<RunsMarkPreviewResult, { kind: K }>
@@ -860,8 +728,6 @@ export const PREVIEW_REFUSAL_TEXT = {
       : `This test recorded ${String(arm.stepCount)} ${arm.stepCount === 1 ? 'step' : 'steps'}, so there is no step ${String(arm.stepIndex + 1)} to mark.`,
   'ambiguous-address': (arm) =>
     `${String(arm.candidates.length)} tests in this run share this address, so the mark can't be placed.`,
-  'ambiguous-correction': (arm) =>
-    `A corrected action needs exactly one recorded decision; this mark covers ${String(arm.decisionCount)}. Remove the corrected action to continue.`,
 } satisfies Record<(typeof MARK_PREVIEW_REFUSALS)[number], unknown> & {
   [K in PreviewRefusalKind]: (arm: PreviewRefusalArm<K>) => string
 }
@@ -879,8 +745,6 @@ export function previewRefusalText(arm: PreviewRefusalArm): string {
     case 'step-not-found':
       return PREVIEW_REFUSAL_TEXT[arm.kind](arm)
     case 'ambiguous-address':
-      return PREVIEW_REFUSAL_TEXT[arm.kind](arm)
-    case 'ambiguous-correction':
       return PREVIEW_REFUSAL_TEXT[arm.kind](arm)
     default:
       return arm satisfies never
@@ -917,7 +781,7 @@ export const RETRY_LABEL = 'Retry'
 /** Label-in-name: the accessible name starts with the visible word and says what it retries. */
 export const PREVIEW_RETRY_ACCESSIBLE_NAME = `${RETRY_LABEL} checking what this will do`
 
-// D-13: the one place the internal mark words and the ids appear as text.
+// The one place the internal mark words and the ids appear as text.
 
 export const TECHNICAL_DETAILS_LABEL = 'Technical details'
 
@@ -926,23 +790,17 @@ export const TECHNICAL_DETAILS_ROW_LABELS = {
   address: 'Address',
   testId: 'Test id',
   records: 'Reached records',
-  labels: 'Labels',
   basis: 'Basis',
 } as const
 
 export type TechnicalDetailsRow = keyof typeof TECHNICAL_DETAILS_ROW_LABELS
-
-export function labelDetailText(label: Pick<MarkPreviewLabel, 'decisionOrdinal' | 'stepIndex' | 'channel'>): string {
-  return `decision ${String(label.decisionOrdinal)} · step ${String(label.stepIndex + 1)} · ${label.channel}`
-}
 
 export function basisDetailText(basis: MarkPreviewBasis): string {
   const prior = basis.priorMarkOrdinal === undefined ? '' : ` · prior mark #${String(basis.priorMarkOrdinal)}`
   return `ledger ordinal ${String(basis.ledgerOrdinal)}${prior}`
 }
 
-// D-22: the history. Each entry is one receipt; its disposition is what happened then. 432-09
-// (D-25): an applied fix states in one line what it changed, and nothing is offered for review.
+// Each history entry is one receipt; its disposition is what happened then.
 
 export type FeedbackHistoryState =
   | 'loading'
@@ -995,18 +853,11 @@ export function replacedByText(time?: string): string {
 
 export const REPLACEMENT_EXPLANATION = 'Only your latest mark on a test or step counts.'
 
-export function correctedPresenceText(corrected: MarkHistoryEntry['corrected']): string | undefined {
-  if (corrected.expectation && corrected.action) return 'With a corrected expectation and action'
-  if (corrected.expectation) return 'With a corrected expectation'
-  if (corrected.action) return 'With a corrected action'
-  return undefined
-}
-
 /** What one history line shows about an applied fix: the changed record content, or the written file. */
 export type AppliedChangeView =
   | { kind: 'knowledge'; records: { recordId: string; content?: string }[] }
   | { kind: 'test-file'; filePath: string }
-  /** A pre-432 drafted receipt: its change was never recorded, and none is invented. */
+  /** An older drafted receipt: its change is not recorded, and none is invented. */
   | { kind: 'unavailable' }
 
 export const APPLIED_KNOWLEDGE_PREFIX = 'Changed knowledge: '
@@ -1025,9 +876,7 @@ export function appliedChangeView(
   if (disposition.kind === 'drafted') return { kind: 'unavailable' }
   if (disposition.kind !== 'applied') return undefined
   if (disposition.change.kind === 'test-file') return { kind: 'test-file', filePath: disposition.change.filePath }
-  // 2026-10-03 (quick 261003-cpv, 432 review IN-32): a knowledge receipt that read back no record
-  // (the records were tombstoned since, or none was read) names no content, so it says the content
-  // was not recorded rather than printing a bare prefix.
+  // A receipt that read back no record says its content is unrecorded, never a bare prefix.
   if (disposition.change.recordIds.length === 0) return { kind: 'unavailable' }
   const joined = new Map((entry.changedRecords ?? []).map((record) => [record.recordId, record.recordContent?.content]))
   return {
@@ -1055,16 +904,11 @@ export function appliedChangeText(view: AppliedChangeView): string {
   }
 }
 
-/** How an applied or drafted entry's one line ends when its change was not recorded (261003-cpv). */
+/** How an applied or drafted entry's one line ends when its change was not recorded. */
 export const APPLIED_CONTENT_NOT_RECORDED_TEXT = 'its content was not recorded.'
 export const DRAFTED_CHANGE_NOT_RECORDED_TEXT = 'what it changed was not recorded.'
 
-/**
- * The ONE history line for an entry (2026-10-03, quick 261003-cpv, 432-UI-REVIEW fix 2, D-25): what
- * the mark did, with what an applied fix changed after a colon. It replaces a disposition line plus
- * a second applied line, which said the same change twice and could contradict itself. The history
- * component renders exactly this text, with record content and paths as text nodes.
- */
+// One line per entry: what the mark did, then what an applied fix changed, so it cannot contradict.
 export function historyChangeText(entry: Pick<MarkHistoryEntry, 'disposition' | 'changedRecords'>): string {
   const lead = dispositionText(entry.disposition)
   const view = appliedChangeView(entry)
@@ -1083,10 +927,7 @@ export function historyChangeText(entry: Pick<MarkHistoryEntry, 'disposition' | 
   }
 }
 
-/**
- * How an applied change is corrected (D-09/D-11), shown once above the history when an entry applied
- * a fix. Marking again replaces the mark, not the fix, so the pointer says so.
- */
+// Marking again replaces the mark, not the fix, so the pointer says how to correct a change.
 export const APPLIED_CORRECTION_TEXT
   = 'A fix stays when you mark again: correct knowledge with new feedback or by forgetting it, and revert a test edit with git.'
 

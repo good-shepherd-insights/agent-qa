@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { MARKER_WRITTEN_BACK_SENTENCE } from '@vostride/agent-qa-schema'
 import { formatConfigDebug, loadConfigFile, loadRequiredConfigFile, loadEnvOverrides, mergeConfigs, mergeWithTestConfig, mergeUseBlocks, resolveConfig } from '../config.js'
+import { HARD_CUT_STEPS, INVALID_CONFIG_FIX } from '../hard-cut.js'
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -18,7 +19,7 @@ function makeValidConfig(overrides: Record<string, unknown> = {}): Record<string
       secretsFile: '.env.secrets.local',
     },
     services: {
-      cache: { dir: '.agent-qa/cache', ttl: '7d' },
+      cache: { dir: '.agent-qa/cache' },
       logging: { level: 'warn' },
       vision: { screenshotSize: '1m' },
     },
@@ -113,9 +114,8 @@ describe('loadEnvOverrides', () => {
 
   it('maps AGENT_QA_CACHE_DIR to services.cache.dir', () => {
     process.env.AGENT_QA_CACHE_DIR = '/tmp/cache'
-    process.env.AGENT_QA_CACHE_TTL = '24h'
     const result = loadEnvOverrides()
-    expect(result).toEqual({ services: { cache: { dir: '/tmp/cache', ttl: '24h' } } })
+    expect(result).toEqual({ services: { cache: { dir: '/tmp/cache' } } })
   })
 
   it('maps AGENT_QA_HEADLESS=true to use.browser.headless boolean true', () => {
@@ -287,10 +287,7 @@ describe('resolveConfig', () => {
     await expect(resolveConfig({ configPath })).rejects.toThrow('services.dashboard.enabled was removed')
   })
 
-  // Phase 408 plan 16, W-2 / CR-02. 408-10 refined `services.dashboard.baseUrl` to an absolute
-  // http(s) URL at the parse boundary, which makes two previously-legal values fail EVERY
-  // `agent-qa` command through the one `safeParse` that throws. These cells assert the migration
-  // path an operator reads, and the negative control asserts it attaches to nothing else.
+  // `services.dashboard.baseUrl` must be an absolute http(s) URL; these cells check the hint.
   it('adds a migration hint when services.dashboard.baseUrl is a schemeless host', async () => {
     const configPath = join(TMP_DIR, 'baseurl-schemeless.yaml')
     const { stringify } = await import('yaml')
@@ -412,9 +409,9 @@ async function runConfigCommand(
   }
 }
 
-describe('C441-CONFIG', () => {
+describe('config show and set with declared secrets', () => {
   it('config show prints an undeclared credential-named value as written and a declared value as its marker', async () => {
-    const dir = join(TMP_DIR, 'show-441')
+    const dir = join(TMP_DIR, 'show')
     await mkdir(dir, { recursive: true })
     const config = makeValidConfig({
       registry: {
@@ -423,26 +420,26 @@ describe('C441-CONFIG', () => {
           provider: 'openai-compatible',
           model: 'gpt-4o',
           baseURL: 'https://api.openai.com/v1',
-          providerHeaders: { 'X-Api-Key': 'plain-441-value' },
+          providerHeaders: { 'X-Api-Key': 'plain-value' },
         }],
       },
     })
     ;(config.use as Record<string, unknown>).buildTag = 'Hunter-42-zz'
     await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(config))
-    await writeFile(join(dir, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n')
+    await writeFile(join(dir, '.env.secrets.local'), 'ACCOUNT_PASSWORD=Hunter-42-zz\n')
 
     const { output, exitCode } = await runConfigCommand(dir, ['show'])
 
     expect(output).toContain('registry.llms[0].providerHeaders.X-Api-Key')
-    expect(output).toContain('plain-441-value')
-    expect(output).toContain('[secret:PW_441]')
+    expect(output).toContain('plain-value')
+    expect(output).toContain('[secret:ACCOUNT_PASSWORD]')
     expect(output).not.toContain('Hunter-42-zz')
     expect(output).not.toContain('<redacted>')
     expect(exitCode).toBe(0)
   })
 
   it('config show refuses at start when the secrets file cannot be read', async () => {
-    const dir = join(TMP_DIR, 'show-refuse-441')
+    const dir = join(TMP_DIR, 'show-refuse')
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(makeValidConfig()))
 
@@ -454,22 +451,22 @@ describe('C441-CONFIG', () => {
   })
 
   it('config set writes a credential-named key and a credential-shaped value', async () => {
-    const dir = join(TMP_DIR, 'set-441')
+    const dir = join(TMP_DIR, 'set')
     await mkdir(dir, { recursive: true })
 
-    const named = await runConfigCommand(dir, ['set', 'apiToken', 'sk-test-441'])
+    const named = await runConfigCommand(dir, ['set', 'apiToken', 'sk-test'])
     const shaped = await runConfigCommand(dir, ['set', 'use.buildTag', 'AKIAIOSFODNN7EXAMPLE'])
 
     expect(named.exitCode).toBe(0)
     expect(shaped.exitCode).toBe(0)
     const written = await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')
-    expect(written).toContain('apiToken: sk-test-441')
+    expect(written).toContain('apiToken: sk-test')
     expect(written).toContain('buildTag: AKIAIOSFODNN7EXAMPLE')
   })
 
   it("the --debug table masks with the run's declared secrets", () => {
-    const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz\n'))
-    process.env.AGENT_QA_CACHE_DIR = 'sk-env-only-441-cache'
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent('ACCOUNT_PASSWORD=Hunter-42-zz\n'))
+    process.env.AGENT_QA_CACHE_DIR = 'sk-env-only-cache'
     const globalConfig = mergeConfigs(makeValidConfig(), loadEnvOverrides(), {})
 
     const table = formatConfigDebug(
@@ -479,20 +476,20 @@ describe('C441-CONFIG', () => {
       (text) => redactor.redactString(text),
     )
 
-    expect(table).toContain('[secret:PW_441]')
+    expect(table).toContain('[secret:ACCOUNT_PASSWORD]')
     expect(table).not.toContain('Hunter-42-zz')
     expect(table).toContain('services.cache.dir')
-    expect(table).toContain('sk-env-only-441-cache')
+    expect(table).toContain('sk-env-only-cache')
     expect(table).not.toContain('<redacted>')
   })
 })
 
-describe('C441-GAP-CONFIG', () => {
+describe('config set with a declared value', () => {
   it('config set prints a declared value only as its marker and writes it as typed', async () => {
     const dir = join(TMP_DIR, 'set-gap-declared')
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(makeValidConfig()))
-    await writeFile(join(dir, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n')
+    await writeFile(join(dir, '.env.secrets.local'), 'ACCOUNT_PASSWORD=Hunter-42-zz\n')
 
     const { output, exitCode } = await runConfigCommand(dir, [
       'set',
@@ -502,7 +499,7 @@ describe('C441-GAP-CONFIG', () => {
 
     const written = await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')
     expect(written).toContain('Hunter-42-zz')
-    expect(output).toContain('use.buildTag = [secret:PW_441] saved to')
+    expect(output).toContain('use.buildTag = [secret:ACCOUNT_PASSWORD] saved to')
     expect(output).not.toContain('Hunter-42-zz')
     expect(exitCode).toBe(0)
   })
@@ -526,14 +523,14 @@ describe('C441-GAP-CONFIG', () => {
   })
 })
 
-describe('C441-GAP2-CONFIG', () => {
+describe('config set refuses a shown marker', () => {
   async function markerWorkspace(name: string): Promise<{ dir: string; before: string }> {
     const dir = join(TMP_DIR, name)
     await mkdir(dir, { recursive: true })
     const config = makeValidConfig()
     ;(config.use as Record<string, unknown>).buildTag = 'real-tag'
     await writeFile(join(dir, 'agent-qa.config.yaml'), JSON.stringify(config))
-    await writeFile(join(dir, '.env.secrets.local'), 'PW_441=Hunter-42-zz\n')
+    await writeFile(join(dir, '.env.secrets.local'), 'ACCOUNT_PASSWORD=Hunter-42-zz\n')
     return { dir, before: await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8') }
   }
 
@@ -543,7 +540,7 @@ describe('C441-GAP2-CONFIG', () => {
     const { stdout, stderr, exitCode } = await runConfigCommand(dir, [
       'set',
       'use.buildTag',
-      '[secret:PW_441]',
+      '[secret:ACCOUNT_PASSWORD]',
     ])
 
     expect(exitCode).toBe(1)
@@ -570,9 +567,9 @@ describe('C441-GAP2-CONFIG', () => {
   })
 })
 
-// 2026-10-19 (445-07, D-23, D-15): a config with keys removed in v2 closes with the hard-cut
-// steps; any other invalid config names the key and the fix.
-describe('C445-CONFIG-HINT', () => {
+// A config with keys removed in v2 closes with the hard-cut steps; any other invalid config,
+// including one carrying a key removed later, names the key and the fix.
+describe('invalid config messages name their fix', () => {
   const RE_INITIALIZE_URL = 'https://vostride.com/docs/agent-qa/migrate/v0-1-to-v0-2'
   const OLD_INIT_LINE = "Run 'agent-qa init' to generate a complete config file."
   const BASE_YAML = [
@@ -609,6 +606,17 @@ describe('C445-CONFIG-HINT', () => {
     '',
   ].join('\n')
   const UNKNOWN_KEY_YAML = [WORKSPACE_YAML, BASE_YAML, 'use:', '  llm: default', 'planer: {}', ''].join('\n')
+  const EVAL_GATE1_YAML = [
+    WORKSPACE_YAML,
+    BASE_YAML,
+    'use:',
+    '  llm: default',
+    'eval:',
+    '  gate1:',
+    '    maxPerJob: 2',
+    '  judge: gpt-judge',
+    '',
+  ].join('\n')
 
   async function failureOf(name: string, source: string): Promise<{ configPath: string; text: string }> {
     const configPath = join(TMP_DIR, name)
@@ -654,5 +662,19 @@ describe('C445-CONFIG-HINT', () => {
     expect(text).not.toContain(OLD_INIT_LINE)
     expect(text).not.toContain('agent-qa daemon stop')
     expect(text).not.toContain(RE_INITIALIZE_URL)
+  })
+
+  it('a config carrying a removed eval block names its message and closes with the key fix', async () => {
+    const { configPath, text } = await failureOf('eval-gate1.yaml', EVAL_GATE1_YAML)
+    expect(text).toContain('Config validation failed')
+    expect(text).toContain(
+      'eval.gate1 was removed: memory is no longer screened by replay before promotion. Delete this block.',
+    )
+    expect(text).toContain(
+      'eval.judge was removed: pass --judge <name> to agent-qa eval replay. Delete this key.',
+    )
+    expect(text).toContain(INVALID_CONFIG_FIX(configPath))
+    expect(text).not.toContain(HARD_CUT_STEPS)
+    expect(text).not.toContain('agent-qa-memory/')
   })
 })

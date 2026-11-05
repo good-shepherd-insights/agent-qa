@@ -183,7 +183,6 @@ describe('useLiveEditor suite mode', () => {
     expect(editor.tests[0].name).toBe('Test A')
   })
 
-  // D-03
   it('executeTestByIndex sends execute-test WS message with testExecutionId, testId, path, testIndex', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
@@ -211,7 +210,6 @@ describe('useLiveEditor suite mode', () => {
     expect(typeof sent?.testExecutionId).toBe('string')
   })
 
-  // D-03
   it('applies test-complete message to tests[i].status and duration', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
@@ -244,7 +242,6 @@ describe('useLiveEditor suite mode', () => {
     expect(editor.runningTestIndex).toBeNull()
   })
 
-  // D-04
   it('runAllTests iterates tests in order', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
@@ -284,8 +281,7 @@ describe('useLiveEditor suite mode', () => {
     expect(ref(holder).isRunningAllTests).toBe(false)
   })
 
-  // D-07 fail-fast
-  it('runAllTests breaks on first failed test (D-07 fail-fast)', async () => {
+  it('runAllTests stops at the first failed test (fail-fast)', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
       refHolder: holder,
@@ -321,7 +317,6 @@ describe('useLiveEditor suite mode', () => {
     expect(dispatched[0].testId).toBe('t_a')
   })
 
-  // D-07
   it('runAllTests breaks on cancelled result', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
@@ -356,7 +351,6 @@ describe('useLiveEditor suite mode', () => {
     expect(dispatched).toHaveLength(1)
   })
 
-  // D-08
   it('cancelRunAllTests halts the in-flight queue', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
@@ -399,7 +393,6 @@ describe('useLiveEditor suite mode', () => {
     expect(ref(holder).isRunningAllTests).toBe(false)
   })
 
-  // D-04
   it('isRunningAllTests flips true during runAllTests and false after', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
@@ -438,7 +431,6 @@ describe('useLiveEditor suite mode', () => {
     expect(ref(holder).isRunningAllTests).toBe(false)
   })
 
-  // D-04
   it('runningTestIndex reflects the currently executing test index', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
@@ -472,8 +464,7 @@ describe('useLiveEditor suite mode', () => {
     expect(ref(holder).runningTestIndex).toBeNull()
   })
 
-  // D-13 — playground model
-  it('test-list changes do NOT invalidate in-flight session (D-13 playground model)', async () => {
+  it('test-list changes do NOT invalidate the in-flight session', async () => {
     const holder: HarnessRefHolder = { current: null }
     await render({
       refHolder: holder,

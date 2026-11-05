@@ -42,19 +42,7 @@ import {
   waitForMarker,
 } from './socket-takeover/spawn-helpers.js'
 
-/**
- * WR-03 seam: force the FIRST registration-removal attempt to report `changed-under-removal`.
- *
- * That outcome is reachable in production only through a window a few microseconds wide — the
- * predicate must match a registration's bytes, a third writer must replace those bytes before the
- * quarantine rename, and yet another must republish the original name before the verify — so no
- * deterministic schedule reaches it and the router's evidence reporting was consequently never
- * tested on three of its four exits. The removal FUNCTION is therefore doubled at the module
- * boundary while everything else in these legs stays real: the classification, the routing, the
- * emission, the inline drain and the daemon handshake are all the shipped code.
- *
- * Default is pure passthrough, so the four pre-existing e2e legs in this file are unaffected.
- */
+// The contended removal is microseconds wide, so the removal is doubled and the rest stays real.
 let nextRemovalOverride: (() => RemoveRegistrationOutcome) | undefined
 
 vi.mock('../daemon/registration.js', async (importOriginal) => {
@@ -74,7 +62,7 @@ vi.mock('../daemon/registration.js', async (importOriginal) => {
 
 const describePosix = process.platform === 'win32' ? describe.skip : describe
 
-/** The stopped leg pays a real TTL plus a two-minute pre-fix daemon wait; budget for both. */
+// Room for a real TTL plus a two-minute daemon wait, so a slow recovery fails by assertion.
 const RECOVERY_LEG_TIMEOUT_MS = 300_000
 
 function isAlive(pid: number): boolean {
@@ -117,7 +105,7 @@ function plantLease(
   writeFileSync(join(knowledgeRoot, LEASE_FILE), `${JSON.stringify(lease)}\n`, 'utf8')
 }
 
-describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)', () => {
+describePosix('knowledge drain recovery across unreachable daemon hosts', () => {
   const surrogates: ChildProcess[] = []
   const servers: Server[] = []
   const socketDirs: string[] = []
@@ -354,18 +342,8 @@ describePosix('knowledge drain recovery across unreachable daemon hosts (CR-08)'
   )
 })
 
-/**
- * WR-03: quarantined registration bytes are named on EVERY drain exit, not only the contended one.
- *
- * Bytes parked under `daemon.json.remove-<tag>-<uuid>` are a fact about the system: nothing reads
- * that name, so an operator who is not told about it never learns the file exists. Before this,
- * three of the four exits reported nothing — the naming lived inside the contended branch, next to
- * the one `return` that happened to be written last.
- *
- * Each leg drives a REAL `knowledge drain` through the shipped router and asserts on what the
- * command actually printed; only the removal outcome is forced (see the module double above).
- */
-describePosix('stranded quarantine evidence on every drain exit (WR-03)', () => {
+// Parked registration bytes are read by nothing, so every drain exit must name them.
+describePosix('stranded quarantine evidence on every drain exit', () => {
   const servers: Server[] = []
   const socketDirs: string[] = []
   const acceptedSockets: Socket[] = []

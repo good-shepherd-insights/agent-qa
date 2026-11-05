@@ -1,27 +1,14 @@
-// The knowledge read verbs — all three of them thin clients now (D-05/D-07, 387 D-20).
-//
-// `bundles` was the phase-384 exemplar: it owns no data access of its own, asks the function
-// layer for `knowledge.bundles.list`, and renders what it is handed. As of 387 `inspect` and
-// `diff` are the same shape over `knowledge.records.inspect` and `knowledge.records.diff` —
-// the review-verb family's read half. Nothing about what the verbs DO changed; what changed is
-// that the query, the store read and the trust fold are reached through `invokeFunction`
-// instead of by naming the packages that perform them, which is what cleared this file's three
-// firewall-ledger entries.
-//
-// One capability is not a function-layer verb and did not become one: resolving a build TAG to
-// an ordinal is run-persistence bookkeeping, not knowledge. It reaches its machinery through
-// the composition edge every host shares (see agent-local's build-ordinals module) rather than
-// through a package this surface may not name.
-//
-// 2026-10-14 (441-14, D-07): every verb prints through the declared mask its invocation reads from
-// `workspace.secretsFile`, and nothing restores a value.
-// Gate output additionally crosses the committed-text safety check before either
-// renderer runs. Producer masks and receipt digests are preserved, never regenerated.
+// Thin clients over `invokeFunction`; the build tag resolves through the shared composition edge.
 
 import { dirname, resolve } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { resolveBuildTag } from '@vostride/agent-qa-agent-local'
+import {
+  guardJsonText,
+  printRunText,
+  reserveStdoutForData,
+} from '@vostride/agent-qa-core/run-text-output'
 import {
   guardInspectRecordView,
   guardRecordChange,
@@ -31,6 +18,7 @@ import {
 } from '@vostride/agent-qa-schema'
 import type {
   BriefWhyResult,
+  GateReceipt,
   InspectFilter,
   InspectRecordView,
   KnowledgeBundleSummary,
@@ -90,7 +78,7 @@ interface BriefWhyOptions {
  */
 const KNOWLEDGE_BUNDLES_LIST_ID = 'knowledge.bundles.list'
 
-/** The record-level read verbs `inspect` and `diff` are clients of (387 D-20, KREV-01). */
+/** The record-level read verbs `inspect` and `diff` are clients of. */
 const KNOWLEDGE_RECORDS_INSPECT_ID = 'knowledge.records.inspect'
 const KNOWLEDGE_RECORDS_DIFF_ID = 'knowledge.records.diff'
 const KNOWLEDGE_GATES_LIST_ID = 'knowledge.gates.list'
@@ -145,7 +133,7 @@ function functionLayerInput(command: Command): { agentQaRoot: string; configPath
   return { agentQaRoot: resolve(dirname(configPath), '.agent-qa'), configPath }
 }
 
-/** The composition input with the invocation's declared mask, refusing at start (E3) without one. */
+/** The composition input with the invocation's declared mask, refusing at start without one. */
 function declaredReadInput(
   command: Command,
 ): { agentQaRoot: string; configPath: string; declaredSecrets: DeclaredSecretMask } {
@@ -221,14 +209,17 @@ function resolvedDiffOrdinal(
   return ordinal
 }
 
-// 2026-10-14 (441-14, D-07): everything this file prints is masked and never restored; JSON is
-// masked leaf by leaf before it is serialized. 2026-10-15 (441-62, IN-A07): keys too.
+// Everything printed is masked and never restored; JSON is masked by key and leaf first.
 function emitJson(mask: MaskFn, value: unknown): void {
-  console.log(JSON.stringify(maskPayloadTree(value, mask), null, 2))
+  console.log(guardJsonText(JSON.stringify(maskPayloadTree(value, mask), null, 2)))
 }
 
 function emitHuman(mask: MaskFn, text: string): void {
-  console.log(mask(text))
+  printRunText(mask(text))
+}
+
+function reserveStdoutForJson(options: { json?: boolean }): (() => void) | undefined {
+  return options.json === true ? reserveStdoutForData() : undefined
 }
 
 function formatInspectRecord(record: InspectRecordView): string {
@@ -346,24 +337,25 @@ function renderGates(dto: KnowledgeGatesListResult): string {
       ? `no gate receipts; would promote via ${dto.live.promotionPath}`
       : `no gate receipts; ${live}`
   }
+  const short = (digest: string) => digest.slice(0, 12)
+  const describe = (receipt: GateReceipt) => receipt.policyApproval !== undefined
+    ? `approval proposal ${receipt.policyApproval.proposalId} @${receipt.producedAtOrdinal}`
+    : `mark ${receipt.mark} @${receipt.producedAtOrdinal}`
+  const standingMark = dto.standing.find(receipt => receipt.policyApproval === undefined)
+  const standingApproval = dto.standing.find(receipt => receipt.policyApproval !== undefined)
   return [
-    `record ${dto.recordId} · ${dto.recordKind} · ${dto.status} · strongest path: ${dto.strongestPromotionPath ?? 'none'}`,
     ...dto.lines.map(line => {
-      const by = [line.producedBy.jobId, line.producedBy.opId].filter(Boolean).join('|') || '-'
       if ('kind' in line) {
-        return `promotion ${line.promotionPath} @${line.producedAtOrdinal} by ${by} cites ${line.citedReceiptDigests.length} digest ${line.receiptDigest.slice(0, 12)}`
+        const cites = line.citedReceiptDigests.map(short).join(', ') || 'none'
+        return `promotion ${line.promotionPath} @${line.producedAtOrdinal} cites ${cites}`
       }
-      const corpus = line.gate === 3 ? '-' : line.corpusVersion.corpusDigest.slice(0, 12)
-      const degradation = line.gate === 1 ? line.degradation ?? '-' : '-'
-      return `gate ${line.gate} ${line.verdict} @${line.producedAtOrdinal} by ${by} digest ${line.receiptDigest.slice(0, 12)} corpus ${corpus} degradation ${degradation}`
+      const run = line.policyApproval !== undefined ? ''
+        : ` run ${line.runId}${line.stepId === undefined ? '' : ` step ${line.stepId}`}`
+      return `${describe(line)}${run} digest ${short(line.receiptDigest)}`
     }),
-    'standing:',
-    ...[1, 2, 3].map(gate => {
-      const receipt = dto.standing.find(line => line.gate === gate)
-      return receipt === undefined ? `gate ${gate}: none`
-        : `gate ${gate}: ${receipt.verdict} @${receipt.producedAtOrdinal}`
-    }),
-    live,
+    `standing: ${standingMark === undefined ? 'mark none' : describe(standingMark)}; `
+      + `${standingApproval === undefined ? 'approval none' : describe(standingApproval)}`,
+    `live: ${live}`,
   ].join('\n')
 }
 
@@ -422,8 +414,9 @@ type KnowledgeReadAction = 'inspect' | 'diff' | 'bundles' | 'gates' | 'show' | '
 
 function printUnavailable(error: DeclaredSecretsUnavailableError): void {
   const [first, ...rest] = error.lines
-  if (first !== undefined) console.error(pc.red(first))
-  for (const line of rest) console.error(pc.dim(line))
+  if (first === undefined) return
+  printRunText([pc.red(first), ...rest.map((line) => pc.dim(line))].join('\n'),
+    (text) => console.error(text))
 }
 
 // A refusal raised before the loader exists has nothing to mask with.
@@ -438,7 +431,7 @@ function printErrorLine(line: string, mask: MaskFn | undefined): void {
       return
     }
   }
-  console.error(pc.red(shown))
+  printRunText(pc.red(shown), (text) => console.error(text))
 }
 
 function reportError(action: KnowledgeReadAction, error: unknown, mask: MaskFn | undefined): void {
@@ -483,6 +476,7 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--json', 'output schema-validated masked JSON')
     .action(async (options: InspectOptions, inspectCommand: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = reserveStdoutForJson(options)
       try {
         const input = declaredReadInput(inspectCommand)
         mask = input.declaredSecrets.mask
@@ -507,6 +501,8 @@ export function registerKnowledgeReadCommands(command: Command): void {
         emitHuman(mask, renderInspect(records))
       } catch (error) {
         reportError('inspect', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -518,6 +514,7 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--json', 'output schema-validated masked JSON')
     .action(async (ref: string, options: DiffOptions, diffCommand: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = reserveStdoutForJson(options)
       try {
         const composition = declaredReadInput(diffCommand)
         mask = composition.declaredSecrets.mask
@@ -537,15 +534,18 @@ export function registerKnowledgeReadCommands(command: Command): void {
         emitHuman(mask, renderDiff(changes, ordinal))
       } catch (error) {
         reportError('diff', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
   command
     .command('gates <id>')
-    .description('Print a record\'s gate-and-promotion history through the agent function layer')
+    .description('Print a record\'s marks, approvals, promotion lines and live verdict through the agent function layer')
     .option('--json', 'output schema-validated masked JSON')
     .action(async (id: string, options: BundlesOptions, cmd: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = reserveStdoutForJson(options)
       try {
         const input = declaredReadInput(cmd)
         mask = input.declaredSecrets.mask
@@ -562,6 +562,8 @@ export function registerKnowledgeReadCommands(command: Command): void {
         emitHuman(mask, renderGates(dto))
       } catch (error) {
         reportError('gates', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -571,6 +573,7 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--json', 'print the knowledge.record.show result unchanged')
     .action(async (recordId: string, options: BundlesOptions, cmd: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = reserveStdoutForJson(options)
       try {
         const input = declaredReadInput(cmd)
         mask = input.declaredSecrets.mask
@@ -591,6 +594,8 @@ export function registerKnowledgeReadCommands(command: Command): void {
         }
       } catch (error) {
         reportError('show', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
@@ -603,6 +608,7 @@ export function registerKnowledgeReadCommands(command: Command): void {
     .option('--json', 'print the knowledge.brief.why result unchanged')
     .action(async (runId: string, options: BriefWhyOptions, cmd: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = reserveStdoutForJson(options)
       try {
         const input = declaredReadInput(cmd)
         mask = input.declaredSecrets.mask
@@ -632,19 +638,19 @@ export function registerKnowledgeReadCommands(command: Command): void {
         }
       } catch (error) {
         reportError('brief-why', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 
-  // The exemplar thin client (D-05/D-07). Registered LAST on purpose: the source-shape
-  // assertion in knowledge-bundles-command.test.ts reads this verb's whole registration as
-  // the slice running to the end of the file, and fails loudly if a later verb is appended
-  // after it rather than silently covering less.
+  // Registered last: a source-shape test reads this registration as the slice to the file's end.
   command
     .command('bundles')
     .description('List committed knowledge bundles through the agent function layer')
     .option('--json', 'output schema-validated masked JSON')
     .action(async (options: BundlesOptions, bundlesCommand: Command) => {
       let mask: MaskFn | undefined
+      const releaseStdout = reserveStdoutForJson(options)
       try {
         const input = declaredReadInput(bundlesCommand)
         mask = input.declaredSecrets.mask
@@ -665,6 +671,8 @@ export function registerKnowledgeReadCommands(command: Command): void {
         emitHuman(mask, renderBundles(rows))
       } catch (error) {
         reportError('bundles', error, mask)
+      } finally {
+        releaseStdout?.()
       }
     })
 }

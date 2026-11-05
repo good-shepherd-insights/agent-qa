@@ -38,10 +38,7 @@ export const AGENT_QA_DASHBOARD_UI_EXTERNAL_DEPENDENCIES = [
 ] as const
 export const AGENT_QA_DASHBOARD_UI_INTERNAL_DEPENDENCIES = [
   '@vostride/agent-qa-ids',
-  // 430 D-04: run detail's views, the entity route map (`ENTITY_DASHBOARD_ROUTES`,
-  // `parseEntityUri`) and api.ts (the run, mark and preview schemas) read
-  // the SHIPPED contracts rather than copies of them. Hand-written mirrors in this package would be
-  // second copies free to drift from the ones the server projects.
+  // These read the shipped contracts, as mirrors in this package would drift from the server's.
   '@vostride/agent-qa-schema',
 ] as const
 
@@ -53,4 +50,5 @@ export const AGENT_QA_DASHBOARD_UI_OWNERSHIP_CONTRACT = {
   forbiddenResponsibilities: AGENT_QA_DASHBOARD_UI_FORBIDDEN_RESPONSIBILITIES,
   externalDependencies: AGENT_QA_DASHBOARD_UI_EXTERNAL_DEPENDENCIES,
   internalDependencies: AGENT_QA_DASHBOARD_UI_INTERNAL_DEPENDENCIES,
+  publishesSelfContainedBundle: true,
 } as const satisfies OwnershipContract

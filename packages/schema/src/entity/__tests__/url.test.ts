@@ -1,8 +1,4 @@
-// The pinned entity route and its slug (Phase 387 plan 07, ENTY-02 / D-10).
-//
-// Two claims live here that no consumer can make on its own: the route TEMPLATE is the value
-// M5 will build its router from, and the slug segment is produced by the repo's ONE
-// security-reviewed path-segment sanitizer rather than by a second one written for links.
+// The slug comes from the repo's one security-reviewed path-segment sanitizer, not a second one.
 
 import { describe, expect, it } from 'vitest'
 
@@ -17,7 +13,7 @@ import {
 
 const BASE = { baseUrl: 'https://qa.example.com', workspace: 'acme' }
 
-describe('ENTITY_URL_ROUTE is the pinned M5 contract', () => {
+describe('ENTITY_URL_ROUTE is the pinned route contract', () => {
   it('is the spec route, with every declared parameter present exactly once', () => {
     expect(ENTITY_URL_ROUTE).toBe('/t/:workspace/:kind/:shortId/:slug')
     for (const param of ENTITY_URL_ROUTE_PARAMS) {

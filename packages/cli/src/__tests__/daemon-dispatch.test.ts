@@ -123,10 +123,7 @@ async function flushMicrotasks(turns = 24): Promise<void> {
   for (let turn = 0; turn < turns; turn += 1) await Promise.resolve()
 }
 
-// 2026-10-02 (quick 261002-tmo): every wait here is a positive condition (the daemon is ready, a
-// job was dispatched); the ceiling only bounds a hang, and every not-yet claim runs on the manual
-// scheduler. The old 1 s ceiling was reached by real composition and SQLite work under load:
-// 4 cells failed at about 1.1 s each at load 40-45 (432-41 #10; also 432-01 #2).
+// Each wait is a positive condition; the ceiling only bounds a hang, as load slows composition.
 async function waitUntil(
   predicate: () => boolean,
   message: string,
@@ -166,8 +163,7 @@ async function startHost(kinds: JobKindRegistry): Promise<RunningHost> {
       throw new Error(`unexpected daemon hard exit ${code}`)
     },
     composeLocalAgent: (input) => {
-      // 2026-10-19 (444.1-12, D-23): the store stamps a retry's not-before time from this clock,
-      // so it reads the same manual time the dispatcher waits on, as the wall clock does live.
+      // The store stamps a retry's not-before time from this clock, the dispatcher's manual time.
       const host = composeLocalAgent({
         ...input,
         jobKinds: kinds,
@@ -230,7 +226,7 @@ async function startHost(kinds: JobKindRegistry): Promise<RunningHost> {
   return host
 }
 
-/** Record-level reading goes through the shipped torn-tail-tolerant reader (WR-02). */
+/** Record-level reading goes through the shipped torn-tail-tolerant reader. */
 function readEvents(agentQaRoot: string): readonly Record<string, unknown>[] {
   const ledger = readDaemonEventLedger(agentQaRoot)
   expect(ledger.warnings).toEqual([])
@@ -246,7 +242,7 @@ afterEach(async () => {
   }
 })
 
-describe('resident daemon agent-job dispatcher (CR-05)', () => {
+describe('resident daemon agent-job dispatcher', () => {
   it('serves a post-start enqueue through the real composed store without a restart', async () => {
     const calls: string[] = []
     const host = await startHost(jobKinds(async (context) => {
@@ -386,7 +382,7 @@ describe('resident daemon agent-job dispatcher (CR-05)', () => {
     expect(host.scheduler.timeoutDelays()).toContain(DISPATCH_POLL_MS)
   })
 
-  it('carries the claimed payload runId onto job-claimed and job-completed (D-16)', async () => {
+  it('carries the claimed payload runId onto job-claimed and job-completed', async () => {
     let completed = 0
     const host = await startHost(jobKinds(async () => {
       completed += 1
@@ -422,7 +418,7 @@ describe('resident daemon agent-job dispatcher (CR-05)', () => {
     }))
   })
 
-  it('omits the runId key when the payload names none or names a non-string (D-16)', async () => {
+  it('omits the runId key when the payload names none or names a non-string', async () => {
     let completed = 0
     const host = await startHost(jobKinds(async () => {
       completed += 1
@@ -475,9 +471,8 @@ describe('resident daemon agent-job dispatcher (CR-05)', () => {
     expect(hostResolved).toBe(true)
   })
 
-  it('pins the dispatcher poll interval in source with a retune-from-evidence comment', () => {
+  it('pins the dispatcher poll interval in source', () => {
     const source = readFileSync(new URL('../daemon/job-dispatcher.ts', import.meta.url), 'utf8')
     expect(source).toMatch(/export const AGENT_JOB_DISPATCH_POLL_MS = 5_000/u)
-    expect(source).toMatch(/retune from .*evidence.*without adding config/iu)
   })
 })

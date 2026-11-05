@@ -84,14 +84,12 @@ describe('SuiteTestRow live mode', () => {
     expect(drag?.getAttribute('aria-disabled')).toBe('true')
   })
 
-  // D-13 playground — test-list edits (including remove) flow through during live session
-  it('SHOWS remove button when liveMode=true (D-13 playground)', () => {
+  it('SHOWS remove button when liveMode=true', () => {
     mount(<SuiteTestRow {...baseProps} liveMode />)
     const remove = container.querySelector('[aria-label^="Remove"]')
     expect(remove).toBeTruthy()
   })
 
-  // D-05
   it('renders Run button with Play icon when liveMode && liveStatus=idle', () => {
     mount(<SuiteTestRow {...baseProps} liveMode liveStatus="idle" onRunTest={vi.fn()} />)
     const btn = container.querySelector('[aria-label="Run test Login flow"]')
@@ -323,7 +321,6 @@ describe('SuiteTestRow live mode', () => {
     expect(container.textContent).toContain('Element not found — see Reasoning tab for details')
   })
 
-  // D-10
   it('renders nested per-test setup hook rows indented', () => {
     const setupHook = makeHook({ id: 'h-setup', name: 'seed-db', phase: 'setup', status: 'passed' })
     mount(
@@ -341,7 +338,6 @@ describe('SuiteTestRow live mode', () => {
     expect(list).toBeTruthy()
   })
 
-  // D-10
   it('renders nested per-test teardown hook rows with "teardown: <name>" label', () => {
     const teardownHook = makeHook({ id: 'h-td', name: 'cleanup', phase: 'teardown', status: 'passed' })
     mount(
@@ -356,7 +352,6 @@ describe('SuiteTestRow live mode', () => {
     expect(container.textContent).toContain('teardown: cleanup')
   })
 
-  // UI-SPEC selection outline
   it('applies the quiet selected-state contract when selection.type=test and selection.testIndex matches', () => {
     mount(
       <SuiteTestRow
@@ -391,7 +386,7 @@ describe('SuiteTestRow live mode', () => {
     expect(selectedSurface?.className).toContain('bg-primary/10')
   })
 
-  // UI-SPEC running state keeps a thin neutral frame while the moving beam carries the accent.
+  // The running state keeps a thin neutral frame while the moving beam carries the accent.
   it('renders canonical running state classes and primary-tinted iconography when liveStatus=running', () => {
     mount(<SuiteTestRow {...baseProps} liveMode liveStatus="running" onRunTest={vi.fn()} />)
     const runningBorder = container.querySelector('.border-border\\/60')

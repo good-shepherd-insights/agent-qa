@@ -1,21 +1,4 @@
-// THE REQUEST HALF OF D-12 (402-03): concurrency is a CONFIG fact, and a caller cannot name it.
-//
-// `use.parallel` / `use.workers` live in the config the run resolves against, so the owner of a
-// target tunes how much of their machine a run may take. `RunsStartInput` is the OTHER side of that
-// sentence: a remote token-holder handing the run service a request must not be able to raise the
-// concurrency of a target somebody else tuned down. That is not a rule anything enforces at runtime
-// — it is a rule the SHAPE enforces, by there being no such field and the object being `.strict()`.
-//
-// WHY A CELL AND NOT A COMMENT. A shape-enforced rule is exactly the kind that a later additive
-// field silently repeals: `RunsStartInput` is designed to grow (its own doc says so), and every
-// growth so far has been a one-line addition. These cells make the two concurrency-shaped names a
-// DELIBERATE red rather than a quiet contract change.
-//
-// THE CELLS SEND THE FIELD. A posture cell that sent a clean request and asserted the parsed value
-// has no concurrency key passes under a schema that accepts one and drops it, under a schema that
-// accepts and honours it, and under no schema at all. So every arm below carries the key and reads
-// the refusal — and each arm's positive control (the same input WITHOUT the key) proves the refusal
-// is about the key rather than about the rest of the request.
+// Each arm sends the concurrency key and its control omits it, so the refusal is about the key.
 
 import { describe, expect, it } from 'vitest'
 
@@ -46,7 +29,7 @@ const CONCURRENCY_SHAPED_KEYS = [
   'threads',
 ] as const
 
-describe('RunsStartInput refuses a concurrency override (D-12)', () => {
+describe('RunsStartInput refuses a concurrency override', () => {
   it('THE POSITIVE CONTROL — the base request, without any added key, parses', () => {
     // Without this, every refusal below could be a refusal of the base request and the cells would
     // read as green posture over a schema that refuses everything.
@@ -86,7 +69,7 @@ describe('RunsStartInput refuses a concurrency override (D-12)', () => {
   it('never parses a concurrency key THROUGH — the refusal is not a silent drop', () => {
     // The other failure mode a strict object rules out: accepting the request and discarding the
     // field. Asserted on the parsed data of the ONE request that does parse, so a schema loosened
-    // to `.passthrough()` (which would carry the caller's field onward) reds here as well as above.
+    // to `.loose()` (which would carry the caller's field onward) reds here as well as above.
     const parsed = RunsStartInputSchema.safeParse(VALID_REQUEST)
 
     expect(parsed.success).toBe(true)

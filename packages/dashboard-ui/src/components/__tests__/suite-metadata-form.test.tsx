@@ -200,7 +200,7 @@ describe('SuiteMetadataForm', () => {
     expect(asterisks.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('accepts filtered suggestions prop (caller filters capture: per D-18)', () => {
+  it('accepts a suggestions prop the caller has already filtered of capture: names', () => {
     const onChange = vi.fn()
     // Passing a pre-filtered list (no capture: namespace) — the caller's responsibility.
     mount(
@@ -214,13 +214,11 @@ describe('SuiteMetadataForm', () => {
         onChange={onChange}
       />,
     )
-    // Contract: SuiteMetadataForm renders without crashing given a filtered list.
-    // Filter enforcement is covered in suite-visual-builder.hooks.test.tsx (Wave 3).
+    // Renders a filtered list; enforcement is tested in suite-visual-builder.hooks.test.tsx.
     expect(container).not.toBeNull()
   })
 
-  // Gap 5 regression — suite-id regenerate button positioned INSIDE the input's right edge
-  it('positions the regenerate button inside the suite-id input with absolute positioning (Gap 5)', () => {
+  it('positions the regenerate button inside the suite-id input with absolute positioning', () => {
     const onChange = vi.fn()
     mount(
       <SuiteMetadataForm
@@ -237,13 +235,11 @@ describe('SuiteMetadataForm', () => {
     expect(input).not.toBeNull()
     // Input has pr-9 to reserve space for the inside-right button so text doesn't overlap
     expect(input!.className).toContain('pr-9')
-    // Legacy flex-1 class is gone now that the parent is a relative-positioned container
     expect(input!.className).not.toContain('flex-1')
     // Parent is a relative-positioned container (positioning anchor for the absolute button)
     const parent = input!.parentElement
     expect(parent).not.toBeNull()
     expect(parent!.className).toContain('relative')
-    // Parent no longer uses the old flex-gap sibling layout
     expect(parent!.className).not.toMatch(/\bflex\s+items-center\s+gap-2\b/)
     // Regenerate button is absolutely positioned at the right edge, vertically centered
     const btn = container.querySelector(

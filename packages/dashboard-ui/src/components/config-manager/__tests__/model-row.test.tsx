@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-// A SAVED MODEL'S ROW, COMPLETED (429-24 · D-12, D-17, D-23, D-24 · UI-SPEC S4, S6, E4, E6).
-//
-// Deleting a model, signing out and removing a key act at once and offer Undo: no dialog, no
-// question. The default model cannot be deleted from under the project, eval judges stay
-// consistent, and a failure puts the row or its status word back.
+// Delete, sign out and remove key act at once with Undo; the default model cannot be deleted.
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -51,7 +47,6 @@ import {
   SIGN_OUT_LABEL,
   TEST_CONNECTION_LABEL,
   TEST_RESULT_TEXT,
-  USED_AS_JUDGE_LINE,
   fixedFactsLine,
   undoLine,
 } from '@/lib/config-copy'
@@ -97,8 +92,8 @@ const LLMS = [
 // The credential-status read carries no secret; SECRET is what a leak would look like.
 const SECRET = 'sk-live-never-in-the-page'
 const HEADER_SECRET = 'org-header-secret'
-// The server shows a declared header value as its marker (441-21, D-29).
-const HEADER_MARKER = '[secret:PW_441]'
+// The server shows a declared header value as its marker.
+const HEADER_MARKER = '[secret:PW_KEY]'
 
 const PROXY = {
   name: 'claude-proxy',
@@ -120,12 +115,10 @@ function credentials(): AuthCredentialInfo[] {
 function modelsConfig(
   llms: readonly Record<string, unknown>[] = LLMS,
   defaultName: string | undefined = 'flash',
-  evalConfig?: Record<string, unknown>,
 ) {
   return {
     registry: { llms },
     use: defaultName === undefined ? {} : { llm: defaultName },
-    ...(evalConfig === undefined ? {} : { eval: evalConfig }),
   }
 }
 
@@ -309,7 +302,7 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('ModelRow explicit actions (429-24 Task 1)', () => {
+describe('ModelRow explicit actions', () => {
   it('DELETE-MODEL-UNDO: Delete model removes the row at once in one undoable write, and Undo brings it back focused', async () => {
     await mount()
     const panel = await openModel('router')
@@ -321,8 +314,6 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
       [
         [
           { op: 'unset', path: ['registry', 'llms', { name: 'router' }] },
-          { op: 'expect', path: ['eval', 'judge'], value: null },
-          { op: 'expect', path: ['eval', 'judges'], value: null },
         ],
         { undoable: true },
       ],
@@ -345,82 +336,42 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     expect(document.activeElement).toBe(toggle(row('router')))
   })
 
-  it('DELETE-JUDGE-MODEL-UNDO: a judge model says so, its delete carries the judge changes, and Undo names it a judge', async () => {
-    const config = modelsConfig(LLMS, 'flash', { judges: ['router', 'flash'] })
-    vi.mocked(fetchConfig).mockResolvedValue(answer(config) as never)
+  it('deleting a model writes only its own change and shows no judge line', async () => {
     await mount()
 
     const panel = await openModel('router')
-    expect(panel?.textContent).toContain(USED_AS_JUDGE_LINE)
-    const other = await openModel('gpt-5.6')
-    expect(other?.textContent).not.toContain(USED_AS_JUDGE_LINE)
+    expect(panel?.querySelector('[data-model-judge]')).toBeNull()
+    expect(panel?.textContent).not.toContain('judge')
 
-    await openModel('router')
     await click(buttonNamed(row('router'), DELETE_MODEL_LABEL))
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [
-        [
-          { op: 'unset', path: ['registry', 'llms', { name: 'router' }] },
-          { op: 'expect', path: ['eval', 'judge'], value: null },
-          { op: 'expect', path: ['eval', 'judges'], value: ['router', 'flash'] },
-          { op: 'unset', path: ['eval', 'judges'] },
-          { op: 'set', path: ['eval', 'judge'], value: 'flash' },
-        ],
-        { undoable: true },
-      ],
+      [[{ op: 'unset', path: ['registry', 'llms', { name: 'router' }] }], { undoable: true }],
     ])
+    const changes = vi.mocked(applyConfigChanges).mock.calls.flatMap(([sent]) => sent as { path: unknown[] }[])
+    expect(changes.filter((change) => change.path[0] === 'eval')).toEqual([])
     expect(row('router')).toBeNull()
-    expect(hook!.status.undo?.line).toBe(undoLine('delete-model', 'router', { judge: true }))
-    expect(hook!.status.undo?.line).toBe('Deleted router, an eval judge')
-
-    await undo()
-    expect(undoConfigAction).toHaveBeenCalledWith('undo-config')
-    expect(row('router')).not.toBeNull()
-    await openModel('router')
-    expect(row('router')!.textContent).toContain(USED_AS_JUDGE_LINE)
+    expect(hook!.status.undo?.line).toBe('Deleted router')
   })
 
-  it("DELETE-MERGES-OUTSIDE-JUDGE-EDIT: a delete refused field_changed lands on the file's new judge list after one re-read", async () => {
-    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig(LLMS, 'router', { judges: ['gpt', 'flash'] })) as never)
+  it("a delete refused field_changed re-reads once and lands the same model's change", async () => {
+    vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig(LLMS, 'router')) as never)
     await mount()
     await openModel('flash')
     vi.mocked(applyConfigChanges).mockRejectedValueOnce(
-      new ApiError(409, 'Conflict', { error: 'field_changed', path: ['eval', 'judges'] }),
-    )
-    vi.mocked(fetchConfig).mockResolvedValue(
-      answer(modelsConfig(LLMS, 'router', { judges: ['gpt', 'flash', 'x'] })) as never,
+      new ApiError(409, 'Conflict', { error: 'field_changed', path: ['registry', 'llms'] }),
     )
     await click(buttonNamed(row('flash'), DELETE_MODEL_LABEL))
     await flush()
 
     const unsetFlash = { op: 'unset', path: ['registry', 'llms', { name: 'flash' }] }
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [
-        [
-          unsetFlash,
-          { op: 'expect', path: ['eval', 'judge'], value: null },
-          { op: 'expect', path: ['eval', 'judges'], value: ['gpt', 'flash'] },
-          { op: 'unset', path: ['eval', 'judges'] },
-          { op: 'set', path: ['eval', 'judge'], value: 'gpt' },
-        ],
-        { undoable: true },
-      ],
-      [
-        [
-          unsetFlash,
-          { op: 'expect', path: ['eval', 'judge'], value: null },
-          { op: 'expect', path: ['eval', 'judges'], value: ['gpt', 'flash', 'x'] },
-          { op: 'set', path: ['eval', 'judges'], value: ['gpt', 'x'] },
-        ],
-        { undoable: true },
-      ],
+      [[unsetFlash], { undoable: true }],
+      [[unsetFlash], { undoable: true }],
     ])
     expect(fetchConfig).toHaveBeenCalledTimes(2)
     expect(row('flash')).toBeNull()
     expect(hook!.status.state).toBe('undo')
-    expect(hook!.status.undo?.line).toBe(undoLine('delete-model', 'flash', { judge: true }))
-    const config = hook!.load.kind === 'ready' ? hook!.load.answer.config : undefined
-    expect((config as { eval?: unknown } | undefined)?.eval).toEqual({ judges: ['gpt', 'x'] })
+    expect(hook!.status.undo?.line).toBe(undoLine('delete-model', 'flash'))
   })
 
   it('FOCUS-AFTER-MODEL-DELETE: focus moves to the next row, else the previous one, else Add model', async () => {
@@ -516,7 +467,7 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
     expect(hook!.status.state).toBe('failed')
     expect(hook!.status.message).toBe('disk full')
 
-    // Retry re-sends drafts only (UI-SPEC E2): a refused delete is not sent again, and the file shows as it is.
+    // Retry re-sends drafts only: a refused delete is not sent again, and the file shows as it is.
     await act(async () => {
       hook!.retry()
     })
@@ -551,7 +502,7 @@ describe('ModelRow explicit actions (429-24 Task 1)', () => {
   })
 })
 
-describe('ModelRow key and settings (429-24 Task 2)', () => {
+describe('ModelRow key and settings', () => {
   it('REPLACE-KEY-SAVES-THEN-TESTS: the new key saves server-side, then the test runs, and a failed test keeps the key', async () => {
     await mount()
     expect(buttonNamed(await openModel('gpt-5.6'), REPLACE_KEY_LABEL)).toBeNull()
@@ -669,7 +620,7 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
 
     await click(buttonNamed(row('claude-proxy'), SAVE_HEADER_LABEL))
     expect(writes()[5]).toEqual([[{ op: 'set', path: [...headers, 'X-Trace'], value: 'trace-secret' }]])
-    // 441-40 (D-29): the landed write is mirrored as written; the editor has no path-class mask.
+    // The landed write is mirrored as written; the editor has no path-class mask.
     const traceValue = row('claude-proxy')!.querySelector('[data-model-header="X-Trace"] [data-secret-field] code')
     expect(traceValue?.textContent).toBe('trace-secret')
     expect(JSON.stringify(localStorage)).not.toContain('trace-secret')
@@ -698,7 +649,7 @@ describe('ModelRow key and settings (429-24 Task 2)', () => {
   })
 })
 
-describe('ModelRow header rename (429-47 Task 1 · deferred 429-24)', () => {
+describe('ModelRow header rename', () => {
   const HEADERS = ['registry', 'llms', { name: 'claude-proxy' }, 'providerHeaders']
 
   function headerNames() {
@@ -737,7 +688,7 @@ describe('ModelRow header rename (429-47 Task 1 · deferred 429-24)', () => {
   })
 })
 
-describe('ModelRow Sign in again (429-26 Task 2)', () => {
+describe('ModelRow Sign in again', () => {
   it('SIGN-IN-AGAIN-SAVED-ROW: an expired or not-connected sign-in row runs the sign-in flow for its saved name, then its test', async () => {
     vi.spyOn(window, 'open').mockImplementation(() => null)
     await mount()
@@ -794,13 +745,11 @@ describe('ModelRow Sign in again (429-26 Task 2)', () => {
   })
 })
 
-// THE MODEL MODAL'S CLAIMS ON A SAVED ROW (429-30 · D-10). The modal is gone. Each claim its suite
-// made about a saved model is asserted here on the open row, or pinned as gone where the phase
-// reversed it (the Edit dialog, the Save Changes footer, and the milliseconds on a passed test).
+// Each claim about a saved model is asserted on the open row; the modal buttons are absent.
 
 const MODAL_BUTTONS = ['Save Changes', 'Save Credential', 'Keep Credential', 'Delete Credential', 'Delete Configuration', 'Add Configuration']
 
-describe('The model modal\'s claims on a saved row (429-30 Task 1)', () => {
+describe("The model modal's claims on a saved row", () => {
   it('LEGACY-LLM-VISION-AND-CONTEXT-WINDOW: the row edits vision and context window by leaf, with no per-model screenshot sizing', async () => {
     await mount()
     const panel = await openModel('router')
@@ -909,9 +858,8 @@ describe('The model modal\'s claims on a saved row (429-30 Task 1)', () => {
   })
 })
 
-// 441-40 (D-29): a header shown as its declared marker is left out of the connection test, so the
-// server sends the saved value (routes.llm-test-saved-headers MASK-HEADER-NEVER-SENT).
-describe('C441-CONFIG', () => {
+// A header shown as its marker stays out of the connection test, so the server sends the saved one.
+describe('the model row and masked header values', () => {
   it('the model row does not resend a header shown as a marker', async () => {
     const proxy = { ...PROXY, providerHeaders: { 'X-Org': HEADER_MARKER, 'X-Trace': 't-1' } }
     vi.mocked(fetchConfig).mockResolvedValue(answer(modelsConfig([...LLMS, proxy])) as never)

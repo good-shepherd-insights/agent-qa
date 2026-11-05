@@ -1,22 +1,4 @@
-// The bounded member pool (402-02, INVK-04 / D-09) — its concurrency proof, its parity control,
-// and the invariants the sequential `for` loop used to guarantee for free.
-//
-// WHY A SEPARATE FILE FROM `run-shell.test.ts`: that file pins the SEQUENTIAL contract and must
-// keep passing byte-for-byte. This one pins what only a POOL can be asked. The distinction is
-// load-bearing for the parity control below.
-//
-// THE VACUOUS-ASSERTION TRAP (measured in 402-01, applied here): a 2-member fixture whose members
-// take the same time and settle in declaration order produces the SAME observable stream under a
-// concurrent pool and under the `for` loop it replaces — such a cell cannot tell them apart. So
-// every cell in this file is driven by DEFERRED executors whose settle order the test controls,
-// chosen so the sequential and concurrent executions produce DIFFERENT observable sequences.
-// Where a claim genuinely cannot be discriminated that way (the terminal sequence's uniqueness,
-// the parity control itself) the assertion site says so in prose.
-//
-// NO SLEEPS. Overlap is observed through a bounded microtask drain (`drainUntil`), not timers: under
-// the pool a second member reaches its executor within the SAME synchronous region as the first
-// (both worker loops run to their first await before either resumes), so a bounded drain either
-// observes the overlap immediately or proves it never happened.
+// Deferred executors settle in an order the test controls, so sequential and pooled runs differ.
 import { describe, expect, it } from 'vitest'
 
 import { RUN_EVENT_SCOPE, handleRosterOf, memberIndexOf } from '@vostride/agent-qa-schema'
@@ -35,7 +17,6 @@ import type {
   RunSession,
 } from '@vostride/agent-qa-schema'
 import type { TestResult } from '../../result.js'
-import { SEQUENTIAL_BASELINE } from './__fixtures__/sequential-baseline.js'
 
 // ---- Shared fakes ---------------------------------------------------------------------------
 
@@ -176,96 +157,20 @@ function normalize(events: readonly RunEventEnvelope[]): BaselineEvent[] {
   }))
 }
 
-/**
- * The first intentional divergence from the pre-402 capture (444.1-15 names the second, below).
- *
- * 402-04 adds `handles` to the `runStarted` payload (D-10's roster). That is an ADDITIVE payload
- * field, so the baseline — captured before it existed — cannot contain it, and the control reds.
- *
- * The fixture is NOT regenerated. Its own header says why: regenerating a differential control
- * against the code under test is how it becomes self-certifying, and after that it can never red
- * again for anything. Instead the divergence is named HERE, subtracted, and asserted separately —
- * so the control keeps its full discriminating power over every other byte of the stream, and the
- * one thing that did change is a line a reviewer reads rather than a diff nobody sees.
- */
-function withoutHandleRoster(events: readonly BaselineEvent[]): BaselineEvent[] {
-  return events.map((event) => {
-    if (event.type !== 'runStarted') return event
-    const { handles: _handles, ...rest } = event.payload as { handles?: unknown }
-    return { ...event, payload: rest }
-  })
+function recordedStream(events: readonly RunEventEnvelope[]): string {
+  return `${JSON.stringify(normalize(events), null, 2)}\n`
 }
 
-// 2026-10-19 (444.1-15, D-24): the second named divergence, subtracted and asserted the same way.
-// A skipped member's testFinished now carries its name and filePath (additive payload fields).
-function withoutSkipIdentity(events: readonly BaselineEvent[]): BaselineEvent[] {
-  return events.map((event) => {
-    if (event.type !== 'testFinished') return event
-    const payload = event.payload as Record<string, unknown>
-    const { name: _name, filePath: _filePath, ...rest } = payload
-    return { ...event, payload: rest }
-  })
-}
-
-function skipIdentityOf(events: readonly RunEventEnvelope[]): unknown[] {
-  return events
-    .filter((event) => event.type === 'testFinished')
-    .map((event) => event.payload as { outcome: string; name?: string; filePath?: string })
-    .filter((payload) => payload.name !== undefined || payload.filePath !== undefined)
-    .map((payload) => [payload.outcome, payload.name, payload.filePath])
-}
-
-describe('workers=1 parity — the pre-refactor differential control', () => {
-  it('reproduces the captured sequential event stream verbatim, but for the added roster', async () => {
+describe('the recorded event stream', () => {
+  it('a workers=1 run emits the recorded event stream', async () => {
     const session = startRun(baselineConfig())
     const events = drain(session)
     await done(session)
 
-    const stream = withoutSkipIdentity(withoutHandleRoster(normalize(events)))
-    expect(stream).toEqual(SEQUENTIAL_BASELINE)
-    // …and the subtracted field is exactly the roster, present and correct. Subtracting a field
-    // without asserting it would let the control pass on a runStarted that lost the roster too.
-    expect(handleRosterOf(events[0] as RunEventEnvelope)).toEqual([0, 1, 2, 3])
-    expect(skipIdentityOf(events)).toEqual([['skipped', 'charlie test', 'charlie.test.ts']])
+    await expect(recordedStream(events)).toMatchFileSnapshot(
+      './__fixtures__/sequential-baseline.json',
+    )
   })
-
-  // Capture mode. Run with AGENT_QA_CAPTURE_BASELINE=1 to (re)generate the fixture. It is
-  // deliberately a test rather than a loose script so the capture and the comparison can never
-  // drift apart: they share the scenario, the executor and the normalizer above.
-  it.runIf(process.env.AGENT_QA_CAPTURE_BASELINE === '1')(
-    'captures the fixture (AGENT_QA_CAPTURE_BASELINE=1)',
-    async () => {
-      const session = startRun(baselineConfig())
-      const events = drain(session)
-      await done(session)
-      const captured = normalize(events)
-
-      const { writeFileSync } = await import('node:fs')
-      const { fileURLToPath } = await import('node:url')
-      const target = fileURLToPath(
-        new URL('./__fixtures__/sequential-baseline.ts', import.meta.url),
-      )
-      writeFileSync(
-        target,
-        [
-          '// GENERATED — the pre-refactor sequential event stream of `run-shell.concurrency.test.ts`\'s',
-          '// baseline scenario, captured 2026-08-24 against the `for`-loop shell at 7908bd34 BEFORE the',
-          '// bounded member pool landed (402-02 Task 1). This file IS the parity control: the pool at',
-          '// workers=1 must reproduce it verbatim. Regenerate ONLY with a recorded reason —',
-          '// `AGENT_QA_CAPTURE_BASELINE=1 pnpm --filter @vostride/agent-qa-runner exec vitest run \\',
-          '//   src/run/__tests__/run-shell.concurrency.test.ts` — because regenerating it against the',
-          '// code under test is exactly how a differential control becomes self-certifying.',
-          'export const SEQUENTIAL_BASELINE: ReadonlyArray<{',
-          '  seq: number',
-          '  type: string',
-          '  runId: string',
-          '  payload: unknown',
-          '}> = ' + JSON.stringify(captured, null, 2),
-          '',
-        ].join('\n'),
-      )
-    },
-  )
 })
 
 // ---- Deferred-executor instruments ------------------------------------------------------------
@@ -379,9 +284,7 @@ describe('the bounded member pool — 2 members concurrent, one bus, one termina
     const events = drain(session)
     await done(session)
 
-    // Assert the PREMISE first. Without this line the cell passes on a sequential executor too,
-    // and would be claiming "no matter how the members interleave" about a run in which they did
-    // not interleave at all — the 402-01 vacuous-assertion trap in its purest form.
+    // Assert the premise first, or the cell also passes on a sequential executor.
     expect(finished).toEqual(['m1', 'm0'])
     expect(events.filter((e) => e.type === 'verdict')).toHaveLength(1)
     expect(events.filter((e) => e.type === 'runFinished')).toHaveLength(1)
@@ -391,9 +294,7 @@ describe('the bounded member pool — 2 members concurrent, one bus, one termina
   })
 
   it('serializes members that declare the SAME exclusive lane, even at workers=8', async () => {
-    // The A2 protection (D-09's "each member its own browser/CDP handle"). Suite members share the
-    // one adapter their suite set up, so they declare a lane and the pool must NOT interleave them
-    // — the same input that produced an inverted finish above must produce declaration order here.
+    // Suite members share their suite's adapter, so the pool must keep declaration order per lane.
     const started: string[] = []
     const finished: string[] = []
     const members = plainMembers(['m0', 'm1']).map((m) => ({
@@ -414,25 +315,28 @@ describe('the bounded member pool — 2 members concurrent, one bus, one termina
     expect(finishedIds).toEqual(['m0', 'm1'])
   })
 
-  it('an all-lane run at workers=8 reproduces the workers=1 baseline stream verbatim', async () => {
-    // The claim that makes the pool safe to ship for the suite path before per-member browser
-    // sessions exist: give every member the lane a suite producer gives it and the ENTIRE event
-    // stream — order, seqs, payloads — is the pre-refactor one, at any worker count.
+  it('an all-lane run at workers=8 emits the same recorded stream as a workers=1 run', async () => {
+    // Give every member the lane a suite producer gives it and the entire event stream (order,
+    // seqs, payloads) is the workers=1 one, at any worker count.
     //
     // Every member gets the lane here, including the ungrouped `delta`. That is deliberate: a run
     // where SOME members declare the lane and some do not is a mixed run, and mixing changes the
     // stream (the lane-free member overtakes the queue). No shipped producer builds one — a run is
     // either the suite path (every member lane-bound) or the direct path (no member lane-bound) —
     // so this cell pins the shape that exists rather than the shape that does not.
+    //
+    // It compares against a workers=1 run made here rather than the recorded file, so only the
+    // workers=1 cell writes that file and `vitest -u` cannot record the pool's stream as the golden.
+    const sequential = startRun(baselineConfig())
+    const sequentialEvents = drain(sequential)
+    await done(sequential)
+
     const laneMembers = BASELINE_MEMBERS.map((m) => ({ ...m, exclusiveLane: 'suite-lifecycle' }))
     const session = startRun(baselineConfig({ members: laneMembers, workers: 8 }))
     const events = drain(session)
     await done(session)
 
-    const stream = withoutSkipIdentity(withoutHandleRoster(normalize(events)))
-    expect(stream).toEqual(SEQUENTIAL_BASELINE)
-    expect(handleRosterOf(events[0] as RunEventEnvelope)).toEqual([0, 1, 2, 3])
-    expect(skipIdentityOf(events)).toEqual([['skipped', 'charlie test', 'charlie.test.ts']])
+    expect(recordedStream(events)).toBe(recordedStream(sequentialEvents))
   })
 })
 
@@ -463,11 +367,7 @@ describe('the pool at the edges — empty and single-member runs', () => {
   })
 })
 
-// ---- The invariant cells (402-02 Task 3) ------------------------------------------------------
-//
-// Three properties the sequential `for` loop guaranteed for free and the pool has to hold on
-// purpose. Each is driven by an input a sequential loop CANNOT produce, so none of them can pass
-// by accident on a run that never actually interleaved.
+// ---- invariants a pool must hold on purpose, each driven by an input a loop cannot produce ----
 
 function scriptedControlledExecutor(
   script: Record<string, () => Promise<TestResult>>,
@@ -484,8 +384,7 @@ describe('ordering edge — outcome slots are index-addressed, not completion-or
   it('attributes every outcome to its OWN member under fully inverted completion', async () => {
     const calls: string[] = []
     const finished: string[] = []
-    // m2 finishes first, then m1, then m0 — the exact inverse of declaration order, which is the
-    // one thing the `for` loop this replaced could never produce.
+    // m2 finishes first, then m1, then m0: the exact inverse of declaration order.
     const releaseM1 = deferred()
     const releaseM0 = deferred()
     const m2Done = deferred()
@@ -523,10 +422,7 @@ describe('ordering edge — outcome slots are index-addressed, not completion-or
     expect(calls).toEqual(['m0', 'm1', 'm2'])
     expect(finished).toEqual(['m2', 'm1', 'm0'])
 
-    // THE ASSERTION. `handoff.tests` is the durable per-member record; a reader takes member i as
-    // `tests[i]`. Appending in completion order would put m2's outcome in m0's slot — the T-402-07
-    // tampering surface, and one that no verdict-level assertion would notice because the multiset
-    // of outcomes is identical either way.
+    // A reader takes member i as `tests[i]`, so completion-order appends would misattribute.
     expect(completion.handoff.tests.map((t) => t.testIndex)).toEqual([0, 1, 2])
     expect(completion.handoff.tests.map((t) => t.testId)).toEqual(['m0', 'm1', 'm2'])
     expect(completion.handoff.tests.map((t) => t.outcome)).toEqual(['passed', 'failed', 'passed'])
@@ -593,17 +489,7 @@ describe('concurrency edge — cancelling the run while N members are in flight'
     // The bus is closed: nothing arrives after runFinished, and the run's own record agrees.
     expect(events.filter((e) => e.seq > last.seq)).toEqual([])
     expect(completion.handoff.tests.map((t) => t.testIndex)).toEqual([0, 1])
-    // Every member reached the aggregate: no slot was read before its member had written it.
-    //
-    // MEASURED LIMIT OF THIS CELL (2026-08-24). It cannot discriminate "the terminal sequence waits
-    // for the pool to settle" from "it runs when the first worker drains". Cancel finalizes an
-    // in-flight member through the executor-vs-abort race, NOT through the executor, so every
-    // member finalizes within microtasks of the abort whatever the pool does — delaying one
-    // member's executor changes nothing, because the abort branch has already won its race. The
-    // claim is real and it IS pinned, by the fail-fast cell below and by the all-lane parity cell
-    // above: both red when `Promise.all` over the workers is weakened to `Promise.race`. Recorded
-    // here rather than papered over, because a cell that cannot fail for the reason its name gives
-    // is worth less than one that says so.
+    // This cell cannot tell when the terminal sequence runs; the fail-fast and parity cells pin it.
     expect(
       events.filter(
         (e) =>
@@ -616,14 +502,7 @@ describe('concurrency edge — cancelling the run while N members are in flight'
 
 describe('fail-fast under the pool — poisoning stops STARTS, not work in flight', () => {
   it('skips the queued member while the in-flight sibling runs to completion', async () => {
-    // The named plan decision (RESEARCH open Q1) in its only observable form. Members [0,1,2] in
-    // one failFastGroup at workers=2: m0 and m1 start together, m0 fails, m2 is then claimed and
-    // must never start, and m1 — already in flight when the poison landed — finishes normally.
-    //
-    // The sequential loop produces [m0 failed, m1 SKIPPED, m2 skipped] for this input. The pool
-    // produces [m0 failed, m1 PASSED, m2 skipped], in the finish order m0, m2, m1. Neither the
-    // outcome triple nor the finish order is reachable sequentially, so this cell cannot pass on a
-    // run that did not actually overlap.
+    // After the poison m2 never starts and in-flight m1 finishes, which no sequential run produces.
     const calls: string[] = []
     const events: RunEventEnvelope[] = []
     const finishedIds = (): string[] =>
@@ -657,7 +536,7 @@ describe('fail-fast under the pool — poisoning stops STARTS, not work in fligh
   })
 })
 
-// ---- The handle roster on runStarted (402-04, D-10) -------------------------------------------
+// ---- The handle roster on runStarted -------------------------------------------
 
 describe('the runStarted handle roster — the run announcing which streams are attachable', () => {
   it('announces each member\'s DERIVED testIndex, in member order, on a 3-member run', async () => {
@@ -729,7 +608,7 @@ describe('the runStarted handle roster — the run announcing which streams are 
   })
 })
 
-// ---- Two-sided attribution, WRITE side (402-04, D-10 · INVK-04) --------------------------------
+// ---- Two-sided attribution, WRITE side --------------------------------
 
 /**
  * The three members of the attribution scene, at PLANTED non-contiguous indices.
@@ -767,15 +646,7 @@ function ownerOf(event: RunEventEnvelope): string | undefined {
   return undefined
 }
 
-/**
- * Executors that cannot all finish until all three have STARTED.
- *
- * That is the discriminating shape (402-02's idiom): under the pool every member reaches its
- * second emission after every other has reached its first, so the published stream interleaves.
- * Under any sequential execution the first member's drain budget expires without the others ever
- * starting, the emissions come out blocked per member, and the interleave assertion reds — this
- * cell cannot pass on a run that did not actually overlap.
- */
+// No executor finishes until all have started, so the cell fails on any sequential execution.
 function attributionExecutor(started: string[]): MemberTestExecutor {
   return async (member: RunMemberDescriptor, ctx: MemberTestRunContext) => {
     started.push(member.testId)

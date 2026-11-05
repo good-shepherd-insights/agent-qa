@@ -1,12 +1,4 @@
-// The cross-document analysis boundary (Phase 389, plan 04 — D-05/D-07, spec §A9).
-//
-// `validateAnalysisAgainstHandoff` is what makes "a sentence a QA engineer believes"
-// CHECKABLE: an authored artifact validates against the run's own handoff — every cited
-// step must exist, every grounding quote must be verbatim-present in that step's captured
-// evidence, every class must be a member of the closed union, every link must parse, and a
-// no-trust-change class must have honestly ruled memory misdirection out when candidate or
-// low-trust memory was on the failing path. Rejects are PER TEST so one confused answer
-// never fails its siblings, and the reason strings feed the D-03 repair message verbatim.
+// Rejects are per test, so one confused answer never fails its siblings.
 
 import { describe, expect, it } from 'vitest'
 
@@ -464,22 +456,6 @@ describe('the §A9 memory-misdirection rule (spec memory.md §7.2)', () => {
     )
     expect(validateAnalysisAgainstHandoff(artifact, handoff)).toEqual({ ok: true })
   })
-
-  it('treats a canary-served line as low-trust memory on the path', () => {
-    const canaryHandoff = buildHandoff()
-    const test0 = canaryHandoff.tests[0] as PerTestOutcome
-    const failing = test0.steps[1] as StepEvidence
-    test0.steps[1] = {
-      ...failing,
-      servedBrief: servedBrief([briefLine({ servedAsCanary: true })]),
-    }
-    const artifact = artifactOf(
-      [verdictFor(0, { memoryMisdirectionRuledOut: false })],
-      [partsFor(0)],
-    )
-    const rejects = rejectsOf(validateAnalysisAgainstHandoff(artifact, canaryHandoff))
-    expect(rejects[0]?.perTest).toBe(0)
-  })
 })
 
 describe('per-test granularity: one bad test never fails its siblings', () => {
@@ -514,10 +490,10 @@ describe('per-test granularity: one bad test never fails its siblings', () => {
   })
 })
 
-describe('perTest uniqueness ownership (WR-02 / G-389-3B): the guard owns it, not this boundary', () => {
+describe('perTest uniqueness ownership: the guard owns it, not this boundary', () => {
   const handoff = buildHandoff()
 
-  it('WR-02 non-owner pin: a duplicate-perTest artifact this validator does not re-check is refused upstream by guardRunAnalysisArtifact', () => {
+  it('non-owner pin: a duplicate-perTest artifact this validator does not re-check is refused upstream by guardRunAnalysisArtifact', () => {
     // Two verdicts for perTest 0 with CONTRADICTING classes, each of which validates
     // independently against the handoff — so this boundary answers ok BY DESIGN: it is the
     // two-document check, and duplicate perTest is a one-document structural property owned

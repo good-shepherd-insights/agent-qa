@@ -14,30 +14,17 @@ export {
 export type { BundleStatus, DerivedTrustState } from './trust-fold'
 export { cautionRootCauseClassSchema } from './distilled-observation'
 export type { CautionRootCauseClass } from './distilled-observation'
-export { PROMOTION_GATE_HOLD_REASONS, GATE_SET_VERDICT_WORDS, evaluatePromotionGate } from './promotion-gate'
-export { GATE_INCONSISTENCY_SHAPES, detectGateInconsistency } from './promotion-gate'
-export type { GateInconsistencyShape, GateInconsistency } from './promotion-gate'
+export { PROMOTION_GATE_HOLD_REASONS, evaluatePromotionGate } from './promotion-gate'
 export type {
   PromotionGateHoldReason,
   PromotionGateInput,
   PromotionGateObservation,
-  PromotionGatePosture,
-  ResolvedPromotionGatePosture,
-  UnavailablePromotionGatePosture,
-  GateSetVerdictWord,
-  PromotionJudgePosture,
-  PromotionCanaryPosture,
-  PromotionPostureScope,
-  PromotionGateSetCounts,
   PromotionGateVerdict,
 } from './promotion-gate'
 export {
   COLD_START_MAX_BUDGET_FRACTION,
   COLD_START_MAX_RECORDS,
   COLD_START_TRUST_DISCOUNT,
-  LOWER_TRUST_PATH_DISCOUNT,
-  GATE2_DEFAULT_STALE_CONFIRMATIONS,
-  GATE2_DEFAULT_MAX_LOWER_TRUST_PER_SCOPE,
   applyColdStartSubCap,
   isVettedCandidate,
 } from './cold-start'
@@ -119,9 +106,6 @@ export type {
   InspectRecordView,
   RecordChange,
 } from './maintenance-views'
-// 2026-10-01, 432-17 (D-05): the direct knowledge change contracts — the review vocabulary, the
-// change identity, the target refs, the forget and commit receipts, the change inputs and the change
-// output. The proposal payload and its apply contracts are deleted with the inbox.
 export {
   DeltaSchema,
   FORGET_RECEIPT_SCHEMA_VERSION,
@@ -162,7 +146,6 @@ export type {
   MarkChangeStamp,
   TombstonedRecord,
 } from './change'
-// 387 KREV-01/KREV-02 D-15: the review-verb read contracts.
 export {
   BRIEF_WHY_NO_TRACE_REASONS,
   BRIEF_WHY_RESULT_KINDS,
@@ -189,27 +172,16 @@ export type {
   KnowledgeRecordsInspectInput,
   KnowledgeRecordsInspectOutput,
 } from './review-verbs'
-// 416 receipt vocabulary and the promotion result seam.
 export { GATE_RECEIPT_SCHEMA_VERSION, GATE_NUMBERS, GATE_VERDICTS, GateReceiptSchema,
   PromotionReceiptSchema, GateLineSchema, receiptDigestOf, stampReceiptDigest,
   isPromotionReceipt, standingReceiptsByGate, strongestPromotionPath } from './gate-receipt'
 export type { GateNumber, GateVerdict, GateReceipt, PromotionReceipt, GateLine } from './gate-receipt'
 export { PROMOTION_PATHS, PROMOTION_PATH_STRENGTH, strongerPromotionPath } from './promotion-path'
 export type { PromotionPath } from './promotion-path'
-export type { PromotionOutcome, GateReceiptRecordOutcome, PromotionCandidateProvenance,
-  PromotionPostureCandidate, ResolvePromotionPosture } from './promotion-gate'
+export type { PromotionOutcome, GateReceiptRecordOutcome, PromotionCandidateProvenance } from './promotion-gate'
 
-export { PER_AXIS_SCORE_AXES, CROSS_CHECKS, DEGRADATIONS, BENEFITS, MARKS, STATE_VALIDITIES,
-  axisScoreSchema, perAxisScoreSchema, corpusVersionSchema, samplesSchema, noiseFloorRefSchema,
-  gate1ArmSchema, gate2ArmSchema, gate3ArmSchema, gate2SpendSchema } from './gate-receipt'
-export type { PerAxisScoreAxis, CrossCheck, Degradation, Benefit, Mark, StateValidity,
-  Gate1Receipt, Gate2Receipt, Gate3Receipt } from './gate-receipt'
-// 2026-09-07, 417: neutral replay receipt and candidate DATA contracts.
-export { GATE1_REASONS, GATE1_TARGET_SOURCES, GATE1_K_SOURCES, GATE1_HARM_ORIGINS,
-  gate1CapSchema, gate1SpendSchema, gate1TargetSchema, gate1HarmedSchema } from './gate-receipt'
-export type { Gate1Reason, Gate1TargetSource, Gate1KSource, Gate1HarmOrigin } from './gate-receipt'
-export { CandidateInjectionSchema, KnowledgeCandidateInjectionResultSchema } from './candidate-injection'
-export type { CandidateInjection, KnowledgeCandidateInjectionResult } from './candidate-injection'
+export { BENEFITS, MARKS, gate3ArmSchema } from './gate-receipt'
+export type { Benefit, Mark, Gate3Receipt } from './gate-receipt'
 export { RecordAnchorsSchema, RecordScopeSchema } from './record-frontmatter'
 export { BundleKindSchema, BundleStatusSchema } from '../functions/knowledge'
 export { BriefLineSchema } from '../brief/guard-lossless-served-brief'

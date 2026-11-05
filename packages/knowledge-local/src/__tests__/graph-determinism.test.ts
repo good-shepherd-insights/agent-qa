@@ -76,7 +76,7 @@ function observation(
   }
 }
 
-describe('GRPH-01 graph rebuild determinism', () => {
+describe('graph rebuild determinism', () => {
   let root: string
 
   beforeEach(async () => {
@@ -91,7 +91,6 @@ describe('GRPH-01 graph rebuild determinism', () => {
     return {
       knowledgeRoot,
       productKey: 'Checkout Application',
-      commitArtifacts: 'none',
     }
   }
 

@@ -5,16 +5,16 @@ import { chromium } from 'playwright-core'
 
 const TEST_ID = 't_off-rang-gold-flu-sweet-common-plan-lung-folder-kent'
 const SUITE_ID = 's_studio-quire-rough-trust-egger-may-grow-verify-menu-tong'
-const TEST_FILE = 'phase-188-smoke.yaml'
-const SUITE_FILE = 'phase-188-smoke.suite.yaml'
+const TEST_FILE = 'dashboard-smoke.yaml'
+const SUITE_FILE = 'dashboard-smoke.suite.yaml'
 const TEST_CONTENT = `test-id: ${TEST_ID}
-name: Phase 188 Smoke Test
+name: Dashboard Smoke Test
 target: my-app
 steps:
   - Navigate to the login page
 `
 const SUITE_CONTENT = `suite-id: ${SUITE_ID}
-name: Phase 188 Smoke Suite
+name: Dashboard Smoke Suite
 target: my-app
 tests:
   - test: ${TEST_FILE}
@@ -162,12 +162,14 @@ async function requestJson(apiBase, path, init) {
   return data
 }
 
+// The smoke test may already exist under another file name, so a seeded run triggers the file
+// the workspace actually holds.
 async function ensureSmokeTest(apiBase, explicitTestId) {
-  if (explicitTestId) return explicitTestId
+  if (explicitTestId) return { testId: explicitTestId, file: TEST_FILE }
 
   const tests = await requestJson(apiBase, '/api/tests')
   const existing = tests.files.find((file) => file.testId === TEST_ID)
-  if (existing) return TEST_ID
+  if (existing) return { testId: TEST_ID, file: existing.path }
 
   await requestJson(apiBase, '/api/tests', {
     method: 'POST',
@@ -175,7 +177,7 @@ async function ensureSmokeTest(apiBase, explicitTestId) {
     body: JSON.stringify({ path: TEST_FILE, content: TEST_CONTENT }),
   })
 
-  return TEST_ID
+  return { testId: TEST_ID, file: TEST_FILE }
 }
 
 async function ensureSmokeSuite(apiBase, explicitSuiteId) {
@@ -194,7 +196,7 @@ async function ensureSmokeSuite(apiBase, explicitSuiteId) {
   return SUITE_ID
 }
 
-async function resolveRunId(apiBase, explicitRunId, pollTimeoutMs) {
+async function resolveRunId(apiBase, explicitRunId, pollTimeoutMs, testFile) {
   if (explicitRunId) return explicitRunId
 
   const runs = await requestJson(apiBase, '/api/runs?limit=1')
@@ -205,7 +207,7 @@ async function resolveRunId(apiBase, explicitRunId, pollTimeoutMs) {
   const triggered = await requestJson(apiBase, '/api/runs/trigger', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ file: TEST_FILE, local: true }),
+    body: JSON.stringify({ file: testFile, local: true }),
   })
 
   const runId = triggered.runId
@@ -320,9 +322,9 @@ async function main() {
 
   const baseUrl = normalizeBaseUrl(args.baseUrl)
   const apiBase = normalizeBaseUrl(args.apiBase)
-  const testId = await ensureSmokeTest(apiBase, args.testId)
+  const { testId, file: testFile } = await ensureSmokeTest(apiBase, args.testId)
   const suiteId = await ensureSmokeSuite(apiBase, args.suiteId)
-  const runId = await resolveRunId(apiBase, args.runId, args.pollTimeoutMs)
+  const runId = await resolveRunId(apiBase, args.runId, args.pollTimeoutMs, testFile)
 
   const allRoutes = buildRoutes({ runId, testId, suiteId })
   const routes = args.routes.length > 0 ? args.routes : allRoutes

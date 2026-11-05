@@ -12,7 +12,7 @@ import { makeScreenState } from '../../testing/screen-fixtures.js'
 import type { TestResult, StepResult } from '../../result.js'
 
 const scope = { tier: 'test', key: 'origin fixture' } as const
-const secret = 'fixture-sensitive-value-420'
+const secret = 'fixture-sensitive-value'
 const runId = asRunId('origin shell fixture')
 
 function evidence(pass: boolean): StepEvidence {
@@ -46,7 +46,7 @@ async function execute(options: {
   finalFailure?: boolean
   secondMember?: boolean
 } = {}) {
-  const secretRedactor = new SecretRedactor(new SecretStore({ ORIGIN_420: secret }))
+  const secretRedactor = new SecretRedactor(new SecretStore({ ORIGIN_KEY: secret }))
   const planner = { plan: vi.fn() }
   const adapterExecute = vi.fn(async () => ({ success: true }))
   const events: RunEventEnvelope[] = []
@@ -90,7 +90,7 @@ async function execute(options: {
   return { loaded, completion, events, results, planner, adapterExecute, secretRedactor }
 }
 
-describe('420 original retry handoff', () => {
+describe('original retry handoff', () => {
   it.each([
     ['timeout', 'Test timed out after 100ms', undefined],
     ['environment', 'unexplained', { status: 503, elapsedMs: 8 }],

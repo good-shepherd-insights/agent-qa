@@ -1,53 +1,4 @@
-// Two REAL OS processes writing one committed `quarantine.jsonl` (Phase 390, D-04).
-//
-// This discharges the concurrent-writer-safety truth the phase carried as a human-verification
-// item through three rounds: "two independent OS processes appending to quarantine.jsonl cannot
-// lose or tear an event, and a human release is not undone by a concurrently-authored `entered`
-// event written against pre-release state." Its stated blocker was "needs two real OS processes and
-// a real timing window", which is a HARNESS need, not a human one — so the harness is here, built
-// on 385-03's `store-contention` idiom.
-//
-// FOUR LEGS, and they answer four different questions. None substitutes for another:
-//
-//   1. EXCLUSION (protected). A daemon-shaped writer — one riding a standing lease through
-//      `resolveWriterAuthority`, exactly what `daemon/host.ts:1875` composes — announces from
-//      INSIDE its own `decide` and stays there. A CLI-shaped writer in a second process, one that
-//      acquires per call, hammers the same identity throughout that window and is refused typed
-//      every time. The refusals are COUNTED AT THE INSTANT they happen, against the announcement
-//      markers, so "the two processes were simultaneously in the critical region" is observed
-//      rather than inferred. Nothing is lost: all 14 events land, the contested identity opens
-//      exactly ONCE, and the second writer's renewal does not un-claim the first writer's owner.
-//
-//   2. LOST UPDATE (control). The single most important leg, because legs 1 and 3 are assertions
-//      that something did NOT happen, and those are load-bearing only if the input could have made
-//      it happen. The same cycle runs with the lease removed and a barrier forced open between the
-//      fold and the append; the harness then observes a real double-open, and a daemon that was
-//      ANSWERED `entered` with its own owner while committed truth records somebody else's. The
-//      protection is what stands between leg 1 and this.
-//
-//   3. THE RELEASE (control + protection). The child folds pre-release state and appends after a
-//      human `release` lands — the exact byte sequence the truth's second half describes. Two
-//      findings, and both are pinned: `operations.add` CANNOT author `entered` from pre-release
-//      state (an open window routes to `renewed`), and the fold's own 390-11 / WR-04 guard refuses
-//      that `renewed` over a closed window. The control's redness is the same bytes folded with
-//      WR-04 removed, which DOES undo the release.
-//
-//   4. TEARING. Both processes append with no serialization at all — the "third caller" residual
-//      `ledger.ts` names by hand — first in strict alternation (interleaving by construction) and
-//      then in a free burst (simultaneity). Every line survives, individually well-formed. This
-//      leg deliberately does NOT hold the lease: the claim under test is about bytes, and
-//      attributing byte integrity to a lock that was never contended would be the wrong reading.
-//
-// EVERY LEG BELOW MODELS A REAL LEASE HOLDER. The daemon-shaped writer in legs 1, 2 and 3 acquires
-// the MRSW lease and hands the acquired `{leaseId, epoch}` in, exactly as `daemon/host.ts:1875`
-// does. Legs 2 and 3 used to hand in a synthetic literal instead, on the reasoning that
-// `underWriterLease` could not tell the difference; since 390-15 it can — the authority arm
-// re-validates the pair against the monotonic epoch and the lease file — and a literal is refused
-// typed. Neither leg ever depended on the parent's authority being fake: what they force is that
-// the CHILD is unserialized, and that is unchanged.
-//
-// WHAT THIS FILE DOES NOT PROVE: anything about more than two writers, and anything about a
-// network filesystem (O_APPEND's atomicity is a local-filesystem guarantee).
+// Two real OS processes share one ledger; O_APPEND atomicity holds only on a local filesystem.
 
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -125,7 +76,7 @@ function blockFor(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT)), 0, 0, ms)
 }
 
-describe('quarantine ledger under real cross-process contention (D-04)', () => {
+describe('quarantine ledger under real cross-process contention', () => {
   let base: string
   let root: string
   let markers: {
@@ -241,8 +192,7 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
     return {
       resolveKnowledgeRoot: () => root,
       now,
-      // Every corpus path is already workspace-relative, so the production recipe is the identity
-      // over them; 390-12 owns the mint's own corpus and it is not the subject here.
+      // Corpus paths are already workspace-relative, so the mint is the identity.
       mintIdentityPath: (filePath) => filePath,
     }
   }
@@ -417,10 +367,7 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
       publishMarker(markers.go)
       await waitFor('the child to fold pre-release state', () => existsSync(markers.folded), handle)
 
-      // FINDING 1, and it is structural rather than lucky: a fold that sees pre-release state sees
-      // an OPEN window, and `operations.add` routes an open window to `renewed`. The `entered`
-      // branch the truth worries about is only reachable from an absent or already-released fold —
-      // which is to say, never from pre-release state.
+      // A pre-release fold sees an open window, which `operations.add` routes to `renewed`.
       expect(JSON.parse(readFileSync(markers.folded, 'utf8'))).toEqual({
         decision: 'renewed',
         observedState: 'quarantined',
@@ -437,14 +384,12 @@ describe('quarantine ledger under real cross-process contention (D-04)', () => {
       expect(read.events.map((event) => event.kind))
         .toEqual(['entered', 'released-manual', 'renewed'])
 
-      // FINDING 2: the release STANDS, on the read side, independently of any lock.
+      // The release stands on the read side, independently of any lock.
       const entries = foldQuarantineLedgerState(read.events, READ_NOW)
       expect(entries).toHaveLength(1)
       expect(entries[0].state).toBe('released')
 
-      // THE CONTROL'S REDNESS. The same bytes, folded with 390-11 / WR-04 removed and nothing
-      // else changed, DO undo the human's release. Without this the assertion above would only
-      // be evidence that the harness never produced a lost-update sequence.
+      // Without the release guard these bytes undo the release: a real lost-update input.
       expect(foldWithoutReleaseGuard(read.events)).toBe('quarantined')
     },
     120_000,

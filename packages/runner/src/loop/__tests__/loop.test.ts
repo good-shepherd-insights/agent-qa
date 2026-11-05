@@ -1,7 +1,3 @@
-// Ported v1 loop scenarios (core/src/agent/__tests__/{loop,trace,integration,capture-gate})
-// re-run against the runner-owned executeStep. Scenarios that exercised deleted machinery
-// (the consecutive-failure counter, memory ablation) are dropped (D-10). New locks: the
-// cached-redacted-marker invalidation and trace===projectLegacyTrace.
 import { describe, it, expect, vi } from 'vitest'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import type { PlatformAdapter, Action } from '../../platform.js'
@@ -66,7 +62,7 @@ describe('executeStep — ported v1 scenarios', () => {
     expect((passed as StepContext).testContext).toBe('This is a banking app')
   })
 
-  it('routes context and tool_result through safety hooks; the async gate executes the ORIGINAL action (SEAM-03)', async () => {
+  it('routes context and tool_result through safety hooks; the async gate executes the ORIGINAL action', async () => {
     const executed: Action[] = []
     const adapter = makeAdapter()
     adapter.execute = async (action: Action) => { executed.push(action); return { success: true } }
@@ -154,11 +150,6 @@ describe('executeStep — ported v1 scenarios', () => {
   })
 
   describe('completion calls the verifier', () => {
-    // D-19 (Phase 360): the retired non-visual-`assert` verifier-bypass short-circuit was
-    // deleted. Its deterministic-verdict replacement (an assertValue outcome short-circuiting
-    // the per-step verifier, D-11) is pinned RED in assert-value.test.ts (Plan 10) — NOT
-    // duplicated here. This suite now only holds the neutral completion invariant: a normal
-    // completing action reaches the verifier.
     it('a completing action + stepComplete calls the verifier', async () => {
       const verifySpy = vi.fn(async (step: string, _before: ScreenState, after: ScreenState, action: Action) => ({
         verification: scriptedVerification({ step, after, action, pass: true, reasoning: 'confirmed' }),
@@ -199,11 +190,10 @@ describe('executeStep — trace projection', () => {
 
 describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
   const cachedLogin: CachedPlanValue = {
-    // Descriptor-only value (D-12): ref/coords stripped; the locator re-grounds to the
-    // fresh `log in` button (e2) against the observation at replay time.
+    // Descriptor-only value: the locator re-grounds to the fresh `log in` button at replay time.
     plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
     groundedLocator: [{ role: 'button', name: 'Log in' }],
-    verificationOutcome: 'passed',
+    completesStep: true,
   }
 
   it('exact-key hit re-grounds the descriptor and replays without calling the planner', async () => {
@@ -219,12 +209,12 @@ describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
     expect(result.evidence?.cacheStatus).toBe('hit')
   })
 
-  it('a hit whose descriptor no longer resolves invalidates the key and replans (D-13)', async () => {
+  it('a hit whose descriptor no longer resolves invalidates the key and replans', async () => {
     let invalidateCalls = 0
     const staleHit: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', name: 'Gone' }],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const cache: ActionPlanCache = {
       async get() { return staleHit },
@@ -259,7 +249,7 @@ describe('executeStep — cache (redesigned per-key port + hit ladder)', () => {
   })
 })
 
-describe('executeStep — vision gate (D-11 / SCREEN-03)', () => {
+describe('executeStep — vision gate', () => {
   function makeCompressor(): ScreenshotCompressor {
     return {
       compress: vi.fn(async () => ({ buffer: Buffer.from('compressed'), imageWidth: 800, imageHeight: 600 })),
@@ -323,7 +313,7 @@ describe('executeStep — vision gate (D-11 / SCREEN-03)', () => {
   })
 })
 
-describe('executeStep — decision screenshot persistence (CASS-02)', () => {
+describe('executeStep — decision screenshot persistence', () => {
   interface Store {
     calls: Uint8Array[]
     persistDecisionScreenshot: (bytes: Uint8Array) => { id: string; sha: string }
@@ -485,7 +475,7 @@ describe('executeStep — decision screenshot persistence (CASS-02)', () => {
     const cachedLogin: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', name: 'Log in' }],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const cache: ActionPlanCache = {
       async get() { return cachedLogin },
@@ -528,7 +518,7 @@ describe('executeStep — decision screenshot persistence (CASS-02)', () => {
   })
 })
 
-describe('executeStep — pre-record secret redaction (Phase 366 D-02)', () => {
+describe('executeStep — pre-record secret redaction', () => {
   it('redacts a registered raw secret from the recorded planned action before evidence records it', async () => {
     const rawSecret = 'sk-live-super-secret-value'
     const secretRedactor = new SecretRedactor(new SecretStore({ TOKEN: rawSecret }))
@@ -574,7 +564,7 @@ describe('executeStep — pre-record secret redaction (Phase 366 D-02)', () => {
   })
 })
 
-describe('C441-NO-HOOK-PORT', () => {
+describe('executeStep — a hook object left on the ports is ignored', () => {
   it('a hook object left on the ports is never consulted; the action executes and its result is recorded redacted', async () => {
     const rawSecret = 'sk-live-echoed-secret-value'
     const consulted: string[] = []

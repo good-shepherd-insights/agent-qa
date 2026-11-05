@@ -1,18 +1,4 @@
-// D-10 end to end, through the REAL config path (Phase 387 plan 07, ENTY-02 / D-10).
-//
-// The agent-side suite proves the producer's rules against `MaskedResolvedConfig` values it
-// constructs. That is necessary and not sufficient: a hand-built DTO can carry a shape the
-// real masker is structurally incapable of producing, and a card URL proven only against one
-// would be the input-domain vacuity this phase keeps finding. Nothing in `packages/agent` can
-// reach the masker — it lives here, in the composition root — so the join is proven HERE, and
-// this is the only place in the workspace where it can be.
-//
-// What "real" means in this file, stated so it can be checked rather than trusted: an actual
-// YAML file on disk, resolved by `resolveConfig` through the shipped `AgentQaConfigSchema`
-// (which is `.strict()`, so an undeclared `services.dashboard` key would fail the read
-// outright), masked by `buildMaskedResolvedConfig` with the declared-secret mask (441-20, D-29),
-// and handed to the real `entities.get` op through `createFunctionRegistry` and
-// `invokeFunction`. The only stubs are the ports this claim is not about.
+// Proves the card URL against the real masker, which only the composition root can reach.
 
 import { createFunctionRegistry, invokeFunction } from '@vostride/agent-qa-agent'
 import type { FunctionDeps } from '@vostride/agent-qa-agent'
@@ -30,10 +16,8 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { createConfigReader } from '../local-agent-host.js'
 
 const DECLARED_VALUE = 'Hunter-42-zz'
-const declaredRedactor = new SecretRedactor(SecretStore.fromEnvContent(`PW_441=${DECLARED_VALUE}\n`))
+const declaredRedactor = new SecretRedactor(SecretStore.fromEnvContent(`PW_KEY=${DECLARED_VALUE}\n`))
 
-// 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
-// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'cli',
   origin: 'agent',
@@ -54,7 +38,6 @@ afterAll(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-/** Write a real config file whose `services.dashboard` block carries the D-10 keys. */
 function writeConfig(dashboard: Record<string, unknown>): string {
   const dir = mkdtempSync(join(tmpdir(), 'agent-qa-card-url-'))
   roots.push(dir)
@@ -107,8 +90,6 @@ function depsFor(configPath: string): FunctionDeps {
 async function cardFor(dashboard: Record<string, unknown>): Promise<EntityCard> {
   const registry = createFunctionRegistry({
     deps: depsFor(writeConfig(dashboard)),
-    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
-    // no context (432-20).
   })
   const result = await invokeFunction(
     registry,
@@ -119,7 +100,7 @@ async function cardFor(dashboard: Record<string, unknown>): Promise<EntityCard> 
   return result as EntityCard
 }
 
-describe('the card url is derived through the real masked-config path (D-10)', () => {
+describe('the card url is derived through the real masked-config path', () => {
   it('renders the pinned route from a base the masker publishes verbatim', async () => {
     const card = await cardFor({
       baseUrl: 'https://qa.example.com',
@@ -151,7 +132,7 @@ describe('the card url is derived through the real masked-config path (D-10)', (
   })
 })
 
-describe('C441-CONFIG', () => {
+describe('the card url base path', () => {
   it('a card url keeps the base path prefix as written', async () => {
     const card = await cardFor({
       baseUrl: 'https://qa.example.com/qa',

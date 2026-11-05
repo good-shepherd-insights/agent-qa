@@ -80,13 +80,7 @@ function stepEvidence(fixture: StepFixture): StepEvidence {
   } as unknown as StepEvidence
 }
 
-/**
- * `testIndex` is the run's per-member index and `rootCause.perTest` is the join key that names it
- * (389 D-07). Both are derived from the member's position here rather than hardcoded: the 390 D-09
- * resolved-class map is keyed by that index, so a fixture where every member claimed index 0 and
- * every rootCause claimed perTest 1 described a handoff no runner can produce, and the classes of
- * unrelated members collapsed onto each other.
- */
+// Indexes come from the member's position, because the resolved-class map is keyed by them.
 function perTest(fixture: TestFixture, testIndex: number): PerTestOutcome {
   return {
     testId: fixture.testId,
@@ -227,8 +221,8 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-describe('run-outcome projection fold (ABRF-02, D-14)', () => {
-  it('skips without writer authority before opening or touching the index (418-12 WR-03)', () => {
+describe('run-outcome projection fold', () => {
+  it('skips without writer authority before opening or touching the index', () => {
     const knowledgeRoot = tempDir('projection-no-authority-')
     const options = { knowledgeRoot, runsRoot: join(knowledgeRoot, 'runs'), extractAnchors }
     expect(reconcileRunOutcomesProjection(options))
@@ -247,7 +241,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     handle.close()
   })
 
-  it('rebuilds under current authority and refuses a stale epoch before any deletion (418-12 WR-03)', () => {
+  it('rebuilds under current authority and refuses a stale epoch before any deletion', () => {
     const knowledgeRoot = tempDir('projection-current-authority-')
     const options = { knowledgeRoot, runsRoot: join(knowledgeRoot, 'runs'), extractAnchors }
     const authority = acquireWriterLease(knowledgeRoot)
@@ -362,10 +356,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
       'scope_tier',
       'test_name',
     ])
-    // 390 D-02, stated as its own assertion so a re-add reds with a named reason rather than as an
-    // opaque set mismatch: the derived quarantined flag is DELETED. One word, one truth — the
-    // committed ledger is the only thing this codebase now calls quarantined, and a projection
-    // column stamped from a lifetime flake threshold could only ever disagree with it.
+    // A re-added derived `quarantined` column would disagree with the committed ledger.
     expect(outcomeColumns).not.toContain('quarantined')
     const anchorColumns = db.prepare('PRAGMA table_info(run_test_anchors)').all()
       .map((row) => String((row as Record<string, unknown>).name))
@@ -522,7 +513,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     expect(dumpTables(db)).toEqual(before)
   })
 
-  it('contributes zero rows or anchors when the durable handoff marker is set (Pitfall 7)', () => {
+  it('contributes zero rows or anchors when the durable handoff marker is set', () => {
     const db = openDb()
     const excluded = handoffFixture({
       runId: 'run-gate',
@@ -548,7 +539,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     ])
   })
 
-  it('rebuild reproduces an incremental fold with one of three handoffs excluded (L12)', () => {
+  it('rebuild reproduces an incremental fold with one of three handoffs excluded', () => {
     const handoffs = [
       handoffFixture({
         runId: '001-first',
@@ -641,7 +632,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
   })
 
   it.skipIf(process.getuid?.() === 0).each(['002-login', 'runs-holder'])(
-    'refuses EACCES at %s without returning a folded report (418-12 CR-01-EXISTS)',
+    'refuses EACCES at %s without returning a folded report',
     (faultSite) => {
       const holder = tempDir('run-outcomes-refusal-')
       const runsRoot = join(holder, 'runs')
@@ -695,7 +686,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     },
   )
 
-  it('rebuild over an empty or missing runs dir yields empty tables without error (ABRF-02 empty edge)', () => {
+  it('rebuild over an empty or missing runs dir yields empty tables without error (the empty edge)', () => {
     const emptyRoot = tempDir('run-outcomes-empty-')
     const db = openDb()
     expect(rebuildRunOutcomes(db, emptyRoot, { extractAnchors })).toEqual({
@@ -712,7 +703,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM run_test_anchors').get()).toMatchObject({ n: 0 })
   })
 
-  it('skips pre-fix handoffs lacking per-test testName with a counted skip, never a throw (A2)', () => {
+  it('skips pre-fix handoffs lacking per-test testName with a counted skip, never a throw', () => {
     const runsRoot = tempDir('run-outcomes-skip-')
     const good = handoffFixture({
       runId: '001-good',
@@ -820,11 +811,7 @@ describe('run-outcome projection fold (ABRF-02, D-14)', () => {
     expect(dumpTables(rebuilt)).toEqual(dumpTables(incremental))
   })
 
-  // 390 D-07 replaced this case's original assertion. It used to pin that crossing a lifetime
-  // flake threshold stamped a derived quarantined flag; the lifetime count is now a RANKING input
-  // only and never a quarantine trigger, because a counter that never forgives cannot express a
-  // lifecycle with an exit. The accumulation still matters and is still pinned — what is pinned
-  // additionally is that accumulating it produces no quarantine effect anywhere in the projection.
+  // The lifetime flake count only ranks; it never forgives, so it cannot drive a quarantine.
   it('accumulates a lifetime flake count that triggers no quarantine of its own', () => {
     const db = openDb()
     for (let ordinal = 1; ordinal <= 3; ordinal += 1) {

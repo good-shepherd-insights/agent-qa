@@ -30,9 +30,7 @@ interface LooseElement {
   attributes?: Record<string, string>
 }
 
-// Local loose-fixture bridge: build a valid v2 ScreenState from the legacy
-// hand-shaped elements these variables tests use, filling the required v2 fields
-// via the shared runner factory (mirrors the core/agent screen-fixtures bridge).
+// Builds a valid `ScreenState` from the loosely-shaped elements these tests use.
 function makeScreenState(overrides: { tree?: string; url?: string; elements?: LooseElement[] } = {}): ScreenState {
   const base = makeBaseScreenState()
   const elements: LooseElement[] = overrides.elements ?? [
@@ -125,8 +123,7 @@ describe('VariableStore source tracking', () => {
   })
 })
 
-// Pitfall 10 (display neutrality): the capture-over-non-capture warning routes through
-// the injected onWarn seam — runner-owned code makes zero console calls.
+// The capture-over-non-capture warning goes through the injected onWarn seam.
 describe('VariableStore onWarn seam', () => {
   it('capture overwriting env fires onWarn with the source in the message', () => {
     const onWarn = vi.fn()
@@ -275,11 +272,7 @@ describe('interpolateVariables', () => {
   })
 })
 
-// G-381-3 capture half (PROC-01, D-03/D-08): interpolation must report WHICH binding
-// names produced the substituted text without changing the text it produces. The
-// delegation-equality table below is the byte-identity pin — expected strings are the
-// literal output of interpolateVariables at the time provenance was introduced, so a
-// regression in either implementation breaks the row rather than agreeing with itself.
+// Interpolation reports which names produced the text; the table pins byte-identical output.
 describe('interpolateVariablesWithProvenance', () => {
   function provenanceStore(): VariableStore {
     const store = new VariableStore()
@@ -348,7 +341,7 @@ describe('interpolateVariablesWithProvenance', () => {
     expect(result.substitutions).toEqual([])
   })
 
-  it('records the value VERBATIM — the pair is never masked or redacted (G-381-3)', () => {
+  it('records the value VERBATIM — the pair is never masked or redacted', () => {
     const store = new VariableStore()
     store.set('PROBE_USER', 'qa.user@example.com', 'env')
     store.set('PROBE_API_TOKEN', 'tok-live-9f3a2b', 'env')
@@ -429,7 +422,7 @@ describe('interpolateVariables with namespaces', () => {
     expect(interpolateVariables('Val: {{env:TOKEN}}', store)).toBe('Val: abc123')
   })
 
-  it('{{hook:TOKEN}} syntax does NOT resolve (namespace removed per D-07)', () => {
+  it('{{hook:TOKEN}} syntax does NOT resolve (the namespace was removed)', () => {
     const store = new VariableStore()
     store.set('TOKEN', 'abc123', 'env')
     expect(interpolateVariables('Val: {{hook:TOKEN}}', store)).toBe('Val: {{hook:TOKEN}}')

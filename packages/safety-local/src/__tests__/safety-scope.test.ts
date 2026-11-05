@@ -6,8 +6,7 @@ import * as surface from '../index'
 import { detectExecutionContext } from '../execution-context-detector'
 import { runSafetyScope } from '../safety-scope'
 
-// 2026-10-15 (441-33, D-12): the scope carries no masking member, so each cell below keeps its
-// title and asserts the execution context only.
+// The scope carries no masking member, so each cell asserts the execution context only.
 describe('runSafetyScope', () => {
   it('resolves the full bundle inside the scope, across awaits (Test 1)', async () => {
     await runSafetyScope({ executionContext: 'cloud' }, async () => {
@@ -48,7 +47,7 @@ describe('runSafetyScope', () => {
     expect(asyncValue).toBe('done')
   })
 
-  it('keeps interleaved sibling scopes isolated — D-02 concurrent-run clobber fix (Test 6)', async () => {
+  it('keeps interleaved sibling scopes isolated across concurrent runs (Test 6)', async () => {
     await Promise.all([
       runSafetyScope({ executionContext: 'ci' }, async () => {
         expect(getActiveExecutionContext()).toBe('ci')
@@ -69,8 +68,6 @@ describe('runSafetyScope', () => {
     expect(surface.runSafetyScope).toBe(runSafetyScope)
   })
 
-  // 2026-10-15 (441-44, D-15): moved from the deleted jsonl-audit-sink.test.ts with the sink class
-  // gone from the roster. 2026-10-15 (441-33, D-12): the ambient masking resolver left the roster.
   it('exports only the fingerprint helper, masking scope binding and its ambient resolver, and execution-context detector', () => {
     expect(Object.keys(surface).sort()).toEqual([
       'detectExecutionContext',

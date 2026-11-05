@@ -1,15 +1,4 @@
-// `runs.artifact` — the op's refusal vocabulary, its sniffer and its input contract (405-05, D-13).
-//
-// WHAT THIS FILE MEASURES AND WHAT IT DELIBERATELY DOES NOT. The bytes' journey from the store
-// through the local door's headers is measured in `dashboard-server`'s adapter cell, over a real
-// `FsEvidenceArtifactStore` and a real socket. What only THIS file can measure is the layer that
-// has no filesystem in it at all: the two refusals BY NAME, the content-type sniff as a total
-// function of the first bytes, and the input contract that makes a malformed sha a refusal the op
-// never sees.
-//
-// THE SNIFFER IS TESTED SEPARATELY FROM THE SPEC because it is separately exported, and it is
-// separately exported for the reason `projectRunTokenTotals` is: a total mapping with no port and
-// nothing to await can have an exhaustive table written over it for the cost of a test file.
+// Only this layer measures the refusals by name, the content sniff and the sha input contract.
 
 import type { EvidenceBlobLookup, RunId } from '@vostride/agent-qa-schema'
 import { RunsArtifactInputSchema } from '@vostride/agent-qa-schema'
@@ -66,9 +55,7 @@ describe('the op refuses BY NAME rather than answering about bytes it cannot see
   })
 
   it('turns blob_absent into EvidenceBlobAbsentError carrying the run and the sha', async () => {
-    // A DIFFERENT refusal from `unknown_run`, deliberately: "that run never existed" and "that run
-    // exists and holds no such blob" are different operator situations (D-15), and a page that
-    // could not tell them apart would render one grey error for two of them.
+    // Differs from `unknown_run`: a missing run and a run without the blob are different cases.
     const rejection = await runsArtifactSpec
       .invoke({ runId: RUN_ID, sha: SHA }, answering({ status: 'blob_absent' }))
       .then(() => undefined, (error: unknown) => error)
@@ -132,7 +119,7 @@ describe('found bytes travel whole, under a content type sniffed from their own 
   })
 })
 
-describe('sniffEvidenceContentType — a total function of the first bytes (T-405-15)', () => {
+describe('sniffEvidenceContentType — a total function of the first bytes', () => {
   it('never answers a type a browser will execute, whatever the bytes say they are', () => {
     // The XSS leg stated as a table: an SVG document and an HTML document both sniff to the
     // opaque default, because a served blob that a browser renders as markup is a script the
@@ -167,7 +154,7 @@ describe('RunsArtifactInputSchema — the sha shape is the contract, not a route
     expect(RunsArtifactInputSchema.safeParse({ runId: RUN_ID, sha: `${SHA}0` }).success).toBe(false)
   })
 
-  it('refuses a traversal-shaped sha before any path could be assembled (T-405-14)', () => {
+  it('refuses a traversal-shaped sha before any path could be assembled', () => {
     expect(RunsArtifactInputSchema.safeParse({ runId: RUN_ID, sha: '../../etc/passwd' }).success).toBe(false)
   })
 
@@ -182,8 +169,6 @@ describe('the spec is a member of this catalogue in good standing', () => {
     expect(runsArtifactSpec.id).toBe(RUNS_ARTIFACT_FUNCTION_ID)
     expect(runsArtifactSpec.id).toMatch(/^[a-z]+(?:\.[a-z]+)+$/)
     expect(runsArtifactSpec.risk.readOnly).toBe(true)
-    // RE-SPELLED 2026-10-01 (432-24, D-12) from `requiredScopes` equal to ['read']: the op
-    // declares no scope; read-only is the risk descriptor above.
     expect(runsArtifactSpec).not.toHaveProperty('requiredScopes')
     expect(runsArtifactSpec.resultKind).toBe('unary')
     expect(runsArtifactSpec.boundThrough).toBe('evidenceBlobs')

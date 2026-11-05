@@ -1,14 +1,4 @@
-// RCC-02 deterministic root-cause classifier pins (373-06, D-02/D-05). RED-first: this file
-// pins every branch of `classifyRootCause` + the D-02 field-fidelity contract of
-// `deterministicVerdict` BEFORE the module exists (right-reason RED on the unresolved import).
-//
-// Contract source: 373-CONTEXT.md D-01 (presence rule, as refined in Plan 01), D-02 (faithful
-// VerdictBase constructor + fixed rationale templates), D-03 (producer discriminator), D-04
-// (baseline probe web signal / device-session-create mobile signal), D-05 (pure module beside
-// run/verdict.ts) + REQUIREMENTS RCC-02. Branch order pinned: timeout → environment → flake →
-// unknown. Misses fall to 'unknown' — the safe Noop default (RESEARCH A2/A3).
-//
-// Runner package convention: `.js`-suffixed relative import specifiers.
+// Branch order: timeout, environment, flake, unknown; a miss falls to `unknown`.
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -56,10 +46,10 @@ function input(overrides: Partial<RootCauseInput> = {}): RootCauseInput {
 
 const TEST_TIMEOUT_MESSAGE = createTimeoutAbortReason('test', 30_000).message
 
-// ---- deterministicVerdict (D-02 field fidelity) ---------------------------
+// ---- deterministicVerdict field fidelity ----
 
-describe('deterministicVerdict (D-02) — faithful VerdictBase constructor', () => {
-  it('environment: fills every VerdictBase field exactly (the D-02 pin)', () => {
+describe('deterministicVerdict — faithful VerdictBase constructor', () => {
+  it('environment: fills every VerdictBase field exactly', () => {
     const verdict = deterministicVerdict('environment', 'connect failure: ECONNREFUSED app:3000', [2], 0)
     expect(verdict).toEqual({
       class: 'environment',
@@ -159,7 +149,7 @@ describe('classifyRootCause — environment (branch 2)', () => {
   })
 
   it.each(SESSION_CREATE_ERROR_TOKENS.map((t) => [t] as const))(
-    'device-session-create token %s in a failing step error classifies environment (D-04 mobile signal)',
+    'device-session-create token %s in a failing step error classifies environment (mobile signal)',
     (token) => {
       const verdict = classifyRootCause(input({
         result: test({ status: 'failed', steps: [step({ status: 'failed', error: `${token}: device unavailable` })] }),
@@ -254,7 +244,7 @@ describe('classifyRootCause — presence rule + unknown (branch 4)', () => {
   })
 })
 
-// ---- classifyRootCause: a limit stop (436 D-12) ------------------------------
+// ---- classifyRootCause: a limit stop ------------------------------
 
 function limitStoppedStep(limit: LimitStopEvidence['limit'], configured: number): StepResult {
   const reason = formatLimitStopReason(limit, configured, configured)
@@ -272,7 +262,7 @@ function limitStoppedStep(limit: LimitStopEvidence['limit'], configured: number)
   })
 }
 
-describe('classifyRootCause — limit stop (436 D-12)', () => {
+describe('classifyRootCause — limit stop', () => {
   it('a limit-stopped failed member is unknown with the limit reason as rationale', () => {
     const stopped = limitStoppedStep('actions', 30)
     const verdict = classifyRootCause(input({

@@ -1,22 +1,4 @@
-// SC1: the REAL post-run hand-off + tail, run twice, produces ONE analyze-run job (388 plan 02).
-//
-// The claim is about the WHOLE post-run leg, not about `queue.enqueue` — calling that twice would
-// only re-prove the store's shipped unique index (385 D-08), which is the mechanism here and not
-// the subject. So this drives the shipped `enqueueAnalyzeRun` and then `runPostRunTail` end to end
-// against a real sqlite store, a real handoff on disk, the real composition root and the real
-// handler bodies, twice, and compares the store's LOGICAL DUMP — the 385 D-03 ratified comparator
-// — across the two runs.
-//
-// 2026-08-26 (404 D-05): the hand-off is the POST-VERDICT STEP's now, so the enqueue half of each
-// pass goes through `enqueueThroughTheStep` — the shipped `enqueueAnalyzeRun` over this fixture's
-// own host. Nothing about the claim moved: the same two passes, the same real store, the same
-// comparator.
-//
-// Only three operations are injected, and none of them is the thing under test: `composeHost`
-// (to bind a fast `curateRun` stub and a config/model pair with no provider behind them),
-// `resolveKnowledgeRoot` (there is no project config file in a tmpdir) and `runCurationTail`
-// (the prior-run janitor has its own suite; running it here would fold nothing and cost a
-// knowledge root).
+// Drives the shipped hand-off and tail twice and compares the store's logical dump across both.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -47,19 +29,12 @@ import {
 } from '../curation/post-run-tail.js'
 import { enqueueThroughTheStep } from './post-run-step-harness.js'
 
-/**
- * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
- * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
- * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
- */
+// Passthrough: the fixture speaks canonical workspace-relative bytes, and core pins the recipe.
 const MINT_IDENTITY = (filePath: string): string => filePath
 
-const RUN_ID = 'run-388-02-idempotency'
+const RUN_ID = 'run-idempotency'
 
-// 389-04's author swap put unknown-floor members on the model path, so a throwing stub
-// now aborts the chain under test. Unparseable text makes the author degrade per-test to
-// the byte-identical deterministic floor (plan 04's proven posture) — chain mechanics
-// keep their 388-era shape.
+// Unparseable text, not a throw: a throwing model aborts the chain; this degrades to the floor.
 const TEST_MODEL: JobModelCapability = {
   modelId: 'test:post-run-enqueue-idempotency',
   generate: async () => ({ text: 'not an author payload' }),
@@ -73,7 +48,7 @@ const TEST_CONFIG: ConfigReaderPort = {
   }),
 }
 
-/** The verdict the runner already persisted (373-07); one member has it, one deliberately does not. */
+/** The verdict the runner already persisted; one member has it, one deliberately does not. */
 const PERSISTED_ROOT_CAUSE: Verdict = {
   class: 'timeout',
   producer: 'deterministic-classifier',
@@ -136,12 +111,12 @@ interface Fixture {
   warn: ReturnType<typeof vi.fn>
   runCurationTail: ReturnType<typeof vi.fn>
   options(overrides?: Partial<PostRunTailOperations>): RunPostRunTailOptions
-  /** The shipped step's hand-off, over this fixture's own host (404 D-05). */
+  /** The shipped step's hand-off, over this fixture's own host. */
   enqueue(): Promise<'enqueued' | 'deduped'>
 }
 
 function fixture(): Fixture {
-  const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-388-02-'))
+  const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-'))
   roots.push(agentQaRoot)
   const knowledgeRoot = join(agentQaRoot, 'knowledge')
   mkdirSync(knowledgeRoot, { recursive: true })
@@ -265,7 +240,7 @@ async function readDurableState(agentQaRoot: string): Promise<{
   }
 }
 
-describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => {
+describe('the real post-run tail run twice', () => {
   it('produces exactly one analyze-run job, and the second run dedupes rather than errors', async () => {
     const f = fixture()
     const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
@@ -281,34 +256,21 @@ describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => 
     const afterSecond = await readDurableState(f.agentQaRoot)
 
     expect(first.report().enqueue).toBe('enqueued')
-    // A deduped second hand-off is a SUCCESS. If the step ever reported it as a failure this
-    // would be 'failed' and the D-07 warning would have fired for a healthy run.
+    // A deduped second hand-off is a success, so no enqueue warning fires for a healthy run.
     expect(second.report().enqueue).toBe('deduped')
     expect(f.warn).not.toHaveBeenCalled()
 
     const analyzeRows = afterSecond.rows.filter((row) => row.kind === 'analyze-run')
     expect(analyzeRows).toHaveLength(1)
     expect(analyzeRows[0]!.id).toBe(String(ids.analyzeRun))
-    // D-02: the chain addresses exactly the ids it enqueues kinds for — pinned by sorted literal
-    // on both, so an extra derived id reds the first line and an extra enqueued row reds the
-    // second, each by name.
-    //
-    // 2026-09-11 (422 D-13): three of each. The idempotency claim this file exists for gets
-    // STRONGER by the widening rather than merely surviving it — a second complete tail run over
-    // a three-stage chain has three chances to re-enqueue something, and the byte-identical
-    // logical dump below says it took none of them.
-    expect(Object.keys(ids).sort())
-      .toEqual(['analyzeRun', 'curateMemory', 'proposeImprovements'])
-    expect(afterSecond.rows.map((row) => row.kind).sort())
-      .toEqual(['analyze-run', 'curate-memory', 'propose-improvements'])
-    expect(afterSecond.rows.find((row) => row.kind === 'propose-improvements'))
-      .toMatchObject({ id: String(ids.proposeImprovements), status: 'done' })
+    // Sorted literals on both, so an extra derived id or an extra enqueued row fails by name.
+    expect(Object.keys(ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
+    expect(afterSecond.rows.map((row) => row.kind).sort()).toEqual(['analyze-run', 'curate-memory'])
+    expect(afterSecond.rows.find((row) => row.kind === 'curate-memory'))
+      .toMatchObject({ id: String(ids.curateMemory), status: 'done' })
     expect(f.curateCalls).toEqual([RUN_ID])
 
-    // The 385 D-03 comparator, and the strongest form of the claim: the second complete tail
-    // run left every byte the CHAIN wrote — jobs, checkpoints, the notification — untouched.
-    // A row-count assertion alone would pass just as well against a tail that re-claimed and
-    // rewrote everything it found.
+    // The second tail left every byte the chain wrote untouched; a row count would miss a rewrite.
     const first1 = splitDump(afterFirst.logicalDump)
     const second2 = splitDump(afterSecond.logicalDump)
     expect(second2.chain).toBe(first1.chain)
@@ -319,11 +281,10 @@ describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => 
     expect(first1.chain.match(/"kind":"analyze-run"/g) ?? []).toHaveLength(1)
   })
 
-  it('still enqueues under --detach, and drains nothing (D-03, Pitfall 8)', async () => {
+  it('still enqueues under --detach, and drains nothing', async () => {
     const f = fixture()
     const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
-    // 404 D-05/Pitfall 8: the hand-off happens in the shell's step, which does NOT skip it under
-    // `--detach`. Detaching declines to SPEND this process on the work, never to forget it exists.
+    // The shell's step hands off even under `--detach`: detaching declines the work, not its row.
     const tail = runPostRunTail({ ...f.options(), enqueueOutcome: await f.enqueue() })
 
     const exitCode = await runVerdictFirstCurationTail({
@@ -350,10 +311,7 @@ describe('SC1 — the real post-run tail run twice (ANLZ-01, D-03/D-07)', () => 
   })
 
   it('a failed hand-off REJECTS out of the step, and the tail still prints nothing about it', async () => {
-    // JOBQ-06's two halves, split the way 404 D-05 splits the work. The step RAISES — the shell
-    // catches it and publishes `post-run-enqueue-failed`, pinned in `post-verdict-step.test.ts` —
-    // and this file pins the tail-side consequence: told `failed`, `finish()` says nothing at all,
-    // because the step's own warning already said everything true about this run.
+    // The step raises and the shell publishes the failure; told `failed`, `finish()` says nothing.
     const f = fixture()
     await expect(enqueueThroughTheStep({
       runId: RUN_ID,

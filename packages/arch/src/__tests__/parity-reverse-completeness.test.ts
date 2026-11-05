@@ -1,20 +1,4 @@
-// Conformance-suite LEG 5 — reverse completeness (Phase 384, SC4).
-//
-// Leg 1 asks "is every registered capability covered?". This leg asks the reverse and
-// harder question: "does every SURFACE project only capabilities the registry declares?"
-// A surface that quietly published something the layer never declared would be a private
-// power wearing a catalog entry, which is the failure the firewall exists to make
-// impossible and this leg exists to make visible.
-//
-// It is keyed on `FIREWALLED_SURFACE_DIRS` rather than on a list of its own, so the leg
-// ACTIVATES on firewall growth with zero edits to its logic: admitting a surface to the
-// firewall without declaring what it projects fails here immediately. M5 admits the two
-// dashboards; 396 replaces the pre-layer MCP server with a real registry projection.
-//
-// Reaching agent's declarations from arch uses the same cross-package relative import the
-// manifest already uses for the ownership contracts — the arch package is source-only and
-// deliberately depends on nothing, so relative traversal is its house style for reading
-// another package's truth rather than a shortcut taken here.
+// Keyed on `FIREWALLED_SURFACE_DIRS`, so a surface admitted without declaring its projection fails.
 
 import { describe, expect, it } from 'vitest'
 
@@ -22,22 +6,7 @@ import { createFunctionRegistry } from '../../../agent/src/functions/registry.js
 import type { FunctionDeps } from '../../../agent/src/functions/spec.js'
 import { FIREWALLED_SURFACE_DIRS } from '../lint/surface-firewall.js'
 
-/**
- * How a firewalled surface decides which capabilities it publishes.
- *
- * `generic-invoker` — the surface projects the registry itself and holds no per-capability
- * knowledge, so there is nothing static to compare and nothing that can drift. The CLI's
- * `fn` verb is the shipped example: it renders whatever the registry lists and detects a
- * stream result structurally.
- *
- * `static-ids` — the surface enumerates the capabilities it publishes. That list must be a
- * SUBSET of the registry's ids; anything else is a capability the layer never declared.
- *
- * `not-yet-projected` — a firewalled surface that predates the function layer. Its imports
- * are already policed by the firewall ledger, but it projects nothing from the registry,
- * so there is no id set to compare yet. Every such entry names the phase that replaces it,
- * and the golden-set assertion below keeps a NEW surface from quietly taking this door.
- */
+// `static-ids` must list a registry subset; `not-yet-projected` predates the function layer.
 export type SurfaceProjectionSource =
   | { kind: 'generic-invoker'; note: string }
   | { kind: 'static-ids'; ids: readonly string[] }
@@ -48,12 +17,12 @@ export const SURFACE_PROJECTION_SOURCES: Readonly<
 > = {
   'packages/cli': {
     kind: 'generic-invoker',
-    note: 'The `fn` verb projects the registry directly — it lists what the registry lists and renders what the invocation returns. That is not the whole CLI, and this entry does not model the remainder: the knowledge command family holds one piece of capability-specific static knowledge, `KNOWLEDGE_BUNDLES_LIST_ID = \'knowledge.bundles.list\'` (declared at commands/knowledge-read.ts:73, invoked at :411), which can drift from the registry. 397 (FUNC-05) turns this entry into a real projection source so the subset comparison below has something to compare.',
+    note: 'The `fn` verb projects the registry directly — it lists what the registry lists and renders what the invocation returns. That is not the whole CLI, and this entry does not model the remainder: the knowledge command family holds one piece of capability-specific static knowledge, `KNOWLEDGE_BUNDLES_LIST_ID = \'knowledge.bundles.list\'` (declared at commands/knowledge-read.ts:73, invoked at :411), which can drift from the registry. Until this entry becomes a real projection source, the subset comparison below has nothing to compare.',
   },
   'packages/mcp': {
     kind: 'not-yet-projected',
-    projectedBy: '396',
-    note: 'The v1 37-tool server predates the layer and publishes a hand-written tool set from its own modules. 396 replaces it with a registry projection and turns this entry into a real id set, at which point the subset comparison below stops being vacuous.',
+    projectedBy: 'a registry projection of the MCP tool set',
+    note: 'The v1 37-tool server predates the layer and publishes a hand-written tool set from its own modules. A registry projection that replaces it turns this entry into a real id set, at which point the subset comparison below stops being vacuous.',
   },
 }
 
@@ -70,8 +39,6 @@ const REGISTRY_IDS = createFunctionRegistry({
   // in order to enumerate itself.
   deps: {} as FunctionDeps,
 })
-  // 432-20 (D-12): the tokenless caller shape. The listing is the same for every caller, so the
-  // retired grant fields and the registry's retired context option are not supplied here.
   .list({
     surface: 'arch-conformance',
     origin: 'agent',
@@ -102,7 +69,7 @@ describe('parity leg 5 — surface reverse completeness', () => {
     }
   })
 
-  it('keeps the pre-layer escape hatch pinned and dated', () => {
+  it('keeps the pre-layer escape hatch pinned, naming what will project each surface', () => {
     const notYetProjected = Object.entries(SURFACE_PROJECTION_SOURCES)
       .filter(([, source]) => source.kind === 'not-yet-projected')
       .map(([dir]) => dir)

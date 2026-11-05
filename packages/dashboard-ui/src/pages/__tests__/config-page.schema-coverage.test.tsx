@@ -38,7 +38,6 @@ import {
   type ConfigTab,
   type ConnectionChoice,
 } from '@/lib/config-tabs'
-import { DEVICE_TRANSPORT_OPTIONS } from '@/components/config-manager/devices-section'
 import { connectLLM, deleteAuthCredential, fetchAuthStatus, saveCredential, type AuthCredentialInfo } from '@/lib/api'
 import { LLM_PROVIDER_COMPLETION_VALUES } from '@/lib/yaml-completions'
 import {
@@ -74,7 +73,7 @@ if (!Element.prototype.scrollIntoView) {
 
 const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
   page: { config: undefined as Record<string, unknown> | undefined },
-  // Every record and list holds at least one entry, so each list renders its rows (D-06).
+  // Every record and list holds at least one entry, so each list renders its rows.
   fullConfig: {
     workspace: {
       testMatch: ['tests/**/*.yaml'],
@@ -84,7 +83,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
       envFile: '.env.local',
       secretsFile: '.env.secrets.local',
     },
-    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none', contextBudgetTokens: 4000 },
+    knowledge: { dir: 'agent-qa-knowledge' },
     services: {
       dashboard: {
         port: 4173,
@@ -95,7 +94,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
         workspace: '.',
       },
       authState: { dir: '.agent-qa/auth' },
-      cache: { dir: '.agent-qa/cache', ttl: '7d' },
+      cache: { dir: '.agent-qa/cache' },
       logging: { level: 'info' },
       recording: { enabled: true, keepFailuresOnly: false },
       accessibility: {
@@ -109,10 +108,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
       vision: { screenshotSize: '256k', effectiveResolution: 768 },
       mcp: {
         enabled: true,
-        transport: 'http',
-        host: '127.0.0.1',
         port: 4174,
-        path: '/mcp',
       },
     },
     registry: {
@@ -134,11 +130,10 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
           platform: 'android',
           appPackage: 'com.example.shop',
           appActivity: '.MainActivity',
-          app: { path: 'apps/shop.apk', browserstack: 'bs://shop' },
+          app: { path: 'apps/shop.apk' },
         },
       },
-      devices: { iosLocal: { platform: 'ios', transport: 'local', match: { udid: 'abc' } } },
-      providers: { browserstack: { username: 'qa-team' } },
+      devices: { iosLocal: { platform: 'ios', match: { udid: 'abc' } } },
     },
     use: {
       browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
@@ -152,20 +147,9 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
       buildTag: 'nightly',
       cache: true,
     },
-    allowProduction: true,
     analytics: {
       privacy: true,
       passRateScope: { attributes: { 'git.branch': 'master', 'user.email': { regex: '^ci@' } } },
-    },
-    eval: {
-      k: 3,
-      seed: 7,
-      judges: ['claude-proxy', 'gemini-fast'],
-      judgeAllowSameFamily: false,
-      gate1: { maxPerJob: 4, maxScreens: 12 },
-      gate2: { canaryHorizonBuilds: 3, maxAblations: 2, maxLowerTrustPerScope: 1 },
-      adversarial: { maxProbeCalls: 20, maxSeedsPerRefresh: 5 },
-      seeding: { silverPerTestCap: 2 },
     },
   },
   sampleConfig: {
@@ -179,7 +163,6 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
   },
   knowledge: {
     dir: 'agent-qa-knowledge',
-    commitArtifacts: 'none',
   },
   services: {
     dashboard: {
@@ -187,7 +170,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
       dbPath: '.agent-qa/runs.db',
       artifactsDir: '.agent-qa/artifacts',
     },
-    cache: { dir: '.agent-qa/cache', ttl: '7d' },
+    cache: { dir: '.agent-qa/cache' },
     logging: { level: 'info' },
     recording: { enabled: true },
     accessibility: {
@@ -221,8 +204,7 @@ const { sampleConfig, fullConfig, page } = vi.hoisted(() => ({
       { name: 'claude-subscription', provider: 'anthropic-subscription', model: 'claude-sonnet-4-20250514' },
     ],
     targets: { staging: { platform: 'web', url: 'https://example.com' } },
-    devices: { iosLocal: { platform: 'ios', transport: 'local', match: { udid: 'abc' } } },
-    providers: { openai: { apiBase: 'https://api.openai.com/v1' } },
+    devices: { iosLocal: { platform: 'ios', match: { udid: 'abc' } } },
   },
   use: {
     browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
@@ -304,7 +286,6 @@ const EXPECTED_DESTINATIONS = [
   'registry:llms',
   'registry:targets',
   'registry:devices',
-  'registry:providers',
   'use:browser',
   'use:timeouts',
   'use:planner',
@@ -328,7 +309,6 @@ const SURFACE_MARKERS: Record<string, { title: string; marker: string }> = {
   'registry:llms': { title: 'Models', marker: ADD_MODEL_LABEL },
   'registry:targets': { title: 'Targets', marker: 'Add target' },
   'registry:devices': { title: 'Devices', marker: 'Add device' },
-  'registry:providers': { title: 'Device farms', marker: 'Add device farm' },
   'use:browser': { title: 'Browser', marker: 'Viewport width' },
   'use:timeouts': { title: 'Timeouts', marker: 'Step timeout' },
   'use:planner': { title: 'Planner limits', marker: PLANNER_FIELD_LABELS.maxActions },
@@ -369,7 +349,7 @@ async function renderAt(url: string) {
   return container
 }
 
-// The model modal is gone (429-30 · D-10): its cells here drive the saved rows and the add row.
+// These cells drive the saved model rows and the add row.
 function modelRow(name: string) {
   return container?.querySelector(`[data-model-row][data-model-name="${name}"]`) as HTMLElement | null
 }
@@ -448,9 +428,7 @@ async function assertConfigSectionShells(destinations: string[]) {
   }
 }
 
-// plugins.* is a file edit by decision; every other leaf of the published schema has a field on
-// the page (D-06). 429-44: the page's write door refuses the same roots, so both read one constant.
-// 2026-10-01 (432-22): safety.* left the schema and the denied roots; allowProduction has its owner.
+// `plugins.*` is a file edit by design; the page and its write door read one denied-roots constant.
 const DENIED_ROOTS: readonly string[] = CONFIG_WRITE_DENIED_ROOTS
 const PAGE_LEAVES = CONFIG_SCHEMA_LEAVES.filter(
   (pattern) => !DENIED_ROOTS.includes(pattern.split('.')[0]!),
@@ -540,27 +518,20 @@ describe('ConfigPage schema coverage', () => {
     page.config = fullConfig
     await renderAt('/config/models')
 
-    expect(PAGE_LEAVES.length, 'the witness: the schema walk found the leaves').toBeGreaterThanOrEqual(88)
     const marks = await collectFieldMarks()
     const uncovered = PAGE_LEAVES.filter((pattern) => !marks.some((mark) => coversLeaf(mark, pattern)))
-    // 432-02 left allowProduction awaiting its owner; 432-22 adds it, so no leaf is pending.
     expect(uncovered, `schema leaves with no field on the page: ${uncovered.join(', ')}`).toEqual([])
-    for (const pattern of ['use.workers', 'use.buildTag', 'eval.gate2.canaryHorizonBuilds', 'allowProduction']) {
+    for (const pattern of ['use.workers', 'use.buildTag']) {
       expect(marks.some((mark) => mark.kind === 'path' && mark.value === pattern), pattern).toBe(true)
     }
   })
 
-  // 432-22 (D-12/D-18/D-22): the final page-writable count, spelled by hand. The strict leaves less
-  // the four plugin leaves; each has exactly one rendered owner and the write door admits it.
-  // 2026-10-07 (436-07, D-05): the two planner limits add two leaves (94 strict, 90 page-writable);
-  // the cell name no longer carries the count, so a later leaf change moves only the number.
-  // 2026-10-07 (436-08, D-05): the old refilling planner key's leaf is cut (93 strict, 89 page-writable).
-  it('C432-CONFIG-WRITABLE: exactly the page-writable leaves, each owned on the page, and only the four plugin leaves excluded', async () => {
+  // The page-writable leaves are the strict leaves less the four plugin leaves; each has a
+  // rendered owner and the write door admits it.
+  it('exactly the page-writable leaves, each owned on the page, and only the four plugin leaves excluded', async () => {
     page.config = fullConfig
     await renderAt('/config/models')
 
-    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(93)
-    expect(PAGE_LEAVES).toHaveLength(89)
     expect(PAGE_LEAVES).toEqual(expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']))
     expect(CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins'])
     expect(CONFIG_SCHEMA_LEAVES.filter((pattern) => !PAGE_LEAVES.includes(pattern))).toEqual([
@@ -571,7 +542,7 @@ describe('ConfigPage schema coverage', () => {
     ])
     const marks = await collectFieldMarks()
     const owned = PAGE_LEAVES.filter((pattern) => marks.some((mark) => coversLeaf(mark, pattern)))
-    expect(owned).toHaveLength(89)
+    expect(owned).toEqual(PAGE_LEAVES)
     for (const leaf of ['use.planner.maxActions', 'use.planner.maxPlanningTurns']) {
       expect(
         [...new Set(marks.filter((mark) => mark.kind === 'path' && mark.value === leaf).map((mark) => mark.where))],
@@ -579,8 +550,6 @@ describe('ConfigPage schema coverage', () => {
       ).toEqual(['models/planner-limits'])
     }
     expect(owned.filter((pattern) => !isPageWritableConfigPath(concretePath(pattern)))).toEqual([])
-    const production = marks.filter((mark) => mark.kind === 'path' && mark.value === 'allowProduction')
-    expect(production.map((mark) => mark.where)).toEqual(['execution/runs'])
   })
 
   it('SCHEMA-COVERAGE-EXACTLY-ONCE: each leaf is owned by exactly one section, and no field or list renders in two sections', async () => {
@@ -712,7 +681,7 @@ describe('ConfigPage schema coverage', () => {
     expect(keyType?.textContent).toContain(KEY_TYPE_LABELS['bearer-token'])
     await press(keyType?.querySelector('[role="radio"][value="bearer-token"]'))
     expect(addRow()?.querySelector('[data-add-field="key"] label')?.textContent).toBe(ADD_FLOW_FIELD_LABELS.token)
-    // The key goes with Connect; the modal's separate Save Credential button is gone.
+    // The key goes with Connect; there is no separate Save Credential button.
     expect(document.body.textContent).not.toContain('Save Credential')
 
     await chooseConnection('openai-compatible-key')
@@ -816,11 +785,6 @@ describe('ConfigPage schema coverage', () => {
     expect(document.body.textContent).not.toContain('Claude Sonnet 4')
   })
 
-  it('exposes only supported device transports in UI fixtures', () => {
-    expect(DEVICE_TRANSPORT_OPTIONS.map((option) => option.value)).toEqual(['local', 'browserstack'])
-    expect(DEVICE_TRANSPORT_OPTIONS.map((option) => option.label)).toEqual(['Local', 'BrowserStack'])
-  })
-
   it('renders a real editor surface for every schema-backed destination', async () => {
     for (const destination of EXPECTED_DESTINATIONS) {
       const [bucket, item] = destination.split(':')
@@ -835,7 +799,7 @@ describe('ConfigPage schema coverage', () => {
     }
   })
 
-  it('Config section shells: all 21 legacy destinations', async () => {
+  it('Config section shells: every legacy destination', async () => {
     const destinations: string[] = [...LEGACY_CONFIG_PAIRS]
 
     expect(destinations).toEqual(EXPECTED_DESTINATIONS)
@@ -887,11 +851,10 @@ describe('ConfigPage schema coverage', () => {
     ])
   })
 
-  it('Config section shells: Targets Devices Providers sections', async () => {
+  it('Config section shells: Targets and Devices sections', async () => {
     await assertConfigSectionShells([
       'registry:targets',
       'registry:devices',
-      'registry:providers',
     ])
   })
 

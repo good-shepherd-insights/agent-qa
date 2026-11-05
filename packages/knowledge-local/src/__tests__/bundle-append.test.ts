@@ -98,7 +98,7 @@ function relation(overrides: Partial<BundleRelation> = {}): BundleRelation {
   }
 }
 
-describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
+describe('bundle append atomic checkpoint units', () => {
   let root: string
   let config: BundleStoreConfig
   let id: RecordId
@@ -109,7 +109,6 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
     config = {
       knowledgeRoot: join(root, 'agent-qa-knowledge'),
       productKey: 'Example Store / production',
-      commitArtifacts: 'none',
       writerLeaseId: 'lease-append-fixture',
     }
     const input: PublishBundleInput = {
@@ -575,7 +574,7 @@ describe('bundle append atomic checkpoint units (D-11/BNDL-03)', () => {
   })
 })
 
-describe('C441-COMMITTED', () => {
+describe('committed records with credential-shaped text', () => {
   const SUMMARY = 'Pay with card 4242 4242 4242 4242 at checkout'
   const BODY = 'Send Bearer abc123def456ghi789 with key AKIAIOSFODNN7EXAMPLE, then mail qa@example.com.'
   let root: string
@@ -583,9 +582,9 @@ describe('C441-COMMITTED', () => {
   let config: BundleStoreConfig
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'knowledge-c441-committed-'))
+    root = mkdtempSync(join(tmpdir(), 'knowledge-committed-'))
     knowledgeRoot = join(root, 'agent-qa-knowledge')
-    config = { knowledgeRoot, productKey: 'Example Store / production', commitArtifacts: 'none' }
+    config = { knowledgeRoot, productKey: 'Example Store / production' }
   })
 
   afterEach(() => {
@@ -607,8 +606,8 @@ describe('C441-COMMITTED', () => {
       relations: [],
       provenance: {
         mode: 'run-linked',
-        runId: 'c441-committed-run',
-        testId: 'c441-committed-test',
+        runId: 'committed-run',
+        testId: 'committed-test',
         stepIndex: 0,
         ...(needsEnrichment
           ? {
@@ -648,8 +647,8 @@ describe('C441-COMMITTED', () => {
 
     const deprecated = BundleOutcomeEventSchema.parse({
       type: 'deprecated',
-      evidenceToken: 'c441-committed-deprecated',
-      curationJobId: 'c441-committed-job',
+      evidenceToken: 'committed-deprecated',
+      curationJobId: 'committed-job',
       buildOrdinal: 43,
       reason: BODY,
     })
@@ -684,8 +683,8 @@ describe('C441-COMMITTED', () => {
     }
     const observation: CurationObservation = {
       schemaVersion: 2,
-      sourceRunId: 'c441-committed-run',
-      observationId: 'c441-committed-observation',
+      sourceRunId: 'committed-run',
+      observationId: 'committed-observation',
       originalDeltaKind: 'Supersede',
       appliedDeltaKind: 'Add',
       disposition: 'downgraded',

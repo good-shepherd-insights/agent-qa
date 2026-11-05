@@ -1,32 +1,4 @@
-// CHAT-06: createModel-or-nothing, as a failing build rather than a convention (Phase 392 plan 04).
-//
-// THE REQUIREMENT. Every chat model call goes through `createModel`. That is where the masking
-// middleware lives, where the profile and transport are resolved, and where auth is applied — so a
-// chat surface that built its own client would be a model egress with no masking on it, carrying
-// whatever the conversation happened to contain (T-392-14). The requirement is easy to state and
-// exactly as easy to forget, which is why it is scanned.
-//
-// THE CLAIM IS TWO-SIDED, and neither side alone is CHAT-06:
-//
-//   (a) NO PROVIDER SDK. Nothing in the chat subtree may name a vendor adapter package. That is
-//       what "constructs no provider client" means concretely; the SDK's neutral orchestration
-//       package is fine, because it can describe a tool set and issue a call against a model it was
-//       handed, and it cannot build one.
-//   (b) NO `createModel` EITHER. The model must ARRIVE at chat as a composition argument. A chat
-//       module that imported the constructor would be a second composition root — legal by rule
-//       (a), masked correctly, and still wrong: the profile in force for a session would then be
-//       decided in two places, and `/model` overrides (D-04) would apply to one of them.
-//
-// THE SCANNED SET IS PINNED, NOT GLOBBED, on the CLI side. `packages/cli/src/commands/` also holds
-// `run.ts`, `doctor.ts` and `auth.ts`, which construct models entirely legitimately — they are the
-// CLI's own composition roots. A directory-wide rule would either fail on those or be widened with
-// exceptions until it meant nothing. So the chat SURFACES are named one file at a time, and a
-// pinned file that has gone missing is an offender: a rule whose subject does not exist passes
-// forever and reads like proof (the resume-path pin's own lesson).
-//
-// THE RULE IS PROVED ABLE TO FAIL. Two positive controls below run the scanner over fabricated
-// sources and assert it reports them. A scan that cannot be shown to red is a scan that converts
-// "unproven" into "proven", which is worse than no scan at all.
+// Chat names no provider SDK and no `createModel`: the model arrives as a composition argument.
 
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -58,20 +30,14 @@ const MODEL_CONSTRUCTOR = 'createModel'
  */
 const CHAT_ORCHESTRATION_DIR = 'packages/agent/src/chat'
 
-/**
- * The chat SURFACES in the CLI, by exact repo-relative path, each with the reason it is listed.
- *
- * `chat.ts` joined in the SAME COMMIT that created it (plan 08), which is the discipline this
- * asymmetry demands: a missing pin here is SILENT — the file is simply not scanned — while the
- * reverse direction is an offender the case below reports. Nothing would have told anyone.
- */
+// A missing entry here is silent, because an unlisted file is simply not scanned.
 const CHAT_SURFACE_FILES: Readonly<Record<string, string>> = {
   'packages/cli/src/commands/ask.ts':
-    '2026-08-09 (392 plan 01, D-01/D-24): the one-shot chat verb. It composes a local agent and '
+    'the one-shot chat verb. It composes a local agent and '
     + 'drives the turn through invokeFunction; whatever model a turn uses is resolved by that '
     + 'composition, never here.',
   'packages/cli/src/commands/chat.ts':
-    '2026-08-09 (392 plan 08, D-01/D-24): the interactive REPL. Every line is one '
+    'the interactive REPL. Every line is one '
     + 'invokeFunction(agent.ask); the model in force for a session is decided by the composition '
     + 'and moved only by the /model directive the engine handles, so a constructor here would be '
     + 'a second place that decision lived.',
@@ -125,7 +91,7 @@ export function findChatModelOffenders(files: readonly ScannedFile[]): string[] 
           `chat-model-rollcall: ${entry.file}:${statement.line} ⇏ ${statement.specifier}`
             + ' (a provider SDK is a model constructor under a vendor name; a chat surface that'
             + ' built its own client would be a model egress with none of the masking, profile'
-            + ' resolution or auth that createModel applies — CHAT-06)',
+            + ' resolution or auth that createModel applies)',
         )
         continue
       }
@@ -151,7 +117,7 @@ export function findChatModelOffenders(files: readonly ScannedFile[]): string[] 
           + ' (the model must ARRIVE at chat as a composition argument. Importing the constructor'
           + ' here would make this a second composition root: the profile in force for a session'
           + ' would be decided in two places, and a /model override would apply to only one of'
-          + ' them — CHAT-06 / D-04)',
+          + ' them)',
       )
     }
   }
@@ -159,7 +125,7 @@ export function findChatModelOffenders(files: readonly ScannedFile[]): string[] 
   return offenders
 }
 
-describe('chat-model-rollcall: createModel-or-nothing (CHAT-06)', () => {
+describe('chat-model-rollcall: createModel-or-nothing', () => {
   it('scans a non-empty set — a rule with no subject passes forever and reads like proof', () => {
     const files = scannedFiles()
     expect(files.length).toBeGreaterThan(0)
@@ -222,9 +188,3 @@ describe('chat-model-rollcall: createModel-or-nothing (CHAT-06)', () => {
   })
 })
 
-// FLAGGED ASSUMPTION (edge probe CHAT-06/unclassified, surfaced rather than dropped): this rollcall
-// covers STATIC module statements in the scanned set. A provider client constructed through a
-// dynamic import inside a test fixture is outside what these assertions can see. The surface
-// firewall and createModel's masking middleware remain the runtime backstop for that case, and the
-// class rules already forbid the vendor namespace in this package outright — this rule exists to
-// state the chat-specific half of CHAT-06 where a reader of the chat code will find it.

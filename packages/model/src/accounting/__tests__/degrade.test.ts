@@ -6,6 +6,7 @@ import {
   FIXTURE_IMAGE_DATA,
   assistantReasoning,
   assistantText,
+  fileOutput,
   makeModelMessages,
   screenshotOutput,
   systemMessage,
@@ -30,7 +31,7 @@ function toolResults(message: ModelMessage): ToolResultPart[] {
   return message.content.filter((part): part is ToolResultPart => part.type === 'tool-result')
 }
 
-describe('degrade — hygiene pass (D-08)', () => {
+describe('degrade — hygiene pass', () => {
   it('strips reasoning from historical assistant turns while preserving message order', () => {
     const messages: ModelMessage[] = [
       systemMessage(),
@@ -85,6 +86,23 @@ describe('degrade — hygiene pass (D-08)', () => {
     expect(JSON.stringify(recent)).toContain(FIXTURE_IMAGE_DATA)
   })
 
+  it('keeps a historical inline file whose media type is not an image', () => {
+    const messages: ModelMessage[] = [
+      systemMessage(),
+      userText('fetch'),
+      ...toolExchange([{
+        toolCallId: 'hist-pdf', toolName: 'download', output: fileOutput(FIXTURE_IMAGE_DATA, 'application/pdf'),
+      }]),
+      userText('again'),
+      ...toolExchange([{ toolCallId: 'recent-shot', toolName: 'screenshot', output: screenshotOutput() }]),
+    ]
+
+    const result = degrade(messages, HYGIENE_ONLY).messages
+
+    const historical = result.flatMap(toolResults).find(r => r.toolCallId === 'hist-pdf')!
+    expect(historical.output).toEqual(fileOutput(FIXTURE_IMAGE_DATA, 'application/pdf'))
+  })
+
   it('hash-dedups content-identical historical tool results down to a one-liner', () => {
     const messages: ModelMessage[] = [
       systemMessage(),
@@ -117,7 +135,7 @@ describe('degrade — hygiene pass (D-08)', () => {
   })
 })
 
-describe('degrade — determinism (D-08 / T-354-03)', () => {
+describe('degrade — determinism', () => {
   it('same input twice ⇒ deep-equal output', () => {
     const first = degrade(makeModelMessages(), HYGIENE_ONLY)
     const second = degrade(makeModelMessages(), HYGIENE_ONLY)
@@ -172,7 +190,7 @@ function mixedExchangeHistory(): ModelMessage[] {
   ]
 }
 
-describe('degrade — eviction (D-10)', () => {
+describe('degrade — eviction', () => {
   it('leaves no orphaned tool-call/tool-result after any degrade (single + fan-out)', () => {
     // Budget forces some but not all exchanges to be evicted.
     for (const budget of [3, 4, 5, 6, 7]) {
@@ -205,7 +223,7 @@ describe('degrade — eviction (D-10)', () => {
   })
 })
 
-describe('degrade — truncation + pins (D-09/D-10)', () => {
+describe('degrade — truncation + pins', () => {
   const bigText = 'X'.repeat(2000)
 
   it('truncates the largest unpinned message with the spec marker, leaving system/final byte-identical', () => {
@@ -272,7 +290,7 @@ describe('degrade — truncation + pins (D-09/D-10)', () => {
   })
 })
 
-describe('degrade — cannot-fit (D-09)', () => {
+describe('degrade — cannot-fit', () => {
   it('returns a structured cannot-fit when pinned content alone exceeds budget (never throws)', () => {
     const pinnedMarker = 'PINNED-HUGE-'
     const pinnedBig: ModelMessage = {

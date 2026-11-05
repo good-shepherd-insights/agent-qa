@@ -29,14 +29,7 @@ import {
 } from '../writer-lease.js'
 import { RESOLVE_TS_SOURCE_HOOK } from './source-import-hook.js'
 
-/**
- * 2026-10-03 (quick 261003-lgd, Phase 432 review CR-01, WR-11, IN-24).
- *
- * The knowledge root is a git repository people share and pull, and a tracked symlink is checked
- * out even under an ignored directory. Nothing the lease guard does may follow, delete, rename or
- * write through a link, or leave the knowledge root. Every symlink target here is a temp
- * directory this file created, holding sentinel files that must survive byte for byte.
- */
+// Each symlink target is a temp directory this file creates, with sentinel files that must survive.
 const SOURCE_URL = new URL('../writer-lease.ts', import.meta.url).href
 
 type Attempt = { kind: string; [key: string]: unknown }
@@ -63,7 +56,7 @@ function deadPid(): number {
   return exited.pid
 }
 
-describe('the lease guard never reaches through a link or out of the knowledge root (CR-01)', () => {
+describe('the lease guard never reaches through a link or out of the knowledge root', () => {
   let root: string
   let knowledgeRoot: string
   let outside: string
@@ -143,7 +136,6 @@ describe('the lease guard never reaches through a link or out of the knowledge r
     const beat = attempt(() => heartbeatLease({ knowledgeRoot, leaseId }))
 
     expect({ released, beat }).toMatchObject({
-      // 2026-10-03 (261003-mqc): the shared knowledge-root containment error, named for every writer.
       released: { kind: 'threw', name: 'KnowledgeRootContainmentError' },
       beat: { kind: 'threw', name: 'KnowledgeRootContainmentError' },
     })
@@ -180,8 +172,7 @@ describe('the lease guard never reaches through a link or out of the knowledge r
   })
 
   it('(d) never reads an owner entry that is not a regular file: a guard holding one is moved aside whole', () => {
-    // A FIFO blocks any reader forever. The child is bounded so the pre-fix hang is a measured
-    // failure, not a stuck suite.
+    // A FIFO blocks any reader forever, so the child is bounded and a hang is a measured failure.
     const fifo = join(outside, 'pipe')
     const made = spawnSync('mkfifo', [fifo])
     if (made.status !== 0) throw new Error(`mkfifo failed: ${String(made.stderr)}`)
@@ -213,7 +204,7 @@ describe('the lease guard never reaches through a link or out of the knowledge r
   }, 20_000)
 })
 
-describe('a residue left by a thread of this very process is reclaimed in a waiter\'s budget (WR-11)', () => {
+describe('a residue left by a thread of this very process is reclaimed in a waiter\'s budget', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -266,7 +257,7 @@ describe('a residue left by a thread of this very process is reclaimed in a wait
     plantOwner(join(knowledgeRoot, LEASE_GUARD_DIR), {
       pid: process.pid,
       threadId: threadId + 1_000,
-      // Left 3 s before the bound would let the pre-fix 2 s window reach it.
+      // Three seconds inside the stale bound.
       claimedAtNs: process.hrtime.bigint() - BigInt(LEASE_GUARD_STALE_MS - 3_000) * 1_000_000n,
     })
 
@@ -274,7 +265,7 @@ describe('a residue left by a thread of this very process is reclaimed in a wait
       .toMatchObject({ kind: 'heartbeated' })
   }, 40_000)
 
-  it('(IN-24) sweeps a staging directory a dead holder leaked, and leaves a live one alone', () => {
+  it('sweeps a staging directory a dead holder leaked, and leaves a live one alone', () => {
     const acquired = acquireWriterLease(knowledgeRoot)
     if (acquired.kind !== 'acquired') throw new Error('expected an acquired writer lease')
     const parent = dirname(join(knowledgeRoot, LEASE_GUARD_DIR))

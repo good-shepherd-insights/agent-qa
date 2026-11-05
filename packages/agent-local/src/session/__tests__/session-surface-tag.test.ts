@@ -1,11 +1,4 @@
-// The session surface tag (Phase 400 plan 03, DASH-01 / D-04 / RESEARCH Pattern 6 / Pitfall 4).
-//
-// ONE SUBSTRATE, TAGGED ON THE HEADER AND NOWHERE ELSE. D-04 puts dashboard conversations on the
-// exact `.agent-qa/sessions/chat-*.jsonl` log CLI chat writes, "tagged with their surface". The
-// obvious spelling — a `surface` field on each event — is the one this cell exists to keep out:
-// `guardChatSessionEvent` compares an EXACT key set per kind, so an extra field makes every session
-// file written before the change unreadable by the build that comes after it. The header guard, by
-// contrast, is presence-based and tolerates keys it does not know, which is why the tag goes there.
+// The surface tag goes on the header: event guards compare exact key sets, headers do not.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -40,7 +33,7 @@ const SESSION_EVENTS_SOURCE = resolve(
 const roots: string[] = []
 
 function freshRoot(): string {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-400-03-surface-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-surface-'))
   roots.push(root)
   return root
 }
@@ -56,7 +49,7 @@ function logOn(root: string, surface?: string) {
     root,
     now: () => new Date(Date.UTC(2026, 7, 21, 9, 0, tick++)).toISOString(),
     model: () => 'claude-sonnet-4-5',
-    toolsetHash: () => 'toolset-400-03',
+    toolsetHash: () => 'toolset-surface',
     random: () => 0.25,
     ...(surface === undefined ? {} : { surface }),
   })
@@ -86,7 +79,7 @@ describe('the surface tag rides the session HEADER', () => {
     await reopened.close()
   })
 
-  it('writes NO tag for a host that names no surface — the pre-400 CLI-chat population', async () => {
+  it('writes NO tag for a host that names no surface, as the CLI chat does', async () => {
     const root = freshRoot()
     const log = logOn(root)
     const opened = await log.open()
@@ -94,9 +87,7 @@ describe('the surface tag rides the session HEADER', () => {
     await opened.close()
 
     const header = headerLineOf(root, sessionId)
-    // ABSENT, and absent rather than `null` or `''`: the documented meaning of an absent tag is
-    // "a host that did not name its surface", which is every file written before this change and
-    // every CLI chat session written after it. A key carrying an empty value would be a third state.
+    // Absent, not `null` or `''`: an absent tag means a host that did not name its surface.
     expect(Object.keys(header)).not.toContain('surface')
     expect(opened.header.surface).toBeUndefined()
   })
@@ -114,7 +105,7 @@ describe('the session header stamp', () => {
         sessionId,
         createdAt: '2026-08-21T09:00:00.000Z',
         model: 'claude-sonnet-4-5',
-        toolsetHash: 'toolset-400-03',
+        toolsetHash: 'toolset-surface',
       })}\n`,
       'utf8',
     )
@@ -126,14 +117,7 @@ describe('the session header stamp', () => {
 })
 
 describe('the session EVENT grammar is untouched by the tag', () => {
-  /**
-   * The `EVENT_KEYS` table as it stood at `abcfe8bb`, the commit before this plan.
-   *
-   * A BYTE SNAPSHOT OF THE SOURCE, and it has to be the source rather than the runtime value: the
-   * table is module-private on purpose (nothing outside the guard may read it), so the only way to
-   * state "not one key moved" is over the text. The digest is what fails; the literal below is what
-   * makes the failure readable.
-   */
+  // A byte snapshot of the module-private `EVENT_KEYS` source, so a moved key fails the digest.
   const EVENT_KEYS_SNAPSHOT = `const EVENT_KEYS: Record<ChatSessionEventKind, readonly string[]> = {
   user_message: ['at', 'kind', 'text', 'turnId'],
   stage_outcome: ['at', 'kind', 'outcome', 'stage', 'turnId'],
@@ -191,7 +175,7 @@ describe('the session EVENT grammar is untouched by the tag', () => {
           CURRENT_CHAT_SESSION_SCHEMA_VERSION,
         ),
         `a ${kind} line carrying a surface key was accepted — the tag has leaked onto the event `
-        + 'grammar and every pre-400 session file is now unreadable',
+        + 'grammar and every older session file is now unreadable',
       ).toThrow(/cannot be read/)
     }
   })

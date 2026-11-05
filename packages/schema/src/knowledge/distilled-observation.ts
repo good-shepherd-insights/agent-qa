@@ -1,8 +1,4 @@
-/**
- * Phase 377 D-09 distilled graph evidence contract (memory.md §6.1).
- * observations.jsonl stores one guarded observation object per line; the file reader lives at the
- * knowledge-local boundary, while this browser-safe module owns each line's strict validation.
- */
+// The file reader lives in knowledge-local; this browser-safe module validates each line.
 import { z } from 'zod'
 
 import { createVersionGuard } from '../versioning/create-version-guard'
@@ -30,10 +26,7 @@ export const cautionRootCauseClassSchema = z.enum(['environment', 'timeout', 'fl
 export type CautionRootCauseClass = z.infer<typeof cautionRootCauseClassSchema>
 const errorSchema = z.object({
   naturalKey: z.string(),
-  /**
-   * 379 D-16 typed caution evidence. When present, this is identity-bearing evidence and joins
-   * the candidate content address; Plan 379-04 plumbs it from the deterministic emit pre-pass.
-   */
+  // Identity-bearing when present: it joins the candidate content address.
   rootCauseClass: cautionRootCauseClassSchema.optional(),
 }).strict()
 
@@ -57,7 +50,7 @@ export const distilledObservationSchema = z.object({
     ctx.addIssue({
       code: 'custom',
       path: ['platform'],
-      message: 'element or locator requires platform (377 D-09; Pitfall 8)',
+      message: 'element or locator requires platform',
     })
   }
 
@@ -65,7 +58,7 @@ export const distilledObservationSchema = z.object({
     ctx.addIssue({
       code: 'custom',
       path: ['element'],
-      message: 'locator requires element (377 D-09)',
+      message: 'locator requires element',
     })
   }
 
@@ -80,7 +73,7 @@ export const distilledObservationSchema = z.object({
     ctx.addIssue({
       code: 'custom',
       path: ['surface', 'kind'],
-      message: 'surface kind must agree with platform (377 D-09)',
+      message: 'surface kind must agree with platform',
     })
   }
 })

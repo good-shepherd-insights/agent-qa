@@ -1,7 +1,5 @@
-// 2026-09-26, 429-03 D-06: the published config schema's leaves, walked structurally and pinned
-// against the schema's leaf list, so a new schema leaf reds here until it is listed. 2026-10-15
-// (441-40, D-29): the list no longer carries masking classes.
-import { CONFIG_SCHEMA_LEAVES, isConfigSchemaPath } from '@vostride/agent-qa-schema'
+// Pinned against the schema's leaf list, so a new leaf fails here until it is listed.
+import { CONFIG_SCHEMA_LEAVES } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
 
 import { AgentQaConfigSchema } from '../schema/config-schema.js'
@@ -88,25 +86,10 @@ describe('config schema leaves', () => {
     }
   })
 
-  // 432-02 added allowProduction (101 leaves, interim); 432-22 removes the nine retired leaves.
-  it('C432-PRODUCTION-CONFIG: allowProduction is one plain top-level leaf of the walked schema', () => {
+  // The removed set is spelled by hand; the list/schema equality above is what makes an unlisted
+  // leaf red here.
+  it('exactly the strict leaves, each classified, none of them retired', () => {
     const walked = schemaLeaves()
-    expect(walked).toContain('allowProduction')
-    expect(walked).toContain('registry.targets.*.environment')
-    expect(walked.filter((leaf) => leaf.split('.')[0] === 'allowProduction')).toEqual(['allowProduction'])
-    expect(CONFIG_SCHEMA_LEAVES).toContain('allowProduction')
-    expect(isConfigSchemaPath(['allowProduction'])).toBe(true)
-  })
-
-  // 432-22 (D-12/D-18/D-22): the final strict leaf set. The count and the removed set are spelled
-  // by hand; the list/schema equality above is what makes an unlisted leaf red here.
-  // 2026-10-07 (436-07, D-02): the two per-step planner limits add two leaves (92 to 94); the cell
-  // name no longer carries the count, so a later leaf change moves only the number.
-  // 2026-10-07 (436-08, D-05): the old refilling planner key's leaf is cut (94 to 93) and listed retired.
-  it('C432-CONFIG-LEAVES: exactly the strict leaves, each classified, none of them retired', () => {
-    const walked = schemaLeaves()
-    expect(walked).toHaveLength(93)
-    expect(CONFIG_SCHEMA_LEAVES).toHaveLength(93)
     expect(walked.filter((leaf) => leaf.startsWith('use.planner.max'))).toEqual(
       expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']),
     )
@@ -140,10 +123,7 @@ describe('config schema leaves', () => {
       'services.dashboard.port',
       'services.dashboard.workspace',
       'services.mcp.enabled',
-      'services.mcp.host',
-      'services.mcp.path',
       'services.mcp.port',
-      'services.mcp.transport',
     ])
     expect(walked.filter(leaf => leaf.split('.')[0] === 'plugins')).toEqual([
       'plugins.auth[].package',

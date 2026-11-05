@@ -1,13 +1,7 @@
 import { RECORD_CHANGE_SCHEMA_VERSION, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
-// 427 · SC2 / SC4 / D-10 / D-19 — the default view carries no id and no retrieval machinery.
-//
-// One rich, schema-parsed projection is folded by the real projectKnowledgeView and mounted as the
-// whole Knowledge tab. The three default-view sections (Knowledge used, Effect on this run, Memory
-// changes) must hold none of its record ids, digests, trust numbers or storage words — not as text,
-// not in a title, not in a data-* attribute — and every id must be one disclosure away, inside
-// Retrieval details, which starts collapsed on every mount.
+// The default view holds no record id or retrieval machinery; every id is inside Retrieval details.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -50,7 +44,7 @@ function mount(element: ReactElement): HTMLElement {
 
 // ── The fixture: every kind of id a run can carry, in content-derived shape ──────────────────────
 
-const RUN = "run-427-10-default-view"
+const RUN = "run-default-view"
 const SERVED_CANARY = "fact-el-button-add-to-cart-0f9a1c2b3d4e5f60"
 const SERVED_PLAIN = "fact-page-https-shop-example-com-cart-1a2b3c4d5e6f7081"
 const OPENED = "fact-flow-checkout-login-2b3c4d5e6f708192"
@@ -70,7 +64,7 @@ const OPENED_DIGEST = "sha256:9e1f2a3b4c5d6e7f8091a2b3c4d5e6f7"
 const GONE_DIGEST = "sha256:0a1b2c3d4e5f60718293a4b5c6d7e8f9"
 const TRUST_NUMBERS = ["0.87", "0.64"]
 
-/** Every record id and digest the fixture carries — the SC2 list. */
+/** Every record id and digest the fixture carries. */
 const RECORD_IDS = [
   SERVED_CANARY, SERVED_PLAIN, OPENED, OPENED_GONE, CAUTION, REPLAYED, HINTED, CUT,
   ADDED, CONFIRMED, VICTIM, REPLACEMENT, DEPRECATED, PROPOSED,
@@ -222,7 +216,7 @@ function openEverything(host: HTMLElement): void {
   throw new Error("Retrieval details kept a disclosure closed")
 }
 
-describe("the default view never shows a record id (SC2, D-10)", () => {
+describe("the default view never shows a record id", () => {
   it("NO-ID-IN-DEFAULT-VIEW: the used, effect and changes sections carry no id or digest, no row leads with one, and the not-found record still has its row", () => {
     const host = mount(<TabKnowledge view={richView()} />)
 
@@ -260,7 +254,7 @@ describe("the default view never shows a record id (SC2, D-10)", () => {
   })
 })
 
-describe("the default view speaks no retrieval machinery (SC4, D-19)", () => {
+describe("the default view speaks no retrieval machinery", () => {
   const MACHINERY = ["canary", "leg ", "rank ", "score ", "attribution", "digest", "tier ", "channel"]
 
   it("NO-MACHINERY-IN-DEFAULT-VIEW: the three sections' text names no storage word and no trust number", () => {

@@ -1,8 +1,4 @@
-// runMemberTest contract, pinned against fakes (Phase 363 D-05, RESEARCH Q2). Fully
-// faked: fake adapter, a stubbed executeStep loop seam, fake HookExecutorPort, a fake
-// MemberEventSink (all Plan 03 legs), a stub extractor factory, and injected fake
-// handlers for runJS / appium / a11y / failure-shot. No real fs, providers, or LLM.
-// Runner convention: `.js`-suffixed relative specifiers.
+// Fully faked: adapter, loop seam, hook executor, event sink, extractors and handlers.
 import { describe, expect, it, vi } from 'vitest'
 import type { LanguageModel } from 'ai'
 import { makeScreenState } from '../../testing/screen-fixtures.js'
@@ -185,7 +181,7 @@ describe('runMemberTest — inline-DSL pipeline order', () => {
     expect(rec.instructions).toHaveLength(1)
   })
 
-  it('passes each step its position in the member (P2, quick 261004-lsa)', async () => {
+  it('passes each step its position in the member', async () => {
     const rec = recordingExecuteStep([stepResult()])
     const result = await runMemberTest(
       member({ steps: ['Type the message', 'Send the message'] }),
@@ -210,7 +206,7 @@ describe('runMemberTest — inline-DSL pipeline order', () => {
 
 // ---- retry semantics ------------------------------------------------------
 
-describe('runMemberTest — retry loop (Pitfall 9)', () => {
+describe('runMemberTest — retry loop', () => {
   it('fails twice then passes: two testRetryScheduled, ONE final result, retryCount=2', async () => {
     const sink = makeSink()
     const rec = recordingExecuteStep((call) =>

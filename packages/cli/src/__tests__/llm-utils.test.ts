@@ -1,7 +1,6 @@
 import { afterAll, describe, it, expect, vi, beforeEach } from 'vitest'
 
-// 2026-10-14 (441-04): the declared-secret loader reads core's workspace paths and the real
-// config merge, so both mocks keep the original module beside the stubbed functions.
+// The secret loader reads core's workspace paths and config merge, so mocks keep the module.
 vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getCredential: vi.fn(),
@@ -20,7 +19,7 @@ import { join } from 'node:path'
 
 import { getCredential, resolveLLMAuth } from '@vostride/agent-qa-core'
 import { generateText as sdkGenerateText } from 'ai'
-import { MockLanguageModelV3 } from 'ai/test'
+import { MockLanguageModelV4 } from 'ai/test'
 import { createModel } from '@vostride/agent-qa-model'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { loadConfigFile } from '../config.js'
@@ -286,8 +285,6 @@ describe('resolveLLMModels', () => {
   })
 })
 
-// ————— 389-06: the analysis token budget + the D-02 vision leg + the CR-02 mechanism pin —————
-
 const BUDGET_CAPABILITIES: ModelCapabilities = {
   text: true,
   vision: false,
@@ -331,7 +328,7 @@ function visionDeps(vision: boolean): {
   }
 }
 
-describe('buildAnalysisTokenBudget (389-06, D-01/386 D-15)', () => {
+describe('buildAnalysisTokenBudget', () => {
   it('derives estimate and inputBudget from the SAME profile resolution as the model capability', () => {
     const { resolveCalls, deps } = visionDeps(false)
 
@@ -351,7 +348,7 @@ describe('buildAnalysisTokenBudget (389-06, D-01/386 D-15)', () => {
   })
 })
 
-describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
+describe('buildJobModelCapability vision', () => {
   const IMAGE_A = new Uint8Array([1, 2, 3])
   const IMAGE_B = new Uint8Array([4, 5, 6])
 
@@ -360,7 +357,7 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
     expect(buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, visionDeps(false).deps).vision).toBe(false)
   })
 
-  it('attaches image parts through the messages form when the gate allows (D-02)', async () => {
+  it('attaches image file parts through the messages form when the gate allows', async () => {
     const { calls, deps } = visionDeps(true)
     const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, deps)
 
@@ -369,14 +366,14 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
     expect(calls).toHaveLength(1)
     const args = calls[0]!
     // The verifier turn-message precedent: ONE user message, one text part (the prompt)
-    // plus one image part per entry; system unchanged; the prompt form absent.
+    // plus one image file part per entry; system unchanged; the prompt form absent.
     expect(args.messages).toEqual([
       {
         role: 'user',
         content: [
           { type: 'text', text: 'explain' },
-          { type: 'image', image: IMAGE_A },
-          { type: 'image', image: IMAGE_B },
+          { type: 'file', mediaType: 'image', data: IMAGE_A },
+          { type: 'file', mediaType: 'image', data: IMAGE_B },
         ],
       },
     ])
@@ -385,15 +382,14 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
     expect(args).toMatchObject({ maxRetries: 0, temperature: 0, maxOutputTokens: 200 })
   })
 
-  it('strips images to the byte-identical text call against a text-only model (L9)', async () => {
+  it('strips images to the byte-identical text call against a text-only model', async () => {
     const { calls, deps } = visionDeps(false)
     const capability = buildJobModelCapability(JOB_PROFILE, NONE_AUTH, (text) => text, deps)
 
     await capability.generate({ prompt: 'explain', images: [IMAGE_A] })
     await capability.generate({ prompt: 'explain' })
 
-    // The gate is enforced at the host boundary (L9): a mis-gated caller's images strip
-    // to EXACTLY the call a plain text request produces — not a variant of it.
+    // Enforced at the host boundary: a mis-gated caller's images strip to the plain text call.
     expect(calls).toHaveLength(2)
     expect(calls[0]).toEqual(calls[1])
     expect(calls[0]).not.toHaveProperty('messages')
@@ -417,18 +413,18 @@ describe('buildJobModelCapability vision (389-06, D-02/L9/v46)', () => {
   })
 })
 
-describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
+describe('the daemon egress mechanism (verified parity)', () => {
   it("passes createModel's pinned-last masking seam with NO active scope — the daemon posture", async () => {
     // The daemon pumps outside any scope; the seam is the declared mask the job capability takes.
     const secret = 'sk-live-abcdef0123456789'
-    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`DAEMON_KEY_441=${secret}`))
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent(`DAEMON_API_KEY=${secret}`))
     let captured: { prompt?: { role: string; content: { type: string; text?: string }[] }[] } | undefined
 
     const capturingCreateModel: typeof createModel = (profile, auth, mask) =>
       createModel(profile, auth, mask, {
         languageModels: {
           'job-model': {
-            specificationVersion: 'v3',
+            specificationVersion: 'v4',
             provider: 'stub',
             modelId: 'stub',
             supportedUrls: {},
@@ -463,13 +459,12 @@ describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
     const text = captured?.prompt
       ?.find((message) => message.role === 'user')
       ?.content.find((part) => part.type === 'text')?.text
-    expect(text).toContain('[secret:DAEMON_KEY_441]')
+    expect(text).toContain('[secret:DAEMON_API_KEY]')
     expect(text).not.toContain(secret)
   })
 
-  it('the daemon binding names 388 CR-02 and rides the same scoped builder (source pin)', () => {
+  it('the daemon binding rides the same scoped builder (source pin)', () => {
     const source = readFileSync(new URL('../commands/daemon.ts', import.meta.url), 'utf8')
-    expect(source.split('388 CR-02').length - 1).toBeGreaterThanOrEqual(1)
     expect(source).toContain('resolveCliJobModel(configPath)')
     expect(source).toContain('resolveCliAnalysisTokenBudget')
   })
@@ -483,7 +478,7 @@ describe('the daemon egress mechanism (388 CR-02, verified parity)', () => {
   })
 })
 
-describe('C441-EGRESS', () => {
+describe('model egress masking', () => {
   const roots: string[] = []
 
   afterAll(() => {
@@ -491,7 +486,7 @@ describe('C441-EGRESS', () => {
   })
 
   function declaredProject(): string {
-    const root = mkdtempSync(join(tmpdir(), 'agent-qa-441-egress-'))
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-egress-'))
     roots.push(root)
     const llm = {
       name: 'planner',
@@ -526,7 +521,7 @@ describe('C441-EGRESS', () => {
   }
 
   function recordingImpl() {
-    const recorder = new MockLanguageModelV3({
+    const recorder = new MockLanguageModelV4({
       doGenerate: {
         content: [{ type: 'text', text: 'ok' }],
         finishReason: { unified: 'stop', raw: 'stop' },

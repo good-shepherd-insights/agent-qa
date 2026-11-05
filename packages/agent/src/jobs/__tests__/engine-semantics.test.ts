@@ -32,11 +32,7 @@ const idSource: JobIdSource = {
   jobIdFor: (kind, idempotencyKey) => `job_${kind}_${idempotencyKey}` as JobId,
 }
 
-/**
- * The queue needs a model bound (385 plan 05, D-10) and nothing in this file authors, so this
- * one refuses. A capability that answered would let a test in here start depending on model
- * output by accident; a capability that throws keeps the authorship proofs where they belong.
- */
+// Throws, so no test in this file can start depending on model output.
 const unusedModel: JobModelCapability = {
   modelId: 'test:unused',
   generate: async () => {
@@ -88,7 +84,7 @@ function dispositionCallCount(store: FakeJobStore, verb: DispositionVerb): numbe
   return store.callCount(verb)
 }
 
-describe('bounded retry (D-18)', () => {
+describe('bounded retry', () => {
   it('retries a retryable report until the bound is spent, then fails', async () => {
     const invocations: number[] = []
     const harness = await harnessFor([
@@ -255,7 +251,7 @@ describe('bounded retry (D-18)', () => {
   })
 })
 
-describe('C444.1-RETRY-BACKOFF', () => {
+describe('the backoff a retry hands the store', () => {
   it('a retry hands the store the backoff it reports', async () => {
     let calls = 0
     const harness = await harnessFor([
@@ -297,7 +293,7 @@ describe('C444.1-RETRY-BACKOFF', () => {
   })
 })
 
-describe('thrown-handler disposition edges (386-21)', () => {
+describe('thrown-handler disposition edges', () => {
   it('proves both adjacent sides of the max-attempts boundary with declared successors', async () => {
     const harness = await harnessFor([
       declaration({
@@ -409,7 +405,7 @@ describe('thrown-handler disposition edges (386-21)', () => {
   })
 })
 
-describe('the poison job: a handler that throws still exhausts its bound (D-18)', () => {
+describe('the poison job: a handler that throws still exhausts its bound', () => {
   it('lands each thrown attempt and terminates on the declared bound', async () => {
     let calls = 0
     const harness = await harnessFor([
@@ -487,7 +483,7 @@ describe('abandoned claims', () => {
   })
 })
 
-describe('backoff as data (D-18)', () => {
+describe('backoff as data', () => {
   it.each([
     { backoff: { kind: 'none' } as const, expected: [0, 0, 0] },
     { backoff: { kind: 'fixed', delayMs: 500 } as const, expected: [500, 500, 500] },
@@ -520,7 +516,7 @@ describe('backoff as data (D-18)', () => {
   })
 })
 
-describe('declared-topology chaining (D-17)', () => {
+describe('declared-topology chaining', () => {
   it('chains a declared successor and stores it', async () => {
     const harness = await harnessFor([
       declaration({
@@ -567,7 +563,7 @@ describe('declared-topology chaining (D-17)', () => {
   })
 })
 
-describe('the permanent-failure disposition (D-20)', () => {
+describe('the permanent-failure disposition', () => {
   function producerHarness(
     next: readonly ChainedJobRequest[],
     allowedSuccessors: readonly JobKind[] = ['curate-memory'],
@@ -838,13 +834,7 @@ describe('the five real kinds, driven through the engine', () => {
     ])
   })
 
-  // Declared equals produced, so the case above (the success path, driven through the scripted
-  // stand-in that maps over the declared set) and the case below (the permanent-failure
-  // fallback) now measure the same one-element list from opposite sides. They agree on purpose:
-  // a build that narrowed one side without the other REDs whichever side moved, by name.
-  //
-  // 2026-09-01 (Phase 409): the reserved sixth kind left with the Issue-slot cleanup, and 388
-  // D-04's declared/produced split collapsed with it.
+  // Declared equals produced, so this case and the next measure one list from opposite sides.
   it('proceeds with unknown verdicts, and only into curate-memory, when analyze-run permanently fails', async () => {
     await harness.queue.enqueue('analyze-run', { fail: 'permanent', reason: 'no model' }, 'run-1')
     const outcome = await harness.queue.runNextJob({ fence: harness.fence })
@@ -892,7 +882,7 @@ describe('the five real kinds, driven through the engine', () => {
   })
 })
 
-describe('construction-time unclaimable kinds (388-09, G-388-2 substrate)', () => {
+describe('construction-time unclaimable kinds', () => {
   it('passes the constructed exclusion set to the store on every runNextJob, and nothing without it', async () => {
     const clock = createSteppingClock()
     const store = createFakeJobStore(clock)

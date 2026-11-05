@@ -1,7 +1,4 @@
-// The run-end working-memory flush (Phase 358 · WM-02 · D-13): every value is masked with the
-// run's declared mask (441 D-06) and written as is (441 D-15), the store is disposed, and the
-// flush never throws (Pitfall 5: the run exit code is untouched).
-//   flushWorkingMemory(store, { artifactsDir, mask }) → Promise<{ path, entriesWritten }>
+// The run-end flush masks every value with the declared mask, disposes the store, never throws.
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, rm, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -29,7 +26,7 @@ afterEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true })
 })
 
-describe('flushWorkingMemory — happy path (D-13)', () => {
+describe('flushWorkingMemory — happy path', () => {
   it('writes a JSON artifact with masked values + kind/provenance, then disposes the store', async () => {
     const store = fakeStore([
       { key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'observation' },
@@ -48,9 +45,9 @@ describe('flushWorkingMemory — happy path (D-13)', () => {
   })
 })
 
-describe('C441-COMMITTED', () => {
+describe('working-memory flush masking', () => {
   it('the working-memory flush masks a declared value and keeps the rest', async () => {
-    const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW_441=Hunter-42-zz'))
+    const redactor = new SecretRedactor(SecretStore.fromEnvContent('PW_KEY=Hunter-42-zz'))
     const store = fakeStore([
       { key: 'password', value: 'Hunter-42-zz', kind: 'extracted-value', provenance: 'observation' },
       { key: 'card', value: '4242 4242 4242 4242', kind: 'extracted-value', provenance: 'observation' },
@@ -62,14 +59,14 @@ describe('C441-COMMITTED', () => {
 
     const raw = await readFile(result.path, 'utf8')
     const written = JSON.parse(raw) as { entries: Entry[] }
-    expect(written.entries.find((e) => e.key === 'password')?.value).toBe('[secret:PW_441]')
+    expect(written.entries.find((e) => e.key === 'password')?.value).toBe('[secret:PW_KEY]')
     expect(written.entries.find((e) => e.key === 'card')?.value).toBe('4242 4242 4242 4242')
     expect(raw).not.toContain('Hunter-42-zz')
     expect('blocked' in result).toBe(false)
   })
 })
 
-describe('flushWorkingMemory — never throws (Pitfall 5)', () => {
+describe('flushWorkingMemory — never throws', () => {
   it('resolves best-effort with the artifact when the mask throws, writing no raw value', async () => {
     const store = fakeStore([{ key: 'otp', value: '4821', kind: 'extracted-value', provenance: 'toolResult' }])
     const result = await flushWorkingMemory(store, {

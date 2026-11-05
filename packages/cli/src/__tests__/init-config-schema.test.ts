@@ -50,12 +50,10 @@ describe('init generated config schema compatibility', () => {
       expectCompressionDefaults(config)
       expect(parsed.services?.recording?.enabled).toBe(true)
       expect(parsed.services?.authState?.dir).toBe('.agent-qa/auth-states')
-      // D-16: the template writes no retired key; knowledge defaults materialize via prefault
+      // The template writes no retired key; knowledge defaults materialize via prefault.
       expect(config.workspace).not.toHaveProperty('agentRules')
       expect(config.services).not.toHaveProperty('memory')
       expect(parsed.knowledge.dir).toBe('agent-qa-knowledge')
-      expect(parsed.knowledge.commitArtifacts).toBe('none')
-      expect(parsed.knowledge.contextBudgetTokens).toBeUndefined()
       expect(parsed.use?.timeout).toEqual(EXPECTED_TIMEOUT_MS)
       expect(parsed.use?.logCapture?.console).toBe(true)
       expect(parsed.use?.logCapture?.network).toBe(true)
@@ -75,7 +73,7 @@ describe('init generated config schema compatibility', () => {
   )
 
   it.each(['web', 'android', 'ios', 'web+android'] as const)(
-    'writes the %s config with the cache under .agent-qa, the canonical workspace and preserved app state, and no retired key or reconciliation',
+    'writes the %s config with the cache under .agent-qa, the canonical workspace and app state for mobile platforms, and no retired key or reconciliation',
     (platform) => {
       const config = buildDefaultConfig(platform, 'anthropic-subscription', 'claude-sonnet-4-6')
       const parsed = parseGeneratedConfig(config)
@@ -84,7 +82,11 @@ describe('init generated config schema compatibility', () => {
       expect(parsed.services?.cache?.dir).toBe('.agent-qa/cache')
       expect(written).toContain('dir: .agent-qa/cache')
       expect(config.workspace).toEqual(CANONICAL_WORKSPACE)
-      expect(parsed.use?.mobile?.appState).toBe('preserve')
+      if (platform === 'web') {
+        expect(parsed.use?.mobile).toBeUndefined()
+      } else {
+        expect(parsed.use?.mobile?.appState).toBe('preserve')
+      }
       for (const retired of ['memory:', 'agentRules', 'actionProofs']) {
         expect(written).not.toContain(retired)
       }
@@ -105,7 +107,6 @@ describe('init generated config schema compatibility', () => {
     expect(config.workspace).not.toHaveProperty('agentRules')
     expect(config.services).not.toHaveProperty('memory')
     expect(parsed.knowledge.dir).toBe('agent-qa-knowledge')
-    expect(parsed.knowledge.commitArtifacts).toBe('none')
     expect(parsed.use?.timeout).toEqual(EXPECTED_TIMEOUT_MS)
     expect(parsed.use?.browser?.viewport).toEqual({ width: 1280, height: 720 })
     expect(parsed.use?.logCapture?.console).toBe(true)

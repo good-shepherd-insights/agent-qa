@@ -1,13 +1,4 @@
-// THE MODELS SECTION BODY (429-23 · D-10, D-11, D-17, WIN #133 · UI-SPEC S4, E1, E4).
-//
-// Every saved model is one row in file order. The list waits for the credential-status read, and
-// a failed read shows every row Not connected: a status the page has not read is never claimed.
-// Add model sits in the section's heading row; with no models the empty state holds the only one.
-// A row being deleted is hidden at once, focus moves to the next row, else the previous one, else
-// Add model, and an Undo focuses the row it brought back (429-24 · D-24). The add row sits first
-// and there is at most one: Add model or ?add while it is open focuses it, ?add is removed once
-// applied, a stored add draft re-opens it after a reload, and a pass lands the saved row open
-// (429-25 · D-14, D-15 · UI-SPEC S5).
+// A failed credential-status read shows every row Not connected, never a status it has not read.
 
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router"
@@ -41,7 +32,6 @@ interface WorkspaceReads {
 
 const LLMS_REF: ConfigFieldRef = { segments: ["registry", "llms"], tab: "models" }
 const DEFAULT_REF: ConfigFieldRef = { segments: ["use", "llm"], tab: "models" }
-const EVAL_REF: ConfigFieldRef = { segments: ["eval"], tab: "models" }
 const ADD_BUTTON = Symbol("add-model")
 
 function withName(names: ReadonlySet<string>, name: string, present: boolean): ReadonlySet<string> {
@@ -103,7 +93,6 @@ export function ModelList(_props: ModelListProps) {
   const defaultValue = autosave.valueOf(DEFAULT_REF)
   const defaultName = typeof defaultValue === "string" ? defaultValue : undefined
   const hasDefault = models.some((model) => model.name === defaultName)
-  const evalConfig = autosave.valueOf(EVAL_REF)
 
   function focusRow(name: string) {
     const rows = Array.from(list.current?.querySelectorAll<HTMLElement>("li[data-model-row]") ?? [])
@@ -259,7 +248,7 @@ export function ModelList(_props: ModelListProps) {
         <Plus className="size-3.5" aria-hidden="true" />
         {ADD_MODEL_LABEL}
       </Button>
-      {/* use.llm is edited here: each row's Default badge or Make default (UI-SPEC S2). */}
+      {/* use.llm is edited here: each row's Default badge or Make default. */}
       <div data-field-path="use.llm" className="col-span-full space-y-4">
         {hasDefault ? null : (
           <p data-no-default className="flex items-start gap-1 text-xs text-foreground">
@@ -294,7 +283,6 @@ export function ModelList(_props: ModelListProps) {
               facts={providerFacts(reads.providers, model.provider)}
               keyType={credentialKeyType(credentials, model)}
               isDefault={model.name === defaultName}
-              evalConfig={evalConfig}
               open={openName === model.name}
               landing={landing?.name === model.name ? landing : undefined}
               onToggle={() => {

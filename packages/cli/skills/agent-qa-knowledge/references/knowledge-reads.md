@@ -30,17 +30,16 @@ is known, not as a verdict. A record's trust never comes from its own text.
 
 ## Gates
 
-A new record starts as a `candidate` and becomes `active` only by passing gates. Each pass leaves
-a receipt, and `knowledge gates` lists them.
+A new record starts as a `candidate` and becomes `active` in one of two ways:
 
-- Gate 1 — replay: the planner is re-asked on recorded screens with and without the record; it
-  must fix what it targets and change nothing else.
-- Gate 2 — canary: the record is served, flagged, on later real runs, and a run has to use it
-  and benefit.
-- Gate 3 — a person: a run mark or an accepted policy. It promotes on its own.
+- the deterministic verdict floor: confirmed outcome evidence from later runs, plus a matching
+  element observation for a fact or a root cause for a caution;
+- a person: a run mark or an accepted policy. It promotes on its own.
 
-The promotion path names how a record got in, weakest to strongest: `deterministic-verdict-floor`,
-`gate1-lower-trust`, `gate1+gate2`, `user-sovereign`. A held record says why it is held.
+Each promotion leaves a promotion line in the record's history, and `knowledge gates` lists a
+record's mark and approval receipts with its promotion lines. The promotion path names how a
+record got in: `deterministic-verdict-floor` or `user-sovereign`. A held record says why it is
+held.
 
 ## Lifecycle
 
@@ -80,8 +79,7 @@ twice. Wrong knowledge is corrected by new feedback (a run mark) or by forgettin
 ### `agent_qa_list_runs`
 
 Which runs exist, newest first. CLI: `npx agent-qa runs list`, with `--verdict`, `--test`,
-`--since` (RFC3339 with an offset) and `--limit` (default 20). `--target` answers no runs in this
-version, because agent-qa records no targets for a run.
+`--target`, `--since` (RFC3339 with an offset) and `--limit` (default 20).
 
 Call: `{ "verdict": "failed", "limit": 2 }`
 
@@ -263,21 +261,20 @@ superseded (1)
 
 ### `agent_qa_list_knowledge_gates`
 
-A record's gate receipts, its standing on each gate and the live promotion verdict. CLI:
-`npx agent-qa knowledge gates <recordId>`.
+A record's mark and approval receipts, its promotion lines, its standing and the live promotion
+verdict. CLI: `npx agent-qa knowledge gates <recordId>`.
 
 Call: `{ "recordId": "fact-pay-button" }`
 
 Answer:
 
 ```text
-record fact-pay-button · fact · active · strongest path: gate1+gate2
-gate 1 pass @10 by job-7 digest 3be1c07d9a21 corpus 58a0f1e2c3d4 degradation -
-gate 2 pass @12 by job-9 digest a44f0e3b1c7d corpus 58a0f1e2c3d4 degradation -
-promotion gate1+gate2 @12 by job-9 cites 2 digest 0c9e8d7f6a5b
-standing:
-gate 1: pass @10
-gate 2: pass @12
-gate 3: none
-promote via gate1+gate2
+mark confirmed-bug @12 run checkout-run step s3 digest a44f0e3b1c7d
+promotion user-sovereign @12 cites a44f0e3b1c7d
+standing: mark confirmed-bug @12; approval none
+live: held: not-candidate
 ```
+
+The last line, `live:`, is the live verdict. Only a candidate can promote, so an active record
+reads `live: held: not-candidate`. A candidate reads `live: promote via <path>` when it would
+promote now, or `live: held: <reason>`.

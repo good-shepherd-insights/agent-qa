@@ -1,15 +1,3 @@
-// RED scaffold (Wave 0, D-09 · Pitfall 8 · Q2). Pins the in-turn grounding-feedback
-// contract on executePlanningTurn BEFORE the groundability seam exists. The turn gains
-// an injected `groundability` callback (Plan 06): a parsed action that fails grounding
-// returns an error-text tool result in the SAME conversation and the model corrects its
-// next call; the turn contract becomes "exactly one GROUNDABLE action call". Two
-// consecutive grounding failures ⇒ a structured PlanningTurnFailure reason
-// 'ungroundable_action' (never a throw). The grounding retry is turn-local and NEVER
-// consumes the K non-action budget. `schema_invalid` keeps its existing throw path (Q2).
-//
-// These fail because the current turn ignores an unknown `groundability` option and
-// returns the first parsed action ungrounded — that failure IS the intended RED (GREEN
-// when Plan 06 lands the callback + the 'ungroundable_action' reason).
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { tool } from 'ai'
 import { z } from 'zod'
@@ -47,9 +35,7 @@ function fakeNonActionTool(): NonActionToolHandler {
   }
 }
 
-// The Plan-06 groundability seam under test: a parsed plan whose action ref is 'e-bad'
-// is ungroundable; everything else grounds. Returned as an extension of the options type
-// so the local test is typed today and redundant (harmless) once Plan 06 adds the field.
+// A parsed plan whose ref is `e-bad` is ungroundable; everything else grounds.
 type GroundabilityResult = { ok: true } | { ok: false; message: string }
 type GroundedTurnOptions = ExecutePlanningTurnOptions & {
   groundability?: (plan: ActionPlan) => GroundabilityResult
@@ -89,7 +75,7 @@ async function generateTextCalls() {
   return vi.mocked(generateText).mock.calls as { 0: { messages: unknown[] } }[]
 }
 
-describe('executePlanningTurn — in-turn grounding feedback (D-09)', () => {
+describe('executePlanningTurn — in-turn grounding feedback', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     toolCallSeq = 0
@@ -155,7 +141,7 @@ describe('executePlanningTurn — in-turn grounding feedback (D-09)', () => {
     expect(note.execute).toHaveBeenCalledTimes(1)
   })
 
-  it('preserves the schema_invalid throw path — malformed args are NOT converted to in-turn feedback (Q2)', async () => {
+  it('preserves the schema_invalid throw path — malformed args are NOT converted to in-turn feedback', async () => {
     // web_fill requires `text`; omitting it makes toolCallToActionPlan throw schema_invalid.
     await scriptResponses([
       { toolCalls: [actionCall('web_fill', { ref: 'e1', ...ENVELOPE })], usage: USAGE },

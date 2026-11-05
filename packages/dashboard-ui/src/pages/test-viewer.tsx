@@ -38,12 +38,10 @@ import { PassRateChart } from "@/components/pass-rate-chart"
 import { DurationChart } from "@/components/duration-chart"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { usePageTitle } from "@/hooks/use-page-title"
-import { useRunConfig } from "@/hooks/use-run-config"
 import {
   fetchTestFile,
   fetchTestAnalytics,
   triggerRun,
-  purgeCache,
   type TestAnalyticsDetail,
   type TestHistoryRun,
 } from "@/lib/api"
@@ -193,7 +191,6 @@ function RunHistoryTable({
 export default function TestViewerPage() {
   const { t_id } = useParams<{ t_id: string }>()
   const navigate = useNavigate()
-  const { defaultRunMode } = useRunConfig()
   const [searchParams, setSearchParams] = useSearchParams()
   const productTour = useOptionalProductTour()
 
@@ -318,11 +315,11 @@ export default function TestViewerPage() {
     }
   }, [testName, loadedTestId, filePath])
 
-  const handleRun = async (local: boolean) => {
+  const handleRun = async () => {
     if (isRunning) return
     setIsRunning(true)
     try {
-      const result = await triggerRun({ file: filePath, local })
+      const result = await triggerRun({ file: filePath })
       toast.success("Run started")
       productTour?.advanceAfterRunStarted(result.runId, result.status)
       navigate(routes.runLive(result.runId))
@@ -335,11 +332,11 @@ export default function TestViewerPage() {
     }
   }
 
-  const handleRunNoCache = async (local: boolean) => {
+  const handleRunNoCache = async () => {
     if (isRunning) return
     setIsRunning(true)
     try {
-      const result = await triggerRun({ file: filePath, noCache: true, local })
+      const result = await triggerRun({ file: filePath, noCache: true })
       toast.success("Run started (no cache)")
       productTour?.advanceAfterRunStarted(result.runId, result.status)
       navigate(routes.runLive(result.runId))
@@ -352,23 +349,12 @@ export default function TestViewerPage() {
     }
   }
 
-  const handlePurgeCache = async () => {
-    try {
-      const { purged } = await purgeCache({ file: filePath })
-      toast.success(`Purged ${purged} cached plan${purged !== 1 ? 's' : ''}`)
-    } catch (err) {
-      toast.error(
-        `Cache purge failed: ${err instanceof Error ? err.message : String(err)}`
-      )
-    }
-  }
-
   const editRoute = routes.testEdit(testId)
   const liveRoute = routes.testEditLive(testId)
 
   useKeyboardShortcuts({
     e: () => navigate(editRoute),
-    r: () => { void handleRun(defaultRunMode === 'local') },
+    r: () => { void handleRun() },
     l: () => navigate(liveRoute),
   })
 
@@ -520,7 +506,7 @@ export default function TestViewerPage() {
           onBack={() => navigate(routes.tests)}
           onSave={() => {}}
           onValidate={() => {}}
-          onRun={(local) => handleRun(local)}
+          onRun={handleRun}
           onLiveConnect={() => navigate(liveRoute)}
           onSettingsOpen={() => {}}
           shortcutsOpen={shortcutsOpen}

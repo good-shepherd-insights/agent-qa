@@ -1,18 +1,6 @@
 // @vitest-environment jsdom
 
-// THE ONE COMPONENT'S CELLS (406-05 · DETL-05, D-17 / D-18, T-406-15 / T-406-16).
-//
-// THREE ABSENCES, THREE VOCABULARIES. A masked chip says "redacted on purpose", the read-unavailable
-// state says "the read failed", and this component says "the bytes are gone". The distinctness cells
-// below assert the other two attributes are ABSENT from this component's subtree, because a
-// vocabulary collapse is invisible in a screenshot and unrecoverable for the reader who trusts it.
-//
-// COPY BY CONSTANT, NEVER BY STRING (405-06's law). A re-typed sentence here would stay green while
-// the page said something else, which is the exact drift the exported constant exists to prevent.
-//
-// THE FOUR REF ARMS. Producer-flagged, read-time-absent and click-time-404 are ONE visible state and
-// never a request; presence UNKNOWN — no `present` key at all — still renders the image, because a
-// host that cannot stat its own store has not measured an absence and must not claim one.
+// Masked, unreadable and missing are separate vocabularies, so each cell asserts the others absent.
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -142,8 +130,8 @@ describe('EvidenceIncomplete', () => {
     expect(view.querySelector('[data-run-detail-error]')).toBeNull()
   })
 
-  // 405's name kept as an alias, pinned so a later respelling of either has to be deliberate.
-  it('keeps the 405 screenshot name as an alias of the ratified label', () => {
+  // The old name stays an alias, pinned so a respelling of either has to be deliberate.
+  it('keeps the screenshot-unavailable name as an alias of the evidence-incomplete label', () => {
     expect(SCREENSHOT_UNAVAILABLE_LABEL).toBe(EVIDENCE_INCOMPLETE_LABEL)
   })
 })

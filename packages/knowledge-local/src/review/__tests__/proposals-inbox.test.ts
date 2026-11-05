@@ -1,26 +1,4 @@
-// C432-PROPOSAL-FILES-UNREAD: old proposal files stay on disk and nothing opens them (432-17,
-// D-02 / D-05 / D-22).
-//
-// RE-SPELLED 2026-10-01 (432-17). This file was the corpus for the Phase 391 proposals inbox over
-// 387's store substrate: the `.rejected.json` sibling, enumeration over the five durable name shapes,
-// expiry computed at read, the WR-03 orphaned-claim reap and the absorb-as-data reading of 387-era
-// bare documents. 432 deletes that inbox with the store, the claim/rename machinery and the
-// envelope, so every one of those claims lost its subject. What survives is the claim the inbox
-// owed the files it leaves behind: a workspace that still holds them is a fresh workspace (D-02),
-// they are never read, claimed, published, reaped or migrated (D-22), and a malformed one cannot
-// break anything because nothing parses it.
-//
-// HOW "NEVER OPENED" IS MEASURED. `node:fs` and `node:fs/promises` are wrapped for this file's
-// module graph, so every path-taking call made by the knowledge-local sources under test is
-// recorded. The cells run the shipped explicit change door and the shipped reads with old and
-// malformed proposal files planted beside the knowledge root, then assert that no recorded path
-// lies under `<agentQaRoot>/proposals` and that the directory's bytes are unchanged. A recorder that
-// could not see such a call would make that a vacuous pass, so a control cell drives one through
-// the same wrapper and requires it to be recorded.
-//
-// AUTOMATIC CANDIDATE STATE IS NOT THE INBOX. Curation's `proposed-supersession-of` relation and
-// the CI/cloud propose-only profile are a knowledge-candidate disposition and survive (D-08); the
-// last cell keeps them measured beside the absence.
+// Old proposal files are never opened; wrapped `node:fs` calls and a control cell prove it.
 
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -138,12 +116,12 @@ const RETIRED_MODULES = ['proposals-store.ts', 'proposals-inbox.ts', 'proposals-
  * produce them any more, which is why they are literals.
  */
 const LEGACY_FILES: Readonly<Record<string, string>> = {
-  // a 387-era bare knowledge proposal, pending
+  // A bare knowledge proposal, pending
   'prop_0123456789ab.json': `${JSON.stringify({
     schemaVersion: 1, proposalId: 'prop_0123456789ab', verb: 'forget',
     targetRef: { grain: 'record', recordId: 'rec-legacy' }, deltas: [], proposedAt: 1, status: 'pending',
   }, undefined, 2)}\n`,
-  // a 391-era wrapped record, pending
+  // A wrapped config record, pending
   'prop_abcdef012345.json': `${JSON.stringify({
     schemaVersion: 1, id: 'prop_abcdef012345', kind: 'config',
     origin: { emittedBy: 'agent', surface: 'mcp' }, payload: { schemaVersion: 1 },
@@ -167,7 +145,7 @@ function digestDirectory(dir: string): Readonly<Record<string, string>> {
   return out
 }
 
-describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claimed, published or migrated', () => {
+describe('old proposal files are never opened, claimed, published or migrated', () => {
   let root: string
   let knowledgeRoot: string
   let agentQaRoot: string
@@ -189,7 +167,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
   })
 
   function storeConfig(): BundleStoreConfig {
-    return { knowledgeRoot, productKey: 'Unread Product', commitArtifacts: 'none' }
+    return { knowledgeRoot, productKey: 'Unread Product' }
   }
 
   function publish(summary: string): string {
@@ -213,15 +191,14 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     return recorder.paths.filter((path) => path === inbox || path.startsWith(prefix))
   }
 
-  it('C432-PROPOSAL-FILES-UNREAD: the recorder sees a call that does reach the proposals directory', () => {
+  it('the recorder sees a call that does reach the proposals directory', () => {
     // The control. Without it, "no recorded path" could be a recorder that records nothing.
     expect(readdirSync(inbox).length).toBe(Object.keys(LEGACY_FILES).length)
     expect(touchedInbox()).toEqual([inbox])
   })
 
-  // Twelve real fsync'd writes across four contexts: 2.1 s alone, past vitest's 15 s default in
-  // 432-17 gate run 5 at load average 18. Same budget as C432-EXPLICIT-ALL-CONTEXTS (432-14).
-  it('C432-PROPOSAL-FILES-UNREAD: explicit accept, reject and forget apply in every context and never open an old proposal file', async () => {
+  // Many fsync'd writes across contexts can pass vitest's 15 s default under load.
+  it('explicit accept, reject and forget apply in every context and never open an old proposal file', async () => {
     const before = digestDirectory(inbox)
     // Fixture publication is not under measurement; only the door and the reads are.
     const targets = CONTEXTS.map((context) => ({
@@ -254,7 +231,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
       .toEqual(before)
   }, 120_000)
 
-  it('C432-PROPOSAL-FILES-UNREAD: a retried explicit change answers its first outcome and still opens no old proposal file', async () => {
+  it('a retried explicit change answers its first outcome and still opens no old proposal file', async () => {
     const before = digestDirectory(inbox)
     const recordId = publish('retry')
     recorder.paths.length = 0
@@ -274,7 +251,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(digestDirectory(inbox)).toEqual(before)
   }, 120_000)
 
-  it('C432-PROPOSAL-FILES-UNREAD: an old proposal id is not a change target, and naming one opens nothing', async () => {
+  it('an old proposal id is not a change target, and naming one opens nothing', async () => {
     const before = digestDirectory(inbox)
     recorder.paths.length = 0
 
@@ -289,7 +266,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(digestDirectory(inbox)).toEqual(before)
   })
 
-  it('C432-PROPOSAL-FILES-UNREAD: a change applies while the old proposals directory cannot be read at all', async () => {
+  it('a change applies while the old proposals directory cannot be read at all', async () => {
     const recordId = publish('unreadable')
     chmodSync(inbox, 0o000)
     try {
@@ -305,7 +282,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(Object.keys(digestDirectory(inbox)).sort()).toEqual(Object.keys(LEGACY_FILES).sort())
   }, 120_000)
 
-  it('C432-PROPOSAL-FILES-UNREAD: the knowledge reads answer with old and malformed proposal files present and never open one', () => {
+  it('the knowledge reads answer with old and malformed proposal files present and never open one', () => {
     const before = digestDirectory(inbox)
     const recordId = publish('read')
     recorder.paths.length = 0
@@ -322,7 +299,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(digestDirectory(inbox)).toEqual(before)
   })
 
-  it('C432-PROPOSAL-FILES-UNREAD: no store, inbox or proposal apply door is exported or present to open them', () => {
+  it('no store, inbox or proposal apply door is exported or present to open them', () => {
     const exported = new Set(Object.keys(knowledgeLocal))
     expect(RETIRED_EXPORTS.filter((name) => exported.has(name)), 'a retired proposal member is exported')
       .toEqual([])
@@ -333,7 +310,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: old proposal files are never opened, claim
     expect(typeof knowledgeLocal.applyExplicitReview).toBe('function')
   })
 
-  it('C432-PROPOSAL-FILES-UNREAD: automatic candidate state remains — CI and cloud still propose, and the relation still parses', () => {
+  it('automatic candidate state remains — CI and cloud still propose, and the relation still parses', () => {
     expect(resolveDispositionProfile('ci')).toEqual({ mode: 'propose-only' })
     expect(resolveDispositionProfile('cloud')).toEqual({ mode: 'propose-only' })
     expect(resolveDispositionProfile('local-headless')).toEqual({ mode: 'drain-to-active' })

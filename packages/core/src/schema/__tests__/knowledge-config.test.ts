@@ -15,26 +15,22 @@ const minimalConfig = {
   },
 }
 
-describe('KnowledgeConfigSchema — defaults (D-08, D-09)', () => {
+describe('KnowledgeConfigSchema — defaults', () => {
   it('materializes knowledge defaults on a minimal config parse', () => {
     const result = AgentQaConfigSchema.safeParse(minimalConfig)
     expect(result.success).toBe(true)
     if (result.success) {
       expect(result.data.knowledge.dir).toBe('agent-qa-knowledge')
-      expect(result.data.knowledge.commitArtifacts).toBe('none')
-      expect(result.data.knowledge.contextBudgetTokens).toBeUndefined()
     }
   })
 
   it('parses an empty knowledge object to full defaults', () => {
     const result = KnowledgeConfigSchema.parse({})
     expect(result.dir).toBe('agent-qa-knowledge')
-    expect(result.commitArtifacts).toBe('none')
-    expect(result.contextBudgetTokens).toBeUndefined()
   })
 })
 
-describe('KnowledgeConfigSchema — dir repo-relative predicate (D-10)', () => {
+describe('KnowledgeConfigSchema — dir repo-relative predicate', () => {
   it.each(['/abs/path', 'C:\\x', '../escape'])('rejects %s with the repo-relative message', (dir) => {
     const result = KnowledgeConfigSchema.safeParse({ dir })
     expect(result.success).toBe(false)
@@ -51,30 +47,6 @@ describe('KnowledgeConfigSchema — dir repo-relative predicate (D-10)', () => {
   it('rejects an empty dir', () => {
     const result = KnowledgeConfigSchema.safeParse({ dir: '' })
     expect(result.success).toBe(false)
-  })
-})
-
-describe('KnowledgeConfigSchema — contextBudgetTokens (D-09)', () => {
-  it('rejects zero and negative caps', () => {
-    expect(KnowledgeConfigSchema.safeParse({ contextBudgetTokens: 0 }).success).toBe(false)
-    expect(KnowledgeConfigSchema.safeParse({ contextBudgetTokens: -5 }).success).toBe(false)
-  })
-
-  it('accepts a positive integer cap', () => {
-    const result = KnowledgeConfigSchema.safeParse({ contextBudgetTokens: 1 })
-    expect(result.success).toBe(true)
-  })
-})
-
-describe('KnowledgeConfigSchema — commitArtifacts closed enum (D-08)', () => {
-  it("rejects 'full' — no full mode exists", () => {
-    const result = KnowledgeConfigSchema.safeParse({ commitArtifacts: 'full' })
-    expect(result.success).toBe(false)
-  })
-
-  it("accepts 'thumbnails'", () => {
-    const result = KnowledgeConfigSchema.safeParse({ commitArtifacts: 'thumbnails' })
-    expect(result.success).toBe(true)
   })
 })
 

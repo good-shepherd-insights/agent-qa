@@ -1,14 +1,4 @@
-// The proposals inbox over the composed host — RE-SPELLED 2026-10-01 (432-17, D-02/D-05/D-22).
-//
-// This file was PROP-03's user journey over the real composition: list, show and reject pre-432
-// proposals through `composeLocalAgent()` and `invokeFunction`, with the origin check refusing an
-// agent and the composition clock driving expiry. 432-17 deletes the inbox's ops, the store and the
-// envelope, so every one of those claims lost its subject (list ordering, the receipts shown before
-// a decision, the named absence, the permanent rejection, the origin refusal, expiry at read, the
-// status filter, the empty listing and the bound listing). What survives is the composed-host half
-// of C432-NO-PROPOSAL-OPS and C432-PROPOSAL-FILES-UNREAD: a pre-432 proposal file in the workspace is
-// left exactly as it was, the retired ids are not capabilities of the composed host, and a direct
-// change made beside the file neither reads nor rewrites it.
+// A legacy proposal file stays as found, the retired ids are not capabilities, nothing reads it.
 
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -31,9 +21,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { composeLocalAgent } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost } from '../composition/compose-local-agent.js'
-import { filePre432KnowledgeProposal } from './pre-432-knowledge-proposal.js'
+import { fileLeftoverKnowledgeProposal } from './leftover-knowledge-proposal.js'
 
-/** The seven ids deleted with the inbox, as a caller would spell them. */
 const RETIRED_IDS = [
   'proposals.list',
   'proposals.show',
@@ -70,7 +59,7 @@ function snapshot(dir: string): Readonly<Record<string, string>> {
   return out
 }
 
-describe('C432-PROPOSAL-FILES-UNREAD: the composed host leaves pre-432 proposal files alone', () => {
+describe('the composed host leaves legacy proposal files alone', () => {
   let root: string
   let agentQaRoot: string
   let knowledgeRoot: string
@@ -108,7 +97,6 @@ describe('C432-PROPOSAL-FILES-UNREAD: the composed host leaves pre-432 proposal 
     return {
       knowledgeRoot,
       productKey: 'Inbox E2E Product',
-      commitArtifacts: 'none',
     }
   }
 
@@ -144,13 +132,13 @@ describe('C432-PROPOSAL-FILES-UNREAD: the composed host leaves pre-432 proposal 
 
   async function propose(summary: string, ordinal: number): Promise<{ recordId: string; proposalId: string }> {
     const recordId = publish(summary, ordinal)
-    const proposalId = await filePre432KnowledgeProposal({
+    const proposalId = await fileLeftoverKnowledgeProposal({
       agentQaRoot, knowledgeRoot, verb: 'forget', target: { grain: 'record', recordId },
     })
     return { recordId, proposalId }
   }
 
-  it('C432-NO-PROPOSAL-OPS: the composed host lists none of the retired ids and refuses each as unknown', async () => {
+  it('the composed host lists none of the retired ids and refuses each as unknown', async () => {
     await propose('checkout button', 11)
     const ids = host.registry.list(HUMAN).map((declaration) => declaration.id)
     expect(ids.length).toBeGreaterThan(0)
@@ -160,7 +148,7 @@ describe('C432-PROPOSAL-FILES-UNREAD: the composed host leaves pre-432 proposal 
     }
   })
 
-  it('C432-PROPOSAL-FILES-UNREAD: a direct change beside a pre-432 proposal neither reads nor rewrites it', async () => {
+  it('a direct change beside a legacy proposal neither reads nor rewrites it', async () => {
     const { recordId } = await propose('checkout button', 11)
     await propose('payment button', 12)
     const inbox = join(agentQaRoot, 'proposals')

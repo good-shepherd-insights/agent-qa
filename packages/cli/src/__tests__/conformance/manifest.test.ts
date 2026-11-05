@@ -1,35 +1,12 @@
-// The manifest legs: the projected migration map, the derived example calls, and `init --agent`
-// (Phase 398 plan 08 — XPLN-01 / XPLN-03, D-08 / D-14 / D-16).
-//
-// WHAT THIS FILE IS FOR. Plan 01 made the catalog one committed artifact. This plan makes it the
-// WHOLE answer: the migration map projected in beside the rows, an example call derived per op, and
-// one non-interactive read — `agent-qa init --agent` — that hands an external agent all of it plus
-// this workspace's posture. The claim SC-1 makes is that those are the same bytes, and the cells
-// below are what turn that claim into a measurement.
-//
-// WHERE EACH CELL POINTS, AND WHY IT MATTERS. The census cells here read the LIVE mint, exactly as
-// plan 01's six censuses do, and that is a deliberate division of labour rather than a convenience:
-// ONE cell in this directory owns "committed versus live" (the freshness leg in `catalog.test.ts`,
-// which byte-compares the whole document including these two new sections), and every other cell
-// asserts a property of what the producer produces. Two cells owning the same comparison would mean
-// a stale artifact reds twice and says two different things, and — the reason that matters here —
-// the regen script's refuse-while-red gate allows exactly ONE red by name. A census cell that read
-// the committed file would make the artifact unregenerable the moment the producer legitimately
-// changed, which is the one state the script exists to let a person out of.
-//
-// THE MANIFEST CELLS ARE THE EXCEPTION, and they are the exception on purpose: `buildAgentManifest`
-// LOADS the committed artifact, so a manifest cell that read a live mint would be measuring a
-// second recipe rather than the shipped read path.
+// The census cells read the live mint; only `catalog.test.ts` compares committed and live bytes.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { V1_TOOL_MIGRATION_MAP } from '@vostride/agent-qa-mcp'
 import {
   AgentManifestPostureSchema,
   AgentManifestSchema,
-  CatalogMigrationArmSchema,
   canonicalJson,
   type CapabilityCatalog,
   type CatalogOpRow,
@@ -42,119 +19,13 @@ import { CLI_FUNCTION_CALLER } from '../../composition/local-agent-host.js'
 import { registryOpIds } from './adapters.js'
 import {
   CATALOG_PATH,
-  CATALOG_REGEN_INSTRUCTION,
   catalogExampleCallOf,
   capabilityCatalogFromRoot,
 } from './catalog.js'
 
-// ---- The projected migration map (D-14) --------------------------------------------------------
+// ---- The derived example calls ----
 
-describe('the catalog\'s migration map projection (D-14, XPLN-03)', () => {
-  let live: CapabilityCatalog
-
-  beforeAll(async () => {
-    live = await capabilityCatalogFromRoot()
-  })
-
-  it('projects exactly the shipped map, in both directions', () => {
-    // THE COMPLETE-SET LAW, applied to the pair D-14 names. One direction alone is the failure
-    // this shape prevents twice over: a projection that carried every source entry could still
-    // carry an invented one, and a projection every one of whose entries came from the source
-    // could still be missing twenty of them.
-    const projected = live.migrationMap.map((entry) => entry.v1Name).sort()
-    const source = V1_TOOL_MIGRATION_MAP.map((entry) => entry.v1Name).sort()
-
-    const missing = source.filter((name) => !projected.includes(name))
-    const stray = projected.filter((name) => !source.includes(name))
-    expect(missing, 'the shipped migration map carries v1 names the catalog does not project')
-      .toEqual([])
-    expect(stray, 'the catalog projects v1 names the shipped migration map does not carry')
-      .toEqual([])
-    // …and the set equality behind the two named lists, so a cancelling pair (one dropped, one
-    // invented) cannot pass by making both lists non-empty in a way nobody reads.
-    expect(projected, 'the projection and the source disagree about the v1 name set')
-      .toEqual(source)
-  })
-
-  it('projects every field of every entry VERBATIM, never a re-worded one', () => {
-    // The member set above says WHICH names travelled; this says the entry a caller reads is the
-    // entry the adjudication ruled. A projection free to re-word a `route` is a second place the
-    // product answers a v1 caller, and the two would agree until somebody improved one of them.
-    const bySource = new Map(V1_TOOL_MIGRATION_MAP.map((entry) => [entry.v1Name, entry]))
-    const drifted: string[] = []
-    for (const projected of live.migrationMap) {
-      const source = bySource.get(projected.v1Name)
-      if (source === undefined) continue
-      // Through the ONE canonical serializer, so an absent key and an `undefined` value are the
-      // same fact and field order cannot make two equal entries look different.
-      if (canonicalJson(projected) !== canonicalJson({ ...source })) {
-        drifted.push(
-          `${projected.v1Name}: the catalog projects ${canonicalJson(projected)}, the shipped map `
-          + `declares ${canonicalJson({ ...source })}`,
-        )
-      }
-    }
-    expect(drifted, 'projected migration entries disagree with the shipped map').toEqual([])
-    // The comparison above is vacuous over an empty projection, so the denominator is asserted.
-    expect(live.migrationMap.length, 'the catalog projected no migration entries at all')
-      .toBe(V1_TOOL_MIGRATION_MAP.length)
-    expect(live.migrationCount, 'the catalog\'s own migration count disagrees with its entries')
-      .toBe(live.migrationMap.length)
-  })
-
-  it('sorts the projection by v1 name, so a re-ordered source is a zero-line diff', () => {
-    const names = live.migrationMap.map((entry) => entry.v1Name)
-    expect(names, 'the projected migration map is not sorted by v1 name').toEqual([...names].sort())
-  })
-
-  it('lands in the COMMITTED artifact, entry for entry, as the shipped map declares it', () => {
-    // THE ARTIFACT ITSELF, not the mint that would produce it. Every cell above measures the
-    // producer; this one measures the bytes a shipped install reads, through the ONE loader — the
-    // difference being that a producer improved in a branch nobody regenerated is invisible to all
-    // of them and visible to this.
-    //
-    // IT IS A COMMITTED-ARTIFACT CELL, and the regen script's gate knows it by name: a legitimate
-    // change to the shipped map REDs this and the freshness leg together, and the whole point of
-    // the one writer is that a person can then regenerate. See ALLOWED_RED in
-    // `scripts/398-regen-catalog.sh`.
-    const committed = loadCapabilityCatalog(CATALOG_PATH)
-    const projected = committed.migrationMap.map((entry) => entry.v1Name).sort()
-    const source = V1_TOOL_MIGRATION_MAP.map((entry) => entry.v1Name).sort()
-
-    expect(
-      source.filter((name) => !projected.includes(name)),
-      `the committed catalog projects no entry for these v1 names — ${CATALOG_REGEN_INSTRUCTION}`,
-    ).toEqual([])
-    expect(
-      projected.filter((name) => !source.includes(name)),
-      `the committed catalog projects v1 names the shipped map does not carry — `
-      + CATALOG_REGEN_INSTRUCTION,
-    ).toEqual([])
-    expect(
-      canonicalJson(committed.migrationMap),
-      `the committed catalog's migration entries disagree with the shipped map — `
-      + CATALOG_REGEN_INSTRUCTION,
-    ).toBe(canonicalJson(live.migrationMap))
-    expect(committed.migrationCount, 'the committed migration count disagrees with its entries')
-      .toBe(committed.migrationMap.length)
-  })
-
-  it('spells exactly the arms the shipped map uses — no member here that nothing carries', () => {
-    // THE TIE ON THE SECOND SPELLING. `CatalogMigrationArmSchema` restates `V1MigrationArm`
-    // because a DTO package may not import a surface package. The COMPILE side of the tie is the
-    // producer's projection function (an arm minted in `mcp` and missing here does not typecheck);
-    // this is the other side — an arm written here that the shipped map does not carry is a
-    // vocabulary the catalog offers a reader and the product never uses.
-    const declared = [...CatalogMigrationArmSchema.options].sort()
-    const carried = [...new Set(V1_TOOL_MIGRATION_MAP.map((entry) => entry.arm))].sort()
-    expect(declared, 'the catalog\'s arm vocabulary and the shipped map\'s arms disagree')
-      .toEqual(carried)
-  })
-})
-
-// ---- The derived example calls (spec §3.3, D-08) -----------------------------------------------
-
-describe('the catalog\'s example calls (D-08)', () => {
+describe('the catalog\'s example calls', () => {
   let live: CapabilityCatalog
 
   beforeAll(async () => {
@@ -165,9 +36,7 @@ describe('the catalog\'s example calls (D-08)', () => {
     live.rows.filter((row): row is CatalogOpRow => row.kind === 'op')
 
   it('re-derives byte-identically from each row\'s OWN params — produced, never authored', () => {
-    // The whole of D-08 for this column, as one comparison: every example in the artifact is what
-    // the pure derivation answers when handed that row's params and nothing else. A hand-written
-    // example — however good — cannot survive this cell, which is the point.
+    // Each example is what the derivation answers for that row's params; a hand-written one reds.
     const drifted: string[] = []
     for (const row of opRows()) {
       const derived = catalogExampleCallOf(row.params, row.id)
@@ -190,14 +59,7 @@ describe('the catalog\'s example calls (D-08)', () => {
   })
 
   it('states an example or a reason there is none — never a silent blank', () => {
-    // The presence rule for the third state, asserted rather than refined (the discriminated-union
-    // constraint plan 01 documented). An absent example WITHOUT a reason is the silent blank D-07
-    // refused for doc paths, one column over.
-    // THE DENOMINATOR FIRST. Both filters below select on `exampleCall === null`, and a row that
-    // carries no such KEY at all satisfies neither — so without this line a catalog that had
-    // simply never grown the column would pass every assertion in this cell. The cast is what
-    // lets the question be ASKED: the DTO makes the column required, so the compiler narrows the
-    // check away, and the fact being guarded here is a runtime one about produced rows.
+    // The cast asks a runtime question: a catalog without the column would pass both filters.
     const columnless = opRows()
       .filter((row) => !('exampleCall' in (row as unknown as Record<string, unknown>)))
       .map((row) => row.id)
@@ -245,13 +107,7 @@ describe('the catalog\'s example calls (D-08)', () => {
       + 'params carry a construct the derivation will not guess at (today: a regular-expression '
       + '`pattern`). A new member is a deliberate decision, not a default.',
     ).toEqual([
-      // 2026-10-01 (432-17): `knowledge.proposal.apply` and `proposals.accept`/`reject`/`show` left
-      // with the inbox, so the set is down to its one 405-05 member.
-      // 2026-08-27 (405-05 D-12/D-13): a FIFTH member, in sort position, and a deliberate one.
-      // `runs.artifact` requires a `sha` constrained to 64 lowercase hex, and the derivation will
-      // not guess at a regular-expression `pattern` — which is right: an invented sha would be a
-      // documented example call that resolves to nothing, teaching a reader a request the store
-      // can only answer `blob_absent` for. The honest catalog entry is the explicit absence.
+      // `runs.artifact` needs a hex `sha` and the derivation guesses no `pattern`, so it is absent.
       'runs.artifact',
     ])
     // The vacuity floor on the other side: most ops DO get an example, and a derivation that
@@ -270,7 +126,7 @@ describe('the catalog\'s example calls (D-08)', () => {
     const derive = (properties: Record<string, unknown>, required: readonly string[]): unknown =>
       catalogExampleCallOf(
         { type: 'object', additionalProperties: false, properties, required: [...required] },
-        'control.398.08',
+        'control.example.probe',
       )
 
     expect(derive({ name: { type: 'string' } }, ['name']))
@@ -340,7 +196,7 @@ describe('the catalog\'s example calls (D-08)', () => {
       exampleCallAbsentReason?: string
     } => catalogExampleCallOf(
       { type: 'object', additionalProperties: false, properties, required: [...required] },
-      'control.398.08',
+      'control.example.probe',
     )
 
     const refusal = (properties: Record<string, unknown>, required: readonly string[]): string => {
@@ -388,9 +244,9 @@ describe('the catalog\'s example calls (D-08)', () => {
   })
 })
 
-// ---- `init --agent` (D-16) ---------------------------------------------------------------------
+// ---- `init --agent` ---------------------------------------------------------------------
 
-describe('the agent manifest (D-16, XPLN-01)', () => {
+describe('the agent manifest', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -404,7 +260,7 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
    * assertion: without an entry there is no name to find and no value to fail to find.
    */
   const fixtureProject = (label: string, tokenEnvVar?: string): string => {
-    const root = mkdtempSync(join(tmpdir(), `agent-qa-398-08-${label}-`))
+    const root = mkdtempSync(join(tmpdir(), `agent-qa-${label}-`))
     roots.push(root)
     writeFileSync(
       join(root, 'agent-qa.config.yaml'),
@@ -437,11 +293,8 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     return root
   }
 
-  it('IS the committed catalog: rows and migration map, through the ONE loader', async () => {
-    // SC-1's "the same manifest" clause, as a comparison rather than a sentence. Both sides read
-    // the committed artifact through `loadCapabilityCatalog`, which is exactly the claim — the
-    // manifest is a LOAD, so a consumer that got its rows from the manifest and a consumer that got
-    // them from the catalog cannot be looking at two different capability sets.
+  it('IS the committed catalog: rows, through the ONE loader', async () => {
+    // Both sides read the committed artifact via `loadCapabilityCatalog`: the manifest is a load.
     const manifest = await buildAgentManifest({
       configPath: join(fixtureProject('identity'), 'agent-qa.config.yaml'),
     })
@@ -449,28 +302,16 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
 
     expect(manifest.rows, 'the manifest and the committed catalog disagree about the rows')
       .toEqual(catalog.rows)
-    expect(
-      manifest.migrationMap,
-      'the manifest and the committed catalog disagree about the migration map',
-    ).toEqual(catalog.migrationMap)
     // The vacuity floor: two empty sides agree perfectly and prove nothing.
     expect(manifest.rows.length, 'the manifest carried no rows').toBeGreaterThan(0)
-    expect(manifest.migrationMap.length, 'the manifest carried no migration entries')
-      .toBeGreaterThan(0)
   })
 
-  it('emits EVERY row, unfiltered — it documents, it does not grant (D-16, P1)', async () => {
-    // THE PROHIBITION, MEASURED. The failure this refuses is a manifest that quietly applied the
-    // visibility law a second time: rows would vanish for reasons no cell states, and the two
-    // places the law lived would agree until one of them was improved. `config-write` ops are the
-    // sharpest case — they are exactly what the D-07 default grant WITHHOLDS, so a manifest that
-    // filtered by the default scope set would drop them.
+  it('emits EVERY row, unfiltered — it documents, it does not grant', async () => {
+    // The manifest must not filter: a second application of the visibility law drops rows silently.
     const manifest = await buildAgentManifest({
       configPath: join(fixtureProject('unfiltered'), 'agent-qa.config.yaml'),
     })
-    // 432-20 (D-12): rows carry no scope column any more, so "outside the default grant" is no
-    // longer a property a row has. The claim survives as completeness: every registered op is a row,
-    // including every config write the old default grant withheld.
+    // Rows carry no scope column, so the claim is completeness: every registered op is a row.
     const opRows = manifest.rows.filter((row): row is CatalogOpRow => row.kind === 'op')
     expect(
       opRows.map((row) => row.id).sort(),
@@ -478,25 +319,20 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     ).toEqual([...registryOpIds()].sort())
     expect(opRows.filter((row) => row.id.startsWith('config.') && row.id !== 'config.get').length)
       .toBeGreaterThan(0)
-    // …and the note a reader gets says so, in the document rather than in a source file.
-    // RE-SPELLED 2026-10-02 (432-42, D-12) from `NOT A GRANT LIST`: there is no grant to contrast
-    // with, so the note says the manifest is unfiltered and that nothing is permissioned.
+    // The note says the manifest is unfiltered and nothing is permissioned, in the document itself.
     expect(manifest.$note.join(' ')).toContain('THIS MANIFEST IS UNFILTERED')
     expect(manifest.$note.join(' ')).toContain('there are no permissions')
     expect(manifest.$note.join(' ')).not.toMatch(/grant list/iu)
   })
 
-  // RE-SPELLED 2026-10-01 (432-21, D-12) from '… by env-ref NAME …'. The manifest reads no MCP token
-  // declaration any more, so a legacy block yields no ref at all; the never-by-value half is the claim
-  // that survives, and it is still measured against a value that is SET while the manifest builds.
-  it('reports a declared credential by env-ref NAME and never by value (T-398-17, 395 D-11)',
+  it('reports a declared credential by env-ref NAME and never by value',
     async () => {
     // THE REFS-ONLY LAW, DRIVEN OVER A REAL SECRET. A cell that only asserted the shape of the
     // posture would pass against a manifest that also carried the value in some field nobody
     // thought to look at, so what is asserted is the ABSENCE OF THE BYTES from the whole
     // serialized document — the surface a person actually reads.
-    const sentinel = 'sk-398-08-sentinel-2b41c9d7e5f60a83'
-    const tokenEnvVar = 'AGENT_QA_398_08_SENTINEL_TOKEN'
+    const sentinel = 'sk-sentinel-2b41c9d7e5f60a83'
+    const tokenEnvVar = 'AGENT_QA_SENTINEL_TOKEN'
     const configPath = join(fixtureProject('refs-only', tokenEnvVar), 'agent-qa.config.yaml')
 
     const previous = process.env[tokenEnvVar]
@@ -504,21 +340,15 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     try {
       const manifest = await buildAgentManifest({ configPath })
 
-      // THE CONTROL ON THE CONTROL, FIRST. The sentinel must still be readable at the moment the
-      // manifest was built, or its absence below is a property of an unset variable rather than of
-      // this product. (Measured 2026-08-17: written first as a `.then()` with a synchronous
-      // `finally`, this line caught the restore firing BEFORE the build — the absence assertion
-      // was vacuous and said nothing about it.)
+      // The sentinel must be set while the manifest builds, or its absence below proves nothing.
       expect(process.env[tokenEnvVar], 'the sentinel was not set during the build').toBe(sentinel)
 
       const serialized = JSON.stringify(manifest, null, 2)
 
-      // 432-22 (D-22): the legacy block is a deleted key, so the config does not resolve.
+      // The legacy block is a deleted key, so the config does not resolve.
       expect(manifest.posture.configuration, 'a legacy token block must fail strict validation')
         .toBe('unresolved')
-      // 432-21 (D-12): no ref is reported — the legacy block is read by nothing. The non-vacuity
-      // control is the rows: the manifest is whole, so the absence below is about a real document.
-      // 2026-10-02 (432-39, D-12): the posture has no ref member at all now.
+      // No ref is reported; the whole set of rows is the non-vacuity control.
       expect(manifest.posture, 'the manifest reported a legacy token declaration')
         .not.toHaveProperty('tokenEnvRefs')
       expect(manifest.rows.length, 'the manifest carried no rows').toBeGreaterThan(0)
@@ -536,10 +366,7 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     }
   })
 
-  // RE-SPELLED 2026-10-02 (432-39, D-12): `AgentManifestTokenRefSchema` is deleted with the posture's
-  // `tokenEnvRefs`. The structural half survives one level up: the posture is `.strict()`, so a
-  // token ref — with a value or without — cannot be added by accident; it stops parsing.
-  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'refuses a token ref carrying a value, rather than passing one through': the body asserts the absence, so the title does.
+  // The posture is `.strict()`, so a token ref, with a value or without, stops parsing.
   it('refuses a token ref on the strict posture, with a value or without one', () => {
     const refused = AgentManifestPostureSchema.safeParse({
       configuration: 'resolved',
@@ -562,12 +389,6 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     expect(AgentManifestPostureSchema.safeParse({ configuration: 'resolved' }).success).toBe(true)
   })
 
-  // RE-SPELLED 2026-10-01 (432-21, D-12): the MCP default grant (every scope but `config-write`)
-  // is deleted with the token resolver. Every caller reaches every op, so the posture reports the
-  // WHOLE closed scope union, read off the union rather than restated, and safe mode is off.
-  // RE-SPELLED 2026-10-02 (432-39, D-12): the union, the grant and the safe-mode member are deleted,
-  // so there is nothing left to restate: the posture carries neither member, and the CLI mint no flag.
-  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'reads the shipped default grant and safe-mode state rather than restating them': the body asserts the absence, so the title does.
   it('reports a posture of exactly { configuration }, with no default grant or safe-mode member', async () => {
     const manifest = await buildAgentManifest({
       configPath: join(fixtureProject('posture'), 'agent-qa.config.yaml'),
@@ -589,7 +410,7 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
     // read. The two are told apart by whether the FILE IS THERE, so the classification never comes
     // from an exception's message: the message quotes the file, and the file is where credentials
     // are declared.
-    const bare = mkdtempSync(join(tmpdir(), 'agent-qa-398-08-bare-'))
+    const bare = mkdtempSync(join(tmpdir(), 'agent-qa-bare-'))
     roots.push(bare)
     const absent = await buildAgentManifest({ configPath: join(bare, 'agent-qa.config.yaml') })
     expect(absent.posture.configuration, 'a directory with no config did not report `absent`')
@@ -601,7 +422,7 @@ describe('the agent manifest (D-16, XPLN-01)', () => {
 
     // …and a config that IS there and does not validate is the OTHER answer. `init` is the wrong
     // advice for this one, which is why it must not share an arm with the case above.
-    const broken = mkdtempSync(join(tmpdir(), 'agent-qa-398-08-broken-'))
+    const broken = mkdtempSync(join(tmpdir(), 'agent-qa-broken-'))
     roots.push(broken)
     const brokenPath = join(broken, 'agent-qa.config.yaml')
     writeFileSync(brokenPath, '{ "workspace": { "testMatch": 17 } }\n', 'utf8')

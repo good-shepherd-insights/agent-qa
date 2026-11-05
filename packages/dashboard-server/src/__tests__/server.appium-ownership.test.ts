@@ -26,22 +26,9 @@ interface RunnerInstance {
   killAll: Mock
   getActiveExecutions: Mock
   closeRun: (runId: string, status: CloseStatus, output?: string[]) => void
-  /** 401-18: a run the gate or the host refused before it began — never a `closeRun` with a flag. */
-  refuseRun: (runId: string, details: {
-    reason: string
-    neutralReason?: string
-  }) => void
+  // A run refused before it began, which is a different event from `closeRun`.
+  refuseRun: (runId: string, details: { reason: string }) => void
 }
-
-/**
- * The neutral sentence the gate composes for a reader whose surface is not a terminal (401-18).
- *
- * Spelled out rather than imported — `packages/dashboard-server` may not import `safety`. What the
- * cells below assert is the SHAPE (a decision said without naming any surface's affordance) and the
- * absence of `--trust-session`, both of which are asserted directly.
- */
-const NEUTRAL_REFUSAL_PROSE =
-  'prompted-denied: declared tier: mutating-shared: the interactive prompt was declined'
 
 const mockState = vi.hoisted(() => ({
   appiumInstances: [] as AppiumInstance[],
@@ -49,14 +36,7 @@ const mockState = vi.hoisted(() => ({
   events: [] as string[],
 }))
 
-/**
- * The execution backend, INJECTED rather than module-mocked (401-07).
- *
- * The class this used to `vi.mock` is gone; `startServer` takes the backend as an option now, so a
- * cell hands over a fake exactly the way `agent-qa dashboard` hands over the real one. That is a
- * stronger fixture than the mock it replaces — it drives the SHIPPED injection point instead of
- * substituting a module underneath it.
- */
+// Injected the way `agent-qa dashboard` hands over the real backend, not module-mocked.
 class FakeExecutionBackend extends EventEmitter {
   execute = vi.fn()
   kill = vi.fn((runId: string) => {
@@ -72,22 +52,12 @@ class FakeExecutionBackend extends EventEmitter {
     this.emit('run-settled', runId, status, { output })
   }
 
-  /**
-   * Drive a run the gate or the host REFUSED before it began (401-18, G-401-16).
-   *
-   * A separate driver, not a flag on `closeRun`, because the two are different EVENTS: `closeRun`
-   * is a run that happened and stopped, this is a run that never started. Every existing cell keeps
-   * calling `closeRun` and therefore keeps measuring the unchanged arms.
-   */
-  refuseRun = (runId: string, details: {
-    reason: string
-    neutralReason?: string
-  }): void => {
+  // A separate driver, because a run that never started differs from one that started and stopped.
+  refuseRun = (runId: string, details: { reason: string }): void => {
     this.emit('run-settled', runId, 'failed', {
       output: details.reason.split('\n'),
       reason: details.reason,
       refusedBeforeStart: true,
-      ...(details.neutralReason === undefined ? {} : { neutralReason: details.neutralReason }),
     })
   }
 
@@ -220,7 +190,6 @@ registry:
   devices:
     release-android-emu:
       platform: android
-      transport: local
       match: {}
 `
 
@@ -244,13 +213,11 @@ function createConfigPath(content = MOBILE_CONFIG): { configPath: string; worksp
 async function startDashboard(opts: {
   configContent?: string
   llm?: boolean
-  preflight?: ExecutionBackend['preflight']
 } = {}): Promise<number> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   currentDb = db
   const { configPath, workspacePaths } = createConfigPath(opts.configContent)
   const backend = new FakeExecutionBackend() as unknown as ExecutionBackend
-  if (opts.preflight) backend.preflight = opts.preflight
   started = await startServer({
     declaredSecretMask: (text) => text,
     db,
@@ -346,9 +313,7 @@ describe('dashboard Appium ownership', () => {
     expect(appium.acquireLease).toHaveBeenCalledWith({ runId: android.runId, platform: 'android' })
     expect(appium.acquireLease).toHaveBeenCalledWith({ runId: ios.runId, platform: 'ios' })
 
-    // THE LEASE URL TRAVELS AS AN ARGUMENT, NOT AS A CHILD'S ENVIRONMENT (401-07, truth 5). The
-    // acquisition above is unchanged — same call, same run id, same manager — and `env` is not
-    // merely unset here, it is no longer a field `ExecuteOptions` has.
+    // The lease URL travels as an `execute` argument; `ExecuteOptions` has no `env` field.
     const executeCalls = runner.execute.mock.calls as Array<[Record<string, unknown>]>
     expect(executeCalls.map(([opts]) => opts.appiumUrl)).toEqual([
       'http://localhost:4723',
@@ -404,9 +369,7 @@ describe('dashboard Appium ownership', () => {
 
     const runner = currentRunner()
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
-    // 405-07 (D-02): the projected step is written through the v2 member-scoped write now. The
-    // claim is unchanged and is the point of the cell: a run whose every PERSISTED step passed
-    // still fails when the run itself timed out — the run's verdict is not a fold of its steps.
+    // A run whose every persisted step passed still fails when the run itself timed out.
     currentDb!.insertRunStep({
       runId: run.runId,
       testIndex: 0,
@@ -455,12 +418,6 @@ describe('dashboard Appium ownership', () => {
     })
   })
 
-  // ---- 401-18 (G-401-16): A REFUSED RUN IS DESCRIBED AS A REFUSAL --------------------------------
-  //
-  // The measured defect (UAT item 15): a run the gate refused before anything started was written
-  // to the runs list as `Process exited before test completed`, and the only record of WHY offered
-  // `--trust-session` — a flag declared on one CLI command — to somebody sitting in a browser.
-
   it('does not summarise a refused run as a process that exited', async () => {
     const port = await startDashboard()
     const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
@@ -471,11 +428,7 @@ describe('dashboard Appium ownership', () => {
     const runner = currentRunner()
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
 
-    runner.refuseRun(run.runId, {
-      reason: 'Run denied: prompted-denied: declared tier: mutating-shared: the interactive prompt'
-        + ' was declined; re-run and approve, or opt in with --trust-session',
-      neutralReason: NEUTRAL_REFUSAL_PROSE,
-    })
+    runner.refuseRun(run.runId, { reason: 'Unrecognised run request field: scope' })
 
     const stored = currentDb!.getRun(run.runId)
     expect(stored?.status).toBe('failed')
@@ -484,34 +437,10 @@ describe('dashboard Appium ownership', () => {
       'a run that never started is still summarised as a process that exited',
     ).not.toBe('Process exited before test completed')
     expect(stored?.failureSummary).toContain('Refused before the run started')
-    expect(stored?.failureSummary).toContain('prompted-denied')
+    expect(stored?.failureSummary).toContain('Unrecognised run request field')
   })
 
-  it('hands the refused run the surface-neutral prose, never the canonical CLI sentence', async () => {
-    const port = await startDashboard()
-    const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
-      name: 'Refused prose channel',
-      platform: 'web',
-    })
-
-    const runner = currentRunner()
-    await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
-
-    runner.refuseRun(run.runId, {
-      reason: 'Run denied: prompted-denied: declared tier: mutating-shared: the interactive prompt'
-        + ' was declined; re-run and approve, or opt in with --trust-session',
-      neutralReason: NEUTRAL_REFUSAL_PROSE,
-    })
-
-    const stored = currentDb!.getRun(run.runId)
-    expect(stored?.errorLog).toBe(NEUTRAL_REFUSAL_PROSE)
-    expect(
-      `${stored?.failureSummary ?? ''}\n${stored?.errorLog ?? ''}`,
-      'a CLI flag is offered as the way forward to somebody in a browser',
-    ).not.toContain('--trust-session')
-  })
-
-  it('describes a refusal that is not a gate denial as a refusal, and invents no way forward', async () => {
+  it('describes a refusal by its own message, and invents no way forward', async () => {
     const port = await startDashboard()
     const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
       name: 'Refused request field',
@@ -521,8 +450,7 @@ describe('dashboard Appium ownership', () => {
     const runner = currentRunner()
     await waitFor(() => expect(runner.execute).toHaveBeenCalledTimes(1))
 
-    // No neutral form — an unrecognised request field is not a gate decision. It is
-    // still a run that never started, and the record has to say so.
+    // A run that never started, and the record has to say so.
     runner.refuseRun(run.runId, {
       reason: 'The dashboard run door does not honour --headed.',
     })
@@ -647,29 +575,62 @@ describe('dashboard Appium ownership', () => {
   })
 })
 
-describe('C442-ENQUEUE-REFUSAL', () => {
-  it('a refused android enqueue takes no Appium lease and executes nothing', async () => {
-    const neutralReason = 'Target "release-android-wikipedia" is declared environment: production.'
-    const preflight = vi.fn(async () => {
-      throw Object.assign(new Error('refused'), { neutralReason })
-    })
-    const port = await startDashboard({ preflight })
-    const response = await fetch(`http://127.0.0.1:${port}/api/queue/enqueue`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'Android', platform: 'android', parallel: true }),
-    })
-    const body = (await response.json()) as Record<string, unknown>
-    await new Promise((resolve) => setTimeout(resolve, 100))
+describe('an Appium start failure for a queued run', () => {
+  const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+  const spies: Array<{ mockRestore: () => void }> = []
 
-    expect({ status: response.status, body }).toEqual({
-      status: 403,
-      body: { error: 'run_denied', neutralReason },
+  afterEach(() => {
+    for (const spy of spies.splice(0)) spy.mockRestore()
+    vi.unstubAllEnvs()
+  })
+
+  async function enqueueFailingMobileRun(message: string): Promise<string> {
+    const port = await startDashboard()
+    currentAppium().acquireLease.mockRejectedValueOnce(new Error(message))
+    const run = await postJson<QueueResponse>(port, '/api/queue/enqueue', {
+      name: 'Android',
+      platform: 'android',
+      parallel: true,
     })
-    expect(preflight).toHaveBeenCalledWith({ args: [], source: 'dashboard' })
-    expect(currentAppium().acquireLease).not.toHaveBeenCalled()
-    expect(currentRunner().execute).not.toHaveBeenCalled()
-    expect(currentDb!.getPendingRuns()).toEqual([])
-    expect(currentDb!.getRuns({})).toEqual([])
+    await waitFor(() => expect(currentDb!.getRun(run.runId)?.status).toBe('failed'))
+    return run.runId
+  }
+
+  it('prints the failure inside one pair on stdout under GitHub Actions', async () => {
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+    const writes: string[] = []
+    const errors: unknown[][] = []
+    spies.push(
+      vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+        writes.push(String(chunk))
+        return true
+      }),
+      vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errors.push(args)
+      }),
+    )
+
+    const runId = await enqueueFailingMobileRun('::set-output name=x::y')
+
+    const blocks = writes.filter((chunk) => chunk.includes('Failed to start Appium'))
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatch(PAIR)
+    expect(blocks[0]).toContain(`Failed to start Appium for run ${runId}: ::set-output name=x::y`)
+    expect(errors.filter((args) => String(args[0]).includes('Failed to start Appium'))).toEqual([])
+  })
+
+  it('prints the same console.error line as before off GitHub Actions', async () => {
+    const errors: unknown[][] = []
+    spies.push(
+      vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+        errors.push(args)
+      }),
+    )
+
+    const runId = await enqueueFailingMobileRun('boom')
+
+    expect(errors.filter((args) => String(args[0]).includes('Failed to start Appium'))).toEqual([
+      [`Failed to start Appium for run ${runId}: boom`],
+    ])
   })
 })

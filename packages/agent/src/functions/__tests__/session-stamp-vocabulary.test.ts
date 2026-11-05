@@ -1,29 +1,4 @@
-// The stamped vocabulary pin: every op carrying a session fact is an op the surface stamps
-// (Phase 394, gap round 2, plan 19 — CR-02 · T-394-74 · T-394-75).
-//
-// WHY THIS FILE EXISTS. `stampSessionRef` guarded ONE function id by equality, and the claim that
-// the id was the only op carrying `sessionRef` was a comment. It was false the day
-// `authoring.draft.verify` gained the field: that op is `mutating-local`, planner-reachable like
-// every registered op (392 D-07), and spreads a caller-supplied `sessionRef` straight onto the
-// receipt it persists. So a model could write another author's session id into a verify call and
-// have it land on a durable receipt — the exact attribution forgery the write op's stamp exists to
-// prevent, one function id over. The guard is now a SET, and this file makes "the set is complete"
-// a check rather than a sentence.
-//
-// THE COMPARISON IS PRODUCED ON ONE SIDE AND PINNED ON THE OTHER, which is the shape
-// `caller-scopes.test.ts` uses (and the deleted proposals-accept action-class suite used, until
-// 432-17; re-spelled 2026-10-02, 432-42). The derived side is read off
-// the LIVE registry — every declaration's inert input projection, asked whether it carries the key
-// at the TOP LEVEL — and never off a hand-written list of the ids anyone believes carry it. The
-// pinned side is the constant the turn engine actually consults. Equality between them is the rule
-// made mechanical: a future sibling op gaining `sessionRef` reds this by the omitted NAME, rather
-// than shipping an unguarded forgery path that every existing cell stays green over.
-//
-// TWO KEYS, TWO SETS, and they are separate because the two laws are. `sessionRef` is an
-// OVERWRITE-NEVER-A-DEFAULT on the write side (absence is exclusion on a receipt); `window` is
-// D-12's ratified SURFACE default on the read side, constructed by the surface that knows its
-// session. A single merged set would have made the two stamps one rule and lost the distinction
-// the receipt's own contract turns on.
+// The stamped set must equal the derived set, so an op gaining `sessionRef` fails by name.
 
 import {
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
@@ -38,22 +13,13 @@ import {
 import { createFunctionRegistry } from '../registry.js'
 import type { FunctionDeclaration, FunctionDeps } from '../spec.js'
 
-// 2026-10-01 (432-35, D-12): no `grantedScopes` or `safeMode` on the caller. Every caller lists the
-// whole catalogue since 432-20, so the name's "granted" no longer narrows anything.
 /** Human origin — a listing must be the whole catalogue, not one caller's slice. */
 const FULLY_GRANTED: FunctionCaller = {
   surface: 'test',
   origin: 'human',
 }
 
-/**
- * The four REQUIRED ports, answering emptily (the fixture shape the deleted proposals-accept
- * action-class suite used; re-spelled 2026-10-02, 432-42).
- *
- * Nothing here dispatches: the cells read DECLARATIONS. What matters is that every registered op
- * is LISTED, including the ones a real host leaves `unbound`, because an input contract is a fact
- * about the catalogue rather than about one composition's bindings.
- */
+// Cells read declarations, so every op is listed, including ones a real host leaves `unbound`.
 function listingDeps(): FunctionDeps {
   return {
     runs: {
@@ -106,14 +72,7 @@ function idsCarryingTopLevelKey(key: string): ReadonlySet<string> {
   return carrying
 }
 
-/**
- * The ids the derivation above cannot see — an input projection with no top-level `properties`.
- *
- * The walk `continue`s over such a declaration, so it contributes to NEITHER side of the
- * equalities below and an op carrying `sessionRef` behind a union, a `$ref` or a record shape
- * would leave every cell here green while going unstamped (394-22, WR-05). Naming those ids makes
- * the skip a decision someone takes rather than one the walk takes silently.
- */
+// The walk skips these, so an op hiding `sessionRef` behind a union must be named here.
 function opaqueDeclarationIds(): string[] {
   return declarations()
     .filter((declaration) => {
@@ -137,7 +96,7 @@ describe('the session facts the chat surface stamps are pinned to the ops that c
     expect(idsCarryingTopLevelKey('window').size).toBeGreaterThan(0)
   })
 
-  it('SET-EQUALS the sessionRef-carrying ops — a sibling cannot be silently omitted (CR-02)', () => {
+  it('SET-EQUALS the sessionRef-carrying ops — a sibling cannot be silently omitted', () => {
     // THE CELL. Its failure names the ids on both sides, because "the set is wrong" is not
     // something anybody can act on, and the whole defect was that nobody could see which op was
     // missing. Removing `authoring.draft.verify` from the constant reds this by that name.
@@ -153,13 +112,12 @@ describe('the session facts the chat surface stamps are pinned to the ops that c
     // derivation that answers "every id" or by one whose projection read never finds anything —
     // and a comparison that cannot reject is the state the guard's own doc block was already in.
     expect(idsCarryingTopLevelKey('sessionReff').size).toBe(0)
-    // 2026-10-02 (432-42): re-pointed from `proposals.list`, deleted by 432-17, at a REGISTERED op
-    // whose input carries no `sessionRef`, so the negative half discriminates over the live catalogue.
+    // A registered op whose input has no `sessionRef`, so the negative half is not vacuous.
     expect(declarations().map((declaration) => declaration.id), 'the negative example is no longer registered').toContain('runs.list')
     expect(idsCarryingTopLevelKey('sessionRef').has('runs.list')).toBe(false)
   })
 
-  it('the derivation SEES the whole catalogue — an opaque input reds by id (WR-05)', () => {
+  it('the derivation SEES the whole catalogue — an opaque input reds by id', () => {
     // The skip is silent by construction: a declaration the walk cannot read contributes to
     // neither side of the equalities above, so both stay green over an op nobody stamped. This
     // cell turns that into a decision point NAMING the offending id — at which point either the
@@ -171,9 +129,7 @@ describe('the session facts the chat surface stamps are pinned to the ops that c
   it('the two sets are DISJOINT — one op, one law, and the laws point opposite ways', () => {
     const overlap = [...SESSION_STAMPED_FUNCTION_IDS]
       .filter((id) => WINDOW_STAMPED_FUNCTION_IDS.has(id))
-    // An op carrying both would need a decision this plan has not made: the ref is an overwrite
-    // that never defaults, the window is a default that only overwrites its session arm. Today
-    // nothing carries both, and that is stated rather than assumed.
+    // The ref overwrites and never defaults, the window is a default; nothing carries both.
     expect(overlap).toEqual([])
   })
 })

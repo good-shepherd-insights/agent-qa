@@ -1,17 +1,4 @@
-// The D-04 §1.4 tiered prompt-builder contract (Phase 389, plan 03).
-//
-// Four pins, each on a property plan 04's author and 392's chat extension both lean on:
-//
-//   determinism  identical tier inputs → byte-identical {system, prompt}. The stable tier
-//                leads so the cache-friendly bytes are the same bytes every call.
-//   tier order   stable renders into `system`; context then volatile render into `prompt`,
-//                in that order — a stable marker always precedes a context marker, which
-//                always precedes a volatile marker in the full rendered output.
-//   empty tiers  an empty volatile tier renders a structurally valid prompt: no dangling
-//                section header, no trailing separator debris.
-//   output shape exactly the TEXT legs of `JobModelRequest` — `{system?, prompt}`,
-//                assignable without a cast. The request's optional images leg is attached
-//                by the author at request assembly (plan 04), never by the tier renderer.
+// Identical inputs give identical bytes, and stable, context and volatile render in that order.
 
 import { describe, expect, it } from 'vitest'
 import type { JobModelRequest } from '../../jobs/record-llm-authorship.js'
@@ -39,7 +26,7 @@ function fullInput(): TieredPromptInput {
   }
 }
 
-describe('buildTieredPrompt (D-04 §1.4 skeleton)', () => {
+describe('buildTieredPrompt (§1.4 skeleton)', () => {
   it('is byte-deterministic: identical tier inputs produce identical {system, prompt}', () => {
     const first = buildTieredPrompt(fullInput())
     const second = buildTieredPrompt(fullInput())

@@ -1,21 +1,4 @@
-// The exemplar thin-client verb: `agent-qa knowledge bundles` (Phase 384, Plan 05 — D-05/D-07).
-//
-// Two claims are under test here, and they are different in kind.
-//
-// BEHAVIOUR: the verb renders `knowledge.bundles.list` end-to-end through the composition
-// root, `invokeFunction`, and the real gate — against genuinely committed bundles on disk.
-//
-// SOURCE SHAPE: the verb's code path takes its data from `invokeFunction` alone, and the
-// whole file has stopped importing the safety package directly (its display-boundary
-// helpers now arrive through the agent barrel). These are the properties plan 06's import
-// firewall will make build-enforced; pinning them here means the firewall lands on a file
-// that already satisfies it rather than on one that has to be repaired first.
-//
-// The source assertions parse IMPORT STATEMENTS over the file bytes. They never shell out
-// to a line matcher: a count that cannot distinguish "zero hits" from "the matcher printed
-// nothing" is not a gate, and a matcher that reads prose in a doc comment as a dependency
-// is a gate a comment can invalidate. The extractor below is proven non-vacuous by its own
-// positive-control case.
+// Import statements are parsed from the file bytes, so prose cannot count as a dependency.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -52,21 +35,17 @@ const KNOWLEDGE_READ_SOURCE_PATH = join(
 
 /**
  * Packages whose presence anywhere in this file would mean a verb reads data for itself
- * instead of asking the function layer for it.
- *
- * 2026-08-02 (Phase 387 plan 09, D-20): the scope of the assertion below WIDENED from the
- * bundles registration block to the whole file, because `inspect` and `diff` no longer import
- * these — the reason the narrow scope existed is gone. The widening was not optional: with
- * nothing in the file binding a data package, "the bundles block contains none of those
- * bindings" is true of every possible block, and a vacuous claim is worse than no claim
- * because it keeps reporting a pass. The file-wide version is checked against a planted
- * control so it cannot go vacuous the same way.
+ * instead of asking the function layer for it. The assertion covers the whole file and is
+ * checked against a planted control so it cannot go vacuous. Core's run-text output subpath is
+ * the one exception, because it reads no data; the core root stays refused.
  */
 const DATA_LAYER_PACKAGES = [
   '@vostride/agent-qa-core',
   '@vostride/agent-qa-knowledge-local',
   '@vostride/agent-qa-runner-local',
 ] as const
+
+const CORE_OUTPUT = '@vostride/agent-qa-core/run-text-output'
 
 interface InvocationResult {
   stdout: string
@@ -98,7 +77,6 @@ function fixtureWorkspace(roots: string[]): FixtureWorkspace {
       },
       knowledge: {
         dir: 'agent-qa-knowledge',
-        commitArtifacts: 'none',
       },
       use: {
         mobile: { appState: 'preserve' },
@@ -163,7 +141,6 @@ function seedTwoBundles(workspace: FixtureWorkspace): { factId: string; cautionI
   const config: BundleStoreConfig = {
     knowledgeRoot: workspace.knowledgeRoot,
     productKey: PRODUCT,
-    commitArtifacts: 'none',
   }
   const fact = publishBundle(config, bundleInput({
     name: 'Checkout',
@@ -222,14 +199,7 @@ async function invoke(
 // Import-statement extraction over file bytes.
 // ---------------------------------------------------------------------------------------
 
-/**
- * Remove block and line comments so prose can neither add nor hide a dependency.
- *
- * This is the whole reason the extractor is written here rather than reused: the repo-wide
- * arch extractor matches a quoted word after the `from` keyword ANYWHERE in a file, which
- * has read a doc comment as an import three times in this phase alone. A firewall gate a
- * comment can flip is not a gate.
- */
+// Strips comments, because the arch extractor reads a quoted word after `from` even in prose.
 function stripComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//gu, '')
@@ -333,8 +303,6 @@ describe('agent-qa knowledge bundles (the exemplar thin client)', () => {
     expect(human).toContain(cautionId)
     expect(human).toContain('Checkout summary')
     expect(human).toContain('Payment timeout summary')
-    // Human prose is the sole unmasking surface (v48 D-11): whatever the boundary emits,
-    // it never leaves a placeholder standing in the operator's terminal.
     expect(human).not.toMatch(/SECRET_\d+/u)
   })
 
@@ -363,7 +331,7 @@ describe('agent-qa knowledge bundles (the exemplar thin client)', () => {
   })
 })
 
-describe('knowledge-read.ts source shape (what plan 06 will enforce)', () => {
+describe('knowledge-read.ts source shape', () => {
   const source = readFileSync(KNOWLEDGE_READ_SOURCE_PATH, 'utf8')
 
   it('extracts statement-scoped specifiers and ignores prose that looks like one', () => {
@@ -392,14 +360,13 @@ describe('knowledge-read.ts source shape (what plan 06 will enforce)', () => {
       .toEqual(['a', 'b'])
   })
 
-  it('no longer imports the safety package anywhere in the file (Pitfall 4, option a)', () => {
+  it('no longer imports the safety package anywhere in the file', () => {
     const specifiers = importSpecifiers(source)
 
     // The extractor is live against THIS file, not just the synthetic control.
     expect(specifiers.length).toBeGreaterThan(4)
     expect(specifiers).toContain('@vostride/agent-qa-agent')
-    // The whole claim: the exemplar file has no direct safety dependency. 2026-10-14 (441-14,
-    // D-12): its only agent-barrel binding is `invokeFunction`; the declared mask is the CLI's own.
+    // The file has no direct safety dependency; the declared mask is the CLI's own.
     expect(specifiers.filter((specifier) => specifier.includes('agent-qa-safety'))).toEqual([])
     expect(importedBindings(source, (s) => s === '@vostride/agent-qa-agent'))
       .toEqual(['invokeFunction'])
@@ -412,14 +379,24 @@ describe('knowledge-read.ts source shape (what plan 06 will enforce)', () => {
 
     // The extractor is live against THIS file, not just a synthetic control.
     expect(specifiers.length).toBeGreaterThan(4)
-    expect(specifiers.filter(isDataPackage)).toEqual([])
+    expect(specifiers).toContain(CORE_OUTPUT)
+    expect(specifiers.filter(isDataPackage).filter((specifier) => specifier !== CORE_OUTPUT))
+      .toEqual([])
 
-    // Non-vacuous by CONTROL rather than by the file happening to violate the rule: plant the
-    // exact import `inspect` used to carry and require the check to catch it. Without this,
-    // an empty result is indistinguishable from an extractor that stopped extracting.
-    const planted = `import { inspectRecords } from '@vostride/agent-qa-knowledge-local/reader'\n${source}`
-    expect(importSpecifiers(planted).filter(isDataPackage))
-      .toEqual(['@vostride/agent-qa-knowledge-local/reader'])
+    // Planting a forbidden import proves the check catches one, so an empty result is not vacuous.
+    const planted = [
+      "import { inspectRecords } from '@vostride/agent-qa-knowledge-local/reader'",
+      "import { printRunText } from '@vostride/agent-qa-core'",
+      "import { guardRunText } from '@vostride/agent-qa-core/logging'",
+      source,
+    ].join('\n')
+    expect(importSpecifiers(planted).filter(isDataPackage)
+      .filter((specifier) => specifier !== CORE_OUTPUT))
+      .toEqual([
+        '@vostride/agent-qa-knowledge-local/reader',
+        '@vostride/agent-qa-core',
+        '@vostride/agent-qa-core/logging',
+      ])
 
     // And the data every verb renders still arrives the sanctioned way.
     expect(bundlesRegistrationBlock(source)).toContain('invokeFunction')

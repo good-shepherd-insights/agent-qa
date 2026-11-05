@@ -4,10 +4,7 @@ import { describe, expect, it } from 'vitest'
 import * as safety from '../../index'
 import * as executionContext from '../execution-context'
 
-// RE-SPELLED 2026-10-01 (432-19, D-15). This file pinned `requiresFailClosed`, the gate's reading of
-// a context (fail closed everywhere but `local-interactive`). It is deleted with the ask ladder that
-// was its one reader. The execution context ITSELF is retained: it is a durable field on handoffs,
-// bus events, deltas, bundles and run DTOs, and D-08's CI switch reads it.
+// The execution context is a durable field on handoffs, bus events, bundles and run DTOs.
 const ALL_CONTEXTS: readonly ExecutionContext[] = ['local-interactive', 'local-headless', 'ci', 'cloud']
 
 describe('requiresFailClosed', () => {
@@ -17,13 +14,13 @@ describe('requiresFailClosed', () => {
   })
 })
 
-describe('C432-EXECUTION-CONTEXT-RETAINED: all four execution contexts and their resolver stay', () => {
-  it.each(ALL_CONTEXTS)('C432-EXECUTION-CONTEXT-RETAINED: an explicit %s override resolves to itself', (context) => {
+describe('all four execution contexts and their resolver stay', () => {
+  it.each(ALL_CONTEXTS)('an explicit %s override resolves to itself', (context) => {
     expect(safety.resolveExecutionContext({ isTty: false, ciMarkers: false }, context)).toBe(context)
     expect(safety.resolveExecutionContext({ isTty: true, ciMarkers: true }, context)).toBe(context)
   })
 
-  it('C432-EXECUTION-CONTEXT-RETAINED: the signal table and the active resolver seam are unchanged', () => {
+  it('the signal table and the active resolver seam are unchanged', () => {
     expect(safety.resolveExecutionContext({ isTty: false, ciMarkers: true })).toBe('ci')
     expect(safety.resolveExecutionContext({ isTty: true, ciMarkers: false })).toBe('local-interactive')
     expect(safety.resolveExecutionContext({ isTty: false, ciMarkers: false })).toBe('local-headless')

@@ -12,7 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { generateText, simulateReadableStream, streamText, wrapLanguageModel } from 'ai'
-import { MockLanguageModelV3 } from 'ai/test'
+import { MockLanguageModelV4 } from 'ai/test'
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { SecretStore } from '@vostride/agent-qa-runner'
 import { createMaskingMiddleware } from '@vostride/agent-qa-safety'
@@ -37,7 +37,7 @@ interface Project {
 }
 
 function project(secrets: string | null, options: { secretsFile?: string | null } = {}): Project {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-441-loader-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-loader-'))
   roots.push(root)
   const secretsFile = options.secretsFile === undefined ? '.secrets.local' : options.secretsFile
   const workspace = [
@@ -80,7 +80,7 @@ function refusalOf(run: () => unknown): DeclaredSecretsUnavailableError {
   throw new Error('expected a DeclaredSecretsUnavailableError')
 }
 
-describe('C441-LOADER', () => {
+describe('the declared secrets loader', () => {
   it('the mask names each value declared in workspace.secretsFile', () => {
     const { configPath } = project(`SHORT=q^7\nLONG=${LONG}\n`)
     const { mask } = createDeclaredSecretMask(configPath)
@@ -173,27 +173,27 @@ describe('C441-LOADER', () => {
   })
 })
 
-describe('C441-GAP-LOADER', () => {
+describe('the loader follows a rewritten config', () => {
   it('one mask follows the secrets file a rewritten config names', () => {
     const { root, configPath } = project(null, { secretsFile: 'a.secrets' })
-    writeFileSync(join(root, 'a.secrets'), 'A_441=alpha-value-1\n')
-    writeFileSync(join(root, 'bb.secrets'), 'B_441=bravo-value-22\n')
+    writeFileSync(join(root, 'a.secrets'), 'A_KEY=alpha-value-1\n')
+    writeFileSync(join(root, 'bb.secrets'), 'B_KEY=bravo-value-22\n')
     const { mask } = createDeclaredSecretMask(configPath)
 
-    expect(mask('alpha-value-1 bravo-value-22')).toBe('[secret:A_441] bravo-value-22')
+    expect(mask('alpha-value-1 bravo-value-22')).toBe('[secret:A_KEY] bravo-value-22')
 
     const body = readFileSync(configPath, 'utf8')
     writeFileSync(configPath, body.replace('secretsFile: a.secrets', 'secretsFile: bb.secrets'))
 
-    expect(mask('alpha-value-1 bravo-value-22')).toBe('alpha-value-1 [secret:B_441]')
+    expect(mask('alpha-value-1 bravo-value-22')).toBe('alpha-value-1 [secret:B_KEY]')
   })
 
   it('a rewritten config that names no secrets file refuses', () => {
     const { root, configPath } = project(null, { secretsFile: 'a.secrets' })
-    writeFileSync(join(root, 'a.secrets'), 'A_441=alpha-value-1\n')
+    writeFileSync(join(root, 'a.secrets'), 'A_KEY=alpha-value-1\n')
     const { mask } = createDeclaredSecretMask(configPath)
 
-    expect(mask('alpha-value-1')).toBe('[secret:A_441]')
+    expect(mask('alpha-value-1')).toBe('[secret:A_KEY]')
 
     const body = readFileSync(configPath, 'utf8')
     writeFileSync(configPath, body.replace('  secretsFile: a.secrets\n', ''))
@@ -209,11 +209,11 @@ const usage = {
   outputTokens: { total: 0, text: 0, reasoning: 0 },
 }
 
-describe('C441-EGRESS', () => {
+describe('a declared value at model egress', () => {
   it('a declared value reaches a recording model as its named marker', async () => {
     const { configPath } = project(`SHORT=q^7\nLONG=${LONG}\n`)
     const { mask } = createDeclaredSecretMask(configPath)
-    const recorder = new MockLanguageModelV3({
+    const recorder = new MockLanguageModelV4({
       doGenerate: {
         content: [{ type: 'text', text: 'ok' }],
         finishReason: { unified: 'stop', raw: 'stop' },

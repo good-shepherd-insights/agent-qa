@@ -10,9 +10,9 @@ metadata:
 ## Workflow
 
 1. Discover the surface from the protocol itself: `tools/list` names every tool, and every caller
-   sees and may call the same set. For the full picture — the capability catalog, the v1 to v2
-   tool-name migration map, and this workspace's posture — run `npx agent-qa init --agent`, which
-   prints one JSON document and writes nothing.
+   sees and may call the same set. For the full picture — the capability catalog and this
+   workspace's posture — run `npx agent-qa init --agent`, which prints one JSON document and writes
+   nothing.
 2. Read the workspace posture from that same manifest: whether this workspace has a configuration
    that reads. No MCP tool reads configuration.
 3. Load `references/agent-qa-contracts.json` when you need exact schema fields or ID contracts.
@@ -56,11 +56,8 @@ metadata:
 
 - Verify the draft first (step 6).
 - Start runs with `agent_qa_start_run` rather than shelling out, and name the test files to run
-  with `patterns` (paths or globs). Its input also lists `scope`, which the local agent-qa server
-  refuses, so never pass it.
-- A run starts in the call, with no prompt. A run that drives a target declared
-  `environment: production` is refused, naming the target, unless `agent-qa.config.yaml` has
-  `allowProduction: true` at the top level. No argument or flag allows it.
+  with `patterns` (paths or globs).
+- A run starts in the call, with no prompt.
 - `agent_qa_list_runs` enumerates recent runs; `agent_qa_get_run_digest` reports one.
 
 ## Secrets
@@ -81,6 +78,3 @@ metadata:
 - Do not use legacy root config buckets.
 - Do not hand-write IDs.
 - Do not mutate files outside the configured workspace patterns.
-- Do not call a v1 tool name. Every retired name and what answers its need instead is carried by the
-  migration map in `npx agent-qa init --agent`; calling one returns that ruling rather than a
-  result.

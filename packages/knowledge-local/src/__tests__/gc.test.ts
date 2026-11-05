@@ -72,7 +72,6 @@ function config() {
   return {
     knowledgeRoot,
     productKey: PRODUCT,
-    commitArtifacts: 'none' as const,
   }
 }
 
@@ -243,7 +242,7 @@ function recordRowids(): Map<string, number> {
   }
 }
 
-describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
+describe('runKnowledgeGc gate-keyed retention', () => {
   it('retains the latest K superseded generations plus the live head and lets rebuild remove orphans', async () => {
     const chain = publishChain('depth', 6)
     await rebuildIndex({ knowledgeRoot })
@@ -344,7 +343,7 @@ describe('runKnowledgeGc gate-keyed retention (DCAY-05)', () => {
   })
 })
 
-describe('removeBundleProjectionRows scoping (WR-01)', () => {
+describe('removeBundleProjectionRows scoping', () => {
   it('returns 0 without creating an index db when the db is absent or ids are empty', () => {
     expect(removeBundleProjectionRows(
       knowledgeRoot,
@@ -368,7 +367,7 @@ describe('removeBundleProjectionRows scoping (WR-01)', () => {
   })
 })
 
-describe('drain-tail GC diagnostics (DCAY-05)', () => {
+describe('drain-tail GC diagnostics', () => {
   const author = vi.fn<CuratorAuthor>()
 
   function baseOperations() {
@@ -380,7 +379,7 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
     }
   }
 
-  it('runs GC after the writer pass and pins the M2 none horizon in the report', async () => {
+  it('runs GC after the writer pass and pins the none horizon in the report', async () => {
     const order: string[] = []
     let gcAuthority: WriterLeaseAuthority | undefined
     const summary: GcSummary = {
@@ -445,7 +444,7 @@ describe('drain-tail GC diagnostics (DCAY-05)', () => {
     expect(gc).not.toHaveBeenCalled()
   })
 
-  it('heals trimmed projections in the same drain (WR-01)', async () => {
+  it('heals trimmed projections in the same drain', async () => {
     const chain = publishChain('same-drain', 4)
     await rebuildIndex({ knowledgeRoot })
     const victim = chain.superseded[0]!

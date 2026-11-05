@@ -1,18 +1,4 @@
-// Concrete filesystem storage-state store (Phase 360, D-14 / STORAGE-STATE).
-//
-// Implements the storage-neutral `StorageStatePort` from @vostride/agent-qa-runner. This is a
-// storageImplementation home for node:fs/promises + node:path (the same boundary as
-// FsActionCache) — ALL storage-state fs writes live here, never in the runner (validate:arch
-// storageNeutral). On-disk layout:
-//
-//   <root>/storage-states/<slug(name)>.json
-//
-// D-14 raw-but-local: the RAW adapter storage-state blob (auth material) is written verbatim so
-// it can be restored, under the gitignored `.agent-qa` runtime dir. It is never masked and never
-// enters evidence — `save` returns only a `{ name, fingerprint }` reference. The name is slugged
-// traversal-safe (the 356 `slugBranch` idiom) so a planner-supplied `../..`-shaped name can never
-// escape the storage-states root (T-360-03). Durability is independent of the action-cache schema
-// version — storage states persist across runs per the spec's auth-reuse intent.
+// Raw auth material, written verbatim and never masked; `save` returns only name and fingerprint.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -52,7 +38,7 @@ export class FsStorageStateStore implements StorageStatePort {
     try {
       raw = await readFile(this.entryPath(name), 'utf-8')
     } catch (err) {
-      // A missing slot is never an error (D-14) — undefined, no throw.
+      // A missing slot is never an error — undefined, no throw.
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined
       throw err
     }
@@ -69,8 +55,7 @@ export class FsStorageStateStore implements StorageStatePort {
   }
 
   private entryPath(name: string): string {
-    // slugBranch neutralizes `..`, path separators, and leading/trailing dots so the slug is a
-    // single safe path segment that can never traverse out of storage-states/ (T-360-03).
+    // `slugBranch` makes the name one safe path segment inside `storage-states/`.
     return join(this.storageStatesDir(), `${slugBranch(name)}.json`)
   }
 }

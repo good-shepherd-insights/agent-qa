@@ -1,30 +1,4 @@
-// THE IN-PROCESS RUN EXECUTION'S OWN CELLS (Phase 401 plan 11).
-//
-// This file grows across the plan. Task 1 lands the typed-input-error register — the proof that no
-// input failure on this path can terminate its host (T-401-31). Task 2 adds the composability cell,
-// its denial control and the D-07 ambient-crossing pair.
-//
-// THE RED BASELINE FOR THE TASK-1 CELLS IS NOT A FAILING ASSERTION, and saying so plainly is more
-// honest than manufacturing one. Pre-task there was no `CliRunInputError` to catch: the preflight
-// RENDERED and called `process.exit`, so the measurement is what the shipped binary did, taken on
-// the pre-extraction dist and pasted into the plan's SUMMARY:
-//
-//     $ agent-qa run tests/red.yaml          # with no .env
-//     Error: Env file not found: <PROJECT>/.env
-//     exit=1
-//     $ agent-qa run 'tests/nothing-*.yaml'
-//     Error: No test files found matching patterns:
-//       tests/nothing-*.yaml
-//     exit=2
-//     $ agent-qa run tests/empty.yaml
-//     Error: Resolved test file(s) but found 0 runnable tests.
-//       <PROJECT>/tests/empty.yaml
-//     Each test file must define at least one test (a top-level `name` + `steps`, or a `tests:` list).
-//     exit=2
-//
-// A process that terminates cannot be asserted about from inside; the cells below assert the same
-// lines and the same codes arriving as a VALUE, and — the discriminating half — that the
-// host-terminating call was never reached.
+// Input failures arrive as values with their lines and exit code, and no exit is reached.
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -89,7 +63,7 @@ function plain(lines: readonly string[]): string[] {
   return lines.map((line) => line.replace(/\[[0-9;]*m/g, ''))
 }
 
-describe('the in-process run path refuses inputs instead of terminating its host (401-11, T-401-31)', () => {
+describe('the in-process run path refuses inputs instead of terminating its host', () => {
   it('a missing env file is a typed refusal carrying the command’s own line and exit code 1', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -184,7 +158,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
     }
   })
 
-  it('a test file that parses to zero runnable tests is the RUNX-06 refusal, exit code 2', async () => {
+  it('a test file that parses to zero runnable tests is refused with exit code 2', async () => {
     const files = ['/tmp/whatever/tests/empty.yaml']
     const refusal = await refusalFrom(async () => { refuseZeroRunnableTests(files, []) })
     expect(plain(refusal.lines)).toEqual([
@@ -232,8 +206,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
   })
 
   it('a suite pattern resolves into the SUITES half, not the tests half', async () => {
-    // The other half of the split, without which "returns both halves" is a claim about one of
-    // them. Task 2's dispatcher reads exactly this.
+    // The other half of the split: a suite pattern lands in the suites half.
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -269,21 +242,7 @@ describe('the in-process run path refuses inputs instead of terminating its host
   })
 })
 
-// ============================================================================================
-// TASK 2 — THE PORT ITSELF
-//
-// THE RED BASELINE, and it is a measured fact rather than a failing assertion. Pre-task there was
-// nothing to red: `assembleCliRun`'s input declares `members` and `executor` as REQUIRED,
-// `RunsStartInputSchema` carries neither, and the only chain that turns one into the other lived
-// unexported inside `run.ts`'s command body. A cell for the port could not be written against a
-// symbol that did not exist — which is the wall 401-06 halted on, stated as a measurement. The real
-// bar for these cells is the mutation ledger in task 4.
-//
-// EVERY RUN BELOW IS A REAL RUN, IN THIS PROCESS. The fixture's model points at an unbindable port
-// and `PLAYWRIGHT_BROWSERS_PATH` is an empty directory, so a member fails fast — but it fails
-// DOWNSTREAM of `startRun`, which is the whole point: the artifacts a started run leaves are what
-// these cells read.
-// ============================================================================================
+// Every run below is real and in process; a member fails fast but downstream of `startRun`.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -293,7 +252,6 @@ import {
   getActiveExecutionContext,
   setActiveExecutionContextResolver,
 } from '@vostride/agent-qa-safety'
-import { RunDeniedError } from '@vostride/agent-qa-agent-local'
 import type { RunSession } from '@vostride/agent-qa-schema'
 
 import { runInProcessCliRun } from '../in-process-run-execution.js'
@@ -306,7 +264,7 @@ import { invokeFunction } from '@vostride/agent-qa-agent'
 import { CLI_FUNCTION_CALLER, composeCliLocalAgent } from '../local-agent-host.js'
 import { closeTestRunRecords, removeInProcessFixtures, testRunRecord } from './in-process-run-fixture.js'
 
-// 2026-10-17 (443-08, D-22): every drive call carries a record; each cell closes the ones it opened.
+// Every drive call carries a record; each cell closes the ones it opened.
 afterEach(() => { closeTestRunRecords() })
 
 /** The process-global resolver is exactly that; a leaked pin poisons every sibling cell. */
@@ -346,7 +304,7 @@ function handoffs(fixture: { project: string; suitePattern: string }): unknown[]
     .map((path) => JSON.parse(readFileSync(path, 'utf8')) as unknown)
 }
 
-describe('a door holding only a RunsStartInput gets a policy-gated run, in process (401-11)', () => {
+describe('a door holding only a RunsStartInput gets a policy-gated run, in process', () => {
   it('THE COMPOSABILITY CELL — { patterns } and a posture, and a real run happens', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -358,22 +316,18 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       // that framework error exactly as the shipped door does. The run still HAPPENED, which is
       // what every assertion below reads. Caught rather than asserted-against so this cell is about
       // the seam and not about the fixture's failure mode.
-      let denial: unknown
       try {
         await runInProcessCliRun(
           {
             runRecord: testRunRecord(),
             ...fixtureOptions(fixture),
-            // THE POSTURE TRAVELS EXPLICITLY (D-07). No CLI option is named anywhere in this call.
+            // The posture travels explicitly; no CLI option is named in this call.
             executionContext: 'local-headless',
             onSession: (started) => { session = started },
           },
           { patterns: [fixture.testPattern] },
         )
-      } catch (err) {
-        denial = err
-      }
-      expect(denial).not.toBeInstanceOf(RunDeniedError)
+      } catch { /* the member's framework error; the run still happened */ }
 
       // THE IN-PROCESS WITNESS. No child process can hand back a live object, so a cell that
       // asserts this cannot pass over a spawn.
@@ -388,54 +342,11 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
       expect(runDirs(fixture as never).map((dir) => dir.split('/').pop())).toContain(
         session!.id as unknown as string,
       )
-      // The gate allowed it, so the baseline probe knocked — the converse of the denial control.
+      // The run started, so the baseline probe knocked.
       expect(target.hits).toEqual(['/in-process-thing'])
       expect(buildOrdinalsExist(fixture as never)).toBe(true)
-      // 432-13: the start is not asked about, so it leaves no approval row.
+      // The start is not asked about, so it leaves no approval row.
       expect(auditRows(fixture as never)).toEqual([])
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  // RE-SPELLED 2026-09-30 (432-13): was `environment: 'shared'`, refused by the run gate. A shared
-  // target now starts (C432-DOOR-NONPRODUCTION), so the one field that still refuses is a production
-  // declaration the config has not opted into.
-  it('THE DENIAL CONTROL — one field different, and all artifacts say refused', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
-      let session: RunSession | undefined
-
-      let denial: unknown
-      try {
-        await runInProcessCliRun(
-          {
-            runRecord: testRunRecord(),
-            ...fixtureOptions(fixture),
-            executionContext: 'local-headless',
-            onSession: (started) => { session = started },
-          },
-          { patterns: [fixture.testPattern] },
-        )
-      } catch (err) {
-        denial = err
-      }
-
-      expect(denial).toBeInstanceOf(RunDeniedError)
-      // (a) no approval row: the production refusal is not a gate decision
-      expect(auditRows(fixture as never)).toEqual([])
-      // (b) no run events — `runStarted` is seq 1 of any run that began at all
-      expect(eventTypes(fixture as never)).toEqual([])
-      expect(session).toBeUndefined()
-      // (c) the durable assembly side effect never happened
-      expect(buildOrdinalsExist(fixture as never)).toBe(false)
-      // (d) nobody knocked on the target
-      expect(target.hits).toEqual([])
-      // (e) the reason names the production target
-      expect((denial as RunDeniedError).reason).toContain(fixture.targetName)
-      expect((denial as RunDeniedError).reason).toMatch(/production/i)
     } finally {
       await target.close()
     }
@@ -467,17 +378,17 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
     }
   }, 120_000)
 
-  it('THE REQUEST NAMES THE CONFIG — `request.configPath` decides what is resolved and gated', async () => {
-    // CARRIED FORWARD BY 401-10 from `fn-runs-start.test.ts`, which died with the child it drove.
-    // The old cell read the `--config` operand the port put in front of the child. The contract
-    // survived the retirement (`runInProcessCliRun`: `request.configPath ?? options.configPath`)
-    // and had no other cell, so it is re-asserted here at the EFFECT — the stronger reading, since
-    // a port that accepted the field and dropped it produces no argv to be wrong about.
+  it('THE REQUEST NAMES THE CONFIG — `request.configPath` decides what is resolved', async () => {
+    // `request.configPath ?? options.configPath` is asserted at its effect, the run it targets.
     const target = new CountingTarget()
     await target.listen()
     try {
       const composed = createInProcessFixture({ origin: target.origin, environment: 'local' })
-      const named = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const named = createInProcessFixture({
+        origin: target.origin,
+        environment: 'local',
+        targetPath: '/named-thing',
+      })
       expect(named.configPath).not.toBe(composed.configPath)
 
       try {
@@ -487,56 +398,19 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
         )
       } catch { /* the member's framework error; where the run LANDED is what this cell reads */ }
 
-      // THE GATE RAN AGAINST THE CONFIG THE REQUEST NAMED. The audit row is the gate's own record
-      // and it is written beside the config whose target declaration it read — so this is the
-      // assertion that a dropped `configPath` could not survive: the classification would have come
-      // off the composition's project instead.
-      // RE-SPELLED 2026-09-30 (432-13): the gate's audit row is gone, so the witness that the
-      // request's config was read is the named project's production declaration refusing below.
-      expect(auditRows(named as never)).toEqual([])
-      expect(auditRows(composed as never)).toEqual([])
+      // THE TARGET CAME FROM THE CONFIG THE REQUEST NAMED. Both configs declare the same target
+      // name, and only the named one points it at `/named-thing`, so a port that dropped
+      // `configPath` would have probed the composed project's `/in-process-thing` instead.
+      expect(target.hits).toEqual(['/named-thing'])
 
-      // AND THE RUN'S DURABLE EVIDENCE FOLLOWS `agentQaRoot`, WHICH THE REQUEST CANNOT NAME. This
-      // is asserted rather than smoothed over: the two halves of one run land in two projects when
-      // a door's config and its request's config differ. It is not the retired wire's behaviour —
-      // the child resolved BOTH from `--config`, which put the evidence somewhere the composition's
-      // own evidence check could not read, and the ack failed. Recorded in the phase's
-      // deferred-items as a contract question with an owner, not decided here.
+      // The run's durable evidence follows `agentQaRoot`, which the request cannot name.
       expect(eventTypes(composed as never)).toContain('runStarted')
       expect(eventTypes(named as never)).toEqual([])
       expect(buildOrdinalsExist(composed as never)).toBe(true)
       expect(buildOrdinalsExist(named as never)).toBe(false)
-      // One run, one id — not two runs. RE-SPELLED 2026-09-30 (432-13): the named project's half
-      // was the gate's audit row, written under ITS run dir; no row is written now, so the named
-      // project holds no run dir at all and the whole run is the composed project's.
+      // One run, one id: every run dir is the composed project's.
       expect(runDirs(named as never)).toEqual([])
       expect(runDirs(composed as never)).toHaveLength(1)
-    } finally {
-      await target.close()
-    }
-  }, 120_000)
-
-  it('THE REQUEST NAMES THE CONFIG — a production declaration in the NAMED config refuses (432-13)', async () => {
-    // The witness the retired audit row gave: the declaration read is the request's config's. The
-    // composed config is `local`, the named one `production`; only a port that read the named config
-    // refuses.
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const composed = createInProcessFixture({ origin: target.origin, environment: 'local' })
-      const named = createInProcessFixture({ origin: target.origin, environment: 'production' })
-      let denial: unknown
-      try {
-        await runInProcessCliRun(
-          { runRecord: testRunRecord(), ...fixtureOptions(composed), executionContext: 'local-headless' },
-          { configPath: named.configPath, patterns: [named.testPattern] },
-        )
-      } catch (err) {
-        denial = err
-      }
-      expect(denial).toBeInstanceOf(RunDeniedError)
-      expect(eventTypes(composed as never)).toEqual([])
-      expect(target.hits).toEqual([])
     } finally {
       await target.close()
     }
@@ -568,9 +442,7 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
     }
   }, 120_000)
 
-  // Owner decision 2026-09-26 (2), G-428-2: both producers put the texts member-runner announces on
-  // every descriptor. The expected texts come from the fixture's own YAML through the core parser,
-  // located by each descriptor's own identity path and test id.
+  // Both producers put the texts member-runner announces on every descriptor.
   it('STEP-TEXTS-ON-BOTH-MEMBER-BUILDERS', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -616,13 +488,8 @@ describe('a door holding only a RunsStartInput gets a policy-gated run, in proce
   }, 120_000)
 })
 
-// RE-SPELLED 2026-09-30 (432-13). The D-07 pair used the run gate as its discriminator: an ambient
-// read would have prompted where the injected context failed closed, and the reverse. The run gate is
-// gone, so a non-production start no longer varies with the context at all — which is the claim the
-// pair now pins, both ways round. The injected context is still what the run carries
-// (`resolveExecutionContext: () => input.executionContext` in run-composition); its only reader until
-// 432-19 is the in-run gate hook, which no action of this fixture reaches.
-describe('C432-DOOR-NONPRODUCTION: a shared target starts whatever the injected or ambient context (432-13)', () => {
+// A non-production start does not vary with the execution context, injected or ambient.
+describe('a shared target starts whatever the injected or ambient context', () => {
   it.each([
     { ambient: 'local-interactive', injected: 'ci' },
     { ambient: 'ci', injected: 'local-interactive' },
@@ -632,17 +499,13 @@ describe('C432-DOOR-NONPRODUCTION: a shared target starts whatever the injected 
     try {
       pinAmbientExecutionContext(ambient)
       const fixture = createInProcessFixture({ origin: target.origin, environment: 'shared' })
-      let denial: unknown
       try {
         await runInProcessCliRun(
           { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: injected },
           { patterns: [fixture.testPattern] },
         )
-      } catch (err) {
-        denial = err
-      }
+      } catch { /* the member's framework error; the run still happened */ }
 
-      expect(denial).not.toBeInstanceOf(RunDeniedError)
       expect(eventTypes(fixture as never)).toContain('runStarted')
       expect(target.hits).toEqual(['/in-process-thing'])
       expect(auditRows(fixture as never)).toEqual([])
@@ -652,11 +515,7 @@ describe('C432-DOOR-NONPRODUCTION: a shared target starts whatever the injected 
   }, 120_000)
 })
 
-// RE-SPELLED 2026-09-30 (432-13). This cell read the disclosure the confirm port was handed, and the
-// port was its only consumer; no door asks about a run any more. What stays true on the door's own
-// road is the reach half: a two-target invocation drives BOTH declared targets. The disclosure text
-// itself keeps its unit cells beside `buildRunDisclosure` until 432-18/19 retire it.
-describe('the CLI door drives every target a two-target invocation names (401-14, W-1; 432-13)', () => {
+describe('the CLI door drives every target a two-target invocation names', () => {
   it('a TWO-TARGET shared invocation starts and probes both declared targets', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -666,17 +525,13 @@ describe('the CLI door drives every target a two-target invocation names (401-14
         environment: 'shared',
         secondTarget: true,
       })
-      let denial: unknown
       try {
         await runInProcessCliRun(
           { runRecord: testRunRecord(), ...fixtureOptions(fixture), executionContext: 'local-interactive' },
           { patterns: [fixture.testPattern, fixture.secondTestPattern!] },
         )
-      } catch (err) {
-        denial = err
-      }
+      } catch { /* the member's framework error; the run still happened */ }
 
-      expect(denial).not.toBeInstanceOf(RunDeniedError)
       expect(eventTypes(fixture as never)).toContain('runStarted')
       expect([...target.hits].sort()).toEqual(['/in-process-thing', '/the-second-thing'])
     } finally {
@@ -685,7 +540,7 @@ describe('the CLI door drives every target a two-target invocation names (401-14
   }, 120_000)
 })
 
-describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19, WR-04)', () => {
+describe('the run-start baseline is taken PER MEMBER and deduped by URL', () => {
   it('two members naming two different web targets: each target is probed, once', async () => {
     // The direct producer's road. Both targets declare `local`, so the run is allowed with no
     // confirm and the only axis left is which URLs assembly reaches for.
@@ -729,8 +584,7 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
   }, 120_000)
 
   it('two members naming the SAME web target cost ONE probe, not one each', async () => {
-    // The dedupe half, and the direction a naive per-member fix breaks: WR-04's complaint was an
-    // unexpected outbound request, so turning one GET into N would be a regression dressed as a fix.
+    // One GET for the shared target, not one per member: an extra outbound request is the defect.
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -802,16 +656,12 @@ describe('the run-start baseline is taken PER MEMBER and deduped by URL (401-19,
   }, 120_000)
 })
 
-// ---------------------------------------------------------------------------
-// 441-58 (D-14): the drive writes no masking-digests sidecar beside events.jsonl
-// ---------------------------------------------------------------------------
-
-describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-14)', () => {
+describe('a dashboard-launched run leaves no masking-digests sidecar', () => {
   it('a run directory holds events.jsonl and no masking-digests.json', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      const plantedSecret = 'zq7-planted-masking-secret-405-02'
+      const plantedSecret = 'zq7-planted-masking-secret-a'
       const fixture = createInProcessFixture({
         origin: target.origin,
         environment: 'local',
@@ -838,7 +688,6 @@ describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-
     }
   }, 120_000)
 
-  // 441-48 (D-14): with the sidecar module deleted, the host root gains no masking key either.
   it('a finished run leaves no masking digest or host key', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -846,7 +695,7 @@ describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-
       const fixture = createInProcessFixture({
         origin: target.origin,
         environment: 'local',
-        plantedSecret: 'zq7-planted-masking-secret-441-48',
+        plantedSecret: 'zq7-planted-masking-secret-b',
       })
 
       try {
@@ -867,9 +716,7 @@ describe('a dashboard-launched run leaves no masking-digests sidecar (441-58, D-
   }, 120_000)
 })
 
-// ---------------------------------------------------------------------------
-// 441-12 (D-06, D-11): a run's records are masked by the redactor its producer read, and only by it
-// ---------------------------------------------------------------------------
+// A run's records are masked by the redactor its producer read, and only by it.
 
 /** Every line of the one run's `events.jsonl`, as written. */
 function eventLines(fixture: { project: string; suitePattern: string }): string[] {
@@ -888,12 +735,12 @@ function onlyStepText(lines: readonly string[]): string {
   return stepTexts[0]!
 }
 
-describe('C441-RUN-RECORDS', () => {
+describe('declared secrets in in-process run records', () => {
   it("an in-process run's events.jsonl holds the declared marker and the email as written", async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      const plantedSecret = 'zq7-planted-run-records-441'
+      const plantedSecret = 'zq7-planted-run-records'
       const fixture = createInProcessFixture({
         origin: target.origin,
         environment: 'local',
@@ -926,7 +773,7 @@ describe('C441-RUN-RECORDS', () => {
         stepText: 'Sign in with Hunter-42-zz, then with Later-99-qq',
       })
       const secretsPath = join(fixture.project, '.env.secrets.local')
-      writeFileSync(secretsPath, 'PW_441=Hunter-42-zz\n')
+      writeFileSync(secretsPath, 'PW_KEY=Hunter-42-zz\n')
       let rewritten = false
       try {
         await runInProcessCliRun(
@@ -938,7 +785,7 @@ describe('C441-RUN-RECORDS', () => {
               session.subscribe(1, () => {
                 if (rewritten) return
                 rewritten = true
-                writeFileSync(secretsPath, 'PW_441=Later-99-qq\n')
+                writeFileSync(secretsPath, 'PW_KEY=Later-99-qq\n')
               })
             },
           },
@@ -948,7 +795,7 @@ describe('C441-RUN-RECORDS', () => {
 
       expect(rewritten).toBe(true)
       const lines = eventLines(fixture)
-      expect(onlyStepText(lines)).toBe('Sign in with [secret:PW_441], then with Later-99-qq')
+      expect(onlyStepText(lines)).toBe('Sign in with [secret:PW_KEY], then with Later-99-qq')
       expect(lines.filter((line) => line.includes('Hunter-42-zz'))).toEqual([])
     } finally {
       await target.close()
@@ -959,11 +806,11 @@ describe('C441-RUN-RECORDS', () => {
     const target = new CountingTarget()
     await target.listen()
     try {
-      const stepText = 'Use alpha-441-x and bravo-441-y'
+      const stepText = 'Use alpha-x and bravo-y'
       const alpha = createInProcessFixture({ origin: target.origin, environment: 'local', stepText })
       const bravo = createInProcessFixture({ origin: target.origin, environment: 'local', stepText })
-      writeFileSync(join(alpha.project, '.env.secrets.local'), 'A_441=alpha-441-x\n')
-      writeFileSync(join(bravo.project, '.env.secrets.local'), 'B_441=bravo-441-y\n')
+      writeFileSync(join(alpha.project, '.env.secrets.local'), 'A_KEY=alpha-x\n')
+      writeFileSync(join(bravo.project, '.env.secrets.local'), 'B_KEY=bravo-y\n')
       const run = async (fixture: typeof alpha): Promise<void> => {
         try {
           await runInProcessCliRun(
@@ -976,19 +823,18 @@ describe('C441-RUN-RECORDS', () => {
 
       const alphaLines = eventLines(alpha)
       const bravoLines = eventLines(bravo)
-      expect(onlyStepText(alphaLines)).toBe('Use [secret:A_441] and bravo-441-y')
-      expect(onlyStepText(bravoLines)).toBe('Use alpha-441-x and [secret:B_441]')
-      expect(alphaLines.filter((line) => line.includes('alpha-441-x'))).toEqual([])
-      expect(bravoLines.filter((line) => line.includes('bravo-441-y'))).toEqual([])
+      expect(onlyStepText(alphaLines)).toBe('Use [secret:A_KEY] and bravo-y')
+      expect(onlyStepText(bravoLines)).toBe('Use alpha-x and [secret:B_KEY]')
+      expect(alphaLines.filter((line) => line.includes('alpha-x'))).toEqual([])
+      expect(bravoLines.filter((line) => line.includes('bravo-y'))).toEqual([])
     } finally {
       await target.close()
     }
   }, 120_000)
 })
 
-// 2026-10-17 (443-08, D-05): a runs.start that names a suite opens its record before the suite is
-// prepared, so an unopenable runs.db refuses it before any plugin loads.
-describe('C443-RECORD-REFUSAL', () => {
+// An unopenable `runs.db` refuses a suite run before any plugin loads.
+describe('a suite run opens its record before preparing the suite', () => {
   it('a runs.start whose pattern is a suite opens the record before preparing the suite', async () => {
     const target = new CountingTarget()
     await target.listen()
@@ -1026,6 +872,41 @@ describe('C443-RECORD-REFUSAL', () => {
       expect(existsSync(marker), 'the auth plugin loaded').toBe(false)
     } finally {
       await composed.close()
+      await target.close()
+    }
+  }, 120_000)
+})
+
+describe('a run that re-raises a framework error hands over its post-run work', () => {
+  it('the drive hands its detached post-run work to onPostRun before it throws', async () => {
+    const target = new CountingTarget()
+    await target.listen()
+    try {
+      const fixture = createInProcessFixture({ origin: target.origin, environment: 'local' })
+      const handedOver: Array<Promise<void>> = []
+      // An aborted signal stops the drive waiting on the analysis enqueue, so the enqueue is still
+      // the run's detached work when the member's framework error is re-raised.
+      const postVerdictSignal = AbortSignal.abort()
+      let thrown: unknown
+      try {
+        await runInProcessCliRun(
+          {
+            runRecord: testRunRecord(),
+            ...fixtureOptions(fixture),
+            executionContext: 'local-headless',
+            postVerdictSignal,
+            onPostRun: (settled) => { handedOver.push(settled) },
+          },
+          { patterns: [fixture.testPattern] },
+        )
+      } catch (error) {
+        thrown = error
+      }
+
+      expect(thrown, 'the member raised no framework error').toBeInstanceOf(Error)
+      expect(handedOver, 'the detached post-run work was not handed over').toHaveLength(1)
+      await expect(handedOver[0]).resolves.toBeUndefined()
+    } finally {
       await target.close()
     }
   }, 120_000)

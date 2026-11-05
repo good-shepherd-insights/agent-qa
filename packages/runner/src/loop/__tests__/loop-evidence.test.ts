@@ -1,7 +1,3 @@
-// SCREEN-02 / D-15: the evidence boundary matrix. stateBefore is always the FULL
-// ScreenState the sub-action was planned against; stateAfter lands ONLY at the three
-// spec-locked boundaries (assert, verifier, self-heal) by reuse of an observation the
-// loop already takes. Plus the redact-before-record security lock and the cache fold.
 import { describe, it, expect } from 'vitest'
 import type { BriefBlock, RecordedRetrievalRung } from '@vostride/agent-qa-schema'
 import type { KnowledgeHintReader } from '../../knowledge-hint-reader.js'
@@ -26,26 +22,18 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
   return overrides
 }
 
-describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
-  it('(1) every recorded sub-action carries stateBefore with non-empty elements and refMap', async () => {
+describe('loop evidence matrix', () => {
+  it('every recorded sub-action carries stateBefore with non-empty elements and refMap', async () => {
     const result = await executeStep('Click Log in', ports({ adapter: makeAdapter(), planner: makePlanner() }), makeStepContext())
     const sub = result.evidence!.subActions[0]
     expect(sub.stateBefore.elements.length).toBeGreaterThan(0)
     expect(Object.keys(sub.stateBefore.refMap).length).toBeGreaterThan(0)
   })
 
-  // (2) REMOVED (Phase 360, D-19): this pinned the retired non-visual-`assert` afterState-reuse
-  // special-case (D-15a) — stateAfter === stateBefore. Both the verb and the reuse branch were
-  // deleted this plan; a no-verifier completion no longer reuses stateBefore. The deterministic
-  // assertion-outcome behavior that replaces it is pinned in assert-value.test.ts (Plan 10), so
-  // it is NOT duplicated here. The surviving stateAfter paths are covered by (3) and (4) below.
-
-  it('(3) a verified sub-action gets the verifier re-observation as stateAfter (D-15b)', async () => {
+  it('a verified sub-action gets the verifier re-observation as stateAfter', async () => {
     const before = makeScreenState({ url: 'https://example.test/before' })
     const after = makeScreenState({ url: 'https://example.test/after' })
-    // The settle gate consumes two consecutive observations (identical screenIdentityHash —
-    // url is not part of screen identity) before proceeding, so `before` is fed twice; the
-    // verifier's own re-observation then yields `after` as stateAfter (D-15b).
+    // Settle needs two equal reads (url is not part of screen identity), so `before` is fed twice.
     const result = await executeStep(
       'Click Log in',
       ports({ adapter: makeAdapter({ observeResults: [before, before, after] }), planner: makePlanner(), verifier: makeVerifier() }),
@@ -57,7 +45,7 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     expect(sub.stateBefore.url).toBe('https://example.test/before')
   })
 
-  it('(4) a failed-then-recovered pair shares the boundary observation and records the contrastive selfHeal pair (D-15c)', async () => {
+  it('a failed-then-recovered pair with no saved path shares the boundary observation and records no self-heal', async () => {
     const screen1 = makeScreenState({ url: 'https://example.test/1' })
     const screen2 = makeScreenState({ url: 'https://example.test/2' })
     const adapter = makeAdapter({
@@ -75,12 +63,10 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     // recovering sub-action's stateBefore (identical-state sharing, one capture).
     expect(failed.stateAfter).toEqual(recovering.stateBefore)
     expect(failed.stateAfter?.url).toBe('https://example.test/2')
-    expect(result.evidence!.selfHeal).toBeDefined()
-    expect(result.evidence!.selfHeal?.failedDecision.plannedAction.type).toBe('click')
-    expect(result.evidence!.selfHeal?.recoveringDecision.plan).toBe('right')
+    expect(result.evidence!.selfHeal).toBeUndefined()
   })
 
-  it('(5) a sub-action at no boundary has no stateAfter', async () => {
+  it('a sub-action at no boundary has no stateAfter', async () => {
     const adapter = makeAdapter({
       observeResults: [makeScreenState(), makeScreenState()],
       executeResults: [{ success: true }, { success: true }],
@@ -94,7 +80,7 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     expect(result.evidence!.subActions[0].stateAfter).toBeUndefined()
   })
 
-  it('(6) a [secret:x]-bearing plan never reaches SubActionEvidence unredacted', async () => {
+  it('a [secret:x]-bearing plan never reaches SubActionEvidence unredacted', async () => {
     const store = new SecretStore({ PASSWORD: 'hunter2' })
     const redactor = new SecretRedactor(store)
     const planner = makePlanner([makeActionPlan({ action: { type: 'fill', ref: 'e1', value: '{{secret:PASSWORD}}' }, stepComplete: true })])
@@ -108,7 +94,7 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     expect(JSON.stringify(result.evidence)).not.toContain('hunter2')
   })
 
-  it('(7) a cache miss (the planner ran) folds to cacheStatus miss', async () => {
+  it('a cache miss (the planner ran) folds to cacheStatus miss', async () => {
     const cache: ActionPlanCache = {
       async get() { return null },
       async set() {},
@@ -124,13 +110,13 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     expect(result.evidence!.cacheStatus).toBe('miss')
   })
 
-  it('(7b) an exact-key hit re-grounds and replays — folds to cacheStatus hit, no planner', async () => {
+  it('an exact-key hit re-grounds and replays — folds to cacheStatus hit, no planner', async () => {
     const cachedLogin: CachedPlanValue = {
       // Descriptor-only value: ref/coords stripped; grounding rides on the locator, which
       // re-grounds to the fresh `log in` button (e2) in the observation.
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', name: 'Log in' }],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const cache: ActionPlanCache = {
       async get() { return cachedLogin },
@@ -142,13 +128,29 @@ describe('loop evidence matrix (SCREEN-02 / D-15)', () => {
     expect(result.status).toBe('passed')
     expect(result.evidence!.cacheStatus).toBe('hit')
   })
+
+  it('a step with no cache bound records its cache as disabled', async () => {
+    const planner = makePlanner([makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true })])
+    const result = await executeStep('One sub-action', ports({ adapter: makeAdapter(), planner }), makeStepContext())
+    expect(result.status).toBe('passed')
+    expect(result.evidence!.cacheStatus).toBe('disabled')
+  })
+
+  it('a step that would bypass records disabled when no cache is bound', async () => {
+    const store = new SecretStore({ PASSWORD: 'hunter2' })
+    const instruction = 'Type {{secret:PASSWORD}} into the password field'
+    const planner = makePlanner([makeActionPlan({ action: { type: 'click', ref: 'e2' }, stepComplete: true })])
+    const result = await executeStep(
+      instruction,
+      ports({ adapter: makeAdapter(), planner, secretStore: store, secretRedactor: new SecretRedactor(store) }),
+      makeStepContext({ stepInstruction: instruction }),
+    )
+    expect(result.evidence!.cacheStatus).toBe('disabled')
+  })
 })
 
-// 407-07 · D-13/D-16: the loop is HANDED a rung (resolved once at the composition root) and
-// stamps it into every step's evidence. Three laws are pinned here because each one is a way
-// the banner could lie: a rung stamped on a run that served no brief (D-16), a rung lost
-// because a host probe was slow, and a step FAILED because asking about the host threw.
-describe('loop retrieval rung threading (407 D-13/D-16)', () => {
+// The loop is handed its rung and stamps it into every step's evidence.
+describe('loop retrieval rung threading', () => {
   const rung: RecordedRetrievalRung = {
     schemaVersion: 2,
     rung: 'lexical-only',
@@ -180,7 +182,7 @@ describe('loop retrieval rung threading (407 D-13/D-16)', () => {
     expect(result.evidence!.retrievalRung).toEqual(rung)
   })
 
-  it('stamps NO rung when no knowledge reader is bound — no reader bound is not a rung (D-16)', async () => {
+  it('stamps NO rung when no knowledge reader is bound — no reader bound is not a rung', async () => {
     const result = await executeStep(
       'Click Log in',
       ports({

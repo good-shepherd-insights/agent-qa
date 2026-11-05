@@ -21,10 +21,8 @@ import {
   type NudgeResponse,
 } from './server.js'
 
-/** Provisional stream reconnect budget; retune from operational evidence without adding config. */
 export const STREAM_RESUME_MAX_ATTEMPTS = 3
 
-/** Pinned nudge I/O budget; retune under D-15 from operational evidence, never config. */
 export const DAEMON_NUDGE_TIMEOUT_MS = 5_000
 
 export interface NudgeDaemonOptions {
@@ -80,15 +78,7 @@ type DaemonStreamInterruptionReason =
   | 'daemon-unavailable'
   | 'resume-attempts-exhausted'
 
-/**
- * Fields assigned in the body rather than declared as constructor parameter properties.
- *
- * 388-02: the daemon child boots `daemon/host.ts` under `--experimental-strip-types`, which
- * refuses a parameter property outright (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`) — so the syntax
- * used here decides whether a module is reachable from the daemon's boot graph at all. The
- * post-run tail put `nudgeDaemon` on that graph; the honest fix is to make this file
- * strip-safe rather than to route the import around it and leave the trap armed.
- */
+// Assigned in the body, because the daemon's strip-types boot refuses parameter properties.
 export class DaemonStreamInterruptedError extends Error {
   readonly lastEventId: number | undefined
   readonly reason: DaemonStreamInterruptionReason
@@ -152,12 +142,7 @@ export function rehydrateFunctionError(value: unknown, statusCode: number): Erro
   ) {
     return new FunctionInputError(functionId, wire.issues)
   }
-  // 2026-10-01 (432-20, D-12): no `FunctionScopeError` arm. The scope check that raised it is
-  // deleted; a wire error naming it from an older daemon falls through to the generic error below
-  // with its message intact.
-  // 2026-10-01 (432-19, D-15): no `FunctionDeniedError` arm. The execution gate that raised it is
-  // deleted, and a wire error naming it from an older daemon falls through to the generic error
-  // below with its message intact.
+  // An older daemon's scope or denial error falls through to the generic error, message intact.
   if (wire?.name === 'FunctionNotBoundError' && functionId !== undefined) {
     return new FunctionNotBoundError(functionId)
   }

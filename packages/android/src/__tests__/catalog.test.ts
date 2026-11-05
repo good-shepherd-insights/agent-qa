@@ -1,21 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// ---------------------------------------------------------------------------
-// Wave-0 RED catalog suite — Phase 360 Plan 02, Task 3 (EXEC-06; T-360-02).
-//
-// Pins the driver-call contract for every Android verb gaining or changing execution
-// this phase against a call-logging mocked webdriverio driver — no live Appium. New
-// android-only cases (pressBack/Home/Recent, openNotifications, openQuickSettings,
-// intent, keyevent), the injection-safety mitigations (typed-args-only intent, KEYCODE
-// allow-list keyevent — T-360-02, the 359 escapeUiSelectorText precedent), the fold
-// re-keys (waitFor on-shapes, keypress mode, swipe path), and the retired assert/openLink/
-// launchApp cases (pinned to the post-flip unreachable outcome so they go green when Plan
-// 06 deletes them).
-//
-// RED convention: these fail on missing / legacy-keyed case behavior (uncalled `mobile:`
-// mocks, assertNever fall-through), NEVER on compile errors — action literals are cast via
-// `as unknown as ExecAction`. The pre-existing adapter.test.ts + compound.test.ts stay GREEN.
-// ---------------------------------------------------------------------------
+// Driver-call contract for each Android verb against a call-logging mocked driver; no live Appium.
 
 const ANDROID_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
@@ -87,7 +72,7 @@ import { AndroidPlatformAdapter } from '../adapter.js'
 
 type ExecAction = Parameters<AndroidPlatformAdapter['execute']>[0]
 
-describe('AndroidPlatformAdapter catalog (RED — Wave-0)', () => {
+describe('AndroidPlatformAdapter catalog', () => {
   let adapter: AndroidPlatformAdapter
   let mockDriver: ReturnType<typeof createMockDriver>
 
@@ -125,7 +110,7 @@ describe('AndroidPlatformAdapter catalog (RED — Wave-0)', () => {
       expect(r.success).toBe(true)
       expect(mockDriver.execute).toHaveBeenCalledWith('mobile: openNotifications')
     })
-    it('openQuickSettings → an args-array mobile: shell invocation (A1, no interpolation)', async () => {
+    it('openQuickSettings → an args-array mobile: shell invocation (no interpolation)', async () => {
       reset()
       const r = await adapter.execute({ type: 'openQuickSettings' } as unknown as ExecAction)
       expect(r.success).toBe(true)
@@ -133,7 +118,7 @@ describe('AndroidPlatformAdapter catalog (RED — Wave-0)', () => {
     })
   })
 
-  describe('intent → mobile: startActivity typed args (T-360-02, Pitfall 6: zero shell interpolation)', () => {
+  describe('intent → mobile: startActivity typed args, with no shell interpolation', () => {
     it('typed action/extras reach mobile: startActivity, never an am-start shell string', async () => {
       reset()
       await adapter.execute({
@@ -173,7 +158,7 @@ describe('AndroidPlatformAdapter catalog (RED — Wave-0)', () => {
     })
   })
 
-  describe('keyevent → KEYCODE allow-list, args-array lane (T-360-02)', () => {
+  describe('keyevent → KEYCODE allow-list, args-array lane', () => {
     it('a KEYCODE_* string matching ^KEYCODE_[A-Z0-9_]+$ executes via a driver call carrying the code', async () => {
       reset()
       await adapter.execute({ type: 'keyevent', keycode: 'KEYCODE_ENTER' } as unknown as ExecAction)
@@ -196,13 +181,13 @@ describe('AndroidPlatformAdapter catalog (RED — Wave-0)', () => {
       expect(r.success).toBe(true)
       expect(mockDriver.getPageSource).toHaveBeenCalled()
     })
-    it('waitFor {on:"selector"} returns a §7.1 web-only error (no selector waiting on native)', async () => {
+    it('waitFor {on:"selector"} returns a structured web-only error (no selector waiting on native)', async () => {
       reset()
       const r = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 } as unknown as ExecAction)
       expect(r.success).toBe(false)
       expect(r.error).toMatch(/web|selector/i)
     })
-    it('keypress mode:"press" works, mode:"down"/"up" return a §7.1 press-only error', async () => {
+    it('keypress mode:"press" works, mode:"down"/"up" return a structured press-only error', async () => {
       reset()
       const press = await adapter.execute({ type: 'keypress', keys: ['Enter'], mode: 'press' } as unknown as ExecAction)
       expect(press.success).toBe(true)
@@ -244,7 +229,7 @@ describe('AndroidPlatformAdapter catalog (RED — Wave-0)', () => {
     })
   })
 
-  describe('retired cases (Plan 06 deletes them — pinned to the post-flip unreachable outcome)', () => {
+  describe('the retired assert, openLink and launchApp actions no longer succeed', () => {
     it('assert / openLink / launchApp are no longer handled as distinct successful cases', async () => {
       reset()
       const rAssert = await adapter.execute({ type: 'assert', condition: 'x' } as unknown as ExecAction)

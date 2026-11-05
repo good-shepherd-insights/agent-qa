@@ -1,13 +1,4 @@
-// RED-first pins for FLAK-02's whole promise (Phase 390 D-14/D-16): a quarantined test still RUNS,
-// its failure does not fail the run — and the disposition is LOUD, never a rewritten outcome.
-//
-// The quarantined set arrives on RunConfig as PLAIN DATA (D-16): the runner gains zero ports and
-// stays storageNeutral; the CLI folds the committed ledger once at run start.
-//
-// Both directions are pinned in one suite (the two-sided-contract law): a quarantined failing member
-// aggregates 'passed' / exit 0, and a non-quarantined failing sibling still aggregates 'failed'.
-//
-// Runner package convention: `.js`-suffixed relative import specifiers.
+// A quarantined test still runs and its failure does not fail the run; its outcome stays truthful.
 import { describe, expect, it } from 'vitest'
 
 import { startRun } from '../shell.js'
@@ -60,13 +51,7 @@ function scriptedExecutor(script: Record<string, TestResult>): MemberTestExecuto
   }
 }
 
-/**
- * The same scripted executor, recording WHICH members it was invoked for.
- *
- * The recording is the point: a member the shell skipped never reaches the executor, so `executed`
- * is the only direct evidence of "this test actually ran" — the half of FLAK-02 that lives in the
- * member loop rather than in the verdict rule.
- */
+// A skipped member never reaches the executor, so `executed` is the evidence that a test ran.
 function trackingExecutor(
   script: Record<string, TestResult>,
   executed: string[],
@@ -142,7 +127,7 @@ function done(session: RunSession): Promise<{ verdict: string; handoff: Complete
 
 // ---- The end-to-end disposition path ------------------------------------
 
-describe('quarantine-aware run (D-14/D-16)', () => {
+describe('quarantine-aware run', () => {
   it('a quarantined failing member leaves the run passed at exit 0, outcome still failed', async () => {
     const session = startRun(baseConfig({ quarantined: [QUARANTINED_FLAKY] }))
     const { verdict, handoff } = await done(session)
@@ -150,8 +135,7 @@ describe('quarantine-aware run (D-14/D-16)', () => {
     expect(verdict).toBe('passed')
     expect(mapVerdictToExitCode(handoff.aggregateVerdict)).toBe(0)
 
-    // The member outcome stays TRUTHFUL — the projection window and the M-passes exit keep
-    // seeing reality (D-14). 'failed' stays 'failed'.
+    // The member outcome stays truthful: `failed` stays `failed`.
     const member = handoff.tests.find((test) => test.testId === 'flaky')
     expect(member?.outcome).toBe('failed')
     expect(member?.quarantined).toBe(true)
@@ -185,7 +169,7 @@ describe('quarantine-aware run (D-14/D-16)', () => {
     )
   })
 
-  it('an absent quarantined set reproduces pre-390 behavior byte-identically', async () => {
+  it('an absent quarantined set reproduces the unquarantined behavior byte-identically', async () => {
     const session = startRun(baseConfig())
     const { verdict, handoff } = await done(session)
 
@@ -212,7 +196,7 @@ describe('quarantine-aware run (D-14/D-16)', () => {
     expect(verdict).toBe('failed')
   })
 
-  it('suppresses a quarantined member that TIMES OUT, the same A3 phenomenon', async () => {
+  it('suppresses a quarantined member that TIMES OUT, the same phenomenon', async () => {
     const timeoutResult: TestResult = {
       name: 'flaky',
       filePath: 'flaky.test.ts',
@@ -234,21 +218,7 @@ describe('quarantine-aware run (D-14/D-16)', () => {
   })
 })
 
-// ---- The fail-fast gate, in the production descriptor shape (CR-01) -----------------------------
-//
-// FLAK-02's promise is that a quarantined test still RUNS. The aggregate rule above delivers half of
-// it; the other half lives in the shell's member loop, where a failing member POISONS its
-// `failFastGroup` and every later same-group member is skipped without ever reaching the executor.
-//
-// Measured 2026-08-05 (phase 390 verification, CR-01): with production-shape descriptors, a
-// quarantined failing member poisoned its group, its NON-quarantined failing sibling never executed,
-// the skip was neutral in the aggregate, and the run answered 'passed' / exit 0 where pre-390 it
-// exited 1. Every fixture in the suite above omits `failFastGroup`, so the CONTROL pin at :128 —
-// "a non-quarantined failing sibling still fails the run" — could not red on it.
-//
-// These four pins are the corpus that can. They assert the ANTI-SILENCING direction (the aggregate
-// and the exit code), not merely that the sibling executed: a build that runs the sibling and then
-// swallows its failure would pass an execution-only pin.
+// These pins assert the aggregate and exit code, so a swallowed sibling failure cannot pass.
 
 /**
  * The verifier's probe output, as a value: which members the executor was reached for, the
@@ -276,7 +246,7 @@ function probeShape(
   }
 }
 
-describe('fail-fast poisoning is disposition-aware (CR-01, D-14)', () => {
+describe('fail-fast poisoning is disposition-aware', () => {
   it('a quarantined failure does not skip its siblings — a failing sibling still reds the run at exit 1', async () => {
     const executed: string[] = []
     const session = startRun(
@@ -291,15 +261,7 @@ describe('fail-fast poisoning is disposition-aware (CR-01, D-14)', () => {
     )
     const { verdict, handoff } = await done(session)
 
-    // Asserted as ONE shape, mirroring the verifier's probe output, because the facts are only
-    // meaningful together: a diff showing just "the sibling was skipped" invites a fix that runs
-    // the sibling and still swallows its failure.
-    //
-    // This ONE fixture shows both directions of the guard, in member order. `flaky`'s LICENSED
-    // failure does not poison, so `regression` executes. `regression`'s UN-licensed failure then
-    // poisons exactly as pre-390, so `healthy` behind it is skipped — the guard removed one route
-    // to a skip and left the other untouched. Pre-fix this whole shape read
-    // `executed: ['flaky'] / verdict 'passed' / exitCode 0`, the verifier's measurement.
+    // A licensed failure does not poison its group; an unlicensed one still does.
     expect(probeShape(executed, verdict, handoff)).toEqual({
       executed: ['flaky', 'regression'],
       verdict: 'failed',
@@ -326,8 +288,7 @@ describe('fail-fast poisoning is disposition-aware (CR-01, D-14)', () => {
     )
     const { verdict, handoff } = await done(session)
 
-    // pre-390 within-suite fail-fast (D-15) is preserved EXACTLY where no disposition applies —
-    // this is the corpus case the guard must REJECT
+    // Within-suite fail-fast holds where no disposition applies; the guard must reject this case.
     expect(probeShape(executed, verdict, handoff)).toEqual({
       executed: ['flaky'],
       verdict: 'failed',
@@ -393,10 +354,10 @@ describe('fail-fast poisoning is disposition-aware (CR-01, D-14)', () => {
   })
 })
 
-// ---- The rule itself (D-14: the skip is EXPLICIT in deriveAggregateVerdict) ----
+// ---- the rule itself: the skip is explicit in deriveAggregateVerdict ----
 
 describe('deriveAggregateVerdict quarantine skip', () => {
-  const base = { runCancelled: false, runBudgetExpired: false }
+  const base = { runCancelled: false }
 
   it('skips quarantined failed AND timeout members', () => {
     for (const outcome of ['failed', 'timeout'] as MemberTestOutcome[]) {
@@ -426,23 +387,14 @@ describe('deriveAggregateVerdict quarantine skip', () => {
     ).toBe('passed')
   })
 
-  it('leaves every other branch untouched — the run-level branches win regardless', () => {
+  it('leaves every other branch untouched — the run-level cancel wins regardless', () => {
     expect(
       deriveAggregateVerdict({
         runCancelled: true,
-        runBudgetExpired: false,
         outcomes: ['failed'],
         quarantined: [true],
       }),
     ).toBe('cancelled')
-    expect(
-      deriveAggregateVerdict({
-        runCancelled: false,
-        runBudgetExpired: true,
-        outcomes: ['failed'],
-        quarantined: [true],
-      }),
-    ).toBe('timeout')
     // A quarantined member never suppresses a sibling 'cancelled' or 'healed' signal.
     expect(
       deriveAggregateVerdict({
@@ -460,7 +412,7 @@ describe('deriveAggregateVerdict quarantine skip', () => {
     ).toBe('healed')
   })
 
-  it('an absent flags array is the pre-390 rule', () => {
+  it('an absent flags array applies the unquarantined rule', () => {
     expect(deriveAggregateVerdict({ ...base, outcomes: ['failed'] })).toBe('failed')
     expect(deriveAggregateVerdict({ ...base, outcomes: ['timeout'] })).toBe('failed')
     expect(deriveAggregateVerdict({ ...base, outcomes: ['passed'] })).toBe('passed')

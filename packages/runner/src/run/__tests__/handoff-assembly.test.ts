@@ -60,14 +60,14 @@ function resultWithoutEvidence(): TestResult {
 }
 
 describe('handoff assembly instrumentation parity', () => {
-  it.each(['passed', 'failed'] as const)('418 stamps member retry evidence on %s results', outcome => {
+  it.each(['passed', 'failed'] as const)('stamps member retry evidence on %s results', outcome => {
     const assembled = assemblePerTestOutcome(member,
       { ...resultWithoutEvidence(), status: outcome, retryCount: 2 }, outcome,
       { testIndex: 0, scope, buildOrdinal: 7, mask: text => text })
     expect(JSON.parse(JSON.stringify(assembled))).toMatchObject({ isRerun: true, rerunAttempt: 2 })
   })
 
-  it.each([0, undefined])('418 omits both retry keys for retryCount %s', retryCount => {
+  it.each([0, undefined])('omits both retry keys for retryCount %s', retryCount => {
     const assembled = assemblePerTestOutcome(member,
       { ...resultWithoutEvidence(), retryCount }, 'passed',
       { testIndex: 0, scope, buildOrdinal: 7, mask: text => text })
@@ -172,7 +172,6 @@ describe('handoff assembly instrumentation parity', () => {
     expect(JSON.parse(JSON.stringify(excluded))).toHaveProperty('excludedFromOutcomes', true)
   })
 
-  // 436-09 (D-06): the run's effective planner limits ride its own record to the acknowledgement.
   it('assembleHandoff copies RunConfig.plannerLimits verbatim and leaves it absent when absent', () => {
     const ordinaryConfig = {
       runId: 'run-limits' as RunId,
@@ -200,7 +199,7 @@ describe('handoff assembly instrumentation parity', () => {
   })
 })
 
-describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {
+describe('§A9 rootCause attach (presence rule)', () => {
   const environmentVerdict: Verdict = {
     class: 'environment',
     producer: 'deterministic-classifier',
@@ -239,7 +238,7 @@ describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {
     expect(JSON.stringify(outcome)).not.toContain('rootCause')
   })
 
-  it('keeps the handoff top-level shape unchanged — rootCause rides tests[] only (D-01)', () => {
+  it('keeps the handoff top-level shape unchanged — rootCause rides tests[] only', () => {
     const config = {
       runId: 'run-1' as RunId,
       scope,
@@ -274,7 +273,7 @@ describe('§A9 rootCause attach (373-07, D-01 presence rule)', () => {
   })
 })
 
-describe('stable test identity — filePath + human testName (ABRF-02, WR-02)', () => {
+describe('stable test identity — filePath + human testName', () => {
   it('populates filePath and human testName from the descriptor on assembled outcomes', () => {
     const outcome = assemblePerTestOutcome(member, resultWithoutEvidence(), 'passed', {
       testIndex: 0,
@@ -298,7 +297,7 @@ describe('stable test identity — filePath + human testName (ABRF-02, WR-02)', 
   })
 })
 
-describe('StepEvidence.planSource marker (D-12)', () => {
+describe('StepEvidence.planSource marker', () => {
   const procedureId = asRecordId('procedure-flow-login-0123456789abcdef')
 
   function evidenceWith(planSource: NonNullable<StepEvidence['planSource']>): StepEvidence {
@@ -347,7 +346,7 @@ describe('StepEvidence.planSource marker (D-12)', () => {
       guard: { checksPassed: 3, total: 3 },
     })
     expect(reloaded.tests[0].steps[1].planSource).toEqual({ kind: 'procedure-hint', procedureId })
-    // the D-12 separation: planSource never pollutes the cached-provenance surface
+    // planSource never touches the cached-provenance surface.
     expect(reloaded.tests[0].steps[0].cacheStatus).toBe('miss')
   })
 
@@ -369,14 +368,9 @@ describe('StepEvidence.planSource marker (D-12)', () => {
   })
 })
 
-// WINDOWS #305 · DETL-04 — masked-at-rest narration on the REAL-evidence arm. The masker here is
-// the product's OWN declared-secret `SecretRedactor`, over two declared values, so every assertion
-// is against the one `MaskFn` a run threads from `shell.ts` into both `assemblePerTestOutcome` and
-// `projectTestFinished` — never a stand-in that could answer "is this a secret" differently.
-// 2026-10-15 (441-33, D-01/D-12): was the deleted masking context, which also minted `<EMAIL_n>`
-// for undeclared emails; the email is now a declared value, so each field is still masked.
-describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () => {
-  const CREDENTIAL = 'zz-405-populated-secret-7f3a91c2'
+// The masker is the product's own declared-secret SecretRedactor, the one a run threads.
+describe('real step evidence is masked at rest', () => {
+  const CREDENTIAL = 'zz-populated-secret-7f3a91c2'
   const EMAIL = 'qa-person@example.com'
   const STEP_TEXT = `Acknowledge the notice using ${CREDENTIAL}.`
   const PLANNED_ACTION: Action = {
@@ -479,7 +473,7 @@ describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () =
     expect('plan' in subAction).toBe(false)
     expect('result' in subAction).toBe(false)
     expect('reasoning' in step.verifierVerdict).toBe(false)
-    // What WAS there rides through untouched, including the G-381-3 carve-out.
+    // What is present rides through untouched.
     expect(subAction.plannedAction).toEqual(PLANNED_ACTION)
     expect(step.stepText).toBe(STEP_TEXT)
   })
@@ -509,7 +503,7 @@ describe('WINDOWS #305 — real step evidence is masked at rest (DETL-04)', () =
     expect(subAction.result.metadata).toEqual({ header: 'authorization [secret:OPERATOR_TOKEN]' })
   })
 
-  it('leaves stepText, plannedAction and interpolatedVariables BYTE-IDENTICAL (the G-381-3 carve-out)', () => {
+  it('leaves stepText, plannedAction and interpolatedVariables BYTE-IDENTICAL (the provenance carve-out)', () => {
     const step = assembleOnce(seededMask())
 
     expect(step.stepText).toBe(STEP_TEXT)

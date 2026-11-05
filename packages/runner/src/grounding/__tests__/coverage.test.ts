@@ -1,10 +1,3 @@
-// GROUND-01..03 + LOOP-04 requirement roll-call (Phase 357, Plan 08 close-out).
-// A single durable regression anchor: each phase acceptance criterion maps to at least
-// one GREEN assertion here over the SHIPPED runner grounding surface (the matcher +
-// capability-gated ladder + pre-execution gate exported from ../index). This is not a
-// re-implementation — it reuses the same pure surfaces the per-plan suites exercise
-// (matcher.test.ts, gate.test.ts, reground-heal.test.ts). Do NOT weaken any assertion to
-// force a pass; if a criterion cannot be proven green, the phase is not done.
 import { describe, expect, it } from 'vitest'
 
 import { asRef } from '@vostride/agent-qa-schema'
@@ -20,8 +13,7 @@ import {
 } from '../index.js'
 import type { GateResult, GroundingRung, RungRequest } from '../index.js'
 
-// A fake visual rung injected via options — proves the capability-negotiation seam
-// (GROUND-02) without any visual rung shipping in M1 (D-01).
+// A fake visual rung injected via options proves the capability-negotiation seam.
 function fakeVisualRung(resolved: string): GroundingRung {
   return {
     stage: 'visual',
@@ -58,8 +50,8 @@ function expectFailure(result: GateResult, code: string): GroundingError {
   return result.error
 }
 
-describe('GROUND roll-call — one green proof per phase acceptance criterion (357)', () => {
-  it('GROUND-01: a descriptor-bearing emission action grounds to an execution-shape action (ref set, target gone) with no second model', () => {
+describe('GROUND roll-call — one green proof per acceptance criterion', () => {
+  it('a descriptor-bearing emission action grounds to an execution-shape action (ref set, target gone) with no second model', () => {
     // A planner emits a natural-language descriptor instead of a raw ref. The default
     // single-model ref-first strategy resolves it against the persisted elements/refMap —
     // groundActionPlan is a pure synchronous function: no second model is consulted.
@@ -79,8 +71,8 @@ describe('GROUND roll-call — one green proof per phase acceptance criterion (3
     expect(result.attempts).toEqual([{ stage: 'tree-search', outcome: 'resolved', resolvedRef: 'e2' }])
   })
 
-  it('GROUND-02: the ladder is auditable ref → tree-search → visual:skipped and the visual rung is capability-gated', () => {
-    // Default assembly is [ref, tree-search] — no visual rung ships in M1 (D-01).
+  it('the ladder is auditable ref → tree-search → visual:skipped and the visual rung is capability-gated', () => {
+    // Default assembly is [ref, tree-search], with no visual rung.
     const defaultLadder = assembleLadder()
     expect(defaultLadder.map((rung) => rung.stage)).toEqual(['ref', 'tree-search'])
 
@@ -88,8 +80,7 @@ describe('GROUND roll-call — one green proof per phase acceptance criterion (3
     expect(assembleLadder({ vision: false, extraRungs: [fakeVisualRung('e2')] })).toHaveLength(2)
     expect(assembleLadder({ vision: true, extraRungs: [fakeVisualRung('e2')] })).toHaveLength(3)
 
-    // A full run over an unresolvable descriptor records one §A8 attempt per attempted rung
-    // and appends visual:skipped (the D-02 denominator) when no visual rung ran.
+    // One attempt per attempted rung, plus `visual:skipped` when no visual rung ran.
     const request: RungRequest = {
       descriptor: { role: 'button', name: 'nonexistent widget' },
       elements: makeScreenState().elements,
@@ -104,7 +95,7 @@ describe('GROUND roll-call — one green proof per phase acceptance criterion (3
     ])
   })
 
-  it('GROUND-03: an ungroundable descriptor yields the §12.17 self-correcting error, and ref_not_in_snapshot / coords_out_of_bounds surface on the live gate path', () => {
+  it('an ungroundable descriptor yields the §12.17 self-correcting error, and ref_not_in_snapshot / coords_out_of_bounds surface on the live gate path', () => {
     const screenState = makeScreenState()
 
     // §12.17 self-correcting form: no silent best-guess — a structured re-observe/refine error.
@@ -135,12 +126,8 @@ describe('GROUND roll-call — one green proof per phase acceptance criterion (3
     expectFailure(oob, 'coords_out_of_bounds')
   })
 
-  it('LOOP-04: re-grounding uses nameNormalized + hierarchy — the prior ancestor chain disambiguates a name-collision', () => {
-    // The exact machinery the D-10 self-heal runs: when a stored ref no longer resolves the
-    // runner re-observes and re-grounds on nameNormalized + hierarchy before replanning. The
-    // loop-leg integration (re-observe → re-ground → patched re-execute, no replan turn) is
-    // proven end-to-end in ../../loop/__tests__/reground-heal.test.ts; here we anchor the
-    // re-ground decision itself.
+  it('re-grounding uses nameNormalized + hierarchy — the prior ancestor chain disambiguates a name-collision', () => {
+    // The re-ground decision the self-heal runs; the loop leg is covered in reground-heal.test.ts.
     const priorContainer = element('cA', 'group', 'item a')
     const priorTarget = element('e1', 'button', 'delete', 'cA')
     const priorElements = [priorContainer, priorTarget]
@@ -151,7 +138,7 @@ describe('GROUND roll-call — one green proof per phase acceptance criterion (3
     const freshB = [element('g2', 'group', 'item b'), element('d2', 'button', 'delete', 'g2')]
     const fresh = [...freshA, ...freshB]
 
-    // No prior context ⇒ the matcher refuses to guess (never a first-pick, T-357-03a).
+    // No prior context: the matcher refuses to guess.
     const ambiguous = matchDescriptor({ descriptor: { role: 'button', name: 'Delete' }, elements: fresh })
     expect(ambiguous.kind).toBe('ambiguous')
 

@@ -1,5 +1,5 @@
 import type { ModelCapabilities, ModelProfile } from '@vostride/agent-qa-schema'
-import type { LanguageModelUsage, ModelMessage } from 'ai'
+import type { FilePart, ImagePart, LanguageModelUsage, ModelMessage, ToolResultPart } from 'ai'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { resolveCapabilities } from '../../capability/resolve.js'
@@ -8,7 +8,7 @@ import { createTokenAccounting } from '../token-accounting.js'
 import {
   FIXTURE_IMAGE_DATA,
   assistantText,
-  mediaOutput,
+  fileOutput,
   screenshotOutput,
   systemMessage,
   toolExchange,
@@ -40,7 +40,7 @@ function usage(inputTokens: number | undefined): LanguageModelUsage {
 const TEXT = 'Log in with the demo account and confirm the dashboard renders.'
 const TEXT_TOKENS = Math.ceil(TEXT.length / 4)
 
-describe('createTokenAccounting — estimate two-signal (chars/4 + per-image, D-02/D-12)', () => {
+describe('createTokenAccounting — estimate two-signal (chars/4 + per-image)', () => {
   it('estimates chars/4 over text parts before any recordUsage', () => {
     const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS) })
     expect(acc.estimate([userText(TEXT)])).toBe(TEXT_TOKENS)
@@ -58,18 +58,68 @@ describe('createTokenAccounting — estimate two-signal (chars/4 + per-image, D-
     expect(withBig).toBe(Math.ceil('screen'.length / 4) + perImageTokens)
   })
 
-  it('charges per-image for BOTH image-data and media parts in historical tool results', () => {
+  it('charges an image file part, with either media type form, as much as an image part', () => {
+    const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS) })
+    const turn = (image: FilePart | ImagePart): ModelMessage[] =>
+      [{ role: 'user', content: [{ type: 'text', text: 'screen' }, image] }]
+    const imagePart = acc.estimate(turn({ type: 'image', image: FIXTURE_IMAGE_DATA }))
+    expect(acc.estimate(turn({ type: 'file', mediaType: 'image', data: FIXTURE_IMAGE_DATA })))
+      .toBe(imagePart)
+    expect(acc.estimate(turn({ type: 'file', mediaType: 'image/png', data: FIXTURE_IMAGE_DATA })))
+      .toBe(imagePart)
+  })
+
+  it('charges per-image for BOTH image-data and inline file parts in historical tool results', () => {
     const perImageTokens = 1600
     const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS), perImageTokens })
     const shot = toolExchange([{ toolCallId: 'c1', toolName: 'screenshot', output: screenshotOutput() }])
-    const media = toolExchange([{ toolCallId: 'c2', toolName: 'screenshot', output: mediaOutput() }])
+    const file = toolExchange([{ toolCallId: 'c2', toolName: 'screenshot', output: fileOutput() }])
     const before = acc.estimate([userText(TEXT)])
-    const after = acc.estimate([userText(TEXT), ...shot, ...media])
+    const after = acc.estimate([userText(TEXT), ...shot, ...file])
     expect(after - before).toBeGreaterThanOrEqual(2 * perImageTokens)
+  })
+
+  it('charges an inline file in a tool result as an image only when its media type is an image', () => {
+    const perImageTokens = 100_000
+    const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS), perImageTokens })
+    const pdf = toolExchange([{
+      toolCallId: 'c1', toolName: 'download', output: fileOutput(FIXTURE_IMAGE_DATA, 'application/pdf'),
+    }])
+    const before = acc.estimate([userText(TEXT)])
+    expect(acc.estimate([userText(TEXT), ...pdf]) - before).toBeLessThan(perImageTokens)
+  })
+
+  it('charges a non-image inline file in a tool result as text of its base64 length', () => {
+    const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS) })
+    const download = (output: ToolResultPart['output']) =>
+      acc.estimate(toolExchange([{ toolCallId: 'c1', toolName: 'download', output }]))
+    const base64Charge = Math.ceil(FIXTURE_IMAGE_DATA.length / 4)
+    const bytes = Uint8Array.from(atob(FIXTURE_IMAGE_DATA), (char) => char.charCodeAt(0))
+
+    expect(base64Charge).toBeGreaterThan(Math.ceil(bytes.byteLength / 4))
+    expect(download(fileOutput(FIXTURE_IMAGE_DATA, 'application/pdf'))).toBe(base64Charge)
+    expect(download({
+      type: 'content',
+      value: [{ type: 'file', data: { type: 'data', data: bytes }, mediaType: 'application/pdf' }],
+    })).toBe(base64Charge)
+  })
+
+  it('charges inline text file data in a tool result as its text', () => {
+    const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS) })
+    const notes = toolExchange([{
+      toolCallId: 'c1',
+      toolName: 'read',
+      output: {
+        type: 'content',
+        value: [{ type: 'file', data: { type: 'text', text: TEXT }, mediaType: 'text/plain' }],
+      },
+    }])
+
+    expect(acc.estimate(notes)).toBe(Math.ceil(TEXT.length / 4))
   })
 })
 
-describe('createTokenAccounting — recordUsage anchor (D-01/D-02)', () => {
+describe('createTokenAccounting — recordUsage anchor', () => {
   it('floors a subsequent matching-prefix estimate to the recorded inputTokens', () => {
     const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS) })
     const messages: ModelMessage[] = [systemMessage(), userText(TEXT)]
@@ -107,7 +157,7 @@ describe('createTokenAccounting — recordUsage anchor (D-01/D-02)', () => {
   })
 })
 
-describe('createTokenAccounting — getCeilings reactive thunk (D-04)', () => {
+describe('createTokenAccounting — getCeilings reactive thunk', () => {
   const profile: ModelProfile = {
     provider: 'openai-compatible',
     model: 'totally-unknown-model-xyz',
@@ -140,7 +190,7 @@ describe('createTokenAccounting — getCeilings reactive thunk (D-04)', () => {
   })
 })
 
-describe('createTokenAccounting — degrade delegates policy-free (D-07)', () => {
+describe('createTokenAccounting — degrade delegates policy-free', () => {
   it('reduces messages via the instance estimate when over budget', () => {
     const acc = createTokenAccounting({ getCapabilities: fixedCaps(KNOWN_CAPS) })
     const big = 'x'.repeat(4000)

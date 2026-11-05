@@ -58,7 +58,7 @@ const DRAFT: BundleDraft = {
 }
 const CONVERSION_EVIDENCE_TOKEN = 'rollback-promotion-conversion-evidence'
 
-describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
+describe('rollback-to-promotion public acceptance', () => {
   let root: string
   let knowledgeRoot: string
   let epoch: number
@@ -84,7 +84,6 @@ describe('rollback-to-promotion public acceptance (PROM-01/DCAY-05)', () => {
     const published = publishBundle({
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'rollback-promotion-fixture',
     }, {
       draft: DRAFT,

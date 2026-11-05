@@ -1,14 +1,4 @@
-// `runs.postprocessing` against a REAL store (Phase 388, D-14 / ANLZ-05 / Pitfall 4).
-//
-// The projection's mapping table is pinned in `agent`, over hand-built row values, because a
-// mapping is what it is. What CANNOT be measured there is everything this file measures: that
-// the ids the op derives address the rows the enqueue actually wrote, that a status query
-// answers from bytes on disk rather than from anything a process held, and — the prohibition
-// this phase carries — that asking the question creates nothing.
-//
-// The op is driven through `invokeFunction` on a composed host's registry rather than by
-// calling the reader, because the claim is about the SEAM D-14 defines: a surface asks the
-// function layer, and the function layer is the only thing that opens a database.
+// Driven through `invokeFunction`; a status query answers from disk and creates nothing.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -47,17 +37,11 @@ import { canonicalLogicalDump, createLogicalDump } from '../store/logical-dump.j
 import { createPostProcessingReader } from '../store/post-processing-reader.js'
 import { createJobCheckpointStore, readJobCheckpointEnvelope } from '../store/job-checkpoint-store.js'
 
-/**
- * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
- * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
- * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
- */
+// Passthrough: this fixture already speaks canonical workspace-relative bytes.
 const MINT_IDENTITY = (filePath: string): string => filePath
 
-const RUN_ID = 'run-388-status'
+const RUN_ID = 'run-status'
 
-// 2026-10-02 (432-38, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
-// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
@@ -66,7 +50,7 @@ const CALLER: FunctionCaller = {
 const TEST_MODEL: JobModelCapability = {
   modelId: 'test:post-processing-status',
   generate: async () => {
-    throw new Error('the post-run chain never authors in 388')
+    throw new Error('the post-run chain never authors')
   },
 }
 
@@ -82,7 +66,7 @@ function createSteppingClock(): ClockPort {
   let tick = 0
   return {
     now() {
-      // 2026-10-19 (444.1-12, D-23): a minute per read, past every declared retry backoff.
+      // A minute per read, past every declared retry backoff.
       const stamp = new Date(Date.parse('2026-03-03T00:00:00.000Z') + tick * 60_000).toISOString()
       tick += 1
       return stamp
@@ -166,7 +150,6 @@ interface Harness {
  */
 function createHarness(existingRoot?: string, postRun?: {
   curateRun?: PostRunJobCapabilities['curateRun']
-  stageAdversarialProposal?: PostRunJobCapabilities['stageAdversarialProposal']
 }, mask: (text: string) => string = (text) => text): Harness {
   const agentQaRoot = existingRoot ?? mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
   if (existingRoot === undefined) roots.push(agentQaRoot)
@@ -240,12 +223,6 @@ function readColdChain(root: string, runId = RUN_ID) {
     .readChain(chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE), runId)
 }
 
-function barrier() {
-  let resolve!: () => void
-  const promise = new Promise<void>(done => { resolve = done })
-  return { promise, resolve }
-}
-
 async function completedCuration() {
   const writer = createHarness(undefined, {
     curateRun: async () => ({ curated: 7, deprecated: 3, complete: true, snapshot: CURATION_SNAPSHOT }),
@@ -259,7 +236,7 @@ async function completedCuration() {
   return { writer, ids }
 }
 
-describe('423 completed checkpoint snapshot', () => {
+describe('the completed checkpoint snapshot', () => {
   it('CHECKPOINT-ENVELOPE keeps safe addresses and named version refusal without creating directories', () => {
     const harness = createHarness()
     const root = join(harness.agentQaRoot, 'missing-root')
@@ -297,49 +274,6 @@ describe('423 completed checkpoint snapshot', () => {
         path,
         observedVersion: stamp,
       }))
-  })
-
-  it('CHECKPOINT-BEFORE-NOTIFICATION reads actual curation while the real proposals stage is blocked', async () => {
-    const entered = barrier()
-    const release = barrier()
-    const writer = createHarness(undefined, {
-      curateRun: async () => ({ curated: 7, deprecated: 3, complete: true, snapshot: CURATION_SNAPSHOT }),
-      stageAdversarialProposal: async () => {
-        entered.resolve()
-        await release.promise
-        return { proposed: 0, skipped: 0 }
-      },
-    })
-    const jobs = await writer.host.jobs()
-    const handoff = fixtureHandoff(RUN_ID)
-    writeHandoff(writer.agentQaRoot, handoff)
-    const fence = await jobs.store.adoptEpoch(1)
-    await jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
-    await jobs.queue.runNextJob({ fence })
-    await jobs.queue.runNextJob({ fence })
-    const running = jobs.queue.runNextJob({ fence })
-    try {
-      await entered.promise
-      const before = readQueue(writer.agentQaRoot)
-      const cold = await readColdChain(writer.agentQaRoot)
-      expect(cold).toMatchObject({
-        analyzeRun: { status: 'done', claimed: false },
-        curateMemory: { status: 'done', claimed: false },
-        proposeImprovements: { status: 'queued', claimed: true },
-        curationSnapshot: CURATION_SNAPSHOT,
-      })
-      expect(cold).not.toHaveProperty('notification')
-      expect(await jobs.store.listNotifications()).toEqual([])
-      const projected = await createHarness(writer.agentQaRoot).status()
-      expect(projected.curationSnapshot).toEqual(CURATION_SNAPSHOT)
-      expect(projected.chips).toEqual({ analysis: 'complete', curation: 'complete' })
-      expect(Object.keys(projected.stageDetails!).sort()).toEqual(['analysis', 'curation', 'proposals'])
-      expect(projected).not.toHaveProperty('notification')
-      expect(readQueue(writer.agentQaRoot)).toEqual(before)
-    } finally {
-      release.resolve()
-      await running
-    }
   })
 
   it.each(['historical', 'incomplete'] as const)('CHECKPOINT-MISSING %s never invents a snapshot', async kind => {
@@ -432,9 +366,9 @@ describe('423 completed checkpoint snapshot', () => {
   })
 })
 
-describe('423 cold stage facts', () => {
+describe('cold stage facts', () => {
   it.each(['queued', 'retried', 'complete', 'failed', 'cancelled'] as const)(
-    'THREE-STAGE-COLD %s preserves exact rows and queue contents',
+    'STAGE-COLD %s preserves exact rows and queue contents',
     async lifecycle => {
       const writer = createHarness()
       const jobs = await writer.host.jobs()
@@ -443,7 +377,6 @@ describe('423 cold stage facts', () => {
       const stages = [
         ['analysis', 'analyze-run', RUN_ID, ids.analyzeRun],
         ['curation', 'curate-memory', `${ids.analyzeRun}->curate-memory`, ids.curateMemory],
-        ['proposals', 'propose-improvements', `${ids.curateMemory}->propose-improvements`, ids.proposeImprovements],
       ] as const
       for (const [stage, kind, key, id] of stages) {
         const enqueued = await jobs.queue.enqueue(kind, { runId: RUN_ID }, key)
@@ -467,7 +400,7 @@ describe('423 cold stage facts', () => {
       }
       await closeWriter(writer)
       const before = readQueue(writer.agentQaRoot)
-      expect(before.rows).toHaveLength(3)
+      expect(before.rows).toHaveLength(2)
       const bytes = readFileSync(join(writer.agentQaRoot, AGENT_JOB_STORE_DB_FILE))
       const cold = createHarness(writer.agentQaRoot)
       const result = await cold.status()
@@ -501,12 +434,10 @@ describe('423 cold stage facts', () => {
     },
   )
 
-  // 425-13: the SETTLED shape, from a row the store wrote and a process that never held it. Every
-  // terminal transition releases the claim lease, so the start is the only instant a finished
-  // stage can be timed from — and this cell reads it off the real row, never off a literal.
+  // Terminal transitions release the claim lease, so a finished stage is timed from its start.
   it('DURABLE-START-SURVIVES-THE-LEASE: a settled stage carries its start and no lease after cold reopen', async () => {
-    const FAILED_RUN = 'run-425-start-failed'
-    const QUEUED_RUN = 'run-425-start-queued'
+    const FAILED_RUN = 'run-start-failed'
+    const QUEUED_RUN = 'run-start-queued'
     const writer = createHarness()
     const jobs = await writer.host.jobs()
     const fence = await jobs.store.adoptEpoch(1)
@@ -559,8 +490,6 @@ describe('423 cold stage facts', () => {
     expect('claimedAt' in never!).toBe(false)
   })
 
-  // RE-SPELLED 2026-10-14 (441-16, D-06/D-23) from '… with the active read context': the host's
-  // declared mask replaces the installed context, and the undeclared email is returned as written.
   it("MASK-FAILURE-REASON masks persisted prose with the host's declared mask", async () => {
     const writer = createHarness()
     const jobs = await writer.host.jobs()
@@ -572,9 +501,9 @@ describe('423 cold stage facts', () => {
     await closeWriter(writer)
     const before = readQueue(writer.agentQaRoot)
     expect(before.rows[0]?.last_failure_reason).toBe(reason)
-    const redactor = new SecretRedactor(new SecretStore({ COLD_441: 'synthetic-cold-secret' }))
+    const redactor = new SecretRedactor(new SecretStore({ COLD_KEY: 'synthetic-cold-secret' }))
     const result = await createHarness(writer.agentQaRoot, undefined, (text) => redactor.redactString(text)).status()
-    expect(result.stageDetails?.analysis?.lastFailureReason).toBe('[secret:COLD_441] for operator@example.test')
+    expect(result.stageDetails?.analysis?.lastFailureReason).toBe('[secret:COLD_KEY] for operator@example.test')
     expect(JSON.stringify(result)).not.toContain('synthetic-cold-secret')
     expect(JSON.stringify(result)).toContain('operator@example.test')
     expect(readQueue(writer.agentQaRoot)).toEqual(before)
@@ -617,7 +546,7 @@ describe('423 cold stage facts', () => {
   })
 })
 
-describe('a status read creates no queue state (T-388-10 / Pitfall 4)', () => {
+describe('a status read creates no queue state', () => {
   it('answers the all-pending projection and leaves NO agent-jobs.db behind', async () => {
     const harness = createHarness()
 
@@ -646,7 +575,7 @@ describe('a status read creates no queue state (T-388-10 / Pitfall 4)', () => {
   })
 })
 
-describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
+describe('chip truth is read from durable rows', () => {
   it('reads a chain that was enqueued and never drained as pending, from the real row', async () => {
     const harness = createHarness()
     const jobs = await harness.host.jobs()
@@ -684,10 +613,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     const status = await harness.status()
 
     expect(status.chips).toEqual({ analysis: 'complete', curation: 'complete' })
-    // The view of the SAME record the terminal transaction wrote, not a rebuild of it: read back
-    // through the store's own reader and compared whole, so a projection that assembled a
-    // plausible notification of its own would fail here rather than look right. The stored row
-    // keeps its own words (444 D-36).
+    // Compared whole with the store's own record, so a projection's plausible rebuild would fail.
     const [written] = await jobs.store.listNotifications()
     expect(status.notification).toEqual(toRunNotificationView(written!.payload))
     expect(written?.payload).toMatchObject({ outcome: 'done', stages: { analysis: { status: 'done' } } })
@@ -701,7 +627,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     })
   })
 
-  it('reads a chain whose curation died as complete/failed (D-12)', async () => {
+  it('reads a chain whose curation died as complete/failed', async () => {
     const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-pp-status-'))
     roots.push(agentQaRoot)
     const host = composeLocalAgent({
@@ -755,7 +681,7 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
     const other = await invokeFunction(
       harness.host.registry,
       RUNS_POST_PROCESSING_FUNCTION_ID,
-      { runId: 'run-388-someone-else' },
+      { runId: 'run-someone-else' },
       CALLER,
     ) as PostProcessingStatus
 
@@ -774,8 +700,8 @@ describe('chip truth is read from durable rows (ANLZ-05, D-14)', () => {
 // this build talking to itself. The only thing standing between bytes another build wrote and a
 // surface is `guardRunNotification`, reached through the op. Pinning the refusal at the guard
 // alone would leave the WIRING free: a reader that stopped calling the guard, or an op that read
-// the column some other way, passes every guard-level cell in `schema` and hands a three-stage
-// record straight to a renderer.
+// the column some other way, passes every guard-level cell in `schema` and hands a stale record
+// straight to a renderer.
 // ------------------------------------------------------------------------------------------
 
 describe('a row another build wrote is refused, through the op', () => {

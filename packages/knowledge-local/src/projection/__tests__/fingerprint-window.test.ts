@@ -1,18 +1,4 @@
-// The fingerprint-keyed recurrence window: detection's substrate (Phase 390, D-07/D-09).
-//
-// The window rows are what plan 05's rule reads, so two properties matter more than the counts:
-//
-//  1. The KEY is the one exported fingerprint over the one exported failing-step rule. The goldens
-//     below are literal BYTES derived from `normalizeAnchor` + `canonicalJson` + `failureFingerprint`
-//     read as source, not captured from a run — a golden anchored in the module's own vocabulary
-//     proves only that the code agrees with itself (the 383 lesson).
-//  2. The verdict CLASS folds into that key by recipe, so an unknown→flake upgrade produces a
-//     DIFFERENT window key for the same anchor. That is deliberate: the same anchor failing as a
-//     flake and failing as an app bug are two facts.
-//
-// Recurrence is counted over DISTINCT build ordinals — the window slides over ordinals, not runs
-// (D-07), so two failing runs inside one build count once and an intermittent failure at ordinals
-// 5/7/9 still crosses at 9.
+// Goldens are bytes derived by reading the source, so the code cannot just agree with itself.
 import { DatabaseSync } from 'node:sqlite'
 
 import {
@@ -55,11 +41,7 @@ const ERROR_TEXT = 'the payment sheet never opened'
  */
 const ELEMENT_GOLDEN = '{"name":"pay now","ordinal":0,"role":"button","t":"el"}'
 
-/**
- * The anchorless golden: with no sub-actions there is no element or page contact, so the recipe
- * falls to its error arm over `errorTextOf`'s answer — the verifier reasoning — and
- * `normalizeAnchor`'s error arm casefolds, collapses whitespace and digit-runs to '#'.
- */
+// With no sub-actions the recipe falls to its error arm, which casefolds and collapses digit runs.
 const ANCHORLESS_GOLDEN = '{"message":"the payment sheet never opened","t":"error"}'
 
 const extractAnchors = (step: StepEvidence): Anchor[] =>
@@ -190,7 +172,7 @@ function windowRows(db: DatabaseSync): Record<string, unknown>[] {
   `).all() as unknown as Record<string, unknown>[]
 }
 
-describe('the fingerprint-keyed recurrence window (D-07)', () => {
+describe('the fingerprint-keyed recurrence window', () => {
   it('stamps the projection at version 2 so receipted runs refold on the next tail', () => {
     expect(RUN_OUTCOMES_PROJECTION_VERSION).toBe(2)
   })
@@ -243,15 +225,7 @@ describe('the fingerprint-keyed recurrence window (D-07)', () => {
     }])
   })
 
-  // The plan specified uniqueness over (product, fingerprint, build_ordinal, run_id); the shipped
-  // constraint is WIDER, carrying file_path and test_name. This case is the whole difference: under
-  // the narrower form the second test's row collides with the first and INSERT OR IGNORE drops it
-  // SILENTLY, so a crossing on that fingerprint could only ever name one of the two tests it
-  // actually describes. The identity has to survive because the ledger is keyed by
-  // (product, filePath, testName) — a window row that cannot say which test it belongs to cannot
-  // author an `entered` event. Refold idempotency is unaffected either way: a re-apply produces
-  // byte-identical tuples (deduped under BOTH forms) and is short-circuited by the applied-runs
-  // marker before any insert, while recurrence counts DISTINCT ordinals and so cannot inflate.
+  // The key has `file_path` and `test_name`, so two tests sharing a fingerprint keep both rows.
   it('keeps BOTH tests when two members of one run share a fingerprint', () => {
     const db = openDb()
     const runId = 'run-shared-fingerprint'
@@ -328,7 +302,7 @@ describe('fingerprintRecurrence — distinct ordinals, sliding window', () => {
     })
   })
 
-  it('crosses on non-consecutive ordinals inside the window (the D-07 slide)', () => {
+  it('crosses on non-consecutive ordinals inside the sliding window', () => {
     const db = openDb()
     for (const buildOrdinal of [5, 7, 9]) {
       fold(db, handoffFixture({

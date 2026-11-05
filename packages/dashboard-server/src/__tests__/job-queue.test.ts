@@ -144,18 +144,9 @@ describe('JobQueue', () => {
       })
     })
 
-    // 2026-10-17 (444-06, D-01, D-11): the cell that pinned the `cancel-running` event is deleted
-    // with the event; C444-CANCEL-REQUEST in 444-cancel-request.test.ts pins the stop request.
+    // The stop request a cancel sends to a running run is checked in
+    // routes.run-cancel-request.test.ts.
 
-    // 2026-08-24 (402-09, D-11): the cell that stood here asserted the child-cancellation fan-out.
-    // The fan-out is deleted with the model that minted its children; this is the same claim with
-    // the opposite sign.
-    //
-    // 2026-08-27 (405-07, D-02): and it no longer seeds LINKED rows, because the link is gone. The
-    // 402-09 version wrote two rows carrying the cancelled run's id in a parent column, to prove
-    // the cancel reached neither. That column and its reader were deleted by this plan's census —
-    // an operator's historical database is refused by version now, not carried — so the claim is
-    // made over two unrelated in-flight rows: a cancel reaches the run it names and nothing else.
     it('leaves every other in-flight run alone when one run is cancelled', () => {
       const asked: string[] = []
       queue.stop()
@@ -407,21 +398,6 @@ describe('JobQueue', () => {
   })
 })
 
-// ---- G-401-18-CR01 (401-23, T-401-G24): the belt at the one writer both doors go through -------
-//
-// The PRIMARY control is the `/api/queue/enqueue` allowlist, which does not admit `confirmScope` as
-// a client-writable key at all. Until 432-14 the queue also refused a confirm scope this server did
-// not mint, because a scope named which browser a run's question was delivered to.
-//
-// RE-SPELLED 2026-10-01 (432-14, D-14): the question, the dialog and every reader of the scope are
-// deleted, so the queue attaches no meaning to the key. The belt's surviving claims are carried
-// where the value could still leave or be planted: the enqueue route refuses every client-supplied
-// metadata key (`routes.test.ts`), and every run-reading response strips it off a row written
-// before 432-14 (`routes.runs.test.ts`). What is pinned here is that the queue no longer interprets
-// it: the row is written once, whole, with no throw.
-
-// RE-TITLED 2026-10-03 (quick-261003-tsr, IN-30): was 'JobQueue refuses a confirm scope this
-// server did not mint'.
 describe('JobQueue no longer interprets a retired confirm-scope key', () => {
   it('a retired confirm-scope key no longer throws: the row and its artifact are written once', () => {
     const before = db.getRuns({ limit: 100 }).length
@@ -439,7 +415,7 @@ describe('JobQueue no longer interprets a retired confirm-scope key', () => {
   })
 })
 
-describe('C443-QUEUE-FLIP', () => {
+describe('the pending-to-running flip', () => {
   const SELF = { pid: 4242, incarnation: 'proc-starttime:7', host: 'h' }
   const OTHER = { pid: 5151, incarnation: 'proc-starttime:9', host: 'h' }
   const inertProbe = { isAlive: () => true, incarnationOf: () => undefined }
@@ -448,7 +424,7 @@ describe('C443-QUEUE-FLIP', () => {
   let other: DashboardDatabase
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'agent-qa-443-queue-flip-'))
+    dir = mkdtempSync(join(tmpdir(), 'agent-qa-queue-flip-'))
     const dbPath = join(dir, 'runs.db')
     own = new DashboardDatabase({ dbPath, runOwnership: { self: SELF, probe: inertProbe } })
     other = new DashboardDatabase({ dbPath, runOwnership: { self: OTHER, probe: inertProbe } })
@@ -544,5 +520,53 @@ describe('C443-QUEUE-FLIP', () => {
     queue.onSlotFreed(next)
     expect(queue.getActiveCount()).toBe(0)
     queue.stop()
+  })
+})
+
+describe('a queue dispatch failure under GitHub Actions', () => {
+  const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+  })
+
+  function failDispatch(message: string): void {
+    vi.spyOn(queue, 'processNext').mockImplementation(() => {
+      throw new Error(message)
+    })
+    queue.start(60000)
+    queue.enqueue({ name: 'Dispatch fails' })
+  }
+
+  it('prints the failure inside one stop-commands pair on stdout', () => {
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+    const writes: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      writes.push(String(chunk))
+      return true
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    failDispatch('::set-output name=x::y')
+
+    const blocks = writes.filter((chunk) => chunk.includes('Queue could not dispatch'))
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatch(PAIR)
+    expect(blocks[0]).toContain(
+      'Queue could not dispatch the next run after an enqueue: ::set-output name=x::y',
+    )
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('prints the same console.error line as before off GitHub Actions', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    failDispatch('::set-output name=x::y')
+
+    expect(errorSpy).toHaveBeenCalledOnce()
+    expect(errorSpy).toHaveBeenCalledWith(
+      'Queue could not dispatch the next run after an enqueue: ::set-output name=x::y',
+    )
   })
 })

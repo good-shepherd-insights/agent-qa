@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { invokeFunction } from '@vostride/agent-qa-agent'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
-import { MARK_RECEIPT_SCHEMA_VERSION, asRef, asRunId, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
+import { MARK_RECEIPT_SCHEMA_VERSION, asRunId, MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
   AgentAskResult,
   ChatSessionEvent,
@@ -20,21 +20,16 @@ import { composeLocalAgent } from '../compose-local-agent.js'
 it.each([true, false])('projects real mark chat with active masking=%s and preserves canonical bytes', async active => {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-chat-mark-masking-'))
   const canary = 'T41916-canary-note-not-a-real-credential'
-  // 2026-10-14 (441-55, D-06): the composition's explicit mask, declared or the identity.
-  const declared = new SecretRedactor(SecretStore.fromEnvContent(`CANARY_441=${canary}\n`))
+  const declared = new SecretRedactor(SecretStore.fromEnvContent(`CANARY_KEY=${canary}\n`))
   const mask: MaskFn = active ? (text) => declared.redactString(text) : (text) => text
-  const placeholder = '[secret:CANARY_441]'
+  const placeholder = '[secret:CANARY_KEY]'
   expect(declared.redactString(canary)).toBe(placeholder)
   const projectedNote = active ? placeholder : canary
-  const input: RunsMarkInput = { runId: asRunId('audit-run'), kind: 'false-fail', note: canary,
-    correctedExpectation: `Expect ${canary}`,
-    correctedAction: { type: 'fill', ref: asRef('e1'), text: canary, clearMode: 'replace', submit: false },
-  }
+  const input: RunsMarkInput = { runId: asRunId('audit-run'), kind: 'false-fail', note: canary }
   const canonical: MarkReceipt = {
     schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, markId: 'mark_0123456789ab', runId: input.runId, runSlug: 'audit-run',
     testIndex: 0, kind: input.kind, origin: 'user', ordinal: 1, markedAt: 0, note: canary,
-    correctedExpectation: input.correctedExpectation, correctedAction: input.correctedAction,
-    disposition: { kind: 'quarantined', class: 'flake' }, gold: [],
+    disposition: { kind: 'quarantined', class: 'flake' },
     evidence: { confirmed: 0, overturned: 0 },
   }
   const canonicalBytes = JSON.stringify(canonical)
@@ -53,7 +48,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     model,
     feedback: { mark, marksFor: async () => [] },
     resolveExecutionContext: () => 'local-interactive',
-    // 432-16 (D-14): the input declares no confirm; the spy is smuggled past the type.
+    // The input type declares no `confirm`; the spy is smuggled past it.
     ...{ confirm: { surface: 'tty-prompt', ask: confirm } } as object,
     observeSessionEvent: (_sessionId, event) => { observed.push(event) },
   })
@@ -64,8 +59,6 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     }) as AgentAskResult
     expect(result.status).toBe('completed')
     expect(mark).toHaveBeenCalledExactlyOnceWith(input)
-    // 432-13 (D-14): the mark is dispatched in the one call; a supplied old confirm port is never
-    // invoked.
     expect(confirm).not.toHaveBeenCalled()
     expect(model).not.toHaveBeenCalled()
     expect(JSON.stringify(canonical)).toBe(canonicalBytes)
@@ -73,10 +66,7 @@ it.each([true, false])('projects real mark chat with active masking=%s and prese
     expect(result.receipts).toMatchObject([{ functionId: 'runs.mark', status: 'executed',
       outcome: 'marked false-fail · quarantined', origin: 'human' }])
     expect.soft(result.results).toEqual([{ functionId: 'runs.mark', payload: {
-      kind: 'marked', receipt: { ...canonical, note: projectedNote,
-        correctedExpectation: `Expect ${projectedNote}`,
-        correctedAction: { ...input.correctedAction, text: projectedNote },
-      },
+      kind: 'marked', receipt: { ...canonical, note: projectedNote },
     } }])
     if (active) expect.soft(JSON.stringify(result)).not.toContain(canary)
     else expect(JSON.stringify(result)).toContain(canary)

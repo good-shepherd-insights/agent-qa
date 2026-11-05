@@ -2,12 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { buildScreenState, screenConformanceCases, type ConformanceInput } from '@vostride/agent-qa-runner'
 import { parseMobileSource, deriveMobileScroll } from '@vostride/agent-qa-core'
 
-// The shared adapter conformance suite (D-09) run against the ANDROID native walk: real
-// UiAutomator2 page-source XML is fed through parseMobileSource into the interim nodes the
-// builder consumes, then every case in screenConformanceCases asserts the pinned
-// builder-contract invariants over those nodes. Beyond the shared cases, android-specific
-// pins assert the D-08 attribute lift (resource-id/content-desc → labels; checked/
-// selected/focused truthfully mapped with typed-absence) and the D-10 best-effort scroll.
+// Real UiAutomator2 page source through `parseMobileSource`, checked against the shared cases.
 
 const VIEWPORT = { width: 1080, height: 1920 }
 // Fixed so repeated builds are byte-identical (the determinism case builds twice and
@@ -53,7 +48,7 @@ function makeAndroidInput(): ConformanceInput {
   }
 }
 
-describe('android adapter conformance (shared D-09 cases)', () => {
+describe('android adapter conformance (shared cases)', () => {
   // Iterate the FULL exported case list — no cherry-picking.
   for (const conformanceCase of screenConformanceCases) {
     it(conformanceCase.name, () => {
@@ -61,7 +56,7 @@ describe('android adapter conformance (shared D-09 cases)', () => {
     })
   }
 
-  // --- Android-specific pins beyond the shared cases (D-08 attribute lift) ---
+  // Android-specific pins beyond the shared cases.
 
   it('resource-id → labels.testId and content-desc → labels.ariaLabel', () => {
     const { nodes } = parseMobileSource(ANDROID_STATE_XML, 'android', VIEWPORT)
@@ -73,7 +68,7 @@ describe('android adapter conformance (shared D-09 cases)', () => {
     expect(checkbox.labels.ariaLabel).toBe('Remember me toggle')
   })
 
-  it('maps checked/selected/focused truthfully; absent signals stay typed-absent (D-08)', () => {
+  it('maps checked/selected/focused truthfully; absent signals stay typed-absent', () => {
     const { nodes } = parseMobileSource(ANDROID_STATE_XML, 'android', VIEWPORT)
     const { state } = buildScreenState({ platform: 'android', nodes, viewport: VIEWPORT, scroll: deriveMobileScroll(nodes, VIEWPORT), coordSpace: 'viewport', timestamp: FIXED_TIMESTAMP })
 
@@ -94,7 +89,7 @@ describe('android adapter conformance (shared D-09 cases)', () => {
     expect(button.labels.ariaLabel).toBeUndefined()
   })
 
-  it('flows deriveMobileScroll output into metadata.scroll (D-10 best-effort approximation)', () => {
+  it('flows deriveMobileScroll output into metadata.scroll (best-effort approximation)', () => {
     const { nodes } = parseMobileSource(ANDROID_LOGIN_XML, 'android', VIEWPORT)
     const scroll = deriveMobileScroll(nodes, VIEWPORT)
     const { state } = buildScreenState({ platform: 'android', nodes, viewport: VIEWPORT, scroll, coordSpace: 'viewport', timestamp: FIXED_TIMESTAMP })

@@ -1,8 +1,4 @@
-// THE CONFIG STRINGS OF RECORD (429 UI-SPEC Copywriting Contract).
-//
-// COPY-429: every exported sentence is non-empty, the owner-locked words are exact, no string
-// carries storage vocabulary, no button label is a bare generic word, and the connection-failure
-// sentences are the shared classifier's own function, never a second spelling.
+// Every exported Config sentence is non-empty, and connection failures use the shared classifier.
 
 import {
   CONFIG_WRITE_REFUSALS,
@@ -36,7 +32,6 @@ function functionOutputs(): string[] {
     copy.configLoadFailedBody('The file is not valid YAML'),
     copy.configFileIssuesBody('Step timeout must be a duration such as 30s'),
     ...EXPLICIT_ACTION_KINDS.map((kind) => copy.undoLine(kind, 'gpt')),
-    copy.undoLine('delete-model', 'gpt', { judge: true }),
     ...deleteKinds.map((kind) => copy.deleteActionName(kind, 'staging')),
     copy.modelLine('gpt-5.6', 'OpenAI-compatible'),
     ...MODEL_STATUSES.flatMap((status) => [
@@ -73,14 +68,14 @@ const OWNER_LOCKED_ONE_WORD = ['Connect', 'Apply', 'Undo', 'Retry']
 /** The in-flight label of the owner-locked Connect button, the one word it turns into while busy. */
 const BUSY_FORMS: Record<string, string> = { 'Connecting…': 'Connect' }
 
-describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
-  it('COPY-429: every exported string is non-empty', () => {
+describe('the Config strings of record', () => {
+  it('every exported string is non-empty', () => {
     const strings = everyString()
     expect(strings.length, 'the witness: the walk found the strings').toBeGreaterThan(100)
     for (const text of strings) expect(text.trim(), JSON.stringify(text)).not.toBe('')
   })
 
-  it('COPY-429: the tab labels, status words and model status words are the locked words', () => {
+  it('the tab labels, status words and model status words are the locked words', () => {
     expect(CONFIG_TABS.map((tab) => copy.CONFIG_TAB_LABELS[tab])).toEqual([
       'Models',
       'Targets',
@@ -108,28 +103,26 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     expect(copy.ADD_MODEL_LABEL).toBe('Add model')
     expect(copy.CONNECT_FORM_LEGEND).toBe('How do you connect?')
     expect(copy.SAVE_WITHOUT_TESTING_LABEL).toBe('Save without testing')
-    expect(Object.values(copy.EVAL_GROUP_LABELS)).toEqual(['Judge', 'Gate 1', 'Gate 2', 'Adversarial', 'Seeding'])
     expect(Object.keys(copy.CONFIG_SECTION_LABELS)).toEqual([...CONFIG_SECTION_IDS])
   })
 
-  it('COPY-429: the Undo lines name what happened, with the judge variant', () => {
+  it('the Undo lines name what happened', () => {
     expect(copy.undoLine('delete-model', 'gpt')).toBe('Deleted gpt')
-    expect(copy.undoLine('delete-model', 'gpt', { judge: true })).toBe('Deleted gpt, an eval judge')
     expect(copy.undoLine('delete-target', 'staging')).toBe('Deleted target staging')
     expect(copy.undoLine('sign-out', 'gpt')).toBe('Signed out of gpt')
     expect(copy.undoLine('remove-key', 'gpt')).toBe('Removed the key for gpt')
     expect(copy.undoLine('change-db-path', 'ignored')).toBe('Changed the database')
-    expect(copy.deleteActionName('delete-device-farm', 'bs')).toBe('Delete device farm bs')
+    expect(copy.deleteActionName('delete-device', 'pixel')).toBe('Delete device pixel')
     expect(copy.applyActionName('database')).toBe('Apply database')
   })
 
-  it('COPY-429: a passed test says Connected with no milliseconds', () => {
+  it('a passed test says Connected with no milliseconds', () => {
     expect(copy.TEST_RESULT_TEXT.connected).toBe('Connected')
     expect(copy.TEST_RESULT_TEXT.connected).not.toMatch(/\d/)
     expect(copy.TEST_RESULT_TEXT['connected-without-key']).toBe('Connected without a key')
   })
 
-  it('COPY-429: the connection sentences follow the row status and the connection kind', () => {
+  it('the connection sentences follow the row status and the connection kind', () => {
     expect(copy.connectionSentence('signed-in', 'ChatGPT', { signIn: true })).toBe(
       'Signed in with your ChatGPT plan.',
     )
@@ -140,7 +133,7 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     expect(copy.connectionSentence('not-connected', 'Claude', { signIn: true })).toBe('Not signed in.')
   })
 
-  it('COPY-429: no string carries storage vocabulary', () => {
+  it('no string carries storage vocabulary', () => {
     for (const text of everyString()) {
       const lower = text.toLowerCase()
       expect(lower, text).not.toContain('bucket')
@@ -149,7 +142,7 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     }
   })
 
-  it('COPY-429: no button label is a bare generic word, and only four owner-locked words stand alone', () => {
+  it('no button label is a bare generic word, and only four owner-locked words stand alone', () => {
     const labels = Object.entries(copy)
       .filter(([name, value]) => name.endsWith('_LABEL') && typeof value === 'string')
       .map(([, value]) => value as string)
@@ -160,7 +153,7 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     }
   })
 
-  it('COPY-429: providerErrorSentence is the schema classifier function itself, never re-spelled', () => {
+  it('providerErrorSentence is the schema classifier function itself, never re-spelled', () => {
     expect(copy.providerErrorSentence).toBe(schemaProviderErrorSentence)
     const source = readFileSync(new URL('../config-copy.ts', import.meta.url), 'utf-8')
     expect(source).toContain("export { providerErrorSentence } from '@vostride/agent-qa-schema'")
@@ -168,10 +161,7 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     expect(source).not.toContain('Authentication failed.')
   })
 
-  // Each line is re-derived from the code that reads the path (429-20 SUMMARY records file:line
-  // evidence): the dashboard opens its database at startup, runs and agent calls resolve the
-  // knowledge folder per run or call while a standing daemon keeps its own, and the artifacts
-  // folder holds only each run's working-memory file, which nothing the dashboard shows reads.
+  // Each line is re-derived from the code that reads its path.
   it('CONSEQUENCE-LINES-PINNED: the three data paths, each with the one sentence the code bears out', () => {
     expect(copy.APPLY_CONSEQUENCES).toEqual({
       'knowledge.dir':
@@ -191,7 +181,7 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
     expect(copy.FIELD_CHANGED_TEXT).toBe("This changed in the file. The page now shows the file's value.")
   })
 
-  it('COPY-429: the timing constants', () => {
+  it('the timing constants', () => {
     expect(copy.SETTLE_DELAY_MS).toBe(1_000)
     expect(copy.SAVED_VISIBLE_MS).toBe(2_000)
     expect(copy.UNDO_WINDOW_MS).toBe(10_000)
@@ -199,7 +189,7 @@ describe('COPY-429: the Config strings of record (429-12 Task 2)', () => {
   })
 })
 
-describe('The Connect refusal sentences (429-48 Task 1)', () => {
+describe('The Connect refusal sentences', () => {
   it('CONNECT-REFUSAL-COPY-TOTAL: every code the connect door can answer has its own full sentence', () => {
     const codes = new Set<string>([...LLM_SETUP_REFUSALS, ...CONFIG_WRITE_REFUSALS, 'connect_failed', 'cross_site_refused'])
     expect(new Set(Object.keys(copy.CONNECT_REFUSAL_COPY))).toEqual(codes)

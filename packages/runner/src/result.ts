@@ -126,12 +126,7 @@ export interface StepResult {
   screenshot?: Buffer
   screenshotBefore?: Buffer
   trace?: StepTrace
-  /**
-   * The §A8 evidence accumulated by the runner loop, produced by construction (D-14).
-   * ADDITIVE (Phase 353): the legacy `trace` is projected FROM this, never the reverse
-   * (Open Q5). Core's transitional orchestration persists it via the run-artifact path
-   * (D-16) until Phase 361 lifts the accumulator into RunSession/CompletedRunHandoff.
-   */
+  // Built as the loop runs; the legacy `trace` is projected from this, never the reverse.
   evidence?: StepEvidence
   retryCount?: number
   capturedVariables?: Record<string, string>

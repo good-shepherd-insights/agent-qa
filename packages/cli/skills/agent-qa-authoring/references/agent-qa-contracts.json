@@ -18,11 +18,9 @@
       "registry",
       "use",
       "plugins",
-      "analytics",
-      "allowProduction",
-      "eval"
+      "analytics"
     ],
-    "mcpFields": ["enabled", "transport", "host", "port", "path"]
+    "mcpFields": ["enabled", "port"]
   },
   "test": {
     "requiredKeys": ["test-id", "name", "target", "steps"],

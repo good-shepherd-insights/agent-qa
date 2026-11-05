@@ -1,15 +1,12 @@
-/**
- * C-CI-MATRIX (quick 261024-3w1 WR-05): CI tests each package on its own leg, so coverage rests on
- * the matrix itself: a dropped leg or shard, or a `rest` exclusion with no leg of its own, would
- * leave tests unrun while CI stays green. This package runs in the ubuntu `rest` leg, so these cells
- * hold the matrix in CI. The check lives in scripts/check-ci-matrix.mjs.
- */
+// A dropped leg or shard leaves tests unrun while CI stays green; this package runs in `rest`.
 import { describe, expect, it } from 'vitest'
 
 type Leg = { group: string; filter: string; vitest?: string }
 type Job = {
-  strategy: { matrix: { include: Leg[] } }
-  steps: Array<{ name?: string; run?: string; env?: Record<string, string> }>
+  if?: string
+  needs?: string | string[]
+  strategy: { matrix: { node?: string[]; leg: Leg[] } }
+  steps: Array<{ name?: string; run?: string; uses?: string; env?: Record<string, string> }>
 }
 type Workflow = { jobs: Record<string, Job> }
 type Check = {
@@ -29,15 +26,15 @@ function mutated(edit: (ci: Workflow) => void): Workflow {
   edit(ci)
   return ci
 }
-const legs = (ci: Workflow, job: string) => ci.jobs[job]!.strategy.matrix.include
+const legs = (ci: Workflow, job: string) => ci.jobs[job]!.strategy.matrix.leg
 const drop = (ci: Workflow, job: string, group: string) => {
-  const include = legs(ci, job)
-  const at = include.findIndex((leg) => leg.group === group)
+  const list = legs(ci, job)
+  const at = list.findIndex((leg) => leg.group === group)
   if (at < 0) throw new Error(`${job} has no leg ${group}`)
-  include.splice(at, 1)
+  list.splice(at, 1)
 }
 
-describe('C-CI-MATRIX', () => {
+describe('the CI matrix tests every package once on each Node line and its aggregate needs every job', () => {
   it('every workspace package is tested by exactly one ubuntu leg, each sharded package by a whole shard set, and macOS covers knowledge-local and all of agent-qa', async () => {
     const all = await packages
     expect(all, 'turbo lists this package among the tested ones').toContain('@vostride/agent-qa-arch')
@@ -52,7 +49,7 @@ describe('C-CI-MATRIX', () => {
     ).toEqual(Object.fromEntries(filters.map((filter, index) => [filter, selected[index]])))
   })
 
-  it('a dropped leg, shard or exclusion, an unknown package name or an unwired shard fails the check', async () => {
+  it('a dropped leg, shard, exclusion or floor axis, a Node axis on macOS, an unknown package name, an unwired shard or an aggregate that can be skipped or misses a job fails the check', async () => {
     const all = await packages
     const failures = (edit: (ci: Workflow) => void) => check.ciMatrixFailures(mutated(edit), all)
     const cases: Array<[string, (ci: Workflow) => void, string]> = [
@@ -86,9 +83,23 @@ describe('C-CI-MATRIX', () => {
         'the Test step stops passing the shard',
         (ci) => {
           const test = ci.jobs.workspace!.steps.find((step) => step.name === 'Test')!
-          test.run = test.run!.replace(' ${{ matrix.vitest }}', '')
+          test.run = test.run!.replace(' ${{ matrix.leg.vitest }}', '')
         },
-        'workspace/Test: run must pass ${{ matrix.filter }} and ${{ matrix.vitest }}',
+        'workspace/Test: run must pass ${{ matrix.leg.filter }} and ${{ matrix.leg.vitest }}',
+      ],
+      [
+        'the floor axis is dropped',
+        (ci) => {
+          delete ci.jobs.workspace!.strategy.matrix.node
+        },
+        'workspace: matrix.node must be [toolchain, floor], so every leg also runs on the Node floor',
+      ],
+      [
+        'macOS gains a Node axis',
+        (ci) => {
+          ci.jobs['ps-hosts']!.strategy.matrix.node = ['toolchain', 'floor']
+        },
+        'ps-hosts: runs on .nvmrc only and must not have a node axis',
       ],
       [
         'macOS drops its second agent-qa shard',
@@ -99,6 +110,31 @@ describe('C-CI-MATRIX', () => {
         'macOS drops knowledge-local',
         (ci) => drop(ci, 'ps-hosts', 'knowledge-local'),
         'ps-hosts: no leg tests @vostride/agent-qa-knowledge-local',
+      ],
+      [
+        'the workspace legs stop downloading the build',
+        (ci) => {
+          const steps = ci.jobs.workspace!.steps
+          const at = steps.findIndex((step) => step.uses?.startsWith('actions/download-artifact@'))
+          if (at < 0) throw new Error('workspace has no download step')
+          steps.splice(at, 1)
+        },
+        'workspace: --only skips the build tasks',
+      ],
+      [
+        'the aggregate stops needing knip',
+        (ci) => {
+          const aggregate = ci.jobs['ci-result']!
+          aggregate.needs = [aggregate.needs ?? []].flat().filter((id) => id !== 'knip')
+        },
+        'ci-result: does not need knip',
+      ],
+      [
+        'the aggregate loses always()',
+        (ci) => {
+          delete ci.jobs['ci-result']!.if
+        },
+        'ci-result: must run with if: always()',
       ],
     ]
     for (const [what, edit, expected] of cases) {

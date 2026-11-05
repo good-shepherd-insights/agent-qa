@@ -1,22 +1,4 @@
-// The dual-posture entity-resolution corpus (Phase 387, D-08 / ENTY-01's validation clause).
-//
-// WHAT IS REAL HERE AND WHAT IS NOT
-//
-// Real: the addressing ledger (its own sqlite file), the entity index projection, `lexicalLeg`
-// over FTS5, `denseLeg` over stored vectors, `fuseWeightedRrf`, and `resolveEntityRef` — the
-// same entry every surface calls. Nothing is stubbed between the query and the answer.
-//
-// Not real: the embedding model. It is replaced by the fixture's authored geometry, because
-// D-08 requires the corpus to run in CI with no live stores and a floor host has no model at
-// all. See the fixture's header for how a cosine is computed by hand there.
-//
-// THE TWO POSTURES, AND WHY NEITHER SETS A FLAG
-//
-// `hybrid.ts` has no posture switch by design: `hasDenseCandidates` skips the dense leg when
-// nothing is embedded, and an absent leg contributes nothing to the fusion. So the floor
-// posture here is built by NOT embedding — which is what a host without a model actually looks
-// like — rather than by telling the resolver which rung to run. A posture the test selects is a
-// posture the test can get wrong; a posture that falls out of the data cannot.
+// Only the embedder is faked; the floor posture comes from embedding nothing, not from a flag.
 
 import { randomUUID } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
@@ -199,12 +181,7 @@ interface Posture {
   close(): void
 }
 
-/**
- * Seed one posture: mint every address by sighting, project, and embed only for `full`.
- *
- * Sighting is what mints AND projects (D-01/D-06), so the corpus is built the way a running
- * system builds one — no direct writes to the ledger or the index anywhere in this file.
- */
+// Sighting mints and projects, so nothing writes to the ledger or index directly.
 async function seedPosture(root: string, name: CorpusPosture): Promise<Posture> {
   const ledger = openAddressingLedger({ path: join(root, `${name}-addresses.db`) })
   const index: EntityIndexHandle = openEntityIndex({ path: join(root, `${name}-index.db`) })
@@ -341,7 +318,7 @@ function outcome(caseId: string, posture: CorpusPosture): EntityResolution {
   return found
 }
 
-describe('D-08 the corpus is a committed population, not a handful of examples', () => {
+describe('the corpus is a committed population, not a handful of examples', () => {
   it('holds at least a hundred entities spanning the five mintable kinds', () => {
     expect(CORPUS_ENTITIES.length).toBeGreaterThanOrEqual(100)
 
@@ -377,7 +354,7 @@ describe('D-08 the corpus is a committed population, not a handful of examples',
   })
 })
 
-describe('D-08 every case is scored in both postures and the log says so', () => {
+describe('every case is scored in both postures and the log says so', () => {
   it('logs one row per case per posture, in score order, on the reported scale', () => {
     expect(reportShapeProblems(report, CORPUS_CASES.map((testCase) => testCase.id))).toEqual([])
     expect(report.cases.length).toBe(CORPUS_CASES.length * CORPUS_POSTURES.length)
@@ -428,7 +405,7 @@ describe('D-08 every case is scored in both postures and the log says so', () =>
   })
 })
 
-describe('D-08 the corpus is deterministic', () => {
+describe('the corpus is deterministic', () => {
   it('answers a second full execution identically, outcome for outcome', async () => {
     const second = await runCorpus(postures)
     expect(second.rows).toEqual(run.rows)
@@ -511,7 +488,7 @@ function disagreements(
   return problems
 }
 
-describe('ENTY-01 never guess: no case resolves to an entity nobody named', () => {
+describe('never guess: no case resolves to an entity nobody named', () => {
   it('answers every case as its declaration says, in both postures', () => {
     const problems: string[] = []
     for (const testCase of CORPUS_CASES) {
@@ -549,7 +526,7 @@ describe('ENTY-01 never guess: no case resolves to an entity nobody named', () =
   })
 })
 
-describe('D-08 the degradation invariant, in its two halves', () => {
+describe('the degradation invariant, in its two halves', () => {
   it('compares two genuinely different hosts', () => {
     // The vacuity a mutation probe found. Every claim below diffs `full` against `floor`, and a
     // "floor" that had been embedded like the full posture would satisfy all of them by being
@@ -590,10 +567,7 @@ describe('D-08 the degradation invariant, in its two halves', () => {
   })
 
   it('is MORE confident at the floor in exactly the cases that declare it', () => {
-    // The monotone half — "the floor only ever ADDS disambiguation" — is empirically FALSE, and
-    // 387-03's handoff named the class before this corpus existed: a sole lexical match with no
-    // dense hit, tied by a dense-only rival, resolves at the floor and disambiguates in full.
-    // Asserting the strong form would have meant authoring a corpus with no case of that shape.
+    // The floor can be more confident than full: a sole lexical match tied by a dense-only rival.
     const rank = (resolution: EntityResolution): number => (
       resolution.kind === 'resolved' ? 0 : resolution.kind === 'ambiguous' ? 1 : 2
     )
@@ -609,7 +583,7 @@ describe('D-08 the degradation invariant, in its two halves', () => {
   })
 })
 
-describe('D-07 equal strength always disambiguates', () => {
+describe('equal strength always disambiguates', () => {
   it('offers both twins at an identical score rather than picking one', () => {
     const equalStrength = CORPUS_CASES.filter((testCase) => testCase.equalStrength === true)
     expect(equalStrength.length).toBeGreaterThanOrEqual(5)
@@ -632,7 +606,7 @@ describe('D-07 equal strength always disambiguates', () => {
   })
 })
 
-describe('ENTY-01 an exact address answers identically whatever the host can embed', () => {
+describe('an exact address answers identically whatever the host can embed', () => {
   it('resolves every address form at the exact-match score in both postures', () => {
     const exact = CORPUS_CASES.filter((testCase) => testCase.category === 'exact')
     expect(exact.length).toBeGreaterThanOrEqual(5)
@@ -652,7 +626,7 @@ describe('ENTY-01 an exact address answers identically whatever the host can emb
   })
 })
 
-describe('D-08 the degradation gate is one an input can actually redden', () => {
+describe('the degradation gate is one an input can actually redden', () => {
   /**
    * The rankings the resolver itself produced, re-decidable at a margin the corpus chooses.
    *

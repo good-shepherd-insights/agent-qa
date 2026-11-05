@@ -38,19 +38,19 @@ vi.mock('@vostride/agent-qa-core', async () => {
       const value = rawValue.trim()
       const normalizedKey = key.toLowerCase()
       if (!key) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Provider header keys cannot be empty.' })
+        ctx.addIssue({ code: 'custom', message: 'Provider header keys cannot be empty.' })
       }
       if (seen.has(normalizedKey)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate provider header "${key}" is not allowed.` })
+        ctx.addIssue({ code: 'custom', message: `Duplicate provider header "${key}" is not allowed.` })
       }
       seen.add(normalizedKey)
       if (/[\x00-\x1F\x7F]/.test(key) || /[\x00-\x1F\x7F]/.test(value)) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Provider header "${key}" cannot contain control characters.` })
+        ctx.addIssue({ code: 'custom', message: `Provider header "${key}" cannot contain control characters.` })
       }
       const sensitive = ['authorization', 'cookie', 'x-api-key', 'api-key', 'token', 'secret']
         .find((term) => normalizedKey.includes(term))
       if (sensitive) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Provider header "${key}" cannot contain auth-like term "${sensitive}".` })
+        ctx.addIssue({ code: 'custom', message: `Provider header "${key}" cannot contain auth-like term "${sensitive}".` })
       }
     }
   })
@@ -72,10 +72,10 @@ vi.mock('@vostride/agent-qa-core', async () => {
       (config.provider === 'openai-compatible' || config.provider === 'anthropic-compatible')
       && (!config.baseURL || config.baseURL.trim() === '')
     ) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['baseURL'], message: `Base URL is required for ${config.provider} providers.` })
+      ctx.addIssue({ code: 'custom', path: ['baseURL'], message: `Base URL is required for ${config.provider} providers.` })
     }
     if (config.providerHeaders !== undefined && config.provider !== 'anthropic-compatible') {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['providerHeaders'], message: 'providerHeaders can only be used with anthropic-compatible providers.' })
+      ctx.addIssue({ code: 'custom', path: ['providerHeaders'], message: 'providerHeaders can only be used with anthropic-compatible providers.' })
     }
   }
   const ModelConfigSchema = modelConfigBaseSchema.superRefine(validateModelConfig)
@@ -144,7 +144,7 @@ interface MockResponse {
 // A loopback caller that names its Host, the way curl, the CLI and the dashboard's own page do.
 const LLM_TEST_HOST = '127.0.0.1:4317'
 const LLM_TEST_HEADERS: IncomingHttpHeaders = { 'content-type': 'application/json', host: LLM_TEST_HOST }
-const LLM_TEST_CREDENTIAL = 'sk-fixture-credential-429-08'
+const LLM_TEST_CREDENTIAL = 'sk-fixture-credential'
 
 let router: ReturnType<typeof createRouter>
 let tempDirs: string[] = []
@@ -165,7 +165,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
 
   process.nextTick(() => {
     if (options.body) {
@@ -489,8 +489,7 @@ describe('GET /api/app-metadata', () => {
   })
 })
 
-// 429-32 D-19: the settings, model-list and default-model claims the per-section PUT routes proved,
-// each driven through the one field-merge write (PATCH /api/config) or the draft-model connect.
+// Settings, model-list and default-model cells, through `PATCH /api/config` or the draft connect.
 const SETTINGS_WORKSPACE_LINES = [
   'workspace:',
   '  testMatch:',
@@ -559,7 +558,7 @@ async function expectPatchRefused(changes: unknown[], initialConfig?: string): P
   return expectValidationRefused(await patchConfig(changes), configPath, before)
 }
 
-describe('settings writes through PATCH /api/config (429-32)', () => {
+describe('settings writes through PATCH /api/config', () => {
   it('persists the missing latest-schema sections through segment config paths', async () => {
     const { configManager } = await useSettingsWorkspace()
 
@@ -571,8 +570,6 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
       set(['workspace', 'secretsFile'], './.env.secrets.local'),
       set(['knowledge'], {
         dir: 'agent-qa-knowledge',
-        commitArtifacts: 'thumbnails',
-        contextBudgetTokens: 4096,
       }),
       set(['services', 'vision'], {
         screenshotSize: '512k',
@@ -585,15 +582,10 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
       }),
       set(['registry', 'devices', 'simulator'], {
         platform: 'ios',
-        transport: 'local',
         match: {
           udid: 'iphone-17',
           bundleId: 'com.example.app',
         },
-      }),
-      set(['registry', 'providers', 'browserstack'], {
-        project: 'agent-qa',
-        retries: 2,
       }),
       set(['analytics', 'passRateScope'], {
         attributes: {
@@ -619,8 +611,6 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
       },
       knowledge: {
         dir: 'agent-qa-knowledge',
-        commitArtifacts: 'thumbnails',
-        contextBudgetTokens: 4096,
       },
       services: {
         vision: {
@@ -639,17 +629,10 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
         devices: {
           simulator: {
             platform: 'ios',
-            transport: 'local',
             match: {
               udid: 'iphone-17',
               bundleId: 'com.example.app',
             },
-          },
-        },
-        providers: {
-          browserstack: {
-            project: 'agent-qa',
-            retries: 2,
           },
         },
       },
@@ -727,7 +710,7 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
     const { configManager, configPath } = await useSettingsWorkspace()
     const before = await readFile(configPath)
 
-    // 429-44: the door refuses the retired leaf by path; inside a container value it still meets validation.
+    // The door refuses the retired leaf by path; in a container value it still meets validation.
     const refused = await patchConfig([set(['use', 'device'], 'ios-sim')])
     expect(refused.status).toBe(422)
     expect(JSON.parse(refused.body)).toEqual({ error: 'path_not_writable' })
@@ -848,7 +831,7 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
   it('rejects services.dashboard.testsDir', async () => {
     const { configPath } = await useSettingsWorkspace()
     const before = await readFile(configPath)
-    // 429-44: the door refuses the retired leaf by path; inside a container value it still meets validation.
+    // The door refuses the retired leaf by path; in a container value it still meets validation.
     const refused = await patchConfig([set(['services', 'dashboard', 'testsDir'], './tests')])
     expect(refused.status).toBe(422)
     expect(JSON.parse(refused.body)).toEqual({ error: 'path_not_writable' })
@@ -867,7 +850,7 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
     expect(issues.some((issue) => dotted(issue) === 'knowledge.dir')).toBe(true)
   })
 
-  it('rejects an absolute knowledge.dir (repo-relative refine, T-373-06)', async () => {
+  it('rejects an absolute knowledge.dir (repo-relative refine)', async () => {
     const issues = await expectPatchRefused([set(['knowledge', 'dir'], '/etc/knowledge')])
 
     expect(issues.some((issue) => dotted(issue) === 'knowledge.dir')).toBe(true)
@@ -908,7 +891,6 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
         appActivity: 'org.wikipedia.main.MainActivity',
         app: {
           path: 'apps/wikipedia-alpha.apk',
-          browserstack: 'bs://uploaded-app',
         },
       }),
     ])
@@ -925,7 +907,6 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
             appActivity: 'org.wikipedia.main.MainActivity',
             app: {
               path: 'apps/wikipedia-alpha.apk',
-              browserstack: 'bs://uploaded-app',
             },
           },
         },
@@ -964,11 +945,10 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
     )).toBe(true)
   })
 
-  it('rejects invalid local device match fields with segment validation paths', async () => {
+  it('rejects invalid device match fields with segment validation paths', async () => {
     const issues = await expectPatchRefused([
       set(['registry', 'devices', 'iosSimulator'], {
         platform: 'ios',
-        transport: 'local',
         match: {
           serial: 'android-only',
         },
@@ -976,7 +956,7 @@ describe('settings writes through PATCH /api/config (429-32)', () => {
     ])
 
     expect(issues.map((issue) => `${dotted(issue)}: ${issue.message}`)).toContain(
-      'registry.devices.iosSimulator.match.serial: Match field "serial" is not valid for ios local transport. Allowed: udid, bundleId, automationName, platformVersion',
+      'registry.devices.iosSimulator.match.serial: Match field "serial" is not valid for an ios device. Allowed: udid, bundleId, automationName, platformVersion',
     )
   })
 })
@@ -1015,7 +995,7 @@ async function expectModelRefusedBothWays(
   return { connectBody, patchIssues }
 }
 
-describe('model list and default model writes through connect and PATCH (429-32)', () => {
+describe('model list and default model writes through connect and PATCH', () => {
   it('omits product-facing authMethod from GET /api/config', async () => {
     const { configManager, configPath } = await createConfigWorkspace([
       'workspace: {}',
@@ -1260,8 +1240,6 @@ describe('dashboard LLM auth and test routes', () => {
     expect(mockWriteAuth).not.toHaveBeenCalled()
   })
 
-  // 429-09 D-15: re-targeted from "rejects credential save for unknown config names" — a name
-  // not yet in registry.llms is a draft, and its credential is accepted.
   it('accepts credential save for a draft name not yet in registry.llms', async () => {
     await useConfigWorkspace(credentialConfig)
 
@@ -1524,7 +1502,7 @@ describe('dashboard LLM auth and test routes', () => {
 
     const liveRes = await invokeRoute('/api/live-editor/sessions', {
       method: 'POST',
-      // 428 D-08: the live-editor doors run the same-site guard, which refuses an absent Host.
+      // The live-editor doors run the same-site guard, which refuses an absent Host.
       headers: { 'content-type': 'application/json', host: '127.0.0.1:3470' },
       body: JSON.stringify({
         platform: 'web',
@@ -1579,7 +1557,7 @@ describe('dashboard LLM auth and test routes', () => {
     })
     expect(mockWriteAuth).not.toHaveBeenCalled()
 
-    // 429-09 D-15: a name missing from registry.llms is a draft, and its sign-in starts.
+    // A name missing from `registry.llms` is a draft, and its sign-in starts.
     const missingRes = await invokeRoute('/api/auth/plugin/openai-subscription/start', {
       method: 'POST',
       headers: { 'content-type': 'application/json', host: LLM_TEST_HOST },
@@ -1676,7 +1654,7 @@ describe('dashboard LLM auth and test routes', () => {
     })
 
     expect(res.status).toBe(200)
-    // 429-11 D-24: the removal answers an Undo token and never the credential it removed.
+    // The removal answers an Undo token and never the credential it removed.
     expect(JSON.parse(res.body)).toEqual({
       deleted: true,
       undo: { token: expect.any(String), expiresAt: expect.any(Number) },

@@ -1,8 +1,4 @@
-// Scroll loops over injected primitives (EXEC-02; 436-02 · D-24/D-25 · spec §12.12). Every fake
-// swipe reports a scripted SwipeSignal and every interim-tree read returns a scripted tree, so the
-// cells can hold movement evidence and visible content apart: the tree decides target visibility
-// only, never movement, end, reversal or retry. All fakes resolve immediately; no timers.
-// 2026-10-08 (436-22): probe fakes answer visible, hidden or unknown (TargetVisibility).
+// The tree decides target visibility only, never movement, end, reversal or retry.
 import { describe, it, expect } from 'vitest'
 import type { InterimNode } from '@vostride/agent-qa-runner'
 import {
@@ -63,7 +59,7 @@ const TARGET = 'Save changes'
 const withTarget: InterimNode[] = [node('button', 'Save changes')]
 const SAME: InterimNode[] = [node('text', 'Row A'), node('text', 'Row B')]
 
-describe('C436-SCROLL — no identity-driven reversal, end or retry (D-24/D-25)', () => {
+describe('no identity-driven reversal, end or retry', () => {
   it('a same-hash scroll keeps going forward', async () => {
     const { p, calls } = makeFakePrimitives({ trees: [SAME], signals: ['moved'] })
     const r = await runUntilVisibleLoop(p, { target: TARGET, direction: 'down', maxSwipes: 5, retryOpposite: false })
@@ -208,7 +204,7 @@ describe('runUntilVisibleLoop — native rung and visibility probe', () => {
   })
 })
 
-describe('C436-SCROLL-PROBE — an adapter visibility probe replaces the tree match (436-17 · D-24)', () => {
+describe('an adapter visibility probe replaces the tree match', () => {
   it('probeTargetVisible replaces the tree match when supplied', async () => {
     const { p, calls } = makeFakePrimitives({ trees: [SAME], signals: ['moved'] })
     const probes: { target: string; ref?: string }[] = []
@@ -268,7 +264,7 @@ function scriptedProbe(answers: TargetVisibility[]): { probe: NonNullable<Scroll
   }
 }
 
-describe('C436-SCROLL-PROBE — an unknown answer never ends a search not-found (436-22 · D-24)', () => {
+describe('an unknown answer never ends a search not-found', () => {
   it('an unknown answer anywhere in the search never ends not-found', async () => {
     const { p, calls } = makeFakePrimitives({ trees: [SAME], signals: ['at-boundary'] })
     p.probeTargetVisible = scriptedProbe(['hidden', 'unknown', 'hidden']).probe
@@ -337,7 +333,7 @@ describe('swipeSignalFromOffsets — the offset rule', () => {
   })
 })
 
-describe('C436-SCROLL-CHAIN — a gesture under the pointer is judged by every scroller it may have moved (436-18 · D-25)', () => {
+describe('a gesture under the pointer is judged by every scroller it may have moved', () => {
   const at = (y: number, maxY: number, x = 0, maxX = 0) => ({ x, y, maxX, maxY })
 
   it('any member moving is moved', () => {
@@ -354,7 +350,7 @@ describe('C436-SCROLL-CHAIN — a gesture under the pointer is judged by every s
   })
 
   it('one member with range short of its extent is unknown', () => {
-    // HARN-03 adjacency: the list at its end inside a document that is not, and the reverse.
+    // The list at its end inside a document that is not, and the reverse.
     expect(scrollerSetSwipeSignal('down', [at(7280, 7280), at(0, 120)], [at(7280, 7280), at(0, 120)])).toBe('unknown')
     expect(scrollerSetSwipeSignal('down', [at(300, 7280), at(120, 120)], [at(300, 7280), at(120, 120)])).toBe('unknown')
   })

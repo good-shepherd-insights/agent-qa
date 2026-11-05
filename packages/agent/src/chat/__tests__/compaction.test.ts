@@ -1,15 +1,4 @@
-// CHAT-04's trigger policy, measured against the REAL v49 substrate (Phase 392, plan 06).
-//
-// HERMETIC BY CONTRACT, NOT BY MOCK (D-13). Every case below drives the shipped
-// `createTokenAccounting` and the shipped `degrade` — the same functions a live chat host runs —
-// over a fake capability thunk that reports a small context window. Nothing here stands in for the
-// substrate: a hand-written degrade would be a second implementation of the mechanism under test,
-// and every assertion about eviction, truncation or the cannot-fit outcome would then be an
-// assertion about the fake (the produced-not-literal law).
-//
-// WHAT THE ESTIMATOR DOES, so the arithmetic below is readable rather than magic: the shipped
-// estimator charges `ceil(totalTextChars / 4)` plus a flat constant per image part. Every fixture
-// here is text-only, so `chars / 4` is the whole story and an exact-boundary case is constructible.
+// The shipped estimator charges `ceil(chars / 4)` for text, so text-only boundaries are exact.
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -21,10 +10,7 @@ import {
   browserConfigSchema,
   deviceConfigSchema,
   platformBase,
-  platformConfigSchema,
-  remoteDeviceSchema,
   timeoutConfigSchema,
-  useSchema,
   viewportSchema,
 } from '@vostride/agent-qa-schema'
 import type { ModelMessage } from 'ai'
@@ -82,16 +68,10 @@ function pass(messages: readonly ModelMessage[], contextWindow: number) {
   })
 }
 
-describe('CHAT-04 / D-20: the pinned trigger policy', () => {
-  it('pins COMPACTION_RATIO at 0.5 and CHAT_MINIMUM_CONTEXT, each with a retune comment', () => {
+describe('the pinned trigger policy', () => {
+  it('pins COMPACTION_RATIO at 0.5 and a positive CHAT_MINIMUM_CONTEXT', () => {
     expect(COMPACTION_RATIO).toBe(0.5)
     expect(CHAT_MINIMUM_CONTEXT).toBeGreaterThan(0)
-
-    const source = readFileSync(COMPACTION_SOURCE, 'utf8')
-    // The comment is the retune CONTRACT (386 D-15): a pinned number nobody knows how to move is
-    // indistinguishable from an accident, so the constant and its retune trigger ship together.
-    expect(source).toMatch(/Retune trigger[\s\S]{0,600}?COMPACTION_RATIO = 0\.5/)
-    expect(source).toMatch(/Retune trigger[\s\S]{0,600}?CHAT_MINIMUM_CONTEXT = /)
   })
 
   it('does not measure size itself — no local chars-per-token arithmetic in the module', () => {
@@ -100,15 +80,14 @@ describe('CHAT-04 / D-20: the pinned trigger policy', () => {
       .split('\n')
       .filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
       .join('\n')
-    // `estimate` is the ONE size authority (edge: CHAT-04/encoding). A chars/4 here would be a
-    // second estimator, free to disagree with the one the budget is denominated in.
+    // A second chars-per-token estimator here could disagree with the one the budget uses.
     expect(code).not.toMatch(/\/\s*4\b/)
     expect(code).not.toMatch(/\.length\s*\/\s*\d/)
     expect(code).not.toMatch(/charCodeAt|TextEncoder|Buffer\.byteLength/)
   })
 })
 
-describe('CHAT-04: the threshold', () => {
+describe('the threshold', () => {
   // contextWindow 32768 -> threshold 16384 tokens -> 65536 chars exactly.
   const WINDOW = 32768
   const THRESHOLD_CHARS = 65536
@@ -142,7 +121,7 @@ describe('CHAT-04: the threshold', () => {
   })
 })
 
-describe('CHAT-04/empty: the degenerate histories', () => {
+describe('the degenerate histories', () => {
   it('an empty history is a no-op — no throw, no degrade, no event', () => {
     const result = pass([], 32768)
     expect(result.messages).toEqual([])
@@ -159,7 +138,7 @@ describe('CHAT-04/empty: the degenerate histories', () => {
   })
 })
 
-describe('CHAT-04: the budget floor', () => {
+describe('the budget floor', () => {
   it('floors the budget at CHAT_MINIMUM_CONTEXT rather than at half a tiny window', () => {
     // contextWindow 4000 -> threshold 2000 tokens (8000 chars); the floor (8192) is what the
     // conversation is asked to fit under, so a 3000-token history is NOT shredded to 2000.
@@ -173,7 +152,7 @@ describe('CHAT-04: the budget floor', () => {
   })
 })
 
-describe('CHAT-04: the hard-truncate fallback cannot wedge a session', () => {
+describe('the hard-truncate fallback cannot wedge a session', () => {
   // The protected set (system + final + the chat pin) alone exceeds the budget. degrade's own
   // contract is that it never throws and never violates a pin — this is chat's half of that.
   const unfittable: ModelMessage[] = [
@@ -213,12 +192,8 @@ describe('CHAT-04: the hard-truncate fallback cannot wedge a session', () => {
   })
 })
 
-describe('CHAT-04: the chat pin, as a two-sided differential', () => {
-  // TWO SIDES, ONE SUBSTRATE (the 388/389/390 differential law). Each case runs the SAME fixture
-  // twice against the same shipped `degrade`: once through `maybeCompact`, which supplies the chat
-  // pin, and once directly with no pin at all. Asserting only the pinned side would prove nothing —
-  // degrade already protects `system` and the FINAL message on its own, and a fixture where those
-  // built-ins happen to cover the message is a test of the substrate wearing the pin's name.
+describe('the chat pin, as a two-sided differential', () => {
+  // Each fixture runs with and without the pin, because degrade already protects some messages.
   const WINDOW = 32768
   const BUDGET = (COMPACTION_RATIO * WINDOW) // 16384; above CHAT_MINIMUM_CONTEXT, so the floor is idle
 
@@ -280,7 +255,7 @@ describe('CHAT-04: the chat pin, as a two-sided differential', () => {
   })
 })
 
-describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
+describe('the assumption-delta invariant: ONE event per pass', () => {
   async function runHook(messages: readonly ModelMessage[], contextWindow: number) {
     const emitted: ChatCompactionEvent[] = []
     const retained: (readonly ModelMessage[])[] = []
@@ -292,12 +267,10 @@ describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
       },
       conversationFor: () => messages,
     })
-    // The append arrives per CALL now (392-12), because it is the handle of the session whose turn
-    // is being compacted — a hook bound to one log at construction could not know which that is.
+    // The append arrives per call: a hook bound to one log at construction cannot know the session.
     await hook({
       turnId: 'turn-7',
-      // The session arrives per CALL too (392 plan 13): what a pass publishes is one conversation's
-      // pruned history, and the sink it goes to is one container per session.
+      // The session arrives per call too: the sink is one container per session.
       sessionId: 'session-compaction',
       replay: { messages: [], abortedTurnIds: [] },
       append: (event) => {
@@ -336,7 +309,7 @@ describe('CHAT-04 / the assumption-delta invariant: ONE event per pass', () => {
     expect(damaged.emitted[0]?.turnId).toBe('turn-7')
   })
 
-  it('defaults its conversation to the REPAIRED replay it was handed (CHAT-05 ordering)', async () => {
+  it('defaults its conversation to the REPAIRED replay it was handed', async () => {
     const emitted: ChatCompactionEvent[] = []
     const retained: (readonly ModelMessage[])[] = []
     const hook = createChatCompactionHook({
@@ -384,24 +357,13 @@ describe('replayToModelMessages', () => {
   })
 })
 
-// ---------------------------------------------------------------------------------------
-// D-20's knob-absence gate.
-//
-// SCHEMA-KEY-DRIVEN, NEVER A GREP OVER FILE TEXT. A raw-text search for `compactionRatio` is
-// defeated by the first comment that mentions the words — including the retune comment this very
-// plan requires — so the gate would either be self-invalidating or would have to be taught to
-// ignore comments, which is a parser it does not have. Walking the parsed zod shapes asks the
-// question that actually matters: is there a CONFIGURABLE KEY, whatever any file says about one.
-// ---------------------------------------------------------------------------------------
+// Walks the parsed zod shapes, not file text, so a comment naming `compactionRatio` cannot fool it.
 
 /** Every schema the config surface publishes, walked as one inventory. */
 const CONFIG_SCHEMAS = [
-  useSchema,
-  platformConfigSchema,
   platformBase,
   browserConfigSchema,
   deviceConfigSchema,
-  remoteDeviceSchema,
   timeoutConfigSchema,
   appStateSchema,
   viewportSchema,
@@ -490,7 +452,7 @@ function compactionKnobKeys(keys: readonly string[]): string[] {
   })
 }
 
-describe('D-20: the knob-absence gate', () => {
+describe('the knob-absence gate', () => {
   it('walks a real, non-empty config-schema key inventory', () => {
     const keys = collectConfigSchemaKeys()
     // A walker that silently returned nothing would pass the assertion below forever.

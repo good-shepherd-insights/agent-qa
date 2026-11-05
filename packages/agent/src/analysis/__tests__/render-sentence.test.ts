@@ -1,12 +1,4 @@
-// The ONE deterministic sentence renderer (Phase 389, D-05/D-06/D-08).
-//
-// Four claims, each an obligation the composed sentence carries: the verbatim grounding
-// quote with its step ref, the discriminator, the recurrence clause (a LIVE join through
-// the provider seam — never a stored number), and the recommended next action with its
-// `agentqa://` links. The renderer is producer-keyed by CONSTRUCTION: it composes typed
-// parts identically whoever authored them, which is what lets plan 04's LLM parts and the
-// deterministic template parts flow through one rule (D-06) — and what makes SC3's
-// "no second code path" structural when plan 07's CLI print imports this same symbol.
+// The renderer composes typed parts identically whoever authored them, LLM or template.
 
 import type {
   QuarantineLadderState,
@@ -91,7 +83,7 @@ function providerAnswering(
   }
 }
 
-describe('renderVerdictSentence — the four obligations (ANLZ-03)', () => {
+describe('renderVerdictSentence — the four obligations', () => {
   it('renders quote, discriminator, recurrence and next action, each at its section marker', () => {
     const { provider } = providerAnswering(() => ({ kth: 3, windowBuilds: 5 }))
     const sentence = renderVerdictSentence(verdictOf(), LLM_PARTS, provider, QUERY)
@@ -126,7 +118,7 @@ describe('renderVerdictSentence — the four obligations (ANLZ-03)', () => {
   })
 })
 
-describe('the recurrence clause is a LIVE join (D-08)', () => {
+describe('the recurrence clause is a LIVE join', () => {
   it('reflects each provider answer at call time — nothing cached, nothing stored', () => {
     let current: { kth: number; windowBuilds: number } | undefined = { kth: 2, windowBuilds: 6 }
     const recording = providerAnswering(() => current)
@@ -170,15 +162,7 @@ describe('the recurrence clause is a LIVE join (D-08)', () => {
   })
 })
 
-// ---- 390 D-17: the ladder arms ------------------------------------------------------------
-//
-// The clause is TOTAL over `QuarantineLadderState | undefined` — four arms over a three-member
-// union, with absence as the fourth. Every case below pins the WHOLE composed sentence rather
-// than a substring, because a table-driven case that derives its expectation from the same
-// table the renderer reads stays green while the table is wrong (390-05's probe D). The one
-// table-shaped assertion here is the totality check, and it is a COMPILE-time one: the literal
-// is written `satisfies Record<QuarantineLadderState, string>`, so a fourth ladder state fails
-// to compile in this file too.
+// Whole sentences, not table-derived ones, which would pass while the table is wrong.
 
 /** The full sentence LLM_PARTS composes, with the recurrence clause spliced in. */
 function llmSentenceWith(clause: string): string {
@@ -196,15 +180,15 @@ function renderWith(answer: RecurrenceAnswer | undefined): string {
   return renderVerdictSentence(verdictOf(), LLM_PARTS, provider, QUERY)
 }
 
-describe('the D-17 ladder arms (390)', () => {
+describe('the flake ladder arms', () => {
   const EXPIRES_AT = '2026-09-04T12:00:00.000Z'
 
-  it('renders the no-ladder arm as the occurrence count alone — byte-unchanged from 389', () => {
+  it('renders the no-ladder arm as the occurrence count alone — byte-unchanged from the ladderless sentence', () => {
     expect(renderWith({ kth: 3, windowBuilds: 5 }))
       .toBe(llmSentenceWith('failure 3 of this test in the last 5 builds'))
   })
 
-  it('renders the flagged arm: suspected flaky, no deadline, one build of warning (D-06)', () => {
+  it('renders the flagged arm: suspected flaky, no deadline, one build of warning', () => {
     expect(renderWith({ kth: 2, windowBuilds: 5, ladder: { state: 'flagged' } }))
       .toBe(llmSentenceWith('failure 2 of this test in the last 5 builds; suspected flaky'))
   })
@@ -219,7 +203,7 @@ describe('the D-17 ladder arms (390)', () => {
     ))
   })
 
-  it('renders the expired arm saying failures count again (D-11 lapse)', () => {
+  it('renders the expired arm saying failures count again', () => {
     expect(renderWith({
       kth: 4,
       windowBuilds: 5,
@@ -260,8 +244,7 @@ describe('the D-17 ladder arms (390)', () => {
   })
 
   it('shows a hand-edited unparseable deadline VERBATIM rather than inventing one', () => {
-    // The ledger is committed text a human may edit (D-12); the fold treats an unparseable
-    // deadline as lapsed, and the clause quotes what the file actually says.
+    // The ledger is human-editable: an unparseable deadline folds as lapsed, quoted as written.
     expect(renderWith({
       kth: 3,
       windowBuilds: 5,
@@ -294,7 +277,7 @@ describe('the D-17 ladder arms (390)', () => {
       .toBe(llmSentenceWith('no prior failure of this test is recorded in the last 4 builds'))
   })
 
-  it('carries the fingerprint on the query the provider is asked with (390 D-07)', () => {
+  it('carries the fingerprint on the query the provider is asked with', () => {
     const recording = providerAnswering(() => ({ kth: 1, windowBuilds: 1 }))
     const keyed: RecurrenceQuery = { ...QUERY, fingerprint: '{"t":"error","message":"boom"}::flake' }
 
@@ -304,7 +287,7 @@ describe('the D-17 ladder arms (390)', () => {
   })
 })
 
-describe('producer-keyed composition through ONE rule (D-06)', () => {
+describe('producer-keyed composition through ONE rule', () => {
   it('renders LLM parts for producer analyze-run', () => {
     const { provider } = providerAnswering(() => ({ kth: 1, windowBuilds: 3 }))
     const sentence = renderVerdictSentence(
@@ -350,7 +333,7 @@ describe('producer-keyed composition through ONE rule (D-06)', () => {
   })
 })
 
-describe('byte determinism (D-05)', () => {
+describe('byte determinism', () => {
   it('same (verdict, parts, provider answer) → the same string, byte for byte', () => {
     const first = renderVerdictSentence(
       verdictOf(),
@@ -369,37 +352,30 @@ describe('byte determinism (D-05)', () => {
   })
 })
 
-// The D-12 quote leg: quoted producer text is cleaned in the ONE renderer (406, DETL-04).
-//
-// The 399 seeded-red sentence is the canonical "before". Pinning it HERE — through
-// `renderVerdictSentence`, not through the sanitizer alone — is what makes the single code
-// path structural: the CLI print, 392's chat and the run page all compose their sentence with
-// this function, so a surface cannot read a differently-cleaned quote without a second
-// renderer, which is the drift D-12 exists to forbid. ESC is spelled as an escape, never as a
-// literal byte, so the cell about invisible characters is itself readable.
+// Pinned through `renderVerdictSentence`, which every surface calls to compose its sentence.
 
 const ESC = '\u001b'
 
-/** Copied from `demo/acceptance/399/399-analysis-seeded-red.json` — Playwright's raw error. */
-const SEEDED_RED_399_QUOTE =
+// Playwright's raw error from a seeded-red run, written as a literal.
+const SEEDED_RED_QUOTE =
   'locator.click: Timeout 30000ms exceeded.\n'
   + 'Call log:\n'
   + `${ESC}[2m  - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()`
   + `${ESC}[22m\n`
 
-const SEEDED_RED_399_PARTS: VerdictSentenceParts = {
+const SEEDED_RED_PARTS: VerdictSentenceParts = {
   perTest: 0,
-  groundingQuote: { stepIndex: 1, quote: SEEDED_RED_399_QUOTE },
+  groundingQuote: { stepIndex: 1, quote: SEEDED_RED_QUOTE },
   discriminator: 'root cause undetermined',
   nextAction: 'inspect the run manually — no deterministic signal matched',
   links: [],
 }
 
-describe('D-12 quote sanitization — the 399 before/after through the ONE renderer', () => {
+describe('quote sanitization — the recorded before/after through the ONE renderer', () => {
   it('renders the seeded-red sentence as readable prose, pinned verbatim', () => {
     const sentence = renderVerdictSentence(
       verdictOf({ class: 'unknown', producer: 'deterministic-classifier', confidence: 0 }),
-      SEEDED_RED_399_PARTS,
+      SEEDED_RED_PARTS,
       undefined,
       QUERY,
     )

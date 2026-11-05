@@ -1,31 +1,4 @@
-// THE PHASE 405 TRACER (plan 01, D-01/D-02/D-03/D-14 · DETL-01/DETL-03).
-//
-// ONE CLAIM, MEASURED END TO END: a decision-screenshot `ArtifactRef` the runner mints reaches a
-// browser as a sha, through every layer this phase touches and with no layer faked.
-//
-//   producer   `projectSubActionRecorded` — the SHIPPED schema fold, called here directly
-//   subscriber `createDashboardRunIngest` — the SHIPPED arms, over a real `DashboardDatabase`
-//   storage    the v2 `run_sub_actions` row, in a real (in-memory) SQLite file
-//   port       `createDashboardRunDetailReader` — the SHIPPED adapter
-//   op         `runs.detail` — the SHIPPED spec, reached through the SHIPPED `invokeFunction`
-//              on a registry composed by the SHIPPED `createFunctionRegistry`
-//   route      `GET /api/runs/:id/detail` on a REAL socket, through `startServer`
-//
-// WHY THE SOCKET AND NOT THE ADAPTER FUNCTION. Two of the things that can break this path live
-// ABOVE the route handler: the arm's POSITION in `routes.ts` — the `/api/runs/:id` catch-all
-// below it claims every four-segment GET and answers `Not found`, which is RESEARCH Pitfall 2 —
-// and the conditional spread in `server.ts` that threads the host at all. A suite that called
-// `serveRunDetailRead` directly would be green with the arm registered in the wrong place, which
-// is the "green that never ran" failure WINDOWS names.
-//
-// WHY A REAL REGISTRY AND NOT A PLANTED HOST. The op is where the token sum is computed, where
-// `RunNotFoundError` is minted and where the `runDetail` binding is checked; a fixture that
-// answered the route's `invokeFunction` itself would be a second implementation of all three,
-// green about a path this product does not ship. `@vostride/agent-qa-agent` is a DEV dependency
-// of this package for exactly this reason — `validate:arch` walks `src` with `__tests__` excluded
-// and reconciles only runtime `dependencies`, so the production edge it forbids stays forbidden
-// (see `run-detail-reader.ts`: the reader declares its own structural port type and imports
-// nothing from the agent package).
+// A real socket and registry: the arm's place in `routes.ts` and the host wiring can both break it.
 
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -49,11 +22,7 @@ import {
   type FunctionDeps,
   type FunctionRegistry,
 } from '@vostride/agent-qa-agent'
-// 405-05: the SHIPPED evidence-blob binding and the SHIPPED store that wrote the blob. Both are
-// DEV-only edges here, on the `@vostride/agent-qa-agent` reasoning at the top of this file —
-// `validate:arch` walks `src` with `__tests__` excluded and reconciles only runtime
-// `dependencies`, so the production edges these packages forbid stay forbidden. The point of
-// driving them is that a reader written in this file would be a second containment rule.
+// The shipped blob reader and store, so no second containment rule is written in this file.
 import { createEvidenceBlobReader } from '@vostride/agent-qa-agent-local'
 import { FsEvidenceArtifactStore, slugBranch } from '@vostride/agent-qa-runner-local'
 import {
@@ -88,17 +57,16 @@ import { createDashboardRunDetailReader } from '../run-detail-reader.js'
 
 /** A 64-hex sha, the shape `FsEvidenceArtifactStore` content-addresses a blob under. */
 const DECISION_SHA = 'a'.repeat(63) + '7'
-// 2026-10-01 (432-21, D-12): the run service is tokenless, so its fixture headers carry nothing, and
-// what it refuses before dispatch is a cross-site request.
+// The run service is tokenless; what it refuses before dispatch is a cross-site request.
 const TOKENLESS_HEADERS: Record<string, string> = {}
 const CROSS_SITE_HEADERS: Record<string, string> = { Origin: 'https://evil.example' }
 const RUN_ID = 'r_tracer-alpha-bravo-charlie-delta-echo-foxtrot-golf-hotel-india'
-const BRIEF_DIGEST = 'brief-digest-405-tracer'
+const BRIEF_DIGEST = 'brief-digest-tracer'
 
 let seq = 0
 function ev(type: RunEventType, payload: Record<string, unknown> = {}): RunEventEnvelope {
   seq += 1
-  return { seq, ts: seq, runId: 'run-bus-405', type, payload } as RunEventEnvelope
+  return { seq, ts: seq, runId: 'run-bus', type, payload } as RunEventEnvelope
 }
 
 function makeScreenState(url: string): ScreenState {
@@ -124,11 +92,7 @@ const DECISION_REF: ArtifactRef = {
   sha: DECISION_SHA,
 }
 
-/**
- * The evidence the runner hands the fold — carrying the decision screenshot ref and NOTHING in
- * `artifactRefs`, which is the shipped producer's actual shape (RESEARCH D1: no runner code sets
- * `artifactRefs`, and the decision screenshot was the field that got voided).
- */
+// The runner's evidence carries the decision screenshot ref and nothing in `artifactRefs`.
 function makeSubActionEvidence(): SubActionEvidence {
   return {
     plan: 'Click the Save button',
@@ -140,17 +104,13 @@ function makeSubActionEvidence(): SubActionEvidence {
   }
 }
 
-// 2026-10-01 (432-21, D-12): the tokenless caller shape — no scope set or safe-mode flag.
+// The tokenless caller shape: no scope set or safe-mode flag.
 const REGISTRY_CALLER: FunctionCaller = {
   surface: 'dashboard',
   origin: 'human',
 }
 
-/**
- * The four REQUIRED ports, minimal by construction. None of them is reached by `runs.detail` —
- * they exist because `FunctionDeps` is non-partial on the read ports, which is itself the
- * contract 387 states: a composition that omits one fails to typecheck.
- */
+// Required because `FunctionDeps` is non-partial on read ports; omitting one fails typecheck.
 function depsWith(
   runDetail: FunctionDeps['runDetail'],
   evidenceBlobs?: FunctionDeps['evidenceBlobs'],
@@ -217,8 +177,6 @@ function hostOver(registry: FunctionRegistry): AgentHost {
     runsEvidenceFunctionId: RUNS_EVIDENCE_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
-    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
-    // workspace still satisfies the interface.
     runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     runsMarkFunctionId: RUNS_MARK_FUNCTION_ID,
     runsMarksHistoryFunctionId: RUNS_MARKS_HISTORY_FUNCTION_ID,
@@ -321,7 +279,7 @@ async function serveOneRun(options: { withHost?: boolean } = {}): Promise<number
   return (started.server.address() as AddressInfo).port
 }
 
-describe('GET /api/runs/:id/detail — the 405 tracer (D-01/D-03/D-14)', () => {
+describe('GET /api/runs/:id/detail', () => {
   it('serves the decision-screenshot artifactRefs sha the producer minted, whole', async () => {
     const port = await serveOneRun()
     const answer = await get(port, `/api/runs/${RUN_ID}/detail`)
@@ -350,20 +308,19 @@ describe('GET /api/runs/:id/detail — the 405 tracer (D-01/D-03/D-14)', () => {
     expect(body.steps[0].status, "the payload's own word").toBe('passed')
     expect(body.steps[0].stepText).toBe('Save the record')
     expect(body.subActions[0].plan).toBe('Click the Save button')
-    // D-02/RESEARCH D2: screen CONTEXT on this bus is the hash pair and nothing else.
+    // Screen context on this bus is the hash pair and nothing else.
     expect(body.subActions[0].screenStateHash).toMatch(/^[0-9a-f]{64}$/)
     expect(body.subActions[0].screenStateHashAfter).toMatch(/^[0-9a-f]{64}$/)
     expect(body.subActions[0].screenStateHashAfter).not.toBe(body.subActions[0].screenStateHash)
 
-    // D-01/D-18: the member row exists, keyed by the handle, with its identity and its outcome.
+    // The member row exists, keyed by the handle, with its identity and its outcome.
     expect(body.members).toHaveLength(1)
     expect(body.members[0].testIndex).toBe(0)
     expect(body.members[0].name).toBe('Tracer Test')
     expect(body.members[0].outcome).toBe('passed')
     expect(body.members[0].attempts).toBe(1)
 
-    // D-06 — ABSENT IS NOT ZERO. Nothing on this bus carries `tokenUsage` yet (405-04 lands the
-    // producer), so the honest answer names how many steps went unmeasured and offers NO total.
+    // Absent is not zero: unmeasured steps are counted and no total is offered.
     expect(body.tokens.measuredSteps).toBe(0)
     expect(body.tokens.unmeasuredSteps).toBe(1)
     expect(Object.keys(body.tokens), 'no totalTokens key at all — a zero would be a lie')
@@ -404,7 +361,7 @@ describe('GET /api/runs/:id/detail — the 405 tracer (D-01/D-03/D-14)', () => {
     expect((answer.body as { error: string }).error).toBe('agent_host_unavailable')
   })
 
-  it('refuses a run id the op\'s own input schema rejects, before any dispatch (T-405-01)', async () => {
+  it('refuses a run id the op\'s own input schema rejects, before any dispatch', async () => {
     const port = await serveOneRun()
     // `..` is exactly the segment `slugBranch` would REWRITE, which `runIdSchema` refuses instead.
     const answer = await get(port, '/api/runs/..%2Fescape/detail')
@@ -421,12 +378,11 @@ const PNG_BYTES = new Uint8Array([
 ])
 const JPEG_BYTES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46])
 
-// 2026-10-14 (441-16, D-06): the production host binds its declared mask; without one runs.evidence
-// answers masking-unavailable, so the doors would never reach the recorded evidence.
+// Without a declared mask `runs.evidence` answers masking-unavailable, so the host binds one.
 const declaredMask: NonNullable<FunctionDeps['secretMask']> = (text) => text
 
 async function serveEvidence() {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-http-evidence-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-http-evidence-'))
   roots.push(root)
   const document = {
     schemaVersion: RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION as typeof RUN_EVIDENCE_DOCUMENT_SCHEMA_VERSION,
@@ -463,7 +419,7 @@ async function serveEvidence() {
   }
 }
 
-describe('423 typed evidence HTTP doors', () => {
+describe('typed evidence HTTP doors', () => {
   const query = '?kind=console&testIndex=0&stepIndex=0'
   it('HTTP-EVIDENCE-HUMAN reaches the recorded evidence through the public operation', async () => {
     const f = await serveEvidence()
@@ -473,9 +429,6 @@ describe('423 typed evidence HTTP doors', () => {
     expect(f.seen).toEqual([RUNS_EVIDENCE_FUNCTION_ID])
     expect(response.headers.get('access-control-allow-origin')).toBeNull()
   })
-  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'HTTP-EVIDENCE-MACHINE authenticates before
-  // dispatch and never restores': the run service asks for no bearer, so the guard that answers
-  // before dispatch is the same-site check; the never-restores claim is unchanged.
   it('HTTP-EVIDENCE-MACHINE guards before dispatch and never restores', async () => {
     const f = await serveEvidence()
     expect((await fetch(`${f.remote}/evidence${query}`, { headers: CROSS_SITE_HEADERS })).status).toBe(403)
@@ -530,38 +483,36 @@ describe('423 typed evidence HTTP doors', () => {
     expect(Buffer.from(result.bytesBase64, 'base64').equals(bytes)).toBe(true)
   })
 })
-// ---- 423-21 (D-18): the two feedback reads on both HTTP doors ---------------------------------
-//
-// The routes format nothing: the registry's own ops answer through a file-backed read port, so the
-// HTTP bodies are compared with a direct invocation of the same registry. The real ledger host
-// lives in the CLI, whose 423-feedback-reads suite drives these same routes over its real stores.
-// 2026-09-30, 432-09: the first mark applied a knowledge fix, and its changed record is joined.
+// The routes format nothing, so HTTP bodies are compared with a direct invocation of the registry.
 
-const FEEDBACK_NOTE_SECRET = 'synthetic-423-21-note-token'
+const FEEDBACK_NOTE_SECRET = 'synthetic-note-token'
 const FIRST_MARK = 'mark_0123456789ab'
 const SECOND_MARK = 'mark_0123456789ac'
 
 function feedbackReceipts(): MarkReceipt[] {
   const base = { schemaVersion: MARK_RECEIPT_SCHEMA_VERSION as typeof MARK_RECEIPT_SCHEMA_VERSION, runId: RUN_ID as MarkReceipt['runId'], testIndex: 0, runSlug: slugBranch(RUN_ID),
-    origin: 'user' as const, gold: [], evidence: { confirmed: 0, overturned: 0 } }
+    origin: 'user' as const, evidence: { confirmed: 0, overturned: 0 } }
   return [
     { ...base, markId: FIRST_MARK, kind: 'false-fail', ordinal: 1, markedAt: 1, note: `note ${FEEDBACK_NOTE_SECRET}`,
-      disposition: { kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_423_21'] } } },
+      disposition: { kind: 'applied', fix: 'fact', change: { kind: 'knowledge', changeId: 'prop_0123456789ab', recordIds: ['mem_feedback'] } } },
     { ...base, markId: SECOND_MARK, kind: 'confirmed-bug', ordinal: 2, markedAt: 2, supersedes: FIRST_MARK,
       disposition: { kind: 'confirmed-bug', confirmedRecords: 0 } },
   ]
 }
 
+const servedRecord = (content: string) => ({ recordId: 'mem_feedback', served: true,
+  recordContent: { content, summary: 'checkout timing', kind: 'fact' as const,
+    applicability: { product: 'shop', scope: 'shop', anchors: [], openedAtOrdinal: 1 }, currentStatus: 'active' as const,
+    currentTrust: { confirmations: 1, contradictions: 0, evidenceTokens: [], lastEventOrdinal: 1 } },
+  evidence: { kind: 'effects' as const, effects: [{ direction: 'confirm' as const }] } })
+
 function feedbackPreview(runId: string): RunsMarkPreviewResult {
   return RunsMarkPreviewResultSchema.parse({
     kind: 'consequences', runId, prospective: true, markKind: 'false-fail', member: { testIndex: 0 },
     resolvedStep: { stepIndex: 0, reason: 'failing-step' }, latest: { kind: 'supersedes', markId: SECOND_MARK, ordinal: 2 },
-    basis: { ledgerOrdinal: 2, priorMarkOrdinal: 2 }, markedDecisionCount: 1,
-    groundTruth: [{ testIndex: 0, stepIndex: 0, verdict: 'pass',
-      recordedVerdict: { pass: false, reasoning: `timed out near ${FEEDBACK_NOTE_SECRET}` }, correctedAction: false }],
-    labels: [{ testIndex: 0, stepIndex: 0, decisionOrdinal: 0, sourceCassetteId: 'cassette-423-21', channel: 'user-mark',
-      correction: { verdict: 'pass' } }],
-    knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
+    basis: { ledgerOrdinal: 2, priorMarkOrdinal: 2 },
+    knowledge: { servedRecordIds: ['mem_feedback'], appendsEvidence: true,
+      records: [servedRecord(`timed out near ${FEEDBACK_NOTE_SECRET}`)], evidence: { confirmed: 1, overturned: 0 } },
     draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
   })
 }
@@ -575,7 +526,7 @@ function fileFeedbackReads(root: string, calls: string[], options: { withPreview
       if (!existsSync(runDir(runId))) return { kind: 'run-not-found' }
       const receipts = JSON.parse(readFileSync(join(runDir(runId), 'marks.json'), 'utf8')) as MarkReceipt[]
       return { kind: 'history', entries: receipts.map(receipt => receipt.disposition.kind === 'applied'
-        ? { receipt, changedRecords: [{ recordId: 'mem_423_21', contentAbsence: { reason: 'not-bound' as const } }] } : { receipt }) }
+        ? { receipt, changedRecords: [{ recordId: 'mem_feedback', contentAbsence: { reason: 'not-bound' as const } }] } : { receipt }) }
     },
     ...(options.withPreview === false ? {} : {
       preview: async (input: RunsMarkInput) => {
@@ -595,7 +546,7 @@ function pathMap(root: string): [string, string][] {
 }
 
 async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: boolean } = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-21-feedback-http-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-feedback-http-'))
   roots.push(root)
   mkdirSync(join(root, 'runs', slugBranch(RUN_ID)), { recursive: true })
   writeFileSync(join(root, 'runs', slugBranch(RUN_ID), 'marks.json'), JSON.stringify(feedbackReceipts()))
@@ -605,7 +556,7 @@ async function serveFeedbackReads(options: { withPreview?: boolean; unbound?: bo
   const portCalls: string[] = []
   const registry = composeRegistry(createDashboardRunDetailReader(db), undefined,
     options.unbound === true ? undefined : fileFeedbackReads(root, portCalls, options),
-    (text) => text.replaceAll(FEEDBACK_NOTE_SECRET, '[secret:FEEDBACK_441]'))
+    (text) => text.replaceAll(FEEDBACK_NOTE_SECRET, '[secret:FEEDBACK_KEY]'))
   const seen: string[] = []
   const baseHost = hostOver(registry)
   const host: AgentHost = { ...baseHost,
@@ -649,14 +600,14 @@ const postJson = (url: string, body: unknown, headers: Record<string, string> = 
   fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body) })
 
-describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
+describe('feedback reads on both HTTP doors', () => {
   it('HTTP-MARKS-HISTORY: both doors answer runs.marks.history exactly as the registry does, guarded and masked', async () => {
     const f = await serveFeedbackReads()
     const expected = await invokeFunction(f.registry, RUNS_MARKS_HISTORY_FUNCTION_ID, { runId: RUN_ID }, REGISTRY_CALLER)
     expect(JSON.stringify(expected)).not.toContain(FEEDBACK_NOTE_SECRET)
     expect(RunsMarksHistoryResultSchema.parse(expected)).toMatchObject({ kind: 'history', entries: [
       { markId: FIRST_MARK, active: false, supersededBy: SECOND_MARK,
-        changedRecords: [{ recordId: 'mem_423_21', contentAbsence: { reason: 'not-bound' } }] },
+        changedRecords: [{ recordId: 'mem_feedback', contentAbsence: { reason: 'not-bound' } }] },
       { markId: SECOND_MARK, active: true, supersedes: FIRST_MARK },
     ] })
     f.seen.length = 0
@@ -705,11 +656,11 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
       expect((await answer.json() as { error: string }).error).toBe('agent_host_unavailable')
     }
 
-    // 441-15 (D-07): both doors answer a stored marker and an old placeholder as they are.
+    // Both doors answer a stored marker and an old placeholder as they are.
     const history = RunsMarksHistoryResultSchema.parse(expected)
     if (history.kind !== 'history') throw new Error('expected a history result')
     const withNote = (note: string) => ({ ...history, entries: history.entries.map((entry, index) => index === 0 ? { ...entry, note } : entry) })
-    const stored = withNote('note [secret:PW_441] and <SECRET_1>')
+    const stored = withNote('note [secret:PW_KEY] and <SECRET_1>')
     const planted = await servePlantedHost(stored)
     const human = await fetch(`${planted.local}/marks`)
     expect(human.status).toBe(200)
@@ -784,10 +735,10 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
       expect(await answer.json()).toMatchObject({ error: 'agent_host_unavailable' })
     }
 
-    // 441-15 (D-07): both doors answer a stored marker and an old placeholder as they are.
+    // Both doors answer a stored marker and an old placeholder as they are.
     const consequences = feedbackPreview(RUN_ID) as Extract<RunsMarkPreviewResult, { kind: 'consequences' }>
-    const stored = RunsMarkPreviewResultSchema.parse({ ...consequences, groundTruth: [{ ...consequences.groundTruth[0]!,
-      recordedVerdict: { pass: false, reasoning: 'near [secret:PW_441]' }, correctedExpectation: '<SECRET_1>' }] })
+    const stored = RunsMarkPreviewResultSchema.parse({ ...consequences, knowledge: { ...consequences.knowledge,
+      records: [servedRecord('near [secret:PW_KEY] and <SECRET_1>')] } })
     const planted = await servePlantedHost(stored)
     const human = await postJson(`${planted.local}/mark-preview`, previewInput())
     expect(human.status).toBe(200)
@@ -820,7 +771,7 @@ describe('423-21 feedback reads on both HTTP doors (D-18)', () => {
   })
 })
 
-/** Bytes that WANT to be a document. The sniffer has no arm that can grant it (T-405-15). */
+// Bytes that look like a document; the sniffer has no arm that grants that type.
 const SVG_BYTES = new TextEncoder().encode(
   '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
 )
@@ -841,7 +792,7 @@ interface ServedArtifact {
 async function serveOneArtifact(
   options: { readonly bytes: Uint8Array; readonly withHost?: boolean },
 ): Promise<ServedArtifact> {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-405-05-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-artifact-routes-'))
   roots.push(root)
   const ref = new FsEvidenceArtifactStore({ root, runId: RUN_ID })
     .persistDecisionScreenshot(options.bytes)
@@ -862,21 +813,9 @@ async function serveOneArtifact(
   return { port: (started.server.address() as AddressInfo).port, sha: ref.sha, root }
 }
 
-// ---- 405-05 (D-12/D-13/D-15 · DETL-03): the ref RESOLVES — a sha becomes immutable bytes -------
-//
-// THE SECOND HALF OF THE TRACER'S CLAIM. The cells above prove a minted `ArtifactRef` reaches a
-// browser as a sha; these prove that sha resolves to the exact bytes the runner wrote, with the
-// headers a content address earns. Nothing here is faked below the route: the blob is written by
-// the SHIPPED `FsEvidenceArtifactStore` under a real temp root, read back by the SHIPPED
-// `createEvidenceBlobReader`, served by the SHIPPED op through the SHIPPED registry, over a real
-// socket — so the arm's POSITION in `routes.ts` (above the `/api/runs/:id` catch-all, which claims
-// every four-segment GET) is inside the claim rather than assumed.
-//
-// AND THE REFUSALS ARE THE POINT AS MUCH AS THE BYTES. `getBlob` answers `undefined` for a
-// malformed sha and for an absent file alike; a door that could not tell those apart would render
-// one grey error for a bad link, a GC'd screenshot and a traversal attempt.
+// Shipped store, reader, op and registry over a real socket, so the bytes are those written.
 
-describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves (405-05, D-12/D-13/D-15)', () => {
+describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves', () => {
   it('serves the exact bytes under a content address, immutably and with nosniff', async () => {
     const served = await serveOneArtifact({ bytes: PNG_BYTES })
     const response = await fetch(
@@ -887,10 +826,11 @@ describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves (405-05, D-12
     // THE BYTES, WHOLE. Not a length, not a hash of what came back — the array itself.
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(PNG_BYTES)
 
-    // D-12's header set, each one load-bearing and each one asserted rather than sampled.
+    // Each header is asserted, not sampled.
     expect(response.headers.get('etag'), 'the content address IS the validator').toBe(`"${served.sha}"`)
     expect(response.headers.get('cache-control')).toBe('public, max-age=31536000, immutable')
-    expect(response.headers.get('x-content-type-options'), 'T-405-15').toBe('nosniff')
+    expect(response.headers.get('x-content-type-options'), 'the response forbids MIME sniffing')
+      .toBe('nosniff')
     expect(response.headers.get('content-type')).toBe('image/png')
     expect(response.headers.get('content-length')).toBe(String(PNG_BYTES.length))
   })
@@ -907,7 +847,7 @@ describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves (405-05, D-12
     expect(response.headers.get('etag')).toBe(`"${served.sha}"`)
   })
 
-  it('refuses a malformed sha with a fixed body that never echoes the request (T-405-14/T-405-18)', async () => {
+  it('refuses a malformed sha with a fixed body that never echoes the request', async () => {
     const served = await serveOneArtifact({ bytes: PNG_BYTES })
     const base = `http://127.0.0.1:${String(served.port)}/api/runs/${RUN_ID}/artifacts`
 
@@ -931,7 +871,7 @@ describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves (405-05, D-12
     expect(await upper.json()).toEqual({ error: 'malformed_sha' })
   })
 
-  it('tells an unknown RUN from an absent BLOB — two 404s, two words (D-15)', async () => {
+  it('tells an unknown RUN from an absent BLOB — two 404s, two words', async () => {
     const served = await serveOneArtifact({ bytes: PNG_BYTES })
     const origin = `http://127.0.0.1:${String(served.port)}`
 
@@ -960,7 +900,7 @@ describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves (405-05, D-12
     expect(await response.json()).toEqual({ error: 'agent_host_unavailable' })
   })
 
-  it('refuses a run id the op\'s own input schema rejects, touching no filesystem (T-405-14)', async () => {
+  it('refuses a run id the op\'s own input schema rejects, touching no filesystem', async () => {
     const served = await serveOneArtifact({ bytes: PNG_BYTES })
     const response = await fetch(
       `http://127.0.0.1:${String(served.port)}/api/runs/%2e%2e%2fescape/artifacts/${served.sha}`,
@@ -993,7 +933,7 @@ describe('GET /api/runs/:runId/artifacts/:sha — the ref resolves (405-05, D-12
   })
 })
 
-describe('the artifact arm reads no store of its own (D-13, the fourth-door law)', () => {
+describe('the artifact arm reads no store of its own', () => {
   it('routes.ts names the evidence store nowhere — the bytes cross the function layer', async () => {
     const source = await readFile(new URL('../../server/routes.ts', import.meta.url), 'utf8')
     // A SOURCE ASSERTION, because the claim is about where a capability LIVES rather than about
@@ -1004,13 +944,6 @@ describe('the artifact arm reads no store of its own (D-13, the fourth-door law)
     expect(source).toContain('serveRunArtifact')
   })
 })
-
-// ---- 405-10 (D-09): the `boundary` option, and what each of its two values promises -----------
-//
-// `serveRunDetailRead` serves BOTH doors — the local one a person's browser reads and the authed
-// remote one a bearer token reads. Since 441-15 (D-07) both answer the projection as stored, and
-// `boundary: 'human'` only turns on the local same-site guard. These cells drive the adapter
-// directly, because the claim is about which VALUE the option carries.
 
 /** A `ServerResponse` stand-in that records the one write the adapter makes. */
 function recordingResponse(): {
@@ -1063,15 +996,15 @@ function storedProjection(text: string): Record<string, unknown> {
   }
 }
 
-describe("serveRunDetailRead's boundary option (405-10, D-09)", () => {
-  it("serves the stored projection unchanged when boundary is 'human'", async () => {
+describe('serveRunDetailRead', () => {
+  it('serves the stored projection unchanged', async () => {
     const projection = storedProjection('<SECRET_0>')
     const recorder = recordingResponse()
 
     serveRunDetailRead(
       { headers: { host: '127.0.0.1:3470' } } as never,
       recorder.res,
-      { runId: RUN_ID, host: plantedHost(projection), boundary: 'human' },
+      { runId: RUN_ID, host: plantedHost(projection) },
     )
     await recorder.done
 
@@ -1079,12 +1012,10 @@ describe("serveRunDetailRead's boundary option (405-10, D-09)", () => {
     expect(recorder.raw()).toBe(JSON.stringify(projection))
   })
 
-  it('serves the stored projection unchanged without a boundary, at a non-loopback Host (the remote door)', async () => {
+  it('serves the same projection at a non-loopback Host, because its door decides who may call', async () => {
     const projection = storedProjection('<SECRET_0>')
     const recorder = recordingResponse()
 
-    // A 200 at a real hostname is the assertion that the same-site guard is gated on `boundary`
-    // and not on the function (405 CR-01, second pass).
     serveRunDetailRead(
       { headers: { host: 'runs.example.com' } } as never,
       recorder.res,
@@ -1097,7 +1028,7 @@ describe("serveRunDetailRead's boundary option (405-10, D-09)", () => {
   })
 })
 
-// ---- 441-15 (D-07): the dashboard shows what was stored and restores nothing ----------------------
+// The dashboard shows what it stored and restores nothing.
 
 async function serveBothDoors(body: unknown) {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
@@ -1114,9 +1045,9 @@ async function serveBothDoors(body: unknown) {
   }
 }
 
-describe('C441-DISPLAY', () => {
+describe('stored markers on display', () => {
   it('the human door serves a stored marker unchanged', async () => {
-    const projection = storedProjection('[secret:PW_441]')
+    const projection = storedProjection('[secret:PW_KEY]')
     const doors = await serveBothDoors(projection)
 
     for (const url of [`${doors.local}/detail`, `${doors.remote}/detail`]) {
@@ -1127,7 +1058,7 @@ describe('C441-DISPLAY', () => {
   })
 
   it('no dashboard route restores or rewrites stored text', async () => {
-    const body = storedProjection('<SECRET_0> beside [secret:PW_441]')
+    const body = storedProjection('<SECRET_0> beside [secret:PW_KEY]')
     const doors = await serveBothDoors(body)
 
     for (const url of [

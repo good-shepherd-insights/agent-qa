@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
 
-// 428 code review (428-REVIEW.md): the editor keeps reconnect on (D-09), so a dropped control
-// socket is an ordinary event during a suite run. CR-01: the drop settles a test in flight, so
-// "Run all tests" ends instead of waiting forever for an answer the old socket cannot carry.
-// WR-01: a socket the server replaced (4409) does not reconnect and take the session back.
+// A drop settles the running test so Run all tests ends; a 4409 replacement never reconnects.
 
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -100,8 +97,8 @@ async function flush(): Promise<void> {
   })
 }
 
-describe('useLiveEditor reconnect during a suite run (428 review)', () => {
-  it('CR-01 DROP-SETTLES-RUNNING-TEST: a socket drop during Run all tests cancels the test and ends the run', async () => {
+describe('useLiveEditor reconnect during a suite run', () => {
+  it('DROP-SETTLES-RUNNING-TEST: a socket drop during Run all tests cancels the test and ends the run', async () => {
     const holder: Holder = { current: null }
     await act(async () => {
       root?.render(React.createElement(Harness, { holder, tests: [test('t_a', 'a.yaml'), test('t_b', 'b.yaml')] }))
@@ -138,7 +135,7 @@ describe('useLiveEditor reconnect during a suite run (428 review)', () => {
       .toHaveLength(1)
   })
 
-  it('WR-01 SUPERSEDED-DOES-NOT-RECONNECT: a 4409 close leaves the page disconnected instead of taking the session back', async () => {
+  it('SUPERSEDED-DOES-NOT-RECONNECT: a 4409 close leaves the page disconnected instead of taking the session back', async () => {
     const holder: Holder = { current: null }
     await act(async () => {
       root?.render(React.createElement(Harness, { holder, tests: [] }))

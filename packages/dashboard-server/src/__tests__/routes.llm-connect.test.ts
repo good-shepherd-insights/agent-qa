@@ -1,8 +1,4 @@
-// 429-10 (D-15/D-16/D-17): POST /api/llm/connect tests a draft model before anything is written,
-// and only a pass (or an explicit skipTest) lands the credential and the definition.
-//
-// auth.json is an in-memory store behind core's readAuth/writeAuth/removeAuth, and the config is a
-// real temp file behind a real ConfigManager, so every cell asserts what both hold afterwards.
+// A draft model is tested before anything is written; only a pass or `skipTest` lands it.
 
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -108,7 +104,7 @@ const mockResolveLLMAuth = vi.mocked(resolveLLMAuth)
 
 const SELF_HOST = '127.0.0.1:4317'
 const SAME_SITE: IncomingHttpHeaders = { 'content-type': 'application/json', host: SELF_HOST }
-const SECRET = 'sk-connect-secret-429-10'
+const SECRET = 'sk-connect-secret'
 const CONNECT = '/api/llm/connect'
 
 const WORKSPACE = [
@@ -170,7 +166,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
   process.nextTick(() => {
     if (options.body) req.push(Buffer.from(options.body))
     req.push(null)
@@ -263,7 +259,7 @@ afterEach(async () => {
   tempDirs = []
 })
 
-describe('POST /api/llm/connect, key mode (429-10 Task 1)', () => {
+describe('POST /api/llm/connect, key mode', () => {
   it('CONNECT-NOTHING-WRITTEN-ON-FAIL: a failed test answers the shared sentence and writes nothing', async () => {
     const before = await fileText()
     mockGenerateText.mockRejectedValueOnce(new Error('401 unauthorized'))
@@ -380,7 +376,7 @@ const CROSS_SITE_CALLERS: readonly { readonly name: string; readonly headers: In
   { name: 'a rebound Host', headers: { 'content-type': 'application/json', host: 'evil.example:4317', origin: 'http://evil.example:4317' } },
 ]
 
-describe('the connect door (429-10 Task 1)', () => {
+describe('the connect door', () => {
   for (const caller of CROSS_SITE_CALLERS) {
     it(`CONNECT-SAME-SITE: ${caller.name} is refused with 403 and no cross-origin grant`, async () => {
       const before = await fileText()
@@ -449,7 +445,7 @@ function registerFakeClaudeSignIn(): void {
   })
 }
 
-describe('POST /api/llm/connect, saved credentials and sign-in (429-10 Task 2)', () => {
+describe('POST /api/llm/connect, saved credentials and sign-in', () => {
   it('CONNECT-EXISTING-CREDENTIAL: a same-provider key saved under the name is tested and nothing is written to auth.json', async () => {
     const saved = { type: 'api', provider: 'openai-compatible', key: 'sk-saved-elsewhere' }
     authStore.current = { 'gpt-5.6': saved }
@@ -528,7 +524,7 @@ const REFUSAL_CASES: readonly RefusalCase[] = [
   { word: 'credential_missing', status: 400, body: { name: 'gemini-draft', provider: 'gemini', model: 'gemini-2.5-pro' } },
 ]
 
-describe('CONNECT-REFUSALS (429-10 Task 2)', () => {
+describe('CONNECT-REFUSALS', () => {
   for (const refusal of REFUSAL_CASES) {
     it(`CONNECT-REFUSALS: ${refusal.word} (${JSON.stringify(refusal.body).slice(0, 80)}) writes nothing`, async () => {
       if (refusal.config) await useConfig(refusal.config)
@@ -550,7 +546,7 @@ describe('CONNECT-REFUSALS (429-10 Task 2)', () => {
   }
 })
 
-describe('repeats, races and the one name (429-10 Task 2)', () => {
+describe('repeats, races and the one name', () => {
   it('CONNECT-TWICE-NO-DUPLICATE: a second connect for a name that just saved answers name_taken', async () => {
     const first = await connect(keyDraft())
     expect(JSON.parse(first.body)).toMatchObject({ success: true })

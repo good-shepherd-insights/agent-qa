@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { asRef, type Ref, type Surface } from '@vostride/agent-qa-schema'
 import type { ToolRegistry } from '../registry.js'
 import type { ToolDefinition } from '../types.js'
-import { NON_EXPOSED, VERB_SURFACE } from './surface-map.js'
+import { VERB_SURFACE } from './surface-map.js'
 
 const CURRENT_SCREEN_REF_DESCRIPTION = 'current-screen element reference (e.g. e12), never a CSS selector or label'
 const ELEMENT_DESCRIPTION_SCHEMA = z.string().optional()
@@ -11,9 +11,7 @@ const ELEMENT_DESCRIPTION_SCHEMA = z.string().optional()
 export const refSchema = (description: string) =>
   z.string().transform((v): Ref => asRef(v)).describe(description)
 
-// 438 D-01, D-02, D-12: the element the planner means, sent beside the ref and checked against
-// it before dispatch; `row` holds a repeated label's row words. No position field, no `near`
-// and no selector-like field: `.strict()` rejects them.
+// Checked against the ref before dispatch; `.strict()` rejects position, `near` and selectors.
 export const targetSchema = z.object({
   role: z.string()
     .describe('The element\'s role as the observation shows it, e.g. button or textbox.'),
@@ -47,7 +45,6 @@ function actionWithSurface(
     id: `${surface}_${verb}`,
     type: verb,
     surface,
-    exposed: !NON_EXPOSED.has(verb),
     description,
     category: 'action',
     schema,
@@ -61,9 +58,7 @@ function action(verb: string, description: string, schema: z.ZodType, meta: Acti
   return actionWithSurface(verb, surface, description, schema, meta)
 }
 
-// Toggle/picker idempotency intent (D-13). Optional with NO default: absence means "no
-// idempotency claim" (a plain gesture). The executor compares it against the element's
-// persisted state at the dispatch seam and skips the gesture when already satisfied (Plan 08).
+// No default: absence is no idempotency claim; a satisfied state skips the gesture at dispatch.
 const desiredStateSchema = z.enum(['checked', 'unchecked', 'selected', 'unselected']).optional()
   .describe('For toggles/checkboxes/pickers — the state this tap should ensure; the executor skips the gesture when the element already persists this state. Omit for plain taps.')
 
@@ -128,21 +123,14 @@ export const waitForSchema = z.discriminatedUnion('on', [
   }).strict(),
 ])
 
-// D-06: assertAI is non-deterministic and should bypass runtime caches in M1; this phase records schema intent only.
 export const assertAISchema = z.object({
   claim: z.string().describe('AI-judged claim to verify against the current screen state'),
   mode: z.enum(['multimodal', 'visual', 'text']).default('multimodal')
-    .describe('multimodal = use all available evidence. Omit for multimodal.'),
-  effort: z.enum(['low', 'medium', 'high']).default('medium')
-    .describe('Model reasoning effort for the assertion. Omit for medium.'),
-  consensus: z.number().int().min(1).max(5).default(1)
-    .describe('Number of model votes — accepted but NOT honored until M3/M4. Omit for single-judge.'),
-  video: z.boolean().optional()
-    .describe('Assert over a recorded clip — accepted but NOT honored until M3/M4. Omit when a still-frame assertion is enough.'),
+    .describe('What the judge looks at. multimodal: the screen text, plus the screenshot when there is one. visual: the screen text and the screenshot; with no screenshot the claim cannot be judged and the step ends. text: the screen text only, never the screenshot. Omit for multimodal.'),
 }).strict()
 
 const assertValueSourceSchema = z.object({
-  source: z.enum(['url', 'storage', 'network', 'expr-result'])
+  source: z.enum(['url', 'storage', 'network'])
     .describe('Deterministic machine-value source to assert against'),
   op: z.enum(['isNull', 'isDefined', 'equals', 'notEquals', 'gt', 'lt', 'contains'])
     .describe('Deterministic comparison operation'),
@@ -165,19 +153,28 @@ const extractArrayItemSchema = z.object({
 }).strict()
 
 export const extractFieldSchema = z.object({
-  name: z.string().describe('Output field name'),
+  name: z.string().min(1, 'field names must not be empty').describe('Output field name'),
   type: z.enum(['string', 'number', 'boolean', 'array', 'object']).describe('Output field value type'),
   description: z.string().describe('Natural-language description of the field to extract'),
   item: extractArrayItemSchema.optional()
-    .describe('Array item type. Omit when type is not array.'),
-}).strict()
+    .describe('Array item type, required when type is array. Omit when type is not array.'),
+}).strict().superRefine((field, ctx) => {
+  if (field.type === 'array' && field.item === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['item'], message: 'item is required when type is array' })
+  }
+})
 
-// D-06: extractAI is non-deterministic and should bypass runtime caches in M1; this phase records schema intent only.
 export const extractAISchema = z.object({
   query: z.string().describe('Perceptual extraction request for the current rendered state'),
-  schema: z.array(extractFieldSchema).describe('Typed field-list output schema'),
-  scope: z.enum(['run', 'global']).default('run')
-    .describe('Where extracted values may be reused. Omit for run scope.'),
+  schema: z.array(extractFieldSchema).superRefine((fields, ctx) => {
+    const seen = new Set<string>()
+    fields.forEach((field, index) => {
+      if (seen.has(field.name)) {
+        ctx.addIssue({ code: 'custom', path: [index, 'name'], message: 'field names must be unique' })
+      }
+      seen.add(field.name)
+    })
+  }).describe('Typed field-list output schema'),
 }).strict()
 
 export const openAppSchema = z.union([

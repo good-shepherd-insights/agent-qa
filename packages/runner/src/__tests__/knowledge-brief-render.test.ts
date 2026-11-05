@@ -41,12 +41,11 @@ function entry(overrides: Partial<OriginStampedEntry> = {}): OriginStampedEntry 
   }
 }
 
-describe('brief line rendering (BRIF-01 / D-03)', () => {
+describe('brief line rendering', () => {
   it('renders every typed serving annotation in one line', () => {
     const rendered = renderBriefLine(entry({
       unconfirmedSinceOrdinal: 17,
       unverified: true,
-      lowerTrust: true,
       servedAs: 'prior-build-hypothesis',
       conflict: {
         peerRecordId: asRecordId('fact-peer'),
@@ -62,7 +61,6 @@ describe('brief line rendering (BRIF-01 / D-03)', () => {
     expect(rendered).toContain('fact-peer')
     expect(rendered).toContain('unknown-conflict')
     expect(rendered).toContain('CANARY')
-    expect(rendered).toContain('[LEARNED, UNCONFIRMED] [CANARY]')
   })
 
   it('keeps 140 UTF-16 code units whole and truncates 141 to the pinned boundary', () => {
@@ -133,7 +131,7 @@ describe('brief line rendering (BRIF-01 / D-03)', () => {
   })
 })
 
-describe('shared observation rendering (FLOOR-06 / D-06)', () => {
+describe('shared observation rendering', () => {
   it('uses the same observation prefix as the full renderer', () => {
     expect(OBSERVATION_LINE_PREFIX).toBe('Observation: ')
     expect(renderBriefLine(entry()).line.startsWith(OBSERVATION_LINE_PREFIX)).toBe(true)
@@ -160,7 +158,7 @@ describe('shared observation rendering (FLOOR-06 / D-06)', () => {
   })
 })
 
-describe('shared brief tier assembly (FLOOR-06 / D-08)', () => {
+describe('shared brief tier assembly', () => {
   it.each(['policy', 'policy\n'])('appends user facts with one separator after %j', (policy) => {
     expect(assembleBriefTiers(policy, ['first fact', 'second fact'], []))
       .toEqual({ L0: 'policy\nfirst fact\nsecond fact', L1: '', L2: '' })

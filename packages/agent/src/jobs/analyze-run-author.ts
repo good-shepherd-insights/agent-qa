@@ -1,41 +1,8 @@
-// The whole-run analyze-run author (Phase 389, plan 04 — D-01/D-02/D-03, ANLZ-02).
-//
-// ONE `model.generate` call authors every unknown-verdict failure together (D-01): the
-// author sees the cross-test pattern ("40 reds, one cause") that clustering and the
-// discriminator feed on, matches the once-per-run heartbeat unit, and never fans out
-// per test or adds a second LLM stage inside the one-checkpoint schedule.
-//
-// The model's answer is UNTRUSTED. It is parsed with the curator's deterministic repair
-// idiom (fence strip, trailing-comma removal — COPIED from `cli/src/curation/
-// curator-author.ts`, never imported: agent→cli is a banned direction), shaped by zod, and
-// then validated cross-document by schema's `validateAnalysisAgainstHandoff`. Rejects feed
-// exactly ONE repair round-trip (D-03) whose feedback names each failing test and reason;
-// whatever still fails degrades to the deterministic unknown floor member for THAT test
-// only — valid siblings persist, and job-level retries stay reserved for transport
-// failures, which propagate out of this function uncaught.
-//
-// The merge law lives here and nowhere else: a floor verdict is replaced iff its class is
-// `unknown` AND a validated author verdict exists for its perTest; everything else passes
-// through byte-identical. `producer: 'analyze-run'` is forced code-side — model output
-// never chooses producer.
-//
-// D-02's screenshot channel rides the same single request: when the capability advertises
-// `vision` and a blob reader is bound and the post-compaction packs still carry
-// screenshotRefs, the failing steps' decision-screenshot bytes attach as the request's
-// optional `images`; every other posture is the L9 text-only degradation — a request
-// structurally identical to the pre-widening text request. The repair round-trip reuses
-// the same image set, never a re-fetch.
-//
-// The model arrives ONLY as the `JobModelCapability` argument the `recordLlmAuthorship`
-// callback hands its author — this module never imports a provider SDK.
+// One generate call for every unknown failure; output is repaired once, then degraded per test.
 
 import type {
-  AnalysisValidationOptions,
   ArtifactRef,
   CompletedRunHandoff,
-  MisdirectionEvidence,
-  MisdirectionRecordResult,
-  MisdirectionRootPosture,
   PerTestOutcome,
   StepEvidence,
   Verdict,
@@ -63,63 +30,25 @@ import type {
 } from './evidence-diet.js'
 import type { JobModelCapability, JobModelRequest } from './record-llm-authorship.js'
 
-/**
- * The single in-attempt repair round-trip (D-03).
- *
- * Pinned, not config (386 D-15); retune from operational evidence: raise only if real
- * transcripts show a second repair regularly rescuing tests the first one could not —
- * every extra round-trip is a model call inside a job attempt whose transport failures
- * already carry their own 3-attempt bound.
- */
 export const AUTHOR_REPAIR_CAP = 1
 
-/**
- * The cap on decision-screenshot image parts attached to the one request (D-02).
- *
- * Pinned, not config (386 D-15); retune from operational evidence: raise if real
- * multi-failure transcripts show discriminating screenshots being cut at this cap, lower
- * if image payloads dominate request cost without moving verdict quality.
- */
 export const MAX_AUTHOR_IMAGES = 6
 
-// ---------------------------------------------------------------------------------------
-// 422 D-17..D-20: the code-owned circularity stamp, applied BEFORE validation.
-//
-// The evidence a no-trust-change verdict rests on is produced by the pre-enqueue arbiter
-// (422-14) and travels on the run's own handoff. It reaches a verdict through THIS function and
-// through no other route: whatever the model answered about `memoryOnPath` or
-// `misdirectionRuledOut` is overwritten, so an authored copy can never become authority.
-//
-// It lives beside the validator call it precedes rather than in the handler, because the
-// ordering is the contract — a stamp applied after `validateAnalysisAgainstHandoff` would leave
-// the gate deciding about a verdict that carries no evidence while the persisted artifact ends
-// up carrying some, which is the one shape that looks right afterwards and was wrong at the
-// instant it mattered.
-// ---------------------------------------------------------------------------------------
-
-export interface MisdirectionStampInput {
+export interface MemoryOnPathStampInput {
   readonly verdict: Verdict
   /** The verdict's sentence parts, when they exist — the grounding quote joins the path. */
   readonly parts: VerdictSentenceParts | undefined
   readonly test: PerTestOutcome | undefined
-  /**
-   * The run-level ledger the arbiter published, or ABSENT when it never ran. Absent is not
-   * empty: a run with no member is a pre-422 run and nothing is stamped onto it at all.
-   */
-  readonly evidence: readonly MisdirectionRecordResult[] | undefined
-  readonly rootPosture: MisdirectionRootPosture
 }
 
 /**
  * The steps a verdict's evidence touches — cited steps, the grounding quote's step, and the
  * run's ACTUAL failing step.
  *
- * The TWIN of `pathStepsOf` inside `schema/src/verdict/validate-analysis.ts`, which is module
- * private there. The two must agree: the stamp writes a `memoryOnPath` DECLARATION and the
+ * The twin of `pathStepsOf` inside `schema/src/verdict/validate-analysis.ts`, which is module
+ * private there. The two must agree: the stamp writes a `memoryOnPath` declaration and the
  * validator recomputes membership over its own path, so a rule that drifted here would make
- * every stamped verdict disagree with its own recomputation. `misdirection-analysis.test.ts`
- * measures the agreement against the real validator — including the case where the author cites
- * a clean neighbour and never mentions the step that failed — rather than restating the rule.
+ * every stamped verdict disagree with its own recomputation.
  */
 export function misdirectionPathSteps(
   verdict: Verdict,
@@ -136,125 +65,22 @@ export function misdirectionPathSteps(
 }
 
 /**
- * The validator posture this run is entitled to (422-11's two fail-closed options).
- *
- * ABSENT evidence keeps the historical surface byte-for-byte: `{}` is what every caller passed
- * before 422 and what `validateAnalysisAgainstHandoff` defaults to, so a run whose arbiter never
- * ran is validated exactly as it was. A PRESENT ledger — even an empty one — means the arbiter
- * ran and said something, which is what makes this run's producer a current gated one.
+ * Stamps `memoryOnPath` with the low-trust records the run's own served briefs put on the
+ * verdict's path, replacing whatever the verdict declared.
+ * Removes `memoryOnPath` when the path carries none.
  */
-export function misdirectionValidationOptions(
-  evidence: readonly MisdirectionRecordResult[] | undefined,
-  rootPosture: MisdirectionRootPosture,
-): AnalysisValidationOptions {
-  return evidence === undefined ? {} : { gatedProducerEvidence: true, rootPosture }
-}
-
-/** One exposure's key: the (step, record) pair, never the record alone. */
-function exposureKey(stepIndex: number, recordId: string): string {
-  return `${String(stepIndex)}\u001f${recordId}`
-}
-
-/**
- * The block's one-word summary, in precedence order: a flip outranks everything, an explicitly
- * inconclusive row outranks an incomplete ledger, and `held` requires EVERY exposure covered by a
- * held row. An uncovered exposure reads `not-run` here and stays individually visible in
- * `results` — and the aggregate the validator computes reads the ROWS, never this word, so a
- * summary can never be the thing that exonerates a verdict.
- */
-function summarizeCrossCheck(
-  rows: readonly MisdirectionRecordResult[],
-  sites: readonly { readonly stepIndex: number; readonly recordId: string }[],
-): MisdirectionEvidence['crossCheck'] {
-  if (rows.some((row) => row.crossCheck === 'flipped')) return 'flipped'
-  if (rows.some((row) => row.crossCheck === 'inconclusive')) return 'inconclusive'
-  const covered = new Set(rows.map((row) => exposureKey(row.stepIndex, String(row.recordId))))
-  const complete = sites.every((site) =>
-    covered.has(exposureKey(site.stepIndex, String(site.recordId))),
-  )
-  return complete && rows.every((row) => row.crossCheck === 'held') ? 'held' : 'not-run'
-}
-
-/** Why an empty ledger is empty — D-19's two postures do not mean the same thing. */
-function postureReason(posture: MisdirectionRootPosture): string | undefined {
-  if (posture === 'no-eval-root') {
-    return 'no evaluation root existed, so no record on this path could be cross-checked'
-  }
-  if (posture === 'broken-eval-root') {
-    return 'the evaluation root could not be consulted, so no record on this path was cross-checked'
-  }
-  return undefined
-}
-
-/**
- * Stamp ONE verdict with the code-owned membership and the code-owned ledger.
- *
- * Three postures, and each is a different fact:
- *
- *   - the arbiter never ran (`evidence === undefined`): the verdict is returned byte-identical,
- *     because a run nobody measured is not a run this job may make new claims about;
- *   - it ran and this verdict's path carries no low-trust record: nothing is stamped, and a
- *     declaration the verdict arrived with is REMOVED rather than carried — there is no claim
- *     here to back, so a block would be an answer to a question nobody asked;
- *   - it ran and the path carries exposures: both members are replaced with values derived from
- *     the run's own served briefs and the published rows, filtered to THIS member and to THIS
- *     verdict's own exposures.
- *
- * The filter matters twice over. Rows for another member would be refused by the aggregate's key
- * integrity, and rows for an exposure this verdict's path does not contain would be refused as
- * "an exposure no served brief recorded on this path" — both correct refusals, and both avoidable
- * by handing the gate exactly the rows it is entitled to.
- */
-export function stampVerdictMisdirectionEvidence(input: MisdirectionStampInput): Verdict {
-  const { verdict, parts, test, evidence, rootPosture } = input
-  if (evidence === undefined || test === undefined) return verdict
+export function stampVerdictMemoryOnPath(input: MemoryOnPathStampInput): Verdict {
+  const { verdict, parts, test } = input
+  if (test === undefined) return verdict
 
   const steps = misdirectionPathSteps(verdict, parts, test)
-  const sites = deriveMemoryOnPathSites(steps)
-  if (sites.length === 0) {
-    if (verdict.memoryOnPath === undefined && verdict.misdirectionRuledOut === undefined) {
-      return verdict
-    }
-    const bare = { ...verdict } as Record<string, unknown>
+  if (deriveMemoryOnPathSites(steps).length === 0) {
+    if (verdict.memoryOnPath === undefined) return verdict
+    const bare: Verdict = { ...verdict }
     delete bare.memoryOnPath
-    delete bare.misdirectionRuledOut
-    return bare as unknown as Verdict
+    return bare
   }
-
-  const keys = new Set(sites.map((site) => exposureKey(site.stepIndex, String(site.recordId))))
-  const rows = evidence.filter(
-    (row) =>
-      row.perTest === verdict.perTest && keys.has(exposureKey(row.stepIndex, String(row.recordId))),
-  )
-  const reason = postureReason(rootPosture)
-  const block: MisdirectionEvidence = {
-    crossCheck: summarizeCrossCheck(rows, sites),
-    results: rows,
-    ...(reason === undefined ? {} : { reason }),
-    // D-19: the ONE exemption is ABSENCE, and only absence. A broken root publishes the same
-    // empty ledger and earns nothing. The `rows.length === 0` clause is not belt-and-braces: the
-    // validator answers on the backing BEFORE it reads the rows, so a marker beside a real ledger
-    // would skip the ledger entirely.
-    ...(rootPosture === 'no-eval-root' && rows.length === 0
-      ? { backing: 'declared-only' as const }
-      : {}),
-  }
-  return {
-    ...verdict,
-    memoryOnPath: deriveMemoryOnPath(steps),
-    misdirectionRuledOut: block,
-  } as Verdict
-}
-
-/** The flipped records a stamped block names — the only records harm may be attributed to. */
-export function flippedRecordsOf(verdict: Verdict): string[] {
-  const rows = verdict.misdirectionRuledOut?.results ?? []
-  const records: string[] = []
-  for (const row of rows) {
-    if (row.crossCheck !== 'flipped') continue
-    if (!records.includes(String(row.recordId))) records.push(String(row.recordId))
-  }
-  return records
+  return { ...verdict, memoryOnPath: deriveMemoryOnPath(steps) }
 }
 
 export interface AuthorTokenBudget {
@@ -266,46 +92,24 @@ export interface AuthorRunAnalysisInput {
   readonly handoff: CompletedRunHandoff
   /** The deterministic floor exactly as the handler projects it — the merge base. */
   readonly floor: readonly Verdict[]
-  /** One evidence pack per unknown member (plan 03's diet), pre-compaction. */
+  /** One evidence pack per unknown member, pre-compaction. */
   readonly packs: readonly EvidencePack[]
-  /** Per-test failure history for the context tier (D-08's input-for-reasoning). */
+  // Per-test failure history for the context tier.
   readonly history: EvidenceHistoryLookup
-  /**
-   * D-01's TokenAccounting substrate entering as data. Absent → no compaction ladder
-   * (rung 0, packs whole) — a host without accounting still authors, it just cannot
-   * pre-shrink.
-   */
+  // Absent means no compaction ladder: packs go whole and nothing is pre-shrunk.
   readonly tokenBudget?: AuthorTokenBudget
-  /**
-   * D-02's capability-gated screenshot bytes, sha-addressed. Absent ⇒ text-only per L9.
-   */
+  // Screenshot bytes by sha; absent means text only.
   readonly readEvidenceBlob?: (sha: string) => Uint8Array | undefined
   /** The §1.4 `agent_context` parameter; defaults to the analyze-run provenance line. */
   readonly agentContext?: string
-  /**
-   * 422 D-17/D-20: the run-level circularity ledger the pre-enqueue arbiter published, exactly
-   * as it reached the analysed handoff bytes.
-   *
-   * It enters the request as DATA — one context-tier block per analyzed member — and it enters
-   * the gate as AUTHORITY, through {@link stampVerdictMisdirectionEvidence}, which overwrites
-   * whatever the model answered about it. The author is still asked for
-   * `memoryMisdirectionRuledOut`: the boolean is the author's own claim and the ledger is what
-   * decides whether that claim is worth anything.
-   *
-   * ABSENT means the arbiter never ran, and absence is the whole of the transition guarantee —
-   * the validator is then called with the historical options and no verdict is stamped at all.
-   */
-  readonly misdirectionEvidence?: readonly MisdirectionRecordResult[]
-  /** D-19's posture; read only when a ledger is present. Fail-closed default: `'eval-root'`. */
-  readonly rootPosture?: MisdirectionRootPosture
 }
 
 export interface AuthorRunAnalysisResult {
   /** The merged array: floor order, unknown members upgraded, all else byte-identical. */
   readonly verdicts: Verdict[]
-  /** LLM sentence parts for the UPGRADED members only, joined by perTest (D-06). */
+  /** LLM sentence parts for the UPGRADED members only, joined by perTest. */
   readonly authoredParts: VerdictSentenceParts[]
-  /** The D-01 ladder outcome, surfaced — `overBudget` is never swallowed. */
+  // The ladder outcome, surfaced; `overBudget` is never swallowed.
   readonly compaction: {
     readonly rung: CompactedEvidence['rung']
     readonly overBudget: boolean
@@ -314,26 +118,9 @@ export interface AuthorRunAnalysisResult {
   /** Analyzed tests that failed validation after the single repair and kept their floor. */
   readonly degradedTests: number[]
   /**
-   * For each degraded member, the cited steps of the LAST candidate the author built for it.
-   *
-   * The floor a refused member falls back to cites nothing, which is correct for a verdict that
-   * asserts nothing — but the circularity disclosure is computed over the verdict's PATH, so a
-   * floor with no citation discloses only the failing step's exposures. A claim refused because a
-   * record on a cited step flipped would then land as an `unknown` beside a HELD ledger, having
-   * forgotten the record that caused it. The handler unions these back in (422-15).
-   */
-  readonly degradedPaths: readonly {
-    readonly perTest: number
-    readonly citedSteps: readonly number[]
-  }[]
-  /**
-   * What this authorship SPENT, recorded once (422 D-20).
-   *
-   * Once, because `recordLlmAuthorship` memoizes: a resumed job reads the recorded value and
-   * never reaches this function, so the calls below can happen exactly one time across every
-   * attempt of one job. Capped, because the loop runs at most `1 + AUTHOR_REPAIR_CAP` times
-   * however persistent the answer is — the evidence-informed repair is the SAME budget the
-   * parse-repair round-trip already had, never a second one bought by the ledger.
+   * What this authorship spent. `recordLlmAuthorship` memoizes, so a resumed job reads the
+   * recorded value and never reaches this function; the loop makes at most
+   * `1 + AUTHOR_REPAIR_CAP` model calls.
    */
   readonly usage: {
     readonly modelCalls: number
@@ -470,9 +257,7 @@ function parseJsonWithRepair(text: string): unknown {
   }
 }
 
-// ---------------------------------------------------------------------------------------
-// Prompt composition: plan 03's stages, composed — never reimplemented.
-// ---------------------------------------------------------------------------------------
+// ---- prompt composition: the existing stages, composed and never reimplemented ----
 
 function stableTier(): PromptTierBlock[] {
   return [
@@ -531,58 +316,10 @@ function historyLine(pack: EvidencePack, history: EvidenceHistoryLookup): string
   )
 }
 
-/**
- * One cross-check row, rendered for the prompt (422 D-20).
- *
- * The row's identity digests are deliberately NOT rendered: they are integrity material for the
- * gate, they cost tokens, and an author cannot act on them. What an author can act on is which
- * record was checked, on which step, and what removing it did.
- */
-function crossCheckLine(row: MisdirectionRecordResult): string {
-  const samples = row.samples === undefined ? '' : `; k=${String(row.samples.k)}`
-  const reason = row.reason === undefined ? '' : `; ${row.reason}`
-  return (
-    `- test ${String(row.perTest)}, step ${String(row.stepIndex)}, record ` +
-    `${String(row.recordId)}: ${row.crossCheck}${reason}${samples}`
-  )
-}
-
-/**
- * The arbiter's own answer about this run, as reasoning input (422 D-20).
- *
- * DATA, not an instruction. The block tells the author what the deterministic removal cross-check
- * measured for the records this run served on its failing paths; the author still answers
- * `memoryMisdirectionRuledOut` for itself, and the code still decides — after the author has
- * spoken — whether the ledger supports the class the author chose. Omitted entirely when the
- * arbiter never ran, so a pre-422 run's request is byte-identical to what it always was.
- */
-function crossCheckTier(
-  packs: readonly EvidencePack[],
-  evidence: readonly MisdirectionRecordResult[] | undefined,
-): PromptTierBlock[] {
-  if (evidence === undefined) return []
-  const analyzed = new Set(packs.map((pack) => pack.testIndex))
-  const rows = evidence.filter((row) => analyzed.has(row.perTest))
-  return [
-    {
-      title: 'Memory misdirection cross-check (reasoning input)',
-      body:
-        'The deterministic removal cross-check already ran for the low-trust records this run ' +
-        'served on the failing paths below. `flipped` means removing the record changed the ' +
-        'outcome — the served memory is implicated. `held` means it did not. `inconclusive` ' +
-        'and `not-run` mean nothing was established:\n' +
-        (rows.length === 0
-          ? '- no record on an analyzed test\u2019s failing path was cross-checked'
-          : rows.map(crossCheckLine).join('\n')),
-    },
-  ]
-}
-
 function contextTier(
   handoff: CompletedRunHandoff,
   packs: readonly EvidencePack[],
   history: EvidenceHistoryLookup,
-  evidence: readonly MisdirectionRecordResult[] | undefined,
 ): PromptTierBlock[] {
   return [
     {
@@ -600,7 +337,6 @@ function contextTier(
         'reasoning, not prose to restate:\n' +
         packs.map((pack) => historyLine(pack, history)).join('\n'),
     },
-    ...crossCheckTier(packs, evidence),
   ]
 }
 
@@ -611,9 +347,7 @@ function volatileTier(packs: readonly EvidencePack[]): PromptTierBlock[] {
   }))
 }
 
-// ---------------------------------------------------------------------------------------
-// The D-02 request gate: images attach iff vision + reader + surviving refs.
-// ---------------------------------------------------------------------------------------
+// Images attach only with vision, a blob reader and surviving refs.
 
 function collectImages(
   packs: readonly EvidencePack[],
@@ -677,15 +411,6 @@ function candidateOf(entry: AuthoredTestEntry): CandidatePair {
 interface AttemptOutcome {
   readonly accepted: Map<number, CandidatePair>
   readonly rejects: { perTest: number; reason: string }[]
-  /**
-   * The cited steps of the candidate built for each pending test — accepted or refused.
-   *
-   * Kept because a REFUSED claim's citation is the only record of which steps the analysis was
-   * actually about, and the floor it degrades to cites nothing. The circularity disclosure is
-   * computed over a verdict's path, so a floor that forgot the citation would also forget every
-   * exposure outside the failing step — including, in the worst case, the record that flipped.
-   */
-  readonly citedByTest: Map<number, readonly number[]>
 }
 
 /**
@@ -710,7 +435,6 @@ function evaluateAttempt(
     return {
       accepted: new Map(),
       rejects: [...pending].map((perTest) => ({ perTest, reason })),
-      citedByTest: new Map(),
     }
   }
 
@@ -725,9 +449,7 @@ function evaluateAttempt(
 
   const rejects: { perTest: number; reason: string }[] = []
   const candidates = new Map<number, CandidatePair>()
-  const citedByTest = new Map<number, readonly number[]>()
   const testsByIndex = new Map(handoff.tests.map((test) => [test.testIndex, test]))
-  const rootPosture = input.rootPosture ?? 'eval-root'
   for (const perTest of pending) {
     const entry = byTest.get(perTest)
     if (entry === undefined) {
@@ -735,20 +457,13 @@ function evaluateAttempt(
       continue
     }
     const pair = candidateOf(entry)
-    citedByTest.set(perTest, [...pair.verdict.evidence.citedSteps])
-    // THE STAMP GOES ON BEFORE THE GATE SEES THE CANDIDATE (422 D-17/D-18). Stamping after
-    // validation would hand the gate a verdict carrying no evidence — which it would refuse for
-    // the wrong reason, spending the one repair on a message the author cannot act on — and then
-    // decorate the refused verdict afterwards. The evidence is code-owned either way; what the
-    // ordering decides is whether the gate got to USE it.
+    // Stamped before validation, so the validator checks the membership that is persisted.
     candidates.set(perTest, {
       ...pair,
-      verdict: stampVerdictMisdirectionEvidence({
+      verdict: stampVerdictMemoryOnPath({
         verdict: pair.verdict,
         parts: pair.parts,
         test: testsByIndex.get(perTest),
-        evidence: input.misdirectionEvidence,
-        rootPosture,
       }),
     })
   }
@@ -763,7 +478,6 @@ function evaluateAttempt(
         parts: ordered.map((pair) => pair.parts),
       },
       handoff,
-      misdirectionValidationOptions(input.misdirectionEvidence, rootPosture),
     )
     if (!validation.ok) {
       const rejectedTests = new Set(validation.rejects.map((reject) => reject.perTest))
@@ -772,7 +486,7 @@ function evaluateAttempt(
     }
   }
 
-  return { accepted: candidates, rejects, citedByTest }
+  return { accepted: candidates, rejects }
 }
 
 function repairFeedback(rejects: readonly { perTest: number; reason: string }[]): string {
@@ -787,11 +501,7 @@ function repairFeedback(rejects: readonly { perTest: number; reason: string }[])
   ].join('\n')
 }
 
-/**
- * The author: compose plan 03's stages around ONE `model.generate` call, repair once,
- * degrade per test, merge upgrade-only-unknown. Transport failures propagate uncaught —
- * the job's declared bound adjudicates those, never this function.
- */
+// One `model.generate` call, one repair, per-test degrade; transport failures propagate uncaught.
 export async function authorRunAnalysis(
   model: JobModelCapability,
   input: AuthorRunAnalysisInput,
@@ -822,7 +532,7 @@ export async function authorRunAnalysis(
       input.agentContext ??
       'analyze-run: authoring root-cause verdicts and sentence parts for one completed run',
     stable: stableTier(),
-    context: contextTier(input.handoff, compacted.packs, input.history, input.misdirectionEvidence),
+    context: contextTier(input.handoff, compacted.packs, input.history),
     volatile: volatileTier(compacted.packs),
   })
   const images = collectImages(compacted.packs, input.readEvidenceBlob, model.vision === true)
@@ -832,7 +542,6 @@ export async function authorRunAnalysis(
   const accepted = new Map<number, CandidatePair>()
   let pending = new Set(analyzed)
   let lastRejects: readonly { perTest: number; reason: string }[] = []
-  const lastCited = new Map<number, readonly number[]>()
   let modelCalls = 0
 
   for (let attempt = 0; attempt <= AUTHOR_REPAIR_CAP && pending.size > 0; attempt += 1) {
@@ -843,7 +552,6 @@ export async function authorRunAnalysis(
     const output = await model.generate(attemptRequest)
     modelCalls += 1
     const outcome = evaluateAttempt(output.text, pending, input)
-    for (const [perTest, cited] of outcome.citedByTest) lastCited.set(perTest, cited)
     for (const [perTest, pair] of outcome.accepted) accepted.set(perTest, pair)
     pending = new Set([...pending].filter((perTest) => !accepted.has(perTest)))
     lastRejects = outcome.rejects
@@ -868,9 +576,6 @@ export async function authorRunAnalysis(
       estimatedTokens: compacted.estimatedTokens,
     },
     degradedTests: analyzed.filter((testIndex) => !accepted.has(testIndex)),
-    degradedPaths: analyzed
-      .filter((testIndex) => !accepted.has(testIndex))
-      .map((perTest) => ({ perTest, citedSteps: lastCited.get(perTest) ?? [] })),
     usage: {
       modelCalls,
       repairCalls: Math.max(0, modelCalls - 1),

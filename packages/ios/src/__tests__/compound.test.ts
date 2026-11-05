@@ -1,20 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// ---------------------------------------------------------------------------
-// Wave-0 RED scaffold — Phase 359 Plan 02, Task 3 (EXEC-01/02/03; D-05..D-08,
-// D-10, D-12, Pitfalls 5/7/9). Pins the iOS adapter fill/scroll/openApp compound
-// sequences against a call-logging mocked webdriverio driver — no live Appium,
-// no simctl/child_process (ownership contract: webdriverio only).
-//
-// RED convention: these fail on not-yet-implemented compound behavior (the current
-// `case 'fill'` sets a value but never re-reads getAttribute('value'); `case 'scroll'`
-// has no native `mobile: scroll` predicate rung; `openApp` is not a handled action).
-// They MUST NOT fail on compile errors — execution-shaped action literals are cast via
-// `as unknown as Parameters<typeof adapter.execute>[0]`.
-//
-// The pre-existing adapter.test.ts and conformance.test.ts stay GREEN (standalone
-// file; legacy `fill {value}` / `scroll {value}` contracts untouched).
-// ---------------------------------------------------------------------------
+// Compound fill, scroll and openApp sequences against a call-logging mocked driver; no live Appium.
 
 const IOS_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <AppiumAUT>
@@ -122,7 +108,7 @@ import { IOSPlatformAdapter } from '../adapter.js'
 
 type ExecAction = Parameters<IOSPlatformAdapter['execute']>[0]
 
-describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
+describe('IOSPlatformAdapter compound behaviors', () => {
   let adapter: IOSPlatformAdapter
   let mockDriver: ReturnType<typeof createMockDriver>
 
@@ -151,8 +137,8 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     return el.ref
   }
 
-  describe('EXEC-01 fill compound (D-05/D-06/D-07/D-08)', () => {
-    it('replace mode types then re-reads getAttribute("value") from the SAME handle (D-05)', async () => {
+  describe('fill compound', () => {
+    it('replace mode types then re-reads getAttribute("value") from the SAME handle', async () => {
       await adapter.setup({ platform: 'ios' })
       const ref = await refFor('Email')
       fieldValueReturn = 'user@test.com'
@@ -167,7 +153,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(readIdx).toBeGreaterThan(typeIdx)
     })
 
-    it('append mode captures prior getAttribute("value") BEFORE typing; expected = prior + typed (D-07)', async () => {
+    it('append mode captures prior getAttribute("value") BEFORE typing; expected = prior + typed', async () => {
       await adapter.setup({ platform: 'ios' })
       const ref = await refFor('Email')
       fieldValueReturn = 'abc'
@@ -189,10 +175,10 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(result.metadata?.fillVerdict).toEqual({ verb: 'fill', verdict: 'exact' })
     })
 
-    it('secure field (XCUIElementTypeSecureTextField) verdicts on non-emptiness only; raw value absent from result (D-06, Pitfall 7)', async () => {
+    it('secure field (XCUIElementTypeSecureTextField) verdicts on non-emptiness only; raw value absent from result', async () => {
       await adapter.setup({ platform: 'ios' })
       const ref = await refFor('Password')
-      fieldValueReturn = '•••••••' // masked bullets — length may not equal typed length (A3)
+      fieldValueReturn = '•••••••' // masked bullets — length may not equal typed length
 
       const result = await adapter.execute({ type: 'fill', ref, text: 'topSecretPw', clearMode: 'replace', submit: false } as unknown as ExecAction)
 
@@ -202,7 +188,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(JSON.stringify(result)).not.toContain('topSecretPw')
     })
 
-    it('mismatch yields success:false + §7.1 error + fillReread meta, single-shot typing (D-08)', async () => {
+    it('mismatch yields success:false + error + fillReread meta, single-shot typing', async () => {
       await adapter.setup({ platform: 'ios' })
       const ref = await refFor('Email')
       fieldValueReturn = 'wrong'
@@ -234,8 +220,8 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
-  describe('EXEC-02 scroll untilVisible (Pitfall 9 selector-injection)', () => {
-    it('tries native mobile: scroll with a CONTAINS predicateString FIRST (A5)', async () => {
+  describe('scroll untilVisible escapes or refuses a hostile predicate target', () => {
+    it('tries native mobile: scroll with a CONTAINS predicateString FIRST', async () => {
       await adapter.setup({ platform: 'ios' })
       await adapter.observe()
 
@@ -279,7 +265,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
-  describe('C436-SCROLL iOS scroll signals (436-02 · D-25)', () => {
+  describe('iOS scroll signals', () => {
     type Primitives = { swipeOnce(direction: string, ref?: string): Promise<string> }
     const primitivesOf = (a: IOSPlatformAdapter): Promise<Primitives> =>
       (a as unknown as { buildIOSScrollPrimitives(d: string, m: number): Promise<Primitives> })
@@ -348,7 +334,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
     })
   })
 
-  describe('EXEC-03 openApp resolution (D-10/D-12, Pitfall 5)', () => {
+  describe('openApp resolution', () => {
     it('success lane: resolves a CFBundleName label and launches via activateApp(resolvedId) with metadata', async () => {
       listAppsReturn = {
         'com.apple.mobilecal': { CFBundleName: 'Calendar' },
@@ -363,7 +349,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(result.metadata?.openApp).toMatchObject({ resolvedId: 'com.apple.mobilecal' })
     })
 
-    it('simulator lane: listApps throwing ⇒ appName variant returns a structured §7.1 error recommending an exact bundleId, never a crash (Pitfall 5)', async () => {
+    it('simulator lane: listApps throwing ⇒ appName variant returns a structured error recommending an exact bundleId, never a crash', async () => {
       listAppsThrows = true
       await adapter.setup({ platform: 'ios' })
 
@@ -373,7 +359,7 @@ describe('IOSPlatformAdapter compound behaviors (RED — Wave-0)', () => {
       expect(result.error).toMatch(/bundleId/i)
     })
 
-    it('explicit {bundleId} with registry unavailable: invalid bundle NEVER yields success true (A2 fallback)', async () => {
+    it('explicit {bundleId} with registry unavailable: invalid bundle NEVER yields success true', async () => {
       listAppsThrows = true
       isAppInstalledReturn = false
       await adapter.setup({ platform: 'ios' })

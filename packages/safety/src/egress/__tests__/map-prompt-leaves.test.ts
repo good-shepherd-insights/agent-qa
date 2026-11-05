@@ -11,6 +11,12 @@ function asParams(params: unknown): ProviderRequestParams {
 
 class LeafBlockError extends Error {}
 
+// The tagged shape ai gives a provider: the raw string rides along when parsing changes it.
+function urlData(raw: string) {
+  const url = new URL(raw)
+  return { type: 'url', url, ...(url.toString() === raw ? {} : { originalUrl: raw }) }
+}
+
 describe('mapPromptLeaves', () => {
   it('returns an equivalent tree for an identity fn across every part type', () => {
     const params = asParams({
@@ -20,7 +26,12 @@ describe('mapPromptLeaves', () => {
           role: 'user',
           content: [
             { type: 'text', text: 'user text' },
-            { type: 'file', filename: 'f.txt', data: 'string data', mediaType: 'text/plain' },
+            {
+              type: 'file',
+              filename: 'f.txt',
+              data: { type: 'data', data: 'string data' },
+              mediaType: 'text/plain',
+            },
           ],
         },
         {
@@ -68,7 +79,12 @@ describe('mapPromptLeaves', () => {
           role: 'user',
           content: [
             { type: 'text', text: 'txt' },
-            { type: 'file', filename: 'name', data: 'body', mediaType: 'text/plain' },
+            {
+              type: 'file',
+              filename: 'name',
+              data: { type: 'data', data: 'body' },
+              mediaType: 'text/plain',
+            },
           ],
         },
         {
@@ -129,7 +145,7 @@ describe('mapPromptLeaves', () => {
 const PW = 'pa"ss\\word'
 const maskPw = (text: string): string => text.split(PW).join('[secret:PW]')
 
-describe('C441-EGRESS', () => {
+describe('masking tool-call inputs, tool results and text parts', () => {
   it('a value with a quote inside a tool-call input is masked', () => {
     const params = asParams({
       prompt: [
@@ -204,7 +220,12 @@ describe('C441-EGRESS', () => {
         {
           role: 'user',
           content: [
-            { type: 'file', filename: `${PW}.txt`, data: fileData, mediaType: 'text/plain' },
+            {
+              type: 'file',
+              filename: `${PW}.txt`,
+              data: { type: 'data', data: fileData },
+              mediaType: 'text/plain',
+            },
           ],
         },
         {
@@ -218,12 +239,12 @@ describe('C441-EGRESS', () => {
                 type: 'content',
                 value: [
                   {
-                    type: 'file-data',
+                    type: 'file',
                     filename: `${PW}.pdf`,
-                    data: resultFileData,
+                    data: { type: 'data', data: resultFileData },
                     mediaType: 'application/pdf',
                   },
-                  { type: 'image-data', data: imageData, mediaType: 'image/png' },
+                  { type: 'file', data: { type: 'data', data: imageData }, mediaType: 'image/png' },
                 ],
               },
             },
@@ -241,7 +262,10 @@ describe('C441-EGRESS', () => {
 
     const user = out.prompt[0]
     if (user?.role !== 'user') throw new Error('expected user')
-    expect(user.content[0]).toMatchObject({ filename: '[secret:PW].txt', data: fileData })
+    expect(user.content[0]).toMatchObject({
+      filename: '[secret:PW].txt',
+      data: { type: 'data', data: fileData },
+    })
     const tool = out.prompt[1]
     if (tool?.role !== 'tool') throw new Error('expected tool')
     const result = tool.content[0]
@@ -250,9 +274,9 @@ describe('C441-EGRESS', () => {
     }
     expect(result.output.value[0]).toMatchObject({
       filename: '[secret:PW].pdf',
-      data: resultFileData,
+      data: { type: 'data', data: resultFileData },
     })
-    expect(result.output.value[1]).toMatchObject({ data: imageData })
+    expect(result.output.value[1]).toMatchObject({ data: { type: 'data', data: imageData } })
     expect(seen).not.toContain(fileData)
     expect(seen).not.toContain(resultFileData)
     expect(seen).not.toContain(imageData)
@@ -279,8 +303,8 @@ describe('C441-EGRESS', () => {
               output: {
                 type: 'content',
                 value: [
-                  { type: 'file-url', url: `https://x.test/${PW}` },
-                  { type: 'image-url', url: `https://x.test/i/${PW}` },
+                  { type: 'file', data: urlData(`https://x.test/${PW}`), mediaType: 'text/plain' },
+                  { type: 'file', data: urlData(`https://x.test/i/${PW}`), mediaType: 'image' },
                 ],
               },
             },
@@ -315,6 +339,259 @@ describe('C441-EGRESS', () => {
       expect(wire).toContain(masked)
     }
     expect(wire).not.toContain('pa\\"ss')
+    expect(wire).not.toContain('pa%22ss')
+  })
+})
+
+function contentResultParams(value: unknown[]): ProviderRequestParams {
+  return asParams({
+    prompt: [
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'read',
+            output: { type: 'content', value },
+          },
+        ],
+      },
+    ],
+  })
+}
+
+function sentContentParts(params: ProviderRequestParams): unknown[] {
+  const message = params.prompt[0]
+  const part = message?.role === 'tool' ? message.content[0] : undefined
+  if (part?.type !== 'tool-result' || part.output.type !== 'content') {
+    throw new Error('expected content tool result')
+  }
+  return part.output.value
+}
+
+describe('masking file parts in tool results', () => {
+  const inline = 'aW5saW5lIGJ5dGVz'
+  const fileParts = (): unknown[] => [
+    {
+      type: 'file',
+      filename: `${PW}.png`,
+      data: { type: 'data', data: inline },
+      mediaType: 'image/png',
+    },
+    {
+      type: 'file',
+      filename: 'page.html',
+      data: { type: 'url', url: new URL('https://x.test/page?token=abc') },
+      mediaType: 'text/html',
+    },
+    {
+      type: 'file',
+      data: { type: 'reference', reference: { openai: `file-${PW}` } },
+      mediaType: 'application/pdf',
+    },
+    {
+      type: 'file',
+      data: { type: 'text', text: `note ${PW}` },
+      mediaType: 'text/plain',
+    },
+    { type: 'custom', providerOptions: { test: { kind: 'opaque' } } },
+  ]
+
+  it('returns an equivalent tree for an identity fn over every file data tag', () => {
+    const params = contentResultParams(fileParts())
+
+    expect(mapPromptLeaves(params, identity)).toEqual(params)
+  })
+
+  it('fn reaches the url, the reference id, the filename and inline text, never inline data', () => {
+    const seen: string[] = []
+    const spy = (text: string): string => {
+      seen.push(text)
+      return bang(text)
+    }
+
+    const parts = sentContentParts(mapPromptLeaves(contentResultParams(fileParts()), spy))
+
+    expect(seen).toEqual([
+      `${PW}.png`,
+      'https://x.test/page?token=abc',
+      'page.html',
+      `file-${PW}`,
+      `note ${PW}`,
+    ])
+    expect(parts[0]).toMatchObject({
+      filename: `${PW}.png!`,
+      data: { type: 'data', data: inline },
+    })
+    const urlPart = parts[1] as { data: { url: URL } }
+    expect(urlPart.data.url).toBeInstanceOf(URL)
+    expect(urlPart.data.url.toString()).toBe('https://x.test/page?token=abc!')
+    expect(parts[2]).toMatchObject({ data: { reference: { openai: `file-${PW}!` } } })
+    expect(parts[3]).toMatchObject({ data: { type: 'text', text: `note ${PW}!` } })
+    expect(parts[4]).toEqual({ type: 'custom', providerOptions: { test: { kind: 'opaque' } } })
+  })
+
+  it('a declared value that URL parsing encodes is masked through the raw URL', () => {
+    const raw = `https://x.test/files/${PW}`
+    const params = contentResultParams([
+      { type: 'file', data: urlData(raw), mediaType: 'application/pdf' },
+    ])
+
+    const [part] = sentContentParts(mapPromptLeaves(params, maskPw)) as {
+      data: { url: URL; originalUrl?: string }
+    }[]
+
+    expect(part?.data.originalUrl).toBe('https://x.test/files/[secret:PW]')
+    expect(part?.data.url.toString()).toBe('https://x.test/files/[secret:PW]')
+  })
+
+  it('a masked URL that no longer parses refuses the request', () => {
+    const params = contentResultParams([
+      { type: 'file', data: urlData('https://secret.test/a'), mediaType: 'text/plain' },
+    ])
+    const breakHost = (text: string): string => text.replace('secret.test', 'bad host')
+
+    expect(() => mapPromptLeaves(params, breakHost)).toThrow('a masked file URL is not a valid URL')
+  })
+
+  it('a tool-result content part of a type it does not know refuses the request', () => {
+    const params = contentResultParams([{ type: 'future-part', text: `note ${PW}` }])
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized tool-result content part future-part',
+    )
+  })
+
+  it('file data of a type it does not know refuses the request', () => {
+    const params = asParams({
+      prompt: [
+        {
+          role: 'user',
+          content: [
+            { type: 'file', data: { type: 'future-data', text: PW }, mediaType: 'text/plain' },
+          ],
+        },
+      ],
+    })
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized file data future-data',
+    )
+  })
+})
+
+describe('parts the walker does not know', () => {
+  const unknownText = { type: 'future-part', text: `note ${PW}` }
+
+  it('a message with a role it does not know refuses the request', () => {
+    const params = asParams({ prompt: [{ role: 'future-role', content: `note ${PW}` }] })
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized message role future-role',
+    )
+  })
+
+  it('a user part of a type it does not know refuses the request', () => {
+    const params = asParams({ prompt: [{ role: 'user', content: [unknownText] }] })
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized user part future-part',
+    )
+  })
+
+  it('an assistant part of a type it does not know refuses the request', () => {
+    const params = asParams({ prompt: [{ role: 'assistant', content: [unknownText] }] })
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized assistant part future-part',
+    )
+  })
+
+  it('a tool part of a type it does not know refuses the request', () => {
+    const params = asParams({ prompt: [{ role: 'tool', content: [unknownText] }] })
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized tool part future-part',
+    )
+  })
+
+  it('a tool-result output of a type it does not know refuses the request', () => {
+    const params = asParams({
+      prompt: [
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'c1',
+              toolName: 'read',
+              output: { type: 'future-output', value: `note ${PW}` },
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized tool-result output future-output',
+    )
+  })
+
+  it('reasoning file data of a type it does not know refuses the request', () => {
+    const params = asParams({
+      prompt: [
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning-file', data: { type: 'text', text: PW }, mediaType: 'text/plain' },
+          ],
+        },
+      ],
+    })
+
+    expect(() => mapPromptLeaves(params, maskPw)).toThrow(
+      'masking: unrecognized reasoning file data text',
+    )
+  })
+})
+
+describe('masking reasoning files and custom assistant parts', () => {
+  const inline = 'aW5saW5lIGJ5dGVz'
+  const assistantParams = (content: unknown[]): ProviderRequestParams =>
+    asParams({ prompt: [{ role: 'assistant', content }] })
+  const sentAssistantParts = (params: ProviderRequestParams): unknown[] => {
+    const message = params.prompt[0]
+    if (message?.role !== 'assistant') throw new Error('expected assistant message')
+    return message.content
+  }
+
+  it('a reasoning file URL is masked through the raw URL, like a file part', () => {
+    const params = assistantParams([
+      { type: 'reasoning-file', data: urlData(`https://x.test/r/${PW}`), mediaType: 'image/png' },
+    ])
+
+    const [part] = sentAssistantParts(mapPromptLeaves(params, maskPw)) as {
+      data: { url: URL; originalUrl?: string }
+    }[]
+
+    expect(part?.data.originalUrl).toBe('https://x.test/r/[secret:PW]')
+    expect(part?.data.url.toString()).toBe('https://x.test/r/[secret:PW]')
+  })
+
+  it('reasoning file inline data and a custom part are sent as they are', () => {
+    const seen: string[] = []
+    const spy = (text: string): string => {
+      seen.push(text)
+      return bang(text)
+    }
+    const content = [
+      { type: 'reasoning-file', data: { type: 'data', data: inline }, mediaType: 'image/png' },
+      { type: 'custom', kind: 'test.opaque' },
+    ]
+
+    expect(sentAssistantParts(mapPromptLeaves(assistantParams(content), spy))).toEqual(content)
+    expect(seen).toEqual([])
   })
 })
 
@@ -335,7 +612,12 @@ function jsonResultParams(value: unknown): ProviderRequestParams {
       {
         role: 'tool',
         content: [
-          { type: 'tool-result', toolCallId: 'c1', toolName: 'read', output: { type: 'json', value } },
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'read',
+            output: { type: 'json', value },
+          },
         ],
       },
     ],
@@ -358,7 +640,7 @@ function sentJsonValue(params: ProviderRequestParams): Record<string, unknown> {
   return part.output.value as Record<string, unknown>
 }
 
-describe('C441-GAP-EGRESS', () => {
+describe('masking object keys and JSON-shaped values', () => {
   it('object keys in a tool-call input and a JSON tool result are masked', () => {
     const input = sentToolCallInput(mapPromptLeaves(toolCallParams({ map: { [PW]: 1 } }), maskPw))
     expect(input).toEqual({ map: { '[secret:PW]': 1 } })

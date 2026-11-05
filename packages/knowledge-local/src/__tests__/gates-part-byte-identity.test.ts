@@ -7,13 +7,13 @@ import { describe, expect, it } from 'vitest'
 
 import { appendGateReceipt, appendOutcomeEvent } from '../bundle-append.js'
 import { deriveBundleTrust, loadBundle, readGateReceipts, verifyBundleIntegrity } from '../bundle-read.js'
-import { completeGate1Receipt, createPromotionFloorFixture } from '../curator/__tests__/fixtures/promotion-floor-fixture.js'
+import { markReceipt, createPromotionFloorFixture } from '../curator/__tests__/fixtures/promotion-floor-fixture.js'
 import { canaryAttributionsFor } from '../serving/canary-attribution.js'
 import { canaryOutcomeObservationId } from '../serving/canary-observation-id.js'
 
-describe('416 D-03 — persisted gates part byte identity (SC1)', () => {
+describe('persisted gates part byte identity', () => {
   it('preserves trust and attributed canary rows with exactly the optional manifest difference', () => {
-    const root = mkdtempSync(join(tmpdir(), '416-gates-byte-identity-'))
+    const root = mkdtempSync(join(tmpdir(), 'gates-byte-identity-'))
     try {
       const knowledgeRoot = join(root, 'source')
       const fixture = createPromotionFloorFixture({ knowledgeRoot })
@@ -29,7 +29,7 @@ describe('416 D-03 — persisted gates part byte identity (SC1)', () => {
       const withoutRoot = join(root, 'without')
       const withRoot = join(root, 'with')
       cpSync(knowledgeRoot, withoutRoot, { recursive: true })
-      const receipt = completeGate1Receipt(published.id)
+      const receipt = markReceipt(published.id)
       expect(appendGateReceipt(fixture.outcomeAppendConfig(), published.id, receipt))
         .toEqual({ kind: 'appended' })
       cpSync(knowledgeRoot, withRoot, { recursive: true })

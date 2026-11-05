@@ -1,8 +1,4 @@
-// Op-level behaviour for the three expansion capabilities (Phase 384, Plan 03).
-//
-// Ops are pure functions of (validated input, injected deps). These cases call `invoke`
-// directly against fake ports so the projection logic is pinned independently of the gate,
-// the registry, and any host access — `invoke-function.test.ts` owns the pipeline itself.
+// Calls `invoke` against fake ports, so projection logic is pinned apart from the registry.
 
 import type {
   CompletedRunHandoff,
@@ -100,7 +96,7 @@ const maskedConfig: MaskedResolvedConfig = {
   configPath: '/workspace/agent-qa.config.yaml',
   entries: [
     { key: 'workspace.testMatch', value: '["tests/**/*.yaml"]', source: 'config-file', masked: false },
-    { key: 'registry.providers.acme.apiKey', value: '[secret:PW_441]', source: 'config-file', masked: true },
+    { key: 'registry.llms.0.providerHeaders.x-acme-access', value: '[secret:PW_KEY]', source: 'config-file', masked: true },
   ],
 }
 
@@ -135,10 +131,7 @@ function fakeDeps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
     knowledge: fakeKnowledge(),
-    // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
-    // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases
-    // exercise other ops, and nothing in this file mints an address, so an honest miss and a
-    // reported absence are the truthful answers.
+    // A required read port, stubbed to answer: nothing in this file mints an address.
     entities: {
       resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
       get: () => Promise.resolve(undefined),
@@ -151,12 +144,9 @@ function fakeDeps(overrides: Partial<FunctionDeps> = {}): FunctionDeps {
 describe('runs.get', () => {
   it('declares a read-only unary contract bound in this composition', () => {
     expect(runsGetSpec.id).toBe('runs.get')
-    // RE-SPELLED 2026-10-01 (432-23, D-12) from `requiredScopes` equal to ['read']: the op
-    // declares no scope, because no caller is checked for one.
     expect(runsGetSpec).not.toHaveProperty('requiredScopes')
     expect(runsGetSpec.resultKind).toBe('unary')
-    // Bound in EVERY composition: the implementation names no optional dep, so there is
-    // nothing a host could withhold that would leave it unbound (D-16).
+    // The implementation names no optional dep, so no host can leave it unbound.
     expect(runsGetSpec.boundThrough).toBeUndefined()
     expect(runsGetSpec.risk).toEqual({ name: 'fn:runs.get', recognized: true, readOnly: true })
   })
@@ -269,8 +259,6 @@ describe('runs.get', () => {
 describe('knowledge.bundles.list', () => {
   it('declares a read-only unary contract bound in this composition', () => {
     expect(knowledgeBundlesListSpec.id).toBe('knowledge.bundles.list')
-    // RE-SPELLED 2026-10-01 (432-25, D-12) from `requiredScopes` equal to ['read']: the op
-    // declares no scope; read-only stays on its risk descriptor below.
     expect(knowledgeBundlesListSpec).not.toHaveProperty('requiredScopes')
     expect(knowledgeBundlesListSpec.resultKind).toBe('unary')
     expect(knowledgeBundlesListSpec.boundThrough).toBeUndefined()
@@ -309,8 +297,6 @@ describe('knowledge.bundles.list', () => {
 describe('config.get', () => {
   it('declares a read-only unary contract bound in this composition', () => {
     expect(configGetSpec.id).toBe('config.get')
-    // RE-SPELLED 2026-10-01 (432-24, D-12) from `requiredScopes` equal to ['read']: the op
-    // declares no scope, because no caller is checked for one.
     expect(configGetSpec).not.toHaveProperty('requiredScopes')
     expect(configGetSpec.resultKind).toBe('unary')
     expect(configGetSpec.boundThrough).toBeUndefined()
@@ -327,7 +313,7 @@ describe('config.get', () => {
 })
 
 describe('the seed capability set', () => {
-  it('registers exactly the four D-06 read ids', () => {
+  it('registers exactly the four seed read ids', () => {
     expect([
       runsListSpec.id,
       runsGetSpec.id,
@@ -339,8 +325,6 @@ describe('the seed capability set', () => {
 describe('knowledge.gates.list', () => {
   it('declares a read-only unary contract through the required knowledge port', () => {
     expect(knowledgeGatesListSpec.id).toBe('knowledge.gates.list')
-    // RE-SPELLED 2026-10-01 (432-27, D-12) from `requiredScopes` equal to ['read']: the op
-    // declares no scope; read-only stays on its risk descriptor below.
     expect(knowledgeGatesListSpec).not.toHaveProperty('requiredScopes')
     expect(knowledgeGatesListSpec.resultKind).toBe('unary')
     expect(knowledgeGatesListSpec.boundThrough).toBeUndefined()
@@ -356,7 +340,7 @@ describe('knowledge.gates.list', () => {
         candidateId: 'rec-1', promotionPath: 'deterministic-verdict-floor',
         citedReceiptDigests: [], producedAtOrdinal: 43, producedBy: { opId: 'promote' } })],
       standing: [], live: { verdict: 'promote', promotionPath: 'deterministic-verdict-floor',
-        citedReceiptDigests: [] }, posture: 'absent',
+        citedReceiptDigests: [] },
     }
     const deps = fakeDeps({ knowledge: fakeKnowledge({
       gateReceipts: ({ candidateId }) => {
@@ -381,14 +365,8 @@ describe('knowledge.gates.list', () => {
   })
 })
 
-// ---- C432-DECLARATION-KEYS (432-23, D-10/D-12) --------------------------------------------------
-//
-// The ten op specs 432-23 migrated, pinned at the SPEC, which is the layer the registry's own
-// key-set census cannot see: a declaration omits the retired keys whatever the spec spells, so only
-// a raw-spec cell proves the op-spec owner actually removed them. The second half pins what must NOT
-// move with them — id, result kind, binding need, risk descriptor and the classify fold — so a
-// metadata removal that also dropped a binding or changed a tier reds here by name.
-describe('C432-DECLARATION-KEYS: the 432-23 op specs carry no permission metadata', () => {
+// Pinned at the spec, which the registry's key-set check cannot see, beside what must not move.
+describe('the funnel, records diff, entity resolve, verify, events, draft write, run get, forget, start and target edit specs carry no permission metadata', () => {
   const migrated = [
     { spec: authoringFunnelGetSpec, resultKind: 'unary', boundThrough: 'authoringFunnel',
       risk: { name: 'fn:authoring.funnel.get', recognized: true, readOnly: true } },
@@ -397,17 +375,17 @@ describe('C432-DECLARATION-KEYS: the 432-23 op specs carry no permission metadat
     { spec: entitiesResolveSpec, resultKind: 'unary', boundThrough: undefined,
       risk: { name: 'fn:entities.resolve', recognized: true, readOnly: true } },
     { spec: authoringVerifyDraftSpec, resultKind: 'unary', boundThrough: 'draftEvaluation',
-      risk: { name: 'fn:authoring.draft.verify', recognized: true, declaredTier: 'mutating-local' } },
+      risk: { name: 'fn:authoring.draft.verify', recognized: true } },
     { spec: runsEventsSpec, resultKind: 'stream', boundThrough: undefined,
       risk: { name: 'fn:runs.events', recognized: true, readOnly: true } },
     { spec: authoringDraftWriteSpec, resultKind: 'unary', boundThrough: 'draftShelf',
-      risk: { name: 'fn:authoring.draft.write', recognized: true, declaredTier: 'mutating-shared' } },
+      risk: { name: 'fn:authoring.draft.write', recognized: true } },
     { spec: runsGetSpec, resultKind: 'unary', boundThrough: undefined,
       risk: { name: 'fn:runs.get', recognized: true, readOnly: true } },
     { spec: knowledgeForgetSpec, resultKind: 'unary', boundThrough: 'knowledgeReview',
       risk: { name: 'fn:knowledge.forget', recognized: true, readOnly: false } },
     { spec: runsStartSpec, resultKind: 'unary', boundThrough: 'runInvocation',
-      risk: { name: 'fn:runs.start', recognized: true, declaredTier: 'mutating-local' } },
+      risk: { name: 'fn:runs.start', recognized: true } },
     { spec: configTargetEditSpec, resultKind: 'unary', boundThrough: 'configWrite',
       risk: { name: 'fn:config.target.edit', recognized: true, readOnly: false } },
   ] as const
@@ -439,19 +417,12 @@ describe('C432-DECLARATION-KEYS: the 432-23 op specs carry no permission metadat
       expect(typeof spec.classify, spec.id).toBe('function')
       expect(typeof spec.invoke, spec.id).toBe('function')
     }
-    // The one disclosure among the ten was untouched by the metadata removal. RE-SPELLED 2026-10-02
-    // (432-42, D-14): the per-op disclosure is deleted, so none of the ten carries one now.
     expect(migrated.filter(({ spec }) => 'disclose' in spec).map(({ spec }) => spec.id))
       .toEqual([])
   })
 })
 
-// ---- C432-DECLARATION-KEYS (432-24, D-10/D-12) --------------------------------------------------
-//
-// The second group of ten, pinned the same way as 432-23's above: absence at the SPEC, and an exact
-// pin beside it of what must not move with the metadata. Kept as its own block so each op-spec owner
-// extends a list it owns rather than one shared expectation.
-describe('C432-DECLARATION-KEYS: the 432-24 op specs carry no permission metadata', () => {
+describe('the artifact, list, config get, digest, field set, draft edit, brief why, live URL, mark preview and mark specs carry no permission metadata', () => {
   const migrated = [
     { spec: runsArtifactSpec, resultKind: 'unary', boundThrough: 'evidenceBlobs',
       risk: { name: 'fn:runs.artifact', recognized: true, readOnly: true } },
@@ -464,7 +435,7 @@ describe('C432-DECLARATION-KEYS: the 432-24 op specs carry no permission metadat
     { spec: configFieldSetSpec, resultKind: 'unary', boundThrough: 'configWrite',
       risk: { name: 'fn:config.field.set', recognized: true, readOnly: false } },
     { spec: authoringDraftEditSpec, resultKind: 'unary', boundThrough: 'draftShelf',
-      risk: { name: 'fn:authoring.draft.edit', recognized: true, declaredTier: 'mutating-local' } },
+      risk: { name: 'fn:authoring.draft.edit', recognized: true } },
     { spec: knowledgeBriefWhySpec, resultKind: 'unary', boundThrough: undefined,
       risk: { name: 'fn:knowledge.brief.why', recognized: true, readOnly: true } },
     { spec: runsLiveUrlSpec, resultKind: 'unary', boundThrough: 'liveView',
@@ -472,7 +443,7 @@ describe('C432-DECLARATION-KEYS: the 432-24 op specs carry no permission metadat
     { spec: runsMarkPreviewSpec, resultKind: 'unary', boundThrough: 'feedbackReads',
       risk: { name: 'fn:runs.mark.preview', recognized: true, readOnly: true } },
     { spec: runsMarkSpec, resultKind: 'unary', boundThrough: 'feedback',
-      risk: { name: 'fn:runs.mark', recognized: true, readOnly: false, declaredTier: 'mutating-shared' } },
+      risk: { name: 'fn:runs.mark', recognized: true, readOnly: false } },
   ] as const
 
   it('spells neither retired permission key on any of the ten specs', () => {
@@ -507,12 +478,8 @@ describe('C432-DECLARATION-KEYS: the 432-24 op specs carry no permission metadat
   })
 })
 
-// ---- C432-DECLARATION-KEYS (432-25, D-10/D-12) --------------------------------------------------
-//
-// The third group of ten, pinned as 432-23's and 432-24's are. Four of them are writers (the two
-// config writers and the two quarantine writes), so the risk descriptor beside the absence is what
-// still states that they write; runs.evidence also keeps its declared output representation.
-describe('C432-DECLARATION-KEYS: the 432-25 op specs carry no permission metadata', () => {
+// The writers' risk descriptors still state that they write.
+describe('the hook add, bundles list, scaffold, editor live URL, evidence, entity get, marks history and quarantine specs carry no permission metadata', () => {
   const migrated = [
     { spec: configHookAddSpec, resultKind: 'unary', boundThrough: 'configWrite',
       risk: { name: 'fn:config.hook.add', recognized: true, readOnly: false } },
@@ -570,13 +537,8 @@ describe('C432-DECLARATION-KEYS: the 432-25 op specs carry no permission metadat
   })
 })
 
-// ---- C432-DECLARATION-KEYS (432-27, D-10/D-12) --------------------------------------------------
-//
-// The last four op specs that still spelled `requiredScopes`, pinned as the earlier groups are.
-// config.auth.set is the writer among them: its risk descriptor and its `configWrite` binding are
-// what still say it writes. runs.detail and runs.overview keep their `runDetail` binding, which is
-// what lists them `unbound` on a host with no projection database.
-describe('C432-DECLARATION-KEYS: the 432-27 op specs carry no permission metadata', () => {
+// The risk descriptor and `configWrite` binding still say `config.auth.set` writes.
+describe('the auth set, gates list, run detail and run overview specs carry no permission metadata', () => {
   const migrated = [
     { spec: configAuthSetSpec, resultKind: 'unary', boundThrough: 'configWrite',
       risk: { name: 'fn:config.auth.set', recognized: true, readOnly: false } },
@@ -616,16 +578,9 @@ describe('C432-DECLARATION-KEYS: the 432-27 op specs carry no permission metadat
   })
 })
 
-// ---- C432-ALL-OPS-AVAILABLE (432-27, D-12) ------------------------------------------------------
-//
-// Unlike the cells above, these go through a real registry and `invokeFunction`, because the claim
-// is about who may call. `knowledge.gates.list` once required `read` and `config.auth.set`
-// `config-write`. Retried from three callers that differ in surface and origin and carry no scope,
-// both are served every time: each port is reached once per attempt with what the caller sent,
-// every caller gets the same answer, and no audit row is written. config.auth.set's reference law
-// still refuses a value that is not a name, for every caller alike, before the writer is reached.
-describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve every caller', () => {
-  it('C432-ALL-OPS-AVAILABLE: a retried knowledge.gates.list and config.auth.set are served alike to every caller', async () => {
+// Through a real registry and `invokeFunction`, because the claim is about who may call.
+describe('the gate read and auth writer serve every caller', () => {
+  it('a retried knowledge.gates.list and config.auth.set are served alike to every caller', async () => {
     const encoder = new TextEncoder()
     const decoder = new TextDecoder()
     const configFile = 'agent-qa.config.yaml'
@@ -637,7 +592,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
         candidateId: 'rec-1', promotionPath: 'deterministic-verdict-floor',
         citedReceiptDigests: [], producedAtOrdinal: 43, producedBy: { opId: 'promote' } })],
       standing: [], live: { verdict: 'promote', promotionPath: 'deterministic-verdict-floor',
-        citedReceiptDigests: [] }, posture: 'absent',
+        citedReceiptDigests: [] },
     }
     const candidates: string[] = []
     const fieldsSet: { path: string; value: unknown }[] = []
@@ -705,7 +660,7 @@ describe('C432-ALL-OPS-AVAILABLE: the 432-27 gate read and auth writer serve eve
           { recordId: 'rec-1' }, caller))
         answers.push(await invokeFunction(registry, 'knowledge.gates.list',
           { recordId: 'rec-9' }, caller))
-        // 2026-10-02 (quick 261002-ctr): the reference is a plugin package (`authStateName` is gone).
+        // The reference is a plugin package.
         answers.push(await invokeFunction(registry, 'config.auth.set',
           { target: 'shop', pluginPackage: '@acme/auth' }, caller))
         answers.push(await invokeFunction(registry, 'config.auth.set',

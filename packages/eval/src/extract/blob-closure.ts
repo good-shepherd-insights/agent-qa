@@ -2,7 +2,7 @@ import type { CassetteCompleteness, MissingCassetteEvidence } from '../cassette/
 import type { CassetteInputLeg } from '../cassette/input-leg'
 import type { ArtifactSource } from '../ports'
 
-/** One content-addressed byte payload resolved in memory for a cassette bundle (D-08). */
+/** One content-addressed byte payload resolved in memory for a cassette bundle. */
 export interface ExtractedBlob {
   sha: string
   bytes: Uint8Array
@@ -20,11 +20,7 @@ export interface BuildCompletenessInput {
   missingEvidence?: readonly MissingCassetteEvidence[]
 }
 
-/**
- * Classify required screenshot identity from Plan 12's authoritative persisted modality.
- * Only `stateBefore.metadata.captureMode === 'full'` proves image evidence was attached;
- * a usable dedicated ref satisfies identity even when its bytes are later unavailable (T-367-20).
- */
+// Only `captureMode === 'full'` proves an attached image; a usable ref satisfies identity.
 export function missingRequiredEvidence(input: CassetteInputLeg): MissingCassetteEvidence[] {
   if (input.stateBefore.metadata.captureMode !== 'full') return []
 
@@ -40,7 +36,7 @@ export function missingRequiredEvidence(input: CassetteInputLeg): MissingCassett
   ]
 }
 
-/** Collect the ordered, deduplicated closure demanded by the projected typed input (D-11/D-14). */
+/** Collect the ordered, deduplicated closure demanded by the projected typed input. */
 export function collectBlobShas(input: CassetteInputLeg): string[] {
   const shas: string[] = []
   const seen = new Set<string>()
@@ -58,7 +54,7 @@ export function collectBlobShas(input: CassetteInputLeg): string[] {
   return shas
 }
 
-/** Resolve every demanded digest while preserving served bytes when siblings are absent (D-11). */
+/** Resolve every demanded digest while preserving served bytes when siblings are absent. */
 export function resolveBlobClosure(
   shas: readonly string[],
   artifacts: ArtifactSource,
@@ -75,7 +71,7 @@ export function resolveBlobClosure(
   return { blobs, missingShas }
 }
 
-/** Fold independent missing-evidence facts into the single D-11 status vocabulary. */
+// Folds independent missing-evidence facts into the single status vocabulary.
 export function buildCompleteness(input: BuildCompletenessInput): CassetteCompleteness {
   const hasMissingBlobs = input.missingShas.length > 0
   const hasMissingEvidence = (input.missingEvidence?.length ?? 0) > 0

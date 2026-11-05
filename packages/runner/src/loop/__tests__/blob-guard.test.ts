@@ -3,7 +3,7 @@ import { guardActionData } from '../blob-guard.js'
 
 const MARKER = '…[truncated to fit context budget]'
 
-describe('guardActionData (D-06 pre-prompt blob-guard fallback)', () => {
+describe('guardActionData (pre-prompt blob-guard fallback)', () => {
   it('returns undefined for undefined input', () => {
     expect(guardActionData(undefined)).toBeUndefined()
   })
@@ -20,7 +20,7 @@ describe('guardActionData (D-06 pre-prompt blob-guard fallback)', () => {
     const out = guardActionData(huge)
     expect(out).toBeDefined()
     expect(out!.endsWith(MARKER)).toBe(true)
-    // Bounded to a generous ceiling well above the v1 2000-char slice.
+    // Bounded to a generous ceiling well above 2000 chars.
     expect(out!.length).toBeGreaterThan(2000)
     expect(out!.length).toBeLessThan(12000)
   })

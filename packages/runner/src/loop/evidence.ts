@@ -1,13 +1,4 @@
-// The §A8 evidence module (D-14): the loop's internal recording types ARE the schema
-// §A8 DTOs. Evidence is populated by construction as the loop runs — never projected
-// after the fact from v1 SubActionTrace shapes. This module mints ZERO new schema
-// types; it consumes SubActionEvidence/StepEvidence/RecordedActionResult/ServedBrief/
-// toRecordedActionResult/computeBriefDigest from @vostride/agent-qa-schema.
-//
-// The legacy StepResult.trace is PROJECTED from the evidence at step end
-// (projectLegacyTrace, Open Q5 — richer→poorer is legal; the reverse is D-14's
-// forbidden direction). Reporters/dashboard/JUnit keep consuming StepResult.trace
-// unchanged until 361/363.
+// Evidence is built as schema DTOs while the loop runs; the legacy trace is projected from it.
 import {
   computeBriefDigest,
   EvidenceArtifactRefSchema,
@@ -68,7 +59,7 @@ import type { StepAnnotation, SubActionTrace } from '../result.js'
 import type { EvidenceArtifactStorePort, SecretRedactorPort } from './ports.js'
 import { redactSecretValue } from './secrets.js'
 
-/** D-02: persist the captured before tree with the member's declared mask; handoff states stay raw. */
+// Persist the captured before tree with the member's declared mask; handoff states stay raw.
 export function persistAriaEvidence(
   evidence: SubActionEvidence,
   secretRedactor: SecretRedactorPort | undefined,
@@ -96,12 +87,7 @@ export function persistAriaEvidence(
   }
 }
 
-// ---------------------------------------------------------------------------
-// makeEmptyServedBrief — the canonical empty brief (Pitfall 4 / D-05 graceful
-// degradation). StepEvidence.servedBrief is REQUIRED; when no KnowledgeHintReader is
-// bound (no M2 implementation exists) the loop serves this fully-typed empty brief —
-// never an unsafe cast (Pitfall 4's warning sign).
-// ---------------------------------------------------------------------------
+// The typed empty brief served when no KnowledgeHintReader is bound; never an unsafe cast.
 
 export function makeEmptyServedBrief(scope: ScopeKey, asOfBuild: number): ServedBrief {
   const brief: ServedBrief = {
@@ -131,7 +117,6 @@ function makeChannel1ServedBrief(input: {
     budget: input.budget,
     truncation: input.block.truncation,
     channel1: [...input.block.lines],
-    // D-03: Channel 2 read traces and Channel 3 cautions are populated by 380-07/380-09.
     channel2: [],
     channel3: [],
     briefDigest: '',
@@ -140,23 +125,16 @@ function makeChannel1ServedBrief(input: {
 }
 
 // ---------------------------------------------------------------------------
-// foldCacheStatus — per-step fold of v1's per-sub-action `cached` booleans. Any miss
-// ⇒ 'miss', all hit ⇒ 'hit'. 'bypass' is unused until Phase 356's cache redesign
-// (documented here for that phase; do not emit it from this fold).
+// foldCacheStatus — per-step fold of the per-sub-action `cached` flags: all hit ⇒ 'hit',
+// otherwise 'miss'. `finalize` decides 'disabled' and 'bypass' before this fold.
 // ---------------------------------------------------------------------------
 
 export function foldCacheStatus(subActionCacheFlags: boolean[]): StepEvidence['cacheStatus'] {
-  // 439 D-15: a step with no sub-actions replayed nothing from the cache, so it is a miss.
+  // A step with no sub-actions replayed nothing from the cache, so it is a miss.
   return subActionCacheFlags.length > 0 && subActionCacheFlags.every(flag => flag) ? 'hit' : 'miss'
 }
 
-// ---------------------------------------------------------------------------
-// collapseAnnotation — pure re-derivation of the v1 loop.ts StepAnnotation block,
-// mapping the adapter's runner-legacy result shape (coordinates / boundingBox /
-// startCoordinates / endCoordinates) onto the single schema ActionAnnotation union.
-// Feeds result.annotation on evidence; projectLegacyTrace derives the legacy dashboard
-// StepAnnotation from it (reporters consume that until 361/363).
-// ---------------------------------------------------------------------------
+// Maps the adapter's legacy coordinate fields onto the schema ActionAnnotation union.
 
 function clampPointToViewport(point: Point, viewport: Viewport): Point {
   return {
@@ -167,8 +145,7 @@ function clampPointToViewport(point: Point, viewport: Viewport): Point {
 
 function scrollDirection(action: PlatformAction): 'up' | 'down' | 'left' | 'right' | undefined {
   if (action.type !== 'scroll') return undefined
-  // Schema v2 Scroll carries an explicit direction on both modes (direction / untilVisible) —
-  // no pixel sign to decode (D-01).
+  // Scroll carries an explicit direction in both modes, so there is no pixel sign to decode.
   const a = action as Extract<PlatformAction, { type: 'scroll' }>
   return a.direction
 }
@@ -178,7 +155,6 @@ export function collapseAnnotation(
   execResult: PlatformActionResult,
   viewport: Viewport,
 ): ActionAnnotation {
-  // Schema swipe (D-15 flip): SwipeByDirection carries `direction`; SwipeByPath carries from/to.
   const direction = action.type === 'swipe'
     ? (action.mode === 'direction' ? action.direction : undefined)
     : scrollDirection(action)
@@ -207,7 +183,7 @@ export function collapseAnnotation(
     return { ...base, kind: 'pinch', pinch: { center, scale: a.scale } }
   }
 
-  // scroll with a container bounding box → region (clamped into the viewport, v1 rule).
+  // scroll with a container bounding box → region, clamped into the viewport.
   if (action.type === 'scroll' && execResult.boundingBox) {
     return { ...base, kind: 'region', region: { boundingBox: clampToViewport(execResult.boundingBox, viewport) } }
   }
@@ -234,61 +210,34 @@ function clampToViewport(box: BoundingBox, viewport: Viewport): BoundingBox {
 }
 
 // ---------------------------------------------------------------------------
-// EvidenceRecorder — the accumulator the loop drives. Its recording types ARE the
-// schema §A8 DTOs; there is no intermediate v1 shape.
+// EvidenceRecorder — the accumulator the loop drives. Its recording types ARE the schema DTOs.
 // ---------------------------------------------------------------------------
 
 export interface RecordSubActionInput {
   /** The planner's reasoning/plan string for this sub-action. */
   plan: string
   plannedAction: Action
-  /**
-   * The FULL observed ScreenState the sub-action was planned against (D-15). Pitfall 3:
-   * v1 stored only the tree string — the forbidden shape. elements + refMap ride along.
-   */
+  // The full observed ScreenState, with elements and refMap, not only the tree string.
   stateBefore: ScreenState
   stateAfter?: ScreenState
-  /**
-   * The execution result as the schema ActionResult (screenshot may be present here as
-   * bytes; it is structurally excluded by toRecordedActionResult before storage — the
-   * type-level screenshot-never guarantee, T-353-06). annotation is produced via
-   * collapseAnnotation.
-   */
+  // Screenshot bytes may be present here; `toRecordedActionResult` strips them before storage.
   result: SchemaActionResult
-  /** v1 per-sub-action cache flag; folded per step by foldCacheStatus at finalize. */
+  /** Per-sub-action cache flag; folded per step by foldCacheStatus at finalize. */
   cached?: boolean
-  /**
-   * The §A8 grounding evidence for this sub-action (GROUND-02): the resolved descriptor
-   * plus the per-rung attempt trail (turn gate on the live path, replay resolution on the
-   * cache path, re-ground heal entries on the D-10 path). Present only when the action
-   * carried an element field; the loop redacts the descriptor BEFORE passing it here so a
-   * pre-redaction descriptor never reaches evidence (T-357-02a, the redact-before-record
-   * ordering). Typed via the schema DTO — no runner-local mirror (353 evidence-by-construction).
-   */
+  // The loop redacts the descriptor before passing it here, so no raw descriptor reaches evidence.
   grounding?: SubActionEvidence['grounding']
-  /**
-   * The §A8 decision-screenshot ArtifactRef (CASS-02): the identity of the exact final image
-   * bytes the planner saw for this live decision, minted by the run-scoped artifact store.
-   * Absent on cache-served, text-only, unbound-store, or failed-store paths — never fabricated.
-   */
+  // Identity of the final image bytes the planner saw; absent when not captured, never fabricated.
   decisionScreenshotRef?: SubActionEvidence['decisionScreenshotRef']
   /**
    * Auxiliary §A8 ArtifactRefs already reserved by the schema DTO. Copied verbatim (order and
    * identity preserved) so the recorder never drops artifact references present on the input.
    */
   artifactRefs?: SubActionEvidence['artifactRefs']
-  /**
-   * Ordered exchanges from this live planning decision (D-01). The loop masks every
-   * string leaf BEFORE passing them here (T-360-01); the recorder never sees raw values.
-   * Present, possibly empty, for live turns and absent for cache replay.
-   */
+  // The loop masks every string leaf first; present for live turns, absent for cache replay.
   exchanges?: ToolExchangeEvidence[]
-  /**
-   * Final-response enrichment for this live decision (D-05/D-08). The loop passes it
-   * conditionally; structural absence means no live call record was available.
-   */
+  // Absent when no live call record is available.
   callRecord?: ModelCallRecord
-  /** 436 D-22: what the action produced outside the page, already masked by the loop. */
+  // What the action produced outside the page, already masked by the loop.
   operationEvidence?: SubActionEvidence['operationEvidence']
   healedDispatch?: SubActionEvidence['healedDispatch']
 }
@@ -297,17 +246,7 @@ export class EvidenceRecorder {
   private readonly subActions: SubActionEvidence[] = []
   private readonly cacheFlags: boolean[] = []
   private servedBrief: ServedBrief
-  /**
-   * KREV-02 · D-13: the serve-time retrieval trace, recorded BESIDE `servedBrief` and never
-   * inside it. `ServedBrief` feeds `computeBriefDigest`, so a trace channel within it would have
-   * rewritten every cassette and acceptance digest in the tree; a sibling field leaves those
-   * bytes untouched, which `evidence-trace.test.ts` proves by digest equality rather than by
-   * asserting that nobody edited the brief.
-   *
-   * Channel 1 is REPLACED on each record (a step replans against the SAME frozen brief, so
-   * appending would duplicate its attributions), while Channel 3 APPENDS — exactly mirroring how
-   * `servedBrief.channel1` and `servedBrief.channel3` themselves behave.
-   */
+  // Kept out of `servedBrief`, whose bytes feed its digest; Channel 1 replaces, Channel 3 appends.
   private channel1Trace?: ServedRetrievalTraceV1
   private readonly channel3TraceLines: TraceLine[] = []
   private readonly channel3Truncated: TraceLine[] = []
@@ -325,26 +264,15 @@ export class EvidenceRecorder {
   private verdictSource?: VerdictSource
   private planSource?: StepPlanSource
   private cacheMiss?: { reason: CacheMissReason }
-  /** D-06 run-declared planner context, copied onto every finalized step when bound. */
+  // Run-declared planner context, copied onto every finalized step when bound.
   private readonly modelProfile?: DeclaredModelProfile
-  /** D-07 verifier identity copied beside every finalized verdict when bound. */
+  // Verifier identity, copied beside every finalized verdict when bound.
   private readonly verifierIdentity?: ModelIdentity
-  /** D-16 once-per-member bound-surface digest copied onto every finalized step. */
+  // Once-per-member bound-surface digest, copied onto every finalized step.
   private readonly toolSchemaDigest?: string
-  /**
-   * 407 D-13: the HOST's retrieval rung at serve time, handed in by the composition root and
-   * copied onto every finalized step. It sits BESIDE `servedBrief` for the same reason
-   * `retrievalTrace` does — `computeBriefDigest` keys cassettes and acceptance evidence on the
-   * brief's bytes, so a rung channel inside the brief would invalidate every brief ever served.
-   * The recorder never resolves it: a run's rung is a fact about serve time, not a live probe.
-   */
+  // Kept out of `servedBrief`, whose bytes key cassettes; the recorder never resolves it.
   private readonly retrievalRung?: RecordedRetrievalRung
-  /**
-   * D-02 single sub-action chokepoint (Plan 361-08). When bound, invoked at the END of
-   * every {@link recordSubAction} append with the recorded evidence and its index — so all
-   * five loop call sites emit `subActionRecorded` through ONE seam, never per-call-site.
-   * Optional-chained: unbound ⇒ the recorder is byte-identical to today (never throws, D-05).
-   */
+  // Every `recordSubAction` append emits through this one seam; unbound, the recorder never throws.
   private readonly onSubActionRecorded?: (evidence: SubActionEvidence, index: number) => void
 
   constructor(options?: {
@@ -481,18 +409,12 @@ export class EvidenceRecorder {
     this.subActions.push(evidence)
     this.cacheFlags.push(input.cached ?? false)
     const index = this.subActions.length - 1
-    // D-02 live emission (Plan 361-08): fire the one chokepoint AFTER the append so the
-    // recorded evidence + its index leave the loop at the moment they occur. Fire-and-forget,
-    // optional-chained — never throws when unbound.
+    // Fires after the append, so the evidence and its index leave the loop as they occur.
     this.onSubActionRecorded?.(evidence, index)
     return index
   }
 
-  /**
-   * Snapshot the run-scoped working-memory set served to this step's planning turns
-   * (WM-01, §12.15). The loop passes the values ALREADY masked (the loop's `recordMask`, Pitfall
-   * 7 boundary 3) — recorded BESIDE the brief, never inside `servedBrief`.
-   */
+  // Values arrive masked by the loop, and sit beside the brief, never inside `servedBrief`.
   recordWorkingMemory(entries: WorkingMemoryEntry[]): void {
     this.workingMemory = entries
   }
@@ -507,13 +429,7 @@ export class EvidenceRecorder {
     asOfBuild: number
     budget: number
     block: BriefBlock
-    /**
-     * D-16's last hop, made structural. The trace is a REQUIRED parameter, so the only way to
-     * persist a served brief without one is to change this signature — which is a compile error
-     * at every call site rather than a silently trace-less run. `makeEmptyServedBrief` stays the
-     * one no-reader constructor fallback and records nothing here, so an absent trace on evidence
-     * means "no reader was bound", never "a reader served and the trace was dropped" (D-15).
-     */
+    // A required parameter, so dropping the trace is a compile error, not a trace-less run.
     trace: ServedRetrievalTraceV1
   }): void {
     this.channel1Trace = input.trace
@@ -532,24 +448,7 @@ export class EvidenceRecorder {
     this.replaceServedBrief(served)
   }
 
-  /**
-   * Append the exact Channel-3 CautionLines injected into a live replan turn. Refused records
-   * never enter this method; the reserved reader overflow line does because its summary was
-   * actually rendered. Digest recomputation keeps ServedBrief content-addressed after mutation.
-   *
-   * WR-10 (387-13): the LEDGER accumulates on every call, including the zero-injection one. A
-   * turn that injected nothing is not a turn with nothing to explain — it is exactly the turn
-   * "why didn't it mention X" is asked about, and {@link foldRetrievalTrace} carries a dedicated
-   * arm for "no served lines, non-empty truncation ledger" that this method previously made
-   * unreachable by returning before accumulating.
-   *
-   * The surviving `cautions.length === 0` return is a COST guard, not a correctness one, and the
-   * distinction is measured rather than asserted: deleting it outright reddens nothing, because
-   * appending an empty array and recomputing a content-addressed digest reproduces the same
-   * bytes. It stays only to skip a whole-brief rehash on every all-cut turn. D-13's byte-stability
-   * on this path is protected by what is NOT written here — cut candidates are never spoofed into
-   * `channel3` as served lines — and the regression cases pin that outcome, not this branch.
-   */
+  // The ledger accumulates even on zero-injection turns; the empty return only skips a rehash.
   recordServedCautions(
     cautions: readonly CautionLine[],
     trace: ServedRetrievalTraceV1,
@@ -588,141 +487,83 @@ export class EvidenceRecorder {
     this.replaceServedBrief(served)
   }
 
-  /**
-   * Record the structurally failed planning turn (D-03). Exchanges and message arrive
-   * ALREADY masked by the loop; the recorder remains mask-agnostic.
-   */
+  // Exchanges and message arrive masked by the loop; the recorder stays mask-agnostic.
   recordPlanningFailure(evidence: PlanningFailureEvidence): void {
     this.planningFailure = evidence
   }
 
-  // -------------------------------------------------------------------------
-  // Phase 360 termination-verb & AI-assertion evidence blocks (EXEC-05/EXEC-07 ·
-  // D-03/D-04/D-05/D-10/D-11). Sibling record* methods on the recorder; recording types ARE
-  // the schema §A8 DTOs (353 D-14 law — no runner-local mirror). MASKED-BEFORE-RECORD: as with
-  // recordWorkingMemory, the caller (the Plan 10 dispatch seam) masks every value-bearing field
-  // via the loop's `recordMask` BEFORE handing the DTO here — the recorder never sees a raw secret
-  // and never store-raw-then-masks (T-360-01).
-  // -------------------------------------------------------------------------
+  // Callers mask every value-bearing field with `recordMask` before handing the DTO here.
 
-  /**
-   * Record the D-03 `common_reportValue` answer block. `value` arrives already masked. Surfaced
-   * on StepEvidence.reportedValue so the verdict layer (and Phase 361's handoff) carries the
-   * retrieved answer first-class. reportValue is non-terminal (D-02) — this only records.
-   */
+  // `value` arrives masked; reportValue is non-terminal, so this only records.
   recordReportedValue(evidence: ReportedValueEvidence): void {
     this.reportedValue = evidence
   }
 
-  /**
-   * Record the D-04 infeasible termination block — present only when a turn declared the step
-   * infeasible via the `failureKind`/`failureReason` envelope (machine-distinguishable from a
-   * plain `stepFailed`). Sorted keys `["kind","reason"]` are fixed by the DTO.
-   */
+  // Present only when a turn declared the step infeasible, unlike a plain `stepFailed`.
   recordTermination(evidence: TerminationEvidence): void {
     this.termination = evidence
   }
 
-  /**
-   * Record the typed limit stop (436 D-12/D-13). Its text fields arrive already masked; it is
-   * never a planning failure, a termination or a verdict source.
-   */
+  // Text fields arrive masked; never a planning failure, a termination or a verdict source.
   recordLimitStop(evidence: LimitStopEvidence): void {
     this.limitStop = evidence
   }
 
-  /**
-   * Record the per-condition verdicts (439 D-07). Text fields arrive masked and bounded; a later
-   * judgment of the same step replaces an earlier one.
-   */
+  // Fields arrive masked and bounded; a later judgment of the step replaces an earlier one.
   recordConditionVerdicts(evidence: ConditionVerdictsEvidence): void {
     this.conditionVerdicts = evidence
   }
 
-  /** Record whether the step's platform could capture each operation (436 D-23). */
+  /** Record whether the step's platform could capture each operation. */
   recordOperationCapture(availability: OperationCaptureAvailability): void {
     this.operationCapture = availability
   }
 
-  /** Record the step's configured limits and usage (436 D-11); finish() calls it on every path. */
+  /** Record the step's configured limits and usage; finish() calls it on every path. */
   recordLimitUsage(usage: StepLimitUsage): void {
     this.limitUsage = usage
   }
 
   /**
-   * Record the D-05/D-06/D-07/D-09 AI judge block (`assertAI`/`extractAI`): verdict, rationale
-   * (masked), the requested-but-deferred M3/M4 knobs, and the extractAI global-scope degradation
-   * marker. One judgment per attempt (single-model law).
+   * Record the assertAI or extractAI judge block: the verdict and masked rationale, or why the
+   * model could not judge or extract. One per attempt.
    */
   recordAiJudgment(evidence: AiJudgmentEvidence): void {
     this.aiJudgment = evidence
   }
 
-  /**
-   * Record the D-10/D-11 structured `common_assertValue` outcome block: the comparator's
-   * deterministic result with `expected`/`actual` already masked. A passing outcome drives the
-   * verifier short-circuit (Plan 10 seam), recorded via {@link recordVerdictSource}.
-   */
+  // `expected` and `actual` arrive masked; the verifier still judges a passing outcome.
   recordAssertOutcome(evidence: AssertValueEvidence): void {
     this.assertOutcome = evidence
   }
 
-  /**
-   * Record which path produced this step's final verification verdict (D-11): the deterministic
-   * assertValue comparator (`'assert-value'`) or the verifier's own model call
-   * (`'verifier-model'`), which also decides every AI-judged conclusion (assertAI or extractAI;
-   * quick 261004-lsa). Set with the final verdict, so a verifier rejection records nothing.
-   */
+  // Set with the final verdict, so a verifier rejection records nothing.
   recordVerdictSource(source: VerdictSource): void {
     this.verdictSource = source
   }
 
-  /**
-   * Record the typed step plan source (PROC-02 · 381 D-12). `procedure-replay` carries the
-   * guard fold (checksPassed/total + the first miss when the fold broke off); `procedure-hint`
-   * marks a served-without-replay exposure. Recorded BESIDE `cacheStatus` — structurally
-   * distinct from the cached flag so eval/cassette consumers reading cached semantics are
-   * never polluted (Pitfall 4). Last write wins: the loop updates the fold as guard checks
-   * accumulate, and the final state is what finalize emits.
-   */
+  // Beside `cacheStatus`, so cached-flag consumers are never polluted; the last write wins.
   recordPlanSource(source: StepPlanSource): void {
     this.planSource = source
   }
 
-  /**
-   * Record why a cache key hit did not replay (438 D-11), before the loop invalidates the entry.
-   * The first reason in the step is kept.
-   */
+  // The first reason in the step is kept, recorded before the loop invalidates the entry.
   recordCacheMiss(miss: { reason: CacheMissReason }): void {
     this.cacheMiss ??= { reason: miss.reason }
   }
 
-  /**
-   * Attach the D-15 stateAfter at the spec-locked boundaries (assert sub-actions, the
-   * verifier boundary, the self-heal boundary) by reuse of an observation the loop
-   * already takes — no extra capture.
-   */
+  // Reuses an observation the loop already takes; no extra capture.
   attachStateAfter(index: number, state: ScreenState): void {
     const evidence = this.subActions[index]
     if (evidence) evidence.stateAfter = state
   }
 
-  /** Record the §A8 contrastive self-heal pair (D-12): the failed decision and the
-   * recovering decision at the replan-with-failure-context boundary. */
+  // The failed and the recovering decision at the replan-with-failure-context boundary.
   recordSelfHeal(failedDecision: Decision, recoveringDecision: Decision): void {
     this.selfHeal = { failedDecision, recoveringDecision }
   }
 
-  /**
-   * Fold the per-channel serve-time attributions into the one persisted trace (D-13/D-14).
-   *
-   * Every value here was computed by the reader at the moment of serving and is copied through
-   * unchanged — no score is re-derived and no rank is recomputed at persistence time. The runner
-   * writes; the reader computed.
-   *
-   * Absent when nothing was served through a bound reader, which is D-15's honest no-trace arm:
-   * an absent trace says "no reader served this step", not "a trace was lost".
-   */
+  // Copies the reader's serve-time values unchanged; absent means no reader served this step.
   private foldRetrievalTrace(): ServedRetrievalTraceV1 | undefined {
     if (this.channel1Trace === undefined && this.channel3TraceLines.length === 0) {
       return this.channel3Truncated.length === 0 ? undefined : {
@@ -747,33 +588,31 @@ export class EvidenceRecorder {
     }
   }
 
-  /** Finalize the accumulated evidence into a §A8 StepEvidence. cacheStatus is the
-   * per-step fold; servedBrief is always present (empty when no reader bound).
+  /** Finalize the accumulated evidence into a §A8 StepEvidence; servedBrief is always present
+   * (empty when no reader bound).
    *
-   * `options.nonCacheable` threads the D-08 bypass signal (Pitfall 7): when a step was
-   * classified NonCacheableStepInput the loop never touched the cache, so cacheStatus is
-   * `'bypass'` DIRECTLY — orthogonal to the boolean hit/miss fold (a cached sub-action's
-   * flag must not fold to `'hit'` for a bypassed step). */
+   * cacheStatus is `'disabled'` when no cache was bound for the step (`options.cacheDisabled`),
+   * else `'bypass'` when the loop left the cache untouched for a non-cacheable step
+   * (`options.nonCacheable`), else the per-step hit/miss fold. */
   finalize(
     verdict: VerifierVerdict,
     stepIndex: number,
     stepText: string,
     options?: {
+      cacheDisabled?: boolean
       nonCacheable?: boolean
-      /**
-       * The step's `{{env:NAME}}` provenance pairs (PROC-01 · 381 D-03/D-08), stamped only
-       * when non-empty so the absent-by-default shape is preserved. The recorder is
-       * MASK-AGNOSTIC by contract: it records exactly what its caller passes and masks
-       * nothing itself. These pairs in particular must NOT be masked anywhere — see the
-       * masking prohibition on `StepEvidence.interpolatedVariables`.
-       */
+      // Stamped only when non-empty, and never masked: see `StepEvidence.interpolatedVariables`.
       interpolatedVariables?: readonly InterpolatedVariable[]
     },
   ): StepEvidence {
     const evidence: StepEvidence = {
       stepIndex,
       stepText,
-      cacheStatus: options?.nonCacheable ? 'bypass' : foldCacheStatus(this.cacheFlags),
+      cacheStatus: options?.cacheDisabled
+        ? 'disabled'
+        : options?.nonCacheable
+          ? 'bypass'
+          : foldCacheStatus(this.cacheFlags),
       servedBrief: this.servedBrief,
       subActions: this.subActions,
       verifierVerdict: verdict,
@@ -782,7 +621,6 @@ export class EvidenceRecorder {
     if (retrievalTrace !== undefined) evidence.retrievalTrace = retrievalTrace
     if (this.retrievalRung !== undefined) evidence.retrievalRung = this.retrievalRung
     if (this.selfHeal) evidence.selfHeal = this.selfHeal
-    // 2026-10-07 (436-03): no producer writes stagnation or cycle any more (D-15, D-17).
     if (this.workingMemory) evidence.workingMemory = this.workingMemory
     if (this.planningFailure) evidence.planningFailure = this.planningFailure
     if (this.reportedValue) evidence.reportedValue = this.reportedValue
@@ -806,11 +644,7 @@ export class EvidenceRecorder {
   }
 }
 
-// ---------------------------------------------------------------------------
-// projectLegacyTrace — projects the legacy SubActionTrace[] (string screen states)
-// FROM the evidence at step end. Richer→poorer only (Open Q5); reporters/dashboard/
-// JUnit keep consuming StepResult.trace unchanged until 361/363.
-// ---------------------------------------------------------------------------
+// Projects the legacy string-state trace from the evidence; richer to poorer only.
 
 const LEGACY_ANNOTATION_TYPES: ReadonlySet<StepAnnotation['type']> = new Set([
   'click', 'fill', 'tap', 'hover', 'scroll', 'swipe', 'pinch', 'navigate',

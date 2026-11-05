@@ -1,7 +1,4 @@
-// 2026-10-14 (441-03, D-10): repair and `authoring.draft.edit` refuse a draft that would type a
-// literal [secret:NAME], as the loop does. Pitfall 5: the repair-evidence and fixture-reality cells
-// this file carried for the deleted credential screen stay here. The fake shelf remints `filePath`
-// on every apply, as the host does, which is what makes the candidate's path measurable.
+// Repair and `authoring.draft.edit` refuse a draft that would type a literal `[secret:NAME]`.
 
 import { TestEditPatchSetSchema, CURRENT_DRAFT_RECEIPT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 import type {
@@ -354,7 +351,7 @@ async function editThrough(
   return { settled, published }
 }
 
-describe('C441-DRAFT-MARKER', () => {
+describe('masked placeholders in a repair patch', () => {
   it('a repair patch that writes a masked placeholder spends the iteration and starts no probe', async () => {
     const bench = harness([emit(MARKER_PATCH), emit(CLEAN_PATCH)], ['passing'])
 
@@ -442,8 +439,7 @@ describe('C441-DRAFT-MARKER', () => {
 
 describe('every repair iteration is shown the trace and the a11y coordinates', () => {
   it('iteration-2-evidence carries the trace and the a11y coordinates at the failure point', async () => {
-    // Iteration 1 probes and fails, so iteration 2 exists. The candidate has by then moved to a
-    // digest-minted path, which is precisely when the handoff join used to return `undefined`.
+    // Iteration 1 probes and fails, so iteration 2 runs with the candidate at a digest-minted path.
     const bench = harness([emit(CLEAN_PATCH)], ['still-failing', 'still-failing', 'still-failing'])
 
     await repairDraft(repairRoute(), bench.deps)

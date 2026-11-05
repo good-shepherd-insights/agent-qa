@@ -5,13 +5,13 @@ import {
   decisionIdentityKey,
 } from '../replay/identity'
 
-/** D-07 loop axis: leaf decisions are n/a; procedure decisions are clear or attributed. */
+// Leaf decisions are n/a; procedure decisions are clear or attributed.
 export type LoopVerdict =
   | { kind: 'not-applicable' }
   | { kind: 'none' }
   | { kind: 'flagged'; priorStepIndex: number }
 
-/** One recorded procedure decision available to later steps as loop history (D-07). */
+/** One recorded procedure decision available to later steps as loop history. */
 export interface ProcedurePriorIdentity {
   /** Canonical key of the recorded gold decision identity. */
   identityKey: string
@@ -47,11 +47,7 @@ export function collectProcedurePriorIdentities(
   return identities
 }
 
-/**
- * D-07 detects identity repetition over recorded procedure history only. Single-decision replay
- * has no observation sequence, so it never judged screen change; since 436-03 the live loop has
- * no stagnation machinery either.
- */
+// Detects identity repetition over recorded procedure history only.
 export function computeLoopVerdict(
   candidateIdentity: DecisionIdentity,
   currentScreenStateHash: string,

@@ -1,30 +1,4 @@
-// The Phase 388 tracer: one finished run drives the REAL post-run chain end to end.
-//
-// Real sqlite, a real handoff document on disk, the real composition root, the real handler
-// bodies. The only injected fakes are the clock (so timestamps are assertable), the model
-// capability (nothing on this path authors) and `curateRun` — which is a CAPABILITY the
-// composition binds rather than a stub of the thing under test: `agent-local` cannot reach
-// the CLI's curation drain, and D-01 puts that binding in the run tail (plan 02). What is
-// under test here is the SEAM: enqueue -> analyze-run -> curate-memory -> exactly one
-// notification row, with deterministic chain ids and the frozen verdicts-authored shape.
-//
-// Why the assertions are on durable state rather than on returned outcomes: the whole point
-// of D-09 is that "notified exactly once" survives a crash, a second process and a replay,
-// and an assertion on a value the engine happened to return would be satisfied just as well
-// by an in-memory memo that the next process cannot see.
-//
-// 2026-09-11 (Phase 422, D-13): the seam is three stages long — enqueue -> analyze-run ->
-// curate-memory -> propose-improvements -> exactly one notification row. Two properties of that
-// widening are only observable HERE, against a real store, and both are asserted below:
-//
-//   1. The successor is inserted in the SAME fenced transaction that lands its predecessor
-//      terminal, BEFORE the terminal record is considered. That ordering is what stops the
-//      chain notifying at stage two: at the instant curate-memory completes, the proposal row
-//      already exists and is queued, so the store's own candidates-that-exist rule finds a
-//      non-terminal member and writes nothing. A build that recorded the terminal first would
-//      write a record claiming a chain had ended, and then enqueue the stage that had not run.
-//   2. The record the third stage lands still reports the first two truthfully — including
-//      counts committed by a job two transactions earlier, which no in-memory state survives.
+// The real post-run chain; assertions read durable state, as exactly-once must survive a crash.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -61,26 +35,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { composeLocalAgent, DIGEST_JOB_ID_SOURCE } from '../composition/compose-local-agent.js'
 import type { LocalAgentHost, LocalAgentJobs } from '../composition/compose-local-agent.js'
 
-/**
- * The composition's REQUIRED quarantine identity mint (390-12 / D-01). Passthrough here: this
- * fixture already speaks canonical workspace-relative bytes, and the recipe itself stays pinned
- * in core's `workspace-paths.test.ts` — what these hosts exercise is everything BUT quarantine.
- */
+// Passthrough: this fixture already speaks canonical workspace-relative bytes.
 const MINT_IDENTITY = (filePath: string): string => filePath
 
-const RUN_ID = 'run-388-alpha'
+const RUN_ID = 'run-alpha'
 
-// 2026-10-02 (432-38, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
-// neither (432-20).
 const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
 }
 
-// 389-04's author swap put the unknown-floor member (`t_unclassified`) on the model path, so
-// a throwing stub now aborts the very chain these tests exercise. Answering unparseable text
-// instead makes the author degrade per-test to the byte-identical deterministic floor (plan 04's
-// proven posture) — the chain mechanics under test are unchanged from their 388 shape.
+// Unparseable text, so the author degrades per test to the deterministic floor, not aborting.
 const TEST_MODEL: JobModelCapability = {
   modelId: 'test:chain-terminal-notify',
   generate: async () => ({ text: 'not an author payload' }),
@@ -99,7 +64,7 @@ function createSteppingClock(): ClockPort {
   let tick = 0
   return {
     now() {
-      // 2026-10-19 (444.1-12, D-23): a minute per read, past every declared retry backoff.
+      // A minute per read, past every declared retry backoff.
       const stamp = new Date(Date.parse('2026-02-02T00:00:00.000Z') + tick * 60_000).toISOString()
       tick += 1
       return stamp
@@ -107,13 +72,7 @@ function createSteppingClock(): ClockPort {
   }
 }
 
-/**
- * The verdict the runner already persisted for the member it could classify (373-07).
- *
- * The fixture carries one member WITH this and one member WITHOUT, and that pairing is the
- * point: a projection that dropped unclassified members, or one that overwrote a persisted
- * verdict with its own fill, would still satisfy a fixture where every member looked alike.
- */
+// One member with a persisted verdict and one without, so a dropped or overwritten verdict shows.
 const PERSISTED_ROOT_CAUSE: Verdict = {
   class: 'timeout',
   producer: 'deterministic-classifier',
@@ -169,7 +128,7 @@ function fixtureHandoff(runId: string): CompletedRunHandoff {
   }
 }
 
-/** Writes the handoff exactly where the D-06 path derivation will look for it. */
+// Writes the handoff exactly where the path derivation looks for it.
 function writeHandoff(agentQaRoot: string, handoff: CompletedRunHandoff): void {
   const runDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch(String(handoff.runId)))
   mkdirSync(runDir, { recursive: true })
@@ -188,9 +147,7 @@ interface Harness {
   readonly agentQaRoot: string
   readonly jobs: LocalAgentJobs
   readonly curateCalls: { runId: string; executionContext: unknown }[]
-  /** What the 422 D-13 staging port was handed, when this case bound one. */
-  readonly stageCalls: unknown[]
-  /** Kept so a case can ask the ONE read op what a surface would render (D-14). */
+  // Kept so a case can ask the one read op what a surface would render.
   readonly host: LocalAgentHost
 }
 
@@ -199,14 +156,11 @@ async function createHarness(options?: {
     curated: number
     deprecated: number
     complete: boolean
-    candidateIds?: readonly string[]
   }>
-  readonly stageAdversarialProposal?: () => Promise<{ proposed: number; skipped: number }>
 }): Promise<Harness> {
   const agentQaRoot = mkdtempSync(join(tmpdir(), 'agent-qa-chain-notify-'))
   roots.push(agentQaRoot)
   const curateCalls: { runId: string; executionContext: unknown }[] = []
-  const stageCalls: unknown[] = []
   const host = composeLocalAgent({
     mask: (text) => text,
     mintQuarantineIdentityPath: MINT_IDENTITY,
@@ -219,27 +173,16 @@ async function createHarness(options?: {
       curateRun: async (input) => {
         curateCalls.push({ runId: input.runId, executionContext: input.executionContext })
         return options?.curateRun === undefined
-          ? { curated: 1, deprecated: 0, complete: true, candidateIds: ['cand-1'] }
+          ? { curated: 1, deprecated: 0, complete: true }
           : await options.curateRun()
       },
       // True of this substitute: it records the call and returns counts, never reaching
       // candidate emission at all — so no candidate prose exists for a masker to redact.
       candidateProse: 'masker-active',
-      // Bound only when a case asks for one. The DEFAULT harness deliberately leaves it
-      // unbound, so every other cell in this file is also the control for "the third stage
-      // runs and terminates with no staging port at all".
-      ...(options?.stageAdversarialProposal === undefined
-        ? {}
-        : {
-            stageAdversarialProposal: async (input: unknown) => {
-              stageCalls.push(input)
-              return await options.stageAdversarialProposal!()
-            },
-          }),
     },
   })
   hosts.push(host)
-  return { agentQaRoot, jobs: await host.jobs(), curateCalls, stageCalls, host }
+  return { agentQaRoot, jobs: await host.jobs(), curateCalls, host }
 }
 
 /**
@@ -266,8 +209,8 @@ async function readCheckpointValue(
   return (recorded.payload as JobCheckpointRecord).value
 }
 
-describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => {
-  it('drives enqueue -> analyze-run -> curate-memory -> propose-improvements -> exactly one notification row', async () => {
+describe('post-run chain terminal notify', () => {
+  it('drives enqueue -> analyze-run -> curate-memory -> exactly one notification row', async () => {
     const harness = await createHarness()
     const handoff = fixtureHandoff(RUN_ID)
     writeHandoff(harness.agentQaRoot, handoff)
@@ -289,8 +232,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
 
     await pump(harness.jobs, fence)
 
-    // The frozen 389 shape: the persisted verdict survives verbatim, and the member the
-    // classifier declined is filled with a deterministic 'unknown' rather than dropped.
+    // The persisted verdict survives verbatim, and a declined member is filled with `unknown`.
     const authored = await readCheckpointValue(
       harness.jobs,
       String(ids.analyzeRun),
@@ -306,47 +248,21 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       perTest: 1,
     })
 
-    // The chain enqueued exactly the kinds it derives ids for, pinned two ways (D-02): the
-    // KEY SET of the derivation and the KINDS of the rows the store actually holds, both against
-    // a sorted literal. A fourth derived id reds the first line by name and a fourth enqueued row
-    // reds the second, and each says WHAT arrived rather than that a count moved.
-    //
-    // 2026-09-01 (Phase 409): the third chain id left with the Issue-slot cleanup.
-    // 2026-09-11 (Phase 422, D-13): a third stage returns, and every row of it is real — three
-    // derived ids, three rows, three kinds, all `done`.
+    // Pinned as the derivation's key set and the stored row kinds, so a failure names what arrived.
     const dump = await harness.jobs.store.dumpState()
     const byId = new Map(dump.jobs.map((row) => [row.id, row]))
-    expect(Object.keys(ids).sort())
-      .toEqual(['analyzeRun', 'curateMemory', 'proposeImprovements'])
-    expect(dump.jobs.map((row) => row.kind).sort())
-      .toEqual(['analyze-run', 'curate-memory', 'propose-improvements'])
+    expect(Object.keys(ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
+    expect(dump.jobs.map((row) => row.kind).sort()).toEqual(['analyze-run', 'curate-memory'])
     expect(byId.get(String(ids.analyzeRun))).toMatchObject({ kind: 'analyze-run', status: 'done' })
     expect(byId.get(String(ids.curateMemory))).toMatchObject({
       kind: 'curate-memory',
       status: 'done',
     })
-    expect(byId.get(String(ids.proposeImprovements))).toMatchObject({
-      kind: 'propose-improvements',
-      status: 'done',
-    })
 
-    // The successor payload carries what the daemon needs to resolve posture per claimed job
-    // (386 D-09/D-12) — a curate-memory payload without executionContext is the DAEM-02 bug.
+    // The successor payload carries `executionContext`, so the daemon resolves posture per job.
     expect(harness.curateCalls).toEqual([
       { runId: RUN_ID, executionContext: 'local-headless' },
     ])
-
-    // The third stage's own durable checkpoint: the receipt-backed candidate ids really crossed
-    // the edge, and they crossed it through the store rather than through a returned value.
-    // No counts, because this composition binds no staging port — which the record below then
-    // reports as a stage that ran and staged nothing, not as a stage that staged zero.
-    expect(
-      await readCheckpointValue(
-        harness.jobs,
-        String(ids.proposeImprovements),
-        'proposals-authored',
-      ),
-    ).toEqual({ runId: RUN_ID, candidateIds: ['cand-1'] })
 
     const notifications = await harness.jobs.store.listNotifications()
     expect(notifications).toHaveLength(1)
@@ -357,22 +273,17 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       outcome: 'done',
       verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },
       stages: {
-        // THE claim of the widening, in one literal: counts committed by a job two transactions
-        // ago are in the record a different job wrote. Nothing in this process carried them —
-        // they travelled on the successor payload, through sqlite, and back out.
         analysis: { status: 'done' },
         curation: { status: 'done', curated: 1, deprecated: 0 },
-        proposals: { status: 'done' },
       },
     })
-    expect(notifications[0]?.payload.stages.proposals?.proposed).toBeUndefined()
   })
 
   // The ordering property the store's own rule rests on, measured rather than argued. Nothing
   // else in this file could see it: both the successor insert and the terminal decision happen
   // inside one `completeAndChain`, so the only observable is that no record exists at the
-  // moment the second stage lands and exactly one exists after the third does.
-  it('inserts the successor before it considers the terminal — no record at stage two', async () => {
+  // moment the first stage lands and exactly one exists after the second does.
+  it('inserts the successor before it considers the terminal — no record at the first stage', async () => {
     const harness = await createHarness()
     const handoff = fixtureHandoff(RUN_ID)
     writeHandoff(harness.agentQaRoot, handoff)
@@ -381,16 +292,15 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     const fence = await harness.jobs.store.adoptEpoch(1)
     await harness.jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
 
-    // Two single-job pumps, stopping the instant curate-memory has landed.
-    await harness.jobs.queue.runNextJob({ fence })
+    // One single-job pump, stopping the instant analyze-run has landed.
     await harness.jobs.queue.runNextJob({ fence })
 
     const midDump = await harness.jobs.store.dumpState()
     const midById = new Map(midDump.jobs.map((row) => [row.id, row]))
-    expect(midById.get(String(ids.curateMemory))).toMatchObject({ status: 'done' })
+    expect(midById.get(String(ids.analyzeRun))).toMatchObject({ status: 'done' })
     // The successor exists ALREADY, written by the very transaction that landed its predecessor…
-    expect(midById.get(String(ids.proposeImprovements))).toMatchObject({
-      kind: 'propose-improvements',
+    expect(midById.get(String(ids.curateMemory))).toMatchObject({
+      kind: 'curate-memory',
       status: 'queued',
     })
     // …which is exactly what makes the record absent here: the store found a candidate that
@@ -402,7 +312,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     expect(await harness.jobs.store.listNotifications()).toHaveLength(1)
   })
 
-  it('dedupes a second identical enqueue at the seam (385 D-08)', async () => {
+  it('dedupes a second identical enqueue at the seam', async () => {
     const harness = await createHarness()
     const handoff = fixtureHandoff(RUN_ID)
     writeHandoff(harness.agentQaRoot, handoff)
@@ -419,10 +329,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     expect(first.deduped).toBe(false)
     expect(second.deduped).toBe(true)
     expect(String(second.job.id)).toBe(String(first.job.id))
-    // Dedupe alone is a shipped 385 guarantee and would pass here with no 388 code at all.
-    // What makes this a pin on THIS phase is the address: the one row both enqueues collapse
-    // onto must be the row `chainJobIdsForRun` predicts from `runId` alone, because that
-    // derivation — not a stored chain table — is what every later reader addresses (Pattern 2).
+    // The collapsed row must be the one `chainJobIdsForRun` predicts from `runId` alone.
     expect(String(first.job.id)).toBe(String(chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE).analyzeRun))
     const dump = await harness.jobs.store.dumpState()
     expect(dump.jobs.filter((row) => row.kind === 'analyze-run')).toHaveLength(1)
@@ -446,8 +353,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       RUN_ID,
     )
 
-    // D-06: the digest pins that the bytes analyzed are the bytes enqueued. Rewriting the
-    // document after the enqueue is exactly the drift the pin exists to catch.
+    // The digest pins the analyzed bytes to the enqueued bytes; this rewrite is the drift.
     writeHandoff(harness.agentQaRoot, { ...handoff, buildOrdinal: 8 })
 
     await pump(harness.jobs, fence)
@@ -455,12 +361,11 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     const dump = await harness.jobs.store.dumpState()
     const analyze = dump.jobs.find((row) => row.id === String(ids.analyzeRun))
     expect(analyze).toMatchObject({ kind: 'analyze-run', status: 'failed' })
-    // A dead analysis head must never leave curation waiting on it (D-20 posture).
+    // A dead analysis head must not leave curation waiting on it.
     expect(dump.jobs.some((row) => row.id === String(ids.curateMemory))).toBe(true)
   })
 
-  // D-12. The chain ALWAYS terminates in a notification, and a failure is exactly when a user
-  // most needs one — a success-only notify would be silent about the runs that went worst.
+  // A failure is when a user most needs the notification; success-only would hide the worst runs.
   it('notifies on the FAILURE terminal, reporting the failed stage honestly', async () => {
     const harness = await createHarness({
       curateRun: () => {
@@ -484,10 +389,6 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       attempts: 3,
     })
 
-    // Halt-chain, measured: the proposal row was never written at all, because there is no
-    // committed bundle for it to be about.
-    expect(dump.jobs.some((row) => row.id === String(ids.proposeImprovements))).toBe(false)
-
     const notifications = await harness.jobs.store.listNotifications()
     expect(notifications).toHaveLength(1)
     expect(notifications[0]?.payload).toMatchObject({
@@ -503,16 +404,9 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     // No counts on a stage that never committed a bundle: zeros would claim it curated
     // nothing, which is a different sentence from never having got that far.
     expect(notifications[0]?.payload.stages.curation.curated).toBeUndefined()
-    // 422 D-15: the proposal stage is ABSENT, not `failed`. A `failed` member would report a
-    // stage that never ran, and this record is what a surface renders.
-    expect(Object.keys(notifications[0]!.payload.stages).sort()).toEqual(['analysis', 'curation'])
   })
 
-  // WR-03, the REJECT leg. Distinct from the case above in exactly one input: there the
-  // capability THREW, so the engine never saw a report at all. Here it RETURNS, successfully,
-  // and says the fold refused — which before the completeness gate landed the job `done` and
-  // wrote a notification row reading `curation: {status: 'done'}` for a fold that committed no
-  // bundle. The two cases look alike on purpose and are not the same measurement.
+  // The capability returns a refusal here rather than throwing, so this is a distinct measurement.
   it('lands curation: failed when the fold never completes', async () => {
     const harness = await createHarness({
       curateRun: async () => ({ curated: 0, deprecated: 0, complete: false }),
@@ -561,12 +455,8 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     // that ran, and the fold's whole point in refusing is that it did not get there.
     expect(notifications[0]?.payload.stages.curation.curated).toBeUndefined()
     expect(notifications[0]?.payload.stages.curation.deprecated).toBeUndefined()
-    // …and no proposal stage at all, for the same reason one step further on (422 D-15).
-    expect(Object.keys(notifications[0]!.payload.stages).sort()).toEqual(['analysis', 'curation'])
 
-    // What a surface renders, through the ONE read op (D-14). Implied by the row status above
-    // rather than independent of it — this pins that the projection is reached, not a second
-    // mapping claim (the mapping is post-processing-status.test.ts's).
+    // Reached through the one read op; the mapping itself is `post-processing-status.test.ts`'s.
     const status = await invokeFunction(
       harness.host.registry,
       RUNS_POST_PROCESSING_FUNCTION_ID,
@@ -576,9 +466,7 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     expect(status.chips).toEqual({ analysis: 'complete', curation: 'failed' })
   })
 
-  // WR-03, the ACCEPT leg. A gate that rejected everything would satisfy the case above just as
-  // well; this is the corpus case the gate must let THROUGH — and it turns on the fold's own
-  // designed recovery, which is a refold, not a repair.
+  // The case the completeness gate must let through: a refold, not a repair.
   it('recovers when a retry completes the fold', async () => {
     let attempt = 0
     const harness = await createHarness({
@@ -614,132 +502,14 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     const notifications = await harness.jobs.store.listNotifications()
     expect(notifications).toHaveLength(1)
     expect(notifications[0]?.payload.outcome).toBe('done')
-    // The counts that reach the record are the COMPLETED attempt's, and they now reach it by
-    // travelling on the successor payload through a third job — so a refused attempt's zeros
-    // would have had two whole transactions in which to overwrite them.
     expect(notifications[0]?.payload.stages.curation).toEqual({
       status: 'done',
       curated: 2,
       deprecated: 1,
     })
-    expect(notifications[0]?.payload.stages.proposals).toEqual({ status: 'done' })
   })
 
-  // 422 D-13's other half: the proposal stage is where staging failures land, and a staging
-  // failure may not retract the bundle the fold already committed. The record has to say both
-  // things at once — a `done` curation beside a `failed` proposal — because both are true.
-  it('lands a failed proposal stage without retracting the committed curation', async () => {
-    const harness = await createHarness({
-      curateRun: async () => ({
-        curated: 3,
-        deprecated: 1,
-        complete: true,
-        candidateIds: ['cand-x', 'cand-y'],
-      }),
-      stageAdversarialProposal: () => {
-        throw new Error('the proposal inbox is unreachable')
-      },
-    })
-    const handoff = fixtureHandoff(RUN_ID)
-    writeHandoff(harness.agentQaRoot, handoff)
-    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
-
-    const fence = await harness.jobs.store.adoptEpoch(1)
-    await harness.jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
-    await pump(harness.jobs, fence)
-
-    const dump = await harness.jobs.store.dumpState()
-    // The fold's row is untouched by what happened afterwards — its work is committed and the
-    // durable evidence of it does not move.
-    expect(dump.jobs.find((row) => row.id === String(ids.curateMemory))).toMatchObject({
-      status: 'done',
-      attempts: 1,
-    })
-    // The declared bound adjudicates the proposal stage: maxAttempts 2, so two claims and the
-    // second is terminal.
-    expect(dump.jobs.find((row) => row.id === String(ids.proposeImprovements))).toMatchObject({
-      kind: 'propose-improvements',
-      status: 'failed',
-      attempts: 2,
-    })
-    // The port really was reached — twice — with the receipt-backed candidates and the upstream
-    // truth. Asserting only the failure would pass equally against a stage that never ran.
-    expect(harness.stageCalls).toHaveLength(2)
-    expect(harness.stageCalls[0]).toEqual({
-      runId: RUN_ID,
-      executionContext: 'local-headless',
-      candidateIds: ['cand-x', 'cand-y'],
-      upstream: {
-        verdictSummary: { total: 2, byClass: { timeout: 1, unknown: 1 } },
-        analysisStatus: 'done',
-        curation: { curated: 3, deprecated: 1, complete: true },
-      },
-    })
-    // No checkpoint: the publish sits after the port, so a stage that never got an answer
-    // records no proposals rather than an empty set of them.
-    expect(
-      await readCheckpointValue(
-        harness.jobs,
-        String(ids.proposeImprovements),
-        'proposals-authored',
-      ),
-    ).toBeUndefined()
-
-    const notifications = await harness.jobs.store.listNotifications()
-    expect(notifications).toHaveLength(1)
-    expect(notifications[0]?.payload).toMatchObject({
-      runId: RUN_ID,
-      outcome: 'failed',
-      stages: {
-        analysis: { status: 'done' },
-        // THE claim. The bundle is on disk; a record that called this stage `failed` because
-        // the stage AFTER it died would be retracting durable work that really happened.
-        curation: { status: 'done', curated: 3, deprecated: 1 },
-        proposals: { status: 'failed' },
-      },
-    })
-  })
-
-  // The ACCEPT half of the port contract, and the counts leg the case above cannot reach.
-  it('records the staged counts a bound port reported', async () => {
-    const harness = await createHarness({
-      curateRun: async () => ({ curated: 0, deprecated: 0, complete: true, candidateIds: [] }),
-      stageAdversarialProposal: async () => ({ proposed: 2, skipped: 1 }),
-    })
-    const handoff = fixtureHandoff(RUN_ID)
-    writeHandoff(harness.agentQaRoot, handoff)
-    const ids = chainJobIdsForRun(RUN_ID, DIGEST_JOB_ID_SOURCE)
-
-    const fence = await harness.jobs.store.adoptEpoch(1)
-    await harness.jobs.queue.enqueue('analyze-run', enqueuePayload(handoff), RUN_ID)
-    await pump(harness.jobs, fence)
-
-    // The no-op fold still produced the stage — zero work is work that finished — and the
-    // record reports its zeros as the real counts they are.
-    expect(
-      await readCheckpointValue(
-        harness.jobs,
-        String(ids.proposeImprovements),
-        'proposals-authored',
-      ),
-    ).toEqual({ runId: RUN_ID, candidateIds: [], proposed: 2, skipped: 1 })
-
-    const notifications = await harness.jobs.store.listNotifications()
-    expect(notifications).toHaveLength(1)
-    expect(notifications[0]?.payload).toMatchObject({
-      outcome: 'done',
-      stages: {
-        analysis: { status: 'done' },
-        curation: { status: 'done', curated: 0, deprecated: 0 },
-        proposals: { status: 'done', proposed: 2, skipped: 1 },
-      },
-    })
-  })
-
-  // D-09/D-10. A host that dies after committing the terminal transaction but before anything
-  // downstream observed it replays that terminal on recovery. The dedupe has to be the store's
-  // — a caller-side "have I notified?" read is two decisions about one row with a window
-  // between them, and that window is exactly where the second notification gets written.
+  // The dedupe is the store's unique index; a caller-side check leaves a window for a second row.
   it('dedupes a replayed chain terminal on the unique index, byte-identically', async () => {
     const harness = await createHarness()
     const handoff = fixtureHandoff(RUN_ID)
@@ -755,14 +525,9 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
 
     // The replay: the SAME terminal verb, with the same record, against rows that are already
     // terminal. This is what a recovered host does, expressed without a second process.
-    //
-    // 422 D-13: replayed against the job that ACTUALLY lands the terminal now — the proposal
-    // job — and with all three candidate ids, which is what the engine itself passes. Replaying
-    // the middle stage would be re-proving the store's dedupe against a call the engine no
-    // longer makes.
-    await harness.jobs.store.completeAndChain(ids.proposeImprovements, [], fence, {
+    await harness.jobs.store.completeAndChain(ids.curateMemory, [], fence, {
       dedupeKey: RUN_ID,
-      candidateJobIds: [ids.analyzeRun, ids.curateMemory, ids.proposeImprovements],
+      candidateJobIds: [ids.analyzeRun, ids.curateMemory],
       payloadJson: canonicalJson({ ...before[0]?.payload, outcome: 'failed' }),
     })
 
@@ -798,12 +563,8 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
     const dump = await harness.jobs.store.dumpState()
     expect(dump.jobs.find((row) => row.id === String(ids.analyzeRun))?.status).toBe('failed')
     expect(dump.jobs.find((row) => row.id === String(ids.curateMemory))?.status).toBe('done')
-    expect(dump.jobs.find((row) => row.id === String(ids.proposeImprovements))?.status)
-      .toBe('done')
-    expect(Object.keys(ids).sort())
-      .toEqual(['analyzeRun', 'curateMemory', 'proposeImprovements'])
-    expect(dump.jobs.map((row) => row.kind).sort())
-      .toEqual(['analyze-run', 'curate-memory', 'propose-improvements'])
+    expect(Object.keys(ids).sort()).toEqual(['analyzeRun', 'curateMemory'])
+    expect(dump.jobs.map((row) => row.kind).sort()).toEqual(['analyze-run', 'curate-memory'])
     // The successor really was handed the run's identity and posture by the FALLBACK, not
     // only by the success path.
     expect(harness.curateCalls).toEqual([
@@ -816,19 +577,18 @@ describe('post-run chain terminal notify (ANLZ-01, D-04/D-06/D-09/D-11)', () => 
       runId: RUN_ID,
       outcome: 'failed',
       // The chain proceeded with no verdicts and the record says so, even though the job that
-      // reported the terminal is now TWO stages downstream of the one that died. The marker
-      // had to survive the fallback's payload, the fold's restatement of it, and sqlite.
+      // reported the terminal is downstream of the one that died. The marker had to survive the
+      // fallback's payload and sqlite.
       stages: {
         analysis: { status: 'failed' },
         curation: { status: 'done', curated: 1, deprecated: 0 },
-        proposals: { status: 'done' },
       },
       verdictSummary: { total: 0, byClass: {} },
     })
   })
 })
 
-/** The D-06 payload the run tail will enqueue with. Minted once, used by every leg. */
+// The payload the run tail enqueues with, minted once and used by every leg.
 function enqueuePayload(handoff: CompletedRunHandoff): Record<string, unknown> {
   return {
     runId: String(handoff.runId),

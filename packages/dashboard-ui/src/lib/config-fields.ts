@@ -1,9 +1,4 @@
-// THE FIELD HELPERS (429-17 · UI-SPEC S2 "Field row", research A1 and Pitfall 1).
-//
-// These schema blocks have required keys once the block exists, so a leaf-only write into an
-// absent one would always fail validation. The write carries the other required siblings at the
-// defaults the fields show as placeholders; optional siblings are never materialized (424 note 27).
-// The snapshot only offers the defaults; the server writes each one only if the field is absent (429-42).
+// A leaf write into an absent block carries its required siblings at their defaults, set-if-absent.
 
 import type { ConfigChange, ConfigPathSegment } from '@vostride/agent-qa-schema'
 
@@ -13,12 +8,12 @@ type LeafDefault = string | number | boolean
 
 // prettier-ignore
 export const REQUIRED_SIBLING_BLOCKS = {
-  'use.timeout': { step: '30s', test: '10m', navigation: '10s' },
+  'use.timeout': { step: '30s', test: '10m', navigation: '2m' },
   'use.planner': { previousStepCount: 5 },
   'use.logCapture': { console: true, network: true },
   'use.browser': { name: 'chromium', headless: true },
   'use.browser.viewport': { width: 1280, height: 720 },
-  'services.cache': { dir: '.agent-qa/cache', ttl: '7d' },
+  'services.cache': { dir: '.agent-qa/cache' },
   'services.accessibility': { enabled: false },
 } as const satisfies Readonly<Record<string, Readonly<Record<string, LeafDefault>>>>
 

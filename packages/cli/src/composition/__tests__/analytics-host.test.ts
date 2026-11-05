@@ -1,15 +1,4 @@
-// The CLI's analytics binding (Phase 398 plan 10, D-17 / D-19 · ANLY-01).
-//
-// TWO CLAIMS ARE MEASURED HERE THAT NOTHING ELSE MEASURES.
-//
-//   1. THE ONE DECISION SITE SURVIVED THE REWIRE. `composeAnalytics` is called from exactly one
-//      shipped file in this package. The package's own cells prove the decision is made once
-//      INSIDE `compose.ts`; these prove that six hosts binding it did not quietly open a second
-//      door (T-398-07).
-//   2. OPTING OUT LEAVES NO TRACE ON DISK. `resolveAnalyticsIdentity` mints and writes
-//      `~/.agent-qa/analytics.json`. The port has no early return, so an opted-out host would
-//      resolve an identity — and persist one — on its way to a transport that sends nothing. The
-//      zero-network differential cannot see this, because nothing goes near a socket.
+// `composeAnalytics` has one call site here, and an opted-out host writes no identity file.
 
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -61,21 +50,7 @@ function shippedSourceFiles(dir: string, out: string[] = []): string[] {
 
 const CLI_SRC = new URL('../../', import.meta.url).pathname
 
-// ---- 398-14 (D-19): THE COMPOSITION-ROOT CENSUS ---------------------------------------------
-//
-// The behavioural cells in `__tests__/analytics-root-optout.test.ts` drive three roots. This
-// census covers the input set those cells cannot range — `mcp` and `run` today, and every root
-// nobody has written yet — and it is pinned to the COMPLETE set, so a sixth root reds by ABSENCE
-// from the pin rather than sitting silently outside the guard.
-//
-// THE OBVIOUS PREDICATE IS WRONG, AND IT WAS MEASURED WRONG BEFORE THIS ONE WAS WRITTEN.
-// "the identifier followed by `(`" returns three files — `daemon`, `mcp`, `run` — and MISSES
-// `chat.ts` and `init.ts`, which are the two roots this round exists to fix: both spell the call
-// through a deps fallback, `(deps.composeAnalytics ?? composeAnalyticsHost)({ … })`, where the
-// identifier is followed by `)`. A census blind to exactly the roots it is meant to guard is worse
-// than none, so the walk below consumes that fallback close before requiring the invocation's open
-// paren. (The sibling census above uses `/\bcomposeAnalytics\s*[<(]/u` — a DIFFERENT identifier,
-// deliberately not matching this one. It is a shape to copy, not a predicate to reuse.)
+// Roots also call `(deps.composeAnalytics ?? composeAnalyticsHost)(…)`, so the walk skips that `)`.
 const COMPOSE_HOST_IDENTIFIER = 'composeAnalyticsHost'
 
 /**
@@ -195,11 +170,8 @@ describe('composeAnalyticsHost', () => {
     expect(host.properties.agent_product).toBeUndefined()
   })
 
-  it('mints NO identity file on a blank-key checkout either — the v1 `disabled` set included it', async () => {
-    // Not an opt-out (`optedOut` is false and must stay false: a developer who never configured
-    // PostHog did not decline tracking). But nothing sends, so nothing needs an identity, and the
-    // v1 module wrote none in this state. A rewire gated on `optedOut` alone would start writing
-    // `~/.agent-qa/analytics.json` on every checkout that runs a test.
+  it('mints NO identity file on a blank-key checkout either, because nothing sends', async () => {
+    // Not an opt-out (`optedOut` stays false), but nothing sends, so nothing needs an identity.
     const resolveIdentity = vi.fn(async () => ({
       distinctId: 'u_should-never-be-resolved',
       runtimeContext: 'user' as const,
@@ -267,8 +239,7 @@ describe('composeAnalyticsHost', () => {
         ...options,
         client: {
           capture: (input) => sent.push({ distinctId: input.distinctId, event: input.event }),
-          // 398-15 (CR-01): `flush` is a REQUIRED member of the client interface now — this cell
-          // measures masking, so both lifecycle calls are inert here.
+          // The cell measures masking, so both lifecycle calls are inert.
           flush: () => {},
           shutdown: () => {},
         },
@@ -323,7 +294,7 @@ describe('composeAnalyticsHost', () => {
   })
 })
 
-describe('the composition-root census (398-14, D-19 · ANLY-01)', () => {
+describe('the composition-root census', () => {
   it('discovers EXACTLY the five shipped composition roots — a sixth reds by absence', () => {
     const discovered = compositionRootCallSites()
       .map((site) => site.file)
@@ -367,14 +338,8 @@ describe('the composition-root census (398-14, D-19 · ANLY-01)', () => {
     expect(sites.length).toBe(PINNED_COMPOSITION_ROOTS.length)
   })
 
-  // ---- 398-15 (WR-06): THE RUN COMMAND'S DRAIN ------------------------------------------------
-  //
-  // A SOURCE-SHAPE DETECTOR, AND IT SAYS SO. The behavioural version would have to drive a full
-  // `agent-qa run` to a terminal `process.exit` inside a vitest worker and observe the composed
-  // client's shutdown count afterwards — a bigger instrument than this item warrants. What this
-  // cell buys is that the drain cannot be silently deleted: removing one awaited call reds here
-  // with the count named.
-  it("drains the memoised analytics host before the run action's terminal exits (398-15, WR-06)", () => {
+  // A source-shape check: removing an awaited drain call fails here with the count named.
+  it("drains the memoised analytics host before the run action's terminal exits", () => {
     const runCommand = shippedSourceFiles(CLI_SRC).find(
       (file) => file.slice(CLI_SRC.length) === 'commands/run.ts',
     )
@@ -416,10 +381,10 @@ interface SentEvent {
   readonly properties: Record<string, unknown>
 }
 
-const c441Roots: string[] = []
+const projectRoots: string[] = []
 
 afterAll(() => {
-  for (const root of c441Roots) rmSync(root, { recursive: true, force: true })
+  for (const root of projectRoots) rmSync(root, { recursive: true, force: true })
 })
 
 afterEach(() => {
@@ -427,8 +392,8 @@ afterEach(() => {
 })
 
 function declaringProject(secrets: string): string {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-441-analytics-'))
-  c441Roots.push(root)
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-analytics-'))
+  projectRoots.push(root)
   const configPath = join(root, 'agent-qa.config.yaml')
   writeFileSync(
     configPath,
@@ -467,7 +432,7 @@ async function shippedSendPath(
     projectKey: 'phc_test_key',
     posthogTransportFactory: (options) =>
       createPosthogTransport({ ...options, client: fakeClient(sent) }),
-    resolveIdentity: async () => ({ distinctId: 'u_c441', runtimeContext: 'user' as const }),
+    resolveIdentity: async () => ({ distinctId: 'u_analytics-host', runtimeContext: 'user' as const }),
   })
   return { host, sent }
 }
@@ -480,9 +445,9 @@ function eventCarrying(host: CliAnalyticsHost, text: string): AgentQaAnalyticsEv
   } as AgentQaAnalyticsEvent
 }
 
-describe('C441-ANALYTICS', () => {
+describe('declared secrets in analytics payloads', () => {
   it('a declared value in an analytics property leaves as its named marker', async () => {
-    const configPath = declaringProject('SHORT_441=q^7\n')
+    const configPath = declaringProject('SHORT_KEY=q^7\n')
     const { host, sent } = await shippedSendPath({ mask: createDeclaredSecretMask(configPath).mask })
     const event = eventCarrying(host, 'q^7')
 
@@ -492,20 +457,20 @@ describe('C441-ANALYTICS', () => {
     expect(sent).toHaveLength(1)
     expect(sent[0]?.event).toBe('agent-qa.explain.answered')
     expect(Object.keys(sent[0]!.properties).sort()).toEqual(Object.keys(event.properties).sort())
-    expect(sent[0]?.properties.planted_text).toBe('before [secret:SHORT_441] after')
+    expect(sent[0]?.properties.planted_text).toBe('before [secret:SHORT_KEY] after')
     expect(JSON.stringify(sent)).not.toContain('q^7')
   })
 
   it('an environment-only value is not masked in an analytics payload', async () => {
-    vi.stubEnv('AGENT_QA_X_PASSWORD', 'env-only-value-441')
-    const configPath = declaringProject('SHORT_441=q^7\n')
+    vi.stubEnv('AGENT_QA_X_PASSWORD', 'env-only-value')
+    const configPath = declaringProject('SHORT_KEY=q^7\n')
     const { host, sent } = await shippedSendPath({ mask: createDeclaredSecretMask(configPath).mask })
 
     host.port.capture(eventCarrying(host, process.env.AGENT_QA_X_PASSWORD!))
     await host.flush()
 
     expect(sent).toHaveLength(1)
-    expect(sent[0]?.properties.planted_text).toBe('before env-only-value-441 after')
+    expect(sent[0]?.properties.planted_text).toBe('before env-only-value after')
   })
 
   it('a mask that throws drops the event', async () => {
@@ -528,13 +493,13 @@ describe('C441-ANALYTICS', () => {
       client: fakeClient(direct),
     })
     expect(() =>
-      transport.capture({ distinctId: 'u_c441', event: eventCarrying(host, 'anything') }),
+      transport.capture({ distinctId: 'u_analytics-host', event: eventCarrying(host, 'anything') }),
     ).not.toThrow()
     expect(direct).toEqual([])
   })
 })
 
-describe('C447-NO-TRANSPORT', () => {
+describe('an opted-out host builds no transport', () => {
   it('an opted-out or blank-key host constructs no transport and resolves no identity', async () => {
     const optedOutFactory = vi.fn(() => recordingTransport())
     const override = { capture: vi.fn(), flush: vi.fn(), shutdown: vi.fn() }
@@ -596,7 +561,7 @@ function nextTurn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
-describe('C447-IDENTITY-BOUND', () => {
+describe('identity resolution is bounded', () => {
   it('a stalled identity resolution releases composition at the bound and nothing is sent under any id', async () => {
     // Loaded before the clock is faked, so a dynamic import by the host resolves from the cache.
     await import('@vostride/agent-qa-agent-local')
@@ -664,13 +629,13 @@ function clearCiMarkers(): void {
   for (const name of CI_MARKERS) vi.stubEnv(name, '')
 }
 
-const c447Roots: string[] = []
+const homeRoots: string[] = []
 
 afterAll(() => {
-  for (const root of c447Roots) rmSync(root, { recursive: true, force: true })
+  for (const root of homeRoots) rmSync(root, { recursive: true, force: true })
 })
 
-describe('C447-CI-DETECTOR', () => {
+describe('CI classification through the execution-context detector', () => {
   it('the host classifies CI through the execution-context detector and passes it to identity resolution', async () => {
     const arms: {
       readonly label: string
@@ -709,11 +674,11 @@ describe('C447-CI-DETECTOR', () => {
   })
 })
 
-describe('C447-CI-DISTINCT', () => {
+describe('distinct CI identities per composition', () => {
   it('two CI compositions carry two different ci_ ids, each one stable across its own events', async () => {
     vi.stubEnv('CI', '1')
-    const home = mkdtempSync(join(tmpdir(), 'agent-qa-447-ci-home-'))
-    c447Roots.push(home)
+    const home = mkdtempSync(join(tmpdir(), 'agent-qa-ci-home-'))
+    homeRoots.push(home)
 
     const ids: string[] = []
     for (let composition = 0; composition < 2; composition += 1) {

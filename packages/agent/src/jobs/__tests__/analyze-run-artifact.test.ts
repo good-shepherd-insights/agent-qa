@@ -1,18 +1,7 @@
-// The tracer's end-to-end proof: artifact-before-checkpoint, one path only (Phase 389, plan 01).
-//
-// Four contracts on one committed slice, each pinned where it can fail loudest:
-//
-//   D-09  the analysis artifact is durable BEFORE the verdicts-authored value is recorded —
-//         order-captured on the stubs, so moving the write after the author returns is a RED.
-//   D-02  the recorded checkpoint value is byte-shape `{runId, verdicts}` exactly as 388 froze
-//         it — asserted with an exact-keys check, never a subset match.
-//   JOBQ-03  a resume with a recorded value never re-enters the author and never rewrites the
-//         artifact — spy count 0 on both.
-//   D-10  `resolveRunVerdicts` is the one verdict read path: artifact verdicts when present,
-//         the handoff's deterministic floor when absent, and the minted `unknown` is
-//         byte-identical to the runner's own `deterministicVerdict` fill.
+// The artifact is durable before the verdicts value is recorded, and a resume never re-authors.
 
 import {
+  asRecordId,
   canonicalJson,
   CURRENT_ANALYSIS_SCHEMA_VERSION,
   guardRunAnalysisArtifact,
@@ -36,7 +25,7 @@ import type { JobHandlerContext } from '../kind-registry.js'
 import { buildSyntheticHandoff } from './fixtures/synthetic-handoff.js'
 
 const EVIDENCE_TEXT = 'Error: element "Submit" not found'
-const ANALYZE_JOB_ID = 'job_analyze_389_tracer'
+const ANALYZE_JOB_ID = 'job_analyze_tracer'
 
 interface HarnessOptions {
   readonly recorded?: Map<string, unknown>
@@ -163,7 +152,7 @@ function expectedFloor(handoff: CompletedRunHandoff): Verdict[] {
     )
 }
 
-describe('the analyze-run tracer: artifact before checkpoint (389 D-09/D-10)', () => {
+describe('the analyze-run tracer: artifact before checkpoint', () => {
   const persistedFlake = deterministicVerdict('flake', 'retryCount 2 > 0', [0], 0)
   const handoff = buildSyntheticHandoff({
     failureCount: 2,
@@ -182,7 +171,7 @@ describe('the analyze-run tracer: artifact before checkpoint (389 D-09/D-10)', (
     expect(calls).toEqual(['persistAnalysis', 'record:verdicts-authored'])
   })
 
-  it('records exactly {runId, verdicts} — the frozen 388 D-02 byte-shape', async () => {
+  it('records exactly {runId, verdicts} — the frozen byte-shape', async () => {
     const { published, run } = harness(handoff)
     await run()
 
@@ -217,7 +206,7 @@ describe('the analyze-run tracer: artifact before checkpoint (389 D-09/D-10)', (
     expect(flakePart?.groundingQuote).toEqual({ stepIndex: 0, quote: EVIDENCE_TEXT })
     expect(flakePart?.discriminator).toBe('flake: retryCount 2 > 0')
 
-    // The floor's unknown gets the honest undetermined discriminator (D-06).
+    // The floor's unknown gets the honest undetermined discriminator.
     const unknownPart = artifact.parts.find((part) => part.perTest === 1)
     expect(unknownPart?.discriminator).toBe('root cause undetermined')
     expect(unknownPart?.nextAction).toContain('inspect the run manually')
@@ -228,7 +217,7 @@ describe('the analyze-run tracer: artifact before checkpoint (389 D-09/D-10)', (
     expect(steplessPart?.groundingQuote).toEqual({ source: 'test-outcome', quote: 'failed' })
   })
 
-  it('never re-enters the author and never rewrites the artifact on resume (JOBQ-03)', async () => {
+  it('never re-enters the author and never rewrites the artifact on resume', async () => {
     const floor = expectedFloor(handoff)
     const recorded = new Map<string, unknown>([
       ['verdicts-authored', { runId: String(handoff.runId), verdicts: floor }],
@@ -249,7 +238,7 @@ describe('the analyze-run tracer: artifact before checkpoint (389 D-09/D-10)', (
     })
   })
 
-  it('resolveRunVerdicts answers the artifact when present and the floor when absent (D-10)', async () => {
+  it('resolveRunVerdicts answers the artifact when present and the floor when absent', async () => {
     const { artifacts, run } = harness(handoff)
     await run()
     const artifact = artifacts[0] as RunAnalysisArtifact
@@ -285,8 +274,8 @@ describe('the analyze-run tracer: artifact before checkpoint (389 D-09/D-10)', (
   })
 })
 
-describe('the full author behind the frozen checkpoint (389 plan 04, ANLZ-02/ANLZ-03)', () => {
-  it('upgrades unknown floor members and persists LLM parts beside template parts (D-06)', async () => {
+describe('the full author behind the frozen checkpoint', () => {
+  it('upgrades unknown floor members and persists LLM parts beside template parts', async () => {
     const persistedFlake = deterministicVerdict('flake', 'retryCount 2 > 0', [0], 0)
     const handoff = buildSyntheticHandoff({
       failureCount: 2,
@@ -310,8 +299,7 @@ describe('the full author behind the frozen checkpoint (389 plan 04, ANLZ-02/ANL
     expect(upgraded.class).toBe('app_bug')
     expect(upgraded.producer).toBe('analyze-run')
 
-    // D-06's one producer-keyed parts rule: template parts for the deterministic member,
-    // the LLM's own parts for the upgraded one.
+    // One producer-keyed rule: template parts for the deterministic member, LLM parts otherwise.
     expect(artifact.parts.map((part) => part.perTest)).toEqual([0, 1])
     expect(artifact.parts[0]?.discriminator).toBe('flake: retryCount 2 > 0')
     expect(artifact.parts[1]?.discriminator).toBe('the same step passed on the previous build')
@@ -325,7 +313,7 @@ describe('the full author behind the frozen checkpoint (389 plan 04, ANLZ-02/ANL
     expect(value.verdicts).toEqual(artifact.verdicts)
   })
 
-  it('zero failed tests: no model call, empty artifact still written, checkpoint still publishes (ANLZ-03)', async () => {
+  it('zero failed tests: no model call, empty artifact still written, checkpoint still publishes', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 0, passedCount: 2 })
     const { artifacts, generateCallCount, published, run } = harness(handoff)
 
@@ -357,7 +345,7 @@ describe('the full author behind the frozen checkpoint (389 plan 04, ANLZ-02/ANL
     expect(artifact.parts[0]?.discriminator).toBe('flake: retryCount 2 > 0')
   })
 
-  it('author transport failure propagates — no artifact, no checkpoint, retry territory (D-03)', async () => {
+  it('author transport failure propagates — no artifact, no checkpoint, retry territory', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const { artifacts, published, run } = harness(handoff, { generateError: 'socket hang up' })
 
@@ -438,3 +426,69 @@ describe('the full author behind the frozen checkpoint (389 plan 04, ANLZ-02/ANL
   })
 })
 
+const SERVED_CANDIDATE = asRecordId('rec-served-candidate')
+
+/** Serve one candidate record on step 0 of each listed member, leaving every other byte alone. */
+function withCandidateServedOn(
+  handoff: CompletedRunHandoff,
+  testIndexes: readonly number[],
+): CompletedRunHandoff {
+  const tests = handoff.tests.map((test) =>
+    !testIndexes.includes(test.testIndex)
+      ? test
+      : {
+          ...test,
+          steps: test.steps.map((step) =>
+            step.stepIndex !== 0
+              ? step
+              : {
+                  ...step,
+                  servedBrief: {
+                    ...step.servedBrief,
+                    channel1: [
+                      {
+                        id: SERVED_CANDIDATE,
+                        kind: 'fact',
+                        summary: 'served candidate record',
+                        trust: 0.2,
+                        status: 'candidate',
+                        servedAsCanary: false,
+                        tier: 'L1',
+                      },
+                    ],
+                  },
+                },
+          ),
+        },
+  ) as CompletedRunHandoff['tests']
+  return { ...handoff, tests }
+}
+
+describe('the analyze-run handler stamps memoryOnPath on every persisted verdict', () => {
+  it.each([
+    { member: 'authored', modelOutputs: [JSON.stringify({ tests: [authoredWireEntry(1)] })], producer: 'analyze-run' },
+    { member: 'degraded', modelOutputs: ['not json', 'still not json'], producer: 'deterministic-classifier' },
+  ])('stamps a deterministic and an $member member whose path served a candidate, and no other', async ({ modelOutputs, producer }) => {
+    const handoff = withCandidateServedOn(
+      buildSyntheticHandoff({
+        failureCount: 3,
+        rootCauseFor: (index) =>
+          index === 1 ? undefined : deterministicVerdict('flake', 'retryCount 2 > 0', [0], index),
+      }),
+      [0, 1],
+    )
+    const { artifacts, published, run } = harness(handoff, { modelOutputs })
+
+    const outcome = await run()
+    if (outcome.status !== 'complete') throw new Error(`expected complete, got ${outcome.status}`)
+
+    const artifact = artifacts[0] as RunAnalysisArtifact
+    const onPath = [{ recordId: SERVED_CANDIDATE, trust: 'candidate' }]
+    expect(artifact.verdicts.map((verdict) => verdict.perTest)).toEqual([0, 1, 2])
+    expect(artifact.verdicts[0]).toMatchObject({ producer: 'deterministic-classifier', memoryOnPath: onPath })
+    expect(artifact.verdicts[1]).toMatchObject({ producer, memoryOnPath: onPath })
+    expect(artifact.verdicts[2]).not.toHaveProperty('memoryOnPath')
+    // The checkpoint carries the same stamped verdicts the artifact persisted.
+    expect(published[0]?.value).toEqual({ runId: String(handoff.runId), verdicts: artifact.verdicts })
+  })
+})

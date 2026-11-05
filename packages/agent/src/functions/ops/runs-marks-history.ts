@@ -1,6 +1,4 @@
-// 2026-09-15, 423 D-19: every mark on a run in ordinal order, with read-time supersession. Pure
-// observation through the feedbackReads port. 2026-09-30, 432-09 (D-04/D-25): each applied knowledge
-// fix carries the records it changed, read now; nothing is read from a proposal store.
+// Read-time supersession over the read-only `feedbackReads` port.
 import {
   RunsMarksHistoryInputSchema, RunsMarksHistoryResultSchema, markAddressKey, maskRecordContent,
 } from '@vostride/agent-qa-schema'
@@ -34,16 +32,11 @@ function projectEntry(receipt: MarkReceipt, changedRecords: readonly MarkHistory
     ordinal: receipt.ordinal,
     markedAt: receipt.markedAt,
     ...(receipt.note === undefined ? {} : { note: mask(receipt.note) }),
-    corrected: {
-      expectation: receipt.correctedExpectation !== undefined,
-      action: receipt.correctedAction !== undefined,
-    },
     ...(receipt.rootCause === undefined ? {} : {
       rootCause: { class: receipt.rootCause.class, producer: mask(receipt.rootCause.producer) },
     }),
     ...(receipt.isRerun === undefined ? {} : { isRerun: receipt.isRerun }),
     disposition: receipt.disposition,
-    gold: receipt.gold,
     evidence: receipt.evidence,
     ...(receipt.supersedes === undefined ? {} : { supersedes: receipt.supersedes }),
     active: supersededBy === undefined,
@@ -86,7 +79,7 @@ export const runsMarksHistorySpec: FunctionSpec<RunsMarksHistoryInput, RunsMarks
     const misplaced = receipts.findIndex((receipt, index) => receipt.ordinal !== index + 1 || receipt.runId !== runId)
     if (misplaced !== -1) return { kind: 'ledger-corrupt', runId, line: misplaced + 1 }
 
-    // Latest-wins per address (419 D-11): a receipt is superseded by the next mark on its address.
+    // Latest-wins per address: a receipt is superseded by the next mark on its address.
     const supersededBy: (string | undefined)[] = []
     const nextOnAddress = new Map<string, string>()
     for (let index = receipts.length - 1; index >= 0; index -= 1) {

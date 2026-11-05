@@ -1,7 +1,5 @@
 // @vitest-environment jsdom
-// 2026-10-03 (quick 261003-cpv, 432-UI-REVIEW priority fix 3 and pillars 3-5): the id badge reports
-// a copy only after the clipboard write resolved, names its action, announces the result, and shares
-// the record-id copy control's status pattern, check colour and type scale.
+// The id badge reports a copy only after the clipboard write resolves, and announces the result.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -43,8 +41,8 @@ async function click(button: HTMLElement) {
   })
 }
 
-describe('C261003-CPV-ID-BADGE-COPY', () => {
-  it('C261003-CPV-ID-BADGE-COPY: names its action and stays on the type scale', () => {
+describe("the copy button's label and type size", () => {
+  it('names its action and stays on the type scale', () => {
     mount(<IdBadge label="S" value={VALUE} />)
     const button = container.querySelector<HTMLElement>('button')!
     expect(button.getAttribute('aria-label')).toBe(`Copy S: ${VALUE}`)
@@ -52,7 +50,7 @@ describe('C261003-CPV-ID-BADGE-COPY', () => {
     expect(container.querySelector('[role="status"]')).not.toBeNull()
   })
 
-  it('C261003-CPV-ID-BADGE-COPY: a rejected write shows no success and announces the failure with the id', async () => {
+  it('a rejected write shows no success and announces the failure with the id', async () => {
     setClipboard(() => Promise.reject(new Error('blocked')))
     mount(<IdBadge label="S" value={VALUE} />)
     const button = container.querySelector<HTMLElement>('button')!
@@ -62,14 +60,14 @@ describe('C261003-CPV-ID-BADGE-COPY', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toMatch(/Could not copy/)
   })
 
-  it('C261003-CPV-ID-BADGE-COPY: a missing clipboard is a failure, not a success', async () => {
+  it('a missing clipboard is a failure, not a success', async () => {
     mount(<IdBadge label="T" value={VALUE} />)
     const button = container.querySelector<HTMLElement>('button')!
     await click(button)
     expect(button.getAttribute('data-copy-status')).toBe('failed')
   })
 
-  it('C261003-CPV-ID-BADGE-COPY: a resolved write shows the check and announces the copy', async () => {
+  it('a resolved write shows the check and announces the copy', async () => {
     const writes: string[] = []
     setClipboard((text) => {
       writes.push(text)
@@ -83,7 +81,7 @@ describe('C261003-CPV-ID-BADGE-COPY', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toMatch(/copied/i)
   })
 
-  it('C261003-CPV-ID-BADGE-COPY: both copy controls use one success colour and one icon size', async () => {
+  it('both copy controls use one success colour and one icon size', async () => {
     setClipboard(() => Promise.resolve())
     mount(<><IdBadge label="S" value={VALUE} /><RecordIdCopy id="mem_1" /></>)
     for (const button of container.querySelectorAll<HTMLElement>('button')) await click(button)

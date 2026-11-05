@@ -1,16 +1,4 @@
-// THE PROJECTION, HELD TOTAL AND PURE (404-07 · LIFE-03, D-21/D-22/D-23).
-//
-// `projectPostProcessingView` is the whole distance between "what the route said" and "what a
-// person reads". It takes a `PostProcessingRead` and returns a view; it has no I/O, no clock and
-// no envelope type in its signature — which is the structural half of D-17. These cells fix the
-// PUBLISHED SENTENCES by their exported constants rather than by literal prose (403-05 D-5), so
-// a copy change moves one line here and one line in the module, and never silently diverges.
-//
-// THE CELL THAT MATTERS MOST is the `failed`-with-no-envelope one. D-21 as narrowed in 404-03 put
-// the masked reason on the in-process `*Failed` chip envelope and NOT on the durable notification
-// row, because the daemon's pump folds with no masking context. So a daemon-drained failure has no
-// reason anywhere, and the only honest renderings are "failed, reason not recorded — drained by the
-// daemon" and a lie. Blank is a lie by omission; `pending` is a lie outright.
+// A daemon-drained failure records no reason, so the card says so rather than going blank.
 
 import { describe, expect, it } from 'vitest'
 import { POST_PROCESSING_SKIP_REASONS, VERDICT_CLASSES, CURATION_SNAPSHOT_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
@@ -32,7 +20,6 @@ import {
   PENDING_POSTURE_TEXT,
   POST_PROCESSING_LOADING_LABEL,
   POST_PROCESSING_UNAVAILABLE_WORD,
-  PROPOSALS_REASON_ABSENT_TEXT,
   STAGE_INDICATOR_WORDS,
   STAGE_PRESENTATION_STATES,
   STAGE_SKIPPED_TEXT,
@@ -43,8 +30,6 @@ import {
   formatClockTime,
   legacyCurationPairText,
   projectPostProcessingView,
-  proposalsFailedText,
-  proposalsStagedText,
   stageFailedText,
   stageIndicatorAccessibleName,
   stageQueuedText,
@@ -75,7 +60,6 @@ function breakdown(counts: Partial<CurationBreakdown> = {}): CurationBreakdown {
 function notification(
   curation: Record<string, unknown>,
   verdictSummary: unknown = { total: 1, byClass: {} },
-  proposals?: Record<string, unknown>,
 ): unknown {
   return {
     schemaVersion: 2,
@@ -85,8 +69,6 @@ function notification(
     stages: {
       analysis: { status: 'complete' },
       curation,
-      // ABSENT MEANS NOT RECORDED (422 D-13) — the member is omitted rather than zero-filled.
-      ...(proposals === undefined ? {} : { proposals }),
     },
   }
 }
@@ -101,7 +83,7 @@ function chips(view: ReturnType<typeof projectPostProcessingView>) {
   return view
 }
 
-describe('a refusal is its own state, never a pending chip (D-23)', () => {
+describe('a refusal is its own state, never a pending chip', () => {
   it('carries the refusal name and reason through, with no chips at all', () => {
     const view = projectPostProcessingView({
       kind: 'unavailable',
@@ -121,7 +103,7 @@ describe('a refusal is its own state, never a pending chip (D-23)', () => {
   })
 })
 
-describe('a pending chip carries the run posture, read off the record (D-22)', () => {
+describe('a pending chip carries the run posture, read off the record', () => {
   it('has NO posture while the run has not reached runFinished — no disposition is not a guess', () => {
     const view = chips(projectPostProcessingView(read({})))
     expect(view.analysis).toEqual({
@@ -170,7 +152,7 @@ describe('a running chip says one word and nothing else', () => {
   })
 })
 
-describe('a terminal curation card says what it committed (D-21, D-17/D-18 wording of record)', () => {
+describe('a terminal curation card says what it committed, in its wording of record', () => {
   it('reads the breakdown off the snapshot on the same read — five buckets, zeros omitted', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }), {
@@ -182,7 +164,7 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
     expect(view.curation.card?.note).toBeUndefined()
   })
 
-  it('says `counts not recorded for this run` when the row committed no counts — never a zero (D-12)', () => {
+  it('says `counts not recorded for this run` when the row committed no counts — never a zero', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' })),
     })))
@@ -203,7 +185,7 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
       .toEqual({ status: 'complete', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete })
   })
 
-  it('renders an all-zero breakdown as `no memory changes` rather than as five zeros (D-17)', () => {
+  it('renders an all-zero breakdown as `no memory changes` rather than as five zeros', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }), {
         curationSnapshot: { schemaVersion: CURATION_SNAPSHOT_SCHEMA_VERSION, rows: [], breakdown: breakdown() },
@@ -212,9 +194,6 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
     expect(view.curation.card?.outcome).toBe(`Curation complete — ${NO_MEMORY_CHANGES_TEXT}`)
   })
 
-  // RE-SPELLED 425-08. The claim is unchanged — curation's counts never reach the analysis card —
-  // but the analysis card is no longer absent on a verdict-bearing run (D-13), so the cell now
-  // measures what that card SAYS rather than that it does not exist.
   it('never invents a card for the analysis chip from curation counts', () => {
     const view = chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }, { total: 1, byClass: { app_bug: 1 } }), {
@@ -233,10 +212,8 @@ describe('a terminal curation card says what it committed (D-21, D-17/D-18 wordi
   })
 })
 
-// FIVE BUCKETS ARE NEVER SYNTHESIZED FROM TWO (D-18). A pre-423 row carries a pair and nothing
-// else; a withheld snapshot carries a reason and nothing else. Each renders what EXISTS, labelled,
-// rather than a breakdown the run never recorded.
-describe('the curation breakdown is one function, and legacy rows say what they are (D-17/D-18)', () => {
+// A legacy pair or withheld snapshot renders what exists, labelled, never a synthesized breakdown.
+describe('the curation breakdown is one function, and legacy rows say what they are', () => {
   it('lists only the non-zero buckets, in the schema order, joined by a middle dot', () => {
     expect(curationBreakdownLine(breakdown({
       added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1,
@@ -284,9 +261,8 @@ describe('the curation breakdown is one function, and legacy rows say what they 
   })
 })
 
-// EVERY STATE HAS AN HONEST FIRST LINE (D-13). A card that could open blank is a hover that rewards
-// the reader with nothing — which is the failure the whole card exists to fix.
-describe('running, queued and failed stages each read their own sentence (D-12/D-13)', () => {
+// Every state has a first line, because a card that opens blank tells the reader nothing.
+describe('running, queued and failed stages each read their own sentence', () => {
   it('names a running stage in its own words', () => {
     const view = chips(projectPostProcessingView(read({ status: status('running', 'running') })))
     expect(view.analysis.card?.outcome).toBe(ANALYSIS_RUNNING_TEXT)
@@ -331,7 +307,7 @@ describe('running, queued and failed stages each read their own sentence (D-12/D
   })
 })
 
-describe('a failed chip says why, or says honestly that nobody recorded why (D-21 as narrowed)', () => {
+describe('a failed chip says why, or says honestly that nobody recorded why', () => {
   it('renders the producer masked text VERBATIM — the page slices nothing', () => {
     const long = `a${'b'.repeat(480)}`
     const view = chips(projectPostProcessingView(read({
@@ -388,11 +364,7 @@ describe('a failed chip says why, or says honestly that nobody recorded why (D-2
   })
 })
 
-// RETIRED 425-06 (D-16). The two cells that stood here pinned the legacy pair's folded sentence,
-// whose last reader — the Knowledge tab's Learned heading — now calls `curationBreakdownLine` and
-// `legacyCurationPairText` instead. Both of those are pinned in this file's breakdown cells, so
-// retiring the function retired its cells rather than leaving them asserting over nothing.
-describe('the count line is the wording of record, in one place (D-09)', () => {
+describe('the count line is the wording of record, in one place', () => {
   it('publishes the curation door name as a thin call into the one accessible-name function', () => {
     const settled = { status: 'complete', state: 'complete', word: STAGE_INDICATOR_WORDS.curation.complete } as const
     expect(curationChipAccessibleName(settled)).toBe('Curation: complete — open Knowledge tab')
@@ -403,10 +375,8 @@ describe('the count line is the wording of record, in one place (D-09)', () => {
   })
 })
 
-// THE PASSING RUN EXPLAINS ITSELF (425-01 · D-13, roadmap SC3). The sentence a person reads on the
-// one run shape that ships every day — analysis settled, nothing to report — is the phase's copy
-// cell, and it is a CONSTANT so the card, the accessible name and this cell cannot drift apart.
-describe('a settled analysis with nothing to report says so in one sentence (D-13)', () => {
+// The passing run's sentence is a constant, so the card, accessible name and cell cannot drift.
+describe('a settled analysis with nothing to report says so in one sentence', () => {
   it('ANALYSIS-COMPLETE-COPY: publishes the sentence and projects it onto a no-verdict pass', () => {
     expect(ANALYSIS_COMPLETE_NO_ISSUES_TEXT).toBe('Analysis complete — no issues found')
 
@@ -423,10 +393,8 @@ describe('a settled analysis with nothing to report says so in one sentence (D-1
   })
 })
 
-// THE VISIBLE WORD (425-01 · D-07). A settled stage is quiet — the name alone. Every other state
-// says itself, because those are the states a person can act on. The set is six and the order is
-// the one the never-bar pins; a cell that only walked the reachable ones would not see a gap.
-describe('an indicator says the stage, and says the state when it needs attention (D-07)', () => {
+// A settled stage shows its name alone; any other state says itself, as a person can act on it.
+describe('an indicator says the stage, and says the state when it needs attention', () => {
   it('STAGE-INDICATOR-WORDS: the stage name alone for complete, name plus state word otherwise', () => {
     expect(STAGE_PRESENTATION_STATES).toEqual([
       'complete',
@@ -457,7 +425,7 @@ describe('an indicator says the stage, and says the state when it needs attentio
   })
 })
 
-describe('C444-STAGE-WORDS', () => {
+describe('the word each stage chip shows', () => {
   it('the dashboard presents complete for a complete chip', () => {
     const view = chips(projectPostProcessingView(read({ status: status('complete', 'complete') })))
     expect(view.analysis).toEqual({
@@ -488,7 +456,7 @@ const SKIPPED_SENTENCES = {
   },
 } as const
 
-describe('C444-STAGE-SKIPPED', () => {
+describe('a skipped stage and its reason', () => {
   it("the dashboard indicator reads Analysis skipped with the reason's own sentence", () => {
     expect(POST_PROCESSING_SKIP_REASONS.length).toBeGreaterThan(0)
     for (const reason of POST_PROCESSING_SKIP_REASONS) {
@@ -513,7 +481,7 @@ describe('C444-STAGE-SKIPPED', () => {
   })
 })
 
-describe('C444-NO-VERDICT', () => {
+describe('a run with no verdict skips analysis and curation', () => {
   it('the dashboard reads Analysis skipped and Curation skipped with the no-verdict sentence', () => {
     expect(POST_PROCESSING_SKIP_REASONS).toContain('no-verdict')
     const view = chips(projectPostProcessingView(read({
@@ -537,14 +505,8 @@ describe('C444-NO-VERDICT', () => {
   })
 })
 
-// THE SKIPPED STATE COMES FROM THE READ'S OWN FIELD (425-08 · D-08, T-425-08-01; 444 D-39).
-//
-// The op folds `skipped` from the run's durable `gateRun` / `excludedFromOutcomes` markers — the
-// same markers the post-verdict enqueue skip reads — so the dashboard, the CLI exit line and the
-// digest say ONE thing (law 6). The projection therefore reads the FIELD and nothing else: not the
-// absence of job rows, not the run's own status, not a settled chip word. The negative arm below is
-// the half that matters, because a fold that guessed would still pass every positive assertion.
-describe('a skipped chain reads skipped because the read said so, never because rows are missing (D-08)', () => {
+// Skipped comes from the read's own field; the negative arm catches a fold that guesses from rows.
+describe('a skipped chain reads skipped because the read said so, never because rows are missing', () => {
   it('EXCLUDED-FROM-FIELD: paints BOTH indicators skipped while the chip words stay verbatim', () => {
     for (const reason of POST_PROCESSING_SKIP_REASONS) {
       const view = chips(projectPostProcessingView(read({
@@ -599,10 +561,8 @@ describe('a skipped chain reads skipped because the read said so, never because 
   })
 })
 
-// PURE AND TOTAL, MEASURED RATHER THAN ASSERTED (PXH-RUN-03). A re-read arriving while a card is
-// open repaints that card from the NEW read alone, which is only safe if projecting a read twice
-// says the same thing and leaves the read's own bytes where it found them.
-describe('the projection is pure and total (PXH-RUN-03)', () => {
+// A re-read repaints an open card, safe only if projecting twice agrees and mutates nothing.
+describe('the projection is pure and total', () => {
   it('PROJECTION-IDEMPOTENT: the same read projects deep-equal twice, and is never mutated', () => {
     const reads: PostProcessingRead[] = [
       read({ status: status('pending', 'pending', undefined, { skipped: { reason: 'outcome-excluded' } }) }),
@@ -626,18 +586,8 @@ describe('the projection is pure and total (PXH-RUN-03)', () => {
   })
 })
 
-// TIMING IS THE JOB ROW'S OWN, CLAUSE BY CLAUSE (425-08 · D-12, T-425-08-03).
-//
-// THE MODULE HAS NO CLOCK AND MUST NOT GROW ONE. Every value below is a stored string the reader
-// stringified out of the job row — `created_at` / `started_at` / `updated_at`, written from the
-// injected clock as `new Date().toISOString()`, and the SQLite `CURRENT_TIMESTAMP` space form that
-// `normalizeTimestamp` exists for. Nothing here compares against "now", so nothing here can say a
-// stage is stuck; elapsed-time judgements are the state the read publishes, not one a card infers.
-//
-// THE CELLS ASSERT THROUGH THE SAME FORMATTER rather than against a literal wall-clock string: the
-// local zone varies between a laptop and CI, and a cell pinned to `10:41:02` would measure the
-// machine it ran on instead of the sentence the reader gets.
-describe('a card times the stage from the job row, and never from a clock of its own (D-12)', () => {
+// The module has no clock; cells assert through the same formatter because the local zone varies.
+describe('a card times the stage from the job row, and never from a clock of its own', () => {
   // The production SETTLED shape: created, started, updated — and no lease, because every terminal
   // transition releases the claim. `LEASE` is the same middle instant spelled as a claim, for the
   // cells that prove a lease alone is not a measurement.
@@ -671,7 +621,7 @@ describe('a card times the stage from the job row, and never from a clock of its
         'complete',
       ),
       'the load-bearing half: every terminal transition releases the lease, so a card that timed '
-        + 'from it could never answer how long a settled stage took — the question D-12 was written for',
+        + 'from it could never answer how long a settled stage took',
     ).toBe(`Queued ${clock()}`)
   })
 
@@ -744,13 +694,8 @@ describe('a card times the stage from the job row, and never from a clock of its
   })
 })
 
-// THE ROOT CAUSE COMES FROM A COUNTED FIELD, NEVER FROM A SENTENCE (425-08 · D-13, UI-SPEC S4).
-//
-// `notification.verdictSummary` is on the same read the header already holds: counted, durable and
-// conformance-pinned. The alternative — reading a verdict's prose and looking for a class in it —
-// is the rule 406 closed: a surface that parses another surface's sentence is coupled to wording
-// that is free to change, and reports a class nobody stored.
-describe('a settled analysis with verdicts names its root cause from the summary (D-13)', () => {
+// The root cause comes from the counted `verdictSummary`, never from parsing a verdict's prose.
+describe('a settled analysis with verdicts names its root cause from the summary', () => {
   const outcomeFor = (verdictSummary: unknown): string | undefined =>
     chips(projectPostProcessingView(read({
       status: status('complete', 'complete', notification({ status: 'complete' }, verdictSummary)),
@@ -789,55 +734,5 @@ describe('a settled analysis with verdicts names its root cause from the summary
     expect(analysisCompleteWithVerdictsText(undefined, 1)).toBe('Analysis complete — 1 verdict')
     expect(analysisCompleteWithVerdictsText('config_error', 4))
       .toBe('Analysis complete — root cause: config error (4 verdicts)')
-  })
-})
-
-// THE CHIP-LESS STAGE SPEAKS ONLY WHEN IT HAS SOMETHING TO SAY (425-08 · D-14).
-//
-// v54 closed the chip set at two, so `proposals` has no indicator of its own. A line on every hover
-// would be text on every run; silence on a FAILED stage would make it invisible. The rule is the
-// spec's: surface a stage only when it has a user-relevant state or result.
-describe('the proposals stage appears in the curation card only when relevant (D-14)', () => {
-  const curationCardFor = (
-    proposals?: Record<string, unknown>,
-    detail?: Record<string, unknown>,
-  ) => chips(projectPostProcessingView(read({
-    status: status(
-      'complete',
-      'complete',
-      notification({ status: 'complete' }, { total: 0, byClass: {} }, proposals),
-      detail === undefined ? {} : { stageDetails: { proposals: detail } },
-    ),
-    disposition: 'drained',
-  }))).curation.card
-
-  it('PROPOSALS-LINE-ONLY-WHEN-RELEVANT: a positive staged count is the only pass that speaks', () => {
-    expect(curationCardFor({ status: 'complete', proposed: 2 })?.proposals)
-      .toBe('Proposals: 2 staged for review')
-    expect(curationCardFor({ status: 'complete', proposed: 0 })?.proposals).toBeUndefined()
-    expect(curationCardFor({ status: 'complete' })?.proposals).toBeUndefined()
-    expect(curationCardFor(undefined)?.proposals).toBeUndefined()
-    expect(proposalsStagedText(1)).toBe('Proposals: 1 staged for review')
-  })
-
-  it('PROPOSALS-LINE-ONLY-WHEN-RELEVANT: a failed stage names its masked reason, or says none was recorded', () => {
-    expect(curationCardFor({ status: 'failed' }, { lastFailureReason: 'the staging port refused' })?.proposals)
-      .toBe('Proposals failed — the staging port refused')
-    expect(curationCardFor({ status: 'failed' })?.proposals)
-      .toBe(`Proposals failed — ${PROPOSALS_REASON_ABSENT_TEXT}`)
-    expect(PROPOSALS_REASON_ABSENT_TEXT).toBe('reason not recorded')
-    expect(proposalsFailedText('nope')).toBe('Proposals failed — nope')
-  })
-
-  it('PROPOSALS-LINE-ONLY-WHEN-RELEVANT: the analysis card never carries one', () => {
-    const view = chips(projectPostProcessingView(read({
-      status: status('complete', 'complete', notification({ status: 'complete' }, { total: 0, byClass: {} }, {
-        status: 'complete',
-        proposed: 2,
-      })),
-      disposition: 'drained',
-    })))
-    expect(view.analysis.card?.proposals).toBeUndefined()
-    expect(view.curation.card?.proposals).toBe('Proposals: 2 staged for review')
   })
 })

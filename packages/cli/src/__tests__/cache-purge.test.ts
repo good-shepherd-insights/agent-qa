@@ -1,13 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdir, writeFile, rm, readdir } from 'node:fs/promises'
+import { mkdir, writeFile, rm, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Command } from 'commander'
+import { sha256hex16 } from '@vostride/agent-qa-schema'
 
-// Phase 356 cache layout: <cacheRoot>/<branch-slug>/<cacheKey>.json. The 16-hex cacheKey
-// is opaque + content-addressed over masked step text and a runtime screenIdentityHash, so
-// entries cannot be recomputed from a test file (no raw step text on disk, D-06). Purge
-// therefore operates over the on-disk branch namespaces directly.
+// The 16-hex cache key is opaque and content-addressed, so purge walks the branch namespaces.
 
 const TMP_DIR = join(tmpdir(), 'agent-qa-cache-purge-test-' + process.pid)
 
@@ -24,54 +22,40 @@ afterEach(async () => {
   await rm(TMP_DIR, { recursive: true, force: true })
 })
 
-describe('purgeTest', () => {
-  it('clears all branch-namespaced cache entries (per-test targeting is not recomputable)', async () => {
-    const { purgeTest } = await import('../commands/cache.js')
-    const cacheDir = join(TMP_DIR, 'cache')
-    await seedEntry(cacheDir, 'main', 'a1b2c3d4e5f60718')
-    await seedEntry(cacheDir, 'main', 'f0e1d2c3b4a59687')
-    await seedEntry(cacheDir, 'feature-x', '1122334455667788')
-
-    const testPath = join(TMP_DIR, 'login.yaml')
-    await writeFile(testPath, 'url: https://example.com\nsteps:\n  - Click login\n')
-
-    const count = await purgeTest(testPath, cacheDir)
-    expect(count).toBe(3)
-    expect(await readdir(cacheDir)).toEqual([])
-  })
-
-  it('returns 0 for a non-existent cache dir', async () => {
-    const { purgeTest } = await import('../commands/cache.js')
-    const testPath = join(TMP_DIR, 'nope.yaml')
-    await writeFile(testPath, 'url: https://example.com\nsteps: []\n')
-    const count = await purgeTest(testPath, join(TMP_DIR, 'nonexistent'))
-    expect(count).toBe(0)
-  })
-
-  it('ignores non-json files and stray top-level files', async () => {
-    const { purgeTest } = await import('../commands/cache.js')
-    const cacheDir = join(TMP_DIR, 'cache')
-    await seedEntry(cacheDir, 'main', 'a1b2c3d4e5f60718')
-    await mkdir(join(cacheDir, 'main'), { recursive: true })
-    await writeFile(join(cacheDir, 'main', 'README.txt'), 'not a cache entry')
-    await writeFile(join(cacheDir, 'stray.tmp'), 'top-level junk')
-
-    const count = await purgeTest(join(TMP_DIR, 'x.yaml'), cacheDir)
-    expect(count).toBe(1)
-  })
-})
-
 describe('purgeAll', () => {
-  // 2026-10-01 (432-15, D-14): re-spelled from "…with force=true"; purgeAll has no force flag.
   it('deletes all cache-key entries across branch namespaces', async () => {
     const { purgeAll } = await import('../commands/cache.js')
     const cacheDir = join(TMP_DIR, 'cache')
-    for (let i = 0; i < 3; i++) await seedEntry(cacheDir, 'main', `key${i}0000000000000`)
-    for (let i = 0; i < 2; i++) await seedEntry(cacheDir, 'feature-y', `keyf${i}000000000000`)
+    for (let i = 0; i < 3; i++) await seedEntry(cacheDir, 'main', sha256hex16(`main-${i}`))
+    for (let i = 0; i < 2; i++) await seedEntry(cacheDir, 'feature-y', sha256hex16(`feature-${i}`))
 
     const count = await purgeAll(cacheDir)
     expect(count).toBe(5)
     expect(await readdir(cacheDir)).toEqual([])
+  })
+
+  it('leaves every file and directory the cache did not write in place', async () => {
+    const { purgeAll } = await import('../commands/cache.js')
+    const cacheDir = join(TMP_DIR, 'cache')
+    await seedEntry(cacheDir, 'main', sha256hex16('main-0'))
+    await seedEntry(cacheDir, 'feature-y', sha256hex16('feature-0'))
+    const kept = [
+      join(cacheDir, 'notes.txt'),
+      join(cacheDir, 'runs', 'run-1', 'handoff.json'),
+      join(cacheDir, 'runs', 'summary.json'),
+      join(cacheDir, 'main', 'README.md'),
+    ]
+    for (const path of kept) {
+      await mkdir(join(path, '..'), { recursive: true })
+      await writeFile(path, 'kept')
+    }
+
+    const count = await purgeAll(cacheDir)
+
+    expect(count).toBe(2)
+    for (const path of kept) expect(await readFile(path, 'utf-8')).toBe('kept')
+    expect((await readdir(cacheDir)).sort()).toEqual(['main', 'notes.txt', 'runs'])
+    expect(await readdir(join(cacheDir, 'main'))).toEqual(['README.md'])
   })
 
   it('returns 0 for non-existent cache dir', async () => {
@@ -120,5 +104,43 @@ use:
     }
 
     expect(await readdir(cacheDir)).toEqual([])
+  })
+
+  it('resolves a relative services.cache.dir against the config file directory, not the cwd', async () => {
+    const { createCacheCommand } = await import('../commands/cache.js')
+    const projectDir = join(TMP_DIR, 'project')
+    const otherCwd = join(TMP_DIR, 'elsewhere')
+    const key = sha256hex16('main-0')
+    await seedEntry(join(projectDir, '.agent-qa', 'cache'), 'main', key)
+    await seedEntry(join(otherCwd, '.agent-qa', 'cache'), 'main', key)
+    const configPath = join(projectDir, 'agent-qa.config.yaml')
+    await writeFile(configPath, `
+workspace:
+  testMatch:
+    - tests/**/*.yaml
+  suiteMatch:
+    - suites/**/*.suite.yaml
+  hooksFile: hooks.yaml
+  envFile: .env
+  secretsFile: .env.secrets.local
+services:
+  cache:
+    dir: .agent-qa/cache
+`)
+
+    const parent = new Command().option('--config <path>')
+    parent.exitOverride()
+    parent.addCommand(createCacheCommand())
+
+    const originalCwd = process.cwd()
+    process.chdir(otherCwd)
+    try {
+      await parent.parseAsync(['node', 'test', '--config', configPath, 'cache', 'purge', '--all'])
+    } finally {
+      process.chdir(originalCwd)
+    }
+
+    expect(await readdir(join(projectDir, '.agent-qa', 'cache'))).toEqual([])
+    expect(await readdir(join(otherCwd, '.agent-qa', 'cache', 'main'))).toEqual([`${key}.json`])
   })
 })

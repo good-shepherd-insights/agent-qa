@@ -1,36 +1,7 @@
 /// <reference lib="dom" />
-// The DOM lib is referenced HERE and nowhere else in this package, because this is the one file
-// whose `page.evaluate` callbacks are compiled as TypeScript and EXECUTED in a browser. Without it
-// `getComputedStyle` and `HTMLAnchorElement` are unresolved names under `tsc --noEmit` while
-// running perfectly under vitest — the TS6059-shaped trap plan 400-08 hit from the other side: a
-// green that only one of the two compilers ever saw.
+// The DOM lib is referenced here alone: this file's `page.evaluate` callbacks run in a browser.
 
-// The shipped dashboard, in a REAL browser against the BUILT bundle (Phase 400 plan 09, D-11).
-//
-// WHY THIS FILE EXISTS AT ALL. jsdom computes no styles, runs no bundler output, and resolves no
-// `import` the way a browser's module graph does. What runs below is the `vite build` bundle,
-// served by the shipped `agent-qa dashboard` command, driven by a real Chromium — so a claim made
-// here is a claim about what a person's browser is actually handed.
-//
-// 430 (2026-09-28, D-01/D-04/D-05/D-07): the dashboard no longer carries a conversation. The cells
-// that measured it are re-spelled as absence cells over the same built bundle: `/chat` lands on
-// Runs, no page links to or mounts a conversation, and the removed chat-worded remedy prose is not
-// in the shipped scripts.
-//
-// A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP. There is no `skipIf` in this file, no
-// environment predicate and no try/catch around the launch. If Chromium is missing, `beforeAll`
-// throws and every cell in the file fails loudly with the install instruction. The alternative —
-// an env-gated skip — turns the file into a no-op that exits 0, which is the exact shape of vacuous
-// green this project has been bitten by before (a path constant that landed on an existing
-// directory, so a control's env predicate skipped itself).
-//
-// THE FRESHNESS GUARD COVERS THE UI BUNDLE TOO, and that is the whole reason `DASHBOARD_ANCHORED_BUILDS`
-// exists. A DOM cell run against a `dashboard-ui/dist` built before today's `.tsx` edit passes and
-// reads as proof of the edit. Plan 400-06 lost a mutation to precisely this: a restored mutation was
-// not rebuilt and a stale `dist` reported a phantom red.
-//
-// MODEL-FREE AND CREDENTIAL-FREE, inherited from the spawned instrument. The child is handed a
-// constructed environment and an `mkdtemp` project with no token entry, no key and no LLM block.
+// A browser that cannot launch is a red, never a skip: a skip exits 0 and proves nothing.
 
 import {
   existsSync,
@@ -41,6 +12,7 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 
@@ -57,7 +29,6 @@ import {
   buildFreshness,
   cleanupTempRoots,
   dashboardFixtureProject,
-  reserveEphemeralPort,
   spawnDashboard,
   trackTempRoot,
 } from './spawned-chat.js'
@@ -98,8 +69,7 @@ beforeAll(async () => {
   expect(freshness, REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
 
   const project = dashboardFixtureProject('dom')
-  const port = await reserveEphemeralPort()
-  const dashboard = await spawnDashboard(project.root, project.configPath, port)
+  const dashboard = await spawnDashboard(project.root, project.configPath)
   expect(
     dashboard.ready,
     'the built `agent-qa dashboard` command never reported that it was listening. its stdout: '
@@ -184,7 +154,7 @@ async function conversationAffordances(page: Page): Promise<Record<string, numbe
 
 const NONE = { link: 0, panel: 0, panelOpen: 0, launcher: 0 }
 
-describe('the shipped dashboard has no conversation (430 D-04/D-07, over 400-09\'s instrument)', () => {
+describe('the shipped dashboard has no conversation', () => {
   it('NO-CHAT-IN-SHIPPED-BUNDLE: /chat lands on Runs and no page links to or mounts a conversation',
     async () => {
       // THE HARNESS'S OWN TRACER as well as an absence: it needs the build fresh, the shipped
@@ -204,9 +174,7 @@ describe('the shipped dashboard has no conversation (430 D-04/D-07, over 400-09\
       }
     }, 120_000)
 
-  // 433 D-22 (UI-011): no standalone Memory or Knowledge explorer. Each explorer-shaped path must
-  // reach the runs page's own ready selector and the /runs URL, so the catch-all is what served it.
-  // The palette's Pages group is read too; config sections named Knowledge stay allowed (note 6).
+  // Each explorer-shaped path reaches the runs page's ready selector, so the catch-all served it.
   it('NO-EXPLORER-IN-SHIPPED-BUNDLE: memory and knowledge explorer paths land on Runs and nothing links to one',
     async () => {
       const paths = [
@@ -282,20 +250,9 @@ describe('the shipped dashboard has no conversation (430 D-04/D-07, over 400-09\
   })
 })
 
-describe('the instrument this file runs on, asserted rather than assumed (400-09 task 1)', () => {
+describe('the instrument this file runs on, asserted rather than assumed', () => {
   it('drives the AUDITED playwright-core pin and never a version resolved at install time', () => {
-    // THE SUPPLY-CHAIN CLAIM (T-400-SC), read off the manifest. The package-legitimacy audit
-    // approved the canonical `microsoft/playwright` package, with no postinstall. Phase 424-35
-    // upgraded the exact workspace pin to `playwright-core@1.61.0` with matching Chromium 1228;
-    // `@playwright/test` remains absent. A range here (`^1.61.0`) would make the
-    // audited artifact and the installed one two different things after the next resolution, so
-    // the assertion is on the EXACT pin.
-    //
-    // THE SECTION IS DELIBERATELY NOT PART OF THE CLAIM. `playwright-core` was already a first-class
-    // `dependencies` entry of this package before this plan — `auth-state.ts` and
-    // `install-browsers.ts` both reach for it at runtime — so the plan's "add it as a devDependency"
-    // was already satisfied by a stronger declaration, and adding a second entry would be two
-    // answers to one version question. See the SUMMARY's deviations.
+    // The exact `playwright-core` pin: a range lets the audited and the installed artifact differ.
     const manifest = JSON.parse(
       readFileSync(join(CLI_PACKAGE_ROOT, 'package.json'), 'utf8'),
     ) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> }
@@ -307,7 +264,15 @@ describe('the instrument this file runs on, asserted rather than assumed (400-09
       declared,
       'this package no longer declares playwright-core, so the browser these cells launch is '
       + 'whatever a hoist happened to leave in node_modules — an unaudited artifact',
-    ).toBe('1.61.0')
+    ).toMatch(/^\d+\.\d+\.\d+$/)
+    const installed = (
+      createRequire(join(CLI_PACKAGE_ROOT, 'package.json'))('playwright-core/package.json') as {
+        version: string
+      }
+    ).version
+    expect(installed, 'the playwright-core these cells import is not the declared pin').toBe(
+      declared,
+    )
 
     // And the runtime the cells actually launched is that package's own browser, not a system one.
     expect(
@@ -317,10 +282,7 @@ describe('the instrument this file runs on, asserted rather than assumed (400-09
   })
 
   it('guards the freshness of the dashboard SERVER and UI dists, not only the chat five', () => {
-    // THE STALE-DIST TRAP, named. Every cell in this file reads the `dashboard-ui` bundle through
-    // the `dashboard-server` process, and neither package is in the chat anchors' build list. A
-    // guard that watched only those five would be green while the bundle a browser was handed was
-    // a revision behind — which is exactly how plan 400-06 lost a mutation to a phantom red.
+    // A browser's bundle comes through `dashboard-server`, so both builds are checked as fresh.
     const guarded = DASHBOARD_ANCHORED_BUILDS.map((build) => `${build.pkg}/${build.artifact}`)
     expect(guarded).toContain(join('dashboard-server', 'dist', 'index.js'))
     expect(guarded).toContain(join('dashboard-ui', 'dist', 'index.html'))
@@ -332,11 +294,8 @@ describe('the instrument this file runs on, asserted rather than assumed (400-09
   })
 
   it('REFUSES a missing dashboard dist and a stale one, by name (the guard, driven)', () => {
-    // The guard's refusing branches, reached with a synthetic package tree rather than by deleting
-    // a real `dist`. `parity-anchors.test.ts` drives the same two branches for the chat list; this
-    // drives them for the two entries this plan added, so the extension is measured rather than
-    // asserted about.
-    const root = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-400-09-guard-')))
+    // The guard's refusing branches, reached with a synthetic package tree, not a deleted `dist`.
+    const root = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-guard-')))
     const builds = [{ pkg: 'dashboard-ui', artifact: join('dist', 'index.html') }]
     mkdirSync(join(root, 'dashboard-ui', 'src'), { recursive: true })
     writeFileSync(join(root, 'dashboard-ui', 'src', 'app.css'), 'body{}', 'utf8')

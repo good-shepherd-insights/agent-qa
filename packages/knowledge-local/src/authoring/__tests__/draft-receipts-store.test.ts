@@ -60,8 +60,7 @@ function receiptFixture(overrides: {
       falsifiable: true,
       captureSignatureHits: [],
     }],
-    // F3: the definitive-pass arm arrives as `healed`, so the fixture carries one — a store that
-    // round-trips only the tidy shapes is not round-tripping the shape this phase measured.
+    // The definitive-pass arm arrives as `healed`, so the fixture round-trips that shape too.
     gateRuns: [{ runId: 'run-1', memberOutcome: 'healed', definitive: true, healed: true }],
     addsValueFinding: {
       novelElements: ['{"anchor":{"name":"order number","ordinal":0,"role":"text","t":"el"}}'],
@@ -99,7 +98,7 @@ function receiptsDir(root: string): string {
   return join(root, DRAFT_RECEIPTS_DIR_NAME)
 }
 
-describe('the draft-receipts store (393 D-19, the proposals-store idiom)', () => {
+describe('the draft-receipts store (the proposals-store idiom)', () => {
   it('round-trips a receipt by its draftRef.contentDigest', async () => {
     const root = agentQaRoot()
     const store = storeAt(root)
@@ -151,7 +150,7 @@ describe('the draft-receipts store (393 D-19, the proposals-store idiom)', () =>
     await expect(store.list()).rejects.toThrow(DraftReceiptSchemaVersionError)
   })
 
-  it('refuses a digest that would join outside the receipts directory (IN-03)', async () => {
+  it('refuses a digest that would join outside the receipts directory', async () => {
     const root = agentQaRoot()
     const store = storeAt(root)
     mkdirSync(receiptsDir(root), { recursive: true })
@@ -166,7 +165,7 @@ describe('the draft-receipts store (393 D-19, the proposals-store idiom)', () =>
     expect(readdirSync(receiptsDir(root))).toEqual([])
   })
 
-  it('refuses to persist a record the receipt schema rejects (T-393-02)', async () => {
+  it('refuses to persist a record the receipt schema rejects', async () => {
     const root = agentQaRoot()
     const store = storeAt(root)
 

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { materializePolicy, PolicyTextRefusedError, policyShelfPath } from '../materialize.js'
 import { acquireWriterLease, releaseLease, WriterAuthorityLostError } from '../../lease/writer-lease.js'
 
-// 441-41: the stage open is the seam inside the transaction now that no audit sink is called.
+// The stage open is the hook point inside the transaction.
 const stageHook = vi.hoisted(() => ({ beforeStage: undefined as (() => void) | undefined }))
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -151,11 +151,11 @@ describe('materializePolicy sovereign authored shelf', () => {
   })
 })
 
-describe('C441-COMMITTED', () => {
+describe('policy files with credential-shaped text', () => {
   let root: string
   let writerAuthority: { leaseId: string; epoch: number }
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'policy-c441-committed-'))
+    root = mkdtempSync(join(tmpdir(), 'policy-committed-'))
     const lease = acquireWriterLease(root)
     if (lease.kind !== 'acquired') throw new Error('lease unavailable')
     writerAuthority = lease
@@ -164,12 +164,12 @@ describe('C441-COMMITTED', () => {
 
   it('a policy file with credential-shaped text is materialized as written', () => {
     const ruleText = 'Pay with 4242 4242 4242 4242 and send Bearer abc123def456ghi789'
-    const outcome = materializePolicy({ knowledgeRoot: root, recordId: 'policy-c441', scope: 'shop',
+    const outcome = materializePolicy({ knowledgeRoot: root, recordId: 'policy-card', scope: 'shop',
       ruleText, title: 'Card 4111 1111 1111 1111', writerAuthority })
     expect(outcome).toMatchObject({ kind: 'written', relPath: join('policies', 'shop.md') })
     expect(readFileSync(policyShelfPath(root, 'shop'), 'utf8')).toBe('# Policies — shop\n\n'
-      + '<!-- agent-qa:policy policy-c441 -->\n### Card 4111 1111 1111 1111\n'
-      + `${ruleText}\n<!-- /agent-qa:policy policy-c441 -->\n`)
+      + '<!-- agent-qa:policy policy-card -->\n### Card 4111 1111 1111 1111\n'
+      + `${ruleText}\n<!-- /agent-qa:policy policy-card -->\n`)
     expect(releaseLease({ knowledgeRoot: root, leaseId: writerAuthority.leaseId }).kind).toBe('released')
   })
 })

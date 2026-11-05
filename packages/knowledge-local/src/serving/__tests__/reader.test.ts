@@ -9,11 +9,9 @@ import {
 } from '@vostride/agent-qa-safety'
 import {
   DISTILLED_OBSERVATION_SCHEMA_VERSION,
-  GATE_RECEIPT_SCHEMA_VERSION,
   asEvidenceToken,
   asRecordId,
   BundleOutcomeEventSchema,
-  LOWER_TRUST_PATH_DISCOUNT,
   parseProcedureBody,
   procedureSourceBinding,
   serializeProcedureBody,
@@ -47,7 +45,6 @@ import {
   type PublishBundleInput,
 } from '../../bundle-publish.test-helper.js'
 import { rebuildIndex } from '../../index-rebuild.js'
-import { appendPromotionReceipt } from '../../bundle-append.js'
 import { listQueuedCandidates } from '../../queue/curation-queue.js'
 import { openKnowledgeReader } from '../reader.js'
 
@@ -155,7 +152,6 @@ describe('openKnowledgeReader synchronous serving port', () => {
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'reader-test',
     }
   }
@@ -389,39 +385,6 @@ describe('openKnowledgeReader synchronous serving port', () => {
     }))
   })
 
-  it('serves lower-trust actives beside a full cold-start reservation and lifts framing on upgrade', async () => {
-    const lower = seedRecord({ key: 'lower-trust' })
-    const candidates = [seeded.candidateFact, seedRecord({ key: 'cold-two', status: 'candidate' }),
-      seedRecord({ key: 'cold-three', status: 'candidate' })]
-    const append = (id: RecordId, promotionPath: 'gate1-lower-trust' | 'gate1+gate2' | 'deterministic-verdict-floor') => {
-      expect(appendPromotionReceipt(storeConfig(), id, { schemaVersion: GATE_RECEIPT_SCHEMA_VERSION, kind: 'promotion',
-        candidateId: id, promotionPath, citedReceiptDigests: [], producedAtOrdinal: 10,
-        producedBy: { opId: 'reader-test' } })).toEqual({ kind: 'appended' })
-    }
-    append(lower, 'gate1-lower-trust')
-    append(seeded.activeFact, 'deterministic-verdict-floor')
-    await rebuildIndex({ knowledgeRoot })
-    const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT,
-      scopeDefaults: { asOfBuild: 10 }, budgets: { recordCap: 50 } })
-    const served = reader.search('checkout', { scope: SCOPE }).find(({ id }) => id === lower)!
-    expect(served).toMatchObject({ status: 'active', lowerTrust: true, servedAsCanary: true })
-    expect(served).not.toHaveProperty('unverified')
-    const brief = reader.getRunBrief(SCOPE, 10_000).brief
-    expect(brief.lines.filter(({ id }) => candidates.includes(id))).toHaveLength(2)
-    expect(brief.lines.find(({ id }) => id === lower)).toMatchObject({ status: 'active',
-      servedAsCanary: true, trust: served.trust * LOWER_TRUST_PATH_DISCOUNT })
-    expect(brief.tiers.L2).toContain('[LEARNED, UNCONFIRMED] [CANARY]')
-    expect(reader.search('checkout', { scope: SCOPE }).find(({ id }) => id === seeded.activeFact))
-      .not.toHaveProperty('lowerTrust')
-    append(lower, 'gate1+gate2')
-    const upgraded = reader.search('checkout', { scope: SCOPE }).find(({ id }) => id === lower)!
-    expect(upgraded).toMatchObject({ status: 'active', servedAsCanary: false })
-    expect(upgraded).not.toHaveProperty('lowerTrust')
-    const upgradedBrief = reader.getRunBrief(SCOPE, 10_000).brief
-    expect(upgradedBrief.lines.find(({ id }) => id === lower)?.trust).toBe(served.trust)
-    expect(upgradedBrief.tiers.L2).not.toContain('LEARNED, UNCONFIRMED')
-  })
-
   it('defends direct reads with current status, scope, and as-of walls', async () => {
     const testScope: ScopeKey = { tier: 'test', key: 'test:checkout' }
     const supersededTarget = seedRecord({
@@ -482,7 +445,6 @@ describe('openKnowledgeReader synchronous serving port', () => {
       candidateId: seeded.candidateFact,
       runOutcome: 'positive',
       benefit: 'rode-along',
-      stateValidity: 'unknown',
       runId: 'reader-canary-run',
       testId: 'checkout::happy-path',
       testIndex: 1,
@@ -590,12 +552,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     ).toBe('hint')
   })
 
-  /**
-   * G-381-4 read-face admission. The committed procedure is minted through the LIVE
-   * `commitCurationDelta` path (the same job assembly the D-02 commit suite asserts), not a
-   * hand-rolled index entry — the gap was precisely that a genuinely committed bundle was
-   * unreadable, so the fixture shape has to be the live one.
-   */
+  // Minted through the live `commitCurationDelta` path, not a hand-rolled index entry.
   function commitLiveProcedure(
     overrides: Partial<CommitFixtureProcedureOptions> = {},
   ): { bundleId: RecordId; bundleDir: string } {
@@ -616,7 +573,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     await rebuildIndex({ knowledgeRoot })
     const reader = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
 
-    // The UAT's direct probe, verbatim: a fact body on the SAME store reads fine.
+    // A fact body on the same store reads fine.
     expect(reader.read(seeded.activeFact)?.body).toContain('Checkout active-fact body.')
 
     const body = reader.read(committed.bundleId)
@@ -700,10 +657,7 @@ describe('openKnowledgeReader synchronous serving port', () => {
     expect(reader.read(unvettedFact)).toBeUndefined()
   })
 
-  // 387-04: the byte comparisons below now cover the COMPOSITE `{ brief, trace }`, so they pin
-  // the serve-time trace's bytes as well as the brief's. That is deliberately stronger than the
-  // pre-387 form — a leaked procedure would show up as a trace attribution even if the rendered
-  // brief text somehow hid it.
+  // The byte comparisons cover `{ brief, trace }`, so a leaked procedure shows in the trace too.
   it('leaks no procedure into brief or caution serving — bytes identical across the commit', async () => {
     const before = openKnowledgeReader({ knowledgeRoot, product: PRODUCT })
     const briefBefore = JSON.stringify(before.getRunBrief(SCOPE, 2_000))

@@ -60,7 +60,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
 
   process.nextTick(() => {
     if (options.body) {
@@ -125,7 +125,7 @@ async function invokeRoute(
 
 const SENTINELS = {
   header: 'sk-live-HEADER-DO-NOT-LEAK',
-  farm: 'sk-live-FARM-DO-NOT-LEAK',
+  access: 'sk-live-ACCESS-DO-NOT-LEAK',
   udid: 'UDID-DO-NOT-LEAK-0001',
   attribute: 'ATTR-DO-NOT-LEAK-main',
   secretsFile: 'secrets-DO-NOT-LEAK.local',
@@ -133,7 +133,7 @@ const SENTINELS = {
 }
 
 const secretConfig = [
-  '# owner notes: the farm key rotates monthly',
+  '# owner notes: the access key rotates monthly',
   'workspace:',
   '  testMatch:',
   '    - tests/**/*.yaml',
@@ -154,22 +154,19 @@ const secretConfig = [
   '      baseURL: https://llm.example.test/v1',
   '      providerHeaders:',
   `        x-org-route: ${SENTINELS.header}`,
-  '  providers:',
-  '    farm:',
-  `      accessKey: ${SENTINELS.farm} # rotated by the owner`,
-  '      certificate: |',
-  `        ${SENTINELS.certificate}-one`,
-  `        ${SENTINELS.certificate}-two`,
+  `        x-org-access: ${SENTINELS.access} # rotated by the owner`,
   '  devices:',
   '    phone:',
   '      platform: ios',
-  '      transport: local',
   '      match:',
   `        udid: ${SENTINELS.udid}`,
   'analytics:',
   '  passRateScope:',
   '    attributes:',
   `      branch: ${SENTINELS.attribute}`,
+  '      certificate: |',
+  `        ${SENTINELS.certificate}-one`,
+  `        ${SENTINELS.certificate}-two`,
   'plugins:',
   '  auth:',
   '    - package: "@example/agent-qa-auth"',
@@ -225,33 +222,30 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
-describe('GET /api/config through the declared mask (441-21, D-29)', () => {
+describe('GET /api/config through the declared mask', () => {
   it('GET-CARRIES-NO-SECRET: every declared value reads as its marker, an undeclared one as written, and no auth.json value is sent', async () => {
-    await useConfigWorkspace(secretConfig, declaredMask({ FARM_KEY: SENTINELS.farm, ROUTE_KEY: SENTINELS.header }))
+    await useConfigWorkspace(secretConfig, declaredMask({ ACCESS_KEY: SENTINELS.access, ROUTE_KEY: SENTINELS.header }))
 
     const { response, body } = await getConfig()
 
     expect(response.status).toBe(200)
-    for (const sentinel of [SENTINELS.farm, SENTINELS.header, AUTH_SENTINEL]) {
+    for (const sentinel of [SENTINELS.access, SENTINELS.header, AUTH_SENTINEL]) {
       expect(response.body).not.toContain(sentinel)
     }
     const { config } = body
     expect(config.registry.llms[0].providerHeaders['x-org-route']).toBe('[secret:ROUTE_KEY]')
-    expect(config.registry.providers.farm.accessKey).toBe('[secret:FARM_KEY]')
-    expect(config.registry.providers.farm.certificate)
+    expect(config.registry.llms[0].providerHeaders['x-org-access']).toBe('[secret:ACCESS_KEY]')
+    expect(config.analytics.passRateScope.attributes.certificate)
       .toBe(`${SENTINELS.certificate}-one\n${SENTINELS.certificate}-two\n`)
     expect(config.registry.devices.phone.match.udid).toBe(SENTINELS.udid)
     expect(config.analytics.passRateScope.attributes.branch).toBe(SENTINELS.attribute)
     expect(config.workspace.secretsFile).toBe(SENTINELS.secretsFile)
     expect(config.registry.llms[0].baseURL).toBe('https://llm.example.test/v1')
     const lines = body.file.lines as FileLine[]
-    expect(lineHolding(lines, 'accessKey:').text).toBe('      accessKey: [secret:FARM_KEY] # rotated by the owner')
+    expect(lineHolding(lines, 'x-org-access:').text).toBe('        x-org-access: [secret:ACCESS_KEY] # rotated by the owner')
     expect(lineHolding(lines, 'x-org-route:').text).toBe('        x-org-route: [secret:ROUTE_KEY]')
   })
 
-  // 432-22 (D-12): re-spelled. The two env-var-name leaves were the MCP and run-service token
-  // variables, deleted with their lists; the surviving claim is that a non-secret leaf reads in clear
-  // in both the payload and the file view, and no line is tagged as an env-var name any more.
   it('ENV-VAR-NAME-IN-CLEAR: a plain MCP leaf reads in clear in the payload and the file view, and no line is an env-var name', async () => {
     await useConfigWorkspace()
 
@@ -273,12 +267,12 @@ describe('GET /api/config through the declared mask (441-21, D-29)', () => {
     expect(body.config.use.llm).toBe('gpt')
     const onDisk = await readFile(configPath, 'utf-8')
     expect(body.revision).toBe(sha256(onDisk))
-    expect(onDisk).toContain('# owner notes: the farm key rotates monthly')
+    expect(onDisk).toContain('# owner notes: the access key rotates monthly')
     expect(body.file.path).toBe(configPath)
     const lines = body.file.lines as FileLine[]
     expect(lines.map((line) => line.n)).toEqual(lines.map((_, i) => i + 1))
     expect(lines.map((line) => line.text)).toEqual(onDisk.trimEnd().split('\n'))
-    expect(lines[0]).toEqual({ n: 1, text: '# owner notes: the farm key rotates monthly' })
+    expect(lines[0]).toEqual({ n: 1, text: '# owner notes: the access key rotates monthly' })
     expect(lineHolding(lines, 'package:').text).toBe('    - package: "@example/agent-qa-auth"')
     expect(body).not.toHaveProperty('fileIssues')
   })
@@ -329,7 +323,7 @@ describe('GET /api/config through the declared mask (441-21, D-29)', () => {
 
   it('GET-FILE-INVALID-NAMED: a file that does not parse is named with 409 and the revision still answers', async () => {
     const configPath = await useConfigWorkspace()
-    const broken = `a: 1\nb: [1, ${SENTINELS.farm}\nc: 3\n`
+    const broken = `a: 1\nb: [1, ${SENTINELS.access}\nc: 3\n`
     await writeFile(configPath, broken, 'utf-8')
 
     const { response, body } = await getConfig()
@@ -338,7 +332,7 @@ describe('GET /api/config through the declared mask (441-21, D-29)', () => {
     expect(body.error).toBe('file_invalid')
     expect(typeof body.message).toBe('string')
     expect(body.message).not.toBe('')
-    expect(response.body).not.toContain(SENTINELS.farm)
+    expect(response.body).not.toContain(SENTINELS.access)
     expect(Object.keys(body).sort()).toEqual(['error', 'message'])
     expect(await getRevision()).toBe(sha256(broken))
 
@@ -398,7 +392,7 @@ const commentedConfig = [
   '',
 ].join('\n')
 
-describe('GET /api/config serves comments through the declared mask (441-21, D-29)', () => {
+describe('GET /api/config serves comments through the declared mask', () => {
   it('COMMENTED-SECRET-MASKED: a comment is served as written, and a declared value in it reads as its marker', async () => {
     const [oldSecret, prevSecret, liveSecret] = commentedSecrets
     const configPath = await useConfigWorkspace(
@@ -425,7 +419,7 @@ describe('GET /api/config serves comments through the declared mask (441-21, D-2
   })
 })
 
-describe('GET /api/config is same-site only with no cross-origin grant (429-41, CR-02)', () => {
+describe('GET /api/config is same-site only with no cross-origin grant', () => {
   it('GET-CONFIG-SAME-SITE-NO-GRANT: a cross-site or rebinding caller is refused before the read, and no answer grants a cross-origin read', async () => {
     const configPath = await useConfigWorkspace(commentedConfig)
     const readMasked = vi.spyOn(ConfigManager.prototype, 'readMasked')

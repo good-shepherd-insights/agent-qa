@@ -20,11 +20,7 @@ vi.mock('@/components/ui/tooltip', () => ({
 let container: HTMLDivElement | null = null
 let root: Root | null = null
 
-// REPOINTED TO THE DURABLE STEP (405-08). The pill parser reads `name`, `originalStepName` and
-// `variableSnapshot`; the first is now the projection's `stepText` and the other two have no
-// producer on this page until 405-11 rebuilds the overview, so they are ABSENT rather than
-// null-filled. An absent optional a consumer already guards is an honest absence; a null-filled
-// v1 field would be a claim that the v1 read still happened.
+// The durable step leaves `originalStepName` and `variableSnapshot` absent, never null-filled.
 function makeStep(overrides: Partial<RunDetailStep> = {}): DisplayStep {
   return fromRunDetailStep(
     {
@@ -73,7 +69,7 @@ describe('StepNameWithPills', () => {
   })
 })
 
-describe('StepNameWithPills — stored step text is shown as written (D-28, D-20)', () => {
+describe('StepNameWithPills — stored step text is shown as written', () => {
   it("shows an old run's numbered placeholder in a DURABLE step text as the characters it holds", () => {
     if (!root || !container) throw new Error('Test root not initialized')
     const step = makeStep({ stepText: 'Enter password <SECRET_1> into the field' })

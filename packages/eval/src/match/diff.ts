@@ -20,9 +20,8 @@ import type {
   TieCause,
 } from './score'
 import type { LoopVerdict } from './loop'
-import type { SideEffectVerdict } from './risk'
 
-/** Replay attribution copied into every D-16 decision diff. */
+// Replay attribution copied into every decision diff.
 export interface DecisionDiffReplayContext {
   promptDrift: ReplayDrift
   agreement: ReplayAgreement
@@ -47,13 +46,12 @@ interface DecisionDiffBase {
   matcherVersion: number
 }
 
-/** Pure JSON D-16 per-decision diff; rendering belongs exclusively to Phase 372. */
+// Pure JSON per-decision diff; this module renders nothing.
 export type DecisionDiff =
   | (DecisionDiffBase & {
       kind: 'scored'
       tierReached: 1 | 2 | 3
       axes: DecisionAxes
-      sideEffect: SideEffectVerdict
       loop: LoopVerdict
     })
   | (DecisionDiffBase & {
@@ -66,7 +64,7 @@ export type DecisionDiff =
       partial?: DecisionPartialBreakdown
     })
 
-/** Input to the pure D-16 projection. */
+// Input to the pure decision-diff projection.
 export interface BuildDecisionDiffInput {
   cassetteId: string
   stepIndex?: number
@@ -137,7 +135,6 @@ export function buildDecisionDiff(input: BuildDecisionDiffInput): DecisionDiff {
     kind: 'scored',
     tierReached: input.score.tierReached,
     axes: input.score.axes,
-    sideEffect: input.score.sideEffect,
     loop: input.score.loop,
   }
 }

@@ -10,7 +10,7 @@ import {
 import * as schema from '../index'
 import type { FunctionCaller } from '../index'
 
-describe('the actor-origin axis (391 D-06)', () => {
+describe('the actor-origin axis', () => {
   it('is closed at exactly two members', () => {
     expect(FUNCTION_CALLER_ORIGINS).toEqual(['human', 'agent'])
   })
@@ -39,11 +39,8 @@ describe('the actor-origin axis (391 D-06)', () => {
   })
 })
 
-describe('C432-DECLARATION-KEYS: the caller record after the permission wave (432-20, D-10/D-12)', () => {
+describe('the caller record after the permission wave', () => {
   it('types a tokenless caller with surface and origin alone — every permission field is optional', () => {
-    // Compile-checked: until 432-20 `grantedScopes` and `safeMode` were required, so this literal
-    // did not type. 2026-10-02 (432-39, D-02/D-10): the retired fields are deleted, so the record
-    // is exactly these two keys at the type level too (C432-NO-PERMISSION-TYPES below).
     const tokenless: FunctionCaller = { surface: 'mcp', origin: 'agent' }
     expect(Object.keys(tokenless).sort()).toEqual(['origin', 'surface'])
     const CALLER_TYPE_KEYS: ExactKeys<FunctionCaller, 'surface' | 'origin'> = true
@@ -51,7 +48,7 @@ describe('C432-DECLARATION-KEYS: the caller record after the permission wave (43
   })
 
   it('keeps origin as presentation data only, with no new label', () => {
-    // No approval- or provenance-shaped member joins the closed origin vocabulary (D-10).
+    // No approval- or provenance-shaped member joins the closed origin vocabulary.
     expect([...FUNCTION_CALLER_ORIGINS]).toEqual(['human', 'agent'])
     const human: FunctionCaller = { surface: 'cli', origin: 'human' }
     const agent: FunctionCaller = { surface: 'cli', origin: 'agent' }
@@ -59,12 +56,6 @@ describe('C432-DECLARATION-KEYS: the caller record after the permission wave (43
   })
 })
 
-// 2026-10-02 (432-39, D-10/D-12): the capability-scope union is DELETED, with every field that
-// named it. The two cells that pinned its members and its parser keep their titles and are
-// re-spelled as its absence (C432-NO-PERMISSION-TYPES).
-// 2026-10-03 (quick-261003-tsr, IN-22): the two distinctness cells asserted that a list they built
-// lacked a value they never put in it, so they could not fail. Each now ranges every list and enum
-// the barrel exports for the retired grant names it is about.
 type ExactKeys<T, K extends PropertyKey> = [keyof T] extends [K]
   ? ([K] extends [keyof T] ? true : false)
   : false
@@ -89,19 +80,13 @@ function listsNaming(grants: readonly string[]): string[] {
 }
 
 describe('the capability-scope union', () => {
-  // RE-SPELLED 2026-10-02 (432-39, D-10/D-12, C432-NO-PERMISSION-TYPES). The union and its six
-  // members are deleted, test-write with them; no barrel exports a scope schema.
-  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'carries test-write as a sixth, distinct member (394 WTST-01)': the body asserts the absence, so the title does.
-  it('exports no capability-scope schema or type from the root barrel (C432-NO-PERMISSION-TYPES)', () => {
+  it('exports no capability-scope schema or type from the root barrel', () => {
     expect(Object.keys(schema)).not.toContain('FunctionScopeSchema')
     expect(Object.keys(schema).filter((name) => /FunctionScope/.test(name))).toEqual([])
     // Non-vacuity: the barrel is the real one, and the caller vocabulary that survives is in it.
     expect(Object.keys(schema)).toContain('FUNCTION_CALLER_ORIGINS')
   })
 
-  // RE-SPELLED 2026-10-02 (432-39, D-10/D-12, C432-NO-PERMISSION-TYPES). With no union there is no
-  // parser for a scope name to pass or fail: no exported enum carries the old members.
-  // RE-TITLED 2026-10-02 (432-42, 432-39 #5) from 'refuses anything off the union': the body asserts the absence, so the title does.
   it('exports no enum parser that carries the six retired scope names', () => {
     const enums = Object.entries(schema).filter(([, value]) =>
       typeof (value as { safeParse?: unknown } | undefined)?.safeParse === 'function'
@@ -115,9 +100,6 @@ describe('the capability-scope union', () => {
     expect(carrying).toEqual([])
   })
 
-  // RE-SPELLED 2026-10-03 (quick-261003-tsr, IN-22): was 'keeps approval-write distinct from
-  // knowledge-write'. With no grants there is nothing to conflate; what can still regress is a list
-  // that names either grant coming back.
   it('exports no list or enum naming approval-write or knowledge-write', () => {
     // Non-vacuity: the barrel exports lists, and the census reads a real one.
     expect(exportedLists().length).toBeGreaterThan(5)
@@ -125,19 +107,14 @@ describe('the capability-scope union', () => {
     expect(listsNaming(['approval-write', 'knowledge-write'])).toEqual([])
   })
 
-  // RE-SPELLED 2026-10-03 (quick-261003-tsr, IN-22): was 'keeps test-write distinct from run'.
   it('exports no list or enum naming test-write', () => {
     expect(listsNaming(['test-write'])).toEqual([])
   })
 })
 
-// 2026-10-01 (432-19, D-14/D-22). The origin axis's surviving reader is the clause RECEIPT: every
-// receipt names the origin the composition minted, and that is the contract the axis keeps once the
-// execution gate (which decided by it) is deleted. No new origin label is introduced, and the one
-// approval record the axis ever attributed — `approval_decision` — stays a READABLE historical kind
-// with no writer, so a session file a pre-432 build wrote still opens.
-describe('the origin axis after the gate (432-19)', () => {
-  it('C432-HISTORICAL-READER: the clause receipt carries origin, with its exact key set', () => {
+// `approval_decision` stays a readable kind with no writer, so older session files still open.
+describe('the origin axis after the gate', () => {
+  it('the clause receipt carries origin, with its exact key set', () => {
     expect(Object.keys(ClauseReceiptSchema.shape).sort()).toEqual(
       ['clause', 'functionId', 'origin', 'outcome', 'status'],
     )
@@ -148,7 +125,7 @@ describe('the origin axis after the gate (432-19)', () => {
     }
   })
 
-  it('C432-HISTORICAL-READER: a pre-432 approval_decision line still parses, both sources and all three decisions', () => {
+  it('a historical approval_decision line still parses, both sources and all three decisions', () => {
     expect(CHAT_SESSION_EVENT_KINDS).toContain('approval_decision')
     for (const source of ['gate', 'verb'] as const) {
       for (const decision of ['accept', 'accept-always', 'deny'] as const) {
@@ -165,7 +142,7 @@ describe('the origin axis after the gate (432-19)', () => {
     }
   })
 
-  it('C432-HISTORICAL-READER: the historical kind keeps its exact key set — no field is added or dropped', () => {
+  it('the historical kind keeps its exact key set — no field is added or dropped', () => {
     const line = {
       kind: 'approval_decision',
       turnId: 't_0001',
@@ -181,7 +158,7 @@ describe('the origin axis after the gate (432-19)', () => {
       .toThrow(/approval_decision/)
   })
 
-  it('C432-HISTORICAL-READER: the origin vocabulary gains no approval-shaped label', () => {
+  it('the origin vocabulary gains no approval-shaped label', () => {
     expect([...FUNCTION_CALLER_ORIGINS]).toEqual(['human', 'agent'])
     for (const retired of ['approved', 'confirmed', 'granted', 'trusted']) {
       expect(FUNCTION_CALLER_ORIGINS as readonly string[]).not.toContain(retired)
@@ -189,10 +166,7 @@ describe('the origin axis after the gate (432-19)', () => {
   })
 })
 
-// 432-19, task 2: the historical reader over a WHOLE pre-432 turn, in file order, read twice. A
-// session an older build wrote interleaves the approval record with the kinds this build still
-// writes; every line reads back, and reading the same bytes again answers the same events.
-describe('C432-HISTORICAL-READER: a pre-432 turn reads back in order, and re-reading is stable', () => {
+describe('a historical turn reads back in order, and re-reading is stable', () => {
   const at = '2026-09-01T10:00:00.000Z'
   const turn = [
     { kind: 'user_message', turnId: 't_0007', at, text: 'write a test for the login page' },
@@ -202,7 +176,7 @@ describe('C432-HISTORICAL-READER: a pre-432 turn reads back in order, and re-rea
     { kind: 'turn_complete', turnId: 't_0007', at, status: 'completed' },
   ]
 
-  it('C432-HISTORICAL-READER: every line of the historical turn parses, in its written order', () => {
+  it('every line of the historical turn parses, in its written order', () => {
     const lines = turn.map((line) => JSON.parse(JSON.stringify(line)) as unknown)
     const read = lines.map((line) => guardChatSessionEvent(line, CURRENT_CHAT_SESSION_SCHEMA_VERSION))
     expect(read.map((event) => event.kind)).toEqual([

@@ -1,10 +1,4 @@
-// D-06 lockstep pins: the cassette zod mirror must track the schema Verdict
-// union in the same commit window as any schema change. Phase 373 Plan 01
-// extends the union to the closed eight classes (unknown/timeout, §A9) and
-// mints the required producer discriminator (D-03). CASSETTE_SCHEMA_VERSION
-// stays 2 — additive literals plus a required field inside the never-yet-written
-// optional label.rootCause object (RESEARCH Pitfall 6): every committed cassette
-// under demo/init/agent-qa-eval/ is rootCause-free and still parses.
+// The cassette zod mirror must change in the same commit as the schema `Verdict` union.
 import { describe, expect, it } from 'vitest'
 import { CASSETTE_SCHEMA_VERSION, guardCassette } from '../../index'
 
@@ -118,7 +112,7 @@ function wireRoundTrip(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown
 }
 
-describe('cassette verdict mirror (D-06 lockstep with schema Verdict)', () => {
+describe('cassette verdict mirror stays in lockstep with the schema Verdict', () => {
   it('parses a rootCause-free schemaVersion 2 document (pre-phase cassettes unaffected)', () => {
     const cassette = guardCassette(wireRoundTrip(validLeafDocument()))
 
@@ -140,7 +134,7 @@ describe('cassette verdict mirror (D-06 lockstep with schema Verdict)', () => {
     expect(cassette.granularity).toBe('leaf')
   })
 
-  it('rejects a verdict missing producer (required discriminator, D-03)', () => {
+  it('rejects a verdict missing producer (required discriminator)', () => {
     const { producer: _omit, ...withoutProducer } = verdictFixture()
     void _omit
 
@@ -152,6 +146,39 @@ describe('cassette verdict mirror (D-06 lockstep with schema Verdict)', () => {
   it('rejects a ninth class literal (closed union, §A9)', () => {
     expect(() =>
       guardCassette(wireRoundTrip(withRootCause(verdictFixture({ class: 'other' })))),
+    ).toThrow()
+  })
+})
+
+describe('cassette verdict mirror: a declared memoryOnPath', () => {
+  const memoryOnPath = [
+    { recordId: 'rec_checkout_button', trust: 'candidate' },
+    { recordId: 'rec_checkout_flow', trust: 'candidate' },
+  ]
+
+  it('carries a well-formed memoryOnPath through the parser unchanged', () => {
+    const cassette = guardCassette(wireRoundTrip(withRootCause(verdictFixture({ memoryOnPath }))))
+
+    if (cassette.granularity !== 'leaf') throw new Error('expected a leaf cassette')
+    expect(cassette.label.rootCause?.memoryOnPath).toEqual(memoryOnPath)
+  })
+
+  it('refuses a memoryOnPath outside the closed trust vocabulary or not an array', () => {
+    expect(() =>
+      guardCassette(
+        wireRoundTrip(
+          withRootCause(
+            verdictFixture({ memoryOnPath: [{ recordId: 'rec_checkout_button', trust: 'canary' }] }),
+          ),
+        ),
+      ),
+    ).toThrow()
+    expect(() =>
+      guardCassette(
+        wireRoundTrip(
+          withRootCause(verdictFixture({ memoryOnPath: { recordId: 'rec_checkout_button' } })),
+        ),
+      ),
     ).toThrow()
   })
 })

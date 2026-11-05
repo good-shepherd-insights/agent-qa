@@ -196,11 +196,7 @@ describe('matchProcedure kind-aware admission', () => {
     expect(match?.id).toBe('proc-open')
   })
 
-  /**
-   * G-381-4: the same predicate is the read face's admission wall (reader.ts
-   * findReadableBundle). Pinning it directly keeps the two faces from diverging again — every
-   * row below is exactly a row of the matcher's own admission table above.
-   */
+  // The read face inherits this predicate, so pinning it keeps the two faces from diverging.
   it('exports one admission predicate whose walls the read face inherits verbatim', () => {
     expect(admitsProcedure(candidate({ id: 'proc-admitted' }))).toBe(true)
     expect(admitsProcedure(candidate({ id: 'proc-admitted-active', status: 'active' }))).toBe(true)
@@ -245,7 +241,7 @@ describe('matchProcedure kind-aware admission', () => {
     ).toBeUndefined()
   })
 
-  it('admits an active-status procedure (impossible in M2 but total)', () => {
+  it('admits an active-status procedure (unreachable today, but the match is total)', () => {
     const match = matchProcedure(matchInput([candidate({ id: 'proc-active', status: 'active' })]))
 
     expect(match?.id).toBe('proc-active')
@@ -286,7 +282,7 @@ describe('matchProcedure anchor matching', () => {
     ).toBeUndefined()
   })
 
-  it('F-381-67-1 fixture invariant: current-target intent retains the same replay match', () => {
+  it('fixture invariant: current-target intent retains the same replay match', () => {
     const ladderAnchors: Anchor[] = [
       { t: 'flow', name: 't_posing-clock-inject-pill-adds-ima-rename-video-emu-fault' },
       { t: 'page', route: 'http://127.0.0.1:8931/form.html' },
@@ -521,8 +517,7 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
       secrets: [],
     }
 
-    // WR-01 mirrored truth-table pin: the shared helper reports the typed slot unfillable,
-    // and the matcher turns that exact verdict into a hint rather than a replay recommendation.
+    // The helper reports the typed slot unfillable, and the matcher turns that verdict into a hint.
     expect(procedureParameterFillability(payload, secretOnlyAvailability)).toEqual({
       fillable: false,
       unfillable: [name],
@@ -539,10 +534,7 @@ describe('matchProcedure tier x confirmations x fillability fold', () => {
     expect(secretOnly?.confidence).toBeCloseTo((variableBacked?.confidence ?? 0) * 0.5)
   })
 
-  // The verifier's PROC-01 counterexamples: a replay-earning procedure (full tier at the
-  // replay bar) whose only source for a typed required parameter is value-incapable must be
-  // downranked to hint — recommending a replay the binder deterministically aborts as
-  // parameter-unbound is the falsified behavior these rows keep dead.
+  // A replay-earning procedure whose required parameter has no value source drops to a hint.
   it.each([
     {
       caseName: 'number: a number-incapable source downranks earned replay to hint',
@@ -674,7 +666,6 @@ describe('servingReader getProcedure end-to-end', () => {
     const outcome = publishBundle({
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'get-procedure-test',
     }, {
       draft: makeProcedureBundleDraftFixture(),

@@ -1,14 +1,8 @@
-// The read-only bundle listing served by the /reader entry (Phase 384, D-06).
-//
-// `knowledge.bundles.list` had no reader-entry function before this module: bundle
-// enumeration and loading lived only behind the writer-gated main entry, so a surface that
-// wanted a listing had to reach through the write side. This composes the two existing read
-// faces — `enumerateBundleDirs` and `loadBundle`/`deriveBundleTrust` — into the schema-owned
-// `KnowledgeBundleSummary` projection and nothing else. No writer, no lease, no index.
+// Composes the read faces only: no writer, no lease, no index.
 
 import { relative } from 'node:path'
 
-import type { KnowledgeBundleSummary, TrustPriorTable } from '@vostride/agent-qa-schema'
+import type { KnowledgeBundleSummary } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle } from './bundle-read.js'
 import { enumerateBundleDirs } from './bundle-scan.js'
@@ -28,7 +22,7 @@ import { enumerateBundleDirs } from './bundle-scan.js'
  * Order is total and stable: product, then bundle directory name (which is the record id).
  * `enumerateBundleDirs` already sorts on exactly those two keys.
  */
-export function listBundles(knowledgeRoot: string, priors?: TrustPriorTable): KnowledgeBundleSummary[] {
+export function listBundles(knowledgeRoot: string): KnowledgeBundleSummary[] {
   const rows: KnowledgeBundleSummary[] = []
 
   for (const entry of enumerateBundleDirs(knowledgeRoot)) {
@@ -36,7 +30,7 @@ export function listBundles(knowledgeRoot: string, priors?: TrustPriorTable): Kn
     if (outcome.kind !== 'loaded') continue
 
     const { bundle } = outcome
-    const trust = deriveBundleTrust(bundle, priors)
+    const trust = deriveBundleTrust(bundle)
 
     rows.push({
       bundleId: bundle.manifest.id,

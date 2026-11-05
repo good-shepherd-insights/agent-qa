@@ -1,15 +1,4 @@
-// The one memoizing checkpointed effect (Phase 385 plan 05, D-10 / D-11 layer 2).
-//
-// D-10's claim is about CONTROL FLOW, not about caching, and the two are easy to confuse in a
-// test. "Called twice in one process, the callback ran once" proves memoization — which a
-// module-level Map would satisfy just as well. What D-10 actually promises is that a host
-// which died after the model answered resumes and gets the recorded bytes back with the
-// callback structurally unreachable. The in-process half of that is proven here by building a
-// SECOND engine over the same store with a model whose counter starts at zero, and by seeding
-// a checkpoint no code in this process ever authored. The half no in-process test can reach —
-// that a SIGKILLed process leaves those bytes on disk and a fresh OS process re-derives them —
-// is Plan 06's kill matrix; `countingModel` below is shaped so its invocation count can become
-// the artifact that crosses the process boundary there.
+// A second engine over the same store gets the recorded bytes with the callback unreachable.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
@@ -112,7 +101,7 @@ function recordingContext(options: {
   }
 }
 
-describe('recordLlmAuthorship: the checkpoint MISS (D-10)', () => {
+describe('recordLlmAuthorship: the checkpoint MISS', () => {
   it('authors exactly once and publishes the result BEFORE it returns', async () => {
     const model = countingModel('model-a')
     const probe = recordingContext({ model: model.capability })
@@ -170,8 +159,7 @@ describe('recordLlmAuthorship: the checkpoint MISS (D-10)', () => {
     expect(probe.recorded().size).toBe(0)
   })
 
-  // The phase-384 defect, written out: a memoizing primitive that returns a frozen constant
-  // passes every assertion about memoization there is.
+  // A memoizing primitive returning a frozen constant passes every memoization assertion.
   it('records bytes that VARY with what the author produced', async () => {
     const model = countingModel('model-a')
     const probe = recordingContext({ model: model.capability })
@@ -191,7 +179,7 @@ describe('recordLlmAuthorship: the checkpoint MISS (D-10)', () => {
   })
 })
 
-describe('recordLlmAuthorship: the RECORDED checkpoint (D-10)', () => {
+describe('recordLlmAuthorship: the RECORDED checkpoint', () => {
   it('returns the recorded bytes and never invokes the author at all', async () => {
     const model = countingModel('model-a')
     const probe = recordingContext({
@@ -295,7 +283,7 @@ function queueOver(
   })
 }
 
-describe('recordLlmAuthorship through the engine (D-10 across a host boundary)', () => {
+describe('recordLlmAuthorship through the engine (across a host boundary)', () => {
   it('resumes into a FRESH engine and a FRESH model without authoring again', async () => {
     const clock = steppingClock()
     const store = createFakeJobStore(clock)
@@ -323,9 +311,7 @@ describe('recordLlmAuthorship through the engine (D-10 across a host boundary)',
     expect(store.checkpoints()).toHaveLength(1)
     expect(store.rows()[0]).toMatchObject({ status: 'queued', claimed: false, attempts: 1 })
 
-    // Host two shares nothing with host one but the store: a new engine, a new registry, a new
-    // handler closure, and a model whose counter starts at zero. That last one is the whole
-    // point — a count that must STAY zero is the in-process shape of Plan 06's artifact.
+    // Host two shares only the store, with a model whose counter starts at zero and stays there.
     const second = countingModel('model-b')
     const hostTwo = queueOver(
       store,
@@ -440,13 +426,9 @@ describe('recordLlmAuthorship through the engine (D-10 across a host boundary)',
   })
 })
 
-// ---------------------------------------------------------------------------------------
-// D-11 layer 2, structurally: there is no ambient accessor, and there is nowhere to add one.
-// These are checked by `tsc --noEmit` (the package tsconfig includes `src`), so a plain vitest
-// run passes them vacuously and `pnpm typecheck` is where they bite.
-// ---------------------------------------------------------------------------------------
+// Checked by `tsc --noEmit`, so a plain vitest run passes them vacuously.
 
-describe('the model is reachable only as the author callback argument (D-11 layer 2)', () => {
+describe('the model is reachable only as the author callback argument', () => {
   it('gives a handler no model member at all', () => {
     expectTypeOf<keyof JobHandlerContext>().toEqualTypeOf<
       'job' | 'payload' | 'publishCheckpoint' | 'recordLlmAuthorship'
@@ -517,7 +499,7 @@ function scanWorkspaceSources(): ScannedFile[] {
   return files
 }
 
-describe('exactly one recordLlmAuthorship primitive exists (JOBQ-03 success criterion)', () => {
+describe('exactly one recordLlmAuthorship primitive exists', () => {
   const files = scanWorkspaceSources()
 
   // The scanner's own control. A walk that landed on the wrong directory would otherwise

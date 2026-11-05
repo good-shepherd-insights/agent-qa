@@ -38,7 +38,6 @@ const baseConfig = {
   use: { timeout: { step: "30s", test: "10m" }, browser: { headless: true } },
   registry: {
     llms: [{ name: "primary", provider: "openai-compatible", model: "gpt-4.1" }],
-    providers: { farm: { accessKey: "••••••••" } },
   },
 }
 
@@ -46,7 +45,10 @@ const headless: ConfigFieldRef = { segments: ["use", "browser", "headless"], tab
 const step: ConfigFieldRef = { segments: ["use", "timeout", "step"], tab: "execution" }
 const envFile: ConfigFieldRef = { segments: ["workspace", "envFile"], tab: "project" }
 const testTimeout: ConfigFieldRef = { segments: ["use", "timeout", "test"], tab: "execution" }
-const farmKey: ConfigFieldRef = { segments: ["registry", "providers", "farm", "accessKey"], tab: "targets" }
+const accessHeader: ConfigFieldRef = {
+  segments: ["registry", "llms", { name: "primary" }, "providerHeaders", "x-access"],
+  tab: "models",
+}
 const maxActions: ConfigFieldRef = { segments: ["use", "planner", "maxActions"], tab: "models" }
 const previousStepCount: ConfigFieldRef = { segments: ["use", "planner", "previousStepCount"], tab: "models" }
 
@@ -146,8 +148,7 @@ beforeEach(() => {
   localStorage.clear()
   seenStatuses = []
   vi.mocked(fetchConfig).mockResolvedValue(answer(baseConfig) as never)
-  // One fake server: the revision route answers whatever the last write landed, and each write
-  // names the revision it merged onto (429-37), so every cell here stays on the trusted path.
+  // The revision route answers the last write's revision, so every cell stays on the trusted path.
   let serverRevision = "rev-1"
   vi.mocked(fetchConfigRevision).mockImplementation(async () => ({ revision: serverRevision }))
   vi.mocked(applyConfigChanges).mockImplementation(async () => {
@@ -164,7 +165,7 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe("useConfigAutosave settle, write, drafts and retry (429-16 Task 1)", () => {
+describe("useConfigAutosave settle, write, drafts and retry", () => {
   it("ONE-WRITE-PER-SETTLE: a toggle writes at once, typing writes once after the pause, a blur writes at once", async () => {
     await mount()
     expect(hook!.load.kind).toBe("ready")
@@ -349,7 +350,7 @@ const editedOutside = {
   use: { timeout: { step: "2m", test: "20m" }, browser: { headless: false } },
 }
 
-describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Task 2)", () => {
+describe("useConfigAutosave outside edits, explicit actions and Undo", () => {
   it("OUTSIDE-EDIT-MERGES-QUIETLY: a revision the page did not write re-reads the config and shows the new value", async () => {
     await mount()
     vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-9" })
@@ -383,8 +384,7 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     expect(hook!.valueOf(headless)).toBe(false)
   })
 
-  // 429-37 CR-01: the outside edit lands at rev-9 and the page writes before any poll tick; the
-  // write's answer names rev-9 as its base, which the page never read.
+  // The outside edit lands at rev-9 before any poll, so the write's answer names a base never read.
   async function interleavedOutsideEdit() {
     await mount()
     const merged = {
@@ -432,8 +432,6 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
     expect(hook!.valueOf(previousStepCount)).toBe(77)
   })
 
-  // Deferred 429-28: an unset through a parent the config lacks leaves nothing to remove there,
-  // and the changes after it in the same set still show at once.
   it("MIRROR-CONTINUES-PAST-MISSING-PARENT: a landed set shows every change after an unset whose parent is absent", async () => {
     await mount()
     const workers: ConfigFieldRef = { segments: ["use", "workers"], tab: "execution" }
@@ -615,7 +613,7 @@ describe("useConfigAutosave outside edits, explicit actions and Undo (429-16 Tas
   })
 })
 
-describe("useConfigAutosave external drafts (429-25 Task 1)", () => {
+describe("useConfigAutosave external drafts", () => {
   it("EXTERNAL-DRAFT-NOT-SAVED: an open add row marks its tab and reads Not saved until it goes, writing nothing", async () => {
     await mount()
     expect(hook!.status.state).toBe("idle")
@@ -642,7 +640,7 @@ describe("useConfigAutosave external drafts (429-25 Task 1)", () => {
   })
 })
 
-describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)", () => {
+describe("useConfigAutosave landed-write mirror for set-if-absent, move and expect", () => {
   async function landExplicit(changes: ConfigChange[]) {
     let landed = false
     await act(async () => {
@@ -674,7 +672,7 @@ describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)"
               name: "proxy",
               provider: "openai-compatible",
               model: "gpt-4.1",
-              providerHeaders: { "X-Org": "[secret:PW_441]" },
+              providerHeaders: { "X-Org": "[secret:PW_KEY]" },
             },
           ],
         },
@@ -692,7 +690,7 @@ describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)"
     expect(
       await landExplicit([{ op: "move", from: [...headers, "X-Org"], path: [...headers, "X-Team"] }]),
     ).toBe(true)
-    expect(hook!.valueOf(proxyHeader("X-Team"))).toBe("[secret:PW_441]")
+    expect(hook!.valueOf(proxyHeader("X-Team"))).toBe("[secret:PW_KEY]")
     expect(hook!.valueOf(proxyHeader("X-Org"))).toBeUndefined()
     expect(JSON.stringify(loadedConfig())).not.toContain("X-Org")
 
@@ -711,8 +709,7 @@ describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)"
     expect(fetchConfig).toHaveBeenCalledTimes(1)
   })
 
-  // 429-42: completing use.browser.headless over a root use.headless keeps the owner's value, not
-  // the default, so the mirror cannot know what landed and must read it.
+  // Completion keeps the owner's root `use.headless` value, so the mirror cannot know what landed.
   it("MIRROR-LEGACY-HEADLESS-REREADS: set-if-absent of browser headless over a root use.headless re-reads the file", async () => {
     const legacy = { ...baseConfig, use: { timeout: baseConfig.use.timeout, headless: false } }
     const moved = { ...baseConfig, use: { timeout: baseConfig.use.timeout, browser: { headless: false } } }
@@ -728,39 +725,39 @@ describe("useConfigAutosave landed-write mirror for the new ops (429-45 Task 2)"
   })
 })
 
-describe("useConfigAutosave computed writes (429-46 Task 1 · CR-01)", () => {
-  const judgesPath = ["eval", "judges"]
-  const judges: ConfigFieldRef = { segments: judgesPath, tab: "advanced" }
+describe("useConfigAutosave computed writes", () => {
+  const patternsPath = ["workspace", "testMatch"]
+  const patterns: ConfigFieldRef = { segments: patternsPath, tab: "project" }
 
-  function withJudges(list: string[]) {
-    return { ...baseConfig, eval: { judges: list } }
+  function withPatterns(list: string[]) {
+    return { ...baseConfig, workspace: { ...baseConfig.workspace, testMatch: list } }
   }
 
   function fieldChanged() {
-    return new ApiError(409, "Conflict", { error: "field_changed", path: judgesPath })
+    return new ApiError(409, "Conflict", { error: "field_changed", path: patternsPath })
   }
 
-  /** Adds one judge to whatever list the config it is handed holds, stating that list first. */
-  function addJudge(name: string) {
+  /** Adds one pattern to whatever list the config it is handed holds, stating that list first. */
+  function addPattern(name: string) {
     return vi.fn((config: Record<string, unknown>): ConfigChange[] => {
-      const block = config.eval as { judges?: string[] } | undefined
-      const read = block?.judges ?? []
+      const block = config.workspace as { testMatch?: string[] } | undefined
+      const read = block?.testMatch ?? []
       return [
-        { op: "expect", path: judgesPath, value: read },
-        { op: "set", path: judgesPath, value: [...read, name] },
+        { op: "expect", path: patternsPath, value: read },
+        { op: "set", path: patternsPath, value: [...read, name] },
       ]
     })
   }
 
   it("COMPUTED-WRITE-MERGES-OUTSIDE-EDIT: a field_changed refusal re-reads, recomputes and lands on the file's list", async () => {
-    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b"])) as never)
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withPatterns(["a", "b"])) as never)
     await mount()
     const first = deferred<never>()
     vi.mocked(applyConfigChanges).mockReturnValueOnce(first.promise)
     vi.mocked(applyConfigChanges).mockResolvedValueOnce({ baseRevision: "rev-5", revision: "rev-6" })
-    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b", "d"]), "rev-5") as never)
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withPatterns(["a", "b", "d"]), "rev-5") as never)
     vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-6" })
-    const compute = addJudge("c")
+    const compute = addPattern("c")
 
     let landing!: Promise<boolean>
     await act(async () => {
@@ -776,16 +773,16 @@ describe("useConfigAutosave computed writes (429-46 Task 1 · CR-01)", () => {
     expect(await landing).toBe(true)
     expect(writeCalls()).toEqual([
       [
-        { op: "expect", path: judgesPath, value: ["a", "b"] },
-        { op: "set", path: judgesPath, value: ["a", "b", "c"] },
+        { op: "expect", path: patternsPath, value: ["a", "b"] },
+        { op: "set", path: patternsPath, value: ["a", "b", "c"] },
       ],
       [
-        { op: "expect", path: judgesPath, value: ["a", "b", "d"] },
-        { op: "set", path: judgesPath, value: ["a", "b", "d", "c"] },
+        { op: "expect", path: patternsPath, value: ["a", "b", "d"] },
+        { op: "set", path: patternsPath, value: ["a", "b", "d", "c"] },
       ],
     ])
     expect(fetchConfig).toHaveBeenCalledTimes(2)
-    expect(hook!.valueOf(judges)).toEqual(["a", "b", "d", "c"])
+    expect(hook!.valueOf(patterns)).toEqual(["a", "b", "d", "c"])
     expect(hook!.status.state).toBe("saved")
     expect(seenStatuses).toContain("saving")
     expect(seenStatuses).not.toContain("failed")
@@ -805,11 +802,11 @@ describe("useConfigAutosave computed writes (429-46 Task 1 · CR-01)", () => {
   })
 
   it("COMPUTED-WRITE-GIVES-UP-HONESTLY: a second field_changed reads Couldn't save, and Retry recomputes from a fresh read", async () => {
-    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b"])) as never)
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withPatterns(["a", "b"])) as never)
     await mount()
     vi.mocked(applyConfigChanges).mockRejectedValueOnce(fieldChanged()).mockRejectedValueOnce(fieldChanged())
-    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b", "d"]), "rev-5") as never)
-    const compute = addJudge("c")
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withPatterns(["a", "b", "d"]), "rev-5") as never)
+    const compute = addPattern("c")
 
     let landed = true
     await act(async () => {
@@ -821,9 +818,9 @@ describe("useConfigAutosave computed writes (429-46 Task 1 · CR-01)", () => {
     expect(writeCalls()).toHaveLength(2)
     expect(hook!.status.state).toBe("failed")
     expect(hook!.status.message).toBe(FIELD_CHANGED_TEXT)
-    expect(hook!.valueOf(judges)).toEqual(["a", "b", "d"])
+    expect(hook!.valueOf(patterns)).toEqual(["a", "b", "d"])
 
-    vi.mocked(fetchConfig).mockResolvedValue(answer(withJudges(["a", "b", "d", "e"]), "rev-7") as never)
+    vi.mocked(fetchConfig).mockResolvedValue(answer(withPatterns(["a", "b", "d", "e"]), "rev-7") as never)
     vi.mocked(fetchConfigRevision).mockResolvedValue({ revision: "rev-8" })
     vi.mocked(applyConfigChanges).mockResolvedValueOnce({ baseRevision: "rev-7", revision: "rev-8" })
     const readsBefore = vi.mocked(fetchConfig).mock.calls.length
@@ -833,17 +830,17 @@ describe("useConfigAutosave computed writes (429-46 Task 1 · CR-01)", () => {
 
     expect(fetchConfig).toHaveBeenCalledTimes(readsBefore + 1)
     expect(compute).toHaveBeenCalledTimes(1)
-    expect(compute.mock.calls[0]![0]).toEqual(withJudges(["a", "b", "d", "e"]))
+    expect(compute.mock.calls[0]![0]).toEqual(withPatterns(["a", "b", "d", "e"]))
     expect(writeCalls()).toHaveLength(3)
     expect(writeCalls()[2]).toEqual([
-      { op: "expect", path: judgesPath, value: ["a", "b", "d", "e"] },
-      { op: "set", path: judgesPath, value: ["a", "b", "d", "e", "c"] },
+      { op: "expect", path: patternsPath, value: ["a", "b", "d", "e"] },
+      { op: "set", path: patternsPath, value: ["a", "b", "d", "e", "c"] },
     ])
     expect(hook!.status.state).toBe("saved")
   })
 })
 
-describe("useConfigAutosave a Retry with nothing to send (429-53 · WR-06)", () => {
+describe("useConfigAutosave a Retry with nothing to send", () => {
   function writeFailed() {
     return new ApiError(500, "Internal Server Error", {
       error: "write_failed",
@@ -912,10 +909,9 @@ describe("useConfigAutosave a Retry with nothing to send (429-53 · WR-06)", () 
   })
 })
 
-// 441-40 (D-29): the editor has no masks of its own. A field the server showed through the declared
-// mask is never sent unless the person edits it, and a landed write is mirrored as written.
-describe("C441-CONFIG", () => {
-  const MARKER = "[secret:PW_441]"
+// A field shown through the declared mask is sent only when the person edits it.
+describe("useConfigAutosave and masked secret fields", () => {
+  const MARKER = "[secret:PW_KEY]"
   const buildTag: ConfigFieldRef = { segments: ["use", "buildTag"], tab: "execution" }
   const workers: ConfigFieldRef = { segments: ["use", "workers"], tab: "execution" }
 
@@ -951,12 +947,12 @@ describe("C441-CONFIG", () => {
     await mount()
     let landed = false
     await act(async () => {
-      landed = await hook!.runExplicit([{ op: "set", path: [...farmKey.segments], value: "AKIA-NEW-1" }])
+      landed = await hook!.runExplicit([{ op: "set", path: [...accessHeader.segments], value: "AKIA-NEW-1" }])
     })
     await flush()
 
     expect(landed).toBe(true)
-    expect(hook!.valueOf(farmKey)).toBe("AKIA-NEW-1")
+    expect(hook!.valueOf(accessHeader)).toBe("AKIA-NEW-1")
     expect(fetchConfig).toHaveBeenCalledTimes(1)
   })
 })

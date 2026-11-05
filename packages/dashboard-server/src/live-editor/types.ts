@@ -13,7 +13,7 @@ import type { PlannerLimits } from '@vostride/agent-qa-schema'
 
 export type LiveSessionLLMConfig = DashboardLLMConfig & {
   vision?: { screenshotSize?: number; effectiveResolution?: number }
-  /** The model entry's own `vision` flag, when the config sets it (439 D-19). */
+  /** The model entry's own `vision` flag, when the config sets it. */
   modelVision?: boolean
 }
 
@@ -22,9 +22,7 @@ export interface LiveDraftMetadata {
   testContext?: string
 }
 
-// EntityRef — passed to SessionManager.createSession to enable the per-entity
-// counter assignment. Ephemeral; counters live on the SessionManager map.
-// [Phase 181.1 D-27, D-30]
+// Lets `SessionManager.createSession` assign the per-entity counter.
 export interface EntityRef {
   type: 'suite' | 'test'
   id: string
@@ -126,8 +124,7 @@ export interface LiveTestStepPayload extends LiveTestExecutionPayload {
   stepInstruction: string
 }
 
-// Result emitted from LiveSession.executeTestCommand and forwarded on the
-// test-complete WS message. [Phase 181.1 D-09, D-25]
+// Emitted from `LiveSession.executeTestCommand` and forwarded on the test-complete message.
 export interface LiveTestResultPayload {
   status: 'passed' | 'failed' | 'cancelled'
   duration: number
@@ -195,23 +192,12 @@ export interface SessionState {
   terminalError: string | null
 }
 
-/**
- * What the create door found the current config declares about the session's target (432 D-18).
- *
- * It can only add a refusal: `initialize` refuses any name here unless the config it reads itself
- * opts in. There is deliberately no opt-in field, so nothing a caller passes can allow production.
- */
-export interface LiveProductionFinding {
-  readonly productionTargetNames: readonly string[]
-}
-
 export interface LiveSessionConfig {
   platform: 'web' | 'android' | 'ios'
   targetName?: string
-  production?: LiveProductionFinding
-  /** 436 D-03: resolved at the create door from the project config and the edited entity. */
+  // Resolved at the create door from the project config and the edited entity.
   plannerLimits?: PlannerLimits
-  /** 436 D-03: per executed test, project then suite then the test's own `use`. */
+  // Per executed test: project, then suite, then the test's own `use`.
   plannerLimitsForTest?: (testId: string) => Promise<PlannerLimits>
   llmConfig: LiveSessionLLMConfig
   authFetch?: typeof globalThis.fetch
@@ -224,6 +210,8 @@ export interface LiveSessionConfig {
   hookRegistryError?: string
   url?: string
   headless?: boolean
+  /** The resolved `use.timeout.navigation`; unset leaves the web adapter's default. */
+  navigationTimeoutMs?: number
   useDeviceName?: string
   appState?: 'preserve' | 'reset'
   bundleId?: string
@@ -243,16 +231,8 @@ export interface LiveSessionConfig {
   }
 }
 
-/**
- * The close code the control socket uses for a session this process does not hold (428 P5), so the
- * page can say the session ended instead of "Disconnected". The dashboard UI spells the same number;
- * Plan 23 pins the two equal.
- */
+// The close code for a session this process does not hold; the dashboard UI spells it too.
 export const LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE = 4404
 
-/**
- * The close code for a control socket a newer one has replaced (428 WR-01). The session is still
- * held; this socket no longer drives it, so the page must not reconnect and take it back. The
- * dashboard UI spells the same number.
- */
+// A replaced socket's close code; the page must not reconnect, and the UI spells the same number.
 export const LIVE_EDITOR_SUPERSEDED_CLOSE_CODE = 4409

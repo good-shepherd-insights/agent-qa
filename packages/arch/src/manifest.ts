@@ -18,7 +18,6 @@ import { AGENT_QA_RUNNER_LOCAL_OWNERSHIP_CONTRACT } from '../../runner-local/src
 import { AGENT_QA_SAFETY_OWNERSHIP_CONTRACT } from '../../safety/src/ownership-contract.js'
 import { AGENT_QA_SAFETY_LOCAL_OWNERSHIP_CONTRACT } from '../../safety-local/src/ownership-contract.js'
 import { AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT } from '../../schema/src/ownership-contract.js'
-import { AGENT_QA_TOOLS_LOCAL_OWNERSHIP_CONTRACT } from '../../tools-local/src/ownership-contract.js'
 import { AGENT_QA_WEB_OWNERSHIP_CONTRACT } from '../../web/src/ownership-contract.js'
 import { PACKAGE_CLASS_RULES } from './contract-types.js'
 import type { OwnershipContract } from './contract-types.js'
@@ -42,13 +41,9 @@ export const ARCH_MANIFEST = {
     AGENT_QA_ANDROID_OWNERSHIP_CONTRACT,
     AGENT_QA_IOS_OWNERSHIP_CONTRACT,
     AGENT_QA_MCP_OWNERSHIP_CONTRACT,
-    // 2026-08-17 (Phase 398 plan 03, D-17 · ANLY-01): the bounded analytics home. Registered here
-    // rather than merely existing, because an unregistered contract is a contract nothing checks —
-    // `validate:arch` ranges THIS array, so a package absent from it has its dep set, its class
-    // rules and its cycle position taken on trust.
+    // The arch lint ranges this array, so an unregistered contract is one nothing checks.
     AGENT_QA_ANALYTICS_OWNERSHIP_CONTRACT,
     AGENT_QA_CLI_OWNERSHIP_CONTRACT,
-    AGENT_QA_TOOLS_LOCAL_OWNERSHIP_CONTRACT,
     AGENT_QA_DASHBOARD_OWNERSHIP_CONTRACT,
     AGENT_QA_DASHBOARD_UI_OWNERSHIP_CONTRACT,
     AGENT_QA_EVAL_OWNERSHIP_CONTRACT,

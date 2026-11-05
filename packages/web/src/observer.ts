@@ -1,7 +1,6 @@
 import type { Page } from 'playwright-core'
-import type { ScreenState, ElementState, ElementLabels } from '@vostride/agent-qa-schema'
-import { buildScreenState, type InterimNode } from '@vostride/agent-qa-runner'
-import { extractDom } from './dom-extractor.js'
+import type { ElementState, ElementLabels } from '@vostride/agent-qa-schema'
+import type { InterimNode } from '@vostride/agent-qa-runner'
 
 const INTERACTIVE_ROLES = new Set([
   'button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'listbox',
@@ -13,10 +12,17 @@ const INTERACTIVE_ROLES = new Set([
   'grid', 'menu', 'menubar', 'tree', 'treegrid',
 ])
 
-// 439 D-16: 'dialog' and 'alertdialog' are kept so an open dialog is on the screen the judge reads.
+// `dialog` and `alertdialog` are kept so an open dialog is on the screen the judge reads.
 const CONTENT_ROLES = new Set([
   'heading', 'cell', 'listitem', 'article', 'region', 'navigation',
   'progressbar', 'tabpanel', 'row', 'dialog', 'alertdialog',
+])
+
+// Playwright prints these with an empty name when every child that names them is its own line.
+const NAME_FROM_CONTENT_ROLES = new Set([
+  'heading', 'button', 'link', 'cell', 'gridcell', 'row', 'columnheader', 'rowheader', 'tab',
+  'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'treeitem', 'checkbox', 'radio',
+  'switch', 'tooltip',
 ])
 
 const LIMIT_KEYS = ['valuenow', 'valuemin', 'valuemax'] as const
@@ -26,9 +32,7 @@ const LINE_PATTERN = /^(\s*-\s*)(\w+)(?:\s+"([^"]*)")?(.*)$/
 // colons or other characters that are ambiguous in its snapshot format.
 // e.g. - 'button "Spoken Language: Any"'
 const QUOTED_LINE_PATTERN = /^(\s*-\s*)'(\w+)(?:\s+"([^"]*)")?(.*)'\s*$/
-// Playwright's ai-mode snapshot annotates each element with a native reference,
-// e.g. `- button "Login" [ref=e5]`. These refs are adapter-PRIVATE handles for
-// aria-ref locators; they are NEVER copied into the node identity (D-03).
+// Native refs are adapter-private handles for aria-ref locators, never node identity.
 const REF_ANNOTATION = /\[ref=([A-Za-z0-9_-]+)\]/
 const BRACKET_ATTR = /\[(\w+)(?:=([^\]]*))?\]/g
 // The inline text after a line's bracket annotations: `- paragraph [ref=e7]: 7 Elm Street`.
@@ -54,31 +58,53 @@ function appendText(node: InterimNode, text: string | undefined): void {
   node.text = node.text === undefined ? tidy : `${node.text} ${tidy}`
 }
 
-/**
- * Parse a Playwright ARIA snapshot into platform-neutral runner interim nodes.
- *
- * Emits nodes in document order with role/name/attributes and a `parentIndex`
- * derived from indentation depth: the nearest kept entry among the line's true
- * ancestors; a dropped line still bounds its subtree (438 gap round, CR-02). A line
- * whose role is not kept never becomes a node: its quoted name and inline text fold
- * into the nearest kept entry among the line's true ancestors (438 D-02, the row
- * text), and a kept content line's own inline text becomes its `text`. Playwright
- * ai-mode `[ref=eN]` annotations are captured into an index-aligned `nativeRefs`
- * array (adapter-private native handles) and are never written into the node. Accepts both ai-mode (annotated) and default-mode
- * (unannotated) snapshot text.
- *
- * No ref minting and no tree rendering happen here — the shared runner builder
- * owns both (D-01/D-02/D-03).
- */
+interface SnapshotLine {
+  depth: number
+  // Into the FILTERED nodes array, only on kept lines.
+  index?: number
+  role: string
+  name?: string
+  // The names and text of the line's content, in document order.
+  parts: string[]
+  inChildFrame: boolean
+}
+
+function tidyText(text: string | undefined): string | undefined {
+  return text?.replace(/\s+/g, ' ').trim() || undefined
+}
+
+// An unnamed line passes its content up to its parent; a child frame's content stays inside it.
+function closeLine(line: SnapshotLine, nodes: InterimNode[], parent: SnapshotLine | undefined): void {
+  const node = line.index === undefined ? undefined : nodes[line.index]
+  if (node && !line.name && NAME_FROM_CONTENT_ROLES.has(line.role) && line.parts.length > 0) {
+    line.name = line.parts.join(' ')
+    node.name = line.name
+  }
+  if (parent === undefined) return
+  if (line.name) parent.parts.push(line.name)
+  else if (line.role !== 'iframe') parent.parts.push(...line.parts)
+}
+
+function closeLinesFrom(ancestors: SnapshotLine[], nodes: InterimNode[], depth: number): void {
+  let top = ancestors.at(-1)
+  while (top !== undefined && top.depth >= depth) {
+    ancestors.pop()
+    closeLine(top, nodes, ancestors.at(-1))
+    top = ancestors.at(-1)
+  }
+}
+
+// A dropped line still bounds its subtree; its name and text fold into the nearest kept ancestor.
 export function parseAriaSnapshot(ariaTree: string): {
   nodes: InterimNode[]
   nativeRefs: (string | undefined)[]
+  inChildFrame: boolean[]
 } {
   const lines = ariaTree.split('\n')
   const nodes: InterimNode[] = []
   const nativeRefs: (string | undefined)[] = []
-  // Every matched line's depth; `index` (into the FILTERED nodes array) only on kept lines.
-  const ancestors: Array<{ depth: number; index?: number }> = []
+  const inChildFrame: boolean[] = []
+  const ancestors: SnapshotLine[] = []
 
   for (const line of lines) {
     const match = line.match(LINE_PATTERN) || line.match(QUOTED_LINE_PATTERN)
@@ -91,9 +117,7 @@ export function parseAriaSnapshot(ariaTree: string): {
     const leadingSpaces = line.length - line.trimStart().length
     const depth = Math.floor(leadingSpaces / 2)
 
-    while (ancestors.length > 0 && ancestors[ancestors.length - 1].depth >= depth) {
-      ancestors.pop()
-    }
+    closeLinesFrom(ancestors, nodes, depth)
     let keptAncestor: number | undefined
     for (let k = ancestors.length - 1; k >= 0; k--) {
       if (ancestors[k].index !== undefined) {
@@ -102,12 +126,26 @@ export function parseAriaSnapshot(ariaTree: string): {
       }
     }
 
+    // Playwright prints a child frame's content beneath its iframe line.
+    const parentLine = ancestors.at(-1)
+    const snapshotLine: SnapshotLine = {
+      depth,
+      role: roleLower,
+      parts: [],
+      inChildFrame:
+        parentLine !== undefined && (parentLine.inChildFrame || parentLine.role === 'iframe'),
+    }
+    const ownName = tidyText(name)
+    if (ownName) snapshotLine.name = ownName
+    const ownText = tidyText(inlineText(suffix))
+    if (ownText) snapshotLine.parts.push(ownText)
+
     if (!INTERACTIVE_ROLES.has(roleLower) && !CONTENT_ROLES.has(roleLower)) {
       if (keptAncestor !== undefined) {
         appendText(nodes[keptAncestor], name)
         appendText(nodes[keptAncestor], inlineText(suffix))
       }
-      ancestors.push({ depth })
+      ancestors.push(snapshotLine)
       continue
     }
 
@@ -140,36 +178,16 @@ export function parseAriaSnapshot(ariaTree: string): {
     const index = nodes.length
     nodes.push(node)
     nativeRefs.push(nativeRef)
-    ancestors.push({ depth, index })
+    inChildFrame.push(snapshotLine.inChildFrame)
+    snapshotLine.index = index
+    ancestors.push(snapshotLine)
   }
 
-  return { nodes, nativeRefs }
+  closeLinesFrom(ancestors, nodes, 0)
+
+  return { nodes, nativeRefs, inChildFrame }
 }
 
-// Browser-context functions use (globalThis as any) to access document
-// because the Node tsconfig has no DOM lib — these functions serialize and run in browser
-function hideAgentQaElements() {
-  const doc = (globalThis as any).document
-  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
-    el.style.display = 'none'
-    el.setAttribute('aria-hidden', 'true')
-  })
-}
-
-function restoreAgentQaElements() {
-  const doc = (globalThis as any).document
-  doc.querySelectorAll('[data-agent-qa-internal]').forEach((el: any) => {
-    el.style.display = ''
-    el.removeAttribute('aria-hidden')
-  })
-}
-
-/**
- * Capture exact web scroll state (Pitfall #2 / D-10). Web scroll is precise:
- * real `window.scrollX/Y` offsets and `document.documentElement.scrollWidth/Height`
- * content size — never hardcoded zeros. Best-effort: on failure it degrades to the
- * Playwright viewport size and zero scroll rather than throwing.
- */
 export async function captureWebScroll(page: Page): Promise<{
   viewport: { width: number; height: number }
   scroll: { offsetX: number; offsetY: number; contentWidth: number; contentHeight: number }
@@ -211,18 +229,7 @@ export async function captureWebScroll(page: Page): Promise<{
   }
 }
 
-/**
- * Resolve exact per-element geometry, state, and labels through Playwright
- * `aria-ref=` locators (the engine's own ground truth) instead of the removed
- * in-page inferred-role heuristic. The ai-mode native refs stay adapter-private
- * handles; builder-minted refs remain the only public identity (D-03).
- *
- * Enrichment mutates the interim nodes in place and is best-effort: a node whose
- * ref fails to resolve (or has no ref) keeps `bounds` absent — the builder's
- * geometry rule turns that into no refMap entry, never zero-geometry fabrication
- * (D-08, Pitfall #3). Enrichment failure degrades to unenriched nodes; it never
- * throws out of observation.
- */
+// An unresolved node keeps no `bounds`, so it gets no `refMap` entry rather than zero geometry.
 export async function enrichWebNodes(
   page: Page,
   nodes: InterimNode[],
@@ -290,9 +297,7 @@ export async function enrichWebNodes(
 
     if (!Array.isArray(raw)) return
 
-    // Coerce untrusted evaluate results to expected primitives before writing them
-    // into the interim nodes (T-352-05): numbers for geometry, strings for labels;
-    // malformed entries degrade to absent fields.
+    // Evaluate results are untrusted, so malformed entries become absent fields.
     for (let k = 0; k < targetIndices.length; k++) {
       const info = raw[k]
       if (!info || typeof info !== 'object') continue
@@ -318,7 +323,7 @@ export async function enrichWebNodes(
       if (title) labels.title = title
       if (Object.keys(labels).length > 0) node.labels = labels
 
-      // 439 D-16: a control's reported value and limits; attributes are neither hashed nor rendered.
+      // A control's value and limits go in `attributes`, which are neither hashed nor rendered.
       const limits: Record<string, string> = {}
       for (const key of LIMIT_KEYS) {
         const value = coerceString((info as any)[key])
@@ -350,63 +355,6 @@ function coerceBounds(
 
 function coerceString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
-}
-
-export async function observePage(
-  page: Page,
-  options?: { filterSelector?: string; extractDom?: boolean },
-): Promise<ScreenState> {
-  const locator = options?.filterSelector
-    ? page.locator(options.filterSelector)
-    : page.locator(':root')
-
-  // Hide framework-injected elements from ARIA snapshot
-  await page.evaluate(hideAgentQaElements)
-
-  let ariaTree: string
-  try {
-    ariaTree = await locator.ariaSnapshot()
-  } finally {
-    // Restore framework-injected elements (always, even if snapshot fails)
-    await page.evaluate(restoreAgentQaElements)
-  }
-
-  const timestamp = Date.now()
-  const url = page.url()
-
-  // Web scroll + viewport are EXACT (D-10, Pitfall #2).
-  const { viewport: capturedViewport, scroll } = await captureWebScroll(page)
-
-  let domContext: string | undefined
-  if (options?.extractDom) {
-    try {
-      domContext = await extractDom(page)
-    } catch {
-      // DOM extraction is best-effort
-    }
-  }
-
-  const { nodes, nativeRefs } = ariaTree
-    ? parseAriaSnapshot(ariaTree)
-    : { nodes: [] as InterimNode[], nativeRefs: [] as (string | undefined)[] }
-
-  // Exact per-element enrichment via aria-ref locators (honest-absence fallback).
-  if (nodes.length > 0) {
-    await enrichWebNodes(page, nodes, nativeRefs)
-  }
-
-  const { state } = buildScreenState({
-    platform: 'web',
-    nodes,
-    viewport: capturedViewport,
-    scroll,
-    coordSpace: 'viewport',
-    timestamp,
-    url,
-    ...(domContext ? { domContext } : {}),
-  })
-
-  return state
 }
 
 /** Coerce an untrusted value to a finite number, falling back when malformed. */

@@ -1,6 +1,4 @@
-// LOOP-02 / 436 D-10: the loop is bounded ONLY by the per-step action limit, the user
-// timeouts/abort, and the verdict — there is no attempt counter (Pitfall 5's regression
-// lock). An always-failing adapter must terminate cleanly at the action limit.
+// The loop ends at its action limit, a timeout, an abort or a verdict; there is no attempt counter.
 import { describe, it, expect } from 'vitest'
 import type { LoopPorts } from '../ports.js'
 import type { Planner } from '../types.js'
@@ -12,7 +10,7 @@ function ports(overrides: Partial<LoopPorts> & Pick<LoopPorts, 'adapter' | 'plan
   return overrides
 }
 
-describe('loop bounds (LOOP-02 / 436 D-10)', () => {
+describe('loop bounds', () => {
   it('an always-failing adapter terminates at the action limit with a failed result and no counter', async () => {
     let planCalls = 0
     const planner: Planner = {

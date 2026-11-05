@@ -61,7 +61,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
 
   process.nextTick(() => {
     if (options.body) {
@@ -191,8 +191,8 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
-describe('PATCH /api/config (429-01)', () => {
-  it('SC3-FIELD-MERGE: an outside edit and a human autosave both survive, comments kept', async () => {
+describe('PATCH /api/config', () => {
+  it('FIELD-MERGE: an outside edit and a human autosave both survive, comments kept', async () => {
     const configPath = await useConfigWorkspace()
     const outside = (await readFile(configPath, 'utf-8')).replace('headless: false', 'headless: true')
     await writeFile(configPath, outside, 'utf-8')
@@ -272,8 +272,7 @@ describe('PATCH /api/config (429-01)', () => {
     })
   })
 
-  // 429-37 CR-01: the answer names the bytes the write merged onto, so a page can tell its write
-  // absorbed an outside edit it never read.
+  // The answer names the bytes the write merged onto, so a page sees it absorbed an outside edit.
   it('BASE-REVISION-ANSWERED: the answer carries the sha256 of the bytes the write merged onto', async () => {
     const configPath = await useConfigWorkspace()
     const outside = Buffer.from(baseConfig.replace('headless: false', 'headless: true'), 'utf-8')
@@ -297,7 +296,7 @@ describe('PATCH /api/config (429-01)', () => {
   })
 })
 
-describe('PATCH /api/config concurrency, idempotency and file identity (429-05)', () => {
+describe('PATCH /api/config concurrency, idempotency and file identity', () => {
   it('TWO-SETTLES-BOTH-LAND: two PATCH requests started together both reach the file', async () => {
     const configPath = await useConfigWorkspace()
 
@@ -331,7 +330,7 @@ describe('PATCH /api/config concurrency, idempotency and file identity (429-05)'
     expect(Buffer.compare(await readFile(configPath), afterFirst)).toBe(0)
     const [one, two] = [first, second].map((response) => JSON.parse(response.body) as { revision: string; baseRevision: string })
     expect(two!.revision).toBe(one!.revision)
-    // 429-37: the second write merged onto exactly what the first one wrote.
+    // The second write merged onto exactly what the first one wrote.
     expect(two!.baseRevision).toBe(one!.revision)
   })
 
@@ -365,7 +364,7 @@ describe('PATCH /api/config concurrency, idempotency and file identity (429-05)'
   })
 })
 
-// 429-42 CR-01: completion and snapshot-computed writes are decided by the file at merge time.
+// Completion and snapshot-computed writes are decided by the file at merge time.
 function withoutLines(text: string, lines: readonly string[]): string {
   return text.split('\n').filter((line) => !lines.includes(line)).join('\n')
 }
@@ -373,7 +372,7 @@ function withoutLines(text: string, lines: readonly string[]): string {
 const TIMEOUT_LINES = ['  timeout:', '    step: 30s', '    test: 10m', '    navigation: 10s']
 const BROWSER_LINES = ['  browser:', '    name: chromium', '    headless: false']
 
-const judgeRegistry = [
+const modelRegistry = [
   'registry:',
   '  llms:',
   ...['a', 'b', 'c', 'd'].flatMap((name) => [`    - name: ${name}`, '      provider: gemini', '      model: gemini-2.5-flash']),
@@ -385,20 +384,21 @@ const judgeRegistry = [
   '        X-Org: org-secret-value',
 ].join('\n')
 
-function judgeConfig(judges: readonly string[]): string {
-  return baseConfig.replace('registry: {}', judgeRegistry)
-    + ['eval:', '  judges:', ...judges.map((judge) => `    - ${judge}`), ''].join('\n')
+function matchConfig(patterns: readonly string[]): string {
+  return baseConfig
+    .replace('registry: {}', modelRegistry)
+    .replace('  testMatch:\n    - tests/**/*.yaml', ['  testMatch:', ...patterns.map((pattern) => `    - ${pattern}`)].join('\n'))
 }
 
-const judgeWrite = {
+const matchWrite = {
   changes: [
-    { op: 'expect', path: ['eval', 'judges'], value: ['a', 'b'] },
-    { op: 'expect', path: ['eval', 'judge'], value: null },
-    { op: 'set', path: ['eval', 'judges'], value: ['a', 'b', 'c'] },
+    { op: 'expect', path: ['workspace', 'testMatch'], value: ['a/*.yaml', 'b/*.yaml'] },
+    { op: 'expect', path: ['use', 'llm'], value: null },
+    { op: 'set', path: ['workspace', 'testMatch'], value: ['a/*.yaml', 'b/*.yaml', 'c/*.yaml'] },
   ],
 }
 
-describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
+describe('PATCH /api/config set-if-absent and expect', () => {
   it('SET-IF-ABSENT-KEEPS-OUTSIDE-VALUE: completion never replaces a sibling already in the file', async () => {
     const configPath = await useConfigWorkspace()
     const outside = baseConfig.replace('  mobile:', '  planner:\n    maxActions: 99\n    maxPlanningTurns: 99\n    previousStepCount: 77\n  mobile:')
@@ -470,31 +470,31 @@ describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
   })
 
   it('EXPECT-MATCH-WRITES: a write whose expects match the file lands', async () => {
-    const configPath = await useConfigWorkspace(judgeConfig(['a', 'b']))
+    const configPath = await useConfigWorkspace(matchConfig(['a/*.yaml', 'b/*.yaml']))
 
-    const response = await patchConfig(judgeWrite)
+    const response = await patchConfig(matchWrite)
 
     expect(response.status, response.body).toBe(200)
-    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { eval: Record<string, unknown> }
-    expect(parsed.eval).toEqual({ judges: ['a', 'b', 'c'] })
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { workspace: Record<string, unknown> }
+    expect(parsed.workspace.testMatch).toEqual(['a/*.yaml', 'b/*.yaml', 'c/*.yaml'])
   })
 
   it('EXPECT-MISMATCH-REFUSED: a field changed outside refuses the whole set 409 and keeps the bytes', async () => {
-    const configPath = await useConfigWorkspace(judgeConfig(['a', 'b', 'd']))
+    const configPath = await useConfigWorkspace(matchConfig(['a/*.yaml', 'b/*.yaml', 'd/*.yaml']))
     const before = await readFile(configPath)
     mockRename.mockClear()
 
-    const response = await patchConfig(judgeWrite)
+    const response = await patchConfig(matchWrite)
 
     expect(response.status).toBe(409)
-    expect(JSON.parse(response.body)).toEqual({ error: 'field_changed', path: ['eval', 'judges'] })
+    expect(JSON.parse(response.body)).toEqual({ error: 'field_changed', path: ['workspace', 'testMatch'] })
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
     expect(mockRename).not.toHaveBeenCalled()
   })
 
-  // 441-21 (D-29): no path is classed secret, so an expect on a header is compared like any field.
+  // No path is classed secret, so an expect on a header is compared like any field.
   it('EXPECT-ON-HEADER-COMPARED: an expect on a header value refuses a wrong guess 409 like any field', async () => {
-    const configPath = await useConfigWorkspace(judgeConfig(['a', 'b']))
+    const configPath = await useConfigWorkspace(matchConfig(['a/*.yaml', 'b/*.yaml']))
     const before = await readFile(configPath)
     const headerPath = ['registry', 'llms', { name: 'proxy' }, 'providerHeaders', 'X-Org']
 
@@ -505,7 +505,7 @@ describe('PATCH /api/config set-if-absent and expect (429-42)', () => {
   })
 })
 
-// 429-44 WR-01: the page's write door changes only what the page renders a field for.
+// The page's write door changes only what the page renders a field for.
 const policyConfig = baseConfig.replace('registry: {}', [
   'registry:',
   '  llms:',
@@ -520,9 +520,8 @@ const policyConfig = baseConfig.replace('registry: {}', [
   '',
 ].join('\n')
 
-describe('PATCH /api/config path policy (429-44)', () => {
-  // 432-22 (D-18/D-22): `safety` left the schema and the denied roots; its paths are still refused,
-  // now as paths the published schema does not describe.
+describe('PATCH /api/config path policy', () => {
+  // `safety` is outside the published schema, so its paths are refused as undescribed paths.
   it('WRITE-DOOR-REFUSES-DENIED-ROOTS: plugins and the retired safety root are refused 422 before anything is read or written', async () => {
     const configPath = await useConfigWorkspace(policyConfig)
     const before = await readFile(configPath)
@@ -563,15 +562,12 @@ describe('PATCH /api/config path policy (429-44)', () => {
     expect(mockRename).not.toHaveBeenCalled()
   })
 
-  // 432-22: re-spelled. The stdio grant switch and the MCP token append were two of the security-
-  // relevant writes; both keys are deleted, so the claim is carried by the retained ones and by the
-  // new production opt-in.
-  it('WRITE-DOOR-ADMITS-PAGE-WRITES: fields the page renders, security-relevant ones included, still land', async () => {
+  // A provider header and the MCP port stand for the security-relevant writes the page makes.
+  it('fields the page renders, security-relevant ones included, still land', async () => {
     const configPath = await useConfigWorkspace(policyConfig)
     const admitted = [
-      { op: 'set', path: ['allowProduction'], value: true },
       { op: 'set', path: ['registry', 'llms', { name: 'gpt' }, 'providerHeaders', 'X-Org'], value: 'org-1' },
-      { op: 'set', path: ['services', 'mcp', 'host'], value: '127.0.0.1' },
+      { op: 'set', path: ['services', 'mcp', 'port'], value: 3471 },
     ]
 
     for (const change of admitted) {
@@ -579,16 +575,14 @@ describe('PATCH /api/config path policy (429-44)', () => {
       expect([change, response.status], response.body).toEqual([change, 200])
     }
     const parsed = parseYaml(await readFile(configPath, 'utf-8')) as {
-      allowProduction: unknown
       services: { mcp: unknown }
       registry: { llms: Array<{ providerHeaders?: unknown }> }
     }
-    expect(parsed.allowProduction).toBe(true)
-    expect(parsed.services.mcp).toEqual({ host: '127.0.0.1' })
+    expect(parsed.services.mcp).toEqual({ port: 3471 })
     expect(parsed.registry.llms[0]!.providerHeaders).toEqual({ 'X-Org': 'org-1' })
   })
 
-  it('C432-CONFIG-WRITE-POLICY: allowProduction is an ordinary write with Undo, and every retired key path is refused before a write', async () => {
+  it('a page-owned boolean is an ordinary write with Undo, and every retired key path is refused before a write', async () => {
     const configPath = await useConfigWorkspace(policyConfig)
     const before = await readFile(configPath)
     mockRename.mockClear()
@@ -608,67 +602,72 @@ describe('PATCH /api/config path policy (429-44)', () => {
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
     expect(mockRename).not.toHaveBeenCalled()
 
-    // A cross-site caller is refused before the body is read, for the new field as for any other.
+    // A cross-site caller is refused before the body is read.
     const crossSite = await patchConfig(
-      { changes: [{ op: 'set', path: ['allowProduction'], value: true }] },
+      { changes: [{ op: 'set', path: ['services', 'recording', 'enabled'], value: false }] },
       { origin: 'https://evil.example' },
     )
     expect(crossSite.status).toBe(403)
     expect(JSON.parse(crossSite.body)).toEqual({ error: 'cross_site_refused' })
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
 
-    // The plain root boolean lands through the same field merge, and only a boolean validates.
-    const wrong = await patchConfig({ changes: [{ op: 'set', path: ['allowProduction'], value: 'yes' }] })
+    // The boolean lands through the field merge, and only a boolean validates.
+    const recording = ['services', 'recording', 'enabled']
+    const wrong = await patchConfig({ changes: [{ op: 'set', path: recording, value: 'yes' }] })
     expect(wrong.status).toBe(422)
     expect(JSON.parse(wrong.body).error).toBe('validation_failed')
-    const landed = await patchConfig({ changes: [{ op: 'set', path: ['allowProduction'], value: true }], undoable: true })
+    const landed = await patchConfig({ changes: [{ op: 'set', path: recording, value: false }], undoable: true })
     expect(landed.status, landed.body).toBe(200)
     const answer = JSON.parse(landed.body) as { undo?: { token: string } }
     expect(answer.undo?.token).toEqual(expect.any(String))
-    expect((parseYaml(await readFile(configPath, 'utf-8')) as { allowProduction?: unknown }).allowProduction).toBe(true)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { services?: { recording?: unknown } }
+    expect(parsed.services?.recording).toEqual({ enabled: false })
   })
 })
 
-// 432-22 (D-18): the production opt-in under the field merge's retry and concurrency rules, the
-// same rules every other page-owned leaf follows.
-describe('PATCH /api/config allowProduction under retry and concurrency (432-22)', () => {
-  it('C432-CONFIG-WRITE-POLICY: a stale expect on allowProduction is refused field_changed, and a fresh one lands', async () => {
-    const configPath = await useConfigWorkspace(baseConfig.replace('registry: {}', 'registry: {}\nallowProduction: false'))
-    const outside = (await readFile(configPath, 'utf-8')).replace('allowProduction: false', 'allowProduction: true')
+// A page-owned boolean under the field merge's retry and concurrency rules.
+describe('PATCH /api/config page-owned fields under retry and concurrency', () => {
+  it('a stale expect on a field is refused field_changed, and a fresh one lands', async () => {
+    const recording = ['services', 'recording', 'enabled']
+    const configPath = await useConfigWorkspace(
+      baseConfig.replace('services: {}', 'services:\n  recording:\n    enabled: false'),
+    )
+    const outside = (await readFile(configPath, 'utf-8')).replace('    enabled: false', '    enabled: true')
     await writeFile(configPath, outside, 'utf-8')
     const before = await readFile(configPath)
 
     const stale = await patchConfig({ changes: [
-      { op: 'expect', path: ['allowProduction'], value: false },
-      { op: 'set', path: ['allowProduction'], value: false },
+      { op: 'expect', path: recording, value: false },
+      { op: 'set', path: recording, value: false },
     ] })
     expect(stale.status).toBe(409)
     expect(JSON.parse(stale.body)).toMatchObject({ error: 'field_changed' })
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
 
     const fresh = await patchConfig({ changes: [
-      { op: 'expect', path: ['allowProduction'], value: true },
-      { op: 'set', path: ['allowProduction'], value: false },
+      { op: 'expect', path: recording, value: true },
+      { op: 'set', path: recording, value: false },
     ] })
     expect(fresh.status, fresh.body).toBe(200)
-    expect((parseYaml(await readFile(configPath, 'utf-8')) as { allowProduction?: unknown }).allowProduction).toBe(false)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { services?: { recording?: unknown } }
+    expect(parsed.services?.recording).toEqual({ enabled: false })
   })
 
-  it('C432-CONFIG-WRITE-POLICY: concurrent writes of allowProduction and an MCP field both land, each field merged', async () => {
+  it('concurrent writes of a recording field and an MCP field both land, each field merged', async () => {
     const configPath = await useConfigWorkspace()
     const answers = await Promise.all([
-      patchConfig({ changes: [{ op: 'set', path: ['allowProduction'], value: true }] }),
+      patchConfig({ changes: [{ op: 'set', path: ['services', 'recording', 'enabled'], value: false }] }),
       patchConfig({ changes: [{ op: 'set', path: ['services', 'mcp', 'port'], value: 4100 }] }),
     ])
     expect(answers.map(answer => answer.status)).toEqual([200, 200])
-    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { allowProduction?: unknown; services?: { mcp?: unknown } }
-    expect(parsed.allowProduction).toBe(true)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { services?: { mcp?: unknown; recording?: unknown } }
+    expect(parsed.services?.recording).toEqual({ enabled: false })
     expect(parsed.services?.mcp).toEqual({ port: 4100 })
     expect(await readFile(configPath, 'utf-8')).toContain('# owner notes: keep the step timeout generous on CI')
   })
 })
 
-// 429-52 (deferred 429-24, server half): a header rename re-keys the value inside the server.
+// A header rename re-keys the value inside the server.
 const HEADER_SECRET = 'sk-header-secret-1'
 const headerConfig = baseConfig.replace('registry: {}', [
   'registry:',
@@ -682,7 +681,7 @@ const headerConfig = baseConfig.replace('registry: {}', [
 ].join('\n'))
 const HEADERS = ['registry', 'llms', { name: 'proxy' }, 'providerHeaders']
 
-describe('PATCH /api/config move (429-52)', () => {
+describe('PATCH /api/config move', () => {
   it('MOVE-KEEPS-VALUE-SERVER-SIDE: a header rename lands with its value and comment, and the answer never carries the value', async () => {
     const configPath = await useConfigWorkspace(headerConfig)
 
@@ -700,19 +699,29 @@ describe('PATCH /api/config move (429-52)', () => {
     expect(text).not.toContain('X-Org')
   })
 
-  // 441-21 (D-29): a move is no longer refused by the masking class of either end.
-  it('MOVE-SUBTREE-ACROSS-PATHS-LANDS: a block moved between paths the map once classed differently lands whole', async () => {
-    const withProvider = headerConfig.replace('registry:\n', 'registry:\n  providers:\n    farm:\n      platform: android\n      transport: local\n')
-    const configPath = await useConfigWorkspace(withProvider)
+  it('MOVE-SUBTREE-ACROSS-PATHS-LANDS: a block moved to another entry lands whole and leaves its old path', async () => {
+    const withRelay = headerConfig.replace('  llms:\n', [
+      '  llms:',
+      '    - name: relay',
+      '      provider: anthropic-compatible',
+      '      model: claude-relay',
+      '      baseURL: https://relay.example.test/v1',
+      '',
+    ].join('\n'))
+    const configPath = await useConfigWorkspace(withRelay)
 
     const response = await patchConfig({
-      changes: [{ op: 'move', from: ['registry', 'providers', 'farm'], path: ['registry', 'devices', 'farm'] }],
+      changes: [{ op: 'move', from: HEADERS, path: ['registry', 'llms', { name: 'relay' }, 'providerHeaders'] }],
     })
 
     expect(response.status, response.body).toBe(200)
-    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { registry: Record<string, unknown> }
-    expect(parsed.registry.devices).toEqual({ farm: { platform: 'android', transport: 'local' } })
-    expect(parsed.registry).not.toHaveProperty('providers')
+    expect(response.body).not.toContain(HEADER_SECRET)
+    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as {
+      registry: { llms: Array<{ name: string; providerHeaders?: unknown }> }
+    }
+    const byName = Object.fromEntries(parsed.registry.llms.map((llm) => [llm.name, llm]))
+    expect(byName.relay!.providerHeaders).toEqual({ 'X-Org': HEADER_SECRET })
+    expect(byName.proxy).not.toHaveProperty('providerHeaders')
   })
 
   it('MOVE-FROM-MISSING-REFUSED: a move from a header that is not there is refused 422 and nothing is written', async () => {
@@ -773,7 +782,7 @@ function classBody(source: string): string {
   return source.slice(start, end)
 }
 
-describe('one write path to the config file (429-32)', () => {
+describe('one write path to the config file', () => {
   it('LEGACY-WRITE-ROUTES-GONE: a PUT to each retired per-section route is an unknown route and the file is untouched', async () => {
     const configPath = await useConfigWorkspace()
     const before = await readFile(configPath)
@@ -800,9 +809,7 @@ describe('one write path to the config file (429-32)', () => {
     expect((await patchConfig(setStep('45s'))).status).toBe(200)
   })
 
-  // 2026-09-30, 432-07 D-05: replaceDocument, the direct writer's whole-file publication over the
-  // digest it was built from, is a file method. It stays inside the class like the others. 441-49
-  // (D-29) deleted the reveal read, leaving five.
+  // `replaceDocument`, the direct writer's whole-file publication, is a file method in the class.
   it('ONE-WRITE-PATH: the manager exposes only its five file methods, and nothing outside the class touches the file', async () => {
     const source = await readFile(CONFIG_MANAGER_SOURCE, 'utf-8')
     const body = classBody(source)

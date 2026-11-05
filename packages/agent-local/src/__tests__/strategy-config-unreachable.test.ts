@@ -1,32 +1,6 @@
-// D-16 / T-392-35: NO PRODUCTION KNOB CAN DISABLE THE DETERMINISTIC OVERRIDE.
-//
-// The mutation proof next door shows what switching the reconciliation strategy COSTS. This file
-// shows that nothing outside a composition can do it. Both halves are needed and neither implies
-// the other: a differential that measured the cost of removing a safety property would be a
-// horror story rather than a proof if a configuration file could remove it too.
-//
-// TWO INDEPENDENT REACH SURFACES, because a knob has two ways to exist.
-//
-//   1. A CONFIGURATION KEY. Answered by walking the PARSED zod shapes this system publishes and
-//      asking whether any key names the concept — never by grepping file text, which the rationale
-//      comments in `compose-local-agent.ts` and `ports.ts` would defeat in the first line they
-//      mention the word. Plan 07's composed e2e walks four hand-named config schemas; this walk is
-//      DISCOVERED instead — every exported zod schema in `@vostride/agent-qa-schema`, found by
-//      inspecting the package's own exports — so a config surface added later joins the walk
-//      without anyone remembering to add it. That is the difference between a pin and a list.
-//
-//   2. AN ENVIRONMENT VARIABLE. The 391 lesson, applied here: an ambient env lever is a knob that
-//      no schema mentions and every process inherits. It is answered against the BUILT dist rather
-//      than the source, because the dist is what actually runs, and every occurrence is adjudicated
-//      BY NAME — a zero-hit result and a list of adjudicated non-strategy hits both pass, an
-//      unadjudicated strategy-shaped hit fails.
-//
-// EVERY WALK CARRIES A NON-VACUITY GUARD AND A POSITIVE CONTROL. Without them, "there is no knob"
-// and "the detector is broken" are the same green, which is the failure this whole plan exists to
-// make impossible.
+// No config key or env variable can disable the deterministic override; each walk has a control.
 
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import * as schemaExports from '@vostride/agent-qa-schema'
@@ -153,24 +127,6 @@ function strategyKnobKeys(keys: readonly string[]): string[] {
   })
 }
 
-// 2026-09-07, 417 D-13: this boolean DISCLOSES that the operator configured a
-// judge-family override which Gate 1 refused to honor. It cannot configure chat
-// reconciliation. Adjudicate its five published receipt paths, never its spelling
-// globally; any new config/alias/wrapper path still reds, even with the same schema object.
-const RECEIPT_DISCLOSURE_PATHS = [
-  'gate1ArmSchema.judge.overrideConfigured',
-  'GateReceiptSchema.judge.overrideConfigured',
-  'GateLineSchema.judge.overrideConfigured',
-  'KnowledgeGatesListResultSchema.lines[].judge.overrideConfigured',
-  'KnowledgeGatesListResultSchema.standing[].judge.overrideConfigured',
-] as const
-
-function isReceiptDisclosure(site: SchemaKeySite): boolean {
-  return site.key === 'overrideConfigured'
-    && (RECEIPT_DISCLOSURE_PATHS as readonly string[]).includes(site.path)
-    && site.owner === schemaExports.gate1ArmSchema.shape.judge.unwrap()
-}
-
 function strategyKnobSites(sites: readonly SchemaKeySite[]): SchemaKeySite[] {
   return sites.filter(site => strategyKnobKeys([site.key]).length > 0)
 }
@@ -199,24 +155,18 @@ function readDist(path: string): string {
   return readFileSync(path, 'utf8')
 }
 
-describe('D-16: the reconciliation strategy is reachable from no configuration key', () => {
+describe('the reconciliation strategy is reachable from no configuration key', () => {
   it('walks a real, non-empty, DISCOVERED schema-key inventory', () => {
     const keys = [...new Set(collectSchemaKeySites().map(site => site.key))]
     // A walker that silently returned nothing would pass the assertion below forever.
     expect(keys.length).toBeGreaterThan(100)
-    // And it must actually be reaching the project configuration, not only the DTOs: these three
-    // keys exist in the config schemas plan 07 named by hand, so their presence proves the
-    // discovered walk covers at least the surface the hand-written one did.
-    for (const key of ['browser', 'device', 'timeouts']) expect(keys).toContain(key)
+    // And it must reach the config schemas, not only the DTOs: one key each from the browser,
+    // device and platform-base schemas the hand-written walk in the compound e2e names.
+    for (const key of ['headless', 'match', 'timeouts']) expect(keys).toContain(key)
   })
 
-  it('no published schema exposes a strategy switch beyond the adjudicated receipt disclosure', () => {
-    const hits = strategyKnobSites(collectSchemaKeySites())
-    // Exact-set non-vacuity: a missing export or broken walk cannot silently erase
-    // a disposition, and a sixth occurrence is not covered by a count-only allowance.
-    expect(hits.filter(isReceiptDisclosure).map(site => site.path).sort())
-      .toEqual([...RECEIPT_DISCLOSURE_PATHS].sort())
-    expect(hits.filter(site => !isReceiptDisclosure(site))).toEqual([])
+  it('no published schema exposes a strategy switch', () => {
+    expect(strategyKnobSites(collectSchemaKeySites())).toEqual([])
   })
 
   it('POSITIVE CONTROL: the detector flags such a key when one exists', () => {
@@ -226,29 +176,9 @@ describe('D-16: the reconciliation strategy is reachable from no configuration k
     expect(strategyKnobKeys(['reconciliationMode'])).toEqual(['reconciliationMode'])
     expect(strategyKnobKeys(['overrideConfigured'])).toEqual(['overrideConfigured'])
   })
-
-  it('POSITIVE CONTROL: the same disclosure spelling and schema still fail on a configuration path', () => {
-    // Structural fixtures use the same definition interface as the real schemas;
-    // no package dependency is added solely to construct the injected config.
-    const config = { def: { type: 'object', shape: {
-      judge: schemaExports.gate1ArmSchema.shape.judge,
-      receipt: schemaExports.GateReceiptSchema,
-    } } }
-    for (const exports of [
-      { GateReceiptSchema: schemaExports.GateReceiptSchema, InjectedConfigSchema: config },
-      { InjectedConfigSchema: config, GateReceiptSchema: schemaExports.GateReceiptSchema },
-    ]) {
-      const hits = strategyKnobSites(collectSchemaKeySites(exports))
-      expect(hits.filter(site => !isReceiptDisclosure(site)).map(site => site.path).sort())
-        .toEqual([
-          'InjectedConfigSchema.judge.overrideConfigured',
-          'InjectedConfigSchema.receipt.judge.overrideConfigured',
-        ])
-    }
-  })
 })
 
-describe('D-16: and from no environment variable either', () => {
+describe('and from no environment variable either', () => {
   it('reads a real, freshly built artifact rather than a missing one', () => {
     const agent = readDist(AGENT_DIST)
     // The non-vacuity guard: a dist that did not contain the chat subtree would report zero env
@@ -267,9 +197,7 @@ describe('D-16: and from no environment variable either', () => {
   })
 
   it('the built composition artifact reads NO environment variable either', () => {
-    // `agent-local` is where the strategy option is CONSUMED, so it is the second place an ambient
-    // lever could live — a composition that read one would make the seam config-reachable without
-    // any schema ever naming it (the 391 lesson).
+    // A composition reading an ambient lever would make the seam config-reachable with no schema.
     expect(envReads(readDist(AGENT_LOCAL_DIST))).toEqual([])
   })
 
@@ -283,10 +211,8 @@ describe('D-16: and from no environment variable either', () => {
 })
 
 describe('the seam exists, and exists only as a composition option', () => {
-  it('is named in the composition input and in no configuration document', () => {
-    // The other direction of the same claim, and it is what stops the two assertions above from
-    // being satisfied by the seam having quietly disappeared: `chatReconcile` IS reachable — by a
-    // caller holding the code that composes a host, which is the only reach D-16 permits.
+  it('is named in the composition input', () => {
+    // The positive control: `chatReconcile` is reachable from the composition input.
     const composition = readFileSync(
       fileURLToPath(new URL('../composition/compose-local-agent.ts', import.meta.url)),
       'utf8',
@@ -294,9 +220,5 @@ describe('the seam exists, and exists only as a composition option', () => {
     expect(composition).toContain('readonly chatReconcile?: ReconcileStrategy')
     // And a project configuration cannot name it. The config `agent-qa init` writes is checked
     // in the CLI's init-config-schema.test.ts; this package does not depend on the CLI.
-    const root = fileURLToPath(new URL('../../../../', import.meta.url))
-    const path = join(root, 'test-fixtures/eval-workspace/agent-qa.config.yaml')
-    expect(existsSync(path), path).toBe(true)
-    expect(readFileSync(path, 'utf8').toLowerCase()).not.toContain('reconcil')
   })
 })

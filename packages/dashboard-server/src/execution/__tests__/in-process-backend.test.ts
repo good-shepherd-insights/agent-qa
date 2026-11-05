@@ -1,29 +1,4 @@
-// THE IN-PROCESS BACKEND'S BRIDGE (Phase 401 plan 07 — D-04/D-09/D-12, INVK-01).
-//
-// WHAT IS UNDER TEST is the half of INVK-01 that lives in `packages/dashboard-server`: the bridge
-// from a started run's `RunSession` bus to the two things the host actually consumes — the settle
-// event it reconciles the db row from, and the active-run list. The run-starter is injected here
-// (it is the CLI's, and this package may not name it), so what these cells range is the bridge, the
-// lifecycle mapping and the completion vocabulary.
-//
-// 2026-08-27 (405-07, D-19) — THE PARITY ANCHOR AND ITS CELLS ARE GONE, AND THAT IS THE RIGHT
-// OUTCOME RATHER THAN A LOSS. The anchor was a golden captured from the SHIPPED spawn-and-scrape
-// wire before that class was deleted, and five cells compared this bridge's per-run replay buffer
-// against it. Its whole job was to make one producer swap measurable while the consumer surface
-// held still — and it did that job. That consumer surface is now deleted with the route it fed, so
-// the golden anchors a shape nothing produces and nothing reads. Keeping the cells would have kept
-// a buffer alive purely so its own test could pass.
-//
-// WHAT REPLACES THE SUBSCRIPTION'S COVERAGE. Replay-then-live is still load-bearing — it is how the
-// status mapping and `testName` see a run whose first envelopes preceded the attach — so it is
-// measured through the two facts that survive: the settled status, and the member name on the
-// active list.
-//
-// THE FAKE SESSION MODELS THE BUS'S REFUSAL, DELIBERATELY. `RunEventBus.subscribe` resolves
-// `fromSeq ?? 1` and raises `ReplayIncompleteError` for any `fromSeq` below the earliest seq it can
-// serve — and since seq numbering starts at 1, `subscribe(0, …)` is unserveable on EVERY run. A fake
-// that accepted 0 would let this suite pass while every dashboard run threw at the attach. So the
-// fake throws exactly where the bus throws, which is what makes the attach seq a measured fact.
+// The fake throws for `subscribe(0)` exactly as the bus does, so the attach seq is measured.
 
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -72,8 +47,7 @@ class FakeRunSession implements RunSession {
     for (const handler of [...this.live]) handler(envelope)
   }
 
-  // 403 D-05: no browser behind this fake, so no stream and no frame subscription — the honest
-  // absent declaration rather than a stub that would make a viewer wait for frames forever.
+  // No browser behind this fake, so no stream and no frame subscription.
   subscribeFrames(): undefined { return undefined }
 
   streamCapabilityOf(): { kind: 'none' } { return { kind: 'none' } }
@@ -115,36 +89,7 @@ interface Drive {
   session?: FakeRunSession
 }
 
-/**
- * The neutral sentence the gate composes for a browser reader (`buildDecisionNeutralReason`).
- *
- * Written out here rather than imported: `packages/dashboard-server` may not import `safety`, so a
- * cell that reached for the producer would be measuring a dependency `validate:arch` forbids. What
- * is load-bearing is the SHAPE — a decision said without naming any surface's affordance — and the
- * absence of `--trust-session`, which is asserted directly.
- */
-const NEUTRAL_DENIAL_PROSE =
-  'fail-closed (local-headless): declared tier: mutating-shared: this action needs an approval this context has not established'
-
-/**
- * A gate denial as it ARRIVES here: an object carrying `reason`, `remedies` and `neutralReason`.
- *
- * Deliberately not an instance of anything this package can name — see the structural-read cell.
- */
-// 2026-10-01 (432-19, D-15): a run denial carries no remedy list any more, and the canonical message
-// it used to carry beside the neutral one named `--trust-session`. The fixture keeps that LEGACY
-// message (an older daemon could still send one) and a stale remedy entry whose kind is assembled,
-// never spelled, so the cells below still prove neither reaches the settle.
-const buildDenial = (): unknown => Object.assign(
-  new Error(
-    'Run denied: fail-closed: ask in local-headless without trust (declared tier: mutating-shared): '
-    + 're-run locally to confirm interactively or opt in with --trust-session',
-  ),
-  { remedies: [{ kind: ['answer', 'confirm'].join('-') }], neutralReason: NEUTRAL_DENIAL_PROSE },
-)
-
-// 2026-10-17 (444-06, D-11, D-43): a cancelled run's status is its own verdict, so a cancelled fake
-// session publishes one.
+// A cancelled run's status is its own verdict, so a cancelled fake session publishes one.
 const cancelledVerdict = (runId: string, seq = 1): RunEventEnvelope => ({
   seq,
   ts: '2026-10-17T00:00:00.000Z',
@@ -252,7 +197,7 @@ async function driveOpenRun(input: {
   return { backend, session: session!, release: () => release?.(), settled }
 }
 
-describe('the bus subscription answers the active list (405-07, D-19 · RESEARCH D7)', () => {
+describe('the bus subscription answers the active list', () => {
   it('`testName` COMES OFF THE SESSION, not off a buffer of its frames', async () => {
     const { backend, release } = await driveOpenRun({
       runId: PARITY_RUN_ID,
@@ -263,9 +208,7 @@ describe('the bus subscription answers the active list (405-07, D-19 · RESEARCH
     const active = backend.getActiveExecutions()
     expect(active).toHaveLength(1)
     expect(active[0]!.runId).toBe(PARITY_RUN_ID)
-    // The Rule-1 fix carried forward: the retiring class looked for a `test-start` event the frozen
-    // §2.2 vocabulary never emits, so this field was `undefined` for every run. The envelope type
-    // is `testStarted` and the name is its payload's.
+    // The envelope type is `testStarted`, and the test name is its payload's.
     expect(active[0]!.testName).toBe('the parity test')
     release()
   })
@@ -310,15 +253,13 @@ describe('the bus subscription answers the active list (405-07, D-19 · RESEARCH
   })
 
   it('THE RUN-LEVEL STATUS IS LAST-WRITER-WINS OVER THE WHOLE SUBSCRIPTION', async () => {
-    // The fixture says `testFinished: failed` at seq 6 and `verdict: passed` at seq 7: a member's
-    // finish does not move the handle (444-02, D-43), the run-level outcome does. Six of the eight
-    // are published before the attach, so this ranges the replay too.
+    // A member's `failed` finish leaves the handle alone; the run's `passed` verdict moves it.
     const drive = await driveOneRun({ preAttach: 6 })
     expect(drive.settled[0]!.status).toBe('completed')
   })
 })
 
-describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12)', () => {
+describe('native lifecycle mapping — cancel, timeout, completion', () => {
   it('KILL ABORTS THE SESSION — no signal, no grace timer, no process group', async () => {
     const drive: Drive = { settled: [] }
     let session: FakeRunSession | undefined
@@ -396,21 +337,19 @@ describe('native lifecycle mapping — cancel, timeout, completion (401-07, D-12
   })
 })
 
-describe('a refusal is not silence — the completion vocabulary (401-07, D-04/INVK-01)', () => {
-  it('A DENIAL — the starter rejects with NO session, and the reason reaches the consumers', async () => {
+describe('a refusal is not silence — the completion vocabulary', () => {
+  it('A REFUSAL — the starter rejects with NO session, and the reason reaches the consumers', async () => {
     const drive = await driveOneRun({
-      runId: 'denied-run',
+      runId: 'refused-run',
       startSession: false,
-      rejectWith: new Error('Run denied: fail-closed: ask in local-headless without trust (declared tier: mutating-shared)'),
+      rejectWith: new Error('Unrecognised run request field: scope'),
     })
 
     expect(drive.settled[0]!.status).toBe('failed')
-    // The gate's own words, carried to the surface a person reads — where the retiring wire lost
-    // them in a child's stderr.
-    expect(drive.settled[0]!.details.reason).toContain('mutating-shared')
-    expect(drive.settled[0]!.details.output.join('\n')).toContain('Run denied')
-    // NO RUN HAPPENED, and the settle says so by name rather than by the absence of frames between
-    // two synthetic bookends — which is what this used to read (405-07, D-19).
+    // The refusal's own words, carried to the surface a person reads.
+    expect(drive.settled[0]!.details.reason).toContain('Unrecognised run request field')
+    expect(drive.settled[0]!.details.output.join('\n')).toContain('scope')
+    // No run happened, and the settle says so by name.
     expect(drive.settled[0]!.details.refusedBeforeStart).toBe(true)
     expect(drive.session).toBeUndefined()
   })
@@ -425,50 +364,27 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
     expect(drive.session).toBeDefined()
   })
 
-  // ---- 401-18 (G-401-16): A REFUSAL TRAVELS AS A FACT, NOT AS PROSE THE READER RE-DERIVES ------
-  //
-  // `settle` already KNOWS the difference — `handle.session === undefined` is the run that never
-  // began — and threw the knowledge away, leaving the host's reconciliation to guess from a regex
-  // over the message. These cells pin the two facts that now ride the settle instead.
-
   it('A REFUSAL IS MARKED AS ONE — the host is not left to infer it from the message', async () => {
     const drive = await driveOneRun({
       runId: 'marked-refusal',
       startSession: false,
-      rejectWith: buildDenial(),
+      rejectWith: Object.assign(new Error('Unrecognised run request field: scope'), { remedies: [] }),
     })
     expect(drive.settled[0]!.details.refusedBeforeStart).toBe(true)
-  })
-
-  it('THE NEUTRAL FORM IS READ STRUCTURALLY OFF THE REJECTION — no class check, no regex', async () => {
-    // The carrier is a PLAIN object with the field on it, never a `RunDeniedError`: this package may
-    // not import the package that mints one, so a cell that needed the class would be measuring a
-    // dependency the architecture forbids. That is exactly `dashboardRemediesOf`'s precedent.
-    const drive = await driveOneRun({
-      runId: 'neutral-refusal',
-      startSession: false,
-      rejectWith: buildDenial(),
-    })
-    expect(drive.settled[0]!.details.neutralReason).toBe(NEUTRAL_DENIAL_PROSE)
-    expect(drive.settled[0]!.details.neutralReason).not.toContain('--trust-session')
-    // C432-PLAIN-REFUSAL (432-09 D-15): the rejection still carries a remedy list, and the settle
-    // is plain facts only — no remedy member is projected or carried at all.
+    // The settle is plain facts only: nothing else the rejection carries is projected.
     expect(drive.settled[0]!.details).not.toHaveProperty('remedies')
     expect(Object.keys(drive.settled[0]!.details).sort())
-      .toEqual(['neutralReason', 'output', 'reason', 'refusedBeforeStart'])
+      .toEqual(['output', 'reason', 'refusedBeforeStart'])
   })
 
-  it('A REFUSAL WITH NO NEUTRAL FORM IS STILL A REFUSAL — the marker does not depend on the prose', async () => {
-    // The other members of the refusal family: an unrecognised request field, an input error, the
-    // host asked to start a run before it was composed. None of them is a gate decision, so none
-    // carries a neutral form — and every one of them still never started a run.
+  it('AN INPUT ERROR IS A REFUSAL, AND ITS OWN MESSAGE IS THE REASON', async () => {
+    // An input error never started a run, so it is marked a refusal like any other.
     const drive = await driveOneRun({
       runId: 'field-refusal',
       startSession: false,
       rejectWith: new Error('The dashboard run door does not honour --headed.'),
     })
     expect(drive.settled[0]!.details.refusedBeforeStart).toBe(true)
-    expect(drive.settled[0]!.details.neutralReason).toBeUndefined()
     expect(drive.settled[0]!.details.reason).toContain('does not honour --headed')
     expect(drive.settled[0]!.details).not.toHaveProperty('remedies')
   })
@@ -479,7 +395,6 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
       rejectWith: new Error('agent-qa browser support is not installed for Chromium'),
     })
     expect(drive.settled[0]!.details.refusedBeforeStart).toBeUndefined()
-    expect(drive.settled[0]!.details.neutralReason).toBeUndefined()
   })
 
   it('A RUN THAT ENDS WITH NO TERMINAL ENVELOPE IS `failed`, NOT `completed`', async () => {
@@ -493,7 +408,7 @@ describe('a refusal is not silence — the completion vocabulary (401-07, D-04/I
   })
 })
 
-describe('two concurrent runs are isolated at the consumer surface (401-07, INVK-01 concurrency edge)', () => {
+describe('two concurrent runs are isolated at the consumer surface', () => {
   it('EACH HANDLE HOLDS ONLY ITS OWN RUN, AND KILLING ONE ABORTS ONLY THAT SESSION', async () => {
     const sessions = new Map<string, FakeRunSession>()
     const settled: Settled[] = []
@@ -520,10 +435,7 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
       sessions.get('run-B')!.publish({ ...envelope, runId: 'run-B' } as RunEventEnvelope)
     }
 
-    // 405-07 (D-19): the per-run buffers this cell used to compare are gone. What remains per-run
-    // is the HANDLE, and the isolation claim is made over the one derived fact it carries. The
-    // interleaved publishing above is what makes it a claim: a bridge with one shared handle map
-    // keyed on anything but the run id would cross the two names here.
+    // Interleaved publishing, so a handle map keyed on anything but the run id crosses the names.
     sessions.get('run-B')!.publish({
       ...PARITY_ENVELOPES[1]!,
       runId: 'run-B',
@@ -574,7 +486,7 @@ describe('two concurrent runs are isolated at the consumer surface (401-07, INVK
   })
 })
 
-describe('the spawn vocabulary is gone from this module (401-07, INVK-01 source assertion)', () => {
+describe('the spawn vocabulary is gone from this module', () => {
   const source = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), '..', 'in-process-backend.ts'),
     'utf8',
@@ -603,10 +515,8 @@ describe('the spawn vocabulary is gone from this module (401-07, INVK-01 source 
     expect(code).not.toContain('SIGKILL')
   })
 
-  // 2026-08-27 (405-07, D-19/D-21): the retired live-feed machinery, pinned absent in the module
-  // that used to hold it. Each needle is two halves so this assertion cannot be the hit that
-  // satisfies the phase's grep-clean inventory — a pin that matches itself proves nothing.
-  it('NO PER-RUN EVENT BUFFER, NO COUNTER, NO SECOND EMISSION', () => {
+  // Each needle is built from two halves, so the assertion is not itself a text-search hit.
+  it('keeps no per-run event buffer, no counter and no second emission', () => {
     expect(code).not.toContain('event' + 'Buffers')
     expect(code).not.toContain('event' + 'Counters')
     expect(code).not.toContain('push' + 'Event')
@@ -619,22 +529,20 @@ describe('the spawn vocabulary is gone from this module (401-07, INVK-01 source 
     expect(code).toContain('handle.testName =')
   })
 
-  it('THE REFUSAL FACTS ARE READ STRUCTURALLY — no class name, no regex over the message (401-18)', () => {
+  it('THE REFUSAL FACT IS READ STRUCTURALLY — no class name, no regex over the message', () => {
     // The two things a repair here could reach for and must not. Naming the class would be an
-    // import `validate:arch` forbids; a regex over the message would be a second parser over prose
+    // import the arch lint forbids; a regex over the message would be a second parser over prose
     // another package composes — the defect this repair exists to close, one layer down.
     const REFUSAL_CLASS_CHECK = /instanceof\s+\w*(?:Denied|Refused)\w*Error/
     const REGEX_OVER_MESSAGE = /(?:message|reason)\s*\.(?:match|search)\(|\.test\(\s*(?:message|reason)\s*\)/
-    expect(code).not.toContain('RunDeniedError')
     expect(code).not.toContain(['Function', 'Denied', 'Error'].join(''))
     expect(code).not.toMatch(REFUSAL_CLASS_CHECK)
     expect(code).not.toMatch(REGEX_OVER_MESSAGE)
-    // What it DOES: reads the field off the value, structurally.
-    expect(code).toContain('neutralReason?: unknown')
+    // What it DOES: a refusal is a rejection with no started session.
     expect(code).toContain('handle.session === undefined')
     // NON-VACUITY, BEFORE THE VERDICT ABOVE IS WORTH ANYTHING: both predicates must fire on the
     // very shapes they forbid, or two `not.toMatch`es are green because they match nothing at all.
-    expect('if (error instanceof RunDeniedError) return error.neutralReason')
+    expect('if (error instanceof StartRefusedError) return error.message')
       .toMatch(REFUSAL_CLASS_CHECK)
     expect('if (/fail-closed/.test(message)) return message').toMatch(REGEX_OVER_MESSAGE)
     expect('const hit = message.match(/--trust-session/)').toMatch(REGEX_OVER_MESSAGE)

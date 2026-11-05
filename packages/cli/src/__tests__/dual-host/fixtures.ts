@@ -22,7 +22,7 @@ export const PERMITTED_RUN_RECEIPT_DIFF_FIELDS = [
   'drainKind',
   'handoffHolderPid',
 ] as const
-/** WR-08 (423-43): written only beside a validated snapshot, so they share its asymmetry. */
+// Written only beside a validated snapshot, so they share its asymmetry.
 export const SNAPSHOT_BOUND_RUN_RECEIPT_FIELDS = ['curated', 'deprecated'] as const
 
 export type FixtureVariant = 'mixed' | 'over-ttl' | 'empty'
@@ -148,7 +148,7 @@ export function buildFixture(variant: FixtureVariant): DualHostFixture {
   while (ci.candidateId.localeCompare(localInteractive.candidateId) <= 0) {
     ci = candidate('ci', 102, 'ci', ++salt)
   }
-  // Claim order is now deliberately local-interactive Add, then posture-sensitive CI Supersede.
+  // Claim order is local-interactive Add, then posture-sensitive CI Supersede.
   const candidates = [localInteractive, ci]
   return {
     schemaVersion: 1,

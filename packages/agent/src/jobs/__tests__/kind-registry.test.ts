@@ -79,7 +79,7 @@ function recordingContext(
       publishCheckpoint: async (checkpointId, value) => {
         published.push({ checkpointId, value })
       },
-      // 385 plan 05: the stand-ins never author, and this file drives them without an engine.
+      // the stand-ins never author, and this file drives them without an engine.
       // A refusal rather than a stub answer, so a handler that quietly started authoring would
       // fail here loudly instead of being handed a plausible-looking value.
       recordLlmAuthorship: async () => {
@@ -132,10 +132,7 @@ describe('createJobKindRegistry declaration validation', () => {
     expect(registry.list().map((entry) => entry.kind)).toEqual(['consolidate'])
   })
 
-  // The declared-but-empty hole (D-09). A kind registered `checkpointed: true` with an empty
-  // schedule contributes ZERO crash points to a registry-driven matrix, so the matrix passes
-  // for it vacuously while the coverage table says it is covered. Making that pair
-  // unregisterable is what turns "we remembered to fill the schedule in" into a structure.
+  // A checkpointed kind with no schedule would pass a crash matrix vacuously, so it is refused.
   it('refuses a checkpointed kind that declares no checkpoints', () => {
     expect(() =>
       createJobKindRegistry([completeDeclaration({ checkpointed: true, checkpointSchedule: [] })]),
@@ -224,28 +221,27 @@ describe('createJobKindRegistry declaration validation', () => {
 
   it('lists declarations in kind order regardless of declaration order', () => {
     const registry = createJobKindRegistry([
-      completeDeclaration({ kind: 'propose-improvements' }),
+      completeDeclaration({ kind: 'curate-memory' }),
       completeDeclaration({ kind: 'chat', checkpointed: false, checkpointSchedule: [] }),
       completeDeclaration({ kind: 'consolidate' }),
     ])
     expect(registry.list().map((entry) => entry.kind)).toEqual([
       'chat',
       'consolidate',
-      'propose-improvements',
+      'curate-memory',
     ])
   })
 })
 
-describe('the five real job kinds', () => {
+describe('the real job kinds', () => {
   // Positive control for the enumeration itself. An accessor that returned an empty array
   // would make every conformance assertion below pass without examining a single kind.
-  it('reads exactly the five shipped kinds out of the enqueue contract, by sorted list', () => {
+  it('reads exactly the shipped kinds out of the enqueue contract, by sorted list', () => {
     expect([...CONTRACT_JOB_KINDS].sort()).toEqual([
       'analyze-run',
       'chat',
       'consolidate',
       'curate-memory',
-      'propose-improvements',
     ])
   })
 
@@ -260,8 +256,7 @@ describe('the five real job kinds', () => {
     )
   })
 
-  // JOBQ-04 / C9, on the REAL kind rather than a stand-in, so a later "unification" refactor
-  // that starts checkpointing chat turns trips this by name.
+  // On the real kind, so checkpointing chat turns would fail here by name.
   it('registers chat as an uncheckpointed kind with no checkpoints at all', () => {
     const chat = createRealJobKindRegistry().require('chat')
     expect(chat.checkpointed).toBe(false)
@@ -299,9 +294,8 @@ describe('the five real job kinds', () => {
 })
 
 describe('the stand-in handlers', () => {
-  // Five indistinguishable no-ops would satisfy "five kinds are registered" perfectly, and the
-  // kill matrix would then compare five identical histories and prove nothing about any of
-  // them. Each handler must publish its OWN declared schedule with its OWN bytes.
+  // Indistinguishable no-ops would satisfy "every kind is registered" perfectly, and the kill
+  // matrix would then compare identical histories and prove nothing about any of them. Each handler must publish its OWN declared schedule with its OWN bytes.
   it.each(REAL_JOB_KIND_DECLARATIONS)(
     'publishes exactly the declared schedule of $kind, in order',
     async (declaration) => {
@@ -337,9 +331,7 @@ describe('the stand-in handlers', () => {
     )
   })
 
-  // Plan 06 compares an interrupted history against an uninterrupted one, so a handler whose
-  // bytes depend on WHICH attempt published them would make every crash leg differ for a
-  // reason that has nothing to do with recovery.
+  // A handler whose bytes depend on the attempt would make every crash leg differ.
   it('publishes the same bytes on a later attempt as on the first', async () => {
     for (const declaration of REAL_JOB_KIND_DECLARATIONS) {
       const first = recordingContext(fakeJob(declaration.kind, { attempts: 1 }))

@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-// ONE SECRET VALUE (429-19 Task 1 · D-17 · UI-SPEC S8, E11).
-//
-// A secret shows the server's text verbatim, already through the declared mask, offers no reveal
-// (441-49, D-29), and is edited only by replacing it: the shown text is never an input value, so a
-// mask can never be written back. These cells mount the real autosave hook over a mocked write route.
+// The shown text is never an input value, so a mask can never be written back.
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -35,18 +31,31 @@ const CONFIG_PATH = '/work/agent-qa.config.yaml'
 const MASK = '[masked]'
 const TYPED = 'typed-new-secret-9X4'
 
+const HEADERS: ConfigPathSegment[] = ['registry', 'llms', { name: 'proxy' }, 'providerHeaders']
 const accessKey = {
-  segments: ['registry', 'providers', 'browserstack', 'accessKey'] as ConfigPathSegment[],
-  pattern: 'registry.providers.*.*',
+  segments: [...HEADERS, 'x-access'] as ConfigPathSegment[],
+  pattern: 'registry.llms[].providerHeaders.*',
 }
 const region = {
-  segments: ['registry', 'providers', 'browserstack', 'region'] as ConfigPathSegment[],
-  pattern: 'registry.providers.*.*',
+  segments: [...HEADERS, 'x-region'] as ConfigPathSegment[],
+  pattern: 'registry.llms[].providerHeaders.*',
 }
 
-const maskedConfig = {
-  registry: { providers: { browserstack: { accessKey: MASK, region: MASK } } },
+function proxyWithHeaders(providerHeaders: Record<string, string>) {
+  return {
+    registry: {
+      llms: [{
+        name: 'proxy',
+        provider: 'anthropic-compatible',
+        model: 'claude-proxy',
+        baseURL: 'https://llm.example.test/v1',
+        providerHeaders,
+      }],
+    },
+  }
 }
+
+const maskedConfig = proxyWithHeaders({ 'x-access': MASK, 'x-region': MASK })
 
 function answer(config: Record<string, unknown>) {
   return { config, provider: null, revision: 'rev-1', file: { path: CONFIG_PATH, lines: [] } }
@@ -63,7 +72,7 @@ function Harness({ children }: { children: ReactNode }) {
 
 function Secrets() {
   const autosave = useConfigAutosaveContext()
-  const maskedAt = (segments: ConfigPathSegment[]) => String(autosave.valueOf({ segments, tab: 'targets' }) ?? '')
+  const maskedAt = (segments: ConfigPathSegment[]) => String(autosave.valueOf({ segments, tab: 'models' }) ?? '')
   return (
     <div>
       <SecretValue field={accessKey} label="Access key" maskedText={maskedAt(accessKey.segments)} />
@@ -182,18 +191,18 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('C441-CONFIG', () => {
+describe('SecretValue and masked header values', () => {
   it("the secret field shows the server's text and offers no reveal", async () => {
-    vi.mocked(fetchConfig).mockResolvedValue(answer({
-      registry: { providers: { browserstack: { accessKey: '[secret:BS_KEY]', region: 'eu-west' } } },
-    }) as never)
+    vi.mocked(fetchConfig).mockResolvedValue(
+      answer(proxyWithHeaders({ 'x-access': '[secret:ACCESS_KEY]', 'x-region': 'eu-west' })) as never,
+    )
     const network = vi.spyOn(globalThis, 'fetch')
     await mount()
     const reads = vi.mocked(fetchConfig).mock.calls.length
 
     const [first, second] = groups()
     expect(first!.getAttribute('data-field-path')).toBe(accessKey.pattern)
-    expect(first!.querySelector('code')?.textContent).toBe('[secret:BS_KEY]')
+    expect(first!.querySelector('code')?.textContent).toBe('[secret:ACCESS_KEY]')
     expect(first!.querySelector('code')?.className).toContain('wrap-anywhere')
     expect(second!.querySelector('code')?.textContent).toBe('eu-west')
     for (const group of [first!, second!]) {
@@ -218,7 +227,7 @@ describe('C441-CONFIG', () => {
   })
 })
 
-describe('SecretValue (429-19 Task 1)', () => {
+describe('SecretValue', () => {
   it('REPLACE-VALUE-EMPTY-INPUT: Replace value shows an empty password input beside Save value and Keep current value, never the mask', async () => {
     await mount()
 
@@ -253,7 +262,7 @@ describe('SecretValue (429-19 Task 1)', () => {
     expect(hook!.status.state).toBe('saved')
   })
 
-  // 441-40 (D-29): the landed write is mirrored as written; the editor has no path-class mask.
+  // The landed write is mirrored as written; the editor has no path-class mask.
   it('SAVE-VALUE-EXPLICIT: typing writes nothing; Save value writes one set at the path and the page shows the value as written', async () => {
     await mount()
 

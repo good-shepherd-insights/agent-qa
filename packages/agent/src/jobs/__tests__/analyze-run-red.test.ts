@@ -1,21 +1,4 @@
-// The ANLZ-01 red-run cells (Phase 406, plan 07 — D-13/D-14/D-15).
-//
-// `analyze-run` on a RED run, driven through the REAL handler with a fake
-// `JobModelCapability`: the happy path (a valid authored answer upgrades the `unknown` floor
-// member in ONE generate call), the degrade path (an unparseable answer keeps the
-// deterministic floor and the job still COMPLETES), and the propagate path (a capability that
-// throws rejects the handler — D-15's posture, no in-handler catch).
-//
-// Two red substrates on purpose. `buildSyntheticHandoff` is the phase-389 synthetic, cheap and
-// parameterizable; `fixtures/399-red-handoff.json` is the REAL 399 acceptance handoff with its
-// screen states trimmed out — same `unknown` floor member, same quotable
-// evidence — so the cells below answer for the document shape the 399 session actually
-// produced rather than only for the one this repo mints.
-//
-// The MEASURED throw itself (`handler-threw: Guardrail blocked outbound prompt leaf:
-// creditCard`) is NOT reproduced here: `406-ANLZ-01-REPRODUCTION.md` § Seam names the egress
-// guardrail in `packages/safety` as the throw site, so per this plan's own rule the seam cell
-// lives in that package as `guardrail/__tests__/analyze-run-red-seam.test.ts`.
+// A real recorded red handoff beside the synthetic, so cells cover the shape a session produced.
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -49,17 +32,13 @@ import { buildSyntheticHandoff } from './fixtures/synthetic-handoff.js'
 
 const EVIDENCE_TEXT = 'Error: element "Submit" not found'
 
-// 2026-10-01 (432-35, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
-// neither (432-20).
+// No `grantedScopes` or `safeMode` on the caller; the registry reads neither.
 const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
 }
 
-// ------------------------------------------------------------------------------------------
-// The harness — the `analyze-run-e2e.test.ts` one, plus a `vision` flag on the scripted model
-// and a `readEvidenceBlob` seam on the capabilities (the two D-02 inputs cell (d) needs).
-// ------------------------------------------------------------------------------------------
+// The harness from `analyze-run-e2e.test.ts`, plus a `vision` flag and a `readEvidenceBlob` seam.
 
 interface HarnessOptions {
   /** Scripted model answers, one per generate call; unscripted calls answer ''. */
@@ -76,7 +55,7 @@ function harness(handoff: CompletedRunHandoff, options: HarnessOptions = {}) {
   let generateCalls = 0
 
   const model = {
-    modelId: 'scripted-406-red',
+    modelId: 'scripted-red',
     ...(options.vision === undefined ? {} : { vision: options.vision }),
     generate: async (request: JobModelRequest): Promise<{ text: string }> => {
       requests.push(request)
@@ -101,7 +80,7 @@ function harness(handoff: CompletedRunHandoff, options: HarnessOptions = {}) {
 
   const context: JobHandlerContext = {
     job: {
-      id: 'job_analyze_406_red',
+      id: 'job_analyze_red',
       kind: 'analyze-run',
       status: 'queued',
       summary: 'fixture',
@@ -197,8 +176,7 @@ async function readThroughTheOp(
       },
       analysis: { getArtifact: () => artifact },
     } as FunctionDeps,
-    // 2026-10-01 (432-35, D-12): no `resolveExecutionContext` registry option; the registry reads
-    // no context (432-20).
+    // No `resolveExecutionContext` registry option; the registry reads no context.
   })
   return (await invokeFunction(
     registry,
@@ -209,20 +187,20 @@ async function readThroughTheOp(
 }
 
 // ------------------------------------------------------------------------------------------
-// The trimmed 399 fixture — loaded through the SHIPPED guard, never a bare JSON.parse.
+// The trimmed recorded fixture, loaded through the shipped guard, never a bare JSON.parse.
 // ------------------------------------------------------------------------------------------
 
 const FIXTURE_PATH = fileURLToPath(
-  new URL('./fixtures/399-red-handoff.json', import.meta.url),
+  new URL('./fixtures/red-run-handoff.json', import.meta.url),
 )
 
-function load399RedHandoff(): CompletedRunHandoff {
+function loadRedRunHandoff(): CompletedRunHandoff {
   return guardCompletedRunHandoff(JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')))
 }
 
-describe('the trimmed 399 red handoff fixture still loads through the shipped guard', () => {
+describe('the trimmed red handoff fixture still loads through the shipped guard', () => {
   it('is a captured red handoff that loads, with one failed member whose floor is unknown', () => {
-    const handoff = load399RedHandoff()
+    const handoff = loadRedRunHandoff()
 
     expect(handoff.schemaVersion).toBe(CURRENT_HANDOFF_SCHEMA_VERSION)
     expect(handoff.aggregateVerdict).toBe('failed')
@@ -233,7 +211,7 @@ describe('the trimmed 399 red handoff fixture still loads through the shipped gu
   })
 
   it('kept the evidence the author quotes from and the refs the vision gate reads', () => {
-    const step = load399RedHandoff().tests[0]?.steps[1]
+    const step = loadRedRunHandoff().tests[0]?.steps[1]
 
     expect(step?.stepText).toBeTruthy()
     expect(step?.retrievalTrace).toBeDefined()
@@ -278,9 +256,9 @@ describe('(a) a red synthetic run whose model answers validly is authored in ONE
   })
 })
 
-describe('(b) the REAL 399 red handoff is authored the same way', () => {
+describe('(b) the REAL recorded red handoff is authored the same way', () => {
   it('upgrades its unknown member when the quote is verbatim from the failing step', async () => {
-    const handoff = load399RedHandoff()
+    const handoff = loadRedRunHandoff()
     const failingStep = handoff.tests[0]?.steps[1]
     const lastError = [...(failingStep?.subActions ?? [])]
       .reverse()
@@ -325,7 +303,7 @@ describe('(c) an unparseable model answer degrades to the floor and the job stil
   })
 })
 
-describe('(d) a capability that throws propagates out of the handler (D-15, no catch)', () => {
+describe('(d) a capability that throws propagates out of the handler (no catch)', () => {
   it('rejects with the readTestHistory error rather than degrading to the floor', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const run = harness(handoff, {

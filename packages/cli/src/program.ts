@@ -1,3 +1,5 @@
+import { installSdkWarningLogger } from '@vostride/agent-qa-agent-local'
+import { reserveStdoutForData } from '@vostride/agent-qa-core/run-text-output'
 import { Command } from 'commander'
 import { VERSION } from './index.js'
 import {
@@ -45,6 +47,14 @@ export function createAgentQaProgram(): Command {
     .option('--verbose', 'shorthand for --log-level debug')
     .option('--quiet', 'shorthand for --log-level silent')
 
+  // A process runs one action, and a --json action's stdout stays reserved until the process
+  // exits: a detached run tail or host teardown can still print after the action returns. The
+  // AI SDK warning logger stays for the same reason.
+  program.hook('preAction', (_program, action) => {
+    if (action.opts<{ json?: unknown }>().json === true) reserveStdoutForData()
+    installSdkWarningLogger()
+  })
+
   program.addCommand(createRunCommand())
   program.addCommand(createRunsCommand())
   program.addCommand(createInitCommand())
@@ -67,20 +77,14 @@ export function createAgentQaProgram(): Command {
   program.addCommand(createEvalCommand())
   program.addCommand(createSkillsCommand())
   program.addCommand(createFnCommand())
-  // 392 D-01/D-24: the one-shot chat verb, registered beside `fn` because it is the same KIND of
-  // thing — a thin client that invokes one registered op through `invokeFunction`.
+  // The one-shot chat verb, beside `fn`: a thin client invoking one op through `invokeFunction`.
   program.addCommand(createAskCommand())
-  // D-01's other surface. Two commands, ONE turn engine: the REPL and the one-shot verb differ in
-  // the session and the loop and in nothing else, which is why a routing change cannot be right in
-  // one of them and wrong in the other.
+  // The REPL shares the one-shot verb's turn engine; they differ only in session and loop.
   program.addCommand(createChatCommand())
-  // 391 D-17: the per-run digest on demand. 2026-10-01 (432-17, D-02/D-05): `agent-qa proposals`
-  // (the inbox and its `grants list | revoke` subtree) is deleted with no alias.
+  // The per-run digest on demand.
   program.addCommand(createDigestCommand())
   program.addCommand(createDaemonCommand())
-  // 413 D-06: the agent job queue's operator verbs, registered beside the daemon that is its
-  // resident drainer — `pump --only <kind>` is the in-process drain for a host that must run one
-  // kind and leave the rest queued.
+  // Beside the daemon that drains it; `pump --only <kind>` drains one kind in process.
   program.addCommand(createAgentJobsCommand())
 
   return program

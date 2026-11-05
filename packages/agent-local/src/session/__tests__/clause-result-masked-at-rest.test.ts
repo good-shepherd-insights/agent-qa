@@ -1,6 +1,4 @@
-// `clause_result` is MASKED AT REST, measured on the bytes of a real session file (399.1-05).
-// 2026-10-14 (441-55, D-06): the payload is masked by an explicit declared mask, never an ambient
-// context, and nothing restores the value (D-07).
+// The payload is masked by an explicit declared mask, never an ambient context, and never restored.
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -23,11 +21,11 @@ const NOW = '2026-08-20T00:00:00.000Z'
 const QUARANTINE_LIST = 'quarantine.list'
 
 const PLANTED_CREDENTIAL = 'sk-live-399105-Wq7zR2mKpX4nT8vB'
-const MARKER = '[secret:PLANTED_399105]'
+const MARKER = '[secret:PLANTED_SECRET]'
 
 const HUMAN: FunctionCaller = { origin: 'human', surface: 'cli' } as unknown as FunctionCaller
 
-describe('clause_result persists the MASKED payload, on the real file (399.1-05)', () => {
+describe('clause_result persists the MASKED payload, on the real file', () => {
   let root: string
 
   beforeEach(() => {
@@ -41,7 +39,7 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
   it('writes the PLACEHOLDER and never the credential — and the placeholder really stands for it',
     async () => {
       const mask: MaskFn = (text) => new SecretRedactor(
-        SecretStore.fromEnvContent(`PLANTED_399105=${PLANTED_CREDENTIAL}\n`),
+        SecretStore.fromEnvContent(`PLANTED_SECRET=${PLANTED_CREDENTIAL}\n`),
       ).redactString(text)
       const maskedPayload = maskPayloadStrings(
         { entries: [{ id: 'P-1', token: PLANTED_CREDENTIAL }] }, mask,
@@ -64,7 +62,7 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         split: splitClauses,
         reconcile: deterministicOverrideStrategy,
         sessionLog,
-        // 432-39 (D-02/D-12): the mint takes no session and stamps none, as production's does.
+        // The mint takes no session and stamps none, as production's does.
         mint: { forStage: () => HUMAN },
         // THE OP ANSWERS WITH THE MASKED PAYLOAD. This is the one fixture fact; everything after it
         // is the shipped engine and the shipped adapter.
@@ -124,7 +122,7 @@ describe('clause_result persists the MASKED payload, on the real file (399.1-05)
         split: splitClauses,
         reconcile: deterministicOverrideStrategy,
         sessionLog,
-        // 432-39 (D-02/D-12): the mint takes no session and stamps none, as production's does.
+        // The mint takes no session and stamps none, as production's does.
         mint: { forStage: () => HUMAN },
         invoke: () => Promise.resolve({
           payload: { entries: [] },

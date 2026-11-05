@@ -1,8 +1,4 @@
-// The `liveUrl` token pair + the `runs.liveurl` op (403 D-01..D-04, LIVE-02).
-//
-// EVERY REFUSAL IS ASSERTED BY NAME, not as a falsy verdict. A validator that answers `false` for
-// four different reasons is a validator whose surface can only ever render "something went wrong" —
-// and D-02's whole point is that a viewer of an expired link is TOLD the link expired.
+// Every refusal is asserted by name, so a viewer of an expired link is told it expired.
 
 import { LIVE_URL_SCOPE, RunsLiveUrlResultSchema } from '@vostride/agent-qa-schema'
 import type {
@@ -57,8 +53,7 @@ function claims(overrides: Partial<LiveUrlClaims> = {}): LiveUrlClaims {
 
 const AT_RUN_ALPHA = { subject: { kind: 'run', id: 'run-alpha' }, now: NOW } as const
 
-// 2026-10-02 (432-36, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
-// neither (432-20). `LIVE_URL_SCOPE` is the signed token's own claim, a live-link control, and stays.
+// `LIVE_URL_SCOPE` is the signed token's own claim, a live-link control.
 const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'human',
@@ -96,8 +91,6 @@ function registryWith(liveView: LiveViewPort | undefined): ReturnType<typeof cre
   } as FunctionDeps
   return createRegistryFromSpecs([runsLiveUrlSpec as FunctionSpec], {
     deps,
-    // 2026-10-02 (432-36, D-12): no `resolveExecutionContext` registry option; the registry reads
-    // no context (432-20).
   })
 }
 
@@ -113,7 +106,7 @@ describe('base64url helpers are a round trip over the claims body', () => {
   })
 })
 
-describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
+describe('mintLiveUrlToken / validateLiveUrlToken', () => {
   it('round-trips a freshly minted token to ok with the claims intact', () => {
     const token = mintLiveUrlToken(fakeSigner, claims())
     const verdict = validateLiveUrlToken(fakeSigner, token, AT_RUN_ALPHA)
@@ -172,7 +165,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
     }
   })
 
-  it('refuses another run id as scope_mismatch (cross-run scope confusion, T-403-03)', () => {
+  it('refuses another run id as scope_mismatch (cross-run scope confusion)', () => {
     const token = mintLiveUrlToken(fakeSigner, claims())
     const other = { subject: { kind: 'run', id: 'run-other' }, now: NOW } as const
     expect(validateLiveUrlToken(fakeSigner, token, other))
@@ -187,7 +180,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
       .toEqual({ kind: 'refused', reason: 'scope_mismatch' })
   })
 
-  it('puts the token in the FRAGMENT and nowhere else (D-04)', () => {
+  it('puts the token in the FRAGMENT and nowhere else', () => {
     const url = liveUrlOf('http://localhost:4321', 'run-alpha', 'v2.body.sig')
     expect(url).toBe('http://localhost:4321/live/run-alpha#v2.body.sig')
     expect(url.split('#')[0], 'no query, no path segment — the fragment is the only carriage')
@@ -196,7 +189,7 @@ describe('mintLiveUrlToken / validateLiveUrlToken (403 D-01/D-02)', () => {
   })
 })
 
-describe('the token names its subject; one kind never opens the other (428 D-07)', () => {
+describe('the token names its subject; one kind never opens the other', () => {
   const AS_RUN = { subject: { kind: 'run', id: 'shared' }, now: NOW } as const
   const AS_EDITOR = { subject: { kind: 'editor', id: 'shared' }, now: NOW } as const
   const runSubject = { kind: 'run', runId: 'shared', handle: 0 } as const
@@ -254,8 +247,7 @@ describe('the token names its subject; one kind never opens the other (428 D-07)
   })
 
   it('UNKNOWN-SUBJECT-KIND-MALFORMED', () => {
-    // Each body also carries the pre-428 top-level runId/handle, so a parser that still read the
-    // old shape would accept it: only a subject-aware parser refuses these.
+    // Each body also carries a top-level runId and handle, so only a subject-aware parser refuses.
     const legacy = { runId: 'shared', handle: 0, scope: LIVE_URL_SCOPE, iat: NOW, exp: NOW + 1 }
     const unknownKind = { ...legacy, subject: { kind: 'suite', id: 'shared' } }
     const runWithoutHandle = { ...legacy, subject: { kind: 'run', runId: 'shared' } }
@@ -271,7 +263,7 @@ describe('the token names its subject; one kind never opens the other (428 D-07)
   })
 })
 
-describe('runs.liveurl through invokeFunction (403 D-03)', () => {
+describe('runs.liveurl through invokeFunction', () => {
   it('returns a schema-parseable result whose liveUrl is origin + /live/ + fragment', async () => {
     const live = recordingLiveView()
     const result = RunsLiveUrlResultSchema.parse(
@@ -328,7 +320,7 @@ describe('runs.liveurl through invokeFunction (403 D-03)', () => {
     expect(live.minted, 'one registration per mint — no more, no fewer').toHaveLength(2)
   })
 
-  it('NEVER puts the token or the URL in the classify outcome (LIVE-02, D-04)', async () => {
+  it('NEVER puts the token or the URL in the classify outcome', async () => {
     const live = recordingLiveView()
     const result = RunsLiveUrlResultSchema.parse(
       await invokeFunction(registryWith(live.port), RUNS_LIVE_URL_FUNCTION_ID, { runId: 'run-alpha', handle: 3 }, CALLER),

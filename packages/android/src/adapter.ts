@@ -11,7 +11,6 @@ import type {
   FillSubmitMeta,
   FillVerdictMeta,
   InterimNode,
-  ObserveOptions,
   PlatformAdapter,
   LiveStreamCapability,
   PlatformConfig,
@@ -52,13 +51,12 @@ import type { AndroidAdapterConfig } from './types.js'
 
 const ANDROID_FILLABLE_ROLES = new Set(['textbox', 'searchbox', 'edittext', 'combobox'])
 
-// UiAutomator2 refuses getAttribute for showing-hint and multiline although it lists them, so they
-// are read through XPath over the focused node's page-source attributes (437 Pitfall 5).
+// UiAutomator2 refuses getAttribute for showing-hint and multiline, so XPath reads them.
 const FOCUSED_XPATH = '//*[@focused="true"]'
 const FOCUSED_HINT_XPATH = '//*[@focused="true" and @showing-hint="true"]'
 const FOCUSED_MULTILINE_XPATH = '//*[@focused="true" and @multiline="true"]'
 const FOCUSED_SINGLE_LINE_XPATH = '//*[@focused="true" and @multiline="false"]'
-// 437 D-11 (WR-02): the focused node's `bounds` must lie within the ref's, within iOS's RECT_TOLERANCE.
+// The focused node's `bounds` must lie within the ref's, within iOS's `RECT_TOLERANCE`.
 const FOCUS_BOUNDS_TOLERANCE = 1
 const ANDROID_BOUNDS_RE = /^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$/
 const ENTER_KEYCODE = 66
@@ -67,11 +65,10 @@ const DEL_KEYCODE = 67
 const MULTI_LINE_SUBMIT_NOTICE =
   'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
 const LINE_BREAK_RE = /[\r\n]/
-// The fixed @appium/base-driver text for a refused insecure feature (437 D-18).
+// The fixed @appium/base-driver text for a refused insecure feature.
 const ADB_SHELL_REFUSAL = "Potentially insecure feature 'adb_shell' has not been enabled"
 
-// 437 D-11: the WebView fill and clear use page scripts only to probe focus and read the value.
-// The probe runs after a trusted tap at the ref's centre and never writes to the page.
+// WebView page scripts only probe focus and read the value; they never write to the page.
 const WEB_FOCUS_PROBE_SCRIPT =
   'var a = document.activeElement;'
   + 'var hit = document.elementFromPoint(arguments[0], arguments[1]);'
@@ -92,8 +89,7 @@ const WEB_FOCUS_PROBE_SCRIPT =
   + ' secure: type === "password",'
   + ' value: typeof v === "string" ? v : null'
   + '};'
-// 437 D-11 (WR-01): Chromium moves focus a moment after the tap, so the probe is polled the way
-// iOS polls its focus (FOCUS_POLLS, FOCUS_POLL_PAUSE_MS) before the WebView path refuses.
+// Chromium moves focus a moment after the tap, so the probe is polled before the path refuses.
 const WEB_FOCUS_POLLS = 3
 const WEB_FOCUS_POLL_MS = 300
 const WEB_FIELD_VALUE_SCRIPT =
@@ -227,13 +223,7 @@ function isAndroidNativeSelectTarget(refData: MobileRefMap[string] | undefined):
   )
 }
 
-/**
- * Escape untrusted target text for interpolation into a UiAutomator `UiSelector` source string
- * (T-359-01 · Pitfall 9). Backslash-escape backslashes FIRST, then double quotes, so the raw
- * text can never break out of the `textContains("…")` literal. Control characters cannot be
- * represented safely in the selector language, so a target carrying any is rejected with a
- * structured error rather than being interpolated verbatim (T-352-11 posture).
- */
+// Backslashes escape first, then quotes, so text never leaves the `textContains` literal.
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/
 function escapeUiSelectorText(value: string): string {
   if (CONTROL_CHAR_RE.test(value)) {
@@ -298,13 +288,7 @@ function parseLogcatLine(message: string, timestamp: number, appPid: string | nu
   }
 }
 
-// Injected into the WebView/browser to emit a JSON-serializable array of interim-node
-// records from the live DOM (RESEARCH Pitfall #5). It walks the DOM as before but NO
-// longer mints refs or renders tree text in-page — the shared runner builder owns ref
-// minting, name normalization, and tree rendering (D-01/D-02/D-03). Every record carries
-// only real DOM signals (D-08); the builder derives all defaults. Defined as a string
-// because this runs in browser context — the Node tsconfig has no DOM lib so a typed
-// function would fail compilation.
+// A string, because it runs in the page and the Node tsconfig has no DOM lib.
 const WEB_OBSERVER_SCRIPT = `
 return (function() {
   var TAG_ROLES = {
@@ -335,8 +319,7 @@ return (function() {
     return node ? (node.textContent || '').trim() : '';
   }
 
-  // 437 D-11 (CR-02): a field is named by its label, never by its value, so typed text never
-  // becomes a name. A wrapping label's text drops the field's own text (a select's options).
+  // A field is named by its label, not its value; a wrapping label drops the field's own text.
   function labelText(el, label) {
     var text = label.textContent || '';
     var own = el.textContent || '';
@@ -360,8 +343,7 @@ return (function() {
     return '';
   }
 
-  // parentIndex is the nearest INCLUDED ancestor (structural/skipped nodes collapse
-  // away, matching the mobile/web walkers' Pitfall #7 handling).
+  // The nearest included ancestor: structural and skipped nodes collapse, as on mobile and web.
   function nearestAncestorIndex(el) {
     var p = el.parentElement;
     while (p) {
@@ -381,8 +363,7 @@ return (function() {
     if (style.display === 'none' || style.visibility === 'hidden') continue;
 
     var tag = el.tagName;
-    // 2026-10-19 (444.1-05, D-09): only the outermost content-editable element is an editor;
-    // its descendants are ordinary nodes.
+    // Only the outermost content-editable element is an editor; its descendants are ordinary nodes.
     var host = el.isContentEditable === true
       && !(el.parentElement && el.parentElement.isContentEditable === true);
     var ariaRole = el.getAttribute('role');
@@ -420,7 +401,7 @@ return (function() {
       height: Math.round(rect.height)
     };
 
-    // Real DOM state signals only — the builder derives every default (D-08).
+    // Real DOM state signals only; the builder derives every default.
     var state = {};
     var disabled = el.disabled === true
       || el.hasAttribute('disabled')
@@ -446,7 +427,7 @@ return (function() {
 
     var parentIndex = nearestAncestorIndex(el);
 
-    // 2026-10-19 (444.1-05 D-08, 444.1-22 D-33): what a field or an editor holds is its value, never its name; a password's never.
+    // What a field or an editor holds is its value, never its name; a password has no value here.
     var observedValue = undefined;
     var textEntry = tag === 'TEXTAREA' || (tag === 'INPUT' && !VALUELESS_TYPES[String(el.type).toLowerCase()]);
     if (textEntry && el.value) {
@@ -490,11 +471,7 @@ return (function() {
 })();
 `
 
-/**
- * Coerce one attacker-shaped in-page record into a trusted InterimNode (T-352-11).
- * `driver.execute` results are untrusted; a record without a usable string role is
- * dropped to typed-absence, never thrown into the builder loop.
- */
+// `driver.execute` results are untrusted; a record without a string role is dropped, not thrown.
 function coerceWebInterimNode(value: unknown): InterimNode | null {
   if (!value || typeof value !== 'object') return null
   const v = value as Record<string, unknown>
@@ -604,13 +581,7 @@ function coerceWebScroll(
   return { offsetX: 0, offsetY: 0, contentWidth: viewport.width, contentHeight: viewport.height }
 }
 
-/**
- * 2026-10-08 (436-12, live A1): a gesture that starts in a system gesture zone (the home and
- * recents bar at the bottom, the shade at the top, the back edges at the sides) is taken by
- * Android, not the app: the list does not move and scrollGesture answers false, which would read
- * as a boundary. The area is kept to the middle 60% of the screen on the swipe axis, where the
- * swipe ran before 436-02; an area wholly outside that band is used as it is.
- */
+// A gesture starting in a system gesture zone moves nothing, so keep to the middle 60% of the axis.
 function gestureArea(
   bounds: { x: number; y: number; width: number; height: number },
   direction: Direction,
@@ -646,8 +617,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   private captureConsole = true
   private appPackage: string | null = null
   private appPid: string | null = null
-  // EXEC-03 session-cached app registry (D-10/D-12): enumerated once per session; null = not yet
-  // enumerated (or enumeration failed and may be retried). Reset in cleanup().
+  // Enumerated once per session; `null` is not yet enumerated or retryable; reset in `cleanup()`.
   private appRegistry: AppRegistryEntry[] | null = null
 
   async setup(config: PlatformConfig): Promise<void> {
@@ -655,7 +625,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     this.captureConsole = config.logCapture?.console !== false
     this.appPackage = this.config.appPackage ?? (config.device?.match?.appPackage as string | undefined) ?? null
 
-    this.driver = await createAndroidSession(this.config, config.farmSession)
+    this.driver = await createAndroidSession(this.config)
 
     const appPackage = this.appPackage
     if (appPackage && !this.config.browserName && !this.config.device?.match?.browserName) {
@@ -671,7 +641,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           state = undefined
         }
       }
-      // D-11 (#566): activating a foreground app clears a deep link above a singleTask launcher.
+      // Activating a foreground app clears a deep link above a singleTask launcher.
       if (state !== 4) {
         try {
           await this.driver.activateApp(appPackage)
@@ -731,7 +701,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
   // falling back to native (which returns an opaque WebView and can crash UiAutomator2).
   private hasSeenWebContext = false
 
-  async observe(_options?: ObserveOptions): Promise<ScreenState> {
+  async observe(): Promise<ScreenState> {
     if (!this.driver) {
       throw new Error('AndroidPlatformAdapter not initialized — call setup() first')
     }
@@ -762,8 +732,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       return await this.observeNative()
     } catch {
       this.lastRefs = {}
-      // Schema-valid empty state (D-11 honest observe-time modality: textOnly) carrying
-      // the diagnostic tree — no elements resolved, so refMap is empty (geometry rule).
+      // Schema-valid empty text-only state with the diagnostic tree; no elements, so no `refMap`.
       return {
         platform: 'android',
         tree: '(native observation unavailable — WebView content not accessible)',
@@ -815,18 +784,14 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
     const buf = await this.captureScreenshot()
     if (buf && this.driver) {
-      // D-19 / D-20 (Phase 138.1.1): Android screenshot dims differ from getWindowSize() on WebView
-      // (1080x2274 image vs 411x810 viewport — ~6% vertical AR drift from URL bar, per D-13/D-14).
-      // On native, dims match (1080x2400 == 1080x2400 getWindowSize). Phase 142 removed all
-      // scaling code — coords are viewport-space identity. Log kept for diagnostics.
+      // Screenshot and window dims can differ on WebView; coords stay viewport-space, logged here.
       try {
-        // 363 D-08/Q10: sharp image utilities moved to runner-local (sharp left core).
         const { getImageDimensions } = await import('@vostride/agent-qa-runner-local')
         const dims = await getImageDimensions(buf)
         const { width } = await this.driver.getWindowSize()
         if (dims && Math.abs(dims.width - width) > 1) {
           // eslint-disable-next-line no-console
-          console.warn(`[android-adapter] screenshot width ${dims.width} != window width ${width} (coord-space divergence, handled by scaleFactor per D-19/D-20)`)
+          console.warn(`[android-adapter] screenshot width ${dims.width} != window width ${width} (coord-space divergence, handled by scaleFactor)`)
         }
       } catch { /* best-effort assertion */ }
     }
@@ -862,13 +827,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return newLogs.filter(e => e.level === level)
   }
 
-  /**
-   * 428 D-11: the labelled 1s snapshot preview, over `captureScreenshot()` — `takeScreenshot()`
-   * and nothing else. Never `screenshot()`: that one switches the Appium context, and a tick
-   * landing between a step's context switch and its command would run the command in the wrong
-   * context. Declared before the driver exists (a capture then answers `undefined`), so the
-   * composition's selection never falls through to `screenshot()`.
-   */
+  // `takeScreenshot()` only: `screenshot()` switches the Appium context mid-step.
   get liveStream(): LiveStreamCapability {
     this.liveStreamCapability ??= createSnapshotLiveStream({ capture: () => this.captureScreenshot() })
     return this.liveStreamCapability
@@ -954,9 +913,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
       await this.ensureContext(webCtx)
 
-      // The in-page script returns a JSON-serializable interim-node payload — attacker-
-      // shaped (T-352-11), so it is Array-guarded and every record/field is primitive-
-      // coerced before entering the builder. No refs, no tree text cross the boundary.
+      // The in-page payload is attacker-shaped, so it is array-guarded and every field coerced.
       const raw = await driver.execute(WEB_OBSERVER_SCRIPT) as unknown
       if (!raw || typeof raw !== 'object') return null
       const payload = raw as Record<string, unknown>
@@ -1007,10 +964,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       driver.getWindowSize(),
     ])
 
-    // The shared mobile walk emits platform-neutral interim nodes (352-04); the runner
-    // builder mints refs, normalizes names, and renders the tree (D-01/D-02/D-03). Mobile
-    // scroll is a documented best-effort approximation (D-10). Execute-time resolution
-    // survives via buildRefEntries feeding the adapter-private lastRefs record.
+    // The runner builder mints refs and the tree; `buildRefEntries` keeps execute-time lookup.
     const { nodes } = parseMobileSource(xml, 'android', viewport)
     const scroll = deriveMobileScroll(nodes, viewport)
     const { state, binding } = buildScreenState({
@@ -1051,7 +1005,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         const base64 = await this.driver.takeScreenshot()
         const buf = Buffer.from(base64, 'base64')
         if (!this.activeWebContext) return buf
-        // 2026-10-19 (444.1-22, D-34): every capture in a WebView context, so the failure screenshot and the live preview are not black either.
+        // Flattened onto white in a WebView, so failure screenshots and previews are not black.
         try {
           const { flattenOntoWhite } = await import('@vostride/agent-qa-runner-local')
           return await flattenOntoWhite(buf)
@@ -1064,10 +1018,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       return undefined
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // Compound behaviors (EXEC-01/02/03)
-  // ---------------------------------------------------------------------------
 
   /** Read the live text of a focused element handle; undefined when nothing is readable. */
   private async readElementText(el: { getText: () => Promise<string> }): Promise<string | undefined> {
@@ -1087,16 +1037,13 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /** An empty field's getText() returns its hint (437 Pitfall 4), so a showing hint reads ''. */
+  /** An empty field's getText() returns its hint, so a showing hint reads ''. */
   private async readFocusedValue(el: { getText: () => Promise<string> }): Promise<string | undefined> {
     if (await this.focusedMatches(FOCUSED_HINT_XPATH)) return ''
     return await this.readElementText(el)
   }
 
-  /**
-   * The `mobile: shell` route of keyevent and openQuickSettings (437 D-18). A refusal by secure
-   * Appium is recorded as unavailable and any other driver error as failed; neither is a pass.
-   */
+  // A secure-Appium refusal is recorded as unavailable and any other driver error as failed.
   private async runShell(
     verb: ShellActionMeta['verb'],
     args: { command: string; args: string[] },
@@ -1125,7 +1072,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /** The one submit mechanism on every Android path (437 D-13); pressed once, never retried. */
+  /** The one submit mechanism on every Android path; pressed once, never retried. */
   private async pressEnter(): Promise<FillSubmitMeta> {
     try {
       await this.driver!.execute('mobile: pressKey', { keycode: ENTER_KEYCODE })
@@ -1135,7 +1082,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /** 437 FA-2 (owner, 2026-10-08): line breaks into a single-line field are refused before typing. */
+  // Line breaks into a single-line field are refused before typing.
   private refuseLineBreaks(action: { submit: boolean }, box: TextBox): ActionResult {
     const fillRefusal: FillRefusalMeta = {
       verb: 'fill',
@@ -1152,14 +1099,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /**
-   * Native fill from the focused handle (437 D-08..D-10, D-12, D-13, D-15, D-17). Delivers once
-   * (addValue for append, setValue for replace), reads back from the same handle and records the
-   * shared verdict. An unknown append prior or an unreadable read-back is unverified, which never
-   * stops a requested Enter; a mismatch or a multi-line field holds it. A driver error during
-   * delivery ends the fill: nothing is typed again and no Enter follows. A secure field yields
-   * length sentinels only.
-   */
+  // Delivers once and reads back; an unverified result still presses Enter, a mismatch holds it.
   private async fillNativeCompound(
     el: FocusedField,
     action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
@@ -1203,11 +1143,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /**
-   * 437 D-11 (WR-02): where the focused node is relative to the ref, judged by its read bounds.
-   * An unreadable or unparseable value is no evidence, so the native path stays (D-04, D-15).
-   * 444.1 D-07: 'elsewhere' needs positive evidence, the bounds of another observed field.
-   */
+  // `elsewhere` needs positive evidence: the read bounds of another observed field.
   private async focusIsElsewhere(
     handle: FocusedField,
     ref: string,
@@ -1229,19 +1165,13 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return 'moved'
   }
 
-  /** Ctrl+A then DEL as key input; clears only the view holding input focus (437 D-14). */
+  /** Ctrl+A then DEL as key input; clears only the view holding input focus. */
   private async clearByKeys(): Promise<void> {
     await this.driver!.execute('mobile: pressKey', CTRL_A)
     await this.driver!.execute('mobile: pressKey', { keycode: DEL_KEYCODE })
   }
 
-  /**
-   * The last-resort keyboard path (437 D-14): the tap left no focused handle. Replace clears by
-   * keys, the text goes through one `mobile: type` (Appium's Unicode IME, exact for every D-08
-   * text), and the value is read back only when a focused handle can be found afterwards. An
-   * append's prior value is unknown, so it is never better than unverified. The field's kind comes
-   * from the observed input-type (D-15): only positive evidence refuses line breaks or holds Enter.
-   */
+  // Last resort when the tap left no handle; an append's prior is unknown, so at best unverified.
   private async fillKeyboardPath(
     action: { text: string; clearMode: 'replace' | 'append'; submit: boolean },
     box: TextBox,
@@ -1275,11 +1205,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     })
   }
 
-  /**
-   * Native and keyboard clearText (437 D-16): clearValue on the focused handle, or Ctrl+A then DEL
-   * when the tap left none, then the hint-aware read-back judged against the empty string. The
-   * caller has already checked that a focused handle is the referenced field (WR-02).
-   */
+  // The caller has already checked that a focused handle is the referenced field.
   private async clearNativeOrKeyboard(
     box: TextBox,
     handle: FocusedField | undefined,
@@ -1363,11 +1289,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /**
-   * The shared end of every Android fill (437 D-09, D-10, D-13, D-15, D-17): records the verdict
-   * and, when a submit was requested, holds Enter on a mismatch or a multi-line field and otherwise
-   * presses it once through `enter`.
-   */
+  // Holds Enter on a mismatch or a multi-line field; otherwise presses it once.
   private async settleFill(
     action: { submit: boolean },
     box: TextBox,
@@ -1416,7 +1338,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return { success: true, ...box, ...notice, metadata }
   }
 
-  /** A real W3C touch tap in the WebView context at the ref's CSS-pixel centre (437 D-11). */
+  /** A real W3C touch tap in the WebView context at the ref's CSS-pixel centre. */
   private async trustedWebTap(center: { x: number; y: number }): Promise<void> {
     await safePerform(this.driver!.action('pointer', { parameters: { pointerType: 'touch' } })
       .move({ x: Math.round(center.x), y: Math.round(center.y), origin: 'viewport' })
@@ -1474,7 +1396,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /** 437 D-11: a tap that left no editable field, or another field, focused writes nothing. */
+  // A tap that leaves no editable field, or another field, focused writes nothing.
   private refuseFocus(
     verb: 'fill' | 'clearText',
     ref: string,
@@ -1506,10 +1428,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /**
-   * WebView clearText (437 D-11, D-16): the same tap and focus probe as the fill, W3C Ctrl+A and
-   * Backspace, then a read-back judged against the empty string. Never success without that check.
-   */
+  // Never success without the read-back judged against the empty string.
   private async clearWebViewField(
     ref: string,
     center: { x: number; y: number },
@@ -1530,11 +1449,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return this.settleClear('webview', await this.readWebFieldValue(), focus.secure, box)
   }
 
-  /**
-   * WebView fill as trusted input (437 D-11): a W3C tap on the ref, a read-only focus probe,
-   * W3C Ctrl+A and Backspace for replace, `mobile: type` from NATIVE_APP, a read-only read-back,
-   * and one `mobile: pressKey 66` from NATIVE_APP. No script writes the field or fires an event.
-   */
+  // Trusted input only: no page script writes the field or fires an event.
   private async fillWebViewCompound(
     action: { ref: string; text: string; clearMode: 'replace' | 'append'; submit: boolean },
     box: TextBox,
@@ -1576,15 +1491,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     })
   }
 
-  /**
-   * EXEC-02 platform primitives injected into the shared runner scroll loops (D-02/D-03; 436-02
-   * D-25). A native swipe is `mobile: scrollGesture` over the container (the ref's bounds, else the
-   * screen), whose boolean is the driver's own boundary signal; in a WebView the touch swipe is
-   * measured over every WebView scroller before and after (436-18), paired by identity (436-23).
-   * nativeSearchScroll drives the UiAutomator
-   * `UiScrollable.scrollIntoView` rung over an injection-escaped selector; readInterimTree is a
-   * light page-source parse — NO refMap mint, NO screenshot, lastRefs untouched.
-   */
+  // Native swipes trust `scrollGesture`'s boolean; WebView swipes compare every scroller by id.
   private async buildAndroidScrollPrimitives(
     scrollDirection: Direction,
     maxSwipes: number,
@@ -1625,8 +1532,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           direction,
           viewport,
         )
-        // A1 (436-RESEARCH), confirmed live by 436-12 on an emulator: true = moved and more remains,
-        // false = the scrollable cannot go further.
+        // `scrollGesture` answers true when the list moved and more remains, false at its end.
         const canScrollMore = await driver.execute('mobile: scrollGesture', {
           left: Math.round(area.x),
           top: Math.round(area.y),
@@ -1661,13 +1567,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /**
-   * The WebView scrollers a touch swipe may have acted on (436-18 · D-25), read by the shared
-   * WEBVIEW_SCROLLERS_SCRIPT. The touch point cannot be mapped into the WebView's CSS coordinates,
-   * so the swipe is judged over all of them.
-   * 2026-10-08 (436-23): a frame in view reads unknown; members carry an identity and are paired
-   * by it; open shadow roots are walked; only on-screen element scrollers are members.
-   */
+  // The touch point cannot map into CSS coordinates, so the swipe is judged over every scroller.
   private async readWebViewScrollers(): Promise<IdentifiedScrollOffsets[] | undefined> {
     try {
       return parseWebViewScrollers(await this.driver!.execute(WEBVIEW_SCROLLERS_SCRIPT) as unknown)
@@ -1676,12 +1576,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     }
   }
 
-  /**
-   * EXEC-03 openApp (D-10/D-11/D-12). Resolve a human name to a package id (or validate an
-   * explicit bundleId) over the session-cached registry, then launch via activateApp. On a
-   * resolution MISS the registry is re-enumerated exactly once (catches mid-run installs) before
-   * erroring with the resolver's candidate ids. Never a best-guess launch (T-359-04).
-   */
+  // On a resolution miss the registry is re-enumerated once before erroring; never a best guess.
   private async openApp(
     action: { appName: string } | { bundleId: string },
   ): Promise<ActionResult> {
@@ -1711,7 +1606,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
 
     let resolution = resolveAppName(action.appName, registry)
     if (resolution.kind === 'unknown' || resolution.kind === 'ambiguous') {
-      // Re-enumerate exactly once on a MISS before erroring (D-12).
       const fresh = await this.enumerateApps()
       if (fresh !== null) {
         this.appRegistry = fresh
@@ -1746,12 +1640,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
     return enumerated
   }
 
-  /**
-   * Enumerate installed apps through the driver only (ownership contract — no adb/child_process).
-   * `mobile: listApps` maps package ids → AppRegistryEntry (labels only when the same call carries
-   * them, D-10 — no per-package round-trips). On failure, fall back to `mobile: shell` pm-list ONLY
-   * when the AGENT_QA_ANDROID_USE_MOBILE_SHELL gate is '1' (Pitfall 4). Null = enumeration unavailable.
-   */
+  // Driver only, no adb; the `mobile: shell` fallback needs `AGENT_QA_ANDROID_USE_MOBILE_SHELL=1`.
   private async enumerateApps(): Promise<AppRegistryEntry[] | null> {
     const driver = this.driver!
     try {
@@ -1839,9 +1728,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'fill': {
-        // EXEC-01 fill compound (D-05..D-08): tap-focus → clear/append → type → RE-READ the SAME
-        // handle → (Enter keycode 66 if submit). ONE ActionResult carrying fillReread metadata;
-        // a mismatch is an honest single-shot failure (no internal retry — the 358 ladder mediates).
+        // One `ActionResult` with re-read metadata; a mismatch fails once, with no internal retry.
         const { center, bounds } = resolver.resolve(action.ref)
         const refData = this.lastRefs[action.ref]
         const role = refData?.role?.toLowerCase()
@@ -1861,7 +1748,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
           .down({ button: 0 })
           .up({ button: 0 })
           )
-        // 437-05 (2026-10-08, D-12): the path is chosen here, before any text is delivered.
+        // The path is chosen here, before any text is delivered.
         const focusedEl = await this.focusedField()
         const verdict = focusedEl ? await this.focusIsElsewhere(focusedEl, action.ref, bounds) : 'target'
         if (verdict !== 'target') {
@@ -1923,13 +1810,9 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'scroll': {
-        // EXEC-02 scroll (D-02/D-03; 436-02 D-24/D-25): ONE ActionResult carrying scrollUntilVisible
-        // metadata. untilVisible prefers the native UiScrollable rung (injection-escaped), then
-        // bounded swipes with light page-source probes for target visibility; direction mode is one
-        // gesture. Movement and boundaries come only from scrollGesture's result or WebView
-        // offsets, never from interim-tree comparisons, and lastRefs is untouched (D-03).
+        // Movement and boundaries come from `scrollGesture` or WebView offsets, never tree diffs.
         if (action.mode === 'untilVisible') {
-          // Reject a hostile/control-char target up front — never interpolate it (Pitfall 9).
+          // Reject a hostile or control-char target up front, never interpolating it.
           try {
             escapeUiSelectorText(action.text)
           } catch (err) {
@@ -1966,8 +1849,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         }
         const { width, height } = await driver.getWindowSize()
 
-        // Schema shapes: SwipeByPath drives explicit from/to points; SwipeByDirection computes a
-        // page-sized gesture from the (optional ref) center (legacy startX..endY reads retired).
+        // `path` drives explicit points; a direction swipes a page from the ref or screen center.
         let pts: { startX: number; startY: number; endX: number; endY: number }
         if (action.mode === 'path') {
           pts = {
@@ -2080,8 +1962,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'waitFor': {
-        // Schema on-modes replace the legacy {condition,timeout} blind pause. text/gone poll the
-        // native accessibility tree; selector-mode is a web-only capability (§7.1, catalog pin).
+        // `text` and `gone` poll the native accessibility tree; `selector` is a web-only mode.
         if (action.on === 'selector') {
           return {
             success: false,
@@ -2116,9 +1997,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'keypress': {
-        // Schema adds mode:'press'|'down'|'up'. Only 'press' is meaningful on mobile — key
-        // hold/release is a web-only lane (§7.1, catalog pin). convertPlatformKeys is a no-op on
-        // mobile (no Meta/Control distinction in Appium key codes per D-13).
+        // Only `press` is meaningful on mobile; key hold and release are web-only.
         if (action.mode !== 'press') {
           return {
             success: false,
@@ -2194,17 +2073,14 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         return { success: true }
 
       case 'openQuickSettings':
-        // args-array shell (A1) — never a concatenated command string (Pitfall 6).
+        // An args-array shell, never a concatenated command string.
         return await this.runShell('openQuickSettings', {
           command: 'cmd',
           args: ['statusbar', 'expand-settings'],
         })
 
       case 'intent': {
-        // T-360-02 / Pitfall 6: map the schema fields onto TYPED mobile: startActivity args. Extras
-        // become [[typeTag, key, value]] triples (string→s / int→i / long→l / float→f / bool→z);
-        // planner-supplied values pass through byte-identical as typed args — NEVER interpolated
-        // into an am-start shell string.
+        // Extras pass as typed `startActivity` args, never interpolated into a shell string.
         const TYPE_TAG: Record<'string' | 'int' | 'long' | 'float' | 'bool', string> = {
           string: 's', int: 'i', long: 'l', float: 'f', bool: 'z',
         }
@@ -2221,9 +2097,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'keyevent': {
-        // T-360-02: allow-list the symbolic code BEFORE any driver call (the 359 escapeUiSelectorText
-        // posture). A non-matching (hostile) string is rejected with a §7.1 error — never reaches a
-        // driver.execute. A matching code runs through an args-array shell lane (no interpolation).
+        // The keycode is allow-listed before any driver call, so a hostile string never reaches it.
         if (!/^KEYCODE_[A-Z0-9_]+$/.test(action.keycode)) {
           return {
             success: false,
@@ -2237,10 +2111,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'assertValue': {
-        // D-10: the adapter RESOLVES the requested source to a raw value on ActionResult.data; the
-        // runner-side comparator applies the op and judges. The adapter never compares. url/storage/
-        // expr read the live WebView (web-context) machinery; sources with no native lane return a
-        // §7.1 error naming the platform limitation.
+        // The adapter resolves the source to a raw value; the runner-side comparator judges.
         if ('expr' in action) {
           if (!inWeb) {
             return {
@@ -2279,8 +2150,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
               success: false,
               error: 'assertValue {source:"network"} (HTTP log inspection) is not available on the Android adapter. Use a web target for network assertions, or assert on visible UI text.',
             }
-          case 'expr-result':
-            return { success: true, data: undefined }
         }
       }
 
@@ -2315,8 +2184,6 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
       }
 
       case 'openApp':
-        // EXEC-03 (D-10/D-12): resolve a human app name (or validate an explicit bundleId) over a
-        // session-cached registry, then launch via activateApp. Never a best-guess launch.
         return await this.openApp(action)
 
       case 'stopApp': {
@@ -2354,11 +2221,7 @@ export class AndroidPlatformAdapter implements PlatformAdapter<'android'> {
         return { success: true, coordinates: { x, y } }
       }
 
-      // Runner-minted / author-channel verbs (D-01/D-15): reportValue, assertAI, extractAI, and
-      // setVariable are intercepted at the runner dispatch seam and never reach the adapter. A
-      // grouped §7.1 defensive case surfaces a dispatch-routing error if one arrives here;
-      // assertNever remains the backstop for a genuinely unknown schema verb. (uniqueValue is
-      // web-only and is not part of ActionsFor<'android'>.)
+      // Runner-channel verbs never reach the adapter; one arriving here is a routing error.
       case 'reportValue':
       case 'assertAI':
       case 'extractAI':

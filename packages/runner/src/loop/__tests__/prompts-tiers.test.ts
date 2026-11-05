@@ -1,22 +1,3 @@
-// Wave-0 (test-first) scaffold for Phase 355 CTXB-01/CTXB-02 — the three cache-ordered
-// planner-prompt tiers (stable / context / volatile), the single Anthropic cache_control
-// breakpoint on the context message, and the per-turn-state decomposition.
-//
-// RED BY DESIGN: `buildContextTier`, `buildVolatileTier`, and `composeTurnMessages` do
-// not exist until Plan 03 rebuilds prompts.ts into tiers. `buildSystemPrompt` (the stable
-// tier) already exists and is unchanged. The failing reason must be exactly the
-// not-yet-implemented tier builders (a missing-export / not-a-function error naming the
-// symbol) — never a typo or wrong fixture. Plan 03 turns this GREEN.
-//
-// Contract these tests pin (per CONTEXT D-04/D-05/D-06/D-07/D-09/D-12):
-//   - buildContextTier(context)  → SystemModelMessage (role:'system'); carries the ONE
-//                                   ephemeral breakpoint under providerOptions.anthropic.cacheControl.
-//   - buildVolatileTier(context) → SystemModelMessage (role:'system'); NO breakpoint; a
-//                                   date-granularity stamp; renders no 'Knowledge brief'
-//                                   section when the brief slot is empty.
-//   - composeTurnMessages(context, screenState) → ModelMessage[]; the per-turn state
-//                                   (screen tree, previous steps, sub-action history) lives
-//                                   here and NEVER in the system tiers; empty slots omitted.
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { ModelMessage, SystemModelMessage } from 'ai'
 import { sha256hex, type ScreenState } from '@vostride/agent-qa-schema'
@@ -24,7 +5,6 @@ import type { StepContext } from '../types.js'
 import { buildAgentScreenState, type LooseScreenState } from './screen-fixtures.js'
 import {
   buildSystemPrompt,
-  // Plan-03 tier API — intentionally unresolved today (the RED reason for this suite):
   buildContextTier,
   buildVolatileTier,
   captureServedPromptTurn,
@@ -56,8 +36,7 @@ function makeScreenState(overrides: LooseScreenState = {}): ScreenState {
   })
 }
 
-// The planner `system` value: an ordered [stable, context, volatile] array. Stable is
-// wrapped from the (unchanged) string builder; context/volatile are Plan-03 tier builders.
+// The planner `system` value: an ordered [stable, context, volatile] array of tier messages.
 function buildPlannerSystem(
   ctx: StepContext,
   platform: 'web' | 'android' | 'ios' = 'web',
@@ -80,7 +59,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('planner system tiers — ordering (CTXB-01 / D-04)', () => {
+describe('planner system tiers — ordering', () => {
   it('assembles system as an ordered [stable, context, volatile] array of role:system messages', () => {
     const system = buildPlannerSystem(makeContext())
     expect(system).toHaveLength(3)
@@ -90,7 +69,7 @@ describe('planner system tiers — ordering (CTXB-01 / D-04)', () => {
   })
 })
 
-describe('planner system tiers — single cache breakpoint (CTXB-01 / D-05)', () => {
+describe('planner system tiers — single cache breakpoint', () => {
   it('places exactly one ephemeral cache_control breakpoint, on the context message', () => {
     const system = buildPlannerSystem(makeContext())
     expect(cacheControlOf(system[1])).toEqual({ type: 'ephemeral' })
@@ -100,7 +79,7 @@ describe('planner system tiers — single cache breakpoint (CTXB-01 / D-05)', ()
   })
 })
 
-describe('planner system tiers — cached-prefix byte-stability (CTXB-01 / D-05/D-07)', () => {
+describe('planner system tiers — cached-prefix byte-stability', () => {
   it('keeps stable + context tiers byte-identical across two turns of the same run', () => {
     const ctx = makeContext()
     const first = buildPlannerSystem(ctx)
@@ -111,7 +90,7 @@ describe('planner system tiers — cached-prefix byte-stability (CTXB-01 / D-05/
   })
 })
 
-describe('volatile tier — date-granularity stamp (CTXB-01 / D-07)', () => {
+describe('volatile tier — date-granularity stamp', () => {
   it('stamps the volatile tier at date granularity (identical bytes across two intra-day clock times)', () => {
     const ctx = makeContext()
     vi.useFakeTimers()
@@ -173,7 +152,7 @@ describe('volatile tier — date-granularity stamp (CTXB-01 / D-07)', () => {
   })
 })
 
-describe('served prompt-turn capture (CR-08 / D-11)', () => {
+describe('served prompt-turn capture', () => {
   it('snapshots the exact production tier bytes and their named SHA-256 digests', () => {
     const ctx = makeContext({
       promptDate: '2026-07-24',
@@ -230,7 +209,7 @@ describe('served prompt-turn capture (CR-08 / D-11)', () => {
   })
 })
 
-describe('per-turn state placement (CTXB-01 / D-04/D-09)', () => {
+describe('per-turn state placement', () => {
   it('emits per-turn screen/history state as turn messages, never in the system tiers', () => {
     const ctx = makeContext({
       previousSteps: [{ instruction: PREV_STEP_INSTRUCTION, outcome: 'passed' }],
@@ -258,9 +237,22 @@ describe('per-turn state placement (CTXB-01 / D-04/D-09)', () => {
     expect(systemText).not.toContain(PREV_STEP_INSTRUCTION)
     expect(systemText).not.toContain('expand the accordion panel')
   })
+
+  it('attaches the screenshot to the observation as an image file part', () => {
+    const screenshot = Buffer.from('png')
+    const messages = composeTurnMessages(makeContext({ screenshot }), makeScreenState())
+
+    expect(messages.at(-2)).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: expect.stringContaining('Current screen state:') },
+        { type: 'file', mediaType: 'image', data: screenshot },
+      ],
+    })
+  })
 })
 
-describe('empty ingredient slots (CTXB-02 / D-12)', () => {
+describe('empty ingredient slots', () => {
   it('omits working-memory and brief messages entirely when those slots are empty', () => {
     const ctx = makeContext() // no knowledgeBrief, no workingMemory
     const screen = makeScreenState()
@@ -275,7 +267,7 @@ describe('empty ingredient slots (CTXB-02 / D-12)', () => {
   })
 })
 
-describe('non-Anthropic provider no-op (CTXB-01 / D-05)', () => {
+describe('non-Anthropic provider no-op', () => {
   it('lets a non-Anthropic run read identical tier content while ignoring providerOptions.anthropic', () => {
     const context = buildContextTier(makeContext()) as SystemModelMessage
     // A non-Anthropic provider passes the message through untouched (a plain object spread

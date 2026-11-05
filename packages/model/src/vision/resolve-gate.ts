@@ -6,11 +6,11 @@ export interface VisionGate {
 
 const TEXT_ONLY_PROMPT_NOTE = [
   'Visual screenshot is unavailable for this step.',
-  'Rely on the accessibility tree and DOM context for element identification, including roles, names, values, refs, and URLs.',
+  'Rely on the accessibility tree for element identification, including roles, names, values, refs, and URLs.',
   'Verify functional state from the available structured context rather than purely visual appearance.',
 ].join(' ')
 
-/** 439 D-19: the configured `vision` when set, otherwise what the capability table says. */
+// The configured `vision` when set, otherwise the capability table's answer.
 export function visionFromConfig(
   configured: boolean | undefined,
   capabilities: { vision: boolean },

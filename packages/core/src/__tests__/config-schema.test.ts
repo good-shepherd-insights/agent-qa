@@ -69,7 +69,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
       },
       services: {
         dashboard: { port: 3470, artifactsDir: '.agent-qa/artifacts' },
-        cache: { dir: '.agent-qa/cache', ttl: '7d' },
+        cache: { dir: '.agent-qa/cache' },
         authState: { dir: '.agent-qa/auth-states' },
         logging: { level: 'warn' as const },
         recording: { enabled: true },
@@ -81,10 +81,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         },
         mcp: {
           enabled: true,
-          transport: 'http' as const,
-          host: '127.0.0.1',
           port: 3471,
-          path: '/mcp',
         },
       },
       registry: {
@@ -302,7 +299,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
         },
         cache: {
           dir: '.agent-qa/custom-cache',
-          ttl: '7d',
         },
         authState: {
           dir: '.agent-qa/custom-auth-states',
@@ -323,7 +319,6 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     if (result.success) {
       expect(result.data.services?.dashboard?.artifactsDir).toBe('.agent-qa/custom-artifacts')
       expect(result.data.services?.cache?.dir).toBe('.agent-qa/custom-cache')
-      expect(result.data.services?.cache?.ttl).toBe(604_800_000)
       expect(result.data.services?.authState?.dir).toBe('.agent-qa/custom-auth-states')
       expect(result.data.services?.logging?.level).toBe('warn')
       expect(result.data.services?.recording?.enabled).toBe(false)
@@ -368,7 +363,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     expect(AuthStateConfigSchema.safeParse({ dir: '.agent-qa/auth-states', ttlSeconds: 3600 }).success).toBe(false)
   })
 
-  it('workspace accepts all documented fields per D-04', () => {
+  it('workspace accepts all documented fields', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({
       workspace: {
         testMatch: ['**/*.yaml'],
@@ -428,7 +423,7 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     }
   })
 
-  it('registry.targets has no environments key per D-08', () => {
+  it('registry.targets has no environments key', () => {
     const result = AgentQaConfigSchema.safeParse({
       registry: {
         targets: {
@@ -505,21 +500,14 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     expect(result.success).toBe(false)
   })
 
-  it('requires global use.mobile.appState', () => {
-    const result = AgentQaConfigSchema.safeParse({
+  it('a web-only config validates without use.mobile.appState', () => {
+    expect(AgentQaConfigSchema.safeParse({
       workspace: validWorkspace,
       use: {
         browser: { name: 'chromium', headless: true },
       },
-    })
-
-    expect(result.success).toBe(false)
-    if (!result.success) {
-      const issue = result.error.issues.find(i => i.path.join('.') === 'use.mobile.appState')
-      expect(issue).toBeDefined()
-      expect(issue?.message).toContain('use.mobile.appState is required')
-      expect(issue?.message).toContain('preserve | reset')
-    }
+    }).success).toBe(true)
+    expect(AgentQaConfigSchema.safeParse({ workspace: validWorkspace }).success).toBe(true)
   })
 
   it('rejects invalid global use.mobile.appState', () => {
@@ -545,26 +533,21 @@ describe('AgentQaConfigSchema — 4-bucket structure', () => {
     expect(result.success).toBe(false)
   })
 
-  // KDIR-03 (Phase 373): the slim knowledge block replaced the retired v1 memory services block.
   it('materializes knowledge defaults when the block is omitted', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
     expect(result.success).toBe(true)
     if (result.success) {
       expect(result.data.knowledge.dir).toBe('agent-qa-knowledge')
-      expect(result.data.knowledge.commitArtifacts).toBe('none')
-      expect(result.data.knowledge.contextBudgetTokens).toBeUndefined()
     }
   })
 
   it('accepts an explicit knowledge block', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({
-      knowledge: { dir: 'docs/knowledge', commitArtifacts: 'thumbnails', contextBudgetTokens: 4096 },
+      knowledge: { dir: 'docs/knowledge' },
     }))
     expect(result.success).toBe(true)
     if (result.success) {
       expect(result.data.knowledge.dir).toBe('docs/knowledge')
-      expect(result.data.knowledge.commitArtifacts).toBe('thumbnails')
-      expect(result.data.knowledge.contextBudgetTokens).toBe(4096)
     }
   })
 
@@ -846,7 +829,7 @@ describe('Sub-schemas — primitives', () => {
 
   it('CacheConfigSchema requires all fields', () => {
     expect(CacheConfigSchema.safeParse({}).success).toBe(false)
-    expect(CacheConfigSchema.safeParse({ dir: '.cache', ttl: '7d' }).success).toBe(true)
+    expect(CacheConfigSchema.safeParse({ dir: '.cache' }).success).toBe(true)
   })
 
   it('AuthStateConfigSchema requires a non-empty dir only', () => {
@@ -881,26 +864,15 @@ describe('Sub-schemas — primitives', () => {
     ).toBe(true)
   })
 
-  it('McpConfigSchema accepts local HTTP and stdio settings', () => {
+  it('McpConfigSchema accepts the server switch and a port', () => {
     expect(McpConfigSchema.safeParse({}).success).toBe(true)
-    expect(McpConfigSchema.safeParse({
-      enabled: true,
-      transport: 'http',
-      host: '127.0.0.1',
-      port: 3471,
-      path: '/mcp',
-    }).success).toBe(true)
-    expect(McpConfigSchema.safeParse({
-      enabled: true,
-      transport: 'stdio',
-    }).success).toBe(true)
+    expect(McpConfigSchema.safeParse({ enabled: true, port: 3471 }).success).toBe(true)
+    expect(McpConfigSchema.safeParse({ enabled: false }).success).toBe(true)
   })
 
-  it('McpConfigSchema rejects unsupported keys and non-local endpoints', () => {
+  it('McpConfigSchema rejects unknown keys and an out-of-range port', () => {
     expect(McpConfigSchema.safeParse({ exposed: true }).success).toBe(false)
-    expect(McpConfigSchema.safeParse({ host: '0.0.0.0' }).success).toBe(false)
     expect(McpConfigSchema.safeParse({ port: 70000 }).success).toBe(false)
-    expect(McpConfigSchema.safeParse({ path: 'mcp' }).success).toBe(false)
   })
 
   it('AccessibilityConfigSchema requires all fields when present', () => {
@@ -1035,7 +1007,7 @@ describe('NamedLLMConfigSchema — name validation', () => {
     expect(result.success).toBe(false)
   })
 
-  it('DOTTED-NAMES-ACCEPTED: dotted names parse, bad spellings are refused (D-13)', () => {
+  it('DOTTED-NAMES-ACCEPTED: dotted names parse, bad spellings are refused', () => {
     const parse = (name: string) => NamedLLMConfigSchema.safeParse({
       name,
       provider: 'anthropic-subscription',
@@ -1187,12 +1159,8 @@ describe('TargetSchema — product key validation', () => {
   })
 })
 
-// 2026-10-01 (432-22, D-12/D-15/D-18/D-22): the retired keys are deleted, not migrated. The four
-// `safety.trustMode` cells this block held (accept, non-boolean, strict subkeys, optional) asserted
-// a key that no longer exists; their surviving claim is that a config without it parses, kept below.
-// A file that still declares a retired key gets zod's ordinary unrecognized-key issue at the owning
-// object, naming exactly that key, with no retired-key message, migration or notice.
-describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)', () => {
+// A retired key gets zod's ordinary unrecognized-key issue at its owning object, naming that key.
+describe('AgentQaConfigSchema — retired keys are strictly unknown', () => {
   const RETIRED: readonly [string, Record<string, unknown>, string, string][] = [
     ['safety.trustMode', { safety: { trustMode: true } }, '', 'safety'],
     ['safety (empty)', { safety: {} }, '', 'safety'],
@@ -1214,7 +1182,7 @@ describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)',
   ]
 
   for (const [label, config, path, key] of RETIRED) {
-    it(`C432-OLD-KEYS-STRICT: ${label} gets the normal unrecognized-key error and nothing else`, () => {
+    it(`${label} gets the normal unrecognized-key error and nothing else`, () => {
       const result = AgentQaConfigSchema.safeParse(withWorkspace(config))
       expect(result.success).toBe(false)
       if (result.success) return
@@ -1227,7 +1195,7 @@ describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)',
     })
   }
 
-  it('C432-OLD-KEYS-STRICT: every retired key at once is refused key by key, each at its own owner', () => {
+  it('every retired key at once is refused key by key, each at its own owner', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({
       safety: { trustMode: false },
       services: {
@@ -1244,7 +1212,7 @@ describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)',
     expect(found.sort()).toEqual([':safety', 'services.dashboard:runServiceTokens', 'services.mcp:stdio,tokens'])
   })
 
-  it('C432-OLD-KEYS-STRICT: minimal empty service objects parse and materialize no retired member', () => {
+  it('minimal empty service objects parse and materialize no retired member', () => {
     for (const services of [{}, { mcp: {} }, { dashboard: {} }, { mcp: {}, dashboard: {} }]) {
       const result = AgentQaConfigSchema.safeParse(withWorkspace({ services }))
       expect(result.success, JSON.stringify(services)).toBe(true)
@@ -1257,92 +1225,61 @@ describe('AgentQaConfigSchema — retired keys are strictly unknown (432 D-22)',
     expect(DashboardConfigSchema.parse({})).toEqual({})
   })
 
-  it('C432-OLD-KEYS-STRICT: a config without any retired key parses (the surviving optional claim)', () => {
+  it('a config without any retired key parses (the surviving optional claim)', () => {
     const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
     expect(result.success).toBe(true)
   })
 
-  // EDGE-13: the removal is exact. The retired spellings stay legal where a free-form record owns
-  // the key, and an unrelated strict object refuses them exactly as it always did.
-  it('C432-OLD-KEYS-STRICT: strict removal rejects exactly the retired keys and nothing that merely shares a name', () => {
+  // Retired spellings stay legal where a free-form record owns the key.
+  it('strict removal rejects exactly the retired keys and nothing that merely shares a name', () => {
     const shared = AgentQaConfigSchema.safeParse(withWorkspace({
-      registry: { providers: { farm: { tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' } } },
+      analytics: { passRateScope: { attributes: { tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' } } },
       services: { mcp: { enabled: false } },
-      knowledge: { contextBudgetTokens: 4000 },
     }))
     expect(shared.success, JSON.stringify(shared.error?.issues)).toBe(true)
     if (shared.success) {
-      expect(shared.data.registry?.providers?.farm).toEqual({ tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' })
+      expect(shared.data.analytics?.passRateScope?.attributes).toEqual({ tokens: 'x', stdio: 'y', trustMode: 'z', runServiceTokens: 'w' })
       expect(shared.data.services?.mcp).toEqual({ enabled: false })
     }
-    const elsewhere = AgentQaConfigSchema.safeParse(withWorkspace({ services: { cache: { dir: '.c', ttl: '1d', tokens: [] } } }))
+    const elsewhere = AgentQaConfigSchema.safeParse(withWorkspace({ services: { cache: { dir: '.c', tokens: [] } } }))
     expect(elsewhere.success).toBe(false)
     if (!elsewhere.success) {
       expect(elsewhere.error.issues.map(issue => [issue.code, issue.path.join('.')])).toEqual([['unrecognized_keys', 'services.cache']])
     }
-    for (const nested of [{ services: { mcp: { stdio: { grantConfigWrite: false } } } }, { eval: { safety: {} } }]) {
+    for (const nested of [{ services: { mcp: { stdio: { grantConfigWrite: false } } } }, { knowledge: { safety: {} } }]) {
       const result = AgentQaConfigSchema.safeParse(withWorkspace(nested))
       expect(result.success, JSON.stringify(nested)).toBe(false)
       if (!result.success) expect(result.error.issues.every(issue => issue.code === 'unrecognized_keys')).toBe(true)
     }
   })
 
-  it('C432-OLD-KEYS-STRICT: the retained guardrail settings keep their contracts', () => {
+  it('the retained guardrail settings keep their contracts', () => {
     const kept = AgentQaConfigSchema.safeParse(withWorkspace({
-      allowProduction: true,
       services: {
-        mcp: { enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' },
+        mcp: { enabled: true, port: 3471 },
         dashboard: { port: 3470, host: '127.0.0.1', baseUrl: 'http://127.0.0.1:3470' },
       },
     }))
     expect(kept.success).toBe(true)
     if (kept.success) {
-      expect(kept.data.services?.mcp).toEqual({ enabled: true, transport: 'http', host: '127.0.0.1', port: 3471, path: '/mcp' })
-      expect(kept.data.allowProduction).toBe(true)
+      expect(kept.data.services?.mcp).toEqual({ enabled: true, port: 3471 })
     }
-    expect(McpConfigSchema.safeParse({ host: '0.0.0.0' }).success, 'MCP stays loopback-only').toBe(false)
     expect(DashboardConfigSchema.safeParse({ baseUrl: 'javascript:alert(1)' }).success, 'the live-link base stays http(s)').toBe(false)
     expect(DashboardConfigSchema.safeParse({ host: '0.0.0.0' }).success, 'the bind refusal stays a runtime guard').toBe(true)
   })
+
+  it('services.mcp.port 0 asks for an ephemeral port', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({ services: { mcp: { enabled: true, port: 0 } } }))
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.services?.mcp).toEqual({ enabled: true, port: 0 })
+  })
 })
 
-// 432 D-18: production is a config declaration. A target may declare `environment: production`,
-// and only the top-level boolean `allowProduction` opts in; absence and false never do.
-describe('AgentQaConfigSchema — production declarations (432 D-18)', () => {
+// A target's `environment` is a label: local, shared, production or undeclared.
+describe('AgentQaConfigSchema — the target environment label', () => {
   const productionTarget = { platform: 'web', url: 'https://shop.example.com', environment: 'production' }
 
-  it('C432-PRODUCTION-CONFIG: allowProduction is optional, and absent stays absent rather than defaulting', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
-    expect(result.success).toBe(true)
-    if (!result.success) return
-    expect(Object.keys(result.data)).not.toContain('allowProduction')
-    expect(result.data.allowProduction).toBeUndefined()
-  })
-
-  it('C432-PRODUCTION-CONFIG: allowProduction accepts exactly false and true', () => {
-    for (const allowProduction of [false, true]) {
-      const result = AgentQaConfigSchema.safeParse(withWorkspace({
-        allowProduction,
-        registry: { targets: { shop: productionTarget } },
-      }))
-      expect(result.success, String(allowProduction)).toBe(true)
-      if (!result.success) continue
-      expect(result.data.allowProduction).toBe(allowProduction)
-      expect(result.data.registry?.targets?.shop?.environment).toBe('production')
-    }
-  })
-
-  it('C432-PRODUCTION-CONFIG: allowProduction refuses null, strings and other non-booleans', () => {
-    for (const allowProduction of [null, 'true', 'false', 'yes', '', 1, 0, {}, []]) {
-      const result = AgentQaConfigSchema.safeParse(withWorkspace({ allowProduction }))
-      expect(result.success, JSON.stringify(allowProduction)).toBe(false)
-      if (result.success) continue
-      expect(result.error.issues.map(issue => issue.path.join('.')), JSON.stringify(allowProduction))
-        .toContain('allowProduction')
-    }
-  })
-
-  it('C432-PRODUCTION-CONFIG: a target declares production, beside local, shared and undeclared', () => {
+  it('a target declares production, beside local, shared and undeclared', () => {
     for (const environment of ['local', 'shared', 'production', undefined] as const) {
       const target = environment === undefined
         ? { platform: 'web', url: 'https://shop.example.com' }
@@ -1355,7 +1292,7 @@ describe('AgentQaConfigSchema — production declarations (432 D-18)', () => {
     }
   })
 
-  it('C432-PRODUCTION-CONFIG: a target refuses malformed environment spellings', () => {
+  it('a target refuses malformed environment spellings', () => {
     for (const environment of ['Production', 'prod', 'staging', ' production', '', null, true]) {
       const result = TargetSchema.safeParse({ ...productionTarget, environment })
       expect(result.success, JSON.stringify(environment)).toBe(false)
@@ -1364,84 +1301,15 @@ describe('AgentQaConfigSchema — production declarations (432 D-18)', () => {
     }
   })
 
-  it('C432-PRODUCTION-CONFIG: misplaced or misspelled opt-ins get the normal unrecognized-key error', () => {
-    const cases: readonly [Record<string, unknown>, string, string][] = [
-      [{ allowProd: true }, '', 'allowProd'],
-      [{ allowproduction: true }, '', 'allowproduction'],
-      [{ registry: { targets: { shop: { ...productionTarget, allowProduction: true } } } }, 'registry.targets.shop', 'allowProduction'],
-    ]
-    for (const [config, path, key] of cases) {
-      const result = AgentQaConfigSchema.safeParse(withWorkspace(config))
-      expect(result.success, key).toBe(false)
-      if (result.success) continue
-      const unrecognized = result.error.issues.filter(issue => issue.code === 'unrecognized_keys')
-      expect(unrecognized.map(issue => issue.path.join('.')), key).toEqual([path])
-      expect((unrecognized[0] as { keys: string[] }).keys).toEqual([key])
-    }
+  it('an unknown key under a target gets the normal unrecognized-key error', () => {
+    const result = AgentQaConfigSchema.safeParse(withWorkspace({
+      registry: { targets: { shop: { ...productionTarget, unknownTargetKey: true } } },
+    }))
+    expect(result.success).toBe(false)
+    if (result.success) return
+    const unrecognized = result.error.issues.filter(issue => issue.code === 'unrecognized_keys')
+    expect(unrecognized.map(issue => issue.path.join('.'))).toEqual(['registry.targets.shop'])
+    expect((unrecognized[0] as { keys: string[] }).keys).toEqual(['unknownTargetKey'])
   })
 })
 
-// D-03 (Phase 372): eval substrate params — judge names a registry.llms entry;
-// strict so unknown eval subkeys are rejected; optional so pre-372 configs still parse.
-describe('AgentQaConfigSchema — eval block (D-03)', () => {
-  it('accepts a full eval block', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({
-      eval: {
-        judge: 'gpt-judge',
-        k: 3,
-        seed: 42,
-        seeding: { silverPerTestCap: 5 },
-      },
-    }))
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.eval?.judge).toBe('gpt-judge')
-      expect(result.data.eval?.k).toBe(3)
-      expect(result.data.eval?.seed).toBe(42)
-      expect(result.data.eval?.seeding?.silverPerTestCap).toBe(5)
-    }
-  })
-
-  it('rejects unknown eval subkeys (strict)', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({
-      eval: { judg: 'x' },
-    }))
-    expect(result.success).toBe(false)
-  })
-
-  it('rejects unknown eval.seeding subkeys (strict)', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({
-      eval: { seeding: { silverPerTest: 5 } },
-    }))
-    expect(result.success).toBe(false)
-  })
-
-  it('rejects non-positive k and non-integer seed', () => {
-    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { k: 0 } })).success).toBe(false)
-    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { seed: 1.5 } })).success).toBe(false)
-    expect(AgentQaConfigSchema.safeParse(withWorkspace({ eval: { seeding: { silverPerTestCap: 0 } } })).success).toBe(false)
-  })
-
-  it('parses a config WITHOUT the eval key (optional, additive)', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({}))
-    expect(result.success).toBe(true)
-  })
-
-  // Owner override of D-10 (2026-07-12): the explicit same-family judging opt-in.
-  it('accepts eval.judgeAllowSameFamily as a boolean (D-10 owner override)', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({
-      eval: { judge: 'judge', judgeAllowSameFamily: true },
-    }))
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.data.eval?.judgeAllowSameFamily).toBe(true)
-    }
-  })
-
-  it('rejects a non-boolean eval.judgeAllowSameFamily (strict)', () => {
-    const result = AgentQaConfigSchema.safeParse(withWorkspace({
-      eval: { judge: 'judge', judgeAllowSameFamily: 'yes' },
-    }))
-    expect(result.success).toBe(false)
-  })
-})

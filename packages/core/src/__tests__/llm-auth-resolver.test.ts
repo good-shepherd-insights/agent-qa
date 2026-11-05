@@ -520,12 +520,12 @@ describe('resolveLLMAuth', () => {
   })
 })
 
-describe('C445-AUTH-MESSAGES', () => {
+describe('a missing credential names the auth command to run', () => {
   let tempDir: string
   let authPath: string
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-445-auth-messages-'))
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-auth-messages-'))
     authPath = join(tempDir, 'auth.json')
   })
 
@@ -599,12 +599,12 @@ describe('C445-AUTH-MESSAGES', () => {
   })
 })
 
-describe('C445-PUBLIC-API-KEY', () => {
+describe('a compatible config on a public API host needs a key', () => {
   let tempDir: string
   let authPath: string
 
   beforeEach(async () => {
-    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-445-public-api-key-'))
+    tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-public-api-key-'))
     authPath = join(tempDir, 'auth.json')
   })
 

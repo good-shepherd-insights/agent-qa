@@ -1,6 +1,4 @@
-// 439 D-03: the whole step's record the verifier judges from. Every action with its outcome and
-// operation evidence, every value read, the settled start screen and the items carried from earlier
-// steps. The planner's reasoning is never part of it. Callers mask and redact what they add.
+// The planner's reasoning is never part of the record; callers mask and redact what they add.
 import type { InputEvidence, OperationEvidence, ScreenState } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 import { renderInputEvidence, renderOperationEvidence, verifierActionDescription } from './prompts.js'
@@ -122,8 +120,7 @@ const PROMPT_VIEW: RecordView = {
   read: readLine,
 }
 
-// 439 D-10: what the planner wrote (a claim, a query, a typed or expected value) is never citable.
-// An error is the runner's or adapter's report on the planner's request and echoes its arguments.
+// What the planner wrote is never citable; an error echoes the planner's arguments.
 const CITATION_VIEW: RecordView = {
   describe: (action) => `${action.type}${fieldOf(action)}`,
   showsError: () => false,
@@ -144,7 +141,7 @@ function fieldOf(action: Action): string {
     : ''
 }
 
-// D-03 sees every fill verdict: an entry the notable renderer skips still gets a plain line.
+// Every fill verdict gets a line, even one the notable renderer skips.
 function inputLines(entry: InputEvidence, action: Action): string[] {
   const notable = renderInputEvidence(entry)
   if (notable !== undefined) return notable.split('\n')
@@ -212,7 +209,7 @@ export function renderStepRecord(record: VerifierStepRecord): RenderedStepRecord
   return renderRecord(record, PROMPT_VIEW)
 }
 
-/** The record as the citation sources hold it: only what the app or the runner observed (D-10). */
+/** The record as the citation sources hold it: only what the app or the runner observed. */
 export function renderCitationRecord(record: VerifierStepRecord): RenderedStepRecord {
   return renderRecord(record, CITATION_VIEW)
 }

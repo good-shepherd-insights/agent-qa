@@ -1,19 +1,4 @@
-// The D-09 rewire: the projection's flake input is the RESOLVED verdict, on both paths.
-//
-// Three things are pinned here, and only the first is about counters:
-//
-//  1. The differential (the SC2 class): one handoff, two legs. With no analysis artifact the fold
-//     answers the deterministic floor — an `unknown` failure increments no flake counter. With an
-//     artifact upgrading that same test unknown→flake, the flake counter moves. Both legs are
-//     id-addressed, because a single-run fixture cannot see a supersession defect (the 388
-//     two-sided-contract law).
-//  2. Identity refusal is INHERITED, not re-derived: an artifact recording another run's id folds
-//     exactly as artifact-absent (G-389-3A). The file is PRESENT on the same path in both legs —
-//     only the recorded runId varies — which is what distinguishes refusal from absence.
-//  3. L12 rebuild parity by BYTES: a mixed incremental history (artifact present / foreign-runId /
-//     absent) and a full rebuild over the same run dirs produce identical table dumps. A rebuild
-//     that folded handoffs alone would silently diverge from the incremental path, which is the
-//     defect a row-count comparison cannot see.
+// Flake input is the resolved verdict; rebuild and incremental folds must produce identical bytes.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -47,11 +32,7 @@ const FLAKY_FILE = 'suite/checkout.test.ts'
 const FLAKY_TEST = 'checkout retries the payment sheet'
 const payAnchor: Anchor = { t: 'el', role: 'button', name: 'pay now', ordinal: 1 }
 
-/**
- * These folds pass no `quarantine` options, so the 390 D-08 detection step declares itself
- * explicitly skipped rather than answering an empty evaluation. Kept as exact equality — the
- * report's shape is the contract, and a loosened matcher would stop certifying it.
- */
+// With no `quarantine` options detection reports itself skipped; exact equality pins the shape.
 const NO_DETECTION = { quarantine: { kind: 'not-evaluated', reason: 'not-requested' } } as const
 
 const tempDirs: string[] = []
@@ -119,7 +100,7 @@ function unknownFailureHandoff(input: {
   } as unknown as CompletedRunHandoff
 }
 
-/** The 389 supersession: the author upgraded the floor's `unknown` to `flake`. */
+// A supersession: the author upgraded the floor's `unknown` to `flake`.
 function flakeArtifact(runId: string): RunAnalysisArtifact {
   const verdict: Verdict = {
     class: 'flake',
@@ -199,7 +180,7 @@ function writeRunDir(input: {
   return runDir
 }
 
-describe('D-09: the projection fold consumes resolved verdicts', () => {
+describe('the projection fold consumes resolved verdicts', () => {
   it('folds the deterministic floor when no artifact exists — an unknown failure is not a flake', () => {
     const db = openDb()
     const handoff = unknownFailureHandoff({ runId: 'run-floor-aaa', buildOrdinal: 4 })
@@ -209,7 +190,7 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
     expect(flakeCountOf(db)).toBe(0)
   })
 
-  it('folds the RESOLVED class when an artifact upgrades unknown to flake (D-09)', () => {
+  it('folds the RESOLVED class when an artifact upgrades unknown to flake', () => {
     const db = openDb()
     const runId = 'run-upgraded-bbb'
     const handoff = unknownFailureHandoff({ runId, buildOrdinal: 4 })
@@ -222,7 +203,7 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
     expect(flakeCountOf(db)).toBe(1)
   })
 
-  it('refuses a FOREIGN-runId artifact at the loader and answers the floor (G-389-3A)', () => {
+  it('refuses a FOREIGN-runId artifact at the loader and answers the floor', () => {
     const runsRoot = tempDir('agent-qa-resolved-foreign-')
     const knowledgeRoot = tempDir('agent-qa-foreign-knowledge-')
     const runId = 'run-own-ccc'
@@ -269,7 +250,7 @@ describe('D-09: the projection fold consumes resolved verdicts', () => {
     }
   })
 
-  it('rebuilds byte-identical tables from run dirs alone over a MIXED artifact history (L12)', () => {
+  it('rebuilds byte-identical tables from run dirs alone over a MIXED artifact history', () => {
     const runsRoot = tempDir('agent-qa-resolved-parity-')
     const incrementalRoot = tempDir('agent-qa-parity-incremental-')
     const rebuildRoot = tempDir('agent-qa-parity-rebuild-')

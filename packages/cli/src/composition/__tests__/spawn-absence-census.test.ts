@@ -1,79 +1,4 @@
-// NO SPAWN-BASED RUN INVOCATION, AND NO STDOUT-SCRAPE CHANNEL, ON THE RUN PATH
-// (Phase 401 plan 10 — D-01, D-04, INVK-01. The retirement's companion invariant.)
-//
-// WHAT THIS IS FOR. D-01 says "no spawn-based run invocation survives as a second spelling". The
-// three families are dead — the dashboard's `TestRunner`, the CLI host's `createCliRunExecution`,
-// the daemon's piped child — and each retirement was measured by the plan that made it. What no
-// plan could measure is the NEXT one: a later phase that re-mints a child because re-entering
-// `agent-qa run` looks like the easy way to get a run out of a process that has none. This cell is
-// what reds then.
-//
-// ═══ WHY THERE ARE TWO PREDICATES AND NOT ONE ════════════════════════════════════════════════
-//
-// 401-08 built its consumer census exactly the way this phase has been prescribing — discovery
-// predicate re-derived at execution time, self-checked against its own known members — and the
-// predicate silently dropped FIVE real files while every self-check stayed green. The rule it
-// found, and the reason this file is shaped the way it is:
-//
-//     A SELF-CHECK ONLY SEES NARROWINGS THAT REACH THE MEMBERS IT NAMES.
-//
-// The self-check below is still here and still necessary. It is not sufficient. So the claim is
-// carried by two predicates whose narrowings are not the same narrowing, and they are RECONCILED:
-//
-//   PREDICATE 1 — POPULATION-SCOPED AND VOCABULARY-KEYED. Over a pinned complete set of run-path
-//     production modules, which modules hold child-process vocabulary at all? Answer must equal an
-//     exact named allow-list. Blind spot: a run-path module the pinned set forgot to name.
-//
-//   PREDICATE 2 — REACHABILITY-SCOPED AND SHAPE-KEYED. Over the transitive first-party import
-//     closure of the run-path roots — 800-odd modules, static AND dynamic edges — which modules
-//     launch a child whose argument vector names THIS PRODUCT? Answer must equal a named survivor
-//     that launches somebody else's CLI. Blind spot: an indirected argument vector.
-//
-//   THE RECONCILIATION is the part neither predicate can do alone. Every module the closure
-//   reaches that holds the vocabulary and the pinned set never scanned is reported BY NAME. That
-//   list is exactly the 401-08 failure made mechanical: if the pin is too narrow, the closure says
-//   so instead of the self-check staying green. And every pinned module must be reachable, or the
-//   pin is naming something off the path (or a door is missing from the roots).
-//
-// ═══ WHAT STAYS, AND WHY ALLOWED IS NOT UNEXAMINED ═══════════════════════════════════════════
-//
-// INVK-01's own scoping sentence keeps two children, and they are named here rather than pattern-
-// matched: the BUNDLED APPIUM SERVER (`dashboard-server/src/execution/appium-manager.ts`) and the
-// DAEMON-OWNED EMBEDDER WORKER (spawned at `cli/src/daemon/host.ts`). A census that refused these
-// would be wrong about the design of record. But a name on an allow-list is not a verdict about
-// behaviour, so each survivor carries a SHAPE PIN asserting what it does with the vocabulary —
-// which is the part a later edit could silently change while keeping the file's name unchanged.
-//
-// ═══ THE SCRAPE HALF, AND THE THING THIS CENSUS FOUND ════════════════════════════════════════
-//
-// The READ half of `AGENT_QA_EVENT:` died with the dashboard's `TestRunner` (401-07 pinned its
-// absence in that package). The WRITE half did not: `cli/src/reporters/wire-reporter.ts` and
-// `core/src/logging/log-manager.ts` still print the prefix on stdout. They are ARMED BY AN
-// ENVIRONMENT VARIABLE — `AGENT_QA_LIVE_EVENTS` — and the thing that used to set it was the
-// dashboard child's environment, which is deleted. No production module sets it any more.
-//
-// So the census does not pretend the prefix is gone. It asserts the true and much stronger fact:
-// the emitters are a CLOSED SET OF TWO, nothing reads the prefix back, and NOTHING ARMS THE
-// CHANNEL. Re-minting the scrape needs a reader or an armer, and either one reds here.
-
-// ═══ MUTATION LEDGER (2026-08-23, 401-10) ════════════════════════════════════════════════════
-//
-// Each applied to the real tree, run, and reverted with `git diff --quiet` verified. A census that
-// has never been shown to red is a census nobody has measured.
-//
-//   M1  A re-minted run child in the emptied host — `spawn(process.execPath, [entry, 'run', '--',
-//       ...patterns])` in `composition/local-agent-host.ts`.        → 4 red: (2) all three, (4) the
-//       emptied-host pin. Cell (1) stayed green, correctly: that file is ALREADY an allowed holder,
-//       which is exactly why its shape pin is the tight one.
-//   M2  A stdout-scrape reader — `line.startsWith('AGENT_QA_EVENT:')` in the dashboard's in-process
-//       run backend.                                                 → 1 red: (5) the holder set.
-//   M3  The ARMING half — a child env carrying `AGENT_QA_LIVE_EVENTS: 'true'` in `daemon/host.ts`.
-//                                                                    → 1 red: (5) nothing arms it.
-//   M4  THE 401-08 FAILURE ITSELF: drop `dashboard-server/src/execution` from the pinned set AND
-//       drop `appium-manager.ts` from the allow-list, so PREDICATE 1's self-consistency is intact.
-//                        → cell (1) STAYED GREEN — its holders still equalled its own allow-list —
-//       and cell (3) red naming the dropped module. That is the whole argument for two predicates,
-//       measured rather than asserted.
+// No spawn-based run invocation, and no stdout-scrape reader or armer, on the run path.
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
@@ -88,13 +13,7 @@ const PACKAGES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..',
 // The two predicates, as functions, so the self-check can drive them over planted source.
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-/**
- * Drop block and line comments, so a module may NAME what it retired without satisfying a census.
- *
- * The `[^:]` guard keeps a protocol-relative URL from being read as a line comment — the trap that
- * eats this kind of stripper. One stripper idiom for the phase: this is byte-identical to the one
- * in `daemon/__tests__/daemon-run-execution.test.ts` and `__tests__/run-door-invocation-census.test.ts`.
- */
+// The `[^:]` guard keeps a protocol-relative URL from being read as a line comment.
 function stripComments(source: string): string {
   return source
     .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -178,7 +97,6 @@ function namesTheRunVerb(span: string): boolean {
   return /(?:^|[^\w-])['"`]run['"`]/.test(span)
 }
 
-/** The scrape's own wire prefix — the only name the retired channel ever had. */
 const SCRAPE_PREFIX = 'AGENT_QA_EVENT'
 /** …and the environment variable that arms the two surviving emitters. */
 const SCRAPE_ARMING_VAR = 'AGENT_QA_LIVE_EVENTS'
@@ -226,17 +144,10 @@ function walk(dir: string): string[] {
   return found
 }
 
-// 2026-09-26, 429-07 D-08: the schema-derived visibility walker left the run path when `config
-// show` moved onto the shared masking map. It stays as the test oracle the map's parity cells
-// check against; no production module imports it, and the reconciliation below asserts that.
-const OFF_RUN_PATH_FILES = ['cli/src/composition/config-visibility.ts'] as const
-
 const PINNED_SET = [
   ...PINNED_DIRECTORIES.flatMap((dir) => walk(join(PACKAGES, dir))),
   ...PINNED_FILES.map((file) => join(PACKAGES, file)),
-]
-  .filter((path) => !OFF_RUN_PATH_FILES.some((file) => path === join(PACKAGES, file)))
-  .sort()
+].sort()
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 // PREDICATE 2's population: the transitive first-party import closure of the run-path roots.
@@ -281,14 +192,7 @@ function resolveSpecifier(from: string, specifier: string): string | null | unde
   return undefined
 }
 
-/**
- * Every first-party module a run can reach from one of the doors, transitively.
- *
- * DYNAMIC EDGES COUNT. `in-process-run-execution.ts` is acquired through `await import(...)` at
- * both of its call sites — that deferral is the surface firewall's only legal route and 401-11
- * measured what happens without it — so a walker reading only static edges would miss the run
- * execution, which is the subject. `require(...)` counts for the same reason.
- */
+// Dynamic `import(...)` and `require(...)` count: the run execution loads through one.
 const RUN_PATH_ROOTS = [
   'cli/src/composition/in-process-run-execution.ts',
   'cli/src/composition/local-agent-host.ts',
@@ -335,26 +239,15 @@ const rel = (path: string): string => relative(PACKAGES, path).split('\\').join(
 
 /** Run-path modules permitted to hold the vocabulary — PREDICATE 1's answer. */
 const PINNED_VOCABULARY_HOLDERS = [
-  // THE BUNDLED APPIUM SERVER — design-of-record, named in INVK-01's own scoping sentence.
+  // The bundled Appium server, a child the design keeps.
   'dashboard-server/src/execution/appium-manager.ts',
-  // THE DAEMON-OWNED EMBEDDER WORKER — design-of-record, the other child INVK-01 keeps.
+  // The daemon-owned embedder worker, the other child the design keeps.
   'cli/src/daemon/host.ts',
-  // 2026-10-01 (432-16, D-07): `cli/src/composition/local-agent-host.ts` LEFT this set. It held git
-  // plumbing (`spawnSync('git', …)` behind an injected exec seam) for the one-commit applies and the
-  // undo source; agent-qa makes no git commits and reads no history now, so it holds no child
-  // vocabulary at all. Its shape pin below says so.
-  // `exec('open <url>')` — the operator's own browser, opened once when `agent-qa dashboard` boots.
+  // `exec('open <url>')` opens the operator's browser once when `agent-qa dashboard` boots.
   'cli/src/commands/dashboard.ts',
 ].sort()
 
-/**
- * Vocabulary holders the closure reaches that the pinned set does not scan — THE RECONCILIATION.
- *
- * This list is the 401-08 failure made mechanical. Each of these is a real child-process user on
- * the run path that PREDICATE 1 is structurally blind to, and each is here with a reason rather
- * than as an exemption. A new member appearing is not automatically wrong — it is the signal that
- * somebody added a child somewhere the pin does not look, and a person should read it.
- */
+// Child-process users the closure reaches but the pinned set does not scan; read each new one.
 const REACHED_BUT_UNPINNED = [
   // `node <playwright-core cli> install <browsers>` — a THIRD-PARTY CLI, via the node binary. The
   // one survivor of PREDICATE 2, pinned by shape below.
@@ -394,21 +287,21 @@ const SCRAPE_EMITTERS = [
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-describe('(0) BOTH PREDICATES SEE WHAT THEY FORBID — before any verdict about any module', () => {
-  it('PREDICATE 1 matches every vocabulary form, and a comment satisfies none of them', () => {
+describe('both predicates see what they forbid, before any verdict about any module', () => {
+  it('the vocabulary predicate matches every vocabulary form, and a comment satisfies none of them', () => {
     expect(holdsSpawnVocabulary("import { spawn } from 'node:child_process'")).toBe(true)
     expect(holdsSpawnVocabulary("const cp = require('child_process')")).toBe(true)
     expect(holdsSpawnVocabulary("import treeKill from 'tree-kill'")).toBe(true)
     expect(holdsSpawnVocabulary("await import('node:child_process')")).toBe(true)
     // …and prose naming the retirement is not a wire.
     expect(holdsSpawnVocabulary('// the daemon used to import node:child_process here')).toBe(false)
-    expect(holdsSpawnVocabulary('/**\n * retired: tree-kill on the run path (D-01)\n */')).toBe(false)
+    expect(holdsSpawnVocabulary('/**\n * retired: tree-kill on the run path\n */')).toBe(false)
     // …and the stripper does not eat a protocol-relative URL, the trap that hollows this out.
     expect(stripComments("const u = 'https://example.test/x'").trim())
       .toBe("const u = 'https://example.test/x'")
   })
 
-  it('PREDICATE 2 reads a launch call ARGUMENT SPAN, and tells a run child from a tool child', () => {
+  it('the argument predicate reads a launch call\'s argument span, and tells a run child from a tool child', () => {
     const runChild = launchSpans(
       "const child = spawn(process.execPath, [entry, 'run', '--', ...patterns], { env })",
     )
@@ -434,17 +327,17 @@ describe('(0) BOTH PREDICATES SEE WHAT THEY FORBID — before any verdict about 
     expect(nested[0]).toContain('process.execPath')
   })
 
-  it('THE SCRAPE PREDICATES separate an emitter, a reader and an ARMER', () => {
+  it('the scrape predicates separate an emitter, a reader and an armer', () => {
     expect(holdsScrapePrefix("const PREFIX = 'AGENT_QA_EVENT:'")).toBe(true)
     expect(holdsScrapePrefix("if (line.startsWith('AGENT_QA_EVENT:')) parse(line.slice(15))")).toBe(true)
-    expect(holdsScrapePrefix('// AGENT_QA_EVENT: retired with the child (D-04)')).toBe(false)
+    expect(holdsScrapePrefix('// AGENT_QA_EVENT: retired with the child')).toBe(false)
     // Arming is an assignment; reading is not. The distinction is the whole claim.
     expect(armsScrapeChannel("env: { ...process.env, AGENT_QA_LIVE_EVENTS: 'true' }")).toBe(true)
     expect(armsScrapeChannel("childEnv.AGENT_QA_LIVE_EVENTS = 'true'")).toBe(true)
     expect(armsScrapeChannel("process.env.AGENT_QA_LIVE_EVENTS === 'true'")).toBe(false)
   })
 
-  it('BOTH POPULATIONS ARE REAL — a walk that returned nothing cannot sweep clean', () => {
+  it('both populations are real — a walk that returned nothing cannot sweep clean', () => {
     expect(PINNED_SET.length).toBeGreaterThan(25)
     expect(PINNED_SET.map(rel)).toContain('cli/src/composition/in-process-run-execution.ts')
     expect(PINNED_SET.map(rel)).toContain('dashboard-server/src/execution/in-process-backend.ts')
@@ -469,8 +362,8 @@ describe('(0) BOTH PREDICATES SEE WHAT THEY FORBID — before any verdict about 
   })
 })
 
-describe('(1) PREDICATE 1 — the pinned run-path set holds no unaccounted child', () => {
-  it('THE COMPLETE SET — vocabulary holders equal the named survivors, exactly', () => {
+describe('the pinned run-path set holds no unaccounted child', () => {
+  it('vocabulary holders equal the named survivors, exactly', () => {
     const holders = PINNED_SET
       .filter((path) => holdsSpawnVocabulary(readFileSync(path, 'utf8')))
       .map(rel)
@@ -479,8 +372,8 @@ describe('(1) PREDICATE 1 — the pinned run-path set holds no unaccounted child
   })
 })
 
-describe('(2) PREDICATE 2 — nothing a run can reach launches THIS PRODUCT as a child', () => {
-  it('THE COMPLETE SET — one launch call names the node binary, and it is not a run', () => {
+describe('nothing a run can reach launches this product as a child', () => {
+  it('one launch call names the node binary, and it is not a run', () => {
     const offenders = CLOSURE.modules
       .filter((path) => launchSpans(readFileSync(path, 'utf8')).some(launchesThisProduct))
       .map(rel)
@@ -488,7 +381,7 @@ describe('(2) PREDICATE 2 — nothing a run can reach launches THIS PRODUCT as a
     expect(offenders).toEqual(SELF_LAUNCH_SURVIVORS)
   })
 
-  it('THROUGH AN INDIRECTION TOO — a launcher that names the node binary anywhere', () => {
+  it('through an indirection too — a launcher that names the node binary anywhere', () => {
     // The wider reading, because an argument vector built two statements above the call is exactly
     // how the surviving embedder child is written — and exactly how a re-mint would be.
     const launchers = CLOSURE.modules
@@ -498,7 +391,7 @@ describe('(2) PREDICATE 2 — nothing a run can reach launches THIS PRODUCT as a
     expect(launchers).toEqual(INDIRECT_SELF_LAUNCHERS)
   })
 
-  it('AND NOT ONE LAUNCH CALL ANYWHERE ASKS A CHILD FOR A RUN — the verb rule', () => {
+  it('no launch call anywhere asks a child for a run', () => {
     // The survivor above passes the first test and must still fail this one. Stated separately so
     // a future third-party-CLI launch does not need this rule relaxed to be added.
     const asking = CLOSURE.modules.flatMap((path) =>
@@ -510,8 +403,8 @@ describe('(2) PREDICATE 2 — nothing a run can reach launches THIS PRODUCT as a
   })
 })
 
-describe('(3) THE RECONCILIATION — what each predicate is blind to, the other reports', () => {
-  it('EVERY PINNED MODULE IS REACHABLE — or the pin names something off the run path', () => {
+describe('what each predicate is blind to, the other reports', () => {
+  it('every pinned module is reachable, or the pin names something off the run path', () => {
     const reachable = new Set(CLOSURE.modules)
     const stranded = PINNED_SET.filter((path) => !reachable.has(path)).map(rel)
     expect(
@@ -519,11 +412,9 @@ describe('(3) THE RECONCILIATION — what each predicate is blind to, the other 
       'a pinned run-path module no door can reach: either it is not on the run path, or the root '
         + 'set below is missing a door',
     ).toEqual([])
-    // The named exemption stays true: an off-run-path module no door reaches.
-    expect(OFF_RUN_PATH_FILES.filter((file) => reachable.has(join(PACKAGES, file)))).toEqual([])
   })
 
-  it('EVERY REACHED HOLDER THE PIN DOES NOT SCAN IS NAMED — the 401-08 catch', () => {
+  it('every reached holder the pin does not scan is named', () => {
     // THIS is the assertion the self-check pattern cannot make about itself. If `PINNED_SET`'s
     // directories were narrowed tomorrow, cell (1) would stay green — its holders would still
     // equal its allow-list — and this one would red with the dropped module's name.
@@ -537,21 +428,20 @@ describe('(3) THE RECONCILIATION — what each predicate is blind to, the other 
   })
 })
 
-describe('(4) ALLOWED IS NOT UNEXAMINED — a shape pin per survivor', () => {
+describe('every allowed survivor has its shape pinned', () => {
   const read = (path: string): string => stripComments(readFileSync(join(PACKAGES, path), 'utf8'))
 
-  it('THE APPIUM CHILD is the Appium server binary, and nothing else', () => {
+  it('the Appium child is the Appium server binary, and nothing else', () => {
     const source = read('dashboard-server/src/execution/appium-manager.ts')
     expect(source).toContain('spawn(appium.command,')
     expect(source).not.toContain('process.execPath')
     expect(source).not.toContain(SCRAPE_PREFIX)
   })
 
-  it('THE EMBEDDER CHILD is the daemon\u2019s worker — the node binary pointed at the WORKER entry', () => {
+  it('the embedder child is the daemon\u2019s worker — the node binary pointed at the worker entry', () => {
     const source = read('cli/src/daemon/host.ts')
     expect(source).toContain('spawnEmbedderWorker: (options) => spawn(')
-    // Every `spawn(` in this host is that one. The daemon's piped RUN child was the other, and it
-    // is gone; this is what makes "gone" a property of the file rather than of a memory.
+    // Every `spawn(` in this host is that one.
     expect([...source.matchAll(/\bspawn\s*\(/g)]).toHaveLength(1)
     // It DOES launch the node binary — that is what a JS worker child is — so the discriminating
     // fact is the script it is pointed at. `resolveEmbedderWorkerEntryPath()` is the worker entry
@@ -563,11 +453,8 @@ describe('(4) ALLOWED IS NOT UNEXAMINED — a shape pin per survivor', () => {
     expect(source).not.toContain('process.argv')
   })
 
-  // RE-SPELLED 2026-10-01 (432-16): was 'THE EMPTIED HOST holds git plumbing only'. The git
-  // plumbing went with the one-commit applies and the undo source; the host launches nothing.
-  it('THE EMPTIED HOST launches nothing — no `child_process`, no git, no entry script, no argv', () => {
-    // The tightest pin in this census, because this is the file `createCliRunExecution` lived in
-    // and therefore the likeliest place for a re-mint to land.
+  it('the emptied host launches nothing — no `child_process`, no git, no entry script, no argv', () => {
+    // The tightest pin in this census: the host file is the likeliest place for a re-mint to land.
     const source = read('cli/src/composition/local-agent-host.ts')
     expect(source).not.toContain('node:child_process')
     expect(source).not.toMatch(/\bspawn(?:Sync)?\s*\(/)
@@ -576,14 +463,14 @@ describe('(4) ALLOWED IS NOT UNEXAMINED — a shape pin per survivor', () => {
     expect(launchSpans(source)).toEqual([])
   })
 
-  it('THE DASHBOARD COMMAND opens a URL in the operator\u2019s browser', () => {
+  it('the dashboard command opens a URL in the operator\u2019s browser', () => {
     const source = read('cli/src/commands/dashboard.ts')
     expect(source).toContain("await import('node:child_process')")
     expect(source).toMatch(/exec\(`\$\{openCmd\} http:\/\/localhost/)
     expect(source).not.toContain('process.execPath')
   })
 
-  it('THE NODE-BINARY SURVIVOR launches PLAYWRIGHT\u2019s CLI, to install browsers', () => {
+  it('the node-binary survivor launches Playwright\u2019s CLI, to install browsers', () => {
     const source = read('cli/src/commands/install-browsers.ts')
     const spans = launchSpans(source).filter(launchesThisProduct)
     expect(spans).toHaveLength(1)
@@ -594,8 +481,8 @@ describe('(4) ALLOWED IS NOT UNEXAMINED — a shape pin per survivor', () => {
   })
 })
 
-describe('(5) THE SCRAPE CHANNEL — two emitters, no reader, and nothing arms it', () => {
-  it('THE COMPLETE SET OF PREFIX HOLDERS — the two emitters, and nothing else on the run path', () => {
+describe('the scrape channel — two emitters, no reader, and nothing arms it', () => {
+  it('the prefix holders on the run path are the two emitters, and nothing else', () => {
     const holders = CLOSURE.modules
       .filter((path) => holdsScrapePrefix(readFileSync(path, 'utf8')))
       .map(rel)
@@ -603,7 +490,7 @@ describe('(5) THE SCRAPE CHANNEL — two emitters, no reader, and nothing arms i
     expect(holders).toEqual(SCRAPE_EMITTERS)
   })
 
-  it('NEITHER EMITTER READS THE WIRE BACK — a scrape needs a parser, and there is none', () => {
+  it('neither emitter reads the wire back — a scrape needs a parser, and there is none', () => {
     for (const emitter of SCRAPE_EMITTERS) {
       const source = stripComments(readFileSync(join(PACKAGES, emitter), 'utf8'))
       expect(source, `${emitter} parses the wire prefix`).not.toMatch(
@@ -613,11 +500,8 @@ describe('(5) THE SCRAPE CHANNEL — two emitters, no reader, and nothing arms i
     }
   })
 
-  it('NOTHING ON THE RUN PATH ARMS THE CHANNEL — the thing that used to is deleted', () => {
-    // `AGENT_QA_LIVE_EVENTS` was set in the dashboard child's environment. With no child there is
-    // no environment to set it in, and no production module sets it any other way. This is what
-    // makes the two emitters dormant rather than a live untyped side channel (D-04), and it is the
-    // assertion a re-mint cannot avoid tripping: a scrape needs its writer armed.
+  it('nothing on the run path arms the channel', () => {
+    // No production module sets `AGENT_QA_LIVE_EVENTS`, so the emitters stay dormant.
     const armers = CLOSURE.modules
       .filter((path) => armsScrapeChannel(readFileSync(path, 'utf8')))
       .map(rel)

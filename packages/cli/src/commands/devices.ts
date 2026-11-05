@@ -4,16 +4,11 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { stringify } from 'yaml'
 import pc from 'picocolors'
+import { printRunText } from '@vostride/agent-qa-core/run-text-output'
 import { resolveConfig } from '../config.js'
 import { loadLocalBindings } from '../devices.js'
 
-function formatStatus(
-  transport: string,
-  localBinding: Record<string, unknown> | null,
-): string {
-  if (transport !== 'local') {
-    return pc.green('Ready') + pc.dim(' (no local binding required)')
-  }
+function formatStatus(localBinding: Record<string, unknown> | null): string {
   if (!localBinding) {
     return pc.red('UNBOUND') + pc.yellow(' - run `agent-qa devices init`')
   }
@@ -27,7 +22,8 @@ async function listDevices(): Promise<void> {
   try {
     config = await resolveConfig({})
   } catch (err) {
-    console.error(pc.red(`Config error: ${err instanceof Error ? err.message : String(err)}`))
+    const message = err instanceof Error ? err.message : String(err)
+    printRunText(pc.red(`Config error: ${message}`), (text) => console.error(text))
     process.exitCode = 1
     return
   }
@@ -38,29 +34,36 @@ async function listDevices(): Promise<void> {
     return
   }
 
-  const localBindings = loadLocalBindings()
+  let localBindings
+  try {
+    localBindings = loadLocalBindings()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    printRunText(pc.red(`Config error: ${message}`), (text) => console.error(text))
+    process.exitCode = 1
+    return
+  }
 
   const nameWidth = Math.max(12, ...Object.keys(devices).map(n => n.length))
   const platWidth = 10
-  const transWidth = 14
 
   console.log('')
   console.log(pc.bold('  Configured Devices'))
   console.log('')
   console.log(
-    `  ${pc.dim('Name'.padEnd(nameWidth))}  ${pc.dim('Platform'.padEnd(platWidth))}  ${pc.dim('Transport'.padEnd(transWidth))}  ${pc.dim('Status')}`,
+    `  ${pc.dim('Name'.padEnd(nameWidth))}  ${pc.dim('Platform'.padEnd(platWidth))}  ${pc.dim('Status')}`,
   )
   console.log(
-    `  ${pc.dim('─'.repeat(nameWidth))}  ${pc.dim('─'.repeat(platWidth))}  ${pc.dim('─'.repeat(transWidth))}  ${pc.dim('─'.repeat(30))}`,
+    `  ${pc.dim('─'.repeat(nameWidth))}  ${pc.dim('─'.repeat(platWidth))}  ${pc.dim('─'.repeat(30))}`,
   )
 
+  const rows: string[] = []
   for (const [name, profile] of Object.entries(devices) as [string, any][]) {
     const localBinding = localBindings?.devices?.[name] as Record<string, unknown> | undefined ?? null
-    const status = formatStatus(profile.transport, localBinding)
-    console.log(
-      `  ${name.padEnd(nameWidth)}  ${profile.platform.padEnd(platWidth)}  ${profile.transport.padEnd(transWidth)}  ${status}`,
-    )
+    const status = formatStatus(localBinding)
+    rows.push(`  ${name.padEnd(nameWidth)}  ${profile.platform.padEnd(platWidth)}  ${status}`)
   }
+  printRunText(rows.join('\n'), (text) => console.log(text))
   console.log('')
 }
 
@@ -172,8 +175,6 @@ async function initDevices(): Promise<void> {
   let bindCount = 0
 
   for (const [name, profile] of Object.entries(registryDevices) as [string, any][]) {
-    if (profile.transport !== 'local') continue
-
     if (profile.platform === 'android' && adbDevices.length > 0) {
       const device = adbDevices[0]
       localDevices[name] = { avd: device.model }
@@ -190,7 +191,6 @@ async function initDevices(): Promise<void> {
 
   const localFileContent = {
     devices: Object.keys(localDevices).length > 0 ? localDevices : {},
-    providers: {},
   }
 
   const yamlContent =

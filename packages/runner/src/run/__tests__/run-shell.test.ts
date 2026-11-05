@@ -1,13 +1,8 @@
-// Wave-0 RED scaffold (361-01, Task 3). Pins the SESSION-01/04/05 run-shell behavior
-// BEFORE any implementation exists — RED strictly on the unresolved import of the
-// not-yet-existing `../shell.js` module (right-reason RED). Turns green in Plan 06.
-//
-// Contract source: 361-CONTEXT.md D-01 (startRun owns session identity, bus, seq,
-// member iteration, aggregate verdict, handoff emission), D-03 (run-level SIGINT +
-// wall-clock budget), D-04 (fully-resolved RunConfig, no fs/providers), D-13/D-17
-// (session.done resolves { verdict, handoff }, handoff persisted exactly once),
-// D-16 (per-test outcome derivation) + spec/v2/runner.md §2.1/§2.2. RESEARCH Pitfall 4:
-// handoff step indices re-derived from array position, never all-zero.
+// Pins the run shell: startRun owns the session identity, the bus and its seq, member iteration,
+// the aggregate verdict and the handoff; a run-level cancel stops the run; the RunConfig arrives
+// fully resolved, with no fs or providers; session.done resolves { verdict, handoff } with the
+// handoff persisted exactly once; per-test outcomes are derived from the member results
+// (spec/v2/runner.md §2.1/§2.2); and handoff step indices come from array position, never all zero.
 //
 // Runner package convention: `.js`-suffixed relative import specifiers. Fully-faked
 // executor + ports — no real fs, providers, or timers.
@@ -174,9 +169,9 @@ function cancel(session: RunSession): void {
   ;(session as unknown as { cancel(): void }).cancel()
 }
 
-// ---- Synchronous session identity (SESSION-01, D-01/D-04) ----------------
+// ---- Synchronous session identity ----------------
 
-describe('startRun — synchronous session identity (SESSION-01)', () => {
+describe('startRun — synchronous session identity', () => {
   it('returns a session synchronously carrying id, running status, executionContext', () => {
     const session = startRun(baseConfig())
     expect(session.id).toBe('run-1')
@@ -185,10 +180,10 @@ describe('startRun — synchronous session identity (SESSION-01)', () => {
   })
 })
 
-// ---- Run lifecycle + ordering (SESSION-04, spec §2.2) --------------------
+// ---- run lifecycle and ordering ----
 
-describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
-  it('the first event is runStarted at seq 1 with busSchemaVersion + D-04 header fields', async () => {
+describe('run lifecycle emission (spec §2.2)', () => {
+  it('the first event is runStarted at seq 1 with busSchemaVersion + header fields', async () => {
     const session = startRun(baseConfig())
     const events = drain(session)
     await done(session)
@@ -259,10 +254,7 @@ describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
     expect(verdictIdx).toBeLessThan(finishIdx)
     expect(finishIdx).toBe(events.length - 1)
     const finishPayload = finishes[0].payload as { disposition: string; finalSeq: number }
-    // 404 D-09/D-10: `detached` is no longer a hardcoded literal — it is what the shell decides
-    // when NO `ports.postVerdict` step was composed, which is this config. Nothing will be drained
-    // from a host that composed no step, and the wire says exactly that (with no warning: nothing
-    // was promised). The three decided values are pinned in the port cells below.
+    // With no `ports.postVerdict` step composed, the shell decides `detached`, with no warning.
     expect(
       finishPayload.disposition,
       'a run with no post-verdict port composed reports detached',
@@ -282,9 +274,9 @@ describe('run lifecycle emission (SESSION-04, spec §2.2)', () => {
   })
 })
 
-// ---- Cancellation + budget (D-03) ----------------------------------------
+// ---- Cancellation ----------------------------------------------------------
 
-describe('run-level cancel + budget (D-03)', () => {
+describe('run-level cancel', () => {
   it('session.cancel() aborts the active member, skips the rest, aggregates cancelled', async () => {
     const calls: string[] = []
     const session = startRun(baseConfig({ executor: abortableExecutor(calls) }))
@@ -295,137 +287,11 @@ describe('run-level cancel + budget (D-03)', () => {
     // The second member is never started once the run is cancelled.
     expect(calls).toEqual(['a'])
   })
-
-  it('run-budget expiry aborts the active member and aggregates timeout', async () => {
-    const timer = makeFakeTimer()
-    const calls: string[] = []
-    const session = startRun(
-      baseConfig({ executor: abortableExecutor(calls), runBudgetMs: 5_000, ports: { handoffStore: makeFakeHandoffStore(), timer } }),
-    )
-    drain(session)
-    timer.fireLatest() // simulate budget expiry
-    const { verdict } = await done(session)
-    expect(verdict).toBe('timeout')
-  })
 })
 
-// ---- Pause-aware run-budget expiry (D-10, plan 362-04) — RETIRED 2026-10-02 (432-42, D-14) ----
-//
-// D-10 credited human confirm time back to the run budget: when the budget "expired" while an
-// injected `confirmPausedMs` supplier reported un-credited confirm time, the shell re-armed for that
-// delta. No run asks since 432-13/19, the supplier always answered 0, and 432-42 deletes it from
-// `RunPorts` with the re-arm. These four cells are re-spelled to the one-shot budget each title now
-// states (old titles in the notes). Where a cell hands a legacy supplier, it is smuggled past the
-// type and proven unread: it is never called and the budget is armed exactly once.
+// ---- Handoff -------------------------------------
 
-/** A legacy pause supplier, smuggled past `RunPorts`; it counts every call it gets. */
-function smuggledPauseSupplier(pausedMs: number): { readonly calls: () => number; readonly ports: object } {
-  let calls = 0
-  return {
-    calls: () => calls,
-    ports: { confirmPausedMs: () => { calls += 1; return pausedMs } },
-  }
-}
-
-describe('pause-aware run-budget expiry (D-10)', () => {
-  // RE-TITLED 2026-10-02 (432-42) from 'Test 1: expiry re-arms for accrued confirm-pause instead of
-  // aborting; run completes normally'.
-  it('Test 1: a smuggled legacy pause supplier is never read; expiry aborts with budget-timeout semantics', async () => {
-    const timer = makeFakeTimer()
-    const calls: string[] = []
-    const legacy = smuggledPauseSupplier(3_000)
-    const session = startRun(
-      baseConfig({
-        executor: abortableExecutor(calls),
-        runBudgetMs: 5_000,
-        ports: { handoffStore: makeFakeHandoffStore(), timer, ...legacy.ports },
-      }),
-    )
-    drain(session)
-    timer.fireLatest()
-    const { verdict } = await done(session)
-    expect(verdict).toBe('timeout')
-    expect(legacy.calls(), 'the shell read the deleted pause supplier').toBe(0)
-  })
-
-  // RE-TITLED 2026-10-02 (432-42) from 'Test 2: re-armed expiry with no further pause aborts with
-  // budget-timeout semantics'.
-  it('Test 2: the first expiry aborts; nothing re-arms the budget', async () => {
-    const base = makeFakeTimer()
-    const delays: number[] = []
-    const recordingTimer: FakeTimer = {
-      now: base.now,
-      fireLatest: base.fireLatest,
-      schedule(delayMs: number, fn: () => void) {
-        delays.push(delayMs)
-        return base.schedule(delayMs, fn)
-      },
-    }
-    const calls: string[] = []
-    const session = startRun(
-      baseConfig({
-        executor: abortableExecutor(calls),
-        runBudgetMs: 5_000,
-        ports: { handoffStore: makeFakeHandoffStore(), timer: recordingTimer },
-      }),
-    )
-    drain(session)
-    base.fireLatest()
-    const { verdict } = await done(session)
-    expect(verdict).toBe('timeout')
-    expect(delays).toEqual([5_000])
-  })
-
-  it('Test 3: no confirmPausedMs supplier bound — expiry aborts immediately (byte-identical to today)', async () => {
-    const timer = makeFakeTimer()
-    const calls: string[] = []
-    const session = startRun(
-      baseConfig({
-        executor: abortableExecutor(calls),
-        runBudgetMs: 5_000,
-        ports: { handoffStore: makeFakeHandoffStore(), timer },
-      }),
-    )
-    drain(session)
-    timer.fireLatest()
-    const { verdict } = await done(session)
-    expect(verdict).toBe('timeout')
-  })
-
-  // RE-TITLED 2026-10-02 (432-42) from 'Test 4: cumulative pause across multiple confirms re-arms
-  // for the un-credited delta only (never double-counts)'.
-  it('Test 4: the budget is armed once for runBudgetMs, whatever a legacy supplier would report', async () => {
-    const base = makeFakeTimer()
-    const delays: number[] = []
-    const recordingTimer: FakeTimer = {
-      now: base.now,
-      fireLatest: base.fireLatest,
-      schedule(delayMs: number, fn: () => void) {
-        delays.push(delayMs)
-        return base.schedule(delayMs, fn)
-      },
-    }
-    const calls: string[] = []
-    const legacy = smuggledPauseSupplier(5_000)
-    const session = startRun(
-      baseConfig({
-        executor: abortableExecutor(calls),
-        runBudgetMs: 5_000,
-        ports: { handoffStore: makeFakeHandoffStore(), timer: recordingTimer, ...legacy.ports },
-      }),
-    )
-    drain(session)
-    base.fireLatest()
-    const { verdict } = await done(session)
-    expect(verdict).toBe('timeout')
-    expect(delays).toEqual([5_000])
-    expect(legacy.calls()).toBe(0)
-  })
-})
-
-// ---- Handoff (SESSION-05, D-13/D-17) -------------------------------------
-
-describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
+describe('handoff — exactly one per run', () => {
   it('session.done resolves the same handoff that is persisted through the store port, exactly once', async () => {
     const store = makeFakeHandoffStore()
     const session = startRun(baseConfig({ ports: { handoffStore: store, eventLog: makeFakeEventLog() } }))
@@ -451,7 +317,7 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
     expect(handoff.tests).toHaveLength(2)
   })
 
-  it('handoff step indices are re-derived from array position (never all-zero — RESEARCH Pitfall 4)', async () => {
+  it('handoff step indices are re-derived from array position (never all-zero)', async () => {
     const twoSteps = passResult('a', [
       defaultStep({ name: 's0', evidence: { stepIndex: 0 } as unknown as StepEvidence }),
       defaultStep({ name: 's1', evidence: { stepIndex: 0 } as unknown as StepEvidence }),
@@ -464,7 +330,7 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
     expect(handoff.tests[0].steps.map(s => s.stepIndex)).toEqual([0, 1])
   })
 
-  it('a step WITHOUT evidence still yields a synthesized minimal StepEvidence (Open Q1: synthesize, do not drop)', async () => {
+  it('a step WITHOUT evidence still yields a synthesized minimal StepEvidence (synthesize, do not drop)', async () => {
     const noEvidence = passResult('a', [defaultStep({ name: 's0' })])
     const session = startRun(
       baseConfig({ members: [{ testId: 'a', name: 'test a', filePath: 'a.test.ts' }], executor: scriptedExecutor({ a: noEvidence }, []) }),
@@ -475,7 +341,7 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
     expect(handoff.tests[0].steps[0]).toMatchObject({ stepIndex: 0 })
   })
 
-  it('handoff-store save failure publishes runWarning handoff-write-failed and done STILL resolves (verdict independence, D-07)', async () => {
+  it('handoff-store save failure publishes runWarning handoff-write-failed and done STILL resolves (verdict independence)', async () => {
     const store = makeFakeHandoffStore({ fail: true })
     const session = startRun(baseConfig({ ports: { handoffStore: store, eventLog: makeFakeEventLog() } }))
     const events = drain(session)
@@ -488,15 +354,11 @@ describe('handoff — exactly one per run (SESSION-05, D-13/D-17)', () => {
   })
 })
 
-// ---- 363 D-01 parity enrichment (testStarted descriptor fields + testFinished extras) ----
-//
-// The producer side of the reporter-parity contract: the shell rides the RunMemberDescriptor's
-// parity fields onto testStarted and the TestResult's durationMs/retryCount/failureSummary onto
-// testFinished, masking the failureSummary at the sink. Absent optionals leave no undefined-hole.
+// Descriptor parity fields ride testStarted; failureSummary on testFinished is masked at the sink.
 
-describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
-  const SECRET = 'SECRET-42'
-  const secretRedactor = new SecretRedactor(new SecretStore({ SECRET_42: SECRET }))
+describe('enriched testStarted / testFinished payloads', () => {
+  const SECRET = 'SECRET-QZ'
+  const secretRedactor = new SecretRedactor(new SecretStore({ SECRET_QZ: SECRET }))
 
   it('testStarted carries the member descriptor parity fields when present', async () => {
     const members: RunMemberDescriptor[] = [
@@ -535,15 +397,14 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
     await done(session)
 
     const started = events.find(e => e.type === 'testStarted')!
-    // filePath is REQUIRED since 381-01 (ABRF-02) — it always rides the payload now.
+    // filePath is required, so it always rides the payload.
     expect(started.payload).toHaveProperty('filePath', 'a.test.ts')
     expect(started.payload).not.toHaveProperty('suiteId')
     expect(started.payload).not.toHaveProperty('stepTexts')
     expect(JSON.parse(JSON.stringify(started.payload))).toEqual(started.payload)
   })
 
-  // G-428-2 (owner decision 2026-09-26 (2)): the descriptor's raw step texts ride testStarted in
-  // step order, masked by this describe's redactor.
+  // The descriptor's raw step texts ride testStarted in step order, masked by this redactor.
   it('STEP-TEXTS-ON-TESTSTARTED', async () => {
     const members: RunMemberDescriptor[] = [
       {
@@ -561,7 +422,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
     const started = events.find(e => e.type === 'testStarted')!
     expect((started.payload as { stepTexts?: readonly string[] }).stepTexts).toEqual([
       'Open the login page',
-      'Type [secret:SECRET_42] into Password',
+      'Type [secret:SECRET_QZ] into Password',
       'Submit the form',
     ])
     expect(JSON.stringify(started.payload)).not.toContain(SECRET)
@@ -588,7 +449,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
     const payload = finished.payload as Record<string, unknown>
     expect(payload.durationMs).toBe(987)
     expect(payload.retryCount).toBe(2)
-    expect(payload.failureSummary).toBe('crashed on [secret:SECRET_42]')
+    expect(payload.failureSummary).toBe('crashed on [secret:SECRET_QZ]')
     expect(JSON.stringify(payload)).not.toContain(SECRET)
   })
 
@@ -604,7 +465,7 @@ describe('363 D-01 — enriched testStarted / testFinished payloads', () => {
   })
 })
 
-// ---- D-08 run-artifact store lifecycle (363-06) --------------------------
+// ---- run-artifact store lifecycle ----
 
 interface FakeArtifactStore {
   stage(document: RunArtifactStageInput): void
@@ -628,7 +489,7 @@ function makeFakeArtifactStore(options: { fail?: boolean } = {}): FakeArtifactSt
   }
 }
 
-describe('run-artifact store lifecycle (D-08, 363-06)', () => {
+describe('run-artifact store lifecycle', () => {
   it('stages the config+source snapshot synchronously after runStarted, before finalize', () => {
     const store = makeFakeArtifactStore()
     const runArtifact: RunArtifactStageInput = {
@@ -674,7 +535,7 @@ describe('run-artifact store lifecycle (D-08, 363-06)', () => {
     await expect(done(session)).resolves.toBeDefined()
   })
 
-  it('a throwing store degrades with runWarnings and never gates the verdict (D-07)', async () => {
+  it('a throwing store degrades with runWarnings and never gates the verdict', async () => {
     const store = makeFakeArtifactStore({ fail: true })
     const session = startRun(
       baseConfig({
@@ -691,12 +552,7 @@ describe('run-artifact store lifecycle (D-08, 363-06)', () => {
   })
 })
 
-// ---- CASS-02 run-scoped evidence artifact store threading (Plan 13) ------
-//
-// The shell holds one run-scoped EvidenceArtifactStorePort on RunPorts (constructed run-scoped at
-// the CLI composition root) and must hand THAT EXACT instance to every member context so Plan 12's
-// screenshot producer sees a single durable store across the whole run. An absent store stays
-// undefined for host-neutral tests and embedders.
+// Every member context gets the run's one evidence artifact store; absent stays undefined.
 
 function makeFakeEvidenceArtifactStore(): EvidenceArtifactStorePort {
   return {
@@ -705,7 +561,7 @@ function makeFakeEvidenceArtifactStore(): EvidenceArtifactStorePort {
   }
 }
 
-describe('CASS-02 — run-scoped evidence artifact store threading (Plan 13)', () => {
+describe('run-scoped evidence artifact store threading', () => {
   it('hands the exact config.ports.evidenceArtifacts to every member context (strict identity, multi-member)', async () => {
     const store = makeFakeEvidenceArtifactStore()
     const seen: Array<EvidenceArtifactStorePort | undefined> = []
@@ -751,7 +607,7 @@ describe('CASS-02 — run-scoped evidence artifact store threading (Plan 13)', (
   })
 })
 
-describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-02)', () => {
+describe('§A9 root-cause classification at the assembly seam', () => {
   it('persists a producer-stamped deterministic verdict for a failing member (round-trip)', async () => {
     const store = makeFakeHandoffStore()
     const session = startRun(
@@ -772,7 +628,7 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     expect(['timeout', 'environment', 'flake', 'unknown']).toContain(rootCause?.class)
   })
 
-  it('classifies a failed member environment from a 503 baseline probe carried ON THE MEMBER (D-04)', async () => {
+  it('classifies a failed member environment from a 503 baseline probe carried ON THE MEMBER', async () => {
     const store = makeFakeHandoffStore()
     const session = startRun(
       baseConfig({
@@ -795,7 +651,7 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     expect(store.saved[0].tests[0].rootCause?.evidence.rationale).toBe('health probe: 503 in 230ms')
   })
 
-  it('each member is classified against its OWN target’s baseline, never a sibling’s (401-19, WR-04)', async () => {
+  it('each member is classified against its OWN target’s baseline, never a sibling’s', async () => {
     // The two members name two different web targets. One target is sick, the other is healthy —
     // which is a state a run-level baseline cannot represent at all, and is why a run-level value
     // applied to everyone reports the healthy target's member as an environment failure.
@@ -820,8 +676,7 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
     )
     const { handoff } = await done(session)
 
-    // BOTH HALVES. The first is that the member's own baseline is read at all; the second — the one
-    // WR-04 is about — is that the sibling with no baseline of its own does not inherit it.
+    // The member's own baseline is read, and a sibling without one does not inherit it.
     expect(handoff.tests[0].rootCause?.class).toBe('environment')
     expect(handoff.tests[0].rootCause?.evidence.rationale).toBe('health probe: 503 in 230ms')
     expect(handoff.tests[1].rootCause?.class).not.toBe('environment')
@@ -847,18 +702,7 @@ describe('§A9 root-cause classification at the assembly seam (373-07, D-05/RCC-
   })
 })
 
-// ---- The post-verdict step (404 D-10/D-11) -------------------------------
-//
-// THE CONTRACT UNDER TEST IS "DEGRADE, NEVER GATE". The shell delays `runFinished` for exactly one
-// host-supplied step, and every way that step can fail to decide must end the same way: the wire
-// reads `detached`, a named `runWarning` says why, `done` still resolves, and `runFinished` is
-// still last and still once. These cells drive all four ways — warned, thrown, timed out, absent
-// (the absent arm is pinned by the ordering cell far above, which composes no port) — plus the two
-// deciding answers, plus what the step is actually told.
-//
-// EVERY CELL BELOW IS ORDER-AWARE. `orderLog` is written by the artifact store and by the port
-// itself, so "after finalize, before runFinished" is read off the sequence the shell actually
-// executed rather than inferred from the event list alone.
+// Every way the post-verdict step can fail to decide reads `detached`, warns, and still finishes.
 
 /**
  * A port that IS a `PostVerdictPort` and also a spy.
@@ -885,7 +729,7 @@ function warningsOf(events: RunEventEnvelope[], code: string): RunEventEnvelope[
   )
 }
 
-describe('post-verdict step — the degrade-never-gate contract (404 D-10/D-11)', () => {
+describe('post-verdict step — the degrade-never-gate contract', () => {
   it('a port answering handedOff decides the wire, publishes no warning, and ran AFTER finalize and BEFORE runFinished', async () => {
     const orderLog: string[] = []
     let sawRunFinishedDuringStep = true
@@ -1091,13 +935,13 @@ describe('post-verdict step — the degrade-never-gate contract (404 D-10/D-11)'
     const input = port.run.mock.calls[0][0] as Record<string, unknown>
     expect(
       Object.keys(input).sort(),
-      'both INVK-06 markers ride the step input when the run carries them',
+      'both invocation markers ride the step input when the run carries them',
     ).toEqual(['excludedFromOutcomes', 'gateRun', 'runId', 'verdict'])
     expect(input.gateRun, 'only the literal true carries').toBe(true)
     expect(input.excludedFromOutcomes, 'only the literal true carries').toBe(true)
   })
 
-  it('done resolves only after runFinished AND bus.close() — the 403-03 D-3 invariant, restated over the new step', async () => {
+  it('done resolves only after runFinished AND bus.close(), with the post-verdict step in place', async () => {
     let events: RunEventEnvelope[] = []
     const port: FakePostVerdictPort = {
       run: vi.fn(async () => ({ disposition: 'drained' as const })),

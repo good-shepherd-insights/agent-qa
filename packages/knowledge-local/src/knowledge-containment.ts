@@ -1,18 +1,5 @@
-/**
- * Containment of knowledge-root writes (261003-lgd CR-01, generalised by 261003-mqc).
- *
- * The knowledge root is a git repository people share and pull, and a tracked symlink is checked
- * out even under an ignored directory, so `memory/`, `memory/queue/`, `memory/index/`, a product
- * directory or `policies/` can point anywhere. Every writer checks the directory it is about to
- * create, write, rename into or delete from before it touches it: each component of that
- * directory that already exists must resolve inside the knowledge root's own real path. A link
- * that stays inside the root is fine; one that leaves it, or resolves nowhere, is refused by name.
- * A component that does not exist yet is created by the writer as a real directory.
- *
- * What this does not close: a local process that swaps a component for a link between this check
- * and the write. The threat this answers is a link committed into the shared repository.
- */
-import { lstatSync, realpathSync } from 'node:fs'
+// Each existing component must resolve inside the root; a link swapped in after the check slips by.
+import { lstatSync, realpathSync, type Stats } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
 export class KnowledgeRootContainmentError extends Error {
@@ -61,20 +48,38 @@ export function assertWithinKnowledgeRoot(knowledgeRoot: string, directory: stri
   let current = knowledgeRoot
   for (const part of rel.split(sep)) {
     current = join(current, part)
-    try {
-      lstatSync(current)
-    } catch (error) {
-      if (errnoOf(error) === 'ENOENT') return
-      throw error
-    }
-    let real: string | undefined
-    try {
-      real = realpathSync(current)
-    } catch (error) {
-      if (errnoOf(error) !== 'ENOENT' && errnoOf(error) !== 'ELOOP') throw error
-    }
+    const component = resolveComponent(current)
+    if (component.kind === 'absent') return
+    const real = component.kind === 'resolved' ? component.real : undefined
     if (real === undefined || (real !== realRoot && !real.startsWith(`${realRoot}${sep}`))) {
       throw new KnowledgeRootContainmentError(current, real, knowledgeRoot)
     }
+  }
+}
+
+type Component = { kind: 'absent' } | { kind: 'dangling' } | { kind: 'resolved'; real: string }
+
+function lstatOrAbsent(path: string): Stats | undefined {
+  try {
+    return lstatSync(path)
+  } catch (error) {
+    if (errnoOf(error) === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+// Another section may remove or remake a directory between the reads; only a link is dangling.
+function resolveComponent(path: string): Component {
+  for (;;) {
+    if (lstatOrAbsent(path) === undefined) return { kind: 'absent' }
+    try {
+      return { kind: 'resolved', real: realpathSync(path) }
+    } catch (error) {
+      if (errnoOf(error) === 'ELOOP') return { kind: 'dangling' }
+      if (errnoOf(error) !== 'ENOENT') throw error
+    }
+    const stat = lstatOrAbsent(path)
+    if (stat === undefined) return { kind: 'absent' }
+    if (stat.isSymbolicLink()) return { kind: 'dangling' }
   }
 }

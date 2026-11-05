@@ -1,13 +1,4 @@
-/**
- * IDX-02's authoritative degraded read leg over committed bundles.
- *
- * The scan is lexical + anchor only. Authority requires loadBundle's strict parse,
- * verifyBundleIntegrity's committed-byte digest and identity checks, and deriveBundleTrust's
- * status and ordinal validity (memory.md §8.2). A parseable payload whose manifest digest no
- * longer matches is not authoritative. Per-bundle digest work is deliberate on this degraded
- * face: correctness outranks scan cost at QA scale. Per 374 D-03, this module consumes those
- * read faces and never re-parses committed bundle files.
- */
+// A payload whose manifest digest does not match is not authoritative; correctness beats scan cost.
 import { readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
@@ -17,7 +8,6 @@ import type {
   BundleStatus,
   DerivedTrustState,
   RecordId,
-  TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import { deriveBundleTrust, loadBundle, verifyBundleIntegrity } from './bundle-read.js'
@@ -37,7 +27,6 @@ export interface KnowledgeHit {
 
 export interface ScanBundlesOptions {
   knowledgeRoot: string
-  priors?: TrustPriorTable
   text?: string
   anchor?: Anchor
   product?: string
@@ -46,7 +35,6 @@ export interface ScanBundlesOptions {
 
 export interface ScanBundleByIdOptions {
   knowledgeRoot: string
-  priors?: TrustPriorTable
   bundleId: string
 }
 
@@ -176,10 +164,7 @@ function toHit(
   }
 }
 
-/**
- * D-16 widens the no-dense scan authority to stored normalized anchor forms.
- * Phase 377 generalizes this lexical behavior into the §5.5.8 query helper.
- */
+// Matches stored normalized anchor forms too, because a bundle scan has no dense leg.
 function textMatches(bundle: LoadedBundle, queryTokens: readonly string[]): boolean {
   if (queryTokens.length === 0) return true
   const searchableText = [
@@ -193,10 +178,7 @@ function textMatches(bundle: LoadedBundle, queryTokens: readonly string[]): bool
   return queryTokens.every((token) => searchableText.includes(token))
 }
 
-/**
- * D-16's rung-3 fallback lives here because a bundle scan is always vec:none.
- * Phase 377 generalizes the same normalized-name widening into the §5.5.8 query helper.
- */
+// The normalized-name fallback lives here because a bundle scan is always `vec: none`.
 function anchorMatches(bundle: LoadedBundle, queryAnchor: Anchor | undefined): boolean {
   if (queryAnchor === undefined) return true
   const canonicalQuery = canonicalJson(queryAnchor)
@@ -209,11 +191,11 @@ function anchorMatches(bundle: LoadedBundle, queryAnchor: Anchor | undefined): b
   })
 }
 
-function servableHit(dir: EnumeratedBundleDir, priors?: TrustPriorTable): KnowledgeHit | undefined {
+function servableHit(dir: EnumeratedBundleDir): KnowledgeHit | undefined {
   const outcome = loadBundle(dir.dir)
   if (outcome.kind !== 'loaded') return undefined
   if (!verifyBundleIntegrity(dir.dir).ok) return undefined
-  const trustState = deriveBundleTrust(outcome.bundle, priors)
+  const trustState = deriveBundleTrust(outcome.bundle)
   return isServable(trustState)
     ? toHit(outcome.bundle, trustState, dir.product)
     : undefined
@@ -238,7 +220,7 @@ function scanBundlesWithPosture(
     if (outcome.kind !== 'loaded') continue
     if (!verifyBundleIntegrity(entry.dir).ok) continue
 
-    const trustState = deriveBundleTrust(outcome.bundle, opts.priors)
+    const trustState = deriveBundleTrust(outcome.bundle)
     if (servingOnly && !isServable(trustState)) continue
     if (!textMatches(outcome.bundle, queryTokens)) continue
     if (!anchorMatches(outcome.bundle, queryAnchor)) continue
@@ -266,7 +248,7 @@ export function scanBundlesForRetrieval(opts: ScanBundlesOptions): KnowledgeHit[
 export function scanBundleById(opts: ScanBundleByIdOptions): KnowledgeHit | undefined {
   for (const entry of enumerateBundleDirs(opts.knowledgeRoot)) {
     if (basename(entry.dir) !== opts.bundleId) continue
-    const hit = servableHit(entry, opts.priors)
+    const hit = servableHit(entry)
     if (hit !== undefined) return hit
   }
   return undefined

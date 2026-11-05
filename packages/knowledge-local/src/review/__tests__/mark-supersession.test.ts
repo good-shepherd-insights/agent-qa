@@ -13,11 +13,7 @@ import * as stores from '../../curator/knowledge-store.js'
 import { applyExplicitReview } from '../apply-review.js'
 import type { ApplyExplicitReviewInput } from '../apply-review.js'
 
-// RE-SPELLED 2026-10-01 (432-17, D-04/D-05): the first cell applied its mark through a filed
-// proposal and the proposal door. It now applies the same mark directly under a stable operation
-// identity (the mark intent's identity), the interruption is injected after the sovereign promotion
-// lands instead of at the deleted applied-record publication, and "already-applied" is the
-// same-identity retry answering the same commit receipt.
+// The interruption lands after the sovereign promotion; a same-identity retry answers that receipt.
 async function applyMark(
   agentQaRoot: string, knowledgeRoot: string, operationId: string,
   input: KnowledgeMarkInput,
@@ -152,7 +148,7 @@ it.each([false, true])('commits a real same-kind same-anchor floor replacement b
   expect(bundles()).toHaveLength(3)
 })
 
-it('applies the same real floor replacement through the direct writer in ci, once per operation, and a later mark supersedes it (432-06)', async () => {
+it('applies the same real floor replacement through the direct writer in ci, once per operation, and a later mark supersedes it', async () => {
   const root = mkdtempSync(join(tmpdir(), 'mark-supersession-direct-'))
   roots.push(root)
   const knowledgeRoot = join(root, 'knowledge')

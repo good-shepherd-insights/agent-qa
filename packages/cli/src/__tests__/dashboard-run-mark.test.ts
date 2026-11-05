@@ -1,6 +1,4 @@
-// The dashboard mark door through the real composition (419 D-13).
-// 432-13: there was no asking frame left to preserve. 432-14 (D-14): the frame, its scope field and
-// the host members that carried them are deleted, so the route is one request to one registered op.
+// The dashboard mark door through the real composition: one request to one registered op.
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,7 +13,7 @@ const closers: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of closers.splice(0)) await close() })
 
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-419-mark-door-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-mark-door-'))
   const configPath = join(root, 'agent-qa.config.yaml')
   writeFileSync(configPath, JSON.stringify({
     workspace: { testMatch: ['tests/**/*.test.yaml'], suiteMatch: ['suites/**/*.suite.yaml'], hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local' },
@@ -37,11 +35,8 @@ function fixture() {
   return { ...door, calls, invoke }
 }
 
-// RE-SPELLED 2026-09-30 (432-13, D-14/D-15). The route used to park on the named run channel and
-// deny an absent or unwatched scope, even under config trustMode. The composed host asks nobody now:
-// the mark dispatches and no confirm frame is ever raised. The absent fixture run is what answers,
-// which proves the op was reached.
-describe('dashboard runs.mark confirmation through the composed host (419 D-13)', () => {
+// The composed host asks nobody: the mark dispatches, and the absent fixture run answers.
+describe('dashboard runs.mark confirmation through the composed host', () => {
   it('binds the actual op id and dispatches with an absent or unwatched scope, raising no frame', async () => {
     const f = fixture()
     expect(f.agentHost.runsMarkFunctionId).toBe(RUNS_MARK_FUNCTION_ID)
@@ -49,9 +44,7 @@ describe('dashboard runs.mark confirmation through the composed host (419 D-13)'
     expect(f.calls).toEqual([RUNS_MARK_FUNCTION_ID])
   })
 
-  // RE-SPELLED 2026-10-01 (432-14): was 'dispatches on a WATCHED run channel too, and never parks
-  // on it'. There is no channel to watch; the claim that survives is that a second mark is a second
-  // dispatch and nothing is held between them.
+  // A second mark is a second dispatch; nothing is held between them.
   it('dispatches on a WATCHED run channel too, and never parks on it', async () => {
     const f = fixture()
     expect(await f.invoke()).toMatchObject({ kind: 'ok', body: { kind: 'run-not-found' } })
@@ -60,8 +53,8 @@ describe('dashboard runs.mark confirmation through the composed host (419 D-13)'
   })
 })
 
-describe('C432-DASHBOARD-MARK-DIRECT', () => {
-  it('C432-DASHBOARD-MARK-DIRECT: one mark request is one runs.mark dispatch, with no scope member on the host', async () => {
+describe('a dashboard mark dispatches directly', () => {
+  it('one mark request is one runs.mark dispatch, with no scope member on the host', async () => {
     const f = fixture()
     const retired = ['confirms', 'enterRunTrigger' + 'Scope']
     for (const member of retired) {
@@ -71,9 +64,9 @@ describe('C432-DASHBOARD-MARK-DIRECT', () => {
     expect(f.calls).toEqual([RUNS_MARK_FUNCTION_ID])
   })
 
-  it('C432-DASHBOARD-MARK-DIRECT: a body naming a confirm scope is an unknown field, refused before any dispatch', async () => {
+  it('a body naming a confirm scope is an unknown field, refused before any dispatch', async () => {
     const f = fixture()
-    const outcome = await f.invoke({ kind: 'false-fail', ['confirm' + 'Scope']: 'run-trigger:432-14' })
+    const outcome = await f.invoke({ kind: 'false-fail', ['confirm' + 'Scope']: 'run-trigger:legacy' })
     expect(outcome).toEqual({ kind: 'refused', status: 400, body: { error: 'invalid_mark_input' } })
     expect(f.calls).toEqual([])
   })

@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-mcp",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "private": false,
   "description": "Model Context Protocol server and tools for agent-qa authoring and triage.",
   "keywords": [
@@ -30,9 +30,14 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [
@@ -41,25 +46,25 @@
     "NOTICE.md"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@modelcontextprotocol/node": "2.1.1",
-    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/node": "2.1.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "@vostride/agent-qa-agent": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.3.1",
-    "@modelcontextprotocol/ext-apps": "1.7.5",
-    "@types/node": "~24.12.2",
+    "@modelcontextprotocol/client": "~2.4.0",
+    "@modelcontextprotocol/ext-apps": "~2.0.4",
+    "@types/node": "~24.19.2",
     "@vostride/agent-qa-arch": "workspace:*",
-    "tsup": "~8.5.1",
-    "typescript": "~6.0.3",
-    "vitest": "~4.1.5"
+    "tsdown": "~0.23.4",
+    "typescript": "~7.0.2",
+    "vitest": "~5.0.5"
   }
 }

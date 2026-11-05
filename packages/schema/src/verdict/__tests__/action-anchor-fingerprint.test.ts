@@ -1,13 +1,4 @@
-// The D-13 action-anchor fingerprint: the sibling recipe, pinned as golden BYTES.
-//
-// Gate 3 compares a draft's elements against the union of the suite's, and the derived
-// fingerprint table accumulates those elements across runs — so changing this recipe re-keys
-// every accrued coverage comparison (the 389 D-13 lesson, applied to the sibling). The goldens
-// below are what make that cost visible: they anchor the contract OUTSIDE the module's own
-// vocabulary rather than phrasing it as a relation among its own outputs (the 383 lesson).
-//
-// The first commit of this file is RED by construction: `../action-anchor-fingerprint` does
-// not exist yet.
+// Golden bytes: changing this recipe re-keys every accrued coverage comparison.
 
 import { describe, expect, it } from 'vitest'
 
@@ -28,15 +19,14 @@ const USERNAME: Anchor = { t: 'el', role: 'textbox', name: 'Username' }
 const USERNAME_NOISY: Anchor = { t: 'el', role: '  TextBox ', name: '  Username\n ' }
 const SUBMIT: Anchor = { t: 'el', role: 'button', name: 'Submit' }
 
-describe('actionAnchorElement (393 D-13/D-14)', () => {
+describe('actionAnchorElement', () => {
   it('is deterministic: the same input yields byte-identical elements', () => {
     const input: ActionAnchorElementInput = { kind: 'action', type: 'click', anchor: SUBMIT }
     expect(actionAnchorElement(input)).toBe(actionAnchorElement(input))
   })
 
-  it('collapses casing and whitespace noise — conservatism lives in the normalizer (D-14)', () => {
-    // D-14 has no similarity threshold to defend, so near-same elements MUST normalize equal
-    // or the set difference over-reports novelty and gate 3 waves duplicates through.
+  it('collapses casing and whitespace noise — conservatism lives in the normalizer', () => {
+    // No similarity threshold exists, so near-same elements must normalize equal.
     expect(actionAnchorElement({ kind: 'action', type: 'click', anchor: USERNAME_NOISY })).toBe(
       actionAnchorElement({ kind: 'action', type: 'click', anchor: USERNAME }),
     )
@@ -121,7 +111,7 @@ describe('actionAnchorElement (393 D-13/D-14)', () => {
   })
 })
 
-describe('actionAnchorSequence (393 D-13)', () => {
+describe('actionAnchorSequence', () => {
   const STEPS: readonly ActionAnchorElementInput[] = [
     { kind: 'action', type: 'fill', anchor: USERNAME },
     { kind: 'action', type: 'click', anchor: SUBMIT },
@@ -139,8 +129,7 @@ describe('actionAnchorSequence (393 D-13)', () => {
   })
 
   it('keeps repeated elements rather than collapsing them — the SET lives at the consumer', () => {
-    // D-14's set semantics are the gate-3 consumer's job. The recipe mints elements in order;
-    // deduplicating here would quietly destroy the sequence information a later enrichment needs.
+    // Set semantics belong to the consumer; deduplicating here would destroy sequence information.
     const repeated = actionAnchorSequence([STEPS[0], STEPS[0]])
     expect(repeated).toHaveLength(2)
     expect(repeated[0]).toBe(repeated[1])
@@ -151,9 +140,8 @@ describe('actionAnchorSequence (393 D-13)', () => {
   })
 })
 
-// 2026-10-09 (437-18, D-05, WR-03): a skipped tap sent no input but did not fail, so its anchor
-// is covered surface on both sides of gate 3, as it was before 437 recorded it `success: false`.
-describe('C437-NO-INPUT-READERS', () => {
+// A skipped tap sent no input but did not fail, so its anchor counts as covered on both sides.
+describe('a skipped tap in the test fingerprint', () => {
   const toggle = {
     ref: asRef('e1'),
     role: 'switch',
@@ -208,7 +196,7 @@ describe('C437-NO-INPUT-READERS', () => {
     }
   }
 
-  it("a skipped tap's anchor counts in the test fingerprint, as before 437", () => {
+  it("a skipped tap's anchor counts in the test fingerprint", () => {
     const skipped = testFingerprintElements(
       testWith({
         success: false,
@@ -222,10 +210,10 @@ describe('C437-NO-INPUT-READERS', () => {
         anchor: { t: 'el', role: 'switch', name: 'notifications', ordinal: 0 },
       }),
     ])
-    const pre437 = testFingerprintElements(
+    const withoutAnchorFields = testFingerprintElements(
       testWith({ success: true, metadata: { idempotentNoop: { currentState: 'checked' } } }),
     )
-    expect(pre437).toEqual(skipped)
+    expect(withoutAnchorFields).toEqual(skipped)
   })
 
   it('a really failed sub-action still adds no element', () => {

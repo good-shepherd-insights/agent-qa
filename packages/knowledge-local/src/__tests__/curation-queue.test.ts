@@ -57,7 +57,7 @@ function sha(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
+describe('curation queue atomic emit drop', () => {
   let root: string
   let knowledgeRoot: string
   let sourceRoot: string
@@ -583,13 +583,13 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     })
   })
 
-  describe('C441-CAPTURE', () => {
+  describe('artifacts captured on a password field', () => {
     const DECLARED = 'Hunter-42-zz'
-    const TOKEN = 'tok-441'
+    const TOKEN = 'tok-declared'
     const STEP = 4
 
     function declaredMask(): (text: string) => string {
-      const redactor = new SecretRedactor(new SecretStore({ PW_441: DECLARED }))
+      const redactor = new SecretRedactor(new SecretStore({ PW_KEY: DECLARED }))
       return (text) => redactor.redactString(text)
     }
 
@@ -654,7 +654,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
       expect(queued.artifactInventory).toHaveLength(1)
       const [inventory] = queued.artifactInventory
       const staged = readFileSync(join(candidateDir, inventory!.relativePath), 'utf8')
-      expect(staged).toContain('[secret:PW_441]')
+      expect(staged).toContain('[secret:PW_KEY]')
       expect(staged).toContain(TOKEN)
       expect(staged).not.toContain(DECLARED)
       expect(staged).not.toContain('<REDACTED')
@@ -699,7 +699,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         .filter((path) => !path.startsWith(queueRoot(knowledgeRoot)))
       expect(committedSnapshot).toHaveLength(1)
       const committedText = readFileSync(committedSnapshot[0]!, 'utf8')
-      expect(committedText).toContain('[secret:PW_441]')
+      expect(committedText).toContain('[secret:PW_KEY]')
       expect(committedText).toContain(TOKEN)
       expect(committedText).not.toContain(DECLARED)
       const committedScreenshot = filesNamed(knowledgeRoot, screenshot.descriptor.ref.sha)
@@ -710,14 +710,13 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     })
   })
 
-  describe('C441-CURATION', () => {
-    // Spelled in parts: the retired field names appear nowhere in packages (441-25, census leg 10).
+  describe('queue rows written with retired capture fields', () => {
     const RETIRED_RECEIPT_KEY = ['capture', 'Receipt'].join('')
 
-    function seedRowWrittenBefore44125(): string {
+    function seedRowWithRetiredReceipt(): string {
       const fields = {
         schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
-        sourceRunId: 'run-before-441-25',
+        sourceRunId: 'run-before-receipt',
         scope: { tier: 'product', key: 'storefront' },
         buildOrdinal: 42,
         executionContext: 'local-interactive',
@@ -727,8 +726,8 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         summarySeed: 'Old checkout button selector',
         bodySeed: 'The old checkout button was resolved and verified.',
         distilledObservations: [],
-        evidenceToken: 'evidence-before-441-25',
-        attributingObservationId: 'run-before-441-25:test-0:step-0',
+        evidenceToken: 'evidence-before-receipt',
+        attributingObservationId: 'run-before-receipt:test-0:step-0',
         artifactInventory: [],
         [RETIRED_RECEIPT_KEY]: { regions: [], interactions: [], omissions: [], redactions: [] },
       }
@@ -744,7 +743,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     }
 
     it('a queue row with a capture receipt is skipped as malformed', async () => {
-      const oldId = seedRowWrittenBefore44125()
+      const oldId = seedRowWithRetiredReceipt()
       const fresh = enqueueArtifactFreeCandidateProjection({
         knowledgeRoot,
         projectionInput: projectionInput(),
@@ -766,7 +765,7 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
     it('a queue row with the retired flags is skipped as malformed', async () => {
       const fields = {
         schemaVersion: CURATION_QUEUE_SCHEMA_VERSION,
-        sourceRunId: 'run-before-441-50',
+        sourceRunId: 'run-before-flags',
         scope: { tier: 'product', key: 'storefront' },
         buildOrdinal: 42,
         executionContext: 'local-interactive',
@@ -778,8 +777,8 @@ describe('curation queue atomic emit drop (CUR-04/T-378-07..09)', () => {
         summarySeed: 'Old checkout button selector',
         bodySeed: 'The old checkout button was resolved and verified.',
         distilledObservations: [],
-        evidenceToken: 'evidence-before-441-50',
-        attributingObservationId: 'run-before-441-50:test-0:step-0',
+        evidenceToken: 'evidence-before-flags',
+        attributingObservationId: 'run-before-flags:test-0:step-0',
         artifactInventory: [],
       }
       const oldId = sha(Buffer.from(canonicalJson(fields)))

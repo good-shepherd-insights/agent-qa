@@ -1,18 +1,4 @@
-// RED-first pins for the three quarantine verbs' wire contract (Phase 390, D-12/D-13).
-//
-// The DTOs are minted in schema (384 D-16) so `agent`'s op specs and knowledge-local's port
-// implementation consume ONE contract rather than two agreeing spellings. Two claims carry
-// most of the weight here:
-//
-//  1. THE STATE AND CLASS VOCABULARIES ARE IMPORTED, NEVER RESPELLED (388 C13). The entry
-//     DTO's `state` enum is built out of the ledger's own const, and its `verdictClass` enum
-//     out of the canonical verdict const — so a fourth ledger state could not arrive with the
-//     wire contract still admitting only three. The cases below assert that identity, not a
-//     hand-written copy of the members.
-//  2. RE-ADD AND MISSING-ENTRY ARE RESULT ARMS, NEVER THROWS (D-13). `release` on a test that
-//     is not quarantined answers `no-entry`; `add` on one that already is answers `renewed`.
-//     A caller learns which happened by reading the discriminant, which a rejected promise
-//     could not carry.
+// The state and class enums import their consts, so the wire cannot lag a new ledger state.
 
 import { describe, expect, it } from 'vitest'
 
@@ -65,7 +51,7 @@ const IDENTITY = {
 
 // ---- The entry DTO: one vocabulary, imported ----------------------------
 
-describe('the quarantine entry DTO carries D-13 enumeration in full', () => {
+describe('the quarantine entry DTO carries every ledger field in full', () => {
   it('round-trips an entry carrying identity, fingerprint, class, owner, entered, expiry and state', () => {
     const parsed = QuarantineEntrySchema.parse(entry())
 
@@ -183,7 +169,7 @@ describe('quarantine.add contracts', () => {
     expect(entered.kind).toBe('entered')
   })
 
-  it('answers a renewed ARM for an already-quarantined identity — never a throw (D-13)', () => {
+  it('answers a renewed ARM for an already-quarantined identity — never a throw', () => {
     const renewed: QuarantineAddOutput = QuarantineAddOutputSchema.parse({
       kind: 'renewed',
       entry: entry({ owner: 'ada' }),

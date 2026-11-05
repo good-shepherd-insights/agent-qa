@@ -1,25 +1,22 @@
 import { dirname, join, resolve } from 'node:path'
-import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
 import type { KnowledgeReaderPort } from '@vostride/agent-qa-agent'
 import type { FeedbackPort } from '@vostride/agent-qa-schema'
 import { RUNS_MARK_FUNCTION_ID } from '@vostride/agent-qa-agent'
-import { applyKnowledgeChange, createKnowledgeReader, LOCAL_CURATION_CAPABILITIES, type ExplicitReviewDelegate, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
-import { MARK_FIX_REFUSALS, MARK_RECEIPT_SCHEMA_VERSION, RunsMarkInputSchema, type MarkFixRefusal, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
-import { resolveConfiguredKnowledgeRoot } from '../config.js'
+import { applyKnowledgeChange, createKnowledgeReader, FsMarkLedger, LOCAL_CURATION_CAPABILITIES, resolveRunExecutionContext, RUNS_SUBDIR, type ExplicitReviewDelegate, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
+import { MARK_FIX_REFUSALS, MARK_RECEIPT_SCHEMA_VERSION, RunsMarkInputSchema, slugBranch, type MarkFixRefusal, type AuthoringDraftEditInput, type AuthoringDraftEditOutput, type MarkReceipt, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import { wordImprovementPlan } from './feedback-wording.js'
 import { decideMarkDraft, loadMarkTarget, markEvidenceCurationJobIds, markFeedbackInput, planMarkFeedback, readMarkDraftFacts } from './feedback-plan.js'
-import { resolveEvalSession, resolveProductPartition, FsMarkLedger, freezeGoldenTrajectory, RUNS_SUBDIR, slugBranch } from '../eval-session-composition.js'
 import { answerRecordedMarkEdit, clearMarkEditRecord, MARK_EDIT_RECORD_FILE, withMarkEditScope } from './mark-edit-record.js'
 
 export { resolveMarkMember } from './feedback-plan.js'
 
 export interface FeedbackHostDeps {
-  resolveTrustPriors?: ResolveTrustPriors
   configPath: string
   agentQaRoot: string
   invokeAuthoringDraftEdit?: (input: AuthoringDraftEditInput) => Promise<AuthoringDraftEditOutput>
-  /** The direct knowledge writer a mark's fix goes through (432-09). Injectable so a cell can fault it. */
+  /** The direct knowledge writer a mark's fix goes through. Injectable so a cell can fault it. */
   applyKnowledgeChange?: typeof applyKnowledgeChange
   /**
    * How this host reaches a live writer-lease holder with a mark's fix: the holder is handed the
@@ -27,10 +24,7 @@ export interface FeedbackHostDeps {
    * that binds none refuses by name when the lease is held, and a retry resumes from the intent.
    */
   knowledgeChangeDelegate?: ExplicitReviewDelegate
-  /**
-   * 2026-10-02 (quick 261002-mrk, 432-13 #1): hands the whole mark to a live writer-lease holder
-   * before any lock, lease or write; `undefined` means no live holder, so the mark runs here.
-   */
+  // Hands the whole mark to a live lease holder before any lock or write; `undefined` runs it here.
   wholeMarkDelegate?: WholeMarkDelegate
   /** The lease this host already holds (the daemon): evidence and fix commit with it, never delegating. */
   writerAuthority?: MarkWriterAuthority
@@ -52,11 +46,7 @@ export interface MarkWriterAuthority {
   readonly authority: () => { readonly leaseId: string; readonly epoch: number }
 }
 
-/**
- * Who holds the writer lease, as a refusal names it. 2026-10-03 (quick 261003-lgd, Phase 432 review
- * IN-11): a dashboard or MCP host that runs a run in process holds the lease for that run's own
- * post-run curation, so the holder can be this very process; it is then not "another" one.
- */
+// An in-process run's host may hold the lease itself, so the holder is not always another process.
 function leaseHolderPhrase(holderPid: number): string {
   return holderPid === process.pid
     ? `This agent-qa process (pid ${holderPid}) is already writing to this knowledge store, for `
@@ -64,46 +54,46 @@ function leaseHolderPhrase(holderPid: number): string {
     : `Another agent-qa process (pid ${holderPid}) is writing to this knowledge store`
 }
 
-/**
- * 2026-10-02 (261002-mrk follow-up): an agent-qa process that is not a daemon held the knowledge
- * writer lease for the whole wait budget, so the mark was not started and nothing was written.
- */
+// A non-daemon agent-qa process holds the writer lease for the whole wait; nothing is written.
 export class MarkWriterLeaseBusyError extends Error {
-  constructor(readonly holderPid: number, readonly waitedMs: number) {
+  readonly holderPid: number
+  readonly waitedMs: number
+
+  constructor(holderPid: number, waitedMs: number) {
     super(`${leaseHolderPhrase(holderPid)}; waited ${waitedMs}ms and nothing was marked. Retry the `
       + 'mark when it finishes.')
+    this.holderPid = holderPid
+    this.waitedMs = waitedMs
     this.name = 'MarkWriterLeaseBusyError'
   }
 }
 
-/**
- * 2026-10-02 (quick 261002-hyg): the knowledge-change sibling of {@link MarkWriterLeaseBusyError}.
- * A change met the writer lease held by another agent-qa process that is not a daemon, so it was
- * not handed anywhere and nothing was changed. `holderPid` is absent when the holder released
- * between the lease check and this refusal.
- */
+// A change met the lease held by a non-daemon process; `holderPid` is absent if it released.
 export class KnowledgeWriterLeaseBusyError extends Error {
-  constructor(readonly holderPid: number | undefined) {
+  readonly holderPid: number | undefined
+
+  constructor(holderPid: number | undefined) {
     super(holderPid === undefined
       ? 'Another agent-qa process was writing to this knowledge store and has just finished; nothing was '
         + 'changed. Retry the change.'
       : `${leaseHolderPhrase(holderPid)}; nothing was changed. Retry the change when it finishes.`)
+    this.holderPid = holderPid
     this.name = 'KnowledgeWriterLeaseBusyError'
   }
 }
 
 /**
- * The mark's fix was not applied this time and a retry can apply it: gold and evidence stand, no
- * receipt, and the unfinished mark resumes on retry.
- *
- * 2026-10-03 (quick 261003-mqc): a refusal that comes from the mark's own planned fix
- * (MARK_FIX_REFUSALS) never reaches here. A retry reuses that plan and could never apply it, so
- * the mark closes instead, under its own identity, with a `not-applied` receipt.
+ * The mark's fix was not applied this time and a retry can apply it: evidence stands, no receipt,
+ * and the unfinished mark resumes on retry. A refusal from the mark's own planned fix
+ * (MARK_FIX_REFUSALS) never reaches here: the mark closes with a `not-applied` receipt instead.
  */
 export class MarkFixNotAppliedError extends Error {
-  constructor(readonly reason: string) {
-    super(`Mark fix was not applied (${reason}); gold and evidence landed, no mark receipt `
-      + 'appended. Retry the mark.')
+  readonly reason: string
+
+  constructor(reason: string) {
+    super(`Mark fix was not applied (${reason}); evidence landed, no mark receipt appended. `
+      + 'Retry the mark.')
+    this.reason = reason
     this.name = 'MarkFixNotAppliedError'
   }
 }
@@ -111,14 +101,7 @@ export class MarkFixNotAppliedError extends Error {
 const isPlannedFixRefusal = (reason: string): reason is MarkFixRefusal =>
   (MARK_FIX_REFUSALS as readonly string[]).includes(reason)
 
-export class FeedbackFreezeRefusedError extends Error {
-  constructor(readonly outcome: unknown) {
-    super('Gold freeze refused; no mark receipt appended. Inspect the committed eval root before retrying: some gold cases may already have landed.')
-    this.name = 'FeedbackFreezeRefusedError'
-  }
-}
-
-/** One lazy host, shared by every function surface. Freeze/evidence stay under the run lock. */
+/** One lazy host, shared by every function surface. Evidence stays under the run lock. */
 export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort {
   if (deps.writerAuthority !== undefined
     && (deps.wholeMarkDelegate !== undefined || deps.knowledgeChangeDelegate !== undefined)) {
@@ -132,7 +115,6 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
     }
     return held.authority()
   }
-  const resolveTrustPriors = deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve
   const curation = deps.curation ?? LOCAL_CURATION_CAPABILITIES
   const ledgerFor = (runId: string) => new FsMarkLedger({ root: deps.agentQaRoot, runId })
   return {
@@ -141,7 +123,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
       const input = RunsMarkInputSchema.parse(raw)
       const target = loadMarkTarget(deps.agentQaRoot, input)
       if (target.kind !== 'target') return target
-      // Decided before the run lock, the gold freeze or any lease, so a delegated mark writes nothing here.
+      // Decided before the run lock or any lease, so a delegated mark writes nothing here.
       if (deps.wholeMarkDelegate !== undefined) {
         const delegated = await deps.wholeMarkDelegate(input)
         if (delegated !== undefined) return delegated
@@ -161,7 +143,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           schemaVersion: MARK_RECEIPT_SCHEMA_VERSION, ...input, ...address, runSlug: slugBranch(input.runId),
           markId: `mark_${deps.randomUuid().replace(/-/g, '').slice(0, 12)}`,
           origin: 'user', ordinal, markedAt: (deps.now ?? Date.now)(),
-          gold: [], evidence: { confirmed: 0, overturned: 0 },
+          evidence: { confirmed: 0, overturned: 0 },
           disposition: { kind: 'confirmed-bug', confirmedRecords: 0 },
           ...(prior === undefined ? {} : { supersedes: prior.markId }),
           ...(member.rootCause === undefined ? {} : { rootCause: {
@@ -176,34 +158,28 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           mark.disposition = { kind: 'quarantined', class: planned.class }
           return mark
         }
-        // 432-09 (D-04/D-11): the intent's operation identity is every effect's identity, so a retry
-        // from any checkpoint (after gold, after evidence, after publication, before the receipt)
-        // lands the same fix once. Order is gold, evidence, fix, receipt.
+        // The intent's operation identity is every effect's identity, so a retry from any checkpoint
+        // lands the same fix once, in the order evidence, fix, receipt.
         let intent = ledger.prepareIntent(mark, deps.randomUuid())
         mark = intent.mark
         if (intent.stage !== 'applied') {
-        const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
+        const config = await resolveConfig({ configPath: deps.configPath, loadAuthPlugins: false })
+        const executionContext = resolveRunExecutionContext()
         const configDir = dirname(resolve(deps.configPath))
         const editRecordPath = join(deps.agentQaRoot, RUNS_SUBDIR, slugBranch(input.runId), MARK_EDIT_RECORD_FILE)
-        const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, configDir)
+        const knowledgeRoot = resolveConfiguredKnowledgeRoot(config, configDir)
         const held = heldAuthority(knowledgeRoot)
-        const frozen = freezeGoldenTrajectory({ agentQaRoot: deps.agentQaRoot,
-          committedRoot: resolve(configDir, 'agent-qa-eval'), product: resolveProductPartition(handoff.scope),
-          mark, handoff, ...(prior === undefined ? {} : { priorGold: prior.gold }),
-          mask: createDeclaredSecretMask(deps.configPath).mask })
-        if (frozen.kind !== 'frozen' || frozen.census === 'write-conflict') throw new FeedbackFreezeRefusedError(frozen)
-        mark.gold = frozen.cases
         const { servedRecordIds } = planned.knowledge
         if (intent.stage === 'prepared' && planned.knowledge.appendsEvidence) {
           const lease = held === undefined ? curation.maintenance.acquireWriterLease(knowledgeRoot) : { kind: 'acquired' as const, ...held }
-          if (lease.kind !== 'acquired') throw new Error(`Mark evidence writer lease ${lease.kind}; gold landed, no mark receipt appended`)
+          if (lease.kind !== 'acquired') throw new Error(`Mark evidence writer lease ${lease.kind}; no mark receipt appended`)
           try {
             const evidence = await curation.appendMarkEvidence({ knowledgeRoot,
-              executionContext: session.executionContext, lease: { leaseId: lease.leaseId, epoch: lease.epoch },
+              executionContext, lease: { leaseId: lease.leaseId, epoch: lease.epoch },
               mark, servedRecordIds, handoff,
               includeAlreadyAppended: true,
               curationJobIds: markEvidenceCurationJobIds(input.runId) })
-            if (evidence.correlationIncomplete) throw new Error('Mark evidence correlation incomplete; gold/evidence may have landed, no receipt appended')
+            if (evidence.correlationIncomplete) throw new Error('Mark evidence correlation incomplete; evidence may have landed, no receipt appended')
             mark.evidence = { confirmed: evidence.confirmed, overturned: evidence.overturned }
           } finally { if (held === undefined) curation.maintenance.releaseLease({ knowledgeRoot, leaseId: lease.leaseId }) }
         }
@@ -212,14 +188,13 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
           mark.disposition = { kind: 'confirmed-bug', confirmedRecords: mark.evidence.confirmed }
         } else {
           const step = member.steps[planned.resolvedStep.stepIndex]!
-          const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot, undefined, undefined, resolveTrustPriors)
+          const reader = deps.reader ?? createKnowledgeReader(() => knowledgeRoot)
           const { served, procedure } = await readMarkDraftFacts({ reader, curation, knowledgeRoot, member, step })
           let plan = intent.plan ?? curation.applyFeedback(markFeedbackInput(mark,
             { handoff, member, step, served, ...(procedure === undefined ? {} : { procedure }) }))
-          if (intent.plan === undefined) plan = await (deps.word ?? wordImprovementPlan)({ plan, config: session.config,
-            executionContext: session.executionContext,
+          if (intent.plan === undefined) plan = await (deps.word ?? wordImprovementPlan)({ plan, config, executionContext,
             // Wording keeps its floor when the declared secrets cannot be read: the mask throws inside its catch.
-            mask: await resolveEvalSession({ configPath: deps.configPath }).then(full => full.mask, (error: unknown) => (): never => { throw error }) })
+            mask: createDeclaredSecretMask(deps.configPath).mask })
           intent = ledger.checkpointIntent({ ...intent, mark, plan })
           const draft = decideMarkDraft(plan, { servedRecords: served.length, procedureRead: procedure !== undefined,
             member, canDraftTestEdit: deps.invokeAuthoringDraftEdit !== undefined })
@@ -229,7 +204,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
             // landing it twice, and a held lease goes to its holder with this exact request.
             const applied = await (deps.applyKnowledgeChange ?? applyKnowledgeChange)({
               agentQaRoot: deps.agentQaRoot, knowledgeRoot, operationId: intent.operationId,
-              opId: RUNS_MARK_FUNCTION_ID, executionContext: session.executionContext, resolveTrustPriors,
+              opId: RUNS_MARK_FUNCTION_ID, executionContext,
               request: { verb: 'mark', input: { target: knowledgePlan.target,
                 mark: { runId: mark.runId, testIndex: mark.testIndex,
                   ...(mark.stepIndex === undefined ? {} : { stepIndex: mark.stepIndex }),
@@ -245,10 +220,7 @@ export function createFeedbackPortForHost(deps: FeedbackHostDeps): FeedbackPort 
                 change: { kind: 'knowledge', changeId: applied.changeId, recordIds: [...applied.recordIds] } }
             }
           } else if (draft.kind === 'test-edit') {
-            // decideMarkDraft admits a test edit only when this host binds the authoring edit, which
-            // writes the edited file itself, guarded by the digest it read (432-08). 261002-mrk: the
-            // write is recorded ahead under this intent's identity, so a retry after a crash inside
-            // the edit answers that write rather than asking the model and editing again.
+            // The edit's write is recorded ahead under this intent, so a crash retry answers it.
             const editScope = { recordPath: editRecordPath, operationId: intent.operationId }
             const written = answerRecordedMarkEdit({ ...editScope, configDir })
               ?? (await withMarkEditScope(editScope, () => deps.invokeAuthoringDraftEdit!({

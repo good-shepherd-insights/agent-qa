@@ -18,12 +18,11 @@ const step = fromRunDetailStep({ testIndex: 7, stepIndex: 2, stepText: 'Check ca
   verifierVerdict: { pass: false, reasoning: 'Cart differs' }, selfHealOccurred: false, briefDigest: 'digest' }, [])
 afterEach(() => { act(() => root.unmount()); container.remove() })
 
-// THE STEP PILLS ARE GONE (426-15 · D-05). The row keeps the selected-row door and the passive
-// glyph; choosing, noting, submitting and reviewing all happen in the composer.
+// The row keeps the selected-row door and the passive glyph; marking happens in the composer.
 const markAttributes = () => [...container.querySelectorAll('*')]
   .flatMap(element => element.getAttributeNames().filter(name => name.startsWith('data-mark')))
 
-describe('419 step marking', () => {
+describe('step marking', () => {
   it('uses the durable address: the row door opens feedback on 7:2 and the row submits nothing itself', () => {
     const onOpen = mountRow({ isSelected: true, selection: { type: 'step', stepId: step.id } })
     const trigger = triggers()[0]!
@@ -64,9 +63,7 @@ describe('419 step marking', () => {
   })
 })
 
-// THE STEP DOOR AND THE PASSIVE TRACE (426-04 · D-04, D-06, RESEARCH Pattern 6). The door renders on
-// the row that owns the selection only, inside a non-button span, so the row button stays the li's
-// one direct button child that 424's `:scope > button` and the playhead cells click.
+// The door sits in a non-button span, so the row button stays the li's one direct button child.
 const SHIPPED_ROW_CLASSES = ['flex', 'w-full', 'items-start', 'gap-2', 'py-2', 'px-3', 'text-left', 'hover:bg-muted/50']
 const stepMark = (kind: RunDetailMemberMark['kind']): RunDetailMemberMark =>
   ({ markId: 'mark_0123456789af', kind, ordinal: 5, stepIndex: 2, disposition: { kind: 'quarantined', class: 'flake' } })
@@ -86,7 +83,7 @@ const row = () => container.querySelector<HTMLLIElement>('li[data-step-id]')!
 const triggers = () => [...container.querySelectorAll<HTMLButtonElement>('[data-feedback-entry="step"]')]
 const glyphs = () => [...container.querySelectorAll<HTMLElement>('[data-feedback-mark-glyph="step"]')]
 
-describe('426-04 the step door on the owning row', () => {
+describe('the step door on the owning row', () => {
   it('TRIGGER-ON-OWNING-ROW-ONLY: the selected row carries one 28px step door addressed to its step; an unselected row none', async () => {
     const onOpen = mountRow({ isSelected: true, selection: { type: 'step', stepId: step.id } })
     expect(triggers()).toHaveLength(1)
@@ -137,7 +134,7 @@ describe('426-04 the step door on the owning row', () => {
   })
 })
 
-describe('426-04 the passive trace on a marked row', () => {
+describe('the passive trace on a marked row', () => {
   it('GLYPH-ON-MARKED-ROW: a marked row that is not the door row carries one named glyph inside its button, before the duration', () => {
     mountRow({ isSelected: false, marks: [stepMark('confirmed-bug')] })
     expect(glyphs()).toHaveLength(1)

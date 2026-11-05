@@ -1,23 +1,22 @@
 import { z } from 'zod'
-import { NamedLLMConfigSchema, TransportSchema } from './primitives.js'
+import { NamedLLMConfigSchema } from './primitives.js'
 import { TargetNameSchema } from '../auth-state/schema.js'
 
 function isAbsoluteAppPath(value: string): boolean {
   return value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
 }
 
-export const AppInstallSchema = z.object({
+export const AppInstallSchema = z.strictObject({
   path: z.string()
-    .refine((v) => !isAbsoluteAppPath(v), { message: 'app.path must be relative' })
+    .refine((v) => !isAbsoluteAppPath(v), { error: 'app.path must be relative' })
     .optional(),
-  browserstack: z.string().optional(),
-}).strict()
+})
 
-export const TargetSchema = z.object({
+export const TargetSchema = z.strictObject({
   product: z.string()
     .refine(
       (v) => !/\.\./.test(v) && !/[/\\]/.test(v) && !/\0/.test(v),
-      { message: 'product must not contain "..", "/", "\\", or null bytes' }
+      { error: 'product must not contain "..", "/", "\\", or null bytes' }
     )
     .optional(),
   platform: z.enum(['web', 'android', 'ios']),
@@ -26,47 +25,37 @@ export const TargetSchema = z.object({
   appActivity: z.string().optional(),
   app: AppInstallSchema.optional(),
   url: z.string().optional(),
-  // D-06 (phase 401): which environment a run against this target actually touches. Deliberately
-  // `.optional()` with NO default — an undeclared target must stay visibly undeclared; since 432
-  // (D-18) undeclared means non-production, decided where the production refusal reads it (the
-  // run gate that decided "shared" is deleted). A default here would make silence and an honest
-  // declaration indistinguishable at every later reader, and
-  // `.strict()` above is what turns a typoed key into a refusal rather than a silent undeclared.
-  // 432 D-18: `production` is the third declared class; only top-level `allowProduction: true`
-  // opts a run into it.
-  environment: z.enum(['local', 'shared', 'production']).optional(),
-}).strict().superRefine((val, ctx) => {
+  // A label only: agent-qa runs every target the same way, whatever it declares.
+  environment: z
+    .enum(['local', 'shared', 'production'])
+    .optional()
+    .describe("A label for this target's environment. agent-qa runs every target the same way."),
+}).superRefine((val, ctx) => {
   if (val.platform === 'web' && !val.url) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Web targets must have a url' })
+    ctx.addIssue({ code: 'custom', message: 'Web targets must have a url' })
   }
 })
 
-export const DeviceProfileSchema = z.object({
+export const DeviceProfileSchema = z.strictObject({
   platform: z.enum(['android', 'ios']),
-  transport: TransportSchema,
   match: z.record(z.string(), z.unknown()).optional().default({}),
-}).strict().superRefine((val, ctx) => {
-  if (val.transport === 'local') {
-    const androidOnly = ['avd', 'serial', 'appPackage', 'appActivity', 'automationName', 'browserName', 'platformVersion']
-    const iosOnly = ['udid', 'bundleId', 'automationName', 'platformVersion']
-    const allowed = val.platform === 'android' ? androidOnly : iosOnly
-    for (const key of Object.keys(val.match)) {
-      if (!allowed.includes(key)) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['match', key],
-          message: `Match field "${key}" is not valid for ${val.platform} local transport. Allowed: ${allowed.join(', ')}`,
-        })
-      }
+}).superRefine((val, ctx) => {
+  const androidOnly = ['avd', 'serial', 'appPackage', 'appActivity', 'automationName', 'browserName', 'platformVersion']
+  const iosOnly = ['udid', 'bundleId', 'automationName', 'platformVersion']
+  const allowed = val.platform === 'android' ? androidOnly : iosOnly
+  for (const key of Object.keys(val.match)) {
+    if (!allowed.includes(key)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['match', key],
+        message: `Match field "${key}" is not valid for an ${val.platform} device. Allowed: ${allowed.join(', ')}`,
+      })
     }
   }
 })
 
-export const ProviderConfigSchema = z.record(z.string(), z.unknown())
-
-export const RegistrySchema = z.object({
+export const RegistrySchema = z.strictObject({
   llms: z.array(NamedLLMConfigSchema).optional().default([]),
   targets: z.record(TargetNameSchema, TargetSchema).optional(),
   devices: z.record(z.string(), DeviceProfileSchema).optional(),
-  providers: z.record(z.string(), ProviderConfigSchema).optional(),
-}).strict()
+})

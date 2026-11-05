@@ -8,8 +8,7 @@ let mockPageListeners: Record<string, Function[]> = {}
 let mockPage2Listeners: Record<string, Function[]> = {}
 let newPageCallCount = 0
 
-// 438 D-06: one locator double answers page.locator(':root') (the ai snapshot, taken at observe and
-// again by the pre-dispatch binding check) and page.locator('aria-ref=e1') (the observed element).
+// One locator double answers both `:root` (the ai snapshot) and `aria-ref=e1` (the element).
 const DEFAULT_TREE = '- button "Test" [ref=e1]'
 const mockLocator = {
   ariaSnapshot: vi.fn().mockResolvedValue(DEFAULT_TREE),
@@ -100,6 +99,7 @@ const mockContext = {
   addInitScript: vi.fn().mockResolvedValue(undefined),
   grantPermissions: vi.fn().mockResolvedValue(undefined),
   exposeBinding: vi.fn().mockResolvedValue(undefined),
+  setDefaultNavigationTimeout: vi.fn(),
   on: vi.fn(),
 }
 
@@ -185,6 +185,21 @@ describe('WebPlatformAdapter', () => {
     )
   })
 
+  describe('setup — navigation timeout', () => {
+    it("sets the context's default navigation timeout to 2m when timeouts are unset", async () => {
+      await adapter.setup({ platform: 'web' })
+      expect(mockContext.setDefaultNavigationTimeout).toHaveBeenCalledWith(120_000)
+      expect(mockContext.setDefaultNavigationTimeout.mock.invocationCallOrder[0]).toBeLessThan(
+        mockContext.newPage.mock.invocationCallOrder[0],
+      )
+    })
+
+    it("sets the context's default navigation timeout to timeouts.navigation", async () => {
+      await adapter.setup({ platform: 'web', timeouts: { navigation: 5_000 } })
+      expect(mockContext.setDefaultNavigationTimeout).toHaveBeenCalledWith(5_000)
+    })
+  })
+
   it('replaces Playwright missing-browser launch errors with agent-qa install guidance', async () => {
     const { webkit } = await import('playwright-core')
     const launch = webkit.launch as unknown as ReturnType<typeof vi.fn>
@@ -199,7 +214,7 @@ describe('WebPlatformAdapter', () => {
       .rejects.toThrow('agent-qa install-browsers --webkit')
   })
 
-  describe('C436-OPERATION-EVIDENCE operation capture support', () => {
+  describe('operation capture support', () => {
     it('a Chromium adapter declares download and clipboard capture', async () => {
       await adapter.setup({ platform: 'web', browser: { name: 'chromium', headless: true } })
       expect(adapter.operationCaptureSupport).toEqual({ download: true, clipboard: true })
@@ -243,7 +258,7 @@ describe('WebPlatformAdapter', () => {
     expect(page.goto).toHaveBeenCalledWith('https://example.com', { waitUntil: 'domcontentloaded' })
   })
 
-  it('execute() assertValue read returns the RAW value on data — never an envelope (D-10 contract)', async () => {
+  it('execute() assertValue read returns the RAW value on data — never an envelope', async () => {
     await adapter.setup({ platform: 'web' })
 
     // The runner-side comparator does String(result.data); a `{ value }` wrapper
@@ -427,6 +442,16 @@ describe('WebPlatformAdapter', () => {
       const errors = (adapter as any).drainConsoleLogs('error')
       expect(errors.length).toBe(1)
       expect(errors[0].text).toBe('tab2 error')
+    })
+
+    it('drainConsoleLogs returns a console warning under the warn filter', async () => {
+      await adapter.setup({ platform: 'web' })
+      simulateConsole(mockPageListeners, 'low stock', 'warning')
+      simulateConsole(mockPageListeners, 'plain log', 'log')
+
+      const warnings = (adapter as any).drainConsoleLogs('warn')
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toMatchObject({ text: 'low stock', level: 'warn' })
     })
 
     it('drainNetworkLogs collects from all tabs', async () => {
@@ -681,19 +706,20 @@ describe('WebPlatformAdapter', () => {
   })
 
   describe('execute — waitForUrl', () => {
-    it('calls page.waitForURL with explicit 30s timeout', async () => {
-      await adapter.setup({ platform: 'web' })
+    it('calls page.waitForURL with the configured navigation timeout', async () => {
+      await adapter.setup({ platform: 'web', timeouts: { navigation: 5_000 } })
       const result = await adapter.execute({ type: 'waitForUrl', pattern: '**/dashboard**' })
       expect(result.success).toBe(true)
-      expect(mockPage.waitForURL).toHaveBeenCalledWith('**/dashboard**', { timeout: 30_000 })
+      expect(mockPage.waitForURL).toHaveBeenCalledWith('**/dashboard**', { timeout: 5_000 })
     })
 
     it('returns success:false with helpful error message on timeout', async () => {
-      mockPage.waitForURL.mockRejectedValueOnce(new Error('Timeout 30000ms exceeded'))
-      await adapter.setup({ platform: 'web' })
+      mockPage.waitForURL.mockRejectedValueOnce(new Error('Timeout 5000ms exceeded'))
+      await adapter.setup({ platform: 'web', timeouts: { navigation: 5_000 } })
       const result = await adapter.execute({ type: 'waitForUrl', pattern: '/dashboard' })
       expect(result.success).toBe(false)
       expect(result.error).toContain('URL pattern "/dashboard"')
+      expect(result.error).toContain('within 5000ms')
       expect(result.error).toContain('**')
     })
   })
@@ -730,7 +756,7 @@ describe('WebPlatformAdapter', () => {
       expect(mockPage.evaluate).toHaveBeenCalledWith(expect.stringContaining('navigator.clipboard.writeText'))
     })
 
-    it('coalesces null textContent to empty string (Pitfall 5)', async () => {
+    it('coalesces null textContent to empty string', async () => {
       const locator = mockLocator
       locator.textContent.mockResolvedValueOnce(null)
       await adapter.setup({ platform: 'web' })

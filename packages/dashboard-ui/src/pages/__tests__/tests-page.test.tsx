@@ -40,9 +40,6 @@ vi.mock("@/lib/api", () => ({
   deleteTestFile: deleteTestFileMock,
 }))
 
-vi.mock("@/hooks/use-run-config", () => ({
-  useRunConfig: () => ({ defaultRunMode: "local", hasFarm: true, isLoading: false }),
-}))
 vi.mock("@/hooks/use-page-title", () => ({ usePageTitle: () => {} }))
 vi.mock("@/hooks/use-keyboard-shortcuts", () => ({ useKeyboardShortcuts: () => {} }))
 vi.mock("sonner", () => ({ toast: { success: toastSuccessMock, error: toastErrorMock } }))
@@ -231,23 +228,19 @@ vi.mock("@/components/batch-action-bar", () => ({
 }))
 vi.mock("@/components/test-run-options-popover", () => ({
   TestRunOptionsPopover: ({
-    browserStackAvailable,
     disabled,
     hiddenCount,
     onOpenChange,
-    onRunBrowserStack,
-    onRunLocal,
+    onRun,
     onUseCacheChange,
     open,
     selectedCount,
     useCache,
   }: {
-    browserStackAvailable: boolean
     disabled?: boolean
     hiddenCount: number
     onOpenChange: (open: boolean) => void
-    onRunBrowserStack: () => void
-    onRunLocal: () => void
+    onRun: () => void
     onUseCacheChange: (checked: boolean) => void
     open: boolean
     selectedCount: number
@@ -269,15 +262,8 @@ vi.mock("@/components/test-run-options-popover", () => ({
             />
             <span>Use cache</span>
           </label>
-          <button type="button" disabled={disabled} onClick={onRunLocal}>
-            Run Local
-          </button>
-          <button
-            type="button"
-            disabled={disabled || !browserStackAvailable}
-            onClick={onRunBrowserStack}
-          >
-            Run on BrowserStack
+          <button type="button" aria-label="Run selected" disabled={disabled} onClick={onRun}>
+            Run
           </button>
         </div>
       ) : null}
@@ -724,7 +710,7 @@ describe("TestsPage", () => {
     expect(nameLabel?.className).not.toContain("truncate")
   })
 
-  it("remembers cache changes for the current page session, launches local runs with runtime overrides, and only clears the queue on the close button", async () => {
+  it("remembers cache changes for the current page session, launches runs with runtime overrides, and only clears the queue on the close button", async () => {
     await renderAt()
 
     await click(findRow("Login flow")?.querySelector('input[aria-label="Select row"]') as HTMLInputElement | null)
@@ -742,15 +728,15 @@ describe("TestsPage", () => {
 
     expect(findCheckboxByLabel("Use cache")?.checked).toBe(false)
 
-    await click(findBatchButton("Run Local"))
+    await click(findBatchButton("Run selected"))
 
     const payloads = triggerRunMock.mock.calls.map(([payload]) => payload)
     expect(payloads).toHaveLength(2)
     expect(payloads).toEqual(expect.arrayContaining([
-      { file: "tests/web/login.yaml", local: true, noCache: true },
-      { file: "tests/android/signup.yaml", local: true, noCache: true },
+      { file: "tests/web/login.yaml", noCache: true },
+      { file: "tests/android/signup.yaml", noCache: true },
     ]))
-    expect(findBatchButton("Run Local")).toBeUndefined()
+    expect(findBatchButton("Run selected")).toBeUndefined()
     expect(container?.textContent).toContain("2 selected")
 
     await click(findBatchButton("Clear queue"))
@@ -771,5 +757,31 @@ describe("TestsPage", () => {
     expect(findRow("Login flow")).toBeUndefined()
     expect(findRow("Signup flow")).toBeUndefined()
     expect(container?.querySelector('[data-testid="batch-actions"]')).toBeNull()
+  })
+
+  it("purges all cached plans in one request from the shared bottom toolbar", async () => {
+    purgeCacheMock.mockResolvedValue({ purged: 3 })
+    await renderAt()
+
+    await click(findRow("Login flow")?.querySelector('input[aria-label="Select row"]') as HTMLInputElement | null)
+    await click(findRow("Signup flow")?.querySelector('input[aria-label="Select row"]') as HTMLInputElement | null)
+
+    await click(findBatchButton("Purge all cached plans"))
+
+    expect(purgeCacheMock).toHaveBeenCalledTimes(1)
+    expect(purgeCacheMock).toHaveBeenCalledWith()
+    expect(toastSuccessMock).toHaveBeenCalledWith("Purged 3 cached plans")
+  })
+
+  it("reports a failed purge of all cached plans", async () => {
+    purgeCacheMock.mockRejectedValue(new Error("Cache purge failed"))
+    await renderAt()
+
+    await click(findRow("Login flow")?.querySelector('input[aria-label="Select row"]') as HTMLInputElement | null)
+
+    await click(findBatchButton("Purge all cached plans"))
+
+    expect(purgeCacheMock).toHaveBeenCalledTimes(1)
+    expect(toastErrorMock).toHaveBeenCalledWith("Cache purge failed: Cache purge failed")
   })
 })

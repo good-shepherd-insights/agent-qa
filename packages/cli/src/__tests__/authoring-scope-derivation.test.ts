@@ -1,14 +1,4 @@
-// The ONE host-side authoring scope derivation (394-26, WINDOWS 110).
-//
-// WHY THIS FILE IS IN `packages/cli`. The derivation reads the resolved config's targets and the
-// workspace's committed tests, which needs `resolveConfig` plus `resolveWorkspacePaths` /
-// `discoverWorkspaceFiles` / `parseTestFile` from `@vostride/agent-qa-core` — the FUNC-02 surface
-// firewall keeps that reach inside `local-agent-host.ts`, so this is the only package where the
-// derivation and a real workspace can be in the same process.
-//
-// D-19'S POSTURE IS THE SUBJECT. A unique candidate binds; ambiguity REFUSES and names every
-// candidate it saw. The refusal arm has its own cell rather than being implied by the derive arm,
-// because a deriver that guessed the first candidate would satisfy every positive cell here.
+// A unique candidate binds and ambiguity refuses; a deriver guessing the first would pass the rest.
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -97,7 +87,7 @@ function writeTest(fileName: string, target: string, index = 0): void {
   writeFileSync(join(root, 'tests', fileName), committedTest(target, index))
 }
 
-describe('deriveDefaultAuthoringScope: a singleton binds (WINDOWS 110)', () => {
+describe('deriveDefaultAuthoringScope: a singleton binds', () => {
   it('derives {tier:product} from the one product the committed tests exercise', async () => {
     writeConfig(ONE_TARGET)
     writeTest('form.yaml', 'local-form')
@@ -130,7 +120,7 @@ describe('deriveDefaultAuthoringScope: a singleton binds (WINDOWS 110)', () => {
   })
 })
 
-describe('deriveDefaultAuthoringScope: ambiguity REFUSES and names its evidence (D-19)', () => {
+describe('deriveDefaultAuthoringScope: ambiguity REFUSES and names its evidence', () => {
   it('throws naming BOTH products when the committed tests span two', async () => {
     writeConfig(TWO_TARGETS)
     writeTest('form.yaml', 'local-form', 0)

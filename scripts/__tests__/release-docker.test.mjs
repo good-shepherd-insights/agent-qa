@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import semver from 'semver'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -7,13 +8,15 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
   assertDockerReleaseEnvironment,
-  checkDockerTagsAbsent,
+  classifyDockerImages,
   createDockerLabels,
   createDockerTags,
+  dockerfileManifestDrift,
   getDockerImageMatrix,
   normalizeDockerNamespace,
   normalizeDockerVersion,
   parseDockerArgs,
+  readNodeVersion,
   runCli as runDockerCli,
   validateDockerReleasePlan,
   writeGithubOutputs,
@@ -98,7 +101,6 @@ test('validates real Docker release files in the repository', () => {
   const plan = validateDockerReleasePlan({ rootDir, version: '0.1.1', namespace: 'vostride' })
   assert.equal(plan.version, '0.1.1')
   assert.equal(plan.namespace, 'vostride')
-  assert.equal(plan.images.length, 6)
   assert.ok(plan.images.every(image => image.tags.includes(`${image.image}:0.1.1`)))
   assert.ok(plan.images.every(image => image.labels.some(label => label === 'org.opencontainers.image.version=0.1.1')))
 })
@@ -116,6 +118,62 @@ test('fails local validation when release files are missing', async () => {
   }
 })
 
+test('a release root without .nvmrc reports it among the missing files', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-docker-nvmrc-'))
+  try {
+    writeFileSync(join(tempDir, 'LICENSE.md'), 'license\n')
+    mkdirSync(join(tempDir, 'docker'), { recursive: true })
+    for (const dockerfile of dockerfiles) writeFileSync(join(tempDir, dockerfile), 'FROM scratch\n')
+    assert.throws(
+      () => validateDockerReleasePlan({ rootDir: tempDir, version: '0.1.1' }),
+      { message: 'Docker release files missing: .nvmrc' },
+    )
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('.nvmrc holds an exact Node version and readNodeVersion returns it', () => {
+  const text = readFileSync(join(rootDir, '.nvmrc'), 'utf8').trim()
+  assert.equal(semver.valid(text), text)
+  assert.equal(readNodeVersion(rootDir), text)
+})
+
+test('readNodeVersion refuses an .nvmrc that is not an exact version', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-docker-nvmrc-'))
+  try {
+    for (const value of ['24', 'lts/*', '>=24.1.0', 'v24.22.2']) {
+      writeFileSync(join(tempDir, '.nvmrc'), `${value}\n`)
+      assert.throws(() => readNodeVersion(tempDir), {
+        message: `.nvmrc must hold an exact Node version, got: ${value}`,
+      })
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+})
+
+test('the Node images build with the .nvmrc version and the other images take no build argument', () => {
+  const nodeVersion = readNodeVersion(rootDir)
+  const plan = validateDockerReleasePlan({ rootDir, version: '0.1.1', namespace: 'vostride' })
+  const buildArgs = Object.fromEntries(plan.images.map(image => [image.id, image.buildArgs]))
+  assert.deepEqual(buildArgs, {
+    web: `NODE_VERSION=${nodeVersion}`,
+    android: `NODE_VERSION=${nodeVersion}`,
+    'hooks-node': `NODE_VERSION=${nodeVersion}`,
+    'hooks-bun': '',
+    'hooks-python': '',
+    'hooks-bash': '',
+  })
+})
+
+test('the Node hook runner description names no Node version', () => {
+  const image = getDockerImageMatrix().find(entry => entry.id === 'hooks-node')
+  assert.equal(image.description, 'Node hook sandbox runtime for agent-qa')
+  const dockerfile = readFileSync(join(rootDir, image.dockerfile), 'utf8')
+  assert.match(dockerfile, /org\.opencontainers\.image\.description="Node hook sandbox runtime for agent-qa"/)
+})
+
 test('requires Docker Hub environment for publishing', () => {
   const goodEnv = {
     DOCKERHUB_USERNAME: 'vostride-bot',
@@ -130,24 +188,43 @@ test('requires Docker Hub environment for publishing', () => {
   assert.throws(() => assertDockerReleaseEnvironment({ env: { ...goodEnv, DOCKERHUB_NAMESPACE: 'agent-qa' } }), /vostride/)
 })
 
-test('checks immutable Docker Hub tags and fails closed on collisions or ambiguity', async () => {
-  const [image] = getDockerImageMatrix()
-  const urls = []
-  await checkDockerTagsAbsent([image], '0.1.1', {
-    fetchImpl: async url => {
-      urls.push(url)
-      return { status: 404 }
-    },
+function hubStatus(statuses, listed = []) {
+  return async url => {
+    if (/\/repositories\/vostride\/[^/]+\/tags\?page_size=100$/.test(url)) {
+      const results = listed.map(name => ({ name }))
+      return { status: 200, json: async () => ({ results, next: null }) }
+    }
+    const match = /\/repositories\/vostride\/([^/]+)\/tags\/([^/]+)$/.exec(url)
+    assert.ok(match, `unexpected Docker Hub URL: ${url}`)
+    return { status: statuses[`${match[1]}:${match[2]}`] ?? 200 }
+  }
+}
+
+test('classifies each image as absent, complete or partial from its two version tags', async () => {
+  const [web, android, node] = getDockerImageMatrix()
+  const result = await classifyDockerImages([web, android, node], '0.1.1', {
+    fetchImpl: hubStatus({
+      'agent-qa-web:0.1.1': 404,
+      'agent-qa-web:v0.1.1': 404,
+      'agent-qa-hook-runner-node:v0.1.1': 404,
+    }),
   })
-  assert.equal(urls.length, 2)
-  assert.ok(urls.every(url => url.includes('hub.docker.com/v2/repositories/vostride/agent-qa-web/tags/')))
+  assert.deepEqual(result, [
+    { id: 'web', image: 'vostride/agent-qa-web', state: 'absent', present: [], missing: ['0.1.1', 'v0.1.1'] },
+    { id: 'android', image: 'vostride/agent-qa-android', state: 'complete', present: ['0.1.1', 'v0.1.1'], missing: [] },
+    { id: 'hooks-node', image: 'vostride/agent-qa-hook-runner-node', state: 'partial', present: ['0.1.1'], missing: ['v0.1.1'] },
+  ])
+})
+
+test('fails closed when Docker Hub answers a tag lookup with anything but 200 or 404', async () => {
+  const [image] = getDockerImageMatrix()
   await assert.rejects(
-    checkDockerTagsAbsent([image], '0.1.1', { fetchImpl: async () => ({ status: 200 }) }),
-    /docker tag already exists/,
+    classifyDockerImages([image], '0.1.1', { fetchImpl: async () => ({ status: 500 }) }),
+    /could not verify Docker tag for vostride\/agent-qa-web:0\.1\.1/,
   )
   await assert.rejects(
-    checkDockerTagsAbsent([image], '0.1.1', { fetchImpl: async () => ({ status: 500 }) }),
-    /could not verify Docker tag absence/,
+    classifyDockerImages([image], '0.1.1', { fetchImpl: hubStatus({ 'agent-qa-web:v0.1.1': 429 }) }),
+    /could not verify Docker tag for vostride\/agent-qa-web:v0\.1\.1/,
   )
 })
 
@@ -156,7 +233,6 @@ test('parses Docker release CLI args', () => {
     '--version', '0.1.1',
     '--namespace', 'vostride',
     '--latest',
-    '--check-local',
     '--check-tags',
     '--require-env',
     '--github-output',
@@ -164,7 +240,6 @@ test('parses Docker release CLI args', () => {
     version: '0.1.1',
     namespace: 'vostride',
     latest: true,
-    checkLocal: true,
     checkTags: true,
     requireEnv: true,
     githubOutput: true,
@@ -173,25 +248,166 @@ test('parses Docker release CLI args', () => {
   assert.throws(() => parseDockerArgs(['--version']), /missing --version/)
 })
 
+function readGithubOutputs(text) {
+  const outputs = {}
+  const lines = text.split('\n')
+  for (let index = 0; index < lines.length; index += 1) {
+    const heredoc = /^([\w-]+)<<(\w+)$/.exec(lines[index])
+    if (heredoc) {
+      const end = lines.indexOf(heredoc[2], index + 1)
+      outputs[heredoc[1]] = lines.slice(index + 1, end).join('\n')
+      index = end
+    } else if (lines[index].includes('=')) {
+      const at = lines[index].indexOf('=')
+      outputs[lines[index].slice(0, at)] = lines[index].slice(at + 1)
+    }
+  }
+  return outputs
+}
+
+async function runWithGithubOutput(argv, fetchImpl, log = () => {}) {
+  const tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-docker-output-'))
+  try {
+    const outputPath = join(tempDir, 'github-output')
+    await runDockerCli([...argv, '--github-output'], {
+      rootDir,
+      env: { GITHUB_OUTPUT: outputPath },
+      fetchImpl,
+      log,
+      output: { write: () => {} },
+    })
+    return readGithubOutputs(readFileSync(outputPath, 'utf8'))
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
+}
+
 test('writes GitHub Actions outputs for matrix handoff', async () => {
   const tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-docker-output-'))
   try {
     const outputPath = join(tempDir, 'github-output')
     const matrix = getDockerImageMatrix()
     writeGithubOutputs({ outputPath, version: '0.1.1', namespace: 'vostride', matrix })
-    const text = readFileSync(outputPath, 'utf8')
-    assert.match(text, /^version=0\.1\.1/m)
-    assert.match(text, /^namespace=vostride/m)
-    assert.match(text, /images<<EOF/)
-    assert.match(text, /"image":"vostride\/agent-qa-web"/)
+    const outputs = readGithubOutputs(readFileSync(outputPath, 'utf8'))
+    assert.equal(outputs.version, '0.1.1')
+    assert.equal(outputs.namespace, 'vostride')
+    assert.deepEqual(JSON.parse(outputs.images), matrix)
+    assert.deepEqual(JSON.parse(outputs.build), matrix)
+    assert.deepEqual(JSON.parse(outputs.retag), [])
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }
 })
 
+test('a release over half-pushed images builds only the absent ones and retags the partial one', async () => {
+  const outputs = await runWithGithubOutput(
+    ['--version', '0.1.1', '--namespace', 'vostride', '--check-tags'],
+    hubStatus({
+      'agent-qa-web:0.1.1': 404,
+      'agent-qa-web:v0.1.1': 404,
+      'agent-qa-android:v0.1.1': 404,
+    }),
+  )
+  assert.deepEqual(JSON.parse(outputs.build).map(image => image.image), ['vostride/agent-qa-web'])
+  assert.equal(JSON.parse(outputs.build)[0].dockerfile, 'docker/Dockerfile.web')
+  assert.deepEqual(JSON.parse(outputs.retag), [
+    { image: 'vostride/agent-qa-android', present: '0.1.1', missing: 'v0.1.1' },
+  ])
+  assert.deepEqual(JSON.parse(outputs.images).map(image => image.image), imageNames)
+})
+
+test('a release with every version tag already pushed builds and retags nothing', async () => {
+  const outputs = await runWithGithubOutput(
+    ['--version', '0.1.1', '--namespace', 'vostride', '--check-tags'],
+    hubStatus({}),
+  )
+  assert.deepEqual(JSON.parse(outputs.build), [])
+  assert.deepEqual(JSON.parse(outputs.retag), [])
+  assert.deepEqual(JSON.parse(outputs.images).map(image => image.image), imageNames)
+})
+
+test('without a tag check every image is built, none is retagged and latest stays', async () => {
+  const outputs = await runWithGithubOutput(['--version', '0.1.1', '--namespace', 'vostride'], async () => {
+    throw new Error('Docker Hub must not be queried without --check-tags')
+  })
+  assert.deepEqual(JSON.parse(outputs.build).map(image => image.image), imageNames)
+  assert.deepEqual(JSON.parse(outputs.retag), [])
+  assert.equal(outputs.may_move_latest, 'false')
+})
+
+test('a version older than one Docker Hub already has leaves latest where it is and says so', async () => {
+  const others = ['latest', 'v0.1.2', '0.1.2', 'v0.1.0', '0.1.0']
+  const states = {
+    'fully pushed': [{}, [...others, 'v0.1.1', '0.1.1']],
+    'not yet pushed': [
+      Object.fromEntries(
+        imageNames.flatMap(image =>
+          ['0.1.1', 'v0.1.1'].map(tag => [`${image.split('/')[1]}:${tag}`, 404]),
+        ),
+      ),
+      others,
+    ],
+  }
+  for (const [state, [statuses, listed]] of Object.entries(states)) {
+    const lines = []
+    const outputs = await runWithGithubOutput(
+      ['--version', '0.1.1', '--namespace', 'vostride', '--check-tags'],
+      hubStatus(statuses, listed),
+      line => lines.push(line),
+    )
+    assert.equal(outputs.may_move_latest, 'false', state)
+    assert.deepEqual(lines, ['latest stays where it is: Docker Hub already has 0.1.2, newer than 0.1.1'], state)
+  }
+})
+
+test('the newest version moves latest, whether its images are already pushed or not', async () => {
+  for (const statuses of [{}, { 'agent-qa-web:0.1.1': 404, 'agent-qa-web:v0.1.1': 404 }]) {
+    const lines = []
+    const outputs = await runWithGithubOutput(
+      ['--version', '0.1.1', '--namespace', 'vostride', '--check-tags'],
+      hubStatus(statuses, ['latest', 'v0.1.1', '0.1.1', 'v0.1.0', '0.1.0', 'v0.0.9', '0.0.9']),
+      line => lines.push(line),
+    )
+    assert.equal(outputs.may_move_latest, 'true')
+    assert.deepEqual(lines, [])
+  }
+})
+
+test('the newest version is read across every page of every image\'s Docker Hub tags', async () => {
+  const bash = 'https://hub.docker.com/v2/repositories/vostride/agent-qa-hook-runner-bash/tags'
+  const pages = {
+    [`${bash}?page_size=100`]: {
+      results: [{ name: 'latest' }, { name: '0.1.1' }],
+      next: `${bash}?page=2&page_size=100`,
+    },
+    [`${bash}?page=2&page_size=100`]: { results: [{ name: 'v0.1.3' }], next: null },
+  }
+  const fetchImpl = async url => {
+    if (!url.includes('/tags?')) return { status: 200 }
+    return { status: 200, json: async () => pages[url] ?? { results: [], next: null } }
+  }
+  const lines = []
+  const outputs = await runWithGithubOutput(
+    ['--version', '0.1.1', '--namespace', 'vostride', '--check-tags'],
+    fetchImpl,
+    line => lines.push(line),
+  )
+  assert.equal(outputs.may_move_latest, 'false')
+  assert.deepEqual(lines, ['latest stays where it is: Docker Hub already has 0.1.3, newer than 0.1.1'])
+})
+
+test('fails closed when Docker Hub cannot list an image\'s tags', async () => {
+  const fetchImpl = async url =>
+    url.includes('/tags?') ? { status: 503, json: async () => ({}) } : { status: 200 }
+  await assert.rejects(
+    runWithGithubOutput(['--version', '0.1.1', '--namespace', 'vostride', '--check-tags'], fetchImpl),
+    /could not list Docker tags for vostride\/agent-qa-web/,
+  )
+})
+
 test('CLI prints a local Docker release plan', async () => {
   let output = ''
-  await runDockerCli(['--check-local', '--version', '0.1.1', '--namespace', 'vostride'], {
+  await runDockerCli(['--version', '0.1.1', '--namespace', 'vostride'], {
     rootDir,
     output: { write: chunk => { output += chunk } },
   })
@@ -208,3 +424,83 @@ test('Dockerfiles include license metadata and avoid secret build args', () => {
     assert.doesNotMatch(text, /ARG .*TOKEN|ARG .*SECRET|build-arg|DOCKERHUB_TOKEN/)
   }
 })
+
+const workspaceDockerfiles = ['docker/Dockerfile.web', 'docker/Dockerfile.android']
+
+function packageDirs() {
+  return readdirSync(join(rootDir, 'packages'), { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .filter(entry => existsSync(join(rootDir, 'packages', entry.name, 'package.json')))
+    .map(entry => entry.name)
+}
+
+function readDockerfile(dockerfile) {
+  return readFileSync(join(rootDir, dockerfile), 'utf8')
+}
+
+test('workspace Dockerfiles copy the manifest of every package and nothing else under packages', () => {
+  const dirs = packageDirs()
+  for (const dockerfile of workspaceDockerfiles) {
+    const drift = dockerfileManifestDrift(readDockerfile(dockerfile), dirs)
+    assert.deepEqual(
+      drift,
+      { missing: [], extra: [] },
+      `${dockerfile} manifest COPY lines drift from packages/: ${JSON.stringify(drift)}`,
+    )
+  }
+})
+
+test('manifest drift names a package whose manifest line is removed', () => {
+  const text = readDockerfile('docker/Dockerfile.web')
+    .split('\n')
+    .filter(line => line.trim() !== 'COPY packages/web/package.json packages/web/')
+    .join('\n')
+  assert.deepEqual(dockerfileManifestDrift(text, packageDirs()).missing, ['web'])
+})
+
+test('manifest drift names an unknown package whose manifest is copied', () => {
+  const text = readDockerfile('docker/Dockerfile.web').replace(
+    'COPY packages/web/package.json packages/web/',
+    'COPY packages/web/package.json packages/web/\nCOPY packages/ghost/package.json packages/ghost/',
+  )
+  assert.deepEqual(dockerfileManifestDrift(text, packageDirs()), { missing: [], extra: ['ghost'] })
+})
+
+test('manifest drift names any other copy from packages by its directory', () => {
+  const text = readDockerfile('docker/Dockerfile.web').replace(
+    'COPY packages/web/package.json packages/web/',
+    'COPY packages/web/package.json packages/web/\nCOPY packages/core/src packages/core/src',
+  )
+  assert.deepEqual(dockerfileManifestDrift(text, packageDirs()), { missing: [], extra: ['core'] })
+})
+
+const nodeDockerfiles = ['docker/Dockerfile.web', 'docker/Dockerfile.android', 'docker/Dockerfile.hooks-node']
+
+test('the Node Dockerfiles take Node from a NODE_VERSION argument with no default', () => {
+  for (const dockerfile of nodeDockerfiles) {
+    const lines = readDockerfile(dockerfile).split('\n').map(line => line.trim())
+    const firstFrom = lines.findIndex(line => line.startsWith('FROM '))
+    const arg = lines.findIndex(line => line.startsWith('ARG NODE_VERSION'))
+    assert.ok(arg !== -1 && arg < firstFrom, `${dockerfile} declares ARG NODE_VERSION before its first FROM`)
+    assert.equal(lines[arg], 'ARG NODE_VERSION', `${dockerfile} gives NODE_VERSION no default`)
+    for (const from of lines.filter(line => line.startsWith('FROM '))) {
+      assert.match(from, /^FROM node:\$\{NODE_VERSION\}-slim( AS builder)?$/, `${dockerfile}: ${from}`)
+    }
+  }
+})
+
+test('the workspace Dockerfiles install pnpm at the packageManager version with npm', () => {
+  for (const dockerfile of workspaceDockerfiles) {
+    const text = readDockerfile(dockerfile)
+    assert.doesNotMatch(text, /corepack/)
+    assertInstallsPnpmAfterRootManifests(text, dockerfile)
+  }
+})
+
+function assertInstallsPnpmAfterRootManifests(text, dockerfile) {
+  const install = `RUN npm install -g "pnpm@$(node -p "require('./package.json').packageManager.replace(/^pnpm@/, '').split('+')[0]")"`
+  const lines = text.split('\n').map(line => line.trim())
+  const rootCopy = lines.indexOf('COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json NOTICE.md ./')
+  assert.notEqual(rootCopy, -1, `${dockerfile} copies the root manifests`)
+  assert.equal(lines[rootCopy + 1], install, `${dockerfile} installs pnpm right after the root manifests`)
+}

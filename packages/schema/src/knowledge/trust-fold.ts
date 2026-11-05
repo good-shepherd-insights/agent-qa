@@ -4,10 +4,7 @@ import {
   type OriginClass,
 } from './outcome-event'
 
-/**
- * PROVISIONAL origin priors for §7.5. M3 owns calibration once real attributed
- * outcomes exist. These are internal constitution values, never config keys.
- */
+/** The trust priors every fold uses, by origin class. Internal values, never config keys. */
 export const ORIGIN_PRIORS = {
   user: { alpha: 3, beta: 1 },
   'agent-verified': { alpha: 2, beta: 1 },
@@ -15,46 +12,10 @@ export const ORIGIN_PRIORS = {
   import: { alpha: 0.5, beta: 1 },
 } as const satisfies Record<OriginClass, { alpha: number; beta: number }>
 
-/** Neutral pseudo-count data. Zero components are valid endpoint priors. */
-export type TrustPriorTable = Partial<Record<OriginClass, { alpha: number; beta: number }>>
-
-function priorDataObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-    && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
-}
-
-/** Reject the whole supplied table, including unused rows, without exposing input bytes. */
-export function guardTrustPriorTable(value: unknown): TrustPriorTable {
-  try {
-    if (!priorDataObject(value)) throw new TypeError()
-    const table: TrustPriorTable = {}
-    for (const key of Reflect.ownKeys(value)) {
-      if (typeof key !== 'string' || !Object.hasOwn(ORIGIN_PRIORS, key)) throw new TypeError()
-      const row: unknown = Object.getOwnPropertyDescriptor(value, key)?.value
-      if (!priorDataObject(row) || Reflect.ownKeys(row).length !== 2) throw new TypeError()
-      const alpha: unknown = Object.getOwnPropertyDescriptor(row, 'alpha')?.value
-      const beta: unknown = Object.getOwnPropertyDescriptor(row, 'beta')?.value
-      if (typeof alpha !== 'number' || typeof beta !== 'number'
-        || !Number.isFinite(alpha) || !Number.isFinite(beta) || alpha < 0 || beta < 0
-        || !Number.isFinite(alpha + beta) || alpha + beta <= 0) throw new TypeError()
-      table[key as OriginClass] = { alpha, beta }
-    }
-    return table
-  } catch {
-    throw new TypeError('Invalid trust prior table')
-  }
-}
-
-/**
- * PROVISIONAL D-08 prior discount; M3 owns calibration against evidence-complete
- * outcomes. It multiplies alpha only and is an internal constant, never a config key.
- */
+// Multiplies alpha only; an internal constant, never a config key.
 export const EVIDENCE_INCOMPLETE_ALPHA_DISCOUNT = 0.5
 
-/**
- * PROVISIONAL D-10 serving-attribution weight. Phase 380 mints the first real
- * helpful/harmful events and M3 owns calibration; this is never a config key.
- */
+// An internal constant, never a config key.
 export const SERVING_ATTRIBUTION_WEIGHT = 0.25
 
 export type BundleStatus = 'active' | 'candidate' | 'superseded' | 'deprecated'
@@ -72,12 +33,7 @@ export interface DerivedTrustState {
     openedAtOrdinal: number
     closedAtOrdinal?: number
   }
-  /**
-   * 379 D-05 RATIFICATION: the latest surviving real confirmation. Retraction and
-   * window restoration never refresh this ordinal; staleness is derived as
-   * asOfBuild minus this value. Index projections must bump their schema version
-   * when adding this field so every existing bundle is re-projected (Plan 379-05).
-   */
+  // Retraction and window restoration never refresh this ordinal.
   lastConfirmedOrdinal: number
 }
 
@@ -101,13 +57,7 @@ function lifecycleStatus(event: BundleOutcomeEvent): BundleStatus | undefined {
   }
 }
 
-/**
- * Pure BNDL-03 derivation shared by bundle reads and Phase 375 rebuilds. Events
- * are deduplicated inside the fold, counters/status/validity are derived rather
- * than stored as frontmatter scalars, and the LLM never supplies the trust number.
- * Event-level origin is audit metadata only; the immutable bundle provenance
- * selects the origin-class prior through opts.
- */
+// Counters, status and validity are derived, never stored, and the model never supplies trust.
 export function foldBundleTrust(
   events: readonly BundleOutcomeEvent[],
   opts: {
@@ -115,9 +65,7 @@ export function foldBundleTrust(
     evidenceIncomplete: boolean
     createdAtOrdinal: number
   },
-  priors?: TrustPriorTable,
 ): DerivedTrustState {
-  const suppliedPriors = priors === undefined ? undefined : guardTrustPriorTable(priors)
   const survivingEvents = survivingOutcomeEvents(events)
 
   const counters = {
@@ -134,8 +82,7 @@ export function foldBundleTrust(
   for (const event of survivingEvents) {
     switch (event.type) {
       case 'overturned':
-        // 419 D-09: overturnsEvidenceToken is interpreted by survivingOutcomeEvents;
-        // the compensating audit line supplies no positive or harmful count.
+        // `overturnsEvidenceToken` is read by `survivingOutcomeEvents`; this line adds no count.
         break
       case 'confirmed':
         counters.confirmed += 1
@@ -186,20 +133,15 @@ export function foldBundleTrust(
     }
   }
 
-  const prior = suppliedPriors?.[opts.originClass] ?? ORIGIN_PRIORS[opts.originClass]
+  const prior = ORIGIN_PRIORS[opts.originClass]
   const alpha = prior.alpha * (
     opts.evidenceIncomplete ? EVIDENCE_INCOMPLETE_ALPHA_DISCOUNT : 1
   )
   const positiveEvidence = counters.confirmed + SERVING_ATTRIBUTION_WEIGHT * counters.helpful
   const negativeEvidence = counters.contradicted + SERVING_ATTRIBUTION_WEIGHT * counters.harmful
-  // Discounting the smallest positive alpha can underflow. With no negative mass or
-  // observations the exact positive endpoint is still one; do not invent epsilon mass.
-  const trust = alpha === 0 && prior.beta === 0
-    && positiveEvidence === 0 && negativeEvidence === 0
-    ? 1
-    : (positiveEvidence + alpha) / (
-        positiveEvidence + negativeEvidence + alpha + prior.beta
-      )
+  const trust = (positiveEvidence + alpha) / (
+    positiveEvidence + negativeEvidence + alpha + prior.beta
+  )
 
   return {
     trust,

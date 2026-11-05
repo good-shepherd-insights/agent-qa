@@ -1,52 +1,27 @@
-// Redesigned storage-neutral cache port (Phase 356, D-03/D-11/D-12).
-// CRITICAL: provider-neutral + storage-neutral. No node:* imports, no fs/sharp,
-// no core/model/adapter package imports. Type-only imports, exported interfaces,
-// no implementation. This replaces the v1 sub-action trio + StepKeyInput: the port
-// is now keyed only by a branded CacheKey and the value is descriptor-only so a
-// cached plan never carries a raw ref/selector/coordinate or step data value.
+// Keyed by a branded CacheKey; the value is descriptor-only, never a ref, selector or data value.
 
 import type { CacheKey } from '@vostride/agent-qa-schema'
 import type { Action } from '../platform.js'
 
-/**
- * The subset of the action union that may be persisted in a cached plan (D-08). The
- * non-deterministic AI-assertion verbs — `assertAI` (judge lane) and `extractAI`
- * (extraction lane) — are `Exclude`d from the composed `Action` union so a plan carrying
- * one CANNOT typecheck into a cache write. Plan 10's runtime guard at the write site is the
- * narrowing proof; this static boundary is the belt-and-suspenders (the 356
- * `NonCacheableStepInput` type-level idiom, mirrored at the value shape).
- */
+// AI-assertion verbs are excluded, so a plan carrying one cannot typecheck into a cache write.
 export type CacheablePlannedAction = Exclude<Action, { type: 'assertAI' } | { type: 'extractAI' }>
 
-/**
- * Descriptor-only locator (D-12, 438 D-10/D-11). Identity is the observed role, the exact
- * observed name with spacing tidied (numbers and badges kept) and, when the planner stated a
- * row the element's row holds, those row words. Never a position, a ref, a selector or
- * coordinates: replay re-finds the one element with this identity in a fresh observation.
- */
+// Role, exact name and stated row words; replay re-finds the one element with this identity.
 export interface GroundedLocator {
   role: string
   name: string
   row?: string
 }
 
-/**
- * The cached plan value. `plannedActions` are stored in sanitized (locator-free,
- * data-free) form AND statically exclude the AI-assertion verbs (D-08); grounding is carried
- * only by `groundedLocator` descriptors so no run-specific ref/selector/coordinate or step
- * `data` value ever persists (D-12).
- */
+// One turn's sanitized action and its descriptor locators. `completesStep` is true when that
+// turn finished the step.
 export interface CachedPlanValue {
   plannedActions: CacheablePlannedAction[]
   groundedLocator: GroundedLocator[]
-  verificationOutcome: 'passed' | 'failed'
+  completesStep: boolean
 }
 
-/**
- * Redesigned per-key cache port (D-11). Get/set/invalidate over a branded CacheKey
- * — the v1 prefix/index sub-action model is dropped. A storage implementation (Plan
- * 05's FsActionCache) implements this interface; runner stays storage-neutral.
- */
+// Get, set and invalidate over a branded CacheKey; storage lives outside runner.
 export interface ActionPlanCache {
   get(key: CacheKey): Promise<CachedPlanValue | null>
   set(key: CacheKey, value: CachedPlanValue): Promise<void>

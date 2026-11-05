@@ -7,12 +7,19 @@ import {
   type ColumnDef,
   type ColumnFiltersState,
   type RowSelectionState,
+  columnFilteringFeature,
+  columnVisibilityFeature,
+  createFilteredRowModel,
+  createPaginatedRowModel,
+  createSortedRowModel,
   flexRender,
-  getCoreRowModel,
-  getSortedRowModel,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  useReactTable,
+  rowPaginationFeature,
+  rowSelectionFeature,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_text,
+  tableFeatures,
+  useTable,
 } from "@tanstack/react-table"
 import { Plus, FolderOpen, ArrowUpDown, Keyboard } from "lucide-react"
 import { RunStatusBadge } from "@/components/run-status-badge"
@@ -52,7 +59,7 @@ import {
 } from "@/pages/tests-suites-table-widths"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 import { useSuitesSearchParams } from "@/hooks/use-suites-search-params"
-import { deleteSuiteFile, deniedRunSentences, fetchSuiteFiles, fetchSuiteSummaries, triggerRun, type SuiteFileInfo, type SuiteSummary } from "@/lib/api"
+import { deleteSuiteFile, fetchSuiteFiles, fetchSuiteSummaries, triggerRun, type SuiteFileInfo, type SuiteSummary } from "@/lib/api"
 import { runStatusClass } from "@/lib/status"
 import { formatDate } from "@/lib/utils"
 
@@ -61,8 +68,7 @@ interface SuiteListRow {
   suiteId: string | null
   name: string
   platform: string | null
-  // 2026-10-18 (444-31, D-64): false while the batch read has not named this file; its rate,
-  // last-run and target cells stay empty and no status filter lists it.
+  // False until the batch read names this file; its cells stay empty and no status filter lists it.
   historyKnown: boolean
   lastRunStatus: string | null
   lastRun: SuiteSummary["lastRun"]
@@ -73,6 +79,18 @@ interface SuiteListRow {
 }
 
 const SUITES_TABLE_PAGE_SIZE = 50
+
+const suitesTableFeatures = tableFeatures({
+  columnFilteringFeature,
+  columnVisibilityFeature,
+  rowPaginationFeature,
+  rowSelectionFeature,
+  rowSortingFeature,
+  filteredRowModel: createFilteredRowModel(),
+  paginatedRowModel: createPaginatedRowModel(),
+  sortedRowModel: createSortedRowModel(),
+  sortFns: { alphanumeric: sortFn_alphanumeric, text: sortFn_text },
+})
 
 function formatPlatformLabel(platform: string | null): string {
   if (!platform) return "\u2014"
@@ -163,7 +181,7 @@ export default function SuitesPage() {
     }
   }, [])
 
-  // 2026-10-18 (444-31, D-64): every per-row figure is the server's, over the suite's own history.
+  // Every per-row figure is the server's, over the suite's own history.
   const data: SuiteListRow[] = useMemo(() => suiteFiles.map((sf) => {
     const summary = summaries?.get(normalizeSuitePath(sf.path))
     const lastRun = summary?.lastRun ?? null
@@ -196,7 +214,7 @@ export default function SuitesPage() {
     return result
   }, [data, status, platform])
 
-  const selectColumn: ColumnDef<SuiteListRow> = {
+  const selectColumn: ColumnDef<typeof suitesTableFeatures, SuiteListRow> = {
     id: "select",
     header: ({ table: t }) => (
       <div className="flex items-center justify-center">
@@ -214,10 +232,9 @@ export default function SuitesPage() {
       />
     ),
     enableSorting: false,
-    size: 48,
   }
 
-  const columns: ColumnDef<SuiteListRow>[] = useMemo(() => [
+  const columns: ColumnDef<typeof suitesTableFeatures, SuiteListRow>[] = useMemo(() => [
     {
       accessorKey: "name",
       header: ({ column }) => (
@@ -240,7 +257,6 @@ export default function SuitesPage() {
           </span>
         </div>
       ),
-      size: 400,
       filterFn: (row, _columnId, filterValue: string) => {
         const name = (row.getValue("name") as string).toLowerCase()
         const path = row.original.path.toLowerCase()
@@ -367,18 +383,17 @@ export default function SuitesPage() {
     [filteredData, selectedPaths],
   )
 
-  const handleBatchRun = useCallback(async (local: boolean) => {
+  const handleBatchRun = useCallback(async () => {
     if (selectedSuites.length === 0) return
     setBatchLoading(true)
     try {
       const results = await Promise.allSettled(
-        selectedSuites.map((s) => triggerRun({ file: s.path, local })),
+        selectedSuites.map((s) => triggerRun({ file: s.path })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
       const failed = results.length - succeeded
       if (failed > 0) {
-        const denied = deniedRunSentences(results)
-        toast.error(`${succeeded} runs queued, ${failed} failed${denied === undefined ? "" : `. ${denied}`}`)
+        toast.error(`${succeeded} runs queued, ${failed} failed`)
       } else {
         toast.success(`${succeeded} runs queued`)
       }
@@ -388,18 +403,17 @@ export default function SuitesPage() {
     }
   }, [selectedSuites])
 
-  const handleBatchRunNoCache = useCallback(async (local: boolean) => {
+  const handleBatchRunNoCache = useCallback(async () => {
     if (selectedSuites.length === 0) return
     setBatchLoading(true)
     try {
       const results = await Promise.allSettled(
-        selectedSuites.map((s) => triggerRun({ file: s.path, noCache: true, local })),
+        selectedSuites.map((s) => triggerRun({ file: s.path, noCache: true })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
       const failed = results.length - succeeded
       if (failed > 0) {
-        const denied = deniedRunSentences(results)
-        toast.error(`${succeeded} runs queued (no cache), ${failed} failed${denied === undefined ? "" : `. ${denied}`}`)
+        toast.error(`${succeeded} runs queued (no cache), ${failed} failed`)
       } else {
         toast.success(`${succeeded} runs queued (no cache)`)
       }
@@ -441,20 +455,17 @@ export default function SuitesPage() {
     }
   }, [selectedSuites])
 
-  const table = useReactTable({
+  const table = useTable({
+    features: suitesTableFeatures,
     data: filteredData,
     columns: [selectColumn, ...columns],
-    getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     onSortingChange,
     onColumnFiltersChange: setColumnFilters,
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
     getRowId: (row) => row.path,
     state: { sorting, columnFilters, rowSelection },
-    initialState: { pagination: { pageSize: SUITES_TABLE_PAGE_SIZE } },
+    initialState: { pagination: { pageIndex: 0, pageSize: SUITES_TABLE_PAGE_SIZE } },
   })
 
   const visibleRows = table.getRowModel().rows
@@ -525,8 +536,8 @@ export default function SuitesPage() {
   }
 
   const filteredCount = table.getFilteredRowModel().rows.length
-  const pageIndex = table.getState().pagination.pageIndex
-  const pageSize = table.getState().pagination.pageSize
+  const pageIndex = table.state.pagination.pageIndex
+  const pageSize = table.state.pagination.pageSize
   const start = pageIndex * pageSize + 1
   const end = Math.min(start + pageSize - 1, filteredCount)
 

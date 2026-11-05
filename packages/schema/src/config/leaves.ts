@@ -1,31 +1,10 @@
-// The leaves of the published config schema (429-03 D-06), pinned against the real schema by
-// core's config-schema-leaves test. 2026-10-15 (441-40, D-29): the list no longer classes a leaf
-// for masking; the config output's only mask is the declared one.
-//
-// Pattern format: dot-joined tokens, where '*' is an operator-named record key and a key
-// suffixed '[]' is an array item (`registry.llms[].name`, `registry.targets.*.url`).
+// `*` is an operator-named record key and a `[]` suffix an array item.
 
 // prettier-ignore
 export const CONFIG_SCHEMA_LEAVES = Object.freeze([
-  'allowProduction',
   'analytics.passRateScope.attributes.*',
   'analytics.passRateScope.attributes.*.regex',
   'analytics.privacy',
-  'eval.adversarial.maxProbeCalls',
-  'eval.adversarial.maxSeedsPerRefresh',
-  'eval.gate1.maxPerJob',
-  'eval.gate1.maxScreens',
-  'eval.gate2.canaryHorizonBuilds',
-  'eval.gate2.maxAblations',
-  'eval.gate2.maxLowerTrustPerScope',
-  'eval.judge',
-  'eval.judgeAllowSameFamily',
-  'eval.judges[]',
-  'eval.k',
-  'eval.seed',
-  'eval.seeding.silverPerTestCap',
-  'knowledge.commitArtifacts',
-  'knowledge.contextBudgetTokens',
   'knowledge.dir',
   'plugins.auth[].package',
   'plugins.auth[].path',
@@ -33,7 +12,6 @@ export const CONFIG_SCHEMA_LEAVES = Object.freeze([
   'plugins.providers[].path',
   'registry.devices.*.match.*',
   'registry.devices.*.platform',
-  'registry.devices.*.transport',
   'registry.llms[].baseURL',
   'registry.llms[].contextWindow',
   'registry.llms[].model',
@@ -41,8 +19,6 @@ export const CONFIG_SCHEMA_LEAVES = Object.freeze([
   'registry.llms[].provider',
   'registry.llms[].providerHeaders.*',
   'registry.llms[].vision',
-  'registry.providers.*.*',
-  'registry.targets.*.app.browserstack',
   'registry.targets.*.app.path',
   'registry.targets.*.appActivity',
   'registry.targets.*.appPackage',
@@ -59,7 +35,6 @@ export const CONFIG_SCHEMA_LEAVES = Object.freeze([
   'services.accessibility.standard',
   'services.authState.dir',
   'services.cache.dir',
-  'services.cache.ttl',
   'services.dashboard.artifactsDir',
   'services.dashboard.baseUrl',
   'services.dashboard.dbPath',
@@ -68,10 +43,7 @@ export const CONFIG_SCHEMA_LEAVES = Object.freeze([
   'services.dashboard.workspace',
   'services.logging.level',
   'services.mcp.enabled',
-  'services.mcp.host',
-  'services.mcp.path',
   'services.mcp.port',
-  'services.mcp.transport',
   'services.recording.enabled',
   'services.recording.keepFailuresOnly',
   'services.vision.effectiveResolution',

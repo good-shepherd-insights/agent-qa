@@ -1,27 +1,4 @@
-// The help ↔ catalog census, the help text's argument contract, and the skills' command vocabulary
-// (Phase 398 plan 09 — XPLN-01, D-01 / SC-1 / Pitfall 5).
-//
-// WHAT THESE LEGS ARE FOR. `resolver-table.ts`'s header states a law in prose: help text kept
-// anywhere other than the canon it documents is a second list of what chat understands, free to
-// drift from the one that actually routes. It was a law nothing enforced, and it had already been
-// broken — the `digest` line advertised "the latest run digest" while the rule it sits fifteen
-// lines below refuses a bare `digest` on purpose. These cells turn the prose into a comparison.
-//
-// WHICH TWO SETS THE CENSUS COMPARES, SAID PLAINLY (397 D-14's lesson, re-measured in 398). It
-// compares (1) the alias tokens named by `CHAT_HELP_ENTRIES` against (2) the committed catalog's
-// alias rows, plus the shipped `CHAT_DIRECTIVES`, plus the aliases the catalog producer's own probe
-// table classifies as the passthrough. Every member of both sides is read from a shipped module or
-// the committed artifact; nothing here is a list somebody typed.
-//
-// AND WHAT IT THEREFORE CANNOT SEE. A census compares MEMBERSHIP. It is blind to a rule whose
-// matching CLAUSE moved while its name stayed — which is exactly the drift that was live in this
-// repo — so the argument-contract cell below closes that half by driving the shipped resolver with
-// each line's own bare verb. It is equally blind to a capability listing rendered on a surface
-// neither set enumerates: a second help string in some other command file is not a member of either
-// side, so it touches neither. The second-list sweep is the cell that watches for that, and it
-// watches by SEARCHING FOR THE VOCABULARY the shipped modules produce rather than by holding a list
-// of forbidden strings — a rule that can only refuse what it can name cannot be driven to zero by
-// naming more things.
+// Help is censused against the catalog, and the bare-verb cell catches a clause that moved.
 
 import {
   cpSync,
@@ -47,13 +24,7 @@ import {
   CHAT_RESOLVER_TABLE,
   resolveClause,
 } from '@vostride/agent-qa-agent'
-import { REFUSED_RUN_REQUEST_FIELDS } from '@vostride/agent-qa-agent-local'
-import {
-  AGENT_QA_MCP_INSTRUCTIONS,
-  AGENT_QA_TOOL_PROJECTIONS,
-  V1_TOOL_MIGRATION_MAP,
-} from '@vostride/agent-qa-mcp'
-import { RunsStartInputSchema } from '@vostride/agent-qa-schema'
+import { AGENT_QA_MCP_INSTRUCTIONS, AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -250,15 +221,7 @@ function isCommentLine(line: string): boolean {
   return trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')
 }
 
-/**
- * Whether a body names a directive form AS A FORM rather than as part of a path.
- *
- * MEASURED, NOT ASSUMED (2026-08-17): the first version of this sweep matched substrings and fired
- * on `commands/init.ts` for `'../model-defaults.js'` and for the URL `iana.org/help/…`. Both are
- * paths, and neither is a listing of anything. The boundary conditions are what make the difference
- * — a form a person types is preceded by whitespace or a quote and followed by whitespace,
- * punctuation or the end of the string, which a path segment never is on both sides at once.
- */
+// A form a person types sits between whitespace or quotes; a path segment never does on both sides.
 function namesDirectiveForm(body: string, form: string): boolean {
   const escaped = form.replace(/[.*+?^${}()|[\]\\/]/gu, '\\$&')
   return new RegExp(`(^|[\\s'"\`(\\[,])${escaped}($|[\\s'"\`)\\],.;:!?])`, 'mu').test(body)
@@ -291,9 +254,7 @@ describe('no second list of what chat understands', () => {
           .filter((line) => !isCommentLine(line))
           .join('\n')
         const named = forms.filter((form) => namesDirectiveForm(code, form))
-        // TWO OR MORE is the shape of a LISTING. One form on its own is a module that mentions a
-        // directive (an error message about `/quit`, say); two or more in one module is a module
-        // that has started enumerating the vocabulary, which is the second list SC-1 forbids.
+        // Two or more forms in one module is a listing; one alone is a mention.
         if (named.length >= 2) findings.push(`${repoRelative} names ${named.join(', ')}`)
       }
     }
@@ -306,9 +267,7 @@ describe('no second list of what chat understands', () => {
       forms.filter((form) => namesDirectiveForm(planted, form)).length,
       'the sweep no longer recognises a planted directive listing',
     ).toBeGreaterThanOrEqual(2)
-    // …and it must NOT fire on the two path shapes that made the first version of this cell red on
-    // an innocent file. A boundary rule that forgot one of its boundaries is a sweep nobody can
-    // leave switched on.
+    // …and it must NOT fire on these two path shapes, which an innocent file holds.
     const paths = "import { X } from '../model-defaults.js'\nconst u = 'https://iana.org/help/x'"
     expect(
       forms.filter((form) => namesDirectiveForm(paths, form)),
@@ -323,28 +282,10 @@ describe('no second list of what chat understands', () => {
   })
 })
 
-/**
- * The AUTHORED skills tree, which is not the one that ships.
- *
- * MEASURED THE HARD WAY (2026-08-17). `packages/cli/skills` is a GENERATED COPY: the CLI package's
- * `prepack` runs `copy:skills`, which deletes that directory and rebuilds it from this one. A guard
- * that read only the resolved (packaged) directory would certify a reconciliation that the next
- * `prepack` silently undoes — which is exactly what happened while this plan was being written, and
- * `validate:publish` is what surfaced it. Both trees are ranged, so a fix applied to one and not the
- * other is a named RED rather than a regression waiting for the next release.
- */
+// `packages/cli/skills` is a copy `prepack` rebuilds from this tree, so both trees are ranged.
 const SKILLS_SOURCE_DIR = 'skills'
 
-/**
- * Every file a skill DIRECTORY carries, not just its SKILL.md.
- *
- * MEASURED, AND THE REASON THIS IS NOT SCOPED TO SKILL.md (2026-08-17). The first version of the
- * guard read only the three SKILL.md files, and it would have passed while
- * `agent-qa-authoring/references/agent-qa-contracts.json` — a file the skill's own step 3 tells an
- * agent to LOAD — still instructed `agent_qa_generate_id`. A guard scoped to one file of a
- * multi-file input class certifies that file, not the class. The universe here is the whole
- * directory the CLI's own resolution finds, minus binaries.
- */
+// Every file in a skill directory, because agents load a skill's references too.
 function shippedSkillFiles(): readonly { name: string; path: string }[] {
   const resolved = resolveAgentQaSkillsDirectory(dirname(fileURLToPath(import.meta.url)))
   const roots = [join(agentQaRoot(), SKILLS_SOURCE_DIR)]
@@ -379,51 +320,17 @@ function filesUnderSkill(root: string): readonly string[] {
 }
 
 /**
- * Every `agent_qa_*` identifier a document mentions.
- *
- * TOKENISED, NOT SUBSTRING-MATCHED, and the difference is the cell rather than a nicety:
- * `agent_qa_get_run` is a retired v1 name AND a prefix of the live `agent_qa_get_run_digest`, so a
- * `body.includes(v1Name)` guard would red on the correct replacement and stay red until somebody
- * "fixed" it by putting the retired name back. The scan reads whole identifiers and asks about
- * membership.
+ * Every `agent_qa_*` identifier a document mentions, read as whole identifiers so a name that is a
+ * prefix of another is not mistaken for it.
  */
 function toolTokensIn(body: string): readonly string[] {
   return sorted(body.match(/agent_qa_[a-z0-9_]+/gu) ?? [])
 }
 
 describe('the shipped skills quote only live commands', () => {
-  it('names no member of the v1 migration map (the list produced from the module)', () => {
-    // THE FORBIDDEN SET IS THE MODULE'S, READ AT TEST TIME. Spelling the retired names here would
-    // be a copy that stops covering the map the day it grows — and the map growing is precisely
-    // when a skill is most likely to be quoting something that just died.
-    const retired = new Set(V1_TOOL_MIGRATION_MAP.map((entry) => entry.v1Name))
-    expect(retired.size, 'the migration map is empty — this cell would forbid nothing')
-      .toBeGreaterThan(0)
-
-    const files = shippedSkillFiles()
-    expect(files.length, 'no shipped skill file was found — the cell would range nothing')
-      .toBeGreaterThan(0)
-
-    const findings: string[] = []
-    for (const file of files) {
-      for (const token of toolTokensIn(readFileSync(file.path, 'utf8'))) {
-        if (retired.has(token)) findings.push(`${file.name}: ${token}`)
-      }
-    }
-
-    expect(
-      findings,
-      'a shipped skill instructs a RETIRED v1 tool name — the skills are doc links in the '
-      + 'capability catalog, so a skill quoting a dead command is the product telling an agent to '
-      + 'call something that answers unknown-tool (Pitfall 5)',
-    ).toEqual([])
-  })
-
   it('every tool a skill names is one the shipped mapping actually projects', () => {
-    // THE STRONGER RULE, AND WHY BOTH ARE HERE. The cell above refuses what the migration map can
-    // NAME, so a tool renamed in some future phase without an inventory row would slip past it.
-    // This one asks the opposite question at the choke point — is this name LIVE — which needs no
-    // list of what is forbidden and cannot be defeated by a name nobody wrote down.
+    // Asks of every name a skill quotes whether it is LIVE, so no list of forbidden names is
+    // needed and a name nobody wrote down cannot slip past.
     const live = new Set(AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name))
     expect(live.size, 'the shipped mapping projects no tools — this cell would allow anything')
       .toBeGreaterThan(0)
@@ -500,8 +407,7 @@ describe('the chat host\'s discovery UX is a projection of the catalog', () => {
         findings.push(`${candidate}: the shipped table binds nothing`)
         continue
       }
-      // Hoisted, because a second read of `resolution.entry` loses the narrowing under `tsc` even
-      // though `vitest --typecheck` accepts it — 398-04's trap, measured again here.
+      // Hoisted: a second read of `resolution.entry` loses the narrowing under `tsc`.
       const bound = resolution.entry.functionId
       if (!rows.some((row) => row.kind === 'op' && row.id === bound)) {
         findings.push(`${candidate}: binds ${bound}, which has no catalog row`)
@@ -537,13 +443,7 @@ describe('the chat host\'s discovery UX is a projection of the catalog', () => {
   })
 })
 
-// ---- 431 D-24: every name the published guidance quotes is live ---------------------------------
-//
-// The subjects are the generated guide, the root pointer, and every file of every skill in BOTH the
-// source tree and the packaged mirror `copy:skills` produces. Tool names are checked against the MCP
-// projection and the committed catalog's op rows; CLI invocations are resolved against the real
-// Commander tree (`createAgentQaProgram`) and, for the verbs the capability manifest lists, against
-// the manifest too. A packaged input that is absent or empty is a finding, never a skip.
+// Every name the published guidance quotes is live; an absent or empty packaged input is a finding.
 
 interface GuidanceSubject {
   readonly name: string
@@ -882,7 +782,7 @@ describe('LIVE-GUIDANCE: the guide, pointer and every source and packaged skill 
   })
 
   it('LIVE-GUIDANCE-INPUTS names a missing or empty packaged reference instead of skipping it', () => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-qa-431-12-census-'))
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-census-'))
     try {
       const sourceRoot = join(root, 'source')
       const packagedRoot = join(root, 'packaged')
@@ -975,12 +875,8 @@ describe('LIVE-GUIDANCE: the guide, pointer and every source and packaged skill 
   })
 })
 
-// 2026-10-01, 432-17 (D-02 / D-05 / D-09): `agent-qa proposals` is deleted with the inbox, including
-// its `grants list | revoke` subtree. No alias is kept, so the parse tree rejects the verb the way it
-// rejects any word it never had, and nothing in the help, the manifest or the dedicated-verb list
-// still names it.
-describe('C432-NO-PROPOSAL-CLI: there is no proposals verb', () => {
-  it('C432-NO-PROPOSAL-CLI: the live Commander tree and its help name no proposals command', () => {
+describe('there is no proposals verb', () => {
+  it('the live Commander tree and its help name no proposals command', () => {
     const program = createAgentQaProgram()
     const names = program.commands.flatMap((command) => [command.name(), ...command.aliases()])
     expect(names.length, 'the command tree is empty, so the absence below would be vacuous').toBeGreaterThan(5)
@@ -990,7 +886,7 @@ describe('C432-NO-PROPOSAL-CLI: there is no proposals verb', () => {
       .toEqual([])
   })
 
-  it('C432-NO-PROPOSAL-CLI: parsing a proposals or proposals-grants invocation is an unknown command', async () => {
+  it('parsing a proposals or proposals-grants invocation is an unknown command', async () => {
     // Guarded first: on a tree that still registers the verb, parsing would RUN it in this cwd.
     expect(createAgentQaProgram().commands.map((command) => command.name()), 'the verb is registered')
       .not.toContain('proposals')
@@ -1008,16 +904,9 @@ describe('C432-NO-PROPOSAL-CLI: there is no proposals verb', () => {
   })
 })
 
-// ---- 432-40 (D-02 / D-05 / D-09 / D-24): the direct model, said with live names only ----------
-//
-// The LIVE-GUIDANCE cells above prove every NAME the guidance quotes is live. These prove what the
-// guidance SAYS: knowledge and config change through agent-qa and apply in the call, wrong knowledge
-// is corrected by new feedback or forget, and no current text describes a proposal, an approval, a
-// grant, a confirm round or a permission. Old recorded argv and dated history notes in source are
-// not guidance and are not read here; the subjects are the generated guide, the root pointer, the
-// scaffolded knowledge README, every source and packaged skill file, and the committed catalogue.
+// What the guidance says: knowledge and config change through agent-qa and apply in the call.
 
-/** The six MCP names the proposal round had; none is projected since 432-12. */
+// MCP tool names no projection may carry.
 const RETIRED_CHANGE_TOOLS: readonly string[] = Object.freeze([
   'agent_qa_propose_knowledge_change',
   'agent_qa_propose_config_change',
@@ -1027,10 +916,14 @@ const RETIRED_CHANGE_TOOLS: readonly string[] = Object.freeze([
   'agent_qa_show_proposal',
 ])
 
-/** The approval model's vocabulary, by the claim each word would make (432 D-24). */
+/**
+ * The approval model's vocabulary, by the claim each word would make. `approval` is also the
+ * knowledge gates read's name for an accepted-policy receipt, so its receipt-kind phrases
+ * (`marks and approvals`, `mark and approval receipts`, `approval none`) are not the approval model.
+ */
 const APPROVAL_VOCABULARY: readonly (readonly [string, RegExp])[] = Object.freeze([
   ['a proposal', /\bpropos(?:al|als|e|ed|es|ing)\b/iu],
-  ['an approval', /\bapprov(?:al|als|e|ed|es|ing)\b/iu],
+  ['an approval', /\bapprov(?:e|ed|es|ing)\b|\bapprovals?\b(?<!\bmarks? and approvals?)(?! none\b| receipts?\b)/iu],
   ['a grant', /\bgrant(?:s|ed|ing)?\b/iu],
   ['a permission', /\bpermissions?\b/iu],
   ['an inbox', /\binbox\b/iu],
@@ -1054,7 +947,7 @@ function approvalFindings(subjects: readonly GuidanceSubject[]): readonly string
   return findings
 }
 
-/** The D-24 rule, as the four facts a knowledge text must state. */
+// The facts a knowledge text must state.
 const KNOWLEDGE_RULE: readonly (readonly [string, RegExp])[] = Object.freeze([
   ['changes only through agent-qa', /changes only\s+through agent-qa/u],
   ['applies at once', /appl(?:y|ies) at once/u],
@@ -1074,8 +967,8 @@ function directGuidanceSubjects(): readonly GuidanceSubject[] {
   ]
 }
 
-describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in the call', () => {
-  it('C432-GUIDANCE-DIRECT: no guide, README, pointer or skill file uses approval-model words or retired change tools', () => {
+describe('current guidance describes changes that apply in the call', () => {
+  it('no guide, README, pointer or skill file uses approval-model words or retired change tools', () => {
     const subjects = directGuidanceSubjects()
     expect(subjects.length, 'fewer guidance subjects than the guide, pointer, README and one skill')
       .toBeGreaterThan(4)
@@ -1095,9 +988,14 @@ describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in
       'planted: "spec/v2" describes a design-doc path',
       'planted: names the retired agent_qa_apply_proposal',
     ])
+    expect(approvalFindings([{
+      name: 'receipt kinds',
+      body: 'Which marks and approvals back a record? It lists mark and approval receipts. '
+        + 'standing: mark false-fail @6; approval none',
+    }])).toEqual([])
   })
 
-  it('C432-GUIDANCE-DIRECT: the guide, the knowledge skill and its reference, and the README each state the change rule', () => {
+  it('the guide, the knowledge skill and its reference, and the README each state the change rule', () => {
     const subjects = directGuidanceSubjects()
     const ruleBearing = subjects.filter((subject) =>
       subject.name === 'generated guide'
@@ -1105,7 +1003,7 @@ describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in
       || (subject.name.includes(`/${KNOWLEDGE_SKILL_NAME}/`) && subject.name.endsWith('.md')))
     // guide + README + (SKILL.md + knowledge-reads.md) in both the source and the packaged tree.
     expect(ruleBearing.map((subject) => subject.name).length).toBe(6)
-    expect(ruleBearing.flatMap(knowledgeRuleFindings), 'a knowledge text omits part of the D-24 rule')
+    expect(ruleBearing.flatMap(knowledgeRuleFindings), 'a knowledge text omits part of the knowledge rule')
       .toEqual([])
     for (const subject of ruleBearing.filter((candidate) => candidate.name !== 'knowledge README')) {
       expect(toolTokensIn(subject.body), `${subject.name}: the change tool`).toContain('agent_qa_change_knowledge')
@@ -1113,10 +1011,8 @@ describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in
     expect(knowledgeRuleFindings({ name: 'planted', body: 'Edit the fact or the evidence.' })).toHaveLength(4)
   })
 
-  // The texts 432-40 replaced, as a historical witness: each sentence the census would have to
-  // miss for the old wording to return is named by it. Assembled from fragments so this file's own
-  // body is not a guidance subject that carries them.
-  it('C432-GUIDANCE-DIRECT: the replaced README and authoring wording is named by the census', () => {
+  // Assembled from fragments, so this file's body is not a guidance subject that carries them.
+  it('the replaced README and authoring wording is named by the census', () => {
     const replaced = approvalFindings([
       { name: 'old README', body: ['content humans write or ', 'approve', ' — QA rules.'].join('') },
       { name: 'old README staging', body: ['pending skill writes awaiting ', 'approval', '.'].join('') },
@@ -1138,7 +1034,7 @@ describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in
     ])
   })
 
-  it('C432-GUIDANCE-DIRECT: the authoring skill names the change tools and the written-test receipt, and no review step', () => {
+  it('the authoring skill names the change tools and the written-test receipt, and no review step', () => {
     const authoring = directGuidanceSubjects().filter((subject) =>
       subject.name.endsWith('/agent-qa-authoring/SKILL.md'))
     expect(authoring.map((subject) => subject.name).sort()).toEqual([
@@ -1152,7 +1048,6 @@ describe('C432-GUIDANCE-DIRECT: current guidance describes changes that apply in
       expect(subject.body, `${subject.name}: the written-test receipt`).toMatch(/`written` receipt/u)
       expect(subject.body, `${subject.name}: the disposition`).toMatch(/disposition/u)
       expect(subject.body, `${subject.name}: changes apply in the call`).toMatch(/apply in the call/u)
-      expect(subject.body, `${subject.name}: the production refusal`).toContain('allowProduction: true')
       expect(subject.body, `${subject.name}: a review instruction`).not.toMatch(/\breview/iu)
     }
   })
@@ -1187,8 +1082,8 @@ function mirrorFindings(sourceRoot: string, packagedRoot: string): readonly stri
   return findings
 }
 
-describe('C432-PACKAGED-SKILLS: the packaged skills are the source skills, byte for byte', () => {
-  it('C432-PACKAGED-SKILLS: every source skill file has a byte-identical packaged copy, and nothing else is packaged', () => {
+describe('the packaged skills are the source skills, byte for byte', () => {
+  it('every source skill file has a byte-identical packaged copy, and nothing else is packaged', () => {
     const sourceRoot = join(agentQaRoot(), SKILLS_SOURCE_DIR)
     const packagedRoot = join(agentQaRoot(), 'packages', 'cli', 'skills')
     expect(mirrorFindings(sourceRoot, packagedRoot), 'run pnpm --filter agent-qa copy:skills').toEqual([])
@@ -1203,8 +1098,8 @@ describe('C432-PACKAGED-SKILLS: the packaged skills are the source skills, byte 
     }
   })
 
-  it('C432-PACKAGED-SKILLS: a one-byte drift, a missing copy and a stray copy are each named', () => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-qa-432-40-mirror-'))
+  it('a one-byte drift, a missing copy and a stray copy are each named', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-mirror-'))
     try {
       const sourceRoot = join(root, 'source')
       const packagedRoot = join(root, 'packaged')
@@ -1228,7 +1123,7 @@ describe('C432-PACKAGED-SKILLS: the packaged skills are the source skills, byte 
   })
 })
 
-/** Retired op ids and tool names, as whole tokens (432-12/17/18 deleted them). */
+// Retired op ids and tool names, as whole tokens.
 const RETIRED_CAPABILITY = /\bproposals\.(?:list|show|accept|reject)\b|\bgrants\.(?:list|revoke)\b|\b(?:knowledge|config)\.proposal\.apply\b|\bconfig\.undo\.propose\b|\bagent_qa_(?:propose_[a-z_]+|apply_[a-z_]*proposal|list_proposals|show_proposal)\b/u
 
 /** Permission-shaped keys a catalogue row could carry. */
@@ -1242,8 +1137,8 @@ function keysDeep(value: unknown): readonly string[] {
   return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [key, ...keysDeep(child)])
 }
 
-describe('C432-CATALOG-CURRENT: the committed catalogue describes only the live tree', () => {
-  it('C432-CATALOG-CURRENT: op rows are the live registry, tools are the twenty projected tools, and no row names a retired capability or a permission', () => {
+describe('the committed catalogue describes only the live tree', () => {
+  it('op rows are the live registry, tools are the twenty projected tools, and no row names a retired capability or a permission', () => {
     const catalog = loadCapabilityCatalog()
     const opRows = catalog.rows.flatMap((row) => (row.kind === 'op' ? [row] : []))
     expect(sorted(opRows.map((row) => row.id)), 'op rows against the live registry census')
@@ -1278,29 +1173,6 @@ describe('C432-CATALOG-CURRENT: the committed catalogue describes only the live 
     expect(catalog.$note.join(' '), 'the note still describes per-caller filtering or a grant')
       .not.toMatch(/per-caller|\bgrants?\b/iu)
   })
-
-  it('C432-CATALOG-CURRENT: every migration route answers with a live tool and no proposal', () => {
-    const catalog = loadCapabilityCatalog()
-    const live = new Set(AGENT_QA_TOOL_PROJECTIONS.map((projection) => projection.name))
-    expect(catalog.migrationMap.length).toBe(catalog.migrationCount)
-    expect(catalog.migrationMap.length).toBe(V1_TOOL_MIGRATION_MAP.length)
-    for (const entry of catalog.migrationMap) {
-      if (entry.v2Tool !== undefined) expect(live.has(entry.v2Tool), `${entry.v1Name}: ${entry.v2Tool}`).toBe(true)
-      for (const text of [entry.route ?? '', entry.v2Tool ?? '']) {
-        expect(text, `${entry.v1Name}: the current answer describes the approval model`)
-          .not.toMatch(/\bpropos|\bapprov|\binbox\b/iu)
-      }
-      for (const tool of toolTokensIn(entry.route ?? '')) {
-        expect(live.has(tool), `${entry.v1Name}: the route names ${tool}, which is not projected`).toBe(true)
-      }
-    }
-    for (const v1Name of ['agent_qa_create_test', 'agent_qa_create_suite', 'agent_qa_update_suite']) {
-      const entry = catalog.migrationMap.find((candidate) => candidate.v1Name === v1Name)
-      expect(entry, v1Name).toBeDefined()
-      expect(`${entry!.note} ${entry!.route ?? ''}`, `${v1Name}: the dated direct-write answer`)
-        .toMatch(/in the call/u)
-    }
-  })
 })
 
 /** Source with block comments and whole-line `//` comments removed: what a reader is shown. */
@@ -1312,8 +1184,8 @@ function codeOf(relativePath: string): string {
     .join('\n')
 }
 
-describe('C432-CURATION-COPY: curation and chat say where a change went, and point at no review', () => {
-  it('C432-CURATION-COPY: a local fold reports what it applied; ci and cloud report what they kept proposed', () => {
+describe('curation and chat say where a change went, and point at no review', () => {
+  it('a local fold reports what it applied; ci and cloud report what they kept proposed', () => {
     expect(curationOutcomeLine({ executionContext: 'local-interactive', committed: 3, downgraded: 0 }))
       .toBe('curation: 3 learned change(s) applied, 0 kept proposed (local runs apply learned knowledge to the knowledge root)')
     expect(curationOutcomeLine({ executionContext: 'local-headless', committed: 3, downgraded: 1 }))
@@ -1328,10 +1200,9 @@ describe('C432-CURATION-COPY: curation and chat say where a change went, and poi
       .toBe('curation: 0 learned change(s) applied, 1 kept proposed (local runs apply learned knowledge to the knowledge root)')
   })
 
-  it('C432-CURATION-COPY: the curation tail and the chat turn engine show no review command and no waiting step', () => {
+  it('the curation tail and the chat turn engine show no review command and no waiting step', () => {
     for (const file of [
       'packages/cli/src/curation/curation-tail.ts',
-      'packages/cli/src/curation/promotion-posture.ts',
       'packages/agent/src/chat/turn-engine.ts',
     ]) {
       const code = codeOf(file)
@@ -1349,12 +1220,12 @@ describe('C432-CURATION-COPY: curation and chat say where a change went, and poi
   })
 })
 
-// C446-GUIDANCE-KEYS (446-04, D-16): every dotted config key in the guidance resolves in the schema
+// Every dotted config key in the guidance resolves in the schema.
 function catalogOpIds(): ReadonlySet<string> {
   return new Set(loadCapabilityCatalog().rows.flatMap((row) => (row.kind === 'op' ? [row.id] : [])))
 }
 
-describe('C446-GUIDANCE-KEYS', () => {
+describe('config keys named in agent guidance', () => {
   it('every dotted config key the guide, the pointer, the MCP instructions, the skills and the contracts file name resolves in the config schema', () => {
     const { subjects } = liveGuidanceInputs()
     const opIds = catalogOpIds()
@@ -1413,8 +1284,8 @@ function bareInvocations(subjects: readonly GuidanceSubject[]): readonly string[
     .map((invocation) => `${subject.name}: "${invocation.text}" is not prefixed with npx`))
 }
 
-// C446-GUIDANCE-NPX (446-06, D-09): every command a skill quotes can be copied and run with a local install
-describe('C446-GUIDANCE-NPX', () => {
+// Every command a skill quotes can be copied and run with a local install.
+describe('CLI commands quoted in agent guidance', () => {
   it('every CLI command a source or packaged skill quotes outside a text block reads npx agent-qa', () => {
     const skills = skillSubjects()
     for (const tree of SKILL_TREES) {
@@ -1455,7 +1326,7 @@ describe('C446-GUIDANCE-NPX', () => {
       .toEqual([['agent-qa runs list', false, '']])
   })
 
-  // 2026-10-20 (446-07, D-09, D-29): the map keeps bare verbs; only its rendering adds npx
+  // The map keeps bare verbs; only its rendering adds npx.
   it('every CLI command the guide, the pointer and the MCP instructions quote reads npx agent-qa, while the question map keeps bare verbs', () => {
     const names: readonly string[] = ['generated guide', 'root pointer', 'MCP instructions']
     const generated = liveGuidanceInputs().subjects.filter((subject) => names.includes(subject.name))
@@ -1473,8 +1344,8 @@ describe('C446-GUIDANCE-NPX', () => {
 
 const EVIDENCE_KINDS = ['console', 'network', 'a11y', 'aria', 'variables'] as const
 
-// C446-PLACEHOLDERS (446-06, D-15): a skill explains each placeholder where it uses it
-describe('C446-PLACEHOLDERS', () => {
+// A skill explains each placeholder where it uses it.
+describe('the build and evidence-kind placeholders in agent guidance', () => {
   it('every skill that names the build placeholder says it is a build ordinal or tag, and every skill that names runs evidence --kind names the five evidence kinds', () => {
     const findings: string[] = []
     let builds = 0
@@ -1511,204 +1382,7 @@ describe('C446-PLACEHOLDERS', () => {
   })
 })
 
-// 2026-10-21 (446-14, D-30, D-31): a passage is a paragraph, list item, heading or table row; fenced blocks quote CLI output (D-09)
-function claimUnits(body: string): readonly string[] {
-  const units: string[] = []
-  let current: string[] = []
-  let fenced = false
-  const flush = (): void => {
-    if (current.length > 0) units.push(current.join('\n'))
-    current = []
-  }
-  for (const line of body.split('\n')) {
-    const trimmed = line.trim()
-    if (/^(?:```|~~~)/u.test(trimmed)) {
-      flush()
-      fenced = !fenced
-      continue
-    }
-    if (fenced) continue
-    if (trimmed === '') {
-      flush()
-      continue
-    }
-    if (/^#{1,6}\s/u.test(trimmed) || trimmed.startsWith('|')) {
-      flush()
-      units.push(trimmed)
-      continue
-    }
-    if (/^(?:[-*]|\d+\.)\s/u.test(trimmed)) flush()
-    current.push(trimmed)
-  }
-  flush()
-  return units
-}
-
-function sentencesOf(unit: string): readonly string[] {
-  return unit.split('\n').join(' ').split(/(?<=[.!?])\s+/u).filter((sentence) => sentence.length > 0)
-}
-
-function claimNamePattern(name: string): RegExp {
-  const words = name.split(/(?=[A-Z])/u).map((word) => word.toLowerCase())
-  const spellings = words.length > 1 ? [name, words.join('\\s+')] : [name]
-  return new RegExp(`(?<![\\w-])(?:--)?(?:${spellings.join('|')})(?![\\w:-])`, 'iu')
-}
-
-interface ClaimCensus {
-  readonly passage: RegExp
-  readonly names: readonly string[]
-  readonly allowed: RegExp
-}
-
-function argumentClaimFindings(
-  subjects: readonly GuidanceSubject[],
-  census: ClaimCensus,
-): { readonly passages: number; readonly findings: readonly string[] } {
-  let passages = 0
-  const findings: string[] = []
-  for (const subject of subjects) {
-    for (const unit of claimUnits(subject.body)) {
-      if (!census.passage.test(unit)) continue
-      passages += 1
-      for (const sentence of sentencesOf(unit)) {
-        if (census.allowed.test(sentence)) continue
-        for (const name of census.names) {
-          if (claimNamePattern(name).test(sentence)) findings.push(`${subject.name}: names ${name} in "${sentence}"`)
-        }
-      }
-    }
-  }
-  return { passages, findings: sorted(findings) }
-}
-
-function namedSubjects(names: readonly string[]): readonly GuidanceSubject[] {
-  const skills = skillSubjects()
-  return names.map((name) => skills.find((subject) => subject.name === name) ?? { name, body: '' })
-}
-
-const START_RUN_CLAIMS: ClaimCensus = {
-  passage: /\bagent_qa_start_run\b/u,
-  names: REFUSED_RUN_REQUEST_FIELDS,
-  allowed: /\brefuse[sd]?\b|\bnot accept/iu,
-}
-
-const START_RUN_SKILL_FILES = SKILL_TREES.flatMap((tree) =>
-  ['agent-qa-authoring', 'agent-qa-debug-fix'].map((skill) => `${tree}${skill}/SKILL.md`))
-
-// C446-START-RUN-ARGS (446-14, D-30): the skills name only arguments the local run core accepts
-describe('C446-START-RUN-ARGS', () => {
-  it('no source or packaged skill names an agent_qa_start_run argument the local run core refuses', () => {
-    for (const subject of namedSubjects(START_RUN_SKILL_FILES)) {
-      expect(argumentClaimFindings([subject], START_RUN_CLAIMS).passages,
-        `no agent_qa_start_run passage was scanned in ${subject.name}`).toBeGreaterThan(0)
-    }
-    expect(argumentClaimFindings(skillSubjects(), START_RUN_CLAIMS).findings,
-      'a skill names an agent_qa_start_run argument the local run core refuses').toEqual([])
-  })
-
-  it('the authoring and debug-fix skills in both trees name the tests to run with patterns, an argument the run core accepts', () => {
-    const refused: readonly string[] = REFUSED_RUN_REQUEST_FIELDS
-    expect(Object.keys(RunsStartInputSchema.shape)).toContain('patterns')
-    expect(refused).not.toContain('patterns')
-    const silent = namedSubjects(START_RUN_SKILL_FILES)
-      .filter((subject) => !claimUnits(subject.body)
-        .some((unit) => START_RUN_CLAIMS.passage.test(unit) && unit.includes('`patterns`')))
-      .map((subject) => subject.name)
-    expect(silent, 'a skill starts runs without naming patterns').toEqual([])
-  })
-
-  it('a planted scope claim is named, a sentence saying the server refuses scope is not, and a census that finds no agent_qa_start_run passage fails', () => {
-    expect(argumentClaimFindings([{
-      name: 'planted',
-      body: '- Start runs with `agent_qa_start_run` rather than shelling out. The test-or-suite scope is an\n  argument to it, not a second tool.',
-    }], START_RUN_CLAIMS)).toEqual({
-      passages: 1,
-      findings: ['planted: names scope in "The test-or-suite scope is an argument to it, not a second tool."'],
-    })
-    expect(argumentClaimFindings([{
-      name: 'planted',
-      body: '- Name the test files to `agent_qa_start_run` with `patterns`; the local agent-qa server refuses `scope`.',
-    }], START_RUN_CLAIMS)).toEqual({ passages: 1, findings: [] })
-    expect(argumentClaimFindings([{
-      name: 'planted',
-      body: [
-        '- `agent_qa_start_run` takes an Execution Context.',
-        '- `agent_qa_start_run` records `executionContext`, and pass --SCOPE too.',
-        '- `agent_qa_start_run` runs the scopes and the executionContexts you list.',
-        '',
-        '```yaml',
-        '# agent_qa_start_run with scope',
-        '```',
-      ].join('\n'),
-    }], START_RUN_CLAIMS)).toEqual({
-      passages: 3,
-      findings: [
-        'planted: names executionContext in "- `agent_qa_start_run` records `executionContext`, and pass --SCOPE too."',
-        'planted: names executionContext in "- `agent_qa_start_run` takes an Execution Context."',
-        'planted: names scope in "- `agent_qa_start_run` records `executionContext`, and pass --SCOPE too."',
-      ],
-    })
-    expect(argumentClaimFindings([{ name: 'planted', body: 'Pass the scope to `agent_qa_list_runs`.' }], START_RUN_CLAIMS))
-      .toEqual({ passages: 0, findings: [] })
-  })
-})
-
-// 2026-10-21 (446-14, D-31): no product constant says the target filter answers no runs (F-446-12-1, todo
-// 2026-10-20-list-runs-target-filter-answers-no-runs); drop target here when the filter works
-const RUN_FILTER_CLAIMS: ClaimCensus = {
-  passage: /\bagent_qa_list_runs\b|\bruns\s+list\b/u,
-  names: ['target'],
-  allowed: /answers no runs/iu,
-}
-
-const RUN_FILTER_SKILL_FILES = SKILL_TREES.flatMap((tree) =>
-  ['SKILL.md', 'references/knowledge-reads.md'].map((file) => `${tree}agent-qa-knowledge/${file}`))
-
-// C446-RUN-FILTERS (446-14, D-31): the skills offer no run-listing filter that answers no runs
-describe('C446-RUN-FILTERS', () => {
-  it('no source or packaged skill offers target as an agent_qa_list_runs or runs list filter', () => {
-    for (const subject of namedSubjects(RUN_FILTER_SKILL_FILES)) {
-      expect(argumentClaimFindings([subject], RUN_FILTER_CLAIMS).passages,
-        `no run-listing passage was scanned in ${subject.name}`).toBeGreaterThan(0)
-    }
-    expect(argumentClaimFindings(skillSubjects(), RUN_FILTER_CLAIMS).findings,
-      'a skill offers target to narrow a run listing').toEqual([])
-  })
-
-  it('a planted target filter is named, a sentence saying target answers no runs is not, and a census that finds no list passage fails', () => {
-    expect(argumentClaimFindings([{
-      name: 'planted',
-      body: [
-        '1. Find the run with `agent_qa_list_runs`.',
-        '   Narrow it with `verdict`, `target` or `limit`.',
-        '',
-        'CLI: `npx agent-qa runs list`, with `--test` and `--target`.',
-      ].join('\n'),
-    }], RUN_FILTER_CLAIMS)).toEqual({
-      passages: 2,
-      findings: [
-        'planted: names target in "CLI: `npx agent-qa runs list`, with `--test` and `--target`."',
-        'planted: names target in "Narrow it with `verdict`, `target` or `limit`."',
-      ],
-    })
-    expect(argumentClaimFindings([{
-      name: 'planted',
-      body: [
-        '- `agent_qa_list_runs`: its `target` filter answers no runs in this version.',
-        '- `npx agent-qa runs list` lists runs across all targets.',
-        '- `agent_qa_list_runs` reads a test whose header sets `target: komazon`.',
-        '',
-        '```yaml',
-        '# agent_qa_list_runs with --target',
-        '```',
-      ].join('\n'),
-    }], RUN_FILTER_CLAIMS)).toEqual({ passages: 3, findings: [] })
-    expect(argumentClaimFindings([{ name: 'planted', body: 'Narrow it with `target`.' }], RUN_FILTER_CLAIMS))
-      .toEqual({ passages: 0, findings: [] })
-  })
-})
-
-// 2026-10-21 (446-15, D-32): a forced init rebuilds agent-qa.config.yaml; a backtick ends a code span
+// A forced init rebuilds agent-qa.config.yaml; a backtick ends a code span.
 const INIT_FORCE = /\binit\b[^`\n]*--force\b/u
 
 function initForceFindings(
@@ -1725,8 +1399,8 @@ function initForceFindings(
   return { scanned, findings: sorted(findings) }
 }
 
-// C446-NO-INIT-FORCE (446-15, D-32): agent-facing guidance never hands an agent a forced init
-describe('C446-NO-INIT-FORCE', () => {
+// Agent-facing guidance never hands an agent a forced init.
+describe('agent guidance never offers init --force', () => {
   it('no agent-facing guidance offers agent-qa init with --force, which rebuilds the workspace config', () => {
     const { subjects } = liveGuidanceInputs()
     const names = subjects.map((subject) => subject.name)

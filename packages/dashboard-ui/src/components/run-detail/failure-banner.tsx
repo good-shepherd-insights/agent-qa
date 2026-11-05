@@ -1,11 +1,4 @@
-// The run's failure summary, as stored (405-14 · DETL-02; 441 D-28): a declared value reads as the
-// `[secret:<name>]` the run wrote, as plain text.
-//
-// The clipboard carries what was rendered and nothing else (T-405-43): the preview while the banner
-// is collapsed, the whole summary once it has been expanded.
-//
-// Text nodes, never markup (T-405-42): there is no `dangerouslySetInnerHTML` here, and a jsdom cell
-// feeds this component markup and asserts no element.
+// Text nodes, never markup; the clipboard carries exactly what is rendered.
 
 import { useState } from "react"
 import { AlertCircle, Check, ChevronRight, Copy } from "lucide-react"
@@ -13,27 +6,7 @@ import { AlertCircle, Check, ChevronRight, Copy } from "lucide-react"
 import { truncateText } from "@/lib/display-text"
 import { cn } from "@/lib/utils"
 
-/**
- * How much of the summary the collapsed banner shows.
- *
- * TWENTY, WHICH IS THE SHIPPED NUMBER — the page-local helper's own budget, moved rather than
- * re-chosen.
- *
- * IT IS EXPORTED BECAUSE TWO THINGS READ IT, AND THE LIST IS NAMED SO IT STAYS TRUE (WINDOWS #292).
- * The justification that stood here — "the failing-run fixture's word arithmetic is written against
- * it" — described a PROSE reference and no import at all, so the budget could move here while every
- * fixture went on asserting the old number. Its consumers:
- *
- *   1. `__tests__/failure-banner.test.tsx`, which IMPORTS it and derives its fixture's word
- *      ordinals from it — the marker inside the budget, the marker past it, and the summary's last
- *      word are all `FAILURE_BANNER_PREVIEW_WORDS` plus an offset, so a change here moves the cells.
- *   2. `cli/src/__tests__/conformance/populated-run-fixture.ts`, which cannot import across the
- *      package boundary and names it in PROSE instead, beside the word-by-word arithmetic its
- *      failing-run sentences are written to.
- *
- * A drift that pushes the marker past the budget is fixed in the FIXTURE, never by widening this
- * number to make a cell go green.
- */
+// Fixtures derive their word ordinals from this; fix a drifting fixture, never widen the number.
 export const FAILURE_BANNER_PREVIEW_WORDS = 20
 
 /** What the last copy attempt did — `idle` until one is made, and back to `idle` after a moment. */
@@ -76,14 +49,7 @@ export function FailureBanner({ summary }: { summary: string }) {
   // exactly what the page renders and a change to one site that the other does not mirror shows in
   // review.
   //
-  // THE CHECK MARK MEANS THE WRITE RESOLVED, AND NOTHING ELSE. `writeText` returns a promise that
-  // rejects with `NotAllowedError` whenever the document is not focused or the permission was
-  // denied — a routine condition, not an exotic one — and the previous spelling neither awaited nor
-  // caught it: an unhandled rejection, plus a green tick telling a reader the failure summary was
-  // on their clipboard when it was not. `navigator.clipboard` is also `undefined` outside a secure
-  // context, which the repo's Docker release reaches over any non-loopback hostname, and the bare
-  // property access threw a `TypeError` inside the click handler. Optional-chained, awaited and
-  // caught — `artifact-drawer.tsx`'s `copyText` idiom, with the outcome kept rather than dropped.
+  // The tick means the write resolved; `writeText` may reject, or be absent in an insecure context.
   const handleCopy = () => {
     const written = navigator.clipboard?.writeText(open ? summary : preview.text)
     if (written === undefined) {

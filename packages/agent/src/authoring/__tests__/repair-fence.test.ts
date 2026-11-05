@@ -1,33 +1,4 @@
-// The passing-prefix fence and the K bound, proven from BOTH sides (Phase 394, D-09/D-10 · WTST-04).
-//
-// D-09'S RULE HAS TWO HALVES AND NEITHER SUBSTITUTES FOR THE OTHER. The static fence reads
-// RFC-6902 paths and refuses a patch that NAMES a step inside the passing prefix, before anything
-// executes. The dynamic re-check reads the probe run and ends repair when a patch that named only
-// unprotected steps BROKE a protected one anyway — a state-dependent effect no path inspection can
-// see. A file shipping only the static cell has proven the fence reads paths; it has not proven the
-// prefix survives, which is the property D-09 is about.
-//
-// AND A FENCE THAT REFUSES EVERYTHING WOULD PASS A ONE-SIDED FILE. 394-04 measured exactly that
-// failure in this phase's own e2e lane: every cell screened against an empty suite, so "the lane
-// admits" was untested and a threshold refusing everything would have passed the file. So the
-// static half is asserted in BOTH directions — a prefix-touching patch is refused, and a patch
-// outside the prefix is ADMITTED and reaches a run.
-//
-// K IS ONLY MEASURED BY A CASE THAT REACHES IT. "Terminates at no more than K" is unfalsifiable
-// against an input that succeeds on iteration 1. The counting cell below drives an adversarial
-// model that emits only fenced patches, so the bound is the only thing that can stop it, and it
-// MIXES a fenced patch with a failed probe because the whole wrinkle over the `AUTHOR_REPAIR_CAP`
-// precedent is that a fenced patch has to consume an iteration too. A model that keeps proposing
-// fenced patches otherwise never terminates.
-//
-// THE RED THIS FILE WAS COMMITTED AS. The subject is imported LAZILY inside each cell (the
-// 394-03/04/05 idiom). A top-level import of a module that does not exist fails the whole file to
-// load, and vitest reports that identically to a corpus nobody wrote — so the recorded RED is a
-// list of NAMED rows, beside the integrity cells that never touch the subject and stay green.
-//
-// vitest does not typecheck `.test.ts` at all (`typecheck.include` is `*.test-d.ts`). `tsc
-// --noEmit` is the only type authority for this file; the type-level half of SC-2 lives in
-// `router.test-d.ts` beside the router's own pins.
+// Tested both ways: a prefix-touching patch is refused, and one outside the prefix reaches a run.
 
 import {
   AUTHORING_REPAIR_ABANDONMENTS,
@@ -191,22 +162,19 @@ const HARNESS_EMISSION_CEILING = 12
 interface ProbeScript {
   /** One entry per probe, in order. `undefined` models a probe whose record is unreadable. */
   readonly probes: readonly (readonly MemberFixture[] | undefined)[]
-  /**
-   * Probe indices the run boundary refuses (432-04, D-18): `start` throws {@link RunRefusal} for
-   * them, as the host's run core does for a production target the config has not opted into.
-   */
+  /** Probe indices the run boundary refuses: `start` throws {@link RunRefusal} for them. */
   readonly refuseProbes?: readonly number[]
   /** The final stability gate is refused the same way: its gate runs never start. */
   readonly refuseVerify?: boolean
 }
 
 /**
- * The refusal the host's run boundary raises. `agent` may not import the host, so this stands in
- * for its `RunDeniedError`: what repair must do with it is the same for any refusal a start throws.
+ * A refusal the host's run boundary raises when a start is refused. What repair must do with it is
+ * the same for any refusal a start throws.
  */
 class RunRefusal extends Error {
   constructor() {
-    super('Target "prod-form" is declared environment: production, and this config does not allow production runs.')
+    super('The run port refused to start this run.')
     this.name = 'RunRefusal'
   }
 }
@@ -261,26 +229,7 @@ function gateBooleans(receipt: DraftReceipt) {
   }
 }
 
-/**
- * A fake CST applier over `ParsedDraftLike`'s steps AND its name.
- *
- * `agent` may not import `core` (the FUNC-02 firewall), so the real `applyPatchSetToTestDoc` is
- * reached through the shelf's mirror verb and bound at the host. What this stands in for is the
- * EFFECT on step positions, which is what the prefix fence and the prefix re-check read.
- *
- * IT HONOURS `/name`, and that is load-bearing rather than completeness for its own sake. `name` is
- * one of the three `EDITABLE_POINTER_ROOTS`, so the REAL applier renames the test when a patch says
- * to; a stand-in that silently dropped the op would make every identity cell below vacuous — they
- * would pass against an implementation with no fence at all, because nothing could rename anything.
- * The integrity cell asserts the rename really happens here before any cell relies on it not
- * happening through repair.
- *
- * IT ALSO MOVES THE DRAFT'S PATH, for the same reason (WR-04). `applyPatches` re-stages the patched
- * document, and staging addresses a draft by the digest of its new bytes — so the repaired draft
- * lives at a new shelf file and the pre-patch one is not rewritten in place. A stand-in that spread
- * `...draft` and changed only the digest certified an identity production does not have, and any
- * cell reading a pre-repair path as the repaired one passed through it.
- */
+// Honours `/name` and moves the path, as the real applier and `stageDraft` do, so cells can fail.
 function applyPatchesToDraft(draft: ParsedDraftLike, set: TestEditPatchSet): ParsedDraftLike {
   const steps = [...draft.steps]
   let testName = draft.testName
@@ -461,17 +410,7 @@ describe('the patch corpus is producible', () => {
   })
 })
 
-// ---- WR-01: repair may fix mechanics, never identity -------------------------------------------
-//
-// `EDITABLE_POINTER_ROOTS` admits `/name` — correctly, because `authoring.draft.edit` serves a
-// USER who asked for a rename (D-21) — and `fencePatchAgainstPassingPrefix` inspects only `/steps`
-// pointers. So a repair patch could rename the test, and `loop.ts:827-841` claims exactly what a
-// rename breaks: the stability target is derived ONCE from the PRE-repair draft, while the accept
-// target is recomputed from the REPAIRED ref through `testDraftProposal`. A rename desyncs them,
-// which is the disagreement the single derivation is documented to prevent.
-//
-// A renamed test is a different test. Repair's grant is mechanics under anchors that forbid
-// changing what the test claims, and the name is the loudest thing a test claims about itself.
+// Repair fixes mechanics, not identity: a rename would desync the stability and accept targets.
 
 describe('identity-fence: repair cannot change what the test IS', () => {
   it('identity-fence REFUSES a patch that renames the test, naming the offending path', async () => {
@@ -515,10 +454,7 @@ describe('identity-fence: repair cannot change what the test IS', () => {
 
   it('identity-fence makes the single-derivation claim TRUE: the repaired SUITE TARGET equals the draft\'s', async () => {
     const { repairDraft } = await loadRepair()
-    // Iteration 1 renames — refused, spent, nothing runs. Iteration 2 fixes a step beyond the
-    // prefix and the probe passes. WITHOUT the fence the rename lands on the candidate, the probe's
-    // member no longer joins on (filePath, testName) at all, and repair cannot even recognise its
-    // own success — which is what the pre-fix RED shows.
+    // Unfenced, the rename lands and the probe's member cannot join on `(filePath, testName)`.
     const bench = harness(
       [emit(NON_STEP), emit(OUTSIDE_PREFIX)],
       { probes: [passingProbe(), passingProbe()] },
@@ -528,9 +464,7 @@ describe('identity-fence: repair cannot change what the test IS', () => {
 
     expect(outcome.kind).toBe('repaired')
     const repaired = outcome.kind === 'repaired' ? outcome.draft : DRAFT
-    // WHAT THE FENCE ACTUALLY GUARANTEES: the NAME. It is the whole of the fence's grant, and it is
-    // the only one of the two inputs that survives a repair — the shelf path moves with the digest
-    // on every applied set, which this cell asserts rather than ignores (WR-04).
+    // The fence guarantees the name; the shelf path moves with the digest on every applied set.
     expect(repaired.testName).toBe(DRAFT.testName)
     expect(repaired.filePath).not.toBe(DRAFT.filePath)
     // AND THE PROPERTY THE SINGLE DERIVATION NEEDS, which is not that both inputs are equal: the
@@ -702,9 +636,7 @@ describe('one receipt per draft, and one disposition derivation', () => {
 
     await repairDraft(repairRoute(), bench.deps as never)
 
-    // `0` is this harness's recording for "no draftMode on the request" — D-10's stabilise-at-the-
-    // end shape, and the difference between a repaired draft that can be kept and one forced to
-    // `unverified` by rule 1 of the disposition table.
+    // `0` is this harness's record of a request with no `draftMode`.
     expect(bench.verifyCalls).toEqual([0])
   })
 
@@ -725,10 +657,9 @@ describe('one receipt per draft, and one disposition derivation', () => {
   })
 })
 
-// 432-04 (D-18): a probe is a run, and so is the repaired draft's final verification. Both go
-// through the run port, so the host's run boundary (a production target without the config's
-// opt-in) refuses them. Repair does not catch that refusal: it reaches the caller at once, and
-// nothing after it is asked, patched, probed or verified.
+// A probe is a run, and so is the repaired draft's final verification. Both go through the run
+// port, so the host's run boundary can refuse them. Repair does not catch that refusal: it reaches
+// the caller at once, and nothing after it is asked, patched, probed or verified.
 describe('a refusal at the run boundary ends repair where it lands', () => {
   it('a refused probe reaches the caller, and repair asks for no further patch and verifies nothing', async () => {
     const { repairDraft } = await loadRepair()
@@ -773,12 +704,7 @@ describe('the repair prompt carries the run evidence at the failure point', () =
   })
 })
 
-// ---- SC-2 at the CALL SITE: the stop branch never enters repair -------------------------------
-//
-// The type-level half lives in `router.test-d.ts` and says the call does not compile. This is the
-// BEHAVIOURAL half, the one cell 2 of the phase's mutation driver (since removed) redded: a differential
-// that could only red a typecheck would say nothing about a build in which somebody reached for a
-// cast, and vitest does not typecheck `.test.ts` at all.
+// ---- at the call site: the stop branch never enters repair, even through a cast ----
 
 /** A clean definitive assertion-fail: the verifier said no, a verdict source says which path. */
 const CLEAN_FAIL_MEMBER: MemberFixture = {
@@ -817,24 +743,19 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
     // very first thing it would do is ask for a patch — so this harness has nothing to give it.
     const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
 
-    // 394-08: stage 5 answers `{outcome, fanOut}` — the runs an invocation spent are known only
-    // where repair is entered, so the report leaves from here rather than being totalled outside.
+    // Repair is where an invocation's runs are known, so the fan-out report leaves from stage 5.
     const { outcome } = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
       read: {
         getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
         suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },
-        // 394-33 WR-07: stage 5 compiles nothing, so a vocabulary read here would be a read
-        // nobody makes — it throws for the same reason its two neighbours do.
+        // Stage 5 compiles nothing, so a vocabulary read here throws like its neighbours.
         configuredTargetNames: () => { throw new Error('stage 5 serves no target vocabulary') },
       },
       shelf: bench.deps.shelf as never,
     }, [])
 
     expect(outcome.kind).toBe('stopped')
-    // MEASURED, not described: no probe was started and no patch was ever asked for. A stop
-    // branch wired into `repairDraft` spends a child process against the user's application in
-    // order to "fix" a test whose claim the application simply did not satisfy — which is oracle
-    // capture by construction, the one implementation D-08 exists to forbid.
+    // No probe and no patch: repairing a test the app failed would capture the oracle.
     expect(bench.startInputs).toEqual([])
     expect(bench.promptsSeen).toEqual([])
     expect(bench.appliedSets).toEqual([])
@@ -844,14 +765,12 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
     const { routeAfterVerify } = await import('../loop.js')
     const bench = harness([], { probes: [] }, { [ROUTING_RUN_ID]: [CLEAN_FAIL_MEMBER] })
 
-    // 394-08: stage 5 answers `{outcome, fanOut}` — the runs an invocation spent are known only
-    // where repair is entered, so the report leaves from here rather than being totalled outside.
+    // Repair is where an invocation's runs are known, so the fan-out report leaves from stage 5.
     const { outcome } = await routeAfterVerify(DRAFT, REJECTED_RECEIPT, {
       read: {
         getAuthoringBrief: () => { throw new Error('stage 5 does not read the brief') },
         suiteTextCorpus: () => { throw new Error('stage 5 does not screen the suite') },
-        // 394-33 WR-07: stage 5 compiles nothing, so a vocabulary read here would be a read
-        // nobody makes — it throws for the same reason its two neighbours do.
+        // Stage 5 compiles nothing, so a vocabulary read here throws like its neighbours.
         configuredTargetNames: () => { throw new Error('stage 5 serves no target vocabulary') },
       },
       shelf: bench.deps.shelf as never,
@@ -860,14 +779,12 @@ describe('stage 5: the app-broken branch cannot reach repair', () => {
     expect(outcome.kind === 'stopped' && outcome.route.signalClass)
       .toBe('clean-definitive-assertion-fail')
     expect(outcome.kind === 'stopped' && outcome.route.evidenceRefs.length).toBeGreaterThan(0)
-    // An ORDINARY stop carries no abandonment key and no prose field — nothing a model wrote
-    // survives on this arm, which is the key set rather than a value (411 D-05).
+    // An ordinary stop carries no abandonment key and no prose field.
     expect(Object.keys(outcome).sort()).toEqual(['draftRef', 'kind', 'receipt', 'route'])
   })
 })
 
-// 2026-10-12 (440-05, D-07): a repair patch that loses a stated value is fenced beside the identity
-// fence, before anything runs, and spends the try. DRAFT's step 3 carries "Saved".
+// A repair patch that loses a stated value is fenced before anything runs; step 3 has `Saved`.
 const LOSES_SAVED = patchSet('reword the banner check', [
   { op: 'replace', path: '/steps/3', value: 'Verify the confirmation banner says "Done"' },
 ])
@@ -876,7 +793,7 @@ const LOWERCASES_SAVED = patchSet('reword the banner check', [
   { op: 'replace', path: '/steps/3', value: 'Verify the confirmation banner says "saved"' },
 ])
 
-describe('C440-VALUE-REPAIR', () => {
+describe('stated values checked on a repair patch', () => {
   it('a repair patch that loses a stated value is refused before any run and spends the try',
     async () => {
       const { repairDraft, REPAIR_ITERATION_CAP } = await loadRepair()

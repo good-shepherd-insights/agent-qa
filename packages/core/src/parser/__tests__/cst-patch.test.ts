@@ -1,16 +1,4 @@
-// The byte-diff edit contract, scored against the frozen corpus (394, D-20 · WTST-07).
-//
-// THE ACCEPTANCE BAR IS THE IMPLEMENTATION THIS MUST GO RED ON, never the suite it passes. Two
-// render strategies must red it by name: `yaml.stringify(doc.toJS())`, which reformats every
-// untouched line, and `CST.stringify(documentToken)`, which silently drops the leading comment
-// that lives in the token stream before the document token. Both differentials are recorded in
-// the plan's SUMMARY with the rows they failed.
-//
-// WHY THE APPLIER IS IMPORTED LAZILY. This suite was authored and committed BEFORE the applier
-// existed, and the RED it had to produce is per-row: a static import would fail at module load,
-// so vitest would report one file-level load error and collect no cells at all — indistinguishable
-// from a corpus that was never written. Awaiting the import inside each cell makes every frozen
-// row fail BY NAME against a nonexistent applier, which is the proof the freeze is worth.
+// Must fail `yaml.stringify(doc.toJS())` and `CST.stringify(documentToken)`, which change bytes.
 
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -327,11 +315,7 @@ describe('the applier exports the refusal vocabulary the corpus scores against',
     }
   })
 
-  // Also not a corpus member, and also a hole a differential named: every frozen input ends with a
-  // newline (the preflight asserts it), so none of the nine exercises appending after an item that
-  // has no line terminator. The 394 research probe hit exactly that and produced `- two  - three`
-  // on one line. The source here is the corpus fixture with its final newline stripped, so the
-  // input is still something the real parser accepts rather than a hand-built shape.
+  // Every frozen input ends with a newline, so this strips it to append after an unterminated item.
   it('appends after an unterminated last item without gluing the two onto one line', async () => {
     const { applyPatchSetToTestDoc, parseTestFileWithTokens, renderPatchedTestDoc } =
       await applier()

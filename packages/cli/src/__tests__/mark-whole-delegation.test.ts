@@ -1,33 +1,4 @@
-// A mark made while a live daemon holds the knowledge writer lease (quick 261002-mrk, closing
-// 432-13 #1 and 432-09 #2).
-//
-// The mark's evidence step and its fix both write knowledge, so a CLI, dashboard or MCP mark used
-// to stop at its evidence step with `Mark evidence writer lease held` whenever a daemon was
-// running, after its gold had already landed. The CLI host now hands the WHOLE `runs.mark` call to
-// the lease holder over the existing `/invoke` socket, with the same registered op and the same
-// input. The daemon runs it under the lease it already holds, and the caller answers the daemon's
-// result unchanged. No op, endpoint or contract is added.
-//
-// The identity a retry carries is the mark's own: the run's mark ledger holds the resumable intent
-// and its operation id, and the daemon and the CLI read the same ledger. So a retry, from either
-// process, resumes that intent or answers the first receipt.
-//
-// These cells start the SHIPPED daemon (`runDaemonHost`, with only the lifecycle-heavy operations
-// stubbed exactly as `daemon-apply-authority.test.ts` stubs them) over a temp mark fixture, and
-// mark through the SHIPPED CLI composition (`composeCliLocalAgent` → `invokeFunction`).
-//
-// OBSERVED RED against agent-qa 527739eb4 (before the delegation), 2026-10-02:
-//
-//   Error: Mark evidence writer lease held; gold landed, no mark receipt appended
-//
-// Follow-up (2026-10-02): a holder that is not a daemon is waited out, bounded, before any refusal.
-// OBSERVED RED against agent-qa 749bd9c7a, before the wait:
-//
-//   C-MRK-HOLDER-RELEASES  DaemonNotRunningError: agent-qa daemon is not running (absent).
-//   C-MRK-HOLDER-KEEPS     expected DaemonNotRunningError … to match object { name: 'MarkWriterLeaseBusyError', … }
-//
-// C-MRK-DELEGATED-ONCE and C-MRK-DAEMON-UNREACHABLE are the controls: a daemon holder is delegated
-// to, or refused at once, exactly as before.
+// With a daemon holding the lease, the CLI hands the whole `runs.mark` call to it over `/invoke`.
 
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -48,7 +19,7 @@ import {
 import { runDaemonHost, type DaemonHostOperations, type DaemonHostTraceStep } from '../daemon/host.js'
 import { DAEMON_REGISTRATION_SCHEMA_VERSION, readDaemonRegistration, writeDaemonRegistration } from '../daemon/registration.js'
 import type { WholeMarkDelegate } from '../gates/feedback-host.js'
-import { bundles, canonicalKnowledge, files, markFixture } from '../gates/__tests__/feedback-fixture.js'
+import { bundles, canonicalKnowledge, files, markFixture, projectOutsideStores } from '../gates/__tests__/feedback-fixture.js'
 
 type Fixture = ReturnType<typeof markFixture>
 
@@ -149,8 +120,7 @@ async function startDaemon(f: Fixture): Promise<LiveDaemon> {
     if (Date.now() >= deadline) throw new Error('daemon never wrote its registration')
     await new Promise(resolve => setTimeout(resolve, 10))
   }
-  // 2026-10-03 (quick-261003-tsr, IN-18): `stop()` answers the exit instead of asserting it, so a
-  // cell that calls it from `finally` reports its own failure first and asserts the exit after.
+  // `stop()` answers the exit rather than asserting it, so a `finally` caller reports first.
   return {
     stop: async (): Promise<unknown> => {
       const listener = signals.get('SIGTERM')
@@ -198,8 +168,8 @@ function receiptLines(f: Fixture): number {
   return readFileSync(join(f.runDir, 'marks.jsonl'), 'utf8').trim().split('\n').length
 }
 
-describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', () => {
-  it('C-MRK-DELEGATED-ONCE: a CLI mark under a live daemon lands once through the daemon, and the CLI never takes the lease', async () => {
+describe('a mark under a lease-holding daemon is delegated whole', () => {
+  it('a CLI mark under a live daemon lands once through the daemon, and the CLI never takes the lease', async () => {
     const f = fixture()
     const daemon = await startDaemon(f)
     let exit: unknown
@@ -230,7 +200,7 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
     expect(exit, 'the daemon did not exit cleanly').toBe(0)
   }, 90_000)
 
-  it('C-MRK-DELEGATED-RETRY: an interrupted delegated mark, retried, resumes its intent and lands every effect once', async () => {
+  it('an interrupted delegated mark, retried, resumes its intent and lands every effect once', async () => {
     const f = fixture()
     const daemon = await startDaemon(f)
     let exit: unknown
@@ -244,7 +214,7 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
       }
       expect(intent.stage, 'the daemon reached its last checkpoint').toBe('applied')
       expect(existsSync(join(f.runDir, 'marks.jsonl')), 'no receipt before the retry').toBe(false)
-      const gold = hashes(join(f.root, 'agent-qa-eval'))
+      const outside = projectOutsideStores(f)
       const knowledge = canonicalKnowledge(f.knowledgeRoot)
 
       const retried = await markThroughCli(f, input)
@@ -256,10 +226,10 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
         throw new Error('expected an applied knowledge fix')
       }
       // The retry carried the first attempt's operation identity: the fix it reports is the change
-      // that identity already landed, and nothing was published, appended or frozen again.
+      // that identity already landed, and nothing was published or appended again.
       expect(disposition.change.changeId).toBe(`prop_${intent.operationId}`)
       expect(canonicalKnowledge(f.knowledgeRoot), 'no second publication or evidence').toEqual(knowledge)
-      expect(hashes(join(f.root, 'agent-qa-eval')), 'gold froze once').toEqual(gold)
+      expect(projectOutsideStores(f), 'nothing outside the stores is written').toEqual(outside)
       expect(evidenceFor(f, retried.receipt.markId)).toHaveLength(1)
       expect(receiptLines(f)).toBe(1)
 
@@ -272,7 +242,7 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
     expect(exit, 'the daemon did not exit cleanly').toBe(0)
   }, 120_000)
 
-  it('C-MRK-NO-HOLDER-LOCAL: with no live holder the delegate answers nothing and the CLI mark runs locally', async () => {
+  it('with no live holder the delegate answers nothing and the CLI mark runs locally', async () => {
     const f = fixture()
     const delegate = delegateMarkViaDaemon({ agentQaRoot: f.agentQaRoot, resolveKnowledgeRoot: () => f.knowledgeRoot })
     expect(await delegate({ runId: f.handoff.runId, kind: 'false-fail' }), 'no holder: run locally').toBeUndefined()
@@ -287,10 +257,8 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
     expect(receiptLines(f)).toBe(1)
   }, 60_000)
 
-  // 2026-10-02 (261002-mrk follow-up): a lease held by another agent-qa process that is NOT a
-  // daemon (a dashboard's post-run curation, another terminal's change) is waited out for a bounded
-  // time, and only a holder that outlasts the budget refuses, by name. Short injected budgets here.
-  it('C-MRK-HOLDER-RELEASES: a non-daemon holder that releases within the budget lets the mark land locally, once', async () => {
+  // A non-daemon holder is waited out for a bounded time; only one that outlasts it is refused.
+  it('a non-daemon holder that releases within the budget lets the mark land locally, once', async () => {
     const f = fixture()
     const holder = holdLease(f)
     const timer = setTimeout(holder.release, 150)
@@ -308,7 +276,7 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
     }
   }, 60_000)
 
-  it('C-MRK-HOLDER-KEEPS: a non-daemon holder that outlasts the budget refuses by name, writes nothing, and a retry resumes', async () => {
+  it('a non-daemon holder that outlasts the budget refuses by name, writes nothing, and a retry resumes', async () => {
     const f = fixture()
     const holder = holdLease(f)
     try {
@@ -316,11 +284,11 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
       const refusal = await markThroughCli(f, { runId: f.handoff.runId, kind: 'false-fail' }, shortBudget(f, 200))
         .then(() => undefined, (error: unknown) => error as Error & { holderPid?: number })
       expect(refusal).toMatchObject({ name: 'MarkWriterLeaseBusyError', holderPid: process.pid })
-      // 2026-10-03 (261003-lgd, IN-11): the holder is this very process, and the refusal says so.
+      // The holder is this very process, and the refusal says so.
       expect(refusal?.message).toContain(`This agent-qa process (pid ${process.pid}) is already writing`)
       expect(refusal?.message).not.toContain('Another agent-qa process')
       expect(refusal?.message).toContain('Retry the mark when it finishes')
-      expect(hashes(f.root), 'nothing was written: no gold, no intent, no evidence').toEqual(before)
+      expect(hashes(f.root), 'nothing was written: no intent, no evidence').toEqual(before)
       const lease = readWriterLease(f.knowledgeRoot)
       expect(lease.kind === 'parsed' && lease.lease.leaseId, 'the holder keeps its lease').toBe(holder.leaseId)
       holder.release()
@@ -334,7 +302,7 @@ describe('a mark under a lease-holding daemon is delegated whole (432-13 #1)', (
     }
   }, 60_000)
 
-  it('C-MRK-DAEMON-UNREACHABLE: a lease that names a registered daemon nobody answers for refuses with DaemonNotRunningError at once', async () => {
+  it('a lease that names a registered daemon nobody answers for refuses with DaemonNotRunningError at once', async () => {
     const f = fixture()
     const holder = holdLease(f)
     const socketRoot = mkdtempSync('/tmp/aq-mrk-')

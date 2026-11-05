@@ -1,10 +1,3 @@
-// D-02 live emission + D-20 digest threading (Plan 361-08). Harness-driven pins for the
-// two loop-side chokepoints: `stepFinalized` fires exactly once per step in finish() with
-// the SAME evidence object attached to the StepResult; `subActionRecorded` fires once per
-// recorded sub-action with the recorder's monotonic indices. Degrade-when-absent: with
-// `events` unset the loop is byte-identical (no throw). D-20: `configDigests` threads into
-// the cache-key material — a present digest pair changes the key the loop keys the cache on
-// (proven by captured CacheKeys, not by grep).
 import { describe, it, expect } from 'vitest'
 import type { CacheKey, StepEvidence, SubActionEvidence } from '@vostride/agent-qa-schema'
 import type { LoopPorts, LoopEventEmitPort } from '../ports.js'
@@ -54,7 +47,7 @@ function twoSubActionPorts(events?: LoopEventEmitPort): LoopPorts {
   return ports(events ? { adapter, planner, events } : { adapter, planner })
 }
 
-describe('loop live emission (D-02)', () => {
+describe('loop live emission', () => {
   it('(a) fires exactly one stepFinalized carrying the StepResult evidence, and one subActionRecorded per sub-action with monotonic indices', async () => {
     const spy = makeEventsPort()
     const result = await executeStep('Click Log in', twoSubActionPorts(spy.port), makeStepContext())
@@ -85,7 +78,7 @@ describe('loop live emission (D-02)', () => {
   })
 })
 
-describe('loop cache-key digest threading (D-20)', () => {
+describe('loop cache-key digest threading', () => {
   function capturingCache(): { cache: ActionPlanCache; keys: CacheKey[] } {
     const keys: CacheKey[] = []
     const cache: ActionPlanCache = {
@@ -133,9 +126,7 @@ describe('loop cache-key digest threading (D-20)', () => {
   })
 })
 
-// ---- 405 D-05: the step's measured token usage rides the stepFinalized extra ------------
-
-describe('loop tokenUsage on stepFinalized (405 D-05 — absent is not zero)', () => {
+describe('loop tokenUsage on stepFinalized (absent is not zero)', () => {
   it('(d) a step whose planner reported usage emits tokenUsage summing prompt + completion', async () => {
     const spy = makeEventsPort()
     const planner: Planner = {
@@ -166,7 +157,7 @@ describe('loop tokenUsage on stepFinalized (405 D-05 — absent is not zero)', (
     const cachedLogin: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', name: 'Log in' }],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const cache: ActionPlanCache = {
       async get() { return cachedLogin },

@@ -69,7 +69,7 @@ function event(
   )
 }
 
-describe('RETR-01 composed retrieval pipeline', () => {
+describe('composed retrieval pipeline', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -87,7 +87,6 @@ describe('RETR-01 composed retrieval pipeline', () => {
     return {
       knowledgeRoot,
       productKey: product,
-      commitArtifacts: 'none',
     }
   }
 

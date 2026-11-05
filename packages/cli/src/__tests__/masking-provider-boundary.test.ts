@@ -1,5 +1,4 @@
-// The captured provider boundary of a run-shaped createModel (C441-EGRESS). 2026-10-15 (441-30,
-// D-12/D-15): the stamped-audit integration proof is deleted with the per-run hook registrar.
+// The captured provider boundary of a run-shaped `createModel`.
 
 import {
   SecretRedactor,
@@ -41,7 +40,7 @@ function createCapturingModel(mask: (text: string) => string): {
 } {
   let captured: CapturedCallOptions | undefined
   const stub: StubLanguageModel = {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'stub',
     modelId: 'stub',
     supportedUrls: {},
@@ -91,7 +90,7 @@ function capturedUserText(captured: CapturedCallOptions | undefined): string {
   return part.text
 }
 
-describe('C441-EGRESS', () => {
+describe('a run-shaped model masks declared values', () => {
   it('a run-shaped model masks the declared value and nothing else', async () => {
     const redactor = new SecretRedactor(
       SecretStore.fromEnvContent(`MY_SERVICE_SECRET=${fileSecret}`),
@@ -165,8 +164,8 @@ function capturedUserTextIn(captured: CapturedCallOptions | undefined): string {
   return part.text
 }
 
-describe('C441-GAP-EGRESS', () => {
-  it('Rule 23, the D-10 refusal and step text reach the model with the template intact', async () => {
+describe('declared values in markers, templates and object keys', () => {
+  it('Rule 23, the literal-marker refusal and step text reach the model with the template intact', async () => {
     const value = 'hunter2-gap-61'
     const redactor = new SecretRedactor(SecretStore.fromEnvContent(`PW=${value}`))
     const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
@@ -249,7 +248,7 @@ describe('C441-GAP-EGRESS', () => {
   })
 })
 
-describe('C441-GAP2-EGRESS', () => {
+describe('declared values against template braces', () => {
   it('a declared value against a template brace is never sent raw', async () => {
     const redactor = new SecretRedactor(new SecretStore({ PW: 'ab{', TAIL: '}tail9' }))
     const { captured, model } = createCapturingModel((text) => redactor.redactString(text))
@@ -282,7 +281,7 @@ describe('C441-GAP2-EGRESS', () => {
   })
 })
 
-describe('C441-GAP3-EGRESS', () => {
+describe('declared brace values inside templates', () => {
   it('a declared brace value inside a template never reaches the provider', async () => {
     for (const [name, value] of [['B', '}'], ['B', '{{'], ['X', 'W}']] as const) {
       const redactor = new SecretRedactor(new SecretStore({ PW: 'hunter2', [name]: value }))

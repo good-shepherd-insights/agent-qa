@@ -1,5 +1,3 @@
-// D-14/SC1 — 382's structural-functional proof; 383 keeps the human-gated live cold→warm E2E.
-
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -199,7 +197,7 @@ function eventSink(): MemberEventSink {
   }
 }
 
-describe('knowledge composition acceptance (D-14/SC1)', () => {
+describe('knowledge composition acceptance', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -215,7 +213,6 @@ describe('knowledge composition acceptance (D-14/SC1)', () => {
     const storeConfig: BundleStoreConfig = {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'composition-reader-seed',
     }
     const published = publishBundle(storeConfig, committedFixtureInput())

@@ -465,9 +465,7 @@ function startHarness(
     // stubbed, so "the surrogate is still alive" is a claim about the OS, not about a fake.
     delete operations.embedderWorkerProcessIsAlive
     delete operations.waitForEmbedderWorkerProcessExit
-    // Signal delivery stays production (`process.kill` with the ESRCH reading, verbatim), but the
-    // DECISION is still recorded: a `processSignals` assertion that only holds because the
-    // recorder was deleted measures the harness, not the daemon.
+    // Signal delivery stays real, but the decision is recorded, so the assertion reads the daemon.
     operations.signalEmbedderWorkerProcess = (pid: number, signal: NodeJS.Signals) => {
       processSignals.push({ pid, signal })
       order.push(`signal:${pid}:${signal}`)
@@ -855,11 +853,9 @@ describe('daemon embedder-worker lifecycle', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'withholds every signal from a live reused pid whose incarnation does not match (CR-05)',
+    'withholds every signal from a live reused pid whose incarnation does not match',
     async () => {
-      // The registration is schema-valid, names a live pid, and its socket is dead — the exact
-      // evidence the daemon used to treat as licence to SIGTERM-then-SIGKILL. The pid now belongs
-      // to an unrelated process, and the ONLY thing that says so is the OS-assigned start time.
+      // Valid registration, live pid, dead socket: only the OS start time shows a reused pid.
       const surrogate = spawnSurrogate()
       // The reader's own start-time format with a value no process has (another is unverifiable).
       const startTimeFormat = String(resolveProcessIncarnation(process.pid)).split(':')[0]
@@ -1010,12 +1006,9 @@ describe('daemon embedder-worker lifecycle', () => {
   )
 
   it.skipIf(process.platform === 'win32')(
-    'withholds every shutdown signal from an adopted worker it cannot attribute (V-03)',
+    'withholds every shutdown signal from an adopted worker it cannot attribute',
     async () => {
-      // The other half of 386-32 prohibition #1. Replacement already refuses to signal a pid it
-      // cannot attribute; shutdown did not, and its own module's docstring says neither verdict
-      // may be signalled. The registered pid here belongs to an unrelated live process, exactly
-      // as it would after an adopted worker died and the kernel recycled its number.
+      // Shutdown must not signal a pid it cannot attribute; this one is an unrelated live process.
       const surrogate = spawnSurrogate()
       const orphan = orphanRegistration(ORPHAN_INSTANCE_ID, DEFAULT_EMBEDDING_PROFILE, {
         pid: surrogate.pid!,
@@ -1070,7 +1063,7 @@ describe('daemon embedder-worker lifecycle', () => {
   )
 
   it.skipIf(process.platform === 'win32')(
-    'still terminates an adopted worker whose shutdown incarnation matches (V-03 control)',
+    'still terminates an adopted worker whose shutdown incarnation matches',
     async () => {
       // The accepting direction, against the production signal path. A predicate that refused
       // everything would pass the leg above and fail here, and the exit record must say so.
@@ -1173,7 +1166,7 @@ describe('daemon embedder-worker lifecycle', () => {
     },
   )
 
-  it('keeps every adopted-shutdown signal below the verified-match gate (V-03)', () => {
+  it('keeps every adopted-shutdown signal below the verified-match gate', () => {
     // The behavioural legs prove the current predicate; this pins the SHAPE that makes it hold.
     // TERM-then-KILL escalation is two calls by construction, so "one call site" is not the
     // available property — "no call site is reachable without a match" is, and it is what a later

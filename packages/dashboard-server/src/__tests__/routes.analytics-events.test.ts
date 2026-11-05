@@ -1,15 +1,4 @@
-// WHAT THESE CELLS ARE GUARDING (398-11, D-18).
-//
-// This file used to drive the `POST /api/analytics/events` bridge: the dashboard UI beaconed one
-// of three v33 product events at it, and the route captured them through core's ambient analytics
-// helpers. D-18 drops those three events now and lets M5's dashboard rebuild re-add whatever it
-// wants against the new `AnalyticsPort`; D-20 deletes `core/src/analytics` outright, which is what
-// the route imported. So the route is GONE, and these cells are the witness that it stays gone.
-//
-// The behavioural cell drives the real router and asserts the path 404s — a route re-added with a
-// silently-swallowing body would still pass a "capture was never called" assertion, so the claim is
-// made on what a caller observes rather than on a mock. The source pins refuse the vocabulary back
-// into the two files that carried it, the same treatment `commands/dashboard.ts` got in 398-10.
+// A 404 from the real router, not a mock, proves the analytics route stays gone.
 
 import { readFile } from 'node:fs/promises'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
@@ -49,7 +38,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
 
   process.nextTick(() => {
     if (options.body) {
@@ -124,7 +113,7 @@ beforeEach(async () => {
   router = createRouter({ db: createMockDatabase() as never })
 })
 
-describe('the dropped dashboard analytics bridge route (D-18/D-20)', () => {
+describe('the dropped dashboard analytics bridge route', () => {
   it('has no ingest endpoint: a v33 dashboard product event is refused, not accepted', async () => {
     const response = await invokeRoute('/api/analytics/events', routeBody({
       name: 'agent-qa.dashboard.opened',

@@ -4,36 +4,7 @@
 // are otherwise unresolved names under `tsc --noEmit` while running perfectly under vitest.
 // `conformance/dashboard-dom.test.ts` carries the same reference for the same reason.
 
-// THE RUN TRIGGER'S CONFIRM LOOP, CLOSED THROUGH A REAL BROWSER (Phase 401, UAT item 15 / Truth 6).
-//
-// SINCE 432-13 (D-14/D-15) there was no loop to close: the run button's run asked nobody. SINCE
-// 432-14 there is nothing left of the loop at all — no channel the page holds open, no scope the
-// trigger carries, no dialog in the bundle. The cells below drive the same real clicks and pin that
-// a click is one request: a non-production run starts at once, and a production target is refused
-// by the core with the plain sentence the page then shows. History below kept as written.
-//
-// WHAT WAS UNVERIFIED, AND WHY IT STAYED THAT WAY. 401-09 built both halves of this loop and could
-// measure neither end against the other: the SERVER end is driven end-to-end by
-// `run-trigger-confirm.test.ts` over `fetch`-parsed SSE, and the DIALOG's render was driven in jsdom,
-// which has no `EventSource`. The wire itself was source-pinned.
-//
-// SO THIS FILE PUTS A REAL CHROMIUM IN FRONT OF A REALLY-RUNNING DASHBOARD. The server is
-// `startServer` with the shipped `uiDir`, so what the browser downloads is `dashboard-ui`'s own
-// `vite build` output — the bundle a person installs. The door is `composeDashboardDoor` /
-// `createDashboardRunDoor`, the same composers `agent-qa dashboard` calls, which is why this file
-// lives in `packages/cli` beside its server-side sibling (`dashboard-server` may not name
-// `@vostride/agent-qa-agent*`; validate:arch).
-//
-// NOTHING BELOW SUBSTITUTES FOR THE TRANSPORT. The page's `EventSource` is REPLACED BY A SUBCLASS
-// OF THE NATIVE ONE, which calls `super(url)` and records the URL. The page's requests are read off
-// Chromium's own request events, bodies included.
-//
-// AND THE RUN IS STARTED BY CLICKING THE PRODUCT'S OWN BUTTON. The cells select a row on the tests
-// page and walk the real Run → Run → Run Local path.
-//
-// A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP, and a stale `dist` is a red before that:
-// `dashboard-dom.test.ts`'s two rules, inherited verbatim. There is no environment predicate in
-// this file.
+// Real Chromium against a running dashboard: one click on Run is one request and starts the run.
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -42,7 +13,6 @@ import { chromium } from 'playwright-core'
 import type { Browser, BrowserContext, Page } from 'playwright-core'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
-// 2026-10-19 (444.1-24, D-39): each drive and its detached tail are awaited before removal.
 const tails = vi.hoisted(() => [] as Array<Promise<void>>)
 
 vi.mock('../../composition/in-process-run-execution.js', async (importOriginal) => {
@@ -181,7 +151,7 @@ interface Scene {
   readonly fixture: Fixture
   readonly db: DashboardDatabase
   settled(): { runId: string; status: string; details: Record<string, unknown> }[]
-  /** The run's OWN bus envelopes, in seq order, recorded off its session (405-07). */
+  // The run's own bus envelopes, in seq order, recorded off its session.
   buffered(runId: string): Record<string, unknown>[]
   close(): Promise<void>
 }
@@ -244,10 +214,7 @@ async function openScene(input: { fixture: Fixture }): Promise<Scene> {
     executionBackend: runDoor.backend,
     agentHost: door.agentHost,
   })
-  // 2026-08-27 (405-07, D-19): the run's OWN bus, watched through the door's published
-  // `observeSessions`. This used to read the backend's per-run replay buffer, which existed for one
-  // SSE route and was deleted with it; `subscribe(1, …)` is replay-then-live from the first seq, so
-  // a recorder registered here sees every envelope of every run this door starts.
+  // `subscribe(1, …)` replays from the first seq, so a recorder here sees every envelope.
   const recordedEnvelopes = new Map<string, Record<string, unknown>[]>()
   runDoor.observeSessions((session) => {
     const id = session.id as unknown as string
@@ -300,12 +267,7 @@ async function waitFor(assertion: () => void, timeoutMs = 180_000): Promise<void
 
 // ---- the person at the keyboard -----------------------------------------------------------------
 
-/**
- * Open the dashboard and dismiss the first-visit tour.
- *
- * 432-14: there is no scope frame to wait for any more. The page is ready when the tests table has
- * rendered the fixture's own row, which is what a person waits for before clicking.
- */
+// Opens the dashboard, dismisses the tour and waits for the fixture's row in the tests table.
 async function openDashboard(scene: Scene): Promise<{ page: Page; pageErrors: string[] }> {
   const context = await browser!.newContext()
   openContexts.push(context)
@@ -329,18 +291,17 @@ async function selectTest(page: Page, fileName: string): Promise<void> {
 }
 
 /**
- * Click Run → Run → Run Local, which is the product's own three-step path to a local run.
+ * Click Run → Run, which is the product's own two-step path to a run.
  *
  * THE INNER BUTTON IS SCOPED TO THE POPOVER rather than picked positionally: both are labelled
  * "Run", and a positional pick resolved before the popover rendered would click the trigger again
  * and close it — a flake, and exactly the kind this file must not ship.
  */
-async function clickRunLocal(page: Page): Promise<void> {
+async function clickRun(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Run', exact: true }).first().click()
   const popover = page.locator('[data-slot="popover-content"]')
   await popover.waitFor({ state: 'visible' })
   await popover.getByRole('button', { name: 'Run', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Run Local' }).click()
 }
 
 // ---- the file's own preconditions ----------------------------------------------------------------
@@ -381,11 +342,8 @@ function startedContext(scene: Scene, runId: string): unknown {
   return started?.payload?.executionContext
 }
 
-describe('the run trigger confirm loop, closed through a real browser (UAT item 15, Truth 6)', () => {
-  // RE-SPELLED 2026-10-01 (432-14): was 'SINGLE CONFIRM — the EventSource carries the scope, and
-  // clicking Run starts the run with no dialog' (432-13). The page holds no channel and the trigger
-  // carries no scope, so the claim is now the click itself: one request, one run.
-  it('C432-BROWSER-RUN-ONE-CLICK: one click is one trigger request, and a non-production run starts at once', async () => {
+describe('the run trigger confirm loop, closed through a real browser', () => {
+  it('one click is one trigger request, and a non-production run starts at once', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -407,7 +365,7 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       })
 
       await selectTest(page, 'direct.yaml')
-      await clickRunLocal(page)
+      await clickRun(page)
 
       await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
       await waitFor(() => { expect(triggeredRunIds).toHaveLength(1) })
@@ -432,9 +390,7 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
     }
   }, 300_000)
 
-  // RE-SPELLED 2026-09-30 (432-13): was 'OVERLAPPING CONFIRMS — the arriving question WAITS ...'
-  // (G-401-15). Two clicks now start two runs and no question is raised, queued or reaped.
-  it('OVERLAPPING CONFIRMS — two clicks start two runs, and no question is raised, queued or reaped (G-401-15)', async () => {
+  it('two overlapping clicks start two runs, and no question is raised, queued or reaped', async () => {
     const target = new CountingTarget()
     await target.listen()
     try {
@@ -460,8 +416,8 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       })
 
       await selectTest(page, 'direct.yaml')
-      await clickRunLocal(page)
-      await clickRunLocal(page)
+      await clickRun(page)
+      await clickRun(page)
 
       await waitFor(() => { expect(triggeredRunIds).toHaveLength(2) })
       await waitFor(() => { expect(scene.settled()).toHaveLength(2) })
@@ -478,62 +434,6 @@ describe('the run trigger confirm loop, closed through a real browser (UAT item 
       expect(
         await page.evaluate(() => document.body.innerText),
       ).not.toContain('denied — nobody answered before the window closed')
-    } finally {
-      await target.close()
-    }
-  }, 300_000)
-
-  it('C432-BROWSER-RUN-ONE-CLICK: a production target is refused by the core, and the run page shows the plain reason', async () => {
-    const target = new CountingTarget()
-    await target.listen()
-    try {
-      const fixture = createInProcessFixture({ origin: target.origin, environment: 'production' })
-      const scene = await openScene({ fixture })
-      const { page, pageErrors } = await openDashboard(scene)
-      const triggers = recordTriggers(page)
-
-      const triggeredRunIds: string[] = []
-      page.on('response', (response) => {
-        if (!response.url().endsWith('/api/runs/trigger')) return
-        void response.json().then(
-          (body: unknown) => {
-            const runId = (body as { runId?: string }).runId
-            if (typeof runId === 'string') triggeredRunIds.push(runId)
-          },
-          () => undefined,
-        )
-      })
-
-      await selectTest(page, 'direct.yaml')
-      await clickRunLocal(page)
-
-      await waitFor(() => { expect(scene.settled()).toHaveLength(1) })
-      await waitFor(() => { expect(triggeredRunIds).toHaveLength(1) })
-      const runId = triggeredRunIds[0]!
-      const settled = scene.settled()[0]!
-
-      expect(triggers).toHaveLength(1)
-      expect(settled.status).toBe('failed')
-      expect(settled.details['refusedBeforeStart']).toBe(true)
-      expect(eventTypes(fixture)).toEqual([])
-      expect(buildOrdinalsExist(fixture)).toBe(false)
-      expect(target.hits).toEqual([])
-
-      await page.goto(`${scene.origin}/runs/${runId}`, { waitUntil: 'domcontentloaded' })
-      const banner = page.locator('[data-failure-banner]')
-      await banner.waitFor({ timeout: 60_000 })
-      const toggle = banner.locator('[data-failure-banner-toggle]')
-      if (await toggle.count() > 0) await toggle.click()
-      await page.locator('[data-failure-banner][data-failure-banner-state="full"]').waitFor()
-      const shown = await banner.locator('[data-failure-banner-text]').textContent() ?? ''
-      expect(shown).toContain('Refused before the run started')
-      expect(shown).toContain(`"${fixture.targetName}"`)
-      expect(shown).toContain('allowProduction: true')
-
-      const wire = await readWire(page)
-      expect(wire.eventSources.filter((url) => url.includes('run-confirm'))).toEqual([])
-      expect(wire.dialogs.filter((shot) => shot.present)).toEqual([])
-      expect(pageErrors).toEqual([])
     } finally {
       await target.close()
     }

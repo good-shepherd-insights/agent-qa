@@ -53,7 +53,7 @@ function expectLoaded(outcome: LoadBundleOutcome): LoadedBundle {
   return outcome.bundle
 }
 
-describe('BNDL-01 tar-equivalent bundle self-sufficiency', () => {
+describe('tar-equivalent bundle self-sufficiency', () => {
   let root: string
 
   beforeEach(() => {
@@ -68,7 +68,6 @@ describe('BNDL-01 tar-equivalent bundle self-sufficiency', () => {
     return {
       knowledgeRoot: join(root, 'agent-qa-knowledge'),
       productKey,
-      commitArtifacts: 'none',
     }
   }
 

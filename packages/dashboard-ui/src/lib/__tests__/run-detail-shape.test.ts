@@ -1,33 +1,4 @@
-/**
- * THE REBUILT RUN-DETAIL SHAPE IS CLOSED (405-13, D-21 / DETL-06).
- *
- * WHAT THIS PINS. 405-11 deleted the v1 UI step shape — the recording-path fields, the healing
- * screenshot list and the run-detail-only sub-action DTO — and rebuilt the page on the durable
- * projection. Each of those is a set that got SMALLER, and every existing cell on this page asks
- * whether a shape CONTAINS what it should, which a bigger shape satisfies too. So the deletions are
- * pinned by EQUALITY here, and leg U of the phase's mutation driver (since removed) proved the pin
- * reds by re-adding a recording-path field to `DisplayStep`.
- *
- * TWO WALLS, BOTH READ. `DisplayStep` and `RunDetailSubAction` are TypeScript, so a returning field
- * is a compile question first — the `satisfies` pins below make `pnpm --filter
- * @vostride/agent-qa-dashboard-ui typecheck` refuse a key set that drifted. But a type is erased
- * before anything runs, and this package's vitest does not typecheck, so a leg reading only the
- * compiler would go quiet the day somebody widens a shape with a cast. The runtime halves therefore
- * read the SOURCE TEXT of the interface and the SHIPPED zod shape.
- *
- * THE MARKUP CELL READS CODE, NOT PROSE. Three modules under `components/run-detail` carry comments
- * explaining that they inject no markup — that is the safety claim's audit trail, and a raw
- * substring search reports every one of them as an offender. A detector that cannot tell a call
- * from a sentence about a call reds on prose (which trains everyone to weaken it) and its natural
- * weakening — excluding the files that talk about the rule — stops covering exactly the files most
- * likely to break it. This is the argument `packages/analytics/src/__tests__/source-scan.ts` makes
- * verbatim for `.strip()`; the scanner is re-derived here rather than imported because the two
- * packages do not depend on each other.
- *
- * That is a DIFFERENT rule from the D-21 inventory in `dashboard-server`, which counts comments as
- * hits on purpose. There the forbidden thing IS the string (a retired token must not be spelled
- * anywhere); here the forbidden thing is an INJECTION SITE, and a sentence is not one.
- */
+// The markup cell reads code, not prose, so a comment about injection is not an injection site.
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -44,10 +15,7 @@ const SRC_DIR = join(HERE, '..', '..')
 // RunDetailSubAction — exactly the bus payload's fields
 // ---------------------------------------------------------------------------------------------
 
-/**
- * The `subActionRecorded` payload's field set, verbatim and in the producer's order. The v1 DTO
- * this replaced (`SubActionData`) carried five more, all of them run-detail-only recording paths.
- */
+/** The `subActionRecorded` payload's field set, verbatim and in the producer's order. */
 const SUB_ACTION_KEYS = [
   'testIndex',
   'stepIndex',
@@ -63,7 +31,7 @@ const SUB_ACTION_KEYS = [
   'recordingOffsetMs',
 ] as const
 
-describe('RunDetailSubAction is exactly the sub-action payload (405-11, D-14)', () => {
+describe('RunDetailSubAction is exactly the sub-action payload', () => {
   // THE SHIPPED SHAPE, not a retyped copy. Reached through the published schema the UI itself
   // parses with, so a key added to the projection is a key this cell sees.
   it('declares exactly the payload key set, in the producer order', () => {
@@ -94,9 +62,7 @@ describe('RunDetailSubAction is exactly the sub-action payload (405-11, D-14)', 
     expectTypeOf<keyof RunDetailSubAction>().toEqualTypeOf<(typeof SUB_ACTION_KEYS)[number]>()
   })
 
-  // NON-VACUITY on the negative claim. The five v1 recording-path fields are named rather than
-  // merely absent — needles built from two halves so this file does not answer the phase's own
-  // grep inventory with itself.
+  // The five v1 recording-path fields are named, built from two halves so a grep misses this file.
   it('carries none of the five v1 recording-path fields', () => {
     const retired = [
       'screenshot' + 'Path',
@@ -161,7 +127,7 @@ const DISPLAY_STEP_SOURCE = readFileSync(join(SRC_DIR, 'lib', 'display-step.ts')
 /** A member whose NAME claims a recording path, a healing capture or a video. */
 const PATH_NAMED = /screenshot|healing|video|Path$/i
 
-describe('DisplayStep carries no path-named member (405-11, D-14)', () => {
+describe('DisplayStep carries no path-named member', () => {
   it('has a non-trivial member list — the control for the extractor', () => {
     const members = interfaceMemberNames(DISPLAY_STEP_SOURCE, 'DisplayStep')
     expect(members.length).toBeGreaterThan(15)
@@ -173,8 +139,7 @@ describe('DisplayStep carries no path-named member (405-11, D-14)', () => {
   })
 
   it('finds a planted path-named member — the known-positive control', () => {
-    // The planted member is assembled from two halves like every other needle in this phase, so
-    // this file cannot be the hit a repo-wide grep for the retired field reports.
+    // Built from two halves, so this file is never the hit a grep for the field reports.
     const plantedMember = 'screenshot' + 'Path'
     const planted = [
       'export interface Planted {',
@@ -275,7 +240,7 @@ function componentFiles(dir: string): string[] {
 const RUN_DETAIL_DIR = join(SRC_DIR, 'components', 'run-detail')
 const MARKUP_SINK = 'dangerously' + 'SetInnerHTML'
 
-describe('no run-detail component injects markup (T-405-45, D-10)', () => {
+describe('no run-detail component injects markup', () => {
   it('scans the whole run-detail component directory', () => {
     expect(componentFiles(RUN_DETAIL_DIR).length).toBeGreaterThan(15)
   })

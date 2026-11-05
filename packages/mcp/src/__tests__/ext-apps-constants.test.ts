@@ -1,37 +1,4 @@
-// THE CONSTANT CENSUS — our restated MCP Apps spec strings, pinned against the OFFICIAL package
-// (Phase 408 plan 06 Task 1 · MCPA-01 · RESEARCH assumption A5 · Pitfall 3 · T-408-SC / T-408-19).
-//
-// WHY THIS FILE EXISTS. This repository restates the Apps vocabulary as local literals —
-// `MCP_APPS_EXTENSION_ID`, `APP_RESOURCE_MIME_TYPE`, the `ui/initialize` method name, the
-// `frameDomains` / `connectDomains` CSP field spellings — because the production package may not
-// import `@modelcontextprotocol/ext-apps` (see the boundary census below). A restated literal that
-// drifts from the official vocabulary fails SILENTLY and in the worst possible way: a typo'd
-// reverse-DNS extension id is simply "never negotiated", and a mis-spelled csp field is simply "an
-// App whose inner frame is blocked". Nothing reds; the product just quietly stops working on every
-// host. RESEARCH assumption A5 rates those spellings MEDIUM (a single spec fetch) and names this
-// cell as the mitigation: pin them against the package that owns the vocabulary.
-//
-// WHAT IS PRODUCTION HERE AND WHAT IS MEASURED. Production: the four exported constants under
-// test, imported from this package's own source. Measured: `@modelcontextprotocol/ext-apps@1.7.5`
-// — its runtime `EXTENSION_ID` / `RESOURCE_MIME_TYPE` exports AND its shipped
-// `dist/src/generated/schema.json`, read off disk. Nothing here is a literal restated a third
-// time: every expected value is READ from the official package, so this file cannot pass by
-// agreeing with itself.
-//
-// THE PEER WARNING, RECORDED RATHER THAN SUPPRESSED (Pitfall 3). `@modelcontextprotocol/ext-apps`
-// declares `peerDependencies: { '@modelcontextprotocol/sdk': '^1.29.0' }` — the v1 MONOLITH SDK —
-// while this package ships on the 2.0.0 split SDK (`@modelcontextprotocol/{node,server,client}`).
-// The install resolved that peer to `@modelcontextprotocol/sdk@1.30.0`, so the workspace now
-// contains TWO SDK generations. That is precisely why ext-apps is a devDependency and why the
-// boundary census below exists: a production import of `ext-apps/server` would drag the v1 line
-// into the shipped bundle. The peer is a fact about the dev tree, and it must never become a fact
-// about `dist`.
-//
-// THE MUTATION LEGS THIS FILE IS THE BAR FOR:
-//   F1  a character changed in MCP_APPS_EXTENSION_ID or APP_RESOURCE_MIME_TYPE  -> cells (1)/(2)
-//   F2  `import { EXTENSION_ID } from '@modelcontextprotocol/ext-apps/server'` added to a
-//       production module under src/                                            -> cell (5)
-//   F3  ext-apps moved from devDependencies into dependencies                    -> cell (6)
+// Restated Apps literals pinned against ext-apps itself: a drifted id is silently never negotiated.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -51,8 +18,7 @@ const TESTS_DIR = resolve(SRC_ROOT, '__tests__')
 /** The package name, spelled ONCE — the boundary census and the manifest cells both key on it. */
 const EXT_APPS = '@modelcontextprotocol/ext-apps'
 
-/** The audited version (RESEARCH § Package Legitimacy Audit — verdict OK, published 2026-07-23). */
-const AUDITED_VERSION = '1.7.5'
+const AUDITED_VERSION = '2.0.4'
 
 const requireFrom = createRequire(join(SRC_ROOT, 'app-resource.ts'))
 
@@ -84,9 +50,9 @@ function installedPackageRoot(): string {
  *
  * Deliberately NOT a substring search for the package name: the production modules mention
  * `ext-apps` in PROSE, on purpose, to record why the boundary exists (`app-resource.ts` explains
- * the v1 peer, `app-wrapper.ts` explains why the handshake is hand-rolled). A census that counted
- * those would force the explanation out of the code to stay green, which is exactly backwards —
- * the comment is the thing keeping the next person from adding the import.
+ * why the constants are restated, `app-wrapper.ts` why the handshake is hand-rolled). A census
+ * that counted those would force the explanation out of the code to stay green, which is exactly
+ * backwards — the comment is the thing keeping the next person from adding the import.
  */
 function extAppsSpecifiers(source: string): readonly string[] {
   const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)(['"])(@modelcontextprotocol\/ext-apps(?:\/[^'"]*)?)\1/gu
@@ -114,7 +80,7 @@ const manifest = JSON.parse(
 
 // ---- 1. The two constants the must-have truth names ---------------------------------------------
 
-describe('our restated Apps vocabulary equals the official one, byte for byte (A5)', () => {
+describe('our restated Apps vocabulary equals the official one, byte for byte', () => {
   it('(1) MCP_APPS_EXTENSION_ID is ext-apps\' own EXTENSION_ID', () => {
     // Read at RUNTIME from the official module — not from a `.d.ts`, not from prose, and not from
     // a literal in this file. A reverse-DNS id that drifts by one character does not throw
@@ -141,30 +107,18 @@ describe('our restated Apps vocabulary equals the official one, byte for byte (A
     const installed = JSON.parse(
       readFileSync(join(installedPackageRoot(), 'package.json'), 'utf8'),
     ) as { readonly version: string }
-    // The legitimacy audit (verdict OK, 3.59M weekly downloads, github.com/modelcontextprotocol/
-    // ext-apps, no postinstall) was performed against 1.7.5. A census that passed against some
-    // other version would be pinning our strings to a package nobody audited.
+    // The package check (github.com/modelcontextprotocol/ext-apps, no install script, provenance)
+    // was performed against AUDITED_VERSION. A census that passed against some other version
+    // would be pinning our strings to a package nobody audited.
     expect(installed.version).toBe(AUDITED_VERSION)
     expect(officialSchema.$id).toBe('https://modelcontextprotocol.io/ext-apps/schema.json')
   })
 })
 
-// ---- 2. The wider A5 census — every spec string this repository restates ------------------------
+// ---- 2. Every spec string this repository restates ----
 
-describe('the other restated spec strings are in the official schema (A5)', () => {
-  /**
-   * The strings this repository spells for itself, and the source file that spells each one.
-   *
-   * A5's risk is not limited to the two exported constants: `app-wrapper.ts` hand-rolls the
-   * `ui/initialize` request because ext-apps cannot be imported into production (Pitfall 3), and
-   * `app-resource.ts` spells the csp field names by hand for the same reason.
-   *
-   * EACH ROW IS ASSERTED ON BOTH SIDES, which is the whole point. A one-sided cell ("the schema
-   * names `frameDomains`") is a fact about the SPEC and would stay green while this repository
-   * spelled something else entirely; a one-sided cell in the other direction ("our source says
-   * `frameDomains`") is a fact about US and would stay green through a rename. Only the join
-   * catches a drift, in either direction.
-   */
+describe('the other restated spec strings are in the official schema', () => {
+  // Strings spelled here by hand, each checked against the schema and its own source file.
   const RESTATED: readonly { readonly value: string; readonly spelledIn: string }[] = [
     { value: 'ui/initialize', spelledIn: 'app-wrapper.ts' },
     { value: 'protocolVersion', spelledIn: 'app-wrapper.ts' },
@@ -199,22 +153,13 @@ describe('the other restated spec strings are in the official schema (A5)', () =
     const csp = officialSchema.$defs.McpUiResourceCsp as {
       readonly properties: Record<string, unknown>
     }
-    // Enumerated from the table rather than restated as a pair (the 399.1 lesson): whatever the
-    // spec's csp record contains, the fields this repository emits must be among them.
+    // Enumerated from the schema's csp record: every field this repository emits must be in it.
     expect(Object.keys(csp.properties)).toContain('frameDomains')
     expect(Object.keys(csp.properties)).toContain('connectDomains')
   })
 
   it('(4d) the wrapper\'s ui/initialize carries every param the official schema REQUIRES', () => {
-    // THE REASON THIS CELL IS SCHEMA-DERIVED RATHER THAN A LITERAL LIST. `app-wrapper.ts` posts
-    // the handshake by hand, and A5 rated its field spellings MEDIUM confidence off a single spec
-    // fetch. The official schema's own `required` array is the contract, so the census reads it
-    // and asks whether the wrapper's one postMessage block names each member — rather than
-    // restating a list that would then be a THIRD copy of the same fact, free to drift from both.
-    //
-    // MEASURED 2026-08-31 (plan 06 Task 1): the shipped wrapper posted only `protocolVersion`,
-    // and this cell red by naming `appInfo` and `appCapabilities`. That is exactly the drift plan
-    // 02's coverage entry D9 deferred to this plan.
+    // Reads the schema's `required` array rather than restating it as a third copy that can drift.
     const request = officialSchema.$defs.McpUiInitializeRequest as {
       readonly properties: { readonly params: { readonly required: readonly string[] } }
     }
@@ -222,19 +167,7 @@ describe('the other restated spec strings are in the official schema (A5)', () =
     expect(required.length, 'the schema really declares required params').toBeGreaterThan(0)
 
     const wrapper = readFileSync(join(SRC_ROOT, 'app-wrapper.ts'), 'utf8')
-    // Scoped to the handshake block, not the whole file: a coincidental `appInfo` in a comment
-    // elsewhere must not satisfy a claim about what the page POSTS.
-    //
-    // BOUNDED BY THE DOCUMENT'S OWN STRUCTURE, NOT BY A CHARACTER COUNT (WR-11, 408-12). This was
-    // `wrapper.slice(start, start + 600)`, and a magic width guarding a schema-derived list is the
-    // weakest link in an otherwise derived cell: it degrades SILENTLY as the block grows. A comment,
-    // a reformat or a fourth member pushes a required param out of the window and the census reports
-    // it missing — a red about the test harness wearing the words of a red about the served
-    // document. The census reads its required list from the SHIPPED SCHEMA, so its bound has to come
-    // from the SHIPPED DOCUMENT too, and not from a guess about how long that document will stay.
-    //
-    // The closing form of the handshake's own `postMessage` call is that bound: the block runs from
-    // the method name to the `}, '*');` that closes the single call carrying it.
+    // Scoped to the handshake's own `postMessage` call, so a comment elsewhere cannot satisfy it.
     const start = wrapper.indexOf("method: 'ui/initialize'")
     expect(start, 'the wrapper still posts a ui/initialize request').toBeGreaterThan(-1)
     const end = wrapper.indexOf("}, '*');", start)
@@ -255,7 +188,7 @@ describe('the other restated spec strings are in the official schema (A5)', () =
   })
 })
 
-// ---- 3. The production boundary — ext-apps is dev-only, as a SOURCE census (Pitfall 3) ----------
+// ---- 3. The production boundary: ext-apps is dev-only, as a source census ----
 
 /** Every `.ts` under `src`, excluding `__tests__` — the production surface of this package. */
 function productionSources(dir: string): string[] {
@@ -272,7 +205,7 @@ function productionSources(dir: string): string[] {
   return found
 }
 
-describe('ext-apps never crosses into production (Pitfall 3, T-408-19)', () => {
+describe('ext-apps never crosses into production', () => {
   it('(5) no file under src/ outside __tests__ IMPORTS the ext-apps package', () => {
     const sources = productionSources(SRC_ROOT)
     // The positive control FIRST: a census over an empty file list is a census that proves nothing,
@@ -285,9 +218,8 @@ describe('ext-apps never crosses into production (Pitfall 3, T-408-19)', () => {
 
     expect(
       offenders.map((row) => `${row.path.slice(PACKAGE_ROOT.length + 1)}: ${row.specifiers.join(', ')}`),
-      `${EXT_APPS} peer-depends on the v1 monolith SDK while this package ships on the 2.0.0 split `
-      + 'SDK — a production import would put two SDK generations in one bundle. It is a dev/test '
-      + 'dependency and nothing else.',
+      `${EXT_APPS} is a dev/test dependency and nothing else: the published package does not `
+      + 'declare it, so a production import fails wherever agent-qa is installed.',
     ).toEqual([])
   })
 
@@ -304,17 +236,10 @@ describe('ext-apps never crosses into production (Pitfall 3, T-408-19)', () => {
     // make cell (5) green forever.
     const thisFile = readFileSync(join(TESTS_DIR, 'ext-apps-constants.test.ts'), 'utf8')
     expect(extAppsSpecifiers(thisFile)).toContain(`${EXT_APPS}/server`)
-
-    // And the detector is NOT a substring search: the production modules mention the package in
-    // prose, deliberately, and that must stay allowed. This is the exact discrimination the cell
-    // above depends on.
-    const prose = readFileSync(join(SRC_ROOT, 'app-resource.ts'), 'utf8')
-    expect(prose, 'app-resource.ts explains the v1 peer in prose').toContain(EXT_APPS)
-    expect(extAppsSpecifiers(prose), 'and that prose is not an import').toEqual([])
   })
 
   it('(6) the manifest keeps it in devDependencies and out of dependencies', () => {
-    expect(manifest.devDependencies?.[EXT_APPS]).toBe(AUDITED_VERSION)
+    expect(manifest.devDependencies?.[EXT_APPS]).toBe(`~${AUDITED_VERSION}`)
     expect(manifest.dependencies?.[EXT_APPS]).toBeUndefined()
   })
 })

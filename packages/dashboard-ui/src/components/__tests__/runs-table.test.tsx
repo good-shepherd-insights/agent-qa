@@ -11,8 +11,7 @@ import { RunsTable, type SuiteRunRow, type VisibleRunRow } from "@/components/ru
 
 const LONG_RUN_NAME = "Open homepage with a deliberately long run name that should wrap inside a compact cell instead of truncating into a single overflowing line"
 
-// 2026-10-17 (444-16, D-05): a cell can switch to the real Radix tooltip, whose trigger slot is the
-// one that overrode the badge's data-slot.
+// A cell can switch to the real Radix tooltip, whose trigger slot overrides `data-slot`.
 const tooltipMode = vi.hoisted(() => ({ real: false }))
 
 vi.mock("@/components/ui/tooltip", async (importOriginal) => {
@@ -90,7 +89,7 @@ const runs: SuiteRunRow[] = [
     duration: 22000,
     attributes: {
       "agent-qa.trigger": "cli",
-      "agent-qa.runner": "browserstack",
+      "agent-qa.runner": "local",
       "git.branch": "phase223-main",
       "user.email": "CI",
     },
@@ -100,14 +99,12 @@ const runs: SuiteRunRow[] = [
     endedAt: "2026-04-18T00:00:22.000Z",
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: "s_smoke",
     platform: "android",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
     attemptNumber: 1,
     retryCount: 0,
     maxRetries: 0,
@@ -122,7 +119,7 @@ const runs: SuiteRunRow[] = [
         duration: 4300,
         attributes: {
           "agent-qa.trigger": "cli",
-          "agent-qa.runner": "browserstack",
+          "agent-qa.runner": "local",
           "git.branch": "phase223-main",
         },
         environment: null,
@@ -131,14 +128,12 @@ const runs: SuiteRunRow[] = [
         endedAt: "2026-04-18T00:00:04.300Z",
         failureSummary: null,
         errorLog: null,
-        memoryLog: null,
         testId: "t_login",
         suiteId: "s_smoke",
         platform: "android",
         testFileContent: null,
         modelName: null,
         llmProvider: null,
-        parentRunId: "suite_run_1",
         attemptNumber: 1,
         retryCount: 0,
         maxRetries: 0,
@@ -164,14 +159,12 @@ const runs: SuiteRunRow[] = [
     endedAt: "2026-04-17T00:00:01.800Z",
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: "t_home",
     suiteId: null,
     platform: "web",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
     attemptNumber: 1,
     retryCount: 0,
     maxRetries: 0,
@@ -456,9 +449,8 @@ describe("RunsTable", () => {
   })
 })
 
-// 2026-10-17 (443-07, D-09): a verify run's row carries the gate-run mark; the list shows it beside
-// the name and adds no filter for it.
-describe("C443-VERIFY-MARK", () => {
+// A verify run's row carries the gate-run mark beside the name, with no filter for it.
+describe("the Verify run mark on a gate run", () => {
   const GATE_RUN_KEY = "agent-qa.gate-run"
 
   function singleRun(id: string, name: string, attributes: Record<string, string>): SuiteRunRow {
@@ -519,8 +511,8 @@ describe("C443-VERIFY-MARK", () => {
   })
 })
 
-// 2026-10-17 (443-18, GAP-D7): the badge alone displays the mark, explained and first-line aligned.
-describe("C443-VERIFY-BADGE", () => {
+// The badge alone displays the mark, explained and first-line aligned.
+describe("the Verify run badge", () => {
   const GATE_RUN_KEY = "agent-qa.gate-run"
   const EXPLANATION = "Started by authoring verify. Not used for learning."
 
@@ -594,9 +586,8 @@ describe("C443-VERIFY-BADGE", () => {
   })
 })
 
-// 2026-10-17 (444-16, D-05): in-row controls take the row's roving tab stop and never open the run;
-// the badge keeps its own slot; Target and Attributes truncate behind a tooltip.
-describe("C444-RUNS-TABLE", () => {
+// In-row controls take the row's roving tab stop and never open the run; long cells truncate.
+describe("the runs table's badge, tab stops and truncated cells", () => {
   const GATE_RUN_KEY = "agent-qa.gate-run"
   const LONG_TARGET = "checkout-service-staging-eu-west-with-a-very-long-registry-name"
 

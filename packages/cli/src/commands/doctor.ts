@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import pc from 'picocolors'
 import { loadConfigFile } from '../config.js'
-import { HARD_CUT_STEPS, INVALID_CONFIG_FIX, isRetiredKeyIssue } from '../hard-cut.js'
+import { HARD_CUT_STEPS, INVALID_CONFIG_FIX, isHardCutIssue } from '../hard-cut.js'
 import { loadAuthPluginsForRawConfig, toModelProfileAndAuth, type LLMModelAdapter } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
 import { NODE_FLOOR_INSTALL_LINE, NODE_FLOOR_MAJOR, nodeFloorRefusal } from '../node-floor.js'
@@ -17,11 +17,9 @@ import {
   type AgentQaConfig,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
+import { isGitHubActions, printRunText } from '@vostride/agent-qa-core/run-text-output'
 import { createModel, getProvider } from '@vostride/agent-qa-model'
 import { createKnowledgeChecks } from './doctor-knowledge-checks.js'
-// 407-30 (REVIEW IN-06): the row renderer lives in its own module now. This command imports the
-// five symbols its emit loop prints with, and re-exports NOTHING — this file's surface is the
-// check contract below plus `createDoctorCommand`.
 import {
   composeRow,
   formatCheckRow,
@@ -30,8 +28,7 @@ import {
   resolveTerminalWidth,
 } from './doctor-row.js'
 
-// 407 D-18: exported so `doctor-knowledge-checks.ts` can build rows this printer prints without
-// restating the row contract. The three types are the whole of what a row is.
+// Exported so `doctor-knowledge-checks.ts` builds rows without restating the row contract.
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
 
 export interface CheckResult {
@@ -188,8 +185,9 @@ function checkConfigValidation(
           return { status: 'pass', message: 'config schema valid' }
         }
 
-        // 2026-10-19 (445-07, D-23): the printed fix is read after this check returns.
-        row.fixInstructions = result.error.issues.some(isRetiredKeyIssue)
+        // The printed fix is read after this check returns: the hard cut for keys removed in v2,
+        // the key fix otherwise.
+        row.fixInstructions = result.error.issues.some(isHardCutIssue)
           ? HARD_CUT_STEPS
           : INVALID_CONFIG_FIX(configPath)
         const issues = result.error.issues.slice(0, 3)
@@ -365,7 +363,7 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
         }
         const { generateText } = await import('ai')
         const { profile, auth: modelAuth } = toModelProfileAndAuth(llm, auth as any)
-        // 2026-10-12 (441-04, D-06): fixed probe text, nothing to mask.
+        // Fixed probe text, nothing to mask.
         const testModel = createModel(profile, modelAuth, (text) => text)
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 10000)
@@ -644,9 +642,7 @@ export function createDoctorCommand(): Command {
         checkNodeVersion(),
         checkConfigFile(configPath),
         checkLegacyV1MemoryData(configPath),
-        // 407 D-18: the knowledge substrate's three rows sit here — directly after the legacy v1
-        // memory row, because they are the same subject — and before config validation, so the
-        // rung reads as the conclusion of the store and embedder rows above it.
+        // After the legacy v1 memory row and before config validation, concluding the store rows.
         ...createKnowledgeChecks({ config, configPath }),
         checkConfigValidation(config, configPath),
         checkSecretsFile(config, configPath),
@@ -671,28 +667,30 @@ export function createDoctorCommand(): Command {
       let hasFailure = false
       const results: { check: DoctorCheck; result: CheckResult }[] = []
 
-      // 407-24 (G-407-3): every line below goes through the width budget. Colour is applied HERE
-      // and only here, by handing named decorators to the same `composeRow` the formatter used to
-      // derive its plain line — so the printed line and the pinned one are one recipe run twice.
-      //
-      // THIS CHANGE IS CONFINED TO ROW RENDERING. No probe, no capability discovery and no
-      // registration cleanup is touched by it: the checks above still answer exactly what they
-      // answered before, and doctor still only reads.
+      // Colour is applied only here, through the `composeRow` the formatter uses for plain lines.
       const width = resolveTerminalWidth()
+      // Rows quote config names, so under GitHub Actions the table prints once as one wrapped
+      // block after the last check; elsewhere each row prints as its check finishes.
+      const table: string[] | undefined = isGitHubActions() ? [] : undefined
+      const printLine = (line: string): void => {
+        if (table === undefined) console.log(line)
+        else table.push(line)
+      }
 
       for (const check of checks) {
         const result = await check.check()
         results.push({ check, result })
 
         const row = formatCheckRow(check.name, result.message, result.status, width)
-        console.log(composeRow(row, { dots: pc.dim, status: formatStatus }))
-        for (const line of row.continuations) console.log(line)
+        printLine(composeRow(row, { dots: pc.dim, status: formatStatus }))
+        for (const line of row.continuations) printLine(line)
 
         if (result.status === 'fail') {
-          for (const line of formatFixLines(check.fixInstructions, width)) console.log(pc.dim(line))
+          for (const line of formatFixLines(check.fixInstructions, width)) printLine(pc.dim(line))
           hasFailure = true
         }
       }
+      if (table !== undefined) printRunText(table.join('\n'))
 
       console.log('')
       if (hasFailure) {

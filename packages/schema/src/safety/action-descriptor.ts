@@ -1,9 +1,8 @@
-import type { RiskTier } from './risk-tier'
 import type { Surface } from '../action'
 
 /**
- * Neutral, browser-safe descriptor the static risk classifier consumes.
- * Core, chat, skill, and shell actions project into this schema-owned shape.
+ * Neutral, browser-safe risk descriptor an op declares. The MCP projection reads `readOnly` and
+ * `destructive` to set each tool's hints.
  */
 export interface RiskActionDescriptor {
   /** Action verb/id, e.g. 'web_navigate', 'git_push', or 'trigger_cloud_run'. */
@@ -12,24 +11,17 @@ export interface RiskActionDescriptor {
   recognized: boolean
   /** Optional originating surface, when known. */
   surface?: Surface
-  /** Advisory "has a side effect" hint, not the destructive risk tier. */
+  /** Advisory "has a side effect" hint. */
   destructive?: boolean
   /** Advisory read-only hint. */
   readOnly?: boolean
-  /** Explicit tier declaration; later classifier signals may raise this floor. */
-  declaredTier?: RiskTier
-  // 2026-10-02 (432-42, D-14/D-16): the `command` payload and the per-invocation `disclosure` are
-  // deleted. The classifier stopped reading a command when the command-pattern list went (432-19),
-  // and the disclosure was display text for the confirm prompt, which no door shows any more.
 }
 
 
-// ---- the scrub, beside the descriptor it used to serve (401-15, WR-01 / T-401-G5 / T-401-G6) ----
+// ---- the disclosure fragment scrub ----
 //
-// The scrub was written for the deleted per-invocation disclosure. It survives because the
-// production refusal (`config/production.ts`) interpolates target names out of a config document
-// into its one sentence, and those names are text this module does not own: control bytes are
-// replaced, length is capped and the cut is visible, on every channel the sentence reaches.
+// One untrusted fragment, made safe to interpolate into a single line a person reads: control bytes
+// are replaced, length is capped and the cut is visible, on every channel the line reaches.
 //
 // PURE, SYNCHRONOUS, DEPENDENCY-FREE. `packages/schema` is browser-safe with zero internal
 // dependencies and may take none; everything below is string work.
@@ -80,27 +72,4 @@ export function scrubDisclosureFragment(fragment: string): string {
     ? `${flattened.slice(0, DISCLOSURE_FRAGMENT_MAX_LENGTH)}${DISCLOSURE_TRUNCATION_MARK}`
     : flattened
   return `"${capped}"`
-}
-
-/** How much of a whole composed disclosure line survives. */
-export const DISCLOSURE_TEXT_MAX_LENGTH = 512
-
-/**
- * The same hygiene for a WHOLE composed disclosure, where the composition owns the prose.
- *
- * SEPARATE FROM THE FRAGMENT FORM BECAUSE THE INPUT IS A DIFFERENT SHAPE. A fragment is a noun the
- * sentence interpolates and quoting it is exactly right; a whole composed sentence (since 432-42
- * only the production refusal's, `buildProductionRefusal`; the per-op `FunctionSpec.disclose` is
- * deleted) would render as a quotation if wrapped. What
- * both share is the rule that actually matters — no byte on this channel may act on the channel.
- *
- * THE CAP IS GENEROUS AND STILL A CAP. An op composes its own prose, so the realistic risk is an
- * unbounded caller-derived substring rather than a long sentence; a bound that no honest disclosure
- * reaches still removes "unbounded" from what a caller controls.
- */
-export function scrubDisclosureText(text: string): string {
-  const flattened = text.replace(DISCLOSURE_UNSAFE, DISCLOSURE_REPLACEMENT_CHARACTER)
-  return flattened.length > DISCLOSURE_TEXT_MAX_LENGTH
-    ? `${flattened.slice(0, DISCLOSURE_TEXT_MAX_LENGTH)}${DISCLOSURE_TRUNCATION_MARK}`
-    : flattened
 }

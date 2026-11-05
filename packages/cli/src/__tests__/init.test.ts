@@ -233,16 +233,11 @@ describe('init command', () => {
     expect(content).toContain('services:')
     expect(content).not.toContain('mcp:')
     expect(content).toContain('enabled: true')
-    expect(content).not.toContain('transport: http')
-    expect(content).not.toContain('host: 127.0.0.1')
     expect(content).not.toContain('port: 3471')
-    expect(content).not.toContain('path: /mcp')
     expect(content).toContain('recording:')
     expect(content).not.toContain('agent-qa-memory')
     expect(content).toContain('# knowledge:')
     expect(content).toContain('#   dir: agent-qa-knowledge')
-    expect(content).toContain('#   commitArtifacts: none')
-    expect(content).not.toContain('thumbnail')
     expect(content).toContain('authState:')
     expect(content).toContain('dir: .agent-qa/auth-states')
     expect(content).toContain('registry:')
@@ -252,8 +247,8 @@ describe('init command', () => {
     expect(content).toContain('komazon-cart-total-bug:')
     expect(content).toContain('url: https://playground.vostride.dev/shop/?bug=cart-total')
     expect(content).toContain('use:')
-    expect(content).toContain('mobile:')
-    expect(content).toContain('appState: preserve')
+    expect(content).not.toMatch(/^\s*mobile:/m)
+    expect(content).not.toContain('appState: preserve')
     expect(content).toContain('dir: .agent-qa/cache')
     expect(content).toContain('plugins:')
     expect(content).toContain('package: "@vostride/agent-qa-subscription-auth"')
@@ -296,7 +291,7 @@ describe('init command', () => {
     expect(content).not.toContain('  # memory:')
     expect(content).toContain('# Named resource definitions')
     expect(content).toContain('  # devices:')
-    expect(content).toContain('  # providers:')
+    expect(content).toContain('  #     platform: android')
     expect(content).toContain('    # my-mobile:')
     expect(content).toContain('    #   appPackage: com.example.app')
     expect(content).toContain('    #   appActivity: .MainActivity')
@@ -383,7 +378,7 @@ describe('init command', () => {
     expect(config.services.vision).toEqual({ screenshotSize: '256k', effectiveResolution: 768 })
     expect(config.registry.llms[0]).not.toHaveProperty('apiKey')
     expect(config.registry.llms[0]).not.toHaveProperty('authMethod')
-    expect(config.use.mobile.appState).toBe('preserve')
+    expect(config.use.mobile).toBeUndefined()
     expect(config.use.browser.viewport).toEqual({ width: 1280, height: 720 })
     expect(config.use.logCapture).toEqual({ console: true, network: true })
     expect(config.use.parallel).toBe(false)
@@ -414,7 +409,7 @@ describe('init command', () => {
     expect(config.services.vision).toEqual({ screenshotSize: '256k', effectiveResolution: 768 })
     expect(config.registry.llms[0]).not.toHaveProperty('authMethod')
     expect(config.registry.llms[0]).not.toHaveProperty('apiKey')
-    expect(config.use.mobile.appState).toBe('preserve')
+    expect(config.use.mobile).toBeUndefined()
     expect(config.use.browser.viewport).toEqual({ width: 1280, height: 720 })
     expect(config.use.logCapture).toEqual({ console: true, network: true })
     expect(config.use.parallel).toBe(false)
@@ -444,7 +439,7 @@ describe('init command', () => {
   })
 
   it.each(['web', 'android', 'ios', 'web+android', 'web+ios'] as const)(
-    'builds %s config with required mobile app state',
+    'builds %s config with a mobile app state only for mobile platforms',
     (platform) => {
       const config = buildDefaultConfig(
         platform,
@@ -452,7 +447,11 @@ describe('init command', () => {
         'claude-sonnet-4-6',
       ) as any
 
-      expect(config.use.mobile.appState).toBe('preserve')
+      if (platform === 'web') {
+        expect(config.use.mobile).toBeUndefined()
+      } else {
+        expect(config.use.mobile.appState).toBe('preserve')
+      }
       expect(config.use.logCapture).toEqual({ console: true, network: true })
       expect(config.use.parallel).toBe(false)
       expect(config.services.authState).toEqual({ dir: '.agent-qa/auth-states' })
@@ -690,6 +689,18 @@ describe('init command', () => {
     expect(consoleOutput()).not.toContain('suites/examples.suite.yaml')
   })
 
+  it('an Android scaffold keeps the optional accessibility example after the cache block', async () => {
+    await runInit(['--dir', '/tmp/test-project', '--platform', 'android'])
+
+    const content = String(findWriteCallEndingWith('agent-qa.config.yaml')?.[1])
+    const cache = content.indexOf('\n  cache:\n')
+    const example = content.indexOf('# Optional accessibility service example:')
+    const authState = content.indexOf('\n  authState:\n')
+    expect(cache).toBeGreaterThan(-1)
+    expect(example).toBeGreaterThan(cache)
+    expect(authState).toBeGreaterThan(example)
+  })
+
   it('creates an empty local secrets file', async () => {
     await runInit(['--dir', '/tmp/test-project', '--platform', 'web'])
 
@@ -726,23 +737,18 @@ describe('init command', () => {
     expect(localCall).toBeDefined()
 
     const content = localCall![1] as string
-    expect(content.startsWith('# This file is for machine-specific device, app, and provider bindings.')).toBe(true)
+    expect(content.startsWith('# This file is for machine-specific device and app bindings.')).toBe(true)
     expect(content).toContain('# Keep it out of git.')
     expect(content).toContain('# Add agent-qa.local.yaml to .gitignore.')
     expect(content).toContain('devices:\n')
     expect(content).toContain('apps:\n')
-    expect(content).toContain('providers:\n')
     expect(content).toContain('  # android-emu:')
     expect(content).toContain('  #   avd: Pixel_8_API_35')
     expect(content).toContain('  # example-android:')
     expect(content).toContain('  #   path: apps/example.apk')
-    expect(content).toContain('  # browserstack:')
-    expect(content).toContain('  #   username: ${BROWSERSTACK_USERNAME}')
-    expect(content).toContain('  #   accessKey: ${BROWSERSTACK_ACCESS_KEY}')
     expect(content).not.toContain('devices: {}')
     expect(content).not.toContain('# devices:')
     expect(content).not.toContain('# apps:')
-    expect(content).not.toContain('# providers:')
 
     const output = consoleOutput()
     expect(output).toContain('agent-qa.local.yaml')
@@ -934,11 +940,7 @@ describe('init command', () => {
         expect(written).not.toContain(envPath)
         expect(written).not.toContain(secretsPath)
 
-        // Looked up by name, not by index. The managed .gitignore is now written before the
-        // scaffold loop so no credential temporary can exist under a name no rule covers,
-        // which moves every scaffold entry one position; the property being pinned here is
-        // the credential files' outcome and their relative scaffold order, never their
-        // absolute position in the list.
+        // Looked up by name: the pin is the credential files' outcome and order, not position.
         const paths = outcomes.map(outcome => outcome.path)
         expect(paths.indexOf(envPath)).toBeGreaterThanOrEqual(0)
         expect(paths.indexOf(envPath)).toBeLessThan(paths.indexOf(secretsPath))
@@ -1063,7 +1065,7 @@ describe('init command', () => {
     expect(content).not.toContain('browsers:')
   })
 
-  describe('knowledge root scaffold (KDIR-01)', () => {
+  describe('knowledge root scaffold', () => {
     const KNOWLEDGE_ROOT = '/tmp/test-project/agent-qa-knowledge'
     // The committed/derived split, verbatim from spec/v2/knowledge-store.md §4.
     const FUNCTIONAL_LINES = [
@@ -1219,7 +1221,7 @@ describe('init command', () => {
       expect(findWriteCallEndingWith('agent-qa-knowledge/README.md')).toBeUndefined()
       expect(findWriteCallEndingWith('policies/global.md')).toBeUndefined()
       expect(findWriteCallEndingWith('agent-qa-knowledge/.gitignore')).toBeUndefined()
-      // 431 D-17: the guide is agent-qa's generated file, so --force regenerates it.
+      // The guide is agent-qa's generated file, so `--force` regenerates it.
       expect(findWriteCallEndingWith('agent-qa-knowledge/AGENTS.md')).toBeDefined()
     })
 
@@ -1230,7 +1232,7 @@ memory/queue/
 memory/*/bundles/.staging/
 .lease
 .writer-authority.sqlite*
-**/artifacts/        # binary blobs; flip to thumbnails via knowledge.commitArtifacts
+**/artifacts/        # binary blobs
 skills/.staging/
 .*.agent-qa-init-*.tmp
 `
@@ -1499,18 +1501,22 @@ skills/.staging/
     try {
       actualChildProcess.execFileSync('pnpm', [
         'exec',
-        'tsup',
+        'tsdown',
         'src/cli.ts',
         'src/cli-main.ts',
+        '--no-config',
         '--out-dir',
         bundleDir,
         '--format',
         'esm',
         '--target',
         'node24',
-        '--no-splitting',
-        '--no-config',
-        '--silent',
+        '--platform',
+        'node',
+        '--no-dts',
+        '--no-fixed-extension',
+        '--log-level',
+        'silent',
       ], {
         cwd: cliRoot,
         stdio: 'pipe',
@@ -1547,13 +1553,7 @@ skills/.staging/
     }
   }, 60_000)
 
-  // ---- 398-10 (D-16 / D-18): the init/scaffold member -----------------------------------------
-  //
-  // REAL FILESYSTEM, REAL COMMAND, REAL COMPOSED PORT — only the transport is substituted. The
-  // three arms below are the three answers this member can give, and each is produced by actually
-  // running `init` rather than by constructing an outcome list: a fresh directory (`created`), the
-  // same directory again (`unchanged`, because the scaffold preserves what it finds), and the
-  // `--agent` manifest read, which writes nothing and must therefore report nothing.
+  // Each arm runs the real `init`: a fresh directory, the same one again, and the `--agent` read.
   it('emits one init member per scaffold, and none for the --agent read', async () => {
     vi.resetModules()
     vi.doUnmock('node:fs')
@@ -1628,14 +1628,8 @@ skills/.staging/
     }
   }, 60_000)
 
-  // ---- 432-40 (D-24 / D-21): the scaffolded knowledge README and guide say the direct rule ------
-  //
-  // A REAL init into a fresh temporary directory, read back from disk: the README and the generated
-  // guide a person and a coding agent open first both say knowledge changes only through agent-qa,
-  // applies at once, and is corrected by new feedback or forget. The README no longer tells anyone
-  // to edit a fact or its evidence and no longer cites a design-doc path a user does not have. The
-  // init samples and the policy file are unchanged (M7 owns them, D-21).
-  it('C432-INIT-KNOWLEDGE-GUIDE: the scaffolded README and guide state the direct change rule, and the samples are unchanged', async () => {
+  // A real init read back from disk: the README and guide say knowledge changes via agent-qa.
+  it('the scaffolded README and guide state the direct change rule, and the samples are unchanged', async () => {
     vi.resetModules()
     vi.doUnmock('node:fs')
     vi.doUnmock('node:child_process')
@@ -1647,7 +1641,7 @@ skills/.staging/
     const actualGuide =
       await vi.importActual<typeof import('../commands/knowledge-guide.js')>('../commands/knowledge-guide.js')
 
-    const dir = actualFs.mkdtempSync(join(tmpdir(), 'agent-qa-432-40-init-'))
+    const dir = actualFs.mkdtempSync(join(tmpdir(), 'agent-qa-init-'))
     try {
       const parent = new Command()
       parent.addCommand(actualInit.createInitCommand())
@@ -1664,8 +1658,10 @@ skills/.staging/
         expect(body, `${name}: wrong knowledge is corrected by new feedback`).toMatch(/corrected by\s+new feedback/u)
         expect(body, `${name}: or by forgetting the record`).toMatch(/forgetting the\s+record/u)
         expect(body, `${name}: the change tool`).toContain('agent_qa_change_knowledge')
-        expect(body, `${name}: approval-model wording`)
-          .not.toMatch(/\bapprov|\bpropos|\bpending\b|\bawaiting\b|\bgrant/iu)
+        // `marks and approvals` names the gates read's receipt kinds, not the approval model.
+        expect(body, `${name}: approval-model wording`).not.toMatch(
+          /\bapprov(?!als?\b)|\bapprovals?\b(?<!\bmarks? and approvals?)|\bpropos|\bpending\b|\bawaiting\b|\bgrant/iu,
+        )
         expect(body, `${name}: a design-doc path a user does not have`).not.toMatch(/\bspec\/v\d/u)
       }
       expect(readme, 'the README still tells a reader to edit a fact or its evidence')
@@ -1674,7 +1670,7 @@ skills/.staging/
       // People still write policies by hand, and the README still says where.
       expect(readme).toContain('policies/global.md')
 
-      // D-21: the samples and the policy template are still scaffolded (445-02 moved the samples).
+      // The samples and the policy template are scaffolded.
       for (const sample of [
         'tests/examples/komazon-checkout.yaml',
         'tests/examples/komazon-cart-total-bug.yaml',

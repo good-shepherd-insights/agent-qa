@@ -1,10 +1,4 @@
-// The D-13 failure fingerprint: one exported vocabulary, byte-stable goldens.
-//
-// 390's FLAK-01 windows recurrence over THESE bytes, and the cluster function groups over
-// them — so the recipe is pinned as golden VALUES, not just as relations among the code's
-// own outputs (the 383 lesson: closures phrased as relations among a module's own fields
-// do not hold; closures anchored outside its vocabulary do). Changing the recipe later
-// re-keys every accumulated fingerprint history; that cost is the reason for the pins.
+// Golden values: changing the recipe re-keys every accumulated fingerprint history.
 
 import { describe, expect, it } from 'vitest'
 
@@ -17,7 +11,7 @@ import { failureFingerprint } from '../failure-fingerprint'
 const EL: Anchor = { t: 'el', role: 'button', name: 'Submit', ordinal: 0 }
 const PAGE: Anchor = { t: 'page', route: '/checkout' }
 
-describe('failureFingerprint (389 D-13)', () => {
+describe('failureFingerprint', () => {
   it('is deterministic: the same (anchors, class) yields byte-identical keys', () => {
     const first = failureFingerprint({ anchors: [EL, PAGE] }, 'flake')
     const second = failureFingerprint({ anchors: [EL, PAGE] }, 'flake')
@@ -52,7 +46,7 @@ describe('failureFingerprint (389 D-13)', () => {
       { anchors: [], errorText: 'timeout after 12ms' },
       'unknown',
     )
-    // The D-13 golden: two timeouts differing only in their digits share one key.
+    // Two timeouts differing only in their digits share one key.
     expect(slow).toBe('{"message":"timeout after #ms","t":"error"}::unknown')
     expect(fast).toBe(slow)
   })
@@ -70,7 +64,7 @@ describe('failureFingerprint (389 D-13)', () => {
   })
 })
 
-describe('exercisedAnchors promoted to schema (389 D-13)', () => {
+describe('exercisedAnchors promoted to schema', () => {
   it('walks element and page contact out of one step, pure over schema types', () => {
     const element = {
       ref: asRef('e1'),

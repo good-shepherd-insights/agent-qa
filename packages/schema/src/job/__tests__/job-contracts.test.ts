@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { jobConclusionKindValues, jobSchema } from '../job'
+import { jobSchema } from '../job'
 import { chainedJobRequestSchema, jobEnqueueRequestSchema } from '../job-enqueue'
 import { JOB_CHECKPOINT_SCHEMA_VERSION, jobCheckpointEnvelopeSchema } from '../job-checkpoint'
 import { jobHandlerOutcomeSchema } from '../job-outcome'
@@ -23,12 +23,7 @@ describe('jobEnqueueRequestSchema', () => {
     expect(jobEnqueueRequestSchema.safeParse(VALID_REQUEST).success).toBe(true)
   })
 
-  // D-08 / JOBQ-05. The mandatory-key guarantee is NOT proved by any accepting case: a
-  // schema that declared the key `.optional()`, or declared it as a bare string, keeps every
-  // accepting case above green while admitting exactly the two payloads that break dedupe.
-  // An absent key means the store has nothing to deduplicate on; an EMPTY key is worse,
-  // because it satisfies the unique index and therefore collapses every job of the kind onto
-  // one row. Both must be rejections, and each gets its own case.
+  // An empty key satisfies the unique index and collapses every job of the kind onto one row.
   it('rejects an enqueue request with no idempotency key at all', () => {
     const withoutKey = { ...VALID_REQUEST }
     delete withoutKey.idempotencyKey
@@ -63,7 +58,7 @@ describe('jobEnqueueRequestSchema', () => {
     )
   })
 
-  it('rejects unknown top-level keys (T-385-06)', () => {
+  it('rejects unknown top-level keys', () => {
     expect(
       jobEnqueueRequestSchema.safeParse({ ...VALID_REQUEST, priority: 'high' }).success,
     ).toBe(false)
@@ -75,9 +70,7 @@ describe('jobEnqueueRequestSchema', () => {
     )
   })
 
-  // A successor is an enqueue request; the alias exists to name the D-17 role, not to relax
-  // anything. If the two ever diverge, a chained enqueue could carry an empty key that a
-  // root enqueue could not.
+  // If the two diverge, a chained enqueue could carry an empty key a root enqueue could not.
   it('holds a chained request to the identical rules', () => {
     expect(chainedJobRequestSchema.safeParse(VALID_REQUEST).success).toBe(true)
     expect(
@@ -92,9 +85,7 @@ describe('jobCheckpointEnvelopeSchema', () => {
     expect(jobCheckpointEnvelopeSchema.safeParse(VALID_ENVELOPE).success).toBe(true)
   })
 
-  // D-04: stamp and hard-fail, no migration machinery. The stamp is a literal, so a file
-  // written by a different build is refused rather than reinterpreted. A plain
-  // `z.number()` would accept every one of these.
+  // The stamp is a literal, so a file another build wrote is refused, not reinterpreted.
   it.each([0, 1, 3, 99, '2', null])('rejects an envelope stamped %p', (version) => {
     expect(
       jobCheckpointEnvelopeSchema.safeParse({ ...VALID_ENVELOPE, schemaVersion: version }).success,
@@ -124,7 +115,7 @@ describe('jobCheckpointEnvelopeSchema', () => {
     ).toBe(false)
   })
 
-  it('rejects unknown top-level keys (T-385-06)', () => {
+  it('rejects unknown top-level keys', () => {
     expect(
       jobCheckpointEnvelopeSchema.safeParse({ ...VALID_ENVELOPE, recordedAt: 'x' }).success,
     ).toBe(false)
@@ -149,9 +140,7 @@ describe('jobHandlerOutcomeSchema', () => {
     expect(parsed).toEqual({ status, reason: 'provider timed out' })
   })
 
-  // The discriminant is the whole point of the union: without it, "a handler failed" and "a
-  // handler finished with no successors" are the same shape, and D-18's retryable/permanent
-  // distinction has nowhere to live.
+  // Without the discriminant a failed handler and one with no successors are the same shape.
   it('rejects an outcome with no status discriminant', () => {
     expect(jobHandlerOutcomeSchema.safeParse({ next: [] }).success).toBe(false)
     expect(jobHandlerOutcomeSchema.safeParse({ reason: 'boom' }).success).toBe(false)
@@ -206,9 +195,7 @@ describe('jobHandlerOutcomeSchema', () => {
   })
 })
 
-// The C6 break from plan 01, re-asserted from the new vocabulary's own test file: these DTOs
-// are typed against `JobKind`, so a regression in the job contract would surface here as a
-// puzzling enqueue failure rather than as a job-contract failure.
+// These DTOs are typed against `JobKind`, so a job-contract regression would show up here.
 describe('jobSchema alongside the new vocabulary', () => {
   it('still parses a full job and still refuses unknown keys', () => {
     const job = {
@@ -226,24 +213,8 @@ describe('jobSchema alongside the new vocabulary', () => {
   })
 })
 
-// 422 D-16 (ADV-03). The conclusion vocabulary, pinned EXACTLY, from a list written out here
-// rather than derived from the declaration under test — a check that read the production array
-// would agree with whatever that array became, which is precisely the change it exists to catch.
-//
-// Runtime and compile-time bars travel TOGETHER (see job-contracts.test-d.ts). Neither alone is
-// enough: the type union and the value list are two declarations, and a member removed from one
-// and not the other is exactly the drift that lets a store record a conclusion no reader accepts.
-describe('jobConclusionKind, the 422 D-16 vocabulary', () => {
-  const CONCLUSIONS = [
-    'no_issue',
-    'needs_user_input',
-    'insufficient_evidence',
-    'knowledge_skipped_draft',
-    'model_capability_error',
-    'provider_error',
-    'insufficient_model_output',
-    'unreadable_kind',
-  ]
+describe('jobConclusionKind', () => {
+  const CONCLUSIONS = ['unreadable_kind']
 
   const JOB: Record<string, unknown> = {
     id: 'job_1',
@@ -255,14 +226,6 @@ describe('jobConclusionKind, the 422 D-16 vocabulary', () => {
     updatedAt: '2026-01-01T00:00:01.000Z',
   }
 
-  it('job conclusion kinds exact', () => {
-    // ORDER included. The list is a declaration, and a reordered declaration is a change a
-    // set-comparison would wave through while a diff of the file would not.
-    expect([...jobConclusionKindValues]).toEqual(CONCLUSIONS)
-  })
-
-  // The list above could be right while the SCHEMA read some other list, so the same vocabulary is
-  // re-asserted through the parser an actual row travels through.
   it.each(CONCLUSIONS)('parses a job concluding %s', (conclusion) => {
     expect(jobSchema.safeParse({ ...JOB, conclusionKind: conclusion }).success).toBe(true)
   })
@@ -274,8 +237,7 @@ describe('jobConclusionKind, the 422 D-16 vocabulary', () => {
     },
   )
 
-  // D-16's other half, asserted from the conclusion's own file: naming an outcome for a row this
-  // build cannot read must not widen what it CAN read. The five kinds are untouched.
+  // Naming an outcome for an unreadable row must not widen the kinds this build reads.
   it('admits the unreadable-kind conclusion without admitting an unreadable kind', () => {
     expect(jobSchema.safeParse({ ...JOB, conclusionKind: 'unreadable_kind' }).success).toBe(true)
     expect(

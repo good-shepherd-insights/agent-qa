@@ -10,7 +10,6 @@ import {
   CLI_ESCAPE_PARTS,
   CONTENT_ABSENCE_TEXT,
   DRAFT_WORDING_NOT_SHOWN_TEXT,
-  NO_GROUND_TRUTH_TEXT,
   PREVIEW_IDLE_TEXT,
   PREVIEW_LINE_LABELS,
   PREVIEW_READ_FAILED_TEXT,
@@ -19,21 +18,17 @@ import {
   PREVIEW_UPDATING_TEXT,
   RETRY_LABEL,
   alreadyMarkedText,
-  correctedGroundTruthText,
   feedbackReadFailureReason,
   isPreviewRefusal,
   previewRefusalText,
   quarantinedText,
   draftHasWording,
-  groundTruthLine,
   knowledgeLine,
-  labelsLine,
   previewFixText,
   recordEffectLine,
   replacesLine,
   showRecordsLabel,
   type FeedbackPreviewState,
-  type FeedbackTextParts,
 } from '@/lib/feedback-view'
 import { cn } from '@/lib/utils'
 
@@ -41,7 +36,7 @@ type Consequences = Extract<RunsMarkPreviewResult, { kind: 'consequences' }>
 
 export interface FeedbackPreviewProps {
   state: FeedbackPreviewState
-  /** The displayed read was computed for the form's current request key (D-16). */
+  /** The displayed read was computed for the form's current request key. */
   current: boolean
   /** The read on screen, kept while a re-fetch is in flight so nothing blanks. */
   read?: RunsMarkPreviewResult
@@ -52,7 +47,7 @@ export interface FeedbackPreviewProps {
   alreadyMarkedTime?: string
   /** Looks an earlier mark's time up in the loaded history; the explicit times above win. */
   timeFor?: (markId: string) => string | undefined
-  /** Why the read on screen failed (D-19). */
+  /** Why the read on screen failed. */
   failure?: FeedbackReadFailure
   /** Re-issues the failed read; never submits. */
   onRetry?: () => void
@@ -60,21 +55,7 @@ export interface FeedbackPreviewProps {
 
 const SKELETON_WIDTHS = ['w-full', 'w-5/6', 'w-2/3', 'w-3/4'] as const
 
-function TextParts({ parts }: { parts: FeedbackTextParts }) {
-  return (
-    <>
-      {parts.prefix}
-      {parts.name}
-      {parts.suffix}
-    </>
-  )
-}
-
-/**
- * "What this will do" (426 D-16, D-17). Presentational: every word comes from the preview read the
- * composer hands it, producer strings are text nodes, and ids stay out of view.
- * Not a live region; outcomes announce through the composer's footer status.
- */
+// Every word comes from the preview read; not a live region, as the composer's footer announces.
 export function FeedbackPreview({
   state,
   current,
@@ -163,32 +144,10 @@ function FailedRead({ failure, onRetry }: { failure: FeedbackReadFailure; onRetr
 }
 
 function ConsequenceLines({ read, replacesTime }: { read: Consequences; replacesTime: string | undefined }) {
-  const { groundTruth, labels, knowledge, draft, latest } = read
+  const { knowledge, draft, latest } = read
   return (
     <div className="space-y-2">
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs">
-        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.result}</dt>
-        <dd data-preview-line="result" className="space-y-1 break-words text-foreground">
-          {groundTruth.length === 0
-            ? NO_GROUND_TRUTH_TEXT
-            : groundTruth.map((entry) => {
-                const corrected = correctedGroundTruthText(entry)
-                return (
-                  <div key={`${String(entry.testIndex)}:${String(entry.stepIndex)}`}>
-                    <p>
-                      <TextParts parts={groundTruthLine(entry)} />
-                    </p>
-                    {corrected === undefined ? null : <p className="text-muted-foreground">{corrected}</p>}
-                  </div>
-                )
-              })}
-        </dd>
-
-        <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.labels}</dt>
-        <dd data-preview-line="labels" className="break-words text-foreground">
-          {labelsLine(labels.length)}
-        </dd>
-
         <dt className="font-medium text-muted-foreground">{PREVIEW_LINE_LABELS.knowledge}</dt>
         <dd data-preview-line="knowledge" className="space-y-1 break-words text-foreground">
           <p>{knowledgeLine(knowledge.evidence, knowledge.records.length)}</p>

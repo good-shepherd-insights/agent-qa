@@ -1,53 +1,4 @@
-// THE D-16 MUTATION PROOF (Phase 392 plan 10, CHAT-02).
-//
-// The phase's falsifiability capstone, and the shape of it is the whole claim: the REAL host is
-// assembled TWICE — deterministic override ON, deterministic override OFF — and the NAMED committed
-// compound scenario is measured GREEN in the first assembly and RED in the second. Green-on-first-
-// write is not evidence that a safety mechanism works; the only evidence that it works is a measured
-// difference between a system that has it and the same system without it.
-//
-// IT RUNS THROUGH THE COMPOSITION ROOT AND NOWHERE ELSE. Both arms go through
-// `composeCliLocalAgent`, which is a thin passthrough over `composeLocalAgent` — the ONE composition
-// root (385 D-15) — and the strategy reaches the engine through `ComposeLocalAgentInput.chatReconcile`,
-// the composition-only seam D-16 names. This file assembles no turn engine, no resolver table and no
-// reconciler, and it does NOT import the shipped strategy module: a differential built out of parts
-// can pass while the composition wires those parts wrongly or not at all, which is the one failure
-// mode a mutation proof must not have (RESEARCH Pitfall 3, the produced-not-literal law). A source
-// assertion at the bottom pins that absence by SPECIFIER rather than by vocabulary — this header
-// discusses reconciliation continuously and must stay free to (392-08's lesson).
-//
-// WHAT "OVERRIDE OFF" MEANS HERE, stated precisely because a vague off-arm proves nothing. The
-// shipped strategy walks the CLAUSES and lets the deterministic table's verdict win wherever stage 1
-// resolved one. The off-arm strategy below never reads `input.mapped` at all: its verdict IS the
-// model's plan, one step per action call the model proposed, in the order it proposed them. That is
-// the honest meaning of "trusts the model verbatim", and it is what D-16 asks to be switchable by a
-// differential and by nothing else.
-//
-// WHY THE OFF-ARM RED IS STRUCTURAL RATHER THAN A MATTER OF MODEL LUCK. The turn engine consults the
-// planner ONLY for the clauses stage 1 could not bind (`turn-engine.ts`, stage 2). For this
-// scenario that is one clause of two, so the model is asked about the digest half and answers with
-// one action call. A strategy that never consults the mapper therefore holds ONE binding for TWO
-// clauses — and the half the person actually typed as a canonical command is the half that
-// disappears. The off-arm's failure does not depend on the model choosing badly; it depends only on
-// the model being asked what it is asked, which is the same thing that makes the on-arm green.
-//
-// THE PREDICTIONS WERE WRITTEN BEFORE THE FIRST RUN, and they are recorded verbatim below so a
-// later reader can tell a prediction apart from a description. What was actually measured is in
-// `392-10-SUMMARY.md` beside them.
-//
-//   ARM A (override on)  — predicted GREEN: status `completed`; receipts `[runs.start, runs.digest]`
-//     both `executed`, origins `[human, agent]`; the run executor called exactly once with the
-//     MAPPER's binding `{ patterns: ['test 42'] }`.
-//   ARM B (override off) — predicted RED, shape named in advance: ONE receipt (`runs.digest`), not
-//     two; ZERO runs started, because the clause the table bound is gone from the plan; and — the
-//     dangerous part — a turn that still reports `completed`, so the loss is silent. The scenario's
-//     own assertion fails on the op list and on the executed count.
-//
-// A RELEASE GATE, NOT A PER-COMMIT ONE, on plan 09's gate and for its reason (D-13): the off-arm
-// consults a real model, so it costs tokens and wall-clock. `AGENT_QA_LIVE_CHAT_CONFIG` is the
-// switch, a never-skipping describe announces which lane actually ran, and the default state is a
-// visible skip — a credential guard that degrades to a silent no-op has produced green runs that
-// measured nothing in this codebase before.
+// Both arms go through the composition root; only the deterministic override differs between them.
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -100,21 +51,13 @@ const HOST_SOURCE = fileURLToPath(new URL('../composition/local-agent-host.ts', 
 
 const LIVE_CONFIG = process.env.AGENT_QA_LIVE_CHAT_CONFIG
 
-const SKIP_REASON =
-  LIVE_CONFIG === undefined
-    ? 'AGENT_QA_LIVE_CHAT_CONFIG is unset — no live-model auth was offered, so the D-16 mutation '
-      + 'proof did not run. Set it to a project config path whose registry.llms and auth plugins '
-      + 'resolve on this machine.'
-    : undefined
-
 /** The run the scenario's second clause names. Seeded so the cell measures routing, not a gap. */
 const SEEDED_RUN_ID = 'RUN-1'
 
 /** What the deterministic table binds for the scenario's first clause — the mapper's own verdict. */
 const MAPPER_BINDING: RunsStartInput = { patterns: ['test 42'] }
 
-// 2026-10-02 (432-37, D-12): no `grantedScopes` or `safeMode` on the caller; the registry reads
-// neither (432-20).
+// No `grantedScopes` or `safeMode` on the caller; the registry reads neither.
 const HUMAN: FunctionCaller = {
   surface: 'test',
   origin: 'human',
@@ -146,11 +89,7 @@ const modelVerbatimStrategy: ReconcileStrategy = (input: ReconcileInput): Reconc
     args: call.input,
     source: 'planner',
   }))
-  // The OLD turn-level prose carry, re-derived here on purpose. `PlannerStageOutcome.answer` was
-  // removed in 392-14 because it carried the first `answer_only` call's text for a whole turn; this
-  // instrument keeps that behaviour deliberately, because what it models is the reconciler as it
-  // was before the override existed — a strategy that quietly gained the new per-claim accounting
-  // would be a weaker mutation than the one this differential claims to apply.
+  // The turn-level prose carry, re-derived: the instrument models a reconciler with no override.
   const firstAnswer = input.planned.toolCalls.find(
     (call) => call.toolName === ANSWER_ONLY_TOOL_NAME,
   )?.input
@@ -164,7 +103,7 @@ const modelVerbatimStrategy: ReconcileStrategy = (input: ReconcileInput): Reconc
 }
 
 function readSubject(): ChatScenario {
-  if (SUBJECT === undefined) throw new Error('the frozen manifest no longer lists the D-16 subject')
+  if (SUBJECT === undefined) throw new Error('the frozen manifest no longer lists the reconciliation subject')
   const path = join(SCENARIOS_ROOT, scenarioRelativePath(SUBJECT))
   return parseScenario(parseYamlDocument(readFileSync(path, 'utf8')), SUBJECT)
 }
@@ -203,6 +142,19 @@ interface Arm {
   readonly result: AgentAskResult
   /** What the injected run executor was actually called with — the bound-argument observable. */
   readonly startedRuns: readonly RunsStartInput[]
+  readonly reading: string
+}
+
+function armReading(
+  overrideOn: boolean,
+  result: AgentAskResult,
+  startedRuns: readonly RunsStartInput[],
+): string {
+  const ops = result.receipts.map((r) => `${r.functionId}:${r.status}:${r.origin}`).join(', ')
+  return (
+    `${overrideOn ? 'override on' : 'override off'} -> ${result.status} ops=[${ops}]`
+    + ` runs=${JSON.stringify(startedRuns)} unhandled=${result.unhandled?.clause ?? '-'}`
+  )
 }
 
 /**
@@ -212,38 +164,27 @@ interface Arm {
  * differently-written checks. Arm B asserts that this THROWS, which is what makes the suite pass
  * by MEASURING the red rather than by declaring it.
  */
-function assertScenario(scenario: ChatScenario, arm: Arm): void {
+function assertScenario(scenario: ChatScenario, arm: Arm, message: string): void {
   const executed = arm.result.receipts.filter((receipt) => receipt.status === 'executed')
-  expect(arm.result.status).toBe('completed')
-  expect(arm.result.receipts.map((receipt) => receipt.functionId)).toEqual(scenario.expect.ops ?? [])
-  expect(arm.result.receipts.map((receipt) => receipt.status)).toEqual(
+  expect(arm.result.status, message).toBe('completed')
+  expect(arm.result.receipts.map((receipt) => receipt.functionId), message).toEqual(
+    scenario.expect.ops ?? [],
+  )
+  expect(arm.result.receipts.map((receipt) => receipt.status), message).toEqual(
     arm.result.receipts.map(() => 'executed'),
   )
-  expect(executed).toHaveLength(scenario.expect.executed)
+  expect(executed, message).toHaveLength(scenario.expect.executed)
 }
 
-describe('the mutation proof announces which lane actually ran (T-392-32)', () => {
-  it('names the gate condition, so a skip can never be mistaken for a pass', () => {
-    process.stderr.write(
-      `\n[D-16 mutation proof] ${SKIP_REASON ?? `running against ${String(LIVE_CONFIG)}`}\n`,
-    )
+describe("the mutation proof's subject and build", () => {
+  it('takes an admitted should_execute member of the live corpus as its subject', () => {
     // The subject must be an ADMITTED member of the frozen corpus, not a file this test found.
     expect(SUBJECT).toBeDefined()
     expect(SUBJECT?.kind).toBe('should_execute')
   })
 
   it('is loaded against a FRESH build of the corpus it measures', () => {
-    // The stale-dist trap, asserted rather than assumed (RESEARCH Pitfall 4). Both arms run in one
-    // process against one build, so the hazard is not between the arms — it is that the whole file
-    // ran against a dist predating 392-09's correction, in which case the on-arm would be measuring
-    // an utterance that could only ever fail closed and the proof would be red-versus-red.
-    //
-    // MEASURED AGAINST THE SOURCE, not against a number written here (392-11). A literal pin made
-    // this guard fire on every later corpus edit — a red that says "the manifest moved" while
-    // claiming to say "your dist is stale", which is the way a tripwire teaches people to edit it.
-    // What the check is actually about is the DISTANCE between the built package and the source it
-    // was built from, so it reads both: the version the imported dist reports must equal the
-    // version the manifest source declares, and it must not predate 392-09's correction.
+    // Compares the built corpus version with the source's, so a stale dist fails here.
     const declared = /SCENARIO_CORPUS_VERSION = (\d+)/.exec(
       readFileSync(join(SCENARIOS_ROOT, 'manifest.ts'), 'utf8'),
     )?.[1]
@@ -257,8 +198,8 @@ describe('the mutation proof announces which lane actually ran (T-392-32)', () =
   })
 })
 
-describe.skipIf(SKIP_REASON !== undefined)(
-  'D-16: the deterministic override, proved by removing it',
+describe.skipIf(LIVE_CONFIG === undefined)(
+  'the deterministic override, proved by removing it',
   () => {
     let root: string
     let agentQaRoot: string
@@ -288,10 +229,7 @@ describe.skipIf(SKIP_REASON !== undefined)(
      */
     async function runArm(utterance: string, reconcile?: ReconcileStrategy): Promise<Arm> {
       const startedRuns: RunsStartInput[] = []
-      // A FAITHFUL executor, not a stub: the composition reads a run's own durable event log back
-      // and refuses a host that reported a run without producing one. It also RECORDS the request,
-      // which is the one seam in the composed path where a bound argument is observable —
-      // `ClauseReceipt` carries no arguments and must not (D-18).
+      // A faithful executor that records the request, the one place a bound argument is observable.
       const runExecution: RunExecutionPort = {
         execute(request) {
           startedRuns.push(request)
@@ -309,8 +247,7 @@ describe.skipIf(SKIP_REASON !== undefined)(
         agentQaRoot,
         configPath: String(LIVE_CONFIG),
         runExecution,
-        // 2026-10-01 (432-17): the proposal apply delegate is deleted; the live gate still opens no
-        // socket to a daemon that may be running.
+        // The live gate opens no socket to a daemon that may be running.
         knowledgeChangeDelegate: () => Promise.reject(new Error('no change delegation in the live gate')),
         ...(capabilities === undefined
           ? {}
@@ -329,21 +266,15 @@ describe.skipIf(SKIP_REASON !== undefined)(
         { message: utterance },
         HUMAN,
       )) as AgentAskResult
-      process.stderr.write(
-        `\n[D-16 mutation proof] ${reconcile === undefined ? 'ARM A (override on) ' : 'ARM B (override off)'}`
-          + ` -> ${result.status}`
-          + ` ops=[${result.receipts.map((r) => `${r.functionId}:${r.status}:${r.origin}`).join(', ')}]`
-          + ` runs=${JSON.stringify(startedRuns)}`
-          + ` unhandled=${result.unhandled?.clause ?? '-'}\n`,
-      )
-      return { result, startedRuns }
+      return {
+        result,
+        startedRuns,
+        reading: armReading(reconcile === undefined, result, startedRuns),
+      }
     }
 
-    it('A5 AUTH SMOKE: the host resolved a chat model', { timeout: 120_000 }, () => {
-      // FIRST, deliberately: everything below composes a host around this model, so a credential
-      // failure reds ONE named case instead of two arms failing in two different-looking ways that
-      // both mean "not logged in" — and a differential whose arms both fail for an unrelated
-      // reason is exactly the vacuous proof this plan exists to avoid.
+    it('AUTH SMOKE: the host resolved a chat model', { timeout: 120_000 }, () => {
+      // First: a credential failure reds one named case, not two arms failing differently.
       expect(
         capabilities,
         'the host could not resolve a chat model from the configured project — check the config '
@@ -351,25 +282,12 @@ describe.skipIf(SKIP_REASON !== undefined)(
       ).toBeDefined()
     })
 
-    /**
-     * PAIRED ATTEMPTS, and the pairing is what stops model variance from manufacturing a proof.
-     *
-     * The two arms of a differential must differ in ONE thing. Run as two independent cases at
-     * k = 1 they differ in two: the strategy, and whichever plan the model happened to produce
-     * that call. This cell is KNOWN to flap — plan 09 recorded one run of five in which the model
-     * answered the digest clause in prose instead of calling `runs.digest`, and plan 10's first
-     * live execution reproduced it — so an attempt runs BOTH arms and is DECISIVE only if the
-     * on-arm satisfied the scenario. The first decisive attempt is the one asserted on.
-     *
-     * IT NEVER ROUNDS. If no attempt is decisive the suite FAILS with every attempt printed, which
-     * reports an unstable corpus cell rather than converting one into a passing proof. That is
-     * plan 09's own retune path applied where it belongs: raise k for the lane, never soften the
-     * assertion of the cell that flapped.
-     */
+    // Each attempt runs both arms and counts only if the on-arm passes; no decisive attempt fails.
     const MAX_ATTEMPTS = 3
     let decisiveOn: Arm | undefined
     let decisiveOff: Arm | undefined
     let attemptsTaken = 0
+    const attemptLines: string[] = []
 
     beforeAll(async () => {
       if (capabilities === undefined) return
@@ -380,13 +298,14 @@ describe.skipIf(SKIP_REASON !== undefined)(
         const off = await runArm(scenario.utterance, modelVerbatimStrategy)
         let decisive = true
         try {
-          assertScenario(scenario, on)
+          assertScenario(scenario, on, on.reading)
         } catch {
           decisive = false
         }
-        process.stderr.write(
-          `\n[D-16 mutation proof] attempt ${attempt}/${MAX_ATTEMPTS} `
-            + `${decisive ? 'DECISIVE' : 'inconclusive (the on-arm did not satisfy the scenario)'}\n`,
+        attemptLines.push(
+          `attempt ${attempt}/${MAX_ATTEMPTS} `
+            + `${decisive ? 'decisive' : 'inconclusive (the on-arm did not satisfy the scenario)'}`
+            + `\n  ${on.reading}\n  ${off.reading}`,
         )
         if (decisive) {
           decisiveOn = on
@@ -396,11 +315,8 @@ describe.skipIf(SKIP_REASON !== undefined)(
       }
     }, 600_000)
 
-    it('A5 AUTH SMOKE: the host resolved a chat model', { timeout: 120_000 }, () => {
-      // FIRST, deliberately: everything below composes a host around this model, so a credential
-      // failure reds ONE named case instead of two arms failing in two different-looking ways that
-      // both mean "not logged in" — and a differential whose arms both fail for an unrelated
-      // reason is exactly the vacuous proof this plan exists to avoid.
+    it('AUTH SMOKE: the host resolved a chat model', { timeout: 120_000 }, () => {
+      // First: a credential failure reds one named case, not two arms failing differently.
       expect(
         capabilities,
         'the host could not resolve a chat model from the configured project — check the config '
@@ -412,45 +328,52 @@ describe.skipIf(SKIP_REASON !== undefined)(
       expect(
         decisiveOn,
         `no decisive attempt in ${attemptsTaken}: the on-arm never satisfied the committed `
-          + 'scenario, so there is no green side for the mutation to take away. Read the per-arm '
-          + 'lines above — this is a report about the live cell, not about the override.',
+          + 'scenario, so there is no green side for the mutation to take away. This is a report '
+          + `about the live cell, not about the override.\n${attemptLines.join('\n')}`,
       ).toBeDefined()
       const scenario = readSubject()
-      assertScenario(scenario, decisiveOn!)
+      const on = decisiveOn!
+      assertScenario(scenario, on, on.reading)
       // The two claims the scenario cannot make about itself, because a receipt carries no
       // arguments and no stage: the MAPPER's binding is what reached the run executor, and the
       // clause the table bound executed as a person acting rather than as the model acting.
-      expect(decisiveOn!.startedRuns).toEqual([MAPPER_BINDING])
-      expect(decisiveOn!.result.receipts[0]?.origin).toBe('human')
-      expect(decisiveOn!.result.receipts[1]?.functionId).toBe(RUNS_DIGEST_FUNCTION_ID)
-      expect(decisiveOn!.result.receipts[1]?.origin).toBe('agent')
+      expect(on.startedRuns, on.reading).toEqual([MAPPER_BINDING])
+      expect(on.result.receipts[0]?.origin, on.reading).toBe('human')
+      expect(on.result.receipts[1]?.functionId, on.reading).toBe(RUNS_DIGEST_FUNCTION_ID)
+      expect(on.result.receipts[1]?.origin, on.reading).toBe('agent')
     })
 
     it('ARM B — the override removed: the SAME scenario goes RED, and the suite measures the red', () => {
-      expect(decisiveOff).toBeDefined()
+      expect(
+        decisiveOff,
+        `no decisive attempt in ${attemptsTaken}.\n${attemptLines.join('\n')}`,
+      ).toBeDefined()
       const scenario = readSubject()
       const arm = decisiveOff!
 
       // THE MUTATION PROOF, in one line: the scenario's own contract, applied to the same
       // utterance through the same composition with one option changed, THROWS.
       expect(() => {
-        assertScenario(scenario, arm)
-      }).toThrow()
+        assertScenario(scenario, arm, arm.reading)
+      }, arm.reading).toThrow()
 
       // The predicted SHAPE, asserted rather than left to the reader. Recording which shape was
       // measured is the plan's own requirement, and asserting it is what stops the red above from
       // being satisfied by an unrelated failure — a differential whose off-arm reds for a setup
       // reason proves nothing about the mechanism.
-      expect(arm.result.receipts.map((receipt) => receipt.functionId)).toEqual([
+      expect(arm.result.receipts.map((receipt) => receipt.functionId), arm.reading).toEqual([
         RUNS_DIGEST_FUNCTION_ID,
       ])
       // ZERO runs started: the half the person typed as a canonical command is simply gone. This
       // is the whole cost of the override, stated as a measurement.
-      expect(arm.startedRuns).toEqual([])
+      expect(arm.startedRuns, arm.reading).toEqual([])
       // And the loss is SILENT — the turn still reports success. A refusal would at least be
       // visible; this is the failure shape the deterministic override exists to make impossible.
-      expect(arm.result.status).toBe('completed')
-      expect(arm.result.receipts.every((receipt) => receipt.origin === 'agent')).toBe(true)
+      expect(arm.result.status, arm.reading).toBe('completed')
+      expect(
+        arm.result.receipts.every((receipt) => receipt.origin === 'agent'),
+        arm.reading,
+      ).toBe(true)
     })
   },
 )
@@ -458,10 +381,7 @@ describe.skipIf(SKIP_REASON !== undefined)(
 describe('the differential is built out of the composition, not out of parts', () => {
   it('imports no reconciliation module and no vendor adapter — SPECIFIERS, never vocabulary', () => {
     const source = readFileSync(fileURLToPath(import.meta.url), 'utf8')
-    // The header discusses reconciliation, the shipped strategy and provider clients at length and
-    // must stay free to — 392-08's lesson is that a pin which forbids a WORD reds on the comment
-    // that explains the rule. So what is walked is the file's own IMPORT SPECIFIERS, and the claim
-    // is about which modules this differential is built out of.
+    // Walks the file's import specifiers, because the header names what the file must not import.
     const specifiers = [...source.matchAll(/^import[^'\n]*'([^']+)'/gm)].map((match) => match[1]!)
     expect(specifiers.length).toBeGreaterThan(5)
     expect(specifiers.filter((specifier) => specifier.includes('reconcil'))).toEqual([])

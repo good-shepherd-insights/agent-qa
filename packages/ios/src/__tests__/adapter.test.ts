@@ -106,7 +106,7 @@ import type { PlatformAdapter, PlatformConfig } from '@vostride/agent-qa-runner'
 import type { LiveFrame } from '@vostride/agent-qa-schema'
 import zlib from 'node:zlib'
 
-// --- PNG helpers (avoids adding sharp as ios dep per Pitfall 5) ---
+// PNG helpers, so the ios package needs no sharp dependency.
 function pngCrc32(buf: Buffer): number {
   const table: number[] = []
   for (let i = 0; i < 256; i++) {
@@ -172,7 +172,7 @@ describe('IOSPlatformAdapter', () => {
       const config: PlatformConfig = {
         platform: 'ios',
         appState: 'preserve',
-        device: { name: 'iphone-15', platform: 'ios', transport: 'local', match: { automationName: 'XCUITest', platformVersion: '17.0', deviceName: 'iPhone 15', app: '/path/to/app.app' } },
+        device: { name: 'iphone-15', platform: 'ios', match: { automationName: 'XCUITest', platformVersion: '17.0', deviceName: 'iPhone 15', app: '/path/to/app.app' } },
       }
 
       await adapter.setup(config)
@@ -210,7 +210,6 @@ describe('IOSPlatformAdapter', () => {
         device: {
           name: 'ios-sim',
           platform: 'ios',
-          transport: 'local',
           match: { automationName: 'XCUITest' },
         },
         bundleId: 'org.reactjs.native.example.wdiodemoapp',
@@ -230,7 +229,6 @@ describe('IOSPlatformAdapter', () => {
         device: {
           name: 'ios-sim',
           platform: 'ios',
-          transport: 'local',
           match: { automationName: 'XCUITest' },
         },
       })
@@ -247,7 +245,6 @@ describe('IOSPlatformAdapter', () => {
         device: {
           name: 'ios-sim',
           platform: 'ios',
-          transport: 'local',
           match: { automationName: 'XCUITest' },
         },
       })
@@ -264,7 +261,6 @@ describe('IOSPlatformAdapter', () => {
         device: {
           name: 'ios-sim',
           platform: 'ios',
-          transport: 'local',
           match: { automationName: 'XCUITest', noReset: true },
         },
       })
@@ -280,7 +276,6 @@ describe('IOSPlatformAdapter', () => {
         device: {
           name: 'ios-sim',
           platform: 'ios',
-          transport: 'local',
           match: { automationName: 'XCUITest' },
         },
         bundleId: 'org.reactjs.native.example.wdiodemoapp',
@@ -304,7 +299,6 @@ describe('IOSPlatformAdapter', () => {
         device: {
           name: 'ios-sim',
           platform: 'ios',
-          transport: 'local',
           match: { automationName: 'XCUITest' },
         },
         bundleId: 'org.reactjs.native.example.wdiodemoapp',
@@ -352,7 +346,7 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('C437-TREE-TOGGLE — adapter-level iOS tree', () => {
+  describe('adapter-level iOS tree', () => {
     it('a switch with value "1" renders [checked] and one with value "0" does not', async () => {
       mockDriver.getPageSource.mockResolvedValue(
         IOS_XML.replace('label="Stay signed in" value="0"', 'label="Stay signed in" value="1"'),
@@ -368,7 +362,7 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('observe — accessible labelled Others (P4)', () => {
+  describe('observe — accessible labelled Others', () => {
     it('observes the Bluesky sheet row as a button and taps its centre', async () => {
       mockDriver.getPageSource.mockResolvedValue(IOS_SHEET_XML)
       mockDriver.getWindowSize.mockResolvedValue({ width: 402, height: 874 })
@@ -421,9 +415,8 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  // C437-IOS-TAP-HOLD (437-09): a zero-duration touch flipped an iOS 27 Settings switch knob 2 of
-  // 11 times live; the same touch held 100 ms between down and up flipped it every time.
-  describe('C437-IOS-TAP-HOLD — single taps hold the touch between down and up', () => {
+  // A zero-duration touch flips an iOS Settings switch unreliably; a 100 ms hold flips it.
+  describe('single taps hold the touch between down and up', () => {
     function chainSteps(): string[] {
       const chain = mockDriver._pointerAction
       const steps: Array<[number, string]> = []
@@ -635,7 +628,7 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('execute — openUniversalLink (re-key of openLink, D-19)', () => {
+  describe('execute — openUniversalLink (re-key of openLink)', () => {
     const LINK = 'https://bsky.app/hashtag/caturday'
     const APP = 'xyz.blueskyweb.app'
     const OTHER = 'com.example.other'
@@ -982,30 +975,10 @@ describe('IOSPlatformAdapter', () => {
         expect(deepLinkExecutes()).toEqual([])
       })
     })
-
-    it('uses driver.url in a BrowserStack browser session without querying the foreground app', async () => {
-      await adapter.setup({
-        platform: 'ios',
-        device: { name: 'iPhone 15', platform: 'ios', transport: 'browserstack', match: { browserName: 'Safari' } },
-        farmSession: {
-          hostname: 'hub-cloud.browserstack.com',
-          port: 443,
-          path: '/wd/hub',
-          capabilities: { 'appium:browserName': 'Safari' },
-        },
-      })
-
-      const result = await adapter.execute({ type: 'openUniversalLink', url: LINK })
-
-      expect(result.success).toBe(true)
-      expect(mockDriver.url).toHaveBeenCalledWith(LINK)
-      expect(foregroundReads()).toBe(0)
-      expect(mockDriver.pause).not.toHaveBeenCalled()
-    })
   })
 
   describe('execute — waitFor (schema on-modes replace legacy condition/timeout)', () => {
-    it('on:"selector" returns a §7.1 web-only error on native iOS', async () => {
+    it('on:"selector" returns a structured web-only error on native iOS', async () => {
       await adapter.setup({ platform: 'ios' })
       const result = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 })
       expect(result.success).toBe(false)
@@ -1019,7 +992,7 @@ describe('IOSPlatformAdapter', () => {
       expect(result.success).toBe(true)
     })
 
-    it('on:"text" times out with a §7.1 error when the text never appears', async () => {
+    it('on:"text" times out with a structured error when the text never appears', async () => {
       await adapter.setup({ platform: 'ios' })
       mockDriver.getPageSource.mockResolvedValue('<XCUIElementTypeOther />')
       const result = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Never', timeoutMs: 20 })
@@ -1072,7 +1045,7 @@ describe('IOSPlatformAdapter', () => {
   })
 
   describe('execute — keypress hold/release gate', () => {
-    it('mode:"down"/"up" (key hold/release) returns a §7.1 press-only error', async () => {
+    it('mode:"down"/"up" (key hold/release) returns a structured press-only error', async () => {
       await adapter.setup({ platform: 'ios' })
       const up = await adapter.execute({ type: 'keypress', keys: ['Shift'], mode: 'up' })
       expect(up.success).toBe(false)
@@ -1126,7 +1099,7 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('screenshot — stage-2 physical→logical alignment (D-05)', () => {
+  describe('screenshot — stage-2 physical→logical alignment', () => {
     it('resizes 1179x2556 physical buffer to 393x852 logical buffer matching getWindowSize', async () => {
       await adapter.setup({ platform: 'ios' })
       mockDriver.getWindowSize.mockResolvedValue({ width: 393, height: 852 })
@@ -1141,7 +1114,7 @@ describe('IOSPlatformAdapter', () => {
       expect(dims!.height).toBe(852)
     })
 
-    it('re-reads getWindowSize on every screenshot call (no caching — D-05, Pitfall 8)', async () => {
+    it('re-reads getWindowSize on every screenshot call (no caching)', async () => {
       await adapter.setup({ platform: 'ios' })
       mockDriver.getWindowSize.mockResolvedValue({ width: 393, height: 852 })
       mockDriver.takeScreenshot.mockResolvedValue(create1179x2556PngBase64())
@@ -1222,7 +1195,7 @@ describe('IOSPlatformAdapter', () => {
     })
   })
 
-  describe('liveStream (428 D-11)', () => {
+  describe('liveStream', () => {
     function contextSpies() {
       const spies = {
         getContext: vi.fn().mockResolvedValue('NATIVE_APP'),

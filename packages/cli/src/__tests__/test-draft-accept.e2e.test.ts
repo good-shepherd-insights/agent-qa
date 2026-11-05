@@ -1,16 +1,4 @@
-// A final authored test is written straight to its target (432 D-06/D-07), over the CLI host's
-// real writer, a real workspace and — where a repository exists — a real git repository.
-//
-// RE-SPELLED IN PLACE, 2026-09-30. This file used to prove that ACCEPTING a `test-draft` proposal
-// wrote it and made one commit of one file (394-10). Nothing waits for acceptance now and agent-qa
-// makes no commits, so every claim here keeps its subject — the bytes that land at the target — and
-// measures the direct write instead: the exact bytes, the workspace boundary and the source-digest
-// guard the old apply checked, no commit, no index change, success in a dirty tree and without git,
-// no bytes for a rejected draft, and a failed write reported as not written.
-//
-// WHY THIS FILE IS IN `packages/cli`. The writer needs `workspaceRelativeIdentityPath` from
-// `@vostride/agent-qa-core`, which neither `agent` nor `agent-local` may name, so the CLI host is the
-// only place the loop, the real writer and a real repository can be in one process.
+// A final authored test is written straight to its target; only the CLI host has the writer.
 
 import { createHash } from 'node:crypto'
 import {
@@ -127,8 +115,8 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-describe('C432-TEST-DIRECT-BYTES: a final authored test is written directly to its target', () => {
-  it('C432-TEST-DIRECT-BYTES: writes the draft bytes exactly, and HEAD, the index and the history do not move', () => {
+describe('a final authored test is written directly to its target', () => {
+  it('writes the draft bytes exactly, and HEAD, the index and the history do not move', () => {
     initRepository()
     const before = repositorySnapshot()
 
@@ -151,7 +139,7 @@ describe('C432-TEST-DIRECT-BYTES: a final authored test is written directly to i
       .toEqual(['.agent-qa-drafts', 'the-coupon-banner-appears.yaml'])
   })
 
-  it("C432-TEST-DIRECT-BYTES: writes into a dirty tree and leaves a person's staged and unstaged work alone", () => {
+  it("writes into a dirty tree and leaves a person's staged and unstaged work alone", () => {
     initRepository()
     writeFileSync(join(root, 'README.md'), 'seeded\nstaged edit\n')
     git('add', '--', 'README.md')
@@ -172,7 +160,7 @@ describe('C432-TEST-DIRECT-BYTES: a final authored test is written directly to i
       .toBe('seeded\nstaged edit\nunstaged edit\n')
   })
 
-  it('C432-TEST-DIRECT-BYTES: writes with no repository and no git on PATH', () => {
+  it('writes with no repository and no git on PATH', () => {
     const savedPath = process.env['PATH']
     process.env['PATH'] = ''
     let outcome: unknown
@@ -190,7 +178,7 @@ describe('C432-TEST-DIRECT-BYTES: a final authored test is written directly to i
     expect(existsSync(join(root, '.git'))).toBe(false)
   })
 
-  it('C432-TEST-DIRECT-BYTES: refuses a target that is no longer what was read, and writes nothing', () => {
+  it('refuses a target that is no longer what was read, and writes nothing', () => {
     const theirs = Buffer.from('name: mine, not yet committed\nsteps:\n  - Open\n')
     writeFileSync(join(root, TARGET_PATH), theirs)
 
@@ -214,7 +202,7 @@ describe('C432-TEST-DIRECT-BYTES: a final authored test is written directly to i
     expect(readFileSync(join(root, TARGET_PATH)).equals(DRAFT_BYTES)).toBe(true)
   })
 
-  it('C432-TEST-DIRECT-BYTES: refuses a target outside the workspace, including through a symlink', () => {
+  it('refuses a target outside the workspace, including through a symlink', () => {
     const outside = mkdtempSync(join(tmpdir(), 'test-direct-write-outside-'))
     try {
       symlinkSync(outside, join(root, 'tests', 'escape'))
@@ -235,7 +223,7 @@ describe('C432-TEST-DIRECT-BYTES: a final authored test is written directly to i
     }
   })
 
-  it('C432-TEST-DIRECT-BYTES: a failed write is reported as not written, never as success', () => {
+  it('a failed write is reported as not written, never as success', () => {
     const outcome = publisher()({
       configPath,
       request: { draftPath: DRAFT_PATH, targetPath: TARGET_PATH },
@@ -345,8 +333,8 @@ function loopDeps(disposition: DraftDisposition, pass: boolean) {
 
 const LOOP_TARGET = 'tests/confirm-the-coupon-banner.yaml'
 
-describe('C432-TEST-DIRECT-BYTES: the loop writes a final draft through this host, or does not', () => {
-  it('C432-TEST-DIRECT-BYTES: a keep-eligible final draft lands at its target, byte for byte', async () => {
+describe('the loop writes a final draft through this host, or does not', () => {
+  it('a keep-eligible final draft lands at its target, byte for byte', async () => {
     initRepository()
     const before = repositorySnapshot()
 
@@ -361,7 +349,7 @@ describe('C432-TEST-DIRECT-BYTES: the loop writes a final draft through this hos
     expect(repositorySnapshot()).toEqual(before)
   })
 
-  it('C432-TEST-DIRECT-BYTES: a rejected final draft leaves no bytes at its target', async () => {
+  it('a rejected final draft leaves no bytes at its target', async () => {
     initRepository()
     const before = repositorySnapshot()
 

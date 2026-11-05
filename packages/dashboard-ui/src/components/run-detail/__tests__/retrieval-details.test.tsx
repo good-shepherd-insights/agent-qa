@@ -1,10 +1,7 @@
 import { RECORD_CHANGE_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
 // @vitest-environment jsdom
 
-// 427 · D-19 — Retrieval details, the one place technical facts live. These cells pin what a reader
-// finds once the section is open: each step's recorded retrieval level when it was below the full
-// index, and a copy button on every record id whose result is announced, failure included.
-// Views are built through the real projectKnowledgeView over schema-parsed projections.
+// Once open: each step's retrieval level below the full index, and an announced copy on every id.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -75,7 +72,7 @@ function step(stepIndex: number, extra: Record<string, unknown> = {}) {
 function readyView(steps: ReturnType<typeof step>[], changes: unknown[] = []): Extract<KnowledgeView, { state: "ready" }> {
   const projection = RunKnowledgeProjectionSchema.parse({
     kind: "ready",
-    runId: "run-427-10-details",
+    runId: "run-details",
     buildOrdinal: 1,
     knowledgeStore: "bound",
     steps,
@@ -97,7 +94,7 @@ function openDetails(view: Extract<KnowledgeView, { state: "ready" }>): HTMLElem
   return host
 }
 
-describe("each step states the retrieval level it recorded, only when it was below the full index (D-19)", () => {
+describe("each step states the retrieval level it recorded, only when it was below the full index", () => {
   it("LEDGER-RUNG-LINE: a bundle-scan step reads its level and cause; a memidex step and a step with no rung read none", () => {
     const view = readyView([
       step(0, { retrievalRung: { schemaVersion: 2, rung: "bundle-scan", reason: "index-locked" } }),
@@ -119,7 +116,7 @@ describe("each step states the retrieval level it recorded, only when it was bel
   })
 })
 
-describe("every record id copies, and the result is announced (E8)", () => {
+describe("every record id copies, and the result is announced", () => {
   const SERVED = "fact-el-button-step-0-0f9a1c2b3d4e5f60"
   const CHANGED = "fact-page-https-example-com-9f2c1ad4"
 
@@ -187,7 +184,7 @@ describe("every record id copies, and the result is announced (E8)", () => {
     expect(button.getAttribute("data-copy-status")).toBe("copied")
     expect(statusOf(button)?.textContent).toBe(RECORD_ID_COPIED_TEXT)
     expect(RECORD_ID_COPIED_TEXT).toBe("Record id copied to the clipboard")
-    // RE-SPELLED 2026-10-03 (quick 261003-cpv): both copy controls wear the success token.
+    // Both copy controls wear the success token.
     expect(button.querySelector("svg")?.getAttribute("class")).toContain("text-success")
   })
 

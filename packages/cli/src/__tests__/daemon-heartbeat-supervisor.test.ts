@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 
 import {
   LEASE_HEARTBEAT_TTL_MS,
@@ -47,16 +47,8 @@ const RECLAIM_MARGIN_MS = 1_000;
 const MUTATION_HOLD_MS = LEASE_HEARTBEAT_TTL_MS + 10_000;
 const MUTATION_CONTENDER_DELAY_MS = LEASE_HEARTBEAT_TTL_MS + 2_000;
 const MUTATION_RECORD_FILE = 'mutation-record.log';
-/**
- * 2026-10-02 (quick 261002-tmo): the blocked/mutating daemon fixtures hold their main thread
- * until the parent writes a release file, after its contender has reported, and never less
- * than their stated minimum. A fixed hold raced the contender's own process start: at load
- * 74-88 the contender attempted 41.6-42.2 s after the mutation began, past the 40 s hold,
- * found the daemon exited and its lease released, and read `acquired` epoch 2 (3 of 3 runs;
- * 432-03 #1). The cap only bounds a parent that never releases.
- */
+// Fixtures hold until the parent releases, as a fixed hold can expire before a loaded contender.
 const RELEASE_CAP_MS = 120_000;
-/** 2026-10-02 (quick 261002-tmo): ceiling for one child vitest process to boot and report. */
 const CHILD_BOOT_CEILING_MS = 60_000;
 
 /** Synchronously occupy the calling thread for at least minHoldMs and until released. */
@@ -154,6 +146,8 @@ function startFixture(
     ],
     {
       cwd: values.cwd ?? PACKAGE_ROOT,
+      // Its own group, so a hangup aimed at the runner's group never meets a stopped fixture.
+      detached: process.platform !== 'win32',
       env: {
         ...process.env,
         AGENT_QA_HEARTBEAT_FIXTURE_ROLE: role,
@@ -182,6 +176,11 @@ function startFixture(
       child.once('exit', (code, signal) => resolve({ code, signal, output }));
     }),
   };
+}
+
+function processGroupOf(pid: number): number {
+  const pgid = execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' });
+  return Number(pgid.trim());
 }
 
 async function stopFixture(child: FixtureChild, wasStopped = false): Promise<void> {
@@ -381,9 +380,7 @@ if (FIXTURE_ROLE === 'contender') {
         cwd: realpathSync(root),
         heartbeatCount: expect.any(Number),
       });
-      // 2026-10-02 (quick 261002-tmo): the cell boots a whole child vitest process; it waits on
-      // that child's exit, so its budget is a hang ceiling. 2.1 s alone at load 23, 9.8-10.1 s at
-      // load 74-88, and over the old 15 s under a forced gate (432-03 #1).
+      // The cell waits on a whole child vitest process, so its budget is only a hang ceiling.
     }, 2 * CHILD_BOOT_CEILING_MS);
 
     it('stops a live worker idempotently without emitting later heartbeats', async () => {
@@ -437,10 +434,7 @@ if (FIXTURE_ROLE === 'contender') {
       expect(releaseLease({ knowledgeRoot: root, leaseId: acquired.leaseId })).toEqual({
         kind: 'released',
       });
-      // 2026-10-02 (quick 261002-lse): strict again. 432-19 had the fixture re-release a lease
-      // that the supervised 25 ms beat resurrected under the same id (432-19 #7). The beat and the
-      // release now share the lease-file guard, so once the release returns no beat can rewrite
-      // the lease, and the very next acquire must answer `acquired`.
+      // The beat and the release share the lease-file guard, so no beat rewrites a released lease.
       const replacement = acquireWriterLease(root);
       if (replacement.kind !== 'acquired') {
         throw new Error(`Expected replacement fixture lease, received ${replacement.kind}`);
@@ -606,17 +600,8 @@ if (FIXTURE_ROLE === 'contender') {
       }
     }, 30_000);
 
-    /**
-     * I-02: the supervisor carried a `MutationLockBusyError` retry branch that could not run.
-     *
-     * The premise still has to stay checked, and it is now stronger than it was: the beat takes no
-     * mutation lock at all, so a store whose write transaction is held by someone else is not a
-     * contended beat but an ordinary one. This leg drives a real wedged store and asserts the beat
-     * lands — never an error message, and never a third outcome. If a future change routes the
-     * beat back through the lock, this reddens, which is exactly when the deleted retry branch
-     * would have been needed and exactly when silently retrying would hide the regression.
-     */
-    it('takes an ordinary beat against a wedged store, never a busy throw (I-02)', async () => {
+    // A held write transaction leaves the beat ordinary, because the beat takes no mutation lock.
+    it('takes an ordinary beat against a wedged store, never a busy throw', async () => {
       const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-contention-'));
       roots.push(root);
       const acquired = acquireWriterLease(root);
@@ -723,6 +708,25 @@ if (FIXTURE_ROLE === 'contender') {
         }
       },
       LEASE_HEARTBEAT_TTL_MS + BLOCK_MARGIN_MS + RELEASE_CAP_MS + 45_000,
+    );
+
+    it.runIf(process.platform !== 'win32')(
+      'starts each fixture as the leader of a process group the test runner is not in',
+      async () => {
+        const root = mkdtempSync(join(tmpdir(), 'agent-qa-heartbeat-group-'));
+        roots.push(root);
+        const fixture = startFixture('contender', { root, report: join(root, 'contender.json') });
+        try {
+          const pid = fixture.process.pid;
+          if (pid === undefined) {
+            throw new Error(`Fixture did not start:\n${(await fixture.exit).output}`);
+          }
+          expect(processGroupOf(pid)).toBe(pid);
+          expect(processGroupOf(process.pid)).not.toBe(pid);
+        } finally {
+          await stopFixture(fixture);
+        }
+      },
     );
 
     it.runIf(process.platform !== 'win32')(

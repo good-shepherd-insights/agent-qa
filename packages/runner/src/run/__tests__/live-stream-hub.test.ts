@@ -13,11 +13,12 @@ import {
 import type { RunTimerPort } from '../ports.js'
 
 /**
- * A MULTI-SLOT fake timer. The `run-cancel.test.ts` fake holds ONE pending callback, which is
- * enough for the run budget but not here: the hub arms an ack bound per in-flight frame AND a stop
- * grace, so a single-slot fake would silently drop whichever was armed first and the cells would be
- * measuring the fake, not the hub. Callbacks are keyed by the delay they were scheduled with, so a
- * cell fires exactly the timer it means (`fire(LIVE_STREAM_STOP_GRACE_MS)`), never "the latest".
+ * A MULTI-SLOT fake timer. The `run-shell.test.ts` fake holds ONE pending callback, which is
+ * enough for the post-verdict bound but not here: the hub arms an ack bound per in-flight frame AND
+ * a stop grace, so a single-slot fake would silently drop whichever was armed first and the cells
+ * would be measuring the fake, not the hub. Callbacks are keyed by the delay they were scheduled
+ * with, so a cell fires exactly the timer it means (`fire(LIVE_STREAM_STOP_GRACE_MS)`), never "the
+ * latest".
  */
 interface FakeTimer extends RunTimerPort {
   fire(delayMs: number): number
@@ -89,7 +90,7 @@ function frame(id: number): LiveFrame {
 /** Let the hub's internal `start()` promise settle before asserting on `calls`. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
-describe('createLiveStreamHub (403 D-05/D-07)', () => {
+describe('createLiveStreamHub', () => {
   it('(a) never starts the producer while nobody is watching', async () => {
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
@@ -210,10 +211,7 @@ describe('createLiveStreamHub (403 D-05/D-07)', () => {
   })
 
   it('(g) withdrawing the capability mid-stream stops it, declares none, and TELLS the viewers', async () => {
-    // CR-03. Stopping the producer without telling the subscriber set is how a live view freezes:
-    // the last frame stays painted and the surface still calls itself live. The end is delivered to
-    // every current subscriber, and the assertion is ordered so an absence can never pass for a
-    // presence — a frame is proved delivered BEFORE the end is asserted.
+    // Every subscriber gets the end; a frame is proved delivered before the end is asserted.
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
     const hub = createLiveStreamHub({ timer })
@@ -266,9 +264,7 @@ describe('createLiveStreamHub (403 D-05/D-07)', () => {
   })
 
   it('detaches a subscriber that throws, reports it on the SUBSCRIBER sink, leaves the others attached', async () => {
-    // WR-06. The detach is unchanged; where it is REPORTED is the fix. `onWarning` carries facts
-    // about the run's producer and the shell wires it to the run's durable event log — a channel a
-    // viewer must not be able to write to by closing its tab at the wrong instant.
+    // A viewer closing its tab must not write to the run's durable log through `onWarning`.
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
     const warnings: string[] = []
@@ -294,20 +290,7 @@ describe('createLiveStreamHub (403 D-05/D-07)', () => {
   })
 })
 
-// ---- 403-02 Task 1: THE N-VIEWER INVARIANT ------------------------------------------------------
-//
-// WHY A PROPERTY CELL AND NOT MORE EXAMPLES. Everything above is an EXAMPLE: one hand-picked order
-// of attach/detach/frame/ack. D-07 and D-16 are not statements about an order — they are statements
-// about ANY order ("N viewers attach and detach in any interleaving"), and a suite of hand-picked
-// orders certifies exactly the orders somebody thought of. 403-01's own masking blocker was found
-// only because that cell was parameterised over binder ORDER and the defect appeared in BOTH
-// directions, each with a passing sibling assertion. So the interleaving is a real parameter here.
-//
-// THE MODEL IS THE SPEC, WRITTEN AS CODE. Every operation updates a tiny reference model — is the
-// stream watched, which viewers are attached, which frames are owed by whom — and the cell asserts
-// the hub's OBSERVED producer calls against it. A model this thin cannot drift into agreeing with
-// the implementation by construction: it is written from D-07's sentence, and it says nothing about
-// how the hub is built.
+// A seeded property cell: any attach, detach, frame and ack order is checked against a tiny model.
 
 /** mulberry32 — a 32-bit PRNG in five lines. Seeded, so a failing interleaving is reproducible. */
 function mulberry32(seed: number): () => number {
@@ -352,7 +335,7 @@ function randomOps(next: () => number, viewerCount: number, length: number): Hub
   return ops
 }
 
-describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
+describe('the N-viewer invariant', () => {
   it('(i) 200 seeded interleavings over up to 6 viewers: one start and one stop per watched interval', async () => {
     // COVERAGE COUNTERS, asserted at the bottom. 200 green iterations prove nothing if every one of
     // them was a single viewer attaching once: a property cell whose generator never reaches the
@@ -371,7 +354,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
       const hub = createLiveStreamHub({ timer })
       hub.register(0, capability)
 
-      // --- the reference model, written from D-07's sentence ---
+      // --- the reference model ---
       const attached = new Map<number, ReturnType<typeof hub.subscribe>>()
       const seenBy = new Map<number, number[]>()
       /** What the MODEL says each viewer must have seen — the frames emitted while it watched. */
@@ -385,7 +368,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
       let nextFrameId = 1
       let peakConcurrent = 0
 
-      /** The grace elapsing with nobody attached ENDS the watched interval (D-07). */
+      // The grace elapsing with nobody attached ends the watched interval.
       const endInterval = (): void => {
         watched = false
         expectedStops += 1
@@ -503,9 +486,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
       }
     }
 
-    // THE ANTI-VACUITY GUARD. If the generator stopped producing concurrent viewers, re-attachments
-    // or shared frames, the 200 iterations above would still be green while measuring nothing that
-    // D-07 is about.
+    // Without concurrent viewers from the generator, the iterations above measure nothing.
     expect(iterationsWithConcurrentViewers, 'the generator never put two viewers on one handle')
       .toBeGreaterThan(20)
     expect(iterationsWithTwoIntervals, 'the generator never closed and re-opened a watched interval')
@@ -560,10 +541,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
     first?.unsubscribe()
     expect(timer.fire(LIVE_STREAM_STOP_GRACE_MS)).toBe(1)
     await flush()
-    // An interval that opens and closes before the producer was ever asked is ELIDED — the
-    // reconciler sees `desired === running === false` and makes no call at all. That is D-07 in its
-    // strongest form (a screencast nobody watched is never started), and the one thing it must
-    // never be is HALF applied: a start with no stop leaves a screencast running for nobody.
+    // An interval that closes before the producer is asked makes no call; never half applied.
     expect(
       capability.calls.filter((call) => call === 'start').length,
       'at most one start for an interval that closed before the producer was asked',
@@ -591,9 +569,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
   })
 
   it('(l) when the LAST viewer is detached by throwing, the producer does not keep running for nobody', async () => {
-    // D-07's zero-cost claim has a back door: a viewer removed by `deliver`'s throw path never
-    // calls `unsubscribe`, so nothing schedules the stop. An unwatched screencast is exactly the
-    // work D-07 exists to refuse.
+    // A viewer dropped by `deliver`'s throw path never unsubscribes, so the hub schedules the stop.
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
     const warnings: string[] = []
@@ -608,7 +584,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
     await flush()
     capability.emit(frame(1))
     expect(faults, 'the witness: the throw path really was taken').toContain('live-stream-subscriber-detached')
-    expect(warnings, 'off the run channel (WR-06)').toEqual([])
+    expect(warnings, 'off the run channel').toEqual([])
     expect(
       timer.pending(LIVE_STREAM_STOP_GRACE_MS),
       'the throw path emptied the subscriber set, so the stop must be scheduled like any other '
@@ -700,7 +676,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
     await flush()
     expect(first.calls, 'the replaced capability is stopped — a re-registered handle leaves no '
       + 'orphan screencast running in the browser').toContain('stop')
-    expect(ends, 'and the viewers of the REPLACED stream are told it ended (CR-03) — a re-register '
+    expect(ends, 'and the viewers of the REPLACED stream are told it ended — a re-register '
       + 'drops their subscription just as surely as a withdraw does').toEqual(['end'])
     expect(second.calls, 'and the replacement is not started until somebody watches it').toEqual([])
     expect(hub.capabilityOf(0)).toEqual({ kind: 'cdp-screencast' })
@@ -712,14 +688,7 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
   })
 
   it('(r) a viewer that acks FROM INSIDE its own frame callback acks the producer immediately', async () => {
-    // THE FASTEST POSSIBLE CONSUMER, and the one the hub was silently punishing. Acking from the
-    // delivery callback is the natural in-process pattern — it is what the LIVE-03 bus-silence
-    // cell does and what any consumer that does not need to decode first would do. The hub used to
-    // record a frame's ack ledger AFTER walking its subscribers, so an ack raised during that walk
-    // found no ledger and was dropped: every frame then waited out the FULL ack bound before the
-    // producer was told, capping a live view at 1000/LIVE_STREAM_ACK_BOUND_MS frames per second no
-    // matter how fast the browser or the viewer was. Invisible to every cell whose viewer acks
-    // later, which is why 403-01's eight cells and the tracer's browser page all missed it.
+    // Acking from the delivery callback must work, or every frame waits out the full ack bound.
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
     const hub = createLiveStreamHub({ timer })
@@ -787,12 +756,9 @@ describe('the N-viewer invariant (403-02 · D-07/D-16 · LIVE-01)', () => {
   })
 })
 
-// ---- 428-01: CAPTURE TIME AND KIND ON THE FRAME (D-15, PXH-LIVE-03) -----------------------------
-//
-// A frame's time is its CAPTURE time in integer epoch milliseconds. The producer stamps it; the hub
-// fills it from its own clock only when the producer did not, and never overwrites one it was given.
+// A frame's time is its capture time in epoch ms; the hub fills it only when the producer did not.
 
-describe('the hub stamps capture time and producer kind on a copy (428-01 · D-15)', () => {
+describe('the hub stamps capture time and producer kind on a copy', () => {
   it('(t) TS-STAMPED-WHEN-ABSENT: an unstamped frame reaches the subscriber at timer.now(), the producer object untouched', async () => {
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
@@ -839,13 +805,9 @@ describe('the hub stamps capture time and producer kind on a copy (428-01 · D-1
   })
 })
 
-// ---- 428-04: EVERY END SAYS WHY, AND close() EVICTS LIKE THE OTHER TWO SITES (D-14, #277) -------
-//
-// `withdrawn`: this member finished or was replaced, and its subject goes on. `closed`: the whole
-// subject is over. A consumer that cannot tell the two apart either ends a whole view when one
-// member finishes, or holds a frozen frame when the run ends.
+// `withdrawn`: this member ended or its capability is replaced; `closed`: the subject is over.
 
-describe('every end names its reason and close() evicts (428-04 · D-14 · #277)', () => {
+describe('every end names its reason and close() evicts', () => {
   it('CLOSE-EVICTS-AND-TELLS: close() ends every subscriber once with closed, stops once, refuses later subscribers', async () => {
     const timer = makeFakeTimer()
     const capability = makeFakeCapability()
@@ -900,11 +862,7 @@ describe('every end names its reason and close() evicts (428-04 · D-14 · #277)
   })
 })
 
-// ---- 428-04: A FAILED START HANDS OVER TO THE SNAPSHOT FALLBACK (D-12) ---------------------------
-//
-// Only the hub can both record the failure on the run's durable log AND switch producers, so the
-// fallback seat lives here. The failure is still written before the switch: a fallback that hid the
-// primary's failure would make a degraded preview indistinguishable from a healthy one.
+// The failure is written before the switch, so a fallback never hides the primary's failure.
 
 /** A primary whose `start` rejects `failures` times, then behaves like the plain fake. */
 function makeRejectingCapability(failures = Number.POSITIVE_INFINITY): FakeCapability {
@@ -927,7 +885,7 @@ function makeSnapshotCapability(): FakeCapability {
   return { ...makeFakeCapability(), kind: 'snapshot' }
 }
 
-describe('a failed primary start hands over to its snapshot fallback (428-04 · D-12)', () => {
+describe('a failed primary start hands over to its snapshot fallback', () => {
   it('START-FAILURE-FALLS-BACK: the failure is recorded, the fallback starts, and its frames arrive labelled snapshot', async () => {
     const timer = makeFakeTimer()
     const warnings: string[] = []
@@ -1047,7 +1005,7 @@ describe('a failed primary start hands over to its snapshot fallback (428-04 · 
 // its member finished: the shape WINDOWS calls "green that never ran". So this cell drives
 // `startRun` end to end.
 
-describe('shell.ts threads the end-of-stream notification onto the real RunSession seam (CR-03)', () => {
+describe('shell.ts threads the end-of-stream notification onto the real RunSession seam', () => {
   it('a member settling delivers onEnd to that handle\'s frame subscribers, run still going', async () => {
     let push: ((frame: LiveFrame) => void) | undefined
     const capability: LiveStreamCapability = {
@@ -1082,8 +1040,7 @@ describe('shell.ts threads the end-of-stream notification onto the real RunSessi
           // subscriber is told about, not a member that had already settled before it attached.
           await memberAHeld
         } else {
-          // The SECOND member keeps the run going, which is what makes this CR-03 and not the
-          // already-covered `runFinished` path: the handle ends while the RUN does not.
+          // The second member keeps the run going, so the handle ends while the run does not.
           await held
         }
         return { name: member.name, filePath: member.filePath, status: 'passed', steps: [], duration: 1 }
@@ -1124,7 +1081,7 @@ describe('shell.ts threads the end-of-stream notification onto the real RunSessi
   })
 })
 
-describe('shell.ts forwards a SUBSCRIBER fault to the host port, off the run bus (403-13 · WR-06)', () => {
+describe('shell.ts forwards a SUBSCRIBER fault to the host port, off the run bus', () => {
   it('a subscriber that throws is reported on ports.onSubscriberFault, detached, and the runWarning count is unchanged', async () => {
     let push: ((frame: LiveFrame) => void) | undefined
     const capability: LiveStreamCapability = {
@@ -1141,7 +1098,7 @@ describe('shell.ts forwards a SUBSCRIBER fault to the host port, off the run bus
     const log: RunEventEnvelope[] = []
     const faults: [string, string][] = []
     const config: RunConfig = {
-      runId: 'run-403-13-subscriber-fault' as RunConfig['runId'],
+      runId: 'run-subscriber-fault' as RunConfig['runId'],
       scope: { tier: 'suite', key: 'live-view' },
       executionContext: 'local-headless',
       buildOrdinal: 1,
@@ -1189,7 +1146,7 @@ describe('shell.ts forwards a SUBSCRIBER fault to the host port, off the run bus
     const runWarningsAfter = log.filter((e) => e.type === 'runWarning').length
     expect(runWarningsAfter, `runWarning count before=${runWarningsBefore} after=${runWarningsAfter}`).toBe(runWarningsBefore)
 
-    // The detach behaviour 403-09 verified is unchanged: the thrower is gone, the witness carries on.
+    // The thrower is gone and the witness carries on.
     push?.({ id: 2, bytes: new Uint8Array([0xff, 0xd8, 0xff]), metadata: { width: 320, height: 240 } })
     witness?.ack(2)
     expect(throwerCalls, 'the throwing subscriber was detached and is not called again').toBe(1)

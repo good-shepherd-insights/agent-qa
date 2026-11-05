@@ -1,8 +1,4 @@
-// 429-09 (D-15/D-16): credentials and sign-ins for a model that is not on disk yet.
-//
-// auth.json is machine-wide, so every cell runs against an in-memory store behind core's
-// readAuth/writeAuth/removeAuth and asserts what the store holds afterwards, not only what the
-// route answered.
+// `auth.json` is machine-wide, so cells use an in-memory store and assert what it holds afterwards.
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { IncomingMessage, type IncomingHttpHeaders, type ServerResponse } from 'node:http'
@@ -82,7 +78,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
   process.nextTick(() => {
     if (options.body) req.push(Buffer.from(options.body))
     req.push(null)
@@ -194,7 +190,7 @@ afterEach(async () => {
   tempDirs = []
 })
 
-describe('draft credentials (429-09 Task 2)', () => {
+describe('draft credentials', () => {
   it('DRAFT-CREDENTIAL-ACCEPTED: a key for a name not in registry.llms is saved and reported created', async () => {
     const res = await post('/api/auth/credential', {
       configName: 'gpt-5.6',
@@ -334,7 +330,7 @@ describe('draft credentials (429-09 Task 2)', () => {
   })
 })
 
-describe('moving a draft credential (429-09 Task 2)', () => {
+describe('moving a draft credential', () => {
   const MOVE = '/api/auth/credential/move'
 
   beforeEach(() => {
@@ -405,7 +401,7 @@ describe('moving a draft credential (429-09 Task 2)', () => {
   })
 })
 
-// 429-09 Task 3: the five auth doors, driven the way 428-live-editor-doors.test.ts drives the
+// The five auth doors, driven the way live-editor.routes-and-sockets.test.ts drives the
 // live-editor doors, plus the rebound Host a DNS-rebinding page presents.
 const FOREIGN_ORIGIN = 'http://evil.example'
 const CROSS_SITE_CALLERS: readonly { readonly name: string; readonly headers: IncomingHttpHeaders }[] = [
@@ -469,7 +465,7 @@ async function startSameSiteSession(): Promise<string> {
   return (JSON.parse(start.body) as { sessionId: string }).sessionId
 }
 
-describe('AUTH-DOORS-SAME-SITE (429-09 Task 3)', () => {
+describe('AUTH-DOORS-SAME-SITE', () => {
   beforeEach(() => {
     registerFakeSubscriptionPlugins()
     authStore.current = { 'draft-a': OPENAI_OAUTH }
@@ -521,7 +517,7 @@ describe('AUTH-DOORS-SAME-SITE (429-09 Task 3)', () => {
   })
 })
 
-describe('CREDENTIAL-WRITES-SERIALIZED (429-09 Task 3)', () => {
+describe('CREDENTIAL-WRITES-SERIALIZED', () => {
   it('CREDENTIAL-WRITES-SERIALIZED: two credential saves never interleave their auth.json writes', async () => {
     const events: string[] = []
     const slowWrite = async (name: string, credential: unknown) => {

@@ -1,26 +1,4 @@
-// D-12's two signature differentials, driven against the SHIPPED op (Phase 398 plan 07 — XPLN-02,
-// D-09 / D-10 / D-11 / D-12; threats T-398-09, T-398-15, T-398-16).
-//
-// WHY THESE CELLS LIVE HERE AND NOT BESIDE THE RENDERER. Plan 04 proved the load-bearing properties
-// as PURE ones — every quoted form resolves to a cited row, model prose is inert, a ghost id
-// abstains the whole output — and proved them where they are decidable, over `CatalogRow[]`. What
-// that level structurally could not reach is the composition: `packages/agent` is storageNeutral,
-// so it cannot load a catalog, and it therefore cannot answer "does the SHIPPED op, dispatched
-// through `invokeFunction` against the SHIPPED loader, abstain". This file answers exactly that,
-// from the one package that can compose everything real.
-//
-// PRODUCED, NOT LITERAL — AND THIS IS THE CLAIM 398-04 EXPLICITLY LEFT OPEN. Its empty-catalog cell
-// passed a literal `[]` to the renderer, which proves the renderer's arm and says nothing about
-// whether an empty catalog is a state the product can be IN. The cell below writes a zero-row
-// catalog through `capabilityCatalogDocumentOf` and `capabilityCatalogText` — the producer's own
-// document recipe and the producer's own serializer — and reads it back through
-// `loadCapabilityCatalog`, the ONE shipped read path. So the fixture is bytes this product emits
-// and the loader accepts, rather than a shape somebody typed.
-//
-// HERMETIC BY CONSTRUCTION. No network, no live model, no shipped catalog mutated. The model half
-// is either absent (the port's own honest posture for a host with no LLM) or a doctored closure
-// returning a fixed citation, so nothing here depends on anything outside its own fixture — a
-// differential whose result moves with the environment is measuring the environment.
+// The shipped op through `invokeFunction` and the shipped loader, over a produced zero-row catalog.
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -40,7 +18,7 @@ import type {
   ExplainCitation,
   ExplainOutput,
 } from '@vostride/agent-qa-schema'
-import { MockLanguageModelV3 } from 'ai/test'
+import { MockLanguageModelV4 } from 'ai/test'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 
 import {
@@ -53,27 +31,13 @@ import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
 import { CONFORMANCE_CENSUS_CALLER } from './adapters.js'
 import { capabilityCatalogDocumentOf, capabilityCatalogText } from './catalog.js'
 
-/**
- * The SHIPPED registry, with the catalog port as its only binding.
- *
- * The `conformanceRegistry` posture exactly (empty deps, cast): `agent.explain` is the one op these
- * cells dispatch, and every other capability reads `unbound` in this composition and refuses by
- * name at the binding check. Nothing here can start a run, write into a project or commit anything.
- *
- * IT IS THE REAL DISPATCH. `invokeFunction` validates the input against the op's own contract,
- * consults the binding and parses the OUTPUT against `ExplainOutputSchema` — so a cell below that
- * reads `kind: 'abstention'` is reading a value the shipped contract admitted, not one this file
- * constructed. (2026-10-01, 432-31: the scope check and policy gate this once named are deleted.)
- */
+// Every op but `agent.explain` reads `unbound` here, so nothing can start a run or write a project.
 function explainRegistry(port: CapabilityCatalogPort): FunctionRegistry {
   return createFunctionRegistry({
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
     deps: { capabilityCatalog: port } as unknown as Parameters<
       typeof createFunctionRegistry
     >[0]['deps'],
-    // 2026-10-01 (432-31, D-12): the pinned `resolveExecutionContext` registry option is dropped.
-    // The registry never read it (no op gate decides in a context), so the answer was already the
-    // same on a laptop and on a runner.
   })
 }
 
@@ -95,7 +59,7 @@ function quotedTokensOf(output: ExplainOutput): readonly string[] {
 const workspaces: string[] = []
 
 function workspace(): string {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-398-07-explain-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-explain-'))
   workspaces.push(root)
   return root
 }
@@ -119,7 +83,7 @@ beforeAll(() => {
   realRowId = `op:${(row as { readonly id: string }).id}`
 })
 
-describe('the empty-catalog differential (SC-2, D-12) — PRODUCED, not literal', () => {
+describe('the empty-catalog differential — PRODUCED, not literal', () => {
   it('drives the shipped op to a typed abstention on a zero-row catalog the producer emitted', async () => {
     const root = workspace()
     const catalogPath = join(root, 'capability-catalog.json')
@@ -127,11 +91,9 @@ describe('the empty-catalog differential (SC-2, D-12) — PRODUCED, not literal'
     // `capabilityCatalogDocumentOf` and the bytes by `capabilityCatalogText`. Nothing about this
     // document is typed by hand, which is the difference between proving the abstention and proving
     // that a hand-written shape reaches it.
-    writeFileSync(catalogPath, capabilityCatalogText(capabilityCatalogDocumentOf([], [])), 'utf8')
+    writeFileSync(catalogPath, capabilityCatalogText(capabilityCatalogDocumentOf([])), 'utf8')
 
-    // AND IT GOES BACK THROUGH THE ONE LOADER. The loader is built to tell a produced zero-row
-    // catalog apart from a missing one (398-01), and this is the cell that depends on it: if it
-    // threw here, the op would never reach its abstention arm at all.
+    // The loader tells a produced zero-row catalog from a missing one; a throw skips abstention.
     expect(loadCapabilityCatalog(catalogPath).rows).toEqual([])
 
     const port = createCliCapabilityCatalogPort({ agentQaRoot: root, catalogPath })
@@ -151,7 +113,7 @@ describe('the empty-catalog differential (SC-2, D-12) — PRODUCED, not literal'
     // The short-circuit is control flow, not a hope about what a model does with no grounding data.
     const root = workspace()
     const catalogPath = join(root, 'capability-catalog.json')
-    writeFileSync(catalogPath, capabilityCatalogText(capabilityCatalogDocumentOf([], [])), 'utf8')
+    writeFileSync(catalogPath, capabilityCatalogText(capabilityCatalogDocumentOf([])), 'utf8')
 
     let asked = 0
     const shipped = createCliCapabilityCatalogPort({ agentQaRoot: root, catalogPath })
@@ -168,7 +130,7 @@ describe('the empty-catalog differential (SC-2, D-12) — PRODUCED, not literal'
   })
 })
 
-describe('the ghost-id differential (D-10/D-12, T-398-09/T-398-10)', () => {
+describe('the ghost-id differential', () => {
   /** The shipped port over the REAL committed catalog, with only the model half doctored. */
   function portCiting(citation: ExplainCitation, root: string): CapabilityCatalogPort {
     const shipped = createCliCapabilityCatalogPort({ agentQaRoot: root })
@@ -224,7 +186,7 @@ describe('the ghost-id differential (D-10/D-12, T-398-09/T-398-10)', () => {
   })
 })
 
-describe('the local coverage log (D-11, T-398-15/T-398-16)', () => {
+describe('the local coverage log', () => {
   it('appends exactly ONE parseable line per abstention, and never the answer path', async () => {
     const root = workspace()
     const logPath = resolveExplainCoverageLogPath(root)
@@ -273,9 +235,7 @@ describe('the local coverage log (D-11, T-398-15/T-398-16)', () => {
     const log = readExplainCoverageLog(logPath)
     expect(log.records.map((record) => record.query)).toEqual([
       'an earlier gap',
-      // The torn line is SKIPPED, and — the part this cell was written to catch — the record
-      // appended AFTER it survives intact. A first draft of the appender concatenated onto the
-      // unterminated tail and silently lost this line entirely.
+      // The torn line is skipped, and the record appended after it survives intact.
       'the question after the crash',
     ])
     // Skipped, and SAID SO. A reader that swallowed it silently would report a coverage number
@@ -284,11 +244,7 @@ describe('the local coverage log (D-11, T-398-15/T-398-16)', () => {
   })
 
   it('never lets one bad line hide a good one, wherever it sits', async () => {
-    // THE ANTI-POISONING RULE. There is exactly one way a line here can be malformed — a process
-    // killed mid-append — and after the next abstention that line is no longer the tail. A reader
-    // that refused the file would make one sleeping laptop destroy the demand signal SURF-FUT-02
-    // reads; a reader that skipped only the LAST line would drop every record written after the
-    // crash. Both were live options, and this is the one that loses nothing.
+    // Skip only a malformed line: one killed append must not destroy the log or drop later records.
     const root = workspace()
     const logPath = resolveExplainCoverageLogPath(root)
     writeFileSync(
@@ -308,7 +264,7 @@ describe('the local coverage log (D-11, T-398-15/T-398-16)', () => {
   })
 })
 
-describe('the counter hooks carry counts and never the query (D-14, T-398-15)', () => {
+describe('the counter hooks carry counts and never the query', () => {
   it('fires onAnswered exactly once on the answer path and onAbstained never', async () => {
     const root = workspace()
     let answered = 0
@@ -347,8 +303,7 @@ describe('the counter hooks carry counts and never the query (D-14, T-398-15)', 
     expect(answered).toBe(0)
     expect(abstained.length).toBe(1)
     expect(abstained[0]?.catalogEmpty).toBe(false)
-    // T-398-15, STRUCTURALLY: the hook's payload has no member a query could occupy, so the check
-    // is over the WHOLE serialized payload rather than over a field somebody remembered to omit.
+    // The hook's payload has no member a query could occupy, so the whole payload is checked.
     expect(JSON.stringify(abstained[0])).not.toContain('zzzz')
     for (const value of Object.values(abstained[0] ?? {})) {
       expect(typeof value === 'number' || typeof value === 'boolean').toBe(true)
@@ -361,7 +316,7 @@ describe('the counter hooks carry counts and never the query (D-14, T-398-15)', 
     // the signal useless in exactly the case it exists for.
     const root = workspace()
     const catalogPath = join(root, 'capability-catalog.json')
-    writeFileSync(catalogPath, capabilityCatalogText(capabilityCatalogDocumentOf([], [])), 'utf8')
+    writeFileSync(catalogPath, capabilityCatalogText(capabilityCatalogDocumentOf([])), 'utf8')
 
     const empty: ExplainAbstainedCounts[] = []
     await explain(
@@ -387,7 +342,7 @@ describe('the counter hooks carry counts and never the query (D-14, T-398-15)', 
   })
 })
 
-describe('a composition with no catalog port refuses BY NAME (D-09)', () => {
+describe('a composition with no catalog port refuses BY NAME', () => {
   it('never degrades to a model-only answer', async () => {
     // The absence that matters most in this feature: an explain that quietly lost its grounding
     // data still SOUNDS like an explain, so the honest report is a refusal naming the capability.
@@ -414,20 +369,11 @@ describe('a composition with no catalog port refuses BY NAME (D-09)', () => {
   })
 })
 
-/**
- * A stub chat model that answers one fixed string and records what it was asked.
- *
- * MODULE-LEVEL rather than per-`describe`, because 398-13's turn cells need the same stub and a
- * second copy of it would be a second answer to "what does the model half of this feature look
- * like" — the one axis every cell that uses it depends on.
- */
+// Module-level, so every cell that needs a model half shares one stub.
 function recordingModel(answer: string): { readonly model: ChatLanguageModel; prompts: string[] } {
   const prompts: string[] = []
-  const model = new MockLanguageModelV3({
-    // The parameter type is INFERRED from the mock's own constructor rather than annotated:
-    // annotating it would mean naming `LanguageModelV3CallOptions`, i.e. naming the provider
-    // protocol package in a `cli` source file, which is the dependency edge the model firewall
-    // exists to keep out of every package but `model` (CHAT-06).
+  const model = new MockLanguageModelV4({
+    // Inferred: annotating it names the provider protocol package, which only `model` may import.
     doGenerate: async (options) => {
       prompts.push(JSON.stringify(options.prompt))
       return {
@@ -444,14 +390,8 @@ function recordingModel(answer: string): { readonly model: ChatLanguageModel; pr
   return { model: model as unknown as ChatLanguageModel, prompts }
 }
 
-describe('the grounding obligation, driven through the SHIPPED model path (398-04 note 1)', () => {
-  // THE CELLS ABOVE ALL DOCTOR `citeCapabilities`, WHICH IS WHY THIS BLOCK EXISTS. Measured
-  // 2026-08-17: a mutation that deleted the catalog from the prompt entirely left all fourteen of
-  // them green. That is precisely the gap plan 04 flagged and said nothing in `packages/agent` could
-  // close — "a binding that prompts WITHOUT the rows degrades every answer to a ghost citation,
-  // which abstains, so it is safe and useless" — and safe-and-useless is a state no assertion about
-  // the ANSWER can see. So these cells watch what the port actually SENDS, through a mock model, and
-  // they range over every row rather than sampling one.
+describe('the grounding obligation, driven through the SHIPPED model path', () => {
+  // The cells above doctor `citeCapabilities`, so these watch what the port sends a mock model.
 
   it('puts EVERY loaded catalog row in the prompt — the obligation, ranged not sampled', async () => {
     const root = workspace()
@@ -467,7 +407,7 @@ describe('the grounding obligation, driven through the SHIPPED model path (398-0
       .toEqual([])
   })
 
-  it('never shows the model an invocation form (D-10)', async () => {
+  it('never shows the model an invocation form', async () => {
     // The other half of the same prompt, and the reason it is a separate claim: the model may only
     // answer with row ids, and every character of a command a person reads is quoted out of a row by
     // the renderer. A prompt carrying `/fn <id>` would be handing the model the exact text it must
@@ -480,10 +420,7 @@ describe('the grounding obligation, driven through the SHIPPED model path (398-0
   })
 
   it('degrades a command-carrying model answer to abstention, end to end', async () => {
-    // T-398-09 at the composed level, through the REAL parse rather than a doctored closure: the
-    // citation contract is `.strict()` and has no field a command fits in, so a model that answered
-    // with one produces a parse failure, which is an empty citation, which is the abstention arm.
-    // No retry loop, no free-form passthrough, and no command anywhere in what a person reads.
+    // The citation contract is `.strict()`: a model answering a command fails parse and abstains.
     const root = workspace()
     const { model } = recordingModel(
       '{"citedRowIds": ["op:runs.start"], "command": "agent-qa deploy --prod --force"}',
@@ -512,17 +449,10 @@ describe('the grounding obligation, driven through the SHIPPED model path (398-0
   })
 })
 
-// ---- 398-10 (D-11 / D-18): the counter hooks, BOUND to a composed analytics port ---------------
-//
-// The two cells above prove the hooks FIRE. This one proves the CLI composition root actually ties
-// them to something — the failure mode is a host that builds a perfectly good port and never hands
-// it to `createCliCapabilityCatalogPort`, which every hook cell above would still pass.
-//
-// It composes the SHIPPED CLI host (`composeCliLocalAgent`) and dispatches through the SHIPPED
-// registry, with only the analytics transport substituted.
-describe('the composition root binds the counter hooks to the analytics port (398-10)', () => {
+// The hook cells pass on a host that never binds the port, so this composes the shipped CLI host.
+describe('the composition root binds the counter hooks to the analytics port', () => {
   it('turns an abstention into exactly one counter event carrying no query text', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-qa-398-10-explain-'))
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-explain-hooks-'))
     const configPath = join(root, 'agent-qa.config.yaml')
     writeFileSync(
       configPath,
@@ -585,8 +515,7 @@ describe('the composition root binds the counter hooks to the analytics port (39
       })
       expect(typeof abstained[0]?.properties.suggested_row_count).toBe('number')
 
-      // T-398-15 over the WIRE this time, not over the hook's payload: the query is a distinctive
-      // string and it may not appear anywhere in what crossed the port.
+      // Over the wire: the distinctive query may appear nowhere in what crossed the port.
       expect(JSON.stringify(sent)).not.toContain('zzzz')
     } finally {
       await host.close()
@@ -596,18 +525,9 @@ describe('the composition root binds the counter hooks to the analytics port (39
 })
 
 
-// ---- 398-13 (D-21 · XPLN-02): the ANSWER ARM, at the turn boundary a person reads ---------------
-//
-// WHAT EVERY CELL ABOVE STRUCTURALLY CANNOT SEE. They all assert on the op's RETURN VALUE, which
-// was correct and complete the whole time — and 398-12's live run measured that the whole of what
-// a person saw for a grounded explain turn was the receipt line `agent.explain completed`. The
-// answer was composed and discarded at the surface, and no cell in the phase was looking there.
-//
-// SO THESE TWO DRIVE THE TURN, not the op: the SHIPPED CLI host, the SHIPPED `agent.ask` op, and
-// the `/fn` passthrough so stage 1 resolves and the planner is never consulted. The stub model is
-// reached only by `citeCapabilities`, which is the arm under measurement.
-describe('the grounded explain answer rides the turn a person reads (398-13, D-21)', () => {
-  const PLANTED_MODEL_PROSE = 'PLANTED-398-13-MODEL-PROSE-4f0c2a9d'
+// These drive the turn, not the op: an answer dropped at the surface still reads fine on the op.
+describe('the grounded explain answer rides the turn a person reads', () => {
+  const PLANTED_MODEL_PROSE = 'PLANTED-MODEL-PROSE-4f0c2a9d'
 
   /**
    * The model reply both cells use: a real committed row id, plus prose in the ONE field the
@@ -708,12 +628,7 @@ describe('the grounded explain answer rides the turn a person reads (398-13, D-2
   it('leaves the receipt the MAP, and no model prose anywhere on the turn', async () => {
     const { result, row } = await driveExplainTurn()
 
-    // THE PROHIBITION IS ONE CLAIM WITH TWO HALVES, and both are asserted here because either half
-    // alone is satisfiable by a build that carries the answer nowhere. XPLN-02's statement is "the
-    // receipt stays the map AND the answer text travels only on the turn's `answer` field" — so
-    // the row's own description must be ON `answer` and must NOT be on any receipt line. A cell
-    // that only asked "is the receipt still plain" would stay green on the very build that
-    // discarded the answer, which is the vacuity this phase already shipped four times.
+    // The description is on `answer` and no receipt line; either half alone passes a broken build.
     expect(
       result.answer ?? '',
       'the answer channel carries nothing, so this cell would be asserting the receipt is plain on '
@@ -724,18 +639,7 @@ describe('the grounded explain answer rides the turn a person reads (398-13, D-2
       'the clause receipt grew a second carrier for the explain result',
     ).not.toContain(row.description)
 
-    // THE RECEIPT CHARTER, PINNED BESIDE THE NEW CHANNEL. `summariseOutcome`'s header argues at
-    // length that the receipt is a map and that its ONE exception is one field on one op. D-21
-    // honoured that rather than amending it, and this is the cell that reds if a later change
-    // quietly puts the territory back inside the map.
-    //
-    // THE LINE MOVED IN 399.1-04 AND THE CLAIM DID NOT. `agent.explain` reported the engine's
-    // fallback `<op> completed` while it declared no classifier; plan 04 makes `classify` a
-    // REQUIRED member, so the op now says how the explain went in its own words. What is pinned
-    // here is unchanged in kind — a MAP: a status word and a COUNT of citations, with no byte of
-    // the answer in it. The `not.toContain(row.description)` assertion above is the half that
-    // survives any future rewording of this line, and the literal below is the half that reds if
-    // somebody makes the outcome expressive enough to be worth reading instead of the answer.
+    // The receipt is a map: a status word and a count of citations, with no byte of the answer.
     expect(
       result.receipts.map((receipt) => ({
         functionId: receipt.functionId,

@@ -18,7 +18,7 @@
 +# agent-qa init:end
 --- /dev/null
 +++ b/agent-qa.config.yaml
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,85 @@
 +# agent-qa Configuration
 +
 +# File discovery and project settings
@@ -44,7 +44,6 @@
 +    # dbPath: .agent-qa/dashboard.sqlite
 +  cache:
 +    dir: .agent-qa/cache
-+    ttl: 7d
 +  authState:
 +    dir: .agent-qa/auth-states
 +  vision:
@@ -64,19 +63,13 @@
 +# Committed knowledge root (optional block; these defaults apply when absent)
 +# knowledge:
 +#   dir: agent-qa-knowledge
-+#   commitArtifacts: none
 +
 +# Named resource definitions (LLM configs, app targets)
 +registry:
-+  # Optional: local and cloud device/provider profiles.
++  # Optional: local device profiles.
 +  # devices:
 +  #   android-emu:
 +  #     platform: android
-+  #     transport: local
-+  # providers:
-+  #   browserstack:
-+  #     username: ${BROWSERSTACK_USERNAME}
-+  #     accessKey: ${BROWSERSTACK_ACCESS_KEY}
 +  targets:
 +    # Optional: add more web or mobile targets here.
 +    # my-mobile:
@@ -97,8 +90,6 @@
 +    viewport:
 +      width: 1280
 +      height: 720
-+  mobile:
-+    appState: preserve
 +  timeout:
 +    step: 20m
 +    test: 90m

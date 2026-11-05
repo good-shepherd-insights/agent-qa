@@ -45,7 +45,7 @@ const BETA_ANCHOR: Anchor = {
   name: 'Beta fresh action',
 }
 
-describe('IDX-02 stale-index bundle recheck', () => {
+describe('stale-index bundle recheck', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -63,7 +63,6 @@ describe('IDX-02 stale-index bundle recheck', () => {
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
     }
   }
 

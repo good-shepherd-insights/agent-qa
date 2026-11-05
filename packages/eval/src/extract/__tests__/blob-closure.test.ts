@@ -34,7 +34,6 @@ const textOnlyMetadata: ScreenStateMetadata = {
   viewportWidth: 1_280,
   viewportHeight: 720,
   scroll: { offsetX: 0, offsetY: 0, contentWidth: 1_280, contentHeight: 1_440 },
-  domContext: 'checkout-frame',
 }
 
 interface LegOptions {
@@ -55,7 +54,10 @@ function buildLeg(opts: LegOptions): CassetteInputLeg {
     opts.captureMode === 'textOnly'
       ? textOnlyMetadata
       : opts.raw === true
-        ? { ...base.stateBefore.metadata, domContext: 'raw-no-sizing-frame' }
+        ? {
+            ...base.stateBefore.metadata,
+            scroll: { ...base.stateBefore.metadata.scroll, offsetY: 1 },
+          }
         : base.stateBefore.metadata
 
   const subAction: SubActionEvidence = {
@@ -242,7 +244,7 @@ describe('buildCompleteness missing-evidence folding precedence', () => {
   })
 })
 
-describe('D-11 blob closure and completeness', () => {
+describe('blob closure and completeness', () => {
   it('collects screenshot then auxiliary shas in recorded order and deduplicates them', () => {
     const leg = buildLeg({
       captureMode: 'full',

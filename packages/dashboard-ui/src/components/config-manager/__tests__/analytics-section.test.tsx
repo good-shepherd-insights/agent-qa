@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-// PASS-RATE SCOPE (429-21 Task 2 · D-06, D-08, D-09 · UI-SPEC S2, S8).
-//
-// Pass-rate attributes are a free-form map the shared masking map classes secret, so each row
-// shows its key in clear and its value through SecretValue. Adding an attribute is an explicit
-// write; removing one writes at once. The privacy switch writes true or removes the key.
+// Attribute values are secret-classed, so each row shows its key in clear and its value masked.
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -161,7 +157,7 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('AnalyticsSection (429-21 Task 2)', () => {
+describe('AnalyticsSection', () => {
   it('PASS-RATE-ATTRIBUTES-SECRET-ROWS: each attribute is its key in clear and a SecretValue showing the server mask, a dotted key staying one segment', async () => {
     await mount()
 
@@ -210,7 +206,7 @@ describe('AnalyticsSection (429-21 Task 2)', () => {
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[{ op: 'set', path: [...ATTRIBUTES, 'build.env'], value: TYPED }]],
     ])
-    // 441-40 (D-29): the landed write is mirrored as written.
+    // The landed write is mirrored as written.
     expect(attributeRow('build.env')?.querySelector('[data-secret-field] code')?.textContent).toBe(TYPED)
     expect(inputLabelled(container, ATTRIBUTE_FIELD_LABELS.value)).toBeNull()
     expect(hook!.status.state).not.toBe('undo')

@@ -1,7 +1,4 @@
-// 2026-09-08, 419 D-06/D-07/D-08/D-12: the Gate-3 neutral contracts.
 import { z } from 'zod'
-import type { Action } from '../action/index'
-import { actionWireSchema } from '../action/wire-schema'
 
 import { MARKS } from '../knowledge/gate-receipt'
 import { DeltaSchema, KnowledgeChangeIdSchema, KnowledgeTargetRefSchema } from '../knowledge/change'
@@ -14,7 +11,6 @@ import { oneJoinArm, recordJoinShape } from './record-join'
 const runIdSchema = runIdCodec.in as unknown as z.ZodType<RunId>
 const markIdSchema = z.string().regex(/^mark_[0-9a-f]{12}$/)
 const indexSchema = z.number().int().nonnegative()
-const correctedActionSchema = actionWireSchema as unknown as z.ZodType<Action>
 type ExactlyEqual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false
 
 // prettier-ignore
@@ -24,11 +20,10 @@ export type MarkQuarantineClass = (typeof MARK_QUARANTINE_CLASSES)[number]
 export const MARK_FIX_KINDS = ['fact', 'caution', 'procedure-hint', 'test-edit'] as const
 export type MarkFixKind = (typeof MARK_FIX_KINDS)[number]
 
-// 2026-09-30, 432-09 (D-04/D-22): a mark applies its fix in the call, so the writer's vocabulary is
-// `applied`. `drafted` is the pre-432 receipt that filed a proposal instead: it stays readable in an
-// existing ledger (430 D-08) and no writer produces it.
-// 2026-10-03 (quick 261003-mqc): `not-applied` closes a mark whose own planned fix was refused,
-// under the mark's own identity, so its gold and evidence count once and the run takes a new mark.
+// A mark applies its fix in the call, so the writer's vocabulary is `applied`. `drafted` is a receipt
+// that filed a proposal instead: it stays readable in an existing ledger and no writer produces it.
+// `not-applied` closes a mark whose own planned fix was refused, under the mark's own identity, so its
+// evidence counts once and the run takes a new mark.
 // prettier-ignore
 export const MARK_DISPOSITIONS = ['quarantined', 'applied', 'no-draftable-fix', 'confirmed-bug', 'not-applied'] as const
 export const MARK_HISTORICAL_DISPOSITIONS = ['drafted'] as const
@@ -92,7 +87,7 @@ export const MarkDispositionSchema = z.discriminatedUnion('kind', [
     fix: z.enum(MARK_FIX_KINDS),
     reason: z.enum(MARK_FIX_REFUSALS),
   }).strict(),
-  /** Historical (read only): a pre-432 mark that filed a proposal. Its change was never recorded. */
+  /** A read-only historical mark that filed a proposal; its change was never recorded. */
   z.object({
     kind: z.literal('drafted'),
     fix: z.enum(MARK_FIX_KINDS),
@@ -123,20 +118,13 @@ export const MarkReceiptSchema = z.object({
   runSlug: z.string().min(1),
   kind: z.enum(MARKS),
   origin: z.literal('user'),
-  /** The 1-based append position governs latest-wins, never markedAt (419 D-11). */
+  /** The 1-based append position governs latest-wins, never markedAt. */
   ordinal: z.number().int().positive(),
   markedAt: indexSchema,
   note: z.string().max(2000).optional(),
-  correctedExpectation: z.string().max(2000).optional(),
-  correctedAction: correctedActionSchema.optional(),
   rootCause: z.object({ class: z.enum(VERDICT_CLASSES), producer: z.string().min(1) }).strict().optional(),
   isRerun: z.literal(true).optional(),
   disposition: MarkDispositionSchema,
-  gold: z.array(z.object({
-    cassetteId: z.string().min(1),
-    sourceCassetteId: z.string().min(1),
-    channel: z.enum(['user-mark', 'overturned-verdict']),
-  }).strict()),
   evidence: z.object({ confirmed: indexSchema, overturned: indexSchema }).strict(),
   supersedes: markIdSchema.optional(),
 }).strict()
@@ -148,8 +136,6 @@ export const RunsMarkInputSchema = z.object({
   stepIndex: indexSchema.optional(),
   kind: z.enum(MARKS),
   note: z.string().max(2000).optional(),
-  correctedExpectation: z.string().max(2000).optional(),
-  correctedAction: correctedActionSchema.optional(),
 }).strict()
 export type RunsMarkInput = z.infer<typeof RunsMarkInputSchema>
 
@@ -166,8 +152,6 @@ export const RunsMarkOutcomeSchema = z.discriminatedUnion('kind', [
     kind: z.literal('ambiguous-address'), runId: runIdSchema,
     candidates: z.array(z.object({ testIndex: indexSchema, testId: z.string().optional() }).strict()).min(2),
   }).strict(),
-  z.object({ kind: z.literal('ambiguous-correction'), runId: runIdSchema,
-    testIndex: indexSchema, decisionCount: indexSchema }).strict(),
 ])
 export type RunsMarkOutcome = z.infer<typeof RunsMarkOutcomeSchema>
 
@@ -189,7 +173,7 @@ export const ImprovementPlanKnowledgeSchema = z.object({
 }).strict().superRefine((value, ctx) => {
   value.deltas.forEach((delta, index) => {
     if (delta.kind === 'MintUnknown') {
-      ctx.addIssue({ code: 'custom', path: ['deltas', index, 'kind'], message: 'a mark never mints unknown knowledge (419 D-12)' })
+      ctx.addIssue({ code: 'custom', path: ['deltas', index, 'kind'], message: 'a mark never mints unknown knowledge' })
     }
   })
 })
@@ -207,8 +191,7 @@ export const ImprovementPlanSchema = z.discriminatedUnion('kind', [
 ])
 export type ImprovementPlan = z.infer<typeof ImprovementPlanSchema>
 
-// 2026-10-01, 432-17: the commit receipt is a direct change receipt and lives with the change
-// contracts; it is re-exported here so every existing import keeps its path.
+// Defined with the change contracts and re-exported for importers of this module.
 export { COMMIT_RECEIPT_SCHEMA_VERSION, CommitReceiptSchema } from '../knowledge/change'
 export type { CommitReceipt } from '../knowledge/change'
 
@@ -221,14 +204,10 @@ export const RunDetailMemberMarkSchema = z.object({
 }).strict()
 export type RunDetailMemberMark = z.infer<typeof RunDetailMemberMarkSchema>
 
-/** OQ5: gate3ArmSchema.stepId uses the same test:step spelling as DisplayStep addressing. */
+// `gate3ArmSchema.stepId` uses the same test:step spelling as DisplayStep addressing.
 export function deriveMarkStepId(testIndex: number, stepIndex: number): string {
   return `${testIndex}:${stepIndex}`
 }
-
-// 2026-10-02 (432-42, D-15): no mark refusal body. `MarkRefusalSchema` described the 403 the browser
-// door answered when the execution gate denied a mark; the gate is deleted (432-19), no route
-// answers that body, and the dashboard's branch that read it is deleted with it.
 
 /** Shared by runs.mark and runs.detail's ledger projection. */
 export interface FeedbackPort {
@@ -236,13 +215,10 @@ export interface FeedbackPort {
   marksFor(runId: RunId): Promise<readonly MarkReceipt[]>
 }
 
-/** The ledger's latest-wins address: member plus step, testId deliberately excluded (419 D-11). */
+// The latest-wins key is member and step only; `testId` is not part of it.
 export function markAddressKey(address: Pick<MarkAddress, 'testIndex' | 'stepIndex'>): string {
   return `${address.testIndex}:${address.stepIndex ?? 'run'}`
 }
-
-// 2026-09-15, 423 D-19: marks history. 2026-09-30, 432-09 (D-04/D-25): each applied knowledge fix
-// joins the records it changed, read now; nothing is read from a proposal store.
 
 export const RunsMarksHistoryInputSchema = z.object({ runId: runIdSchema }).strict()
 export type RunsMarksHistoryInput = z.infer<typeof RunsMarksHistoryInputSchema>
@@ -260,15 +236,13 @@ export const MarkHistoryChangedRecordSchema = z.object({
 export type MarkHistoryChangedRecord = z.infer<typeof MarkHistoryChangedRecordSchema>
 
 const receiptFactShape = MarkReceiptSchema.omit({
-  schemaVersion: true, runSlug: true, correctedExpectation: true, correctedAction: true, note: true,
+  schemaVersion: true, runSlug: true, note: true,
 }).shape
 
 export const MarkHistoryEntrySchema = z.object({
   ...receiptFactShape,
   // Masked free text can differ in length from the recorded note, so the writer's cap is not reapplied.
   note: z.string().optional(),
-  /** Corrected fields are reported by presence; their content stays in the ledger. */
-  corrected: z.object({ expectation: z.boolean(), action: z.boolean() }).strict(),
   active: z.boolean(),
   supersededBy: markIdSchema.optional(),
   /** The records an applied knowledge fix changed, in the receipt's order, joined at read time. */
@@ -305,33 +279,27 @@ export type RunsMarksHistoryResult = z.infer<typeof RunsMarksHistoryResultSchema
 const _historyOutcomesCover: ExactlyEqual<(typeof MARKS_HISTORY_OUTCOMES)[number], RunsMarksHistoryResult['kind']> = true
 void _historyOutcomesCover
 
-// 2026-09-15, 423 D-16/D-17: the consequence preview. Input is RunsMarkInputSchema itself; runs.mark
-// gains no field. Refusals are runs.mark's own arm objects, taken by position and type-pinned below.
-const [, , markRunNotFoundArm, markMemberNotFoundArm, markStepNotFoundArm, markAmbiguousAddressArm,
-  markAmbiguousCorrectionArm] = RunsMarkOutcomeSchema.options
+// The preview's refusals are runs.mark's own arms, taken by position and type-pinned below.
+const [, , markRunNotFoundArm, markMemberNotFoundArm, markStepNotFoundArm, markAmbiguousAddressArm] = RunsMarkOutcomeSchema.options
 
-export const MARK_PREVIEW_REFUSALS = ['run-not-found', 'member-not-found', 'step-not-found', 'ambiguous-address', 'ambiguous-correction'] as const
+export const MARK_PREVIEW_REFUSALS = ['run-not-found', 'member-not-found', 'step-not-found', 'ambiguous-address'] as const
 export const MARK_PREVIEW_OUTCOMES = ['consequences', 'quarantined', 'already-marked', ...MARK_PREVIEW_REFUSALS] as const
 export const MARK_TARGET_REASONS = ['step-mark', 'failing-step', 'passing-verdict'] as const
-export const MARK_GOLD_CHANNELS = ['user-mark', 'overturned-verdict'] as const
 export const MARK_PREVIEW_LATEST_KINDS = ['first', 'supersedes'] as const
 export const MARK_PREVIEW_DRAFT_KINDS = ['confirmed-bug', 'knowledge', 'test-edit', 'no-draftable-fix'] as const
 
 const _refusalArmsInOrder: ExactlyEqual<
   [z.infer<typeof markRunNotFoundArm>['kind'], z.infer<typeof markMemberNotFoundArm>['kind'],
-    z.infer<typeof markStepNotFoundArm>['kind'], z.infer<typeof markAmbiguousAddressArm>['kind'],
-    z.infer<typeof markAmbiguousCorrectionArm>['kind']],
+    z.infer<typeof markStepNotFoundArm>['kind'], z.infer<typeof markAmbiguousAddressArm>['kind']],
   [...typeof MARK_PREVIEW_REFUSALS]> = true
 void _refusalArmsInOrder
-const _goldChannelsCover: ExactlyEqual<(typeof MARK_GOLD_CHANNELS)[number], MarkReceipt['gold'][number]['channel']> = true
-void _goldChannelsCover
 
 export const MarkPreviewBasisSchema = z.object({
   ledgerOrdinal: indexSchema,
   /** The addressed prior mark's ordinal as observed. Not a lock: runs.mark re-plans under its transaction. */
   priorMarkOrdinal: z.number().int().positive().optional(),
 }).strict().refine(basis => basis.priorMarkOrdinal === undefined || basis.priorMarkOrdinal <= basis.ledgerOrdinal,
-  { message: 'the prior mark lies inside the observed ledger', path: ['priorMarkOrdinal'] })
+  { error: 'the prior mark lies inside the observed ledger', path: ['priorMarkOrdinal'] })
 export type MarkPreviewBasis = z.infer<typeof MarkPreviewBasisSchema>
 
 export const MarkPreviewLatestSchema = z.discriminatedUnion('kind', [
@@ -343,29 +311,6 @@ export type MarkPreviewLatest = z.infer<typeof MarkPreviewLatestSchema>
 const previewMemberSchema = z.object({ testIndex: indexSchema, testId: z.string().min(1).optional() }).strict()
 const resolvedStepSchema = z.object({ stepIndex: indexSchema, reason: z.enum(MARK_TARGET_REASONS) }).strict()
 
-export const MarkPreviewGroundTruthSchema = z.object({
-  testIndex: indexSchema,
-  stepIndex: indexSchema,
-  /** The verdict the mark asserts for this step. */
-  verdict: z.enum(['pass', 'fail']),
-  recordedVerdict: z.object({ pass: z.boolean(), reasoning: z.string() }).strict(),
-  correctedExpectation: z.string().optional(),
-  /** The corrected action is reported by presence; its content is the caller's own input. */
-  correctedAction: z.boolean(),
-}).strict()
-export type MarkPreviewGroundTruth = z.infer<typeof MarkPreviewGroundTruthSchema>
-
-/** A label a freeze would write. Gold cassette ids and ordinals are writer-minted and never appear. */
-export const MarkPreviewLabelSchema = z.object({
-  testIndex: indexSchema,
-  stepIndex: indexSchema,
-  decisionOrdinal: indexSchema,
-  sourceCassetteId: z.string().min(1),
-  channel: z.enum(MARK_GOLD_CHANNELS),
-  correction: z.object({ verdict: z.enum(['pass', 'fail']) }).strict().optional(),
-}).strict()
-export type MarkPreviewLabel = z.infer<typeof MarkPreviewLabelSchema>
-
 export const MARK_PREVIEW_EVIDENCE_DIRECTIONS = ['confirm', 'overturn'] as const
 export const MARK_PREVIEW_RECORD_EVIDENCE_KINDS = ['effects', 'unreadable'] as const
 
@@ -376,11 +321,7 @@ export const MarkPreviewEvidenceEffectSchema = z.discriminatedUnion('direction',
 ])
 export type MarkPreviewEvidenceEffect = z.infer<typeof MarkPreviewEvidenceEffectSchema>
 
-/**
- * 2026-09-15, 423 D-17: one record the mark reaches, led by its joined content (or the typed reason
- * there is none) and followed by its complete planned effects. A record the store cannot read keeps
- * its id and is `unreadable`, exactly as the writer skips it.
- */
+// A record the store cannot read keeps its id and is `unreadable`, as the writer skips it.
 export const MarkPreviewKnowledgeRecordSchema = z.object({
   recordId: z.string().min(1),
   ...recordJoinShape,
@@ -467,9 +408,6 @@ export const RunsMarkPreviewResultSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('consequences'),
     ...prospectiveShape,
-    markedDecisionCount: indexSchema,
-    groundTruth: z.array(MarkPreviewGroundTruthSchema),
-    labels: z.array(MarkPreviewLabelSchema),
     knowledge: MarkPreviewKnowledgeSchema,
     draft: MarkPreviewDraftSchema,
   }).strict().superRefine((value, ctx) => {
@@ -477,15 +415,10 @@ export const RunsMarkPreviewResultSchema = z.discriminatedUnion('kind', [
     if ((value.draft.kind === 'confirmed-bug') !== (value.markKind === 'confirmed-bug')) {
       ctx.addIssue({ code: 'custom', path: ['draft'], message: 'a confirmed bug drafts no fix and every other mark plans one' })
     }
-    if (value.markKind !== 'false-pass' && value.labels.some(label => label.channel === 'overturned-verdict')) {
-      ctx.addIssue({ code: 'custom', path: ['labels'], message: 'only a false-pass freezes an overturned verdict' })
-    }
     if (value.markKind !== 'false-pass' && (value.knowledge.evidence.overturned > 0
       || value.knowledge.records.some(record => !record.served))) {
       ctx.addIssue({ code: 'custom', path: ['knowledge'], message: 'only a false-pass overturns or reaches an unserved record' })
     }
-    const foreign = [...value.groundTruth, ...value.labels].some(item => item.testIndex !== value.member.testIndex)
-    if (foreign) ctx.addIssue({ code: 'custom', path: ['member'], message: 'ground truth and labels belong to the resolved member' })
   }),
   z.object({
     kind: z.literal('quarantined'),
@@ -507,7 +440,6 @@ export const RunsMarkPreviewResultSchema = z.discriminatedUnion('kind', [
   markMemberNotFoundArm,
   markStepNotFoundArm,
   markAmbiguousAddressArm,
-  markAmbiguousCorrectionArm,
 ])
 export type RunsMarkPreviewResult = z.infer<typeof RunsMarkPreviewResultSchema>
 const _previewOutcomesCover: ExactlyEqual<(typeof MARK_PREVIEW_OUTCOMES)[number], RunsMarkPreviewResult['kind']> = true
@@ -535,10 +467,6 @@ export type MarkHistoryRead =
  */
 export interface FeedbackReadsPort {
   history(runId: RunId): Promise<MarkHistoryRead>
-  /**
-   * 423 D-16: runs.mark's deterministic plan for this exact input, stopping before any intent,
-   * lease, model call, id mint or write. Optional until a host implements it (423-19); a
-   * feedbackReads binding without it leaves runs.mark.preview unbound by name.
-   */
+  // Plans only: no lease, model call, id mint or write; a host without it leaves the op unbound.
   preview?(input: RunsMarkInput): Promise<RunsMarkPreviewResult>
 }

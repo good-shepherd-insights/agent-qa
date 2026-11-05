@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-// THE ONE MODEL WORKSPACE (429-23 · D-10, D-11, D-17, D-18 · UI-SPEC S4, E4 · PXH-CONF-02).
-//
-// Every model is one row that opens in place, with one honest status word read from the
-// credential-status answer and the provider's label. A test result exists only after a test runs
-// here, and the line shows the latest test's answer; Make default is a routine autosave.
+// One status word per model from the credential-status read; a test result needs a test.
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -208,7 +204,7 @@ afterEach(async () => {
   localStorage.clear()
 })
 
-describe('ModelList closed rows (429-23 Task 1)', () => {
+describe('ModelList closed rows', () => {
   it('ONE-STATUS-WORD-PER-ROW: signed in, key saved, not connected and sign-in expired read one word each, with one Default badge', async () => {
     const auth = deferred<{ credentials: AuthCredentialInfo[] }>()
     vi.mocked(fetchAuthStatus).mockReturnValueOnce(auth.promise)
@@ -332,7 +328,7 @@ describe('ModelList closed rows (429-23 Task 1)', () => {
     expect(empty!.contains(adds[0])).toBe(true)
     expect(adds[0].getAttribute('data-variant')).toBe('default')
 
-    // 429-25 re-target: Add model opens the add row in place (it no longer goes through ?add).
+    // Add model opens the add row in place.
     await click(adds[0])
     expect(container!.querySelector('[data-model-list] > li[data-model-draft]')).not.toBeNull()
     expect(container!.querySelector('[data-models-empty]')).toBeNull()
@@ -395,7 +391,7 @@ async function openModel(name: string) {
   expect(panelOf(name), name).not.toBeNull()
 }
 
-describe('ModelRow connection block (429-23 Task 2)', () => {
+describe('ModelRow connection block', () => {
   it('TEST-LINE-STATES: Test connection reads Testing, then Connected with no number, the server sentence verbatim when it fails, or Connected without a key', async () => {
     await mount()
     await openModel('router')

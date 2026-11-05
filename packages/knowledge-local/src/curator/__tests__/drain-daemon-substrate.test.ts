@@ -378,7 +378,7 @@ describe('drainQueue daemon substrate', () => {
     })
     expect(author).toHaveBeenCalledOnce()
     expect(author.mock.calls[0]?.[0].executionContext).toBe('local-headless')
-    // 432 D-08: the local-headless fallback drains to active, so the promotion floor runs.
+    // The local-headless fallback drains to active, so the promotion floor runs.
     expect(statusesBySummary()).toEqual({ 'legacy-checkout selector': 'active' })
     expect(listQueuedCandidates(knowledgeRoot)).toEqual([])
     expect(readJobState(knowledgeRoot, candidateId).kind).toBe('absent')
@@ -852,7 +852,6 @@ describe('drainQueue daemon substrate', () => {
       stepIndex: 0,
       runOutcome: 'positive',
       benefit: 'rode-along',
-      stateValidity: 'unknown',
       exercisedAnchor: { t: 'page', route: '/missing-canary' },
       attribution: 'run-canary-requeue:canary-requeue:0',
       briefDigest: 'missing canary target',
@@ -1022,13 +1021,8 @@ describe('drainQueue daemon substrate', () => {
     })
   })
 
-  /**
-   * CR-02: canary evidence is trust/status currency, so every canary mutation must sit inside the
-   * same exact-authority section as the terminal job-state write. Each barrier below names one
-   * point at which a takeover either completes (and must find nothing landed) or is blocked (and
-   * must observe the tail's holder), which is the only way "one held section" is executable.
-   */
-  describe('canary tail authority barriers (CR-02)', () => {
+  // Each barrier is one point where a takeover finds nothing landed or sees the tail's holder.
+  describe('canary tail authority barriers', () => {
     type AcquireWithDeadline = (
       knowledgeRoot: string,
       hooks?: { mutationLockTakeoverMs?: number },
@@ -1122,7 +1116,6 @@ describe('drainQueue daemon substrate', () => {
         candidateId: asRecordId(bundleId),
         runOutcome,
         benefit: 'rode-along',
-        stateValidity: 'unknown',
         runId: `run-canary-${seed}`,
         testId: `canary::${seed}`,
         testIndex: 0,

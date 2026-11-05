@@ -1,14 +1,11 @@
-import type { LanguageModelMiddleware } from 'ai'
+import type { LanguageModelMiddleware, LogWarningsFunction, Warning } from 'ai'
 import type {
-  LanguageModelV3,
-  LanguageModelV3CallOptions,
-  LanguageModelV3Prompt,
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4Prompt,
 } from '@ai-sdk/provider'
 
-// RUNX-04. Flag-gated (AGENT_QA_DEBUG_LLM) debug surface: per model call it logs the request
-// shape and, on a provider failure, the error's structured fields, then re-throws the error
-// unchanged. Disabled, it is a pure passthrough.
-// 2026-10-14 (441-36, D-28): a line carries no header value, query string or provider free text.
+// Gated by `AGENT_QA_DEBUG_LLM`; a line carries no header value, query string or provider text.
 
 export interface DebugLoggingOptions {
   /** Force enable/disable. When omitted, resolves from the `AGENT_QA_DEBUG_LLM` env flag. */
@@ -19,6 +16,12 @@ export interface DebugLoggingOptions {
 
 const REQUEST_PREFIX = '[agent-qa:llm] request'
 const ERROR_PREFIX = '[agent-qa:llm] provider-error'
+const WARNING_PREFIX = '[agent-qa:llm] provider-warning'
+
+// Sent to every model, adapted by a provider for one; the planner's call record keeps them.
+const ADAPTED_SETTINGS: ReadonlySet<string> = new Set([
+  'toolChoice', 'temperature', 'topP', 'topK', 'maxOutputTokens',
+])
 
 function isEnvEnabled(): boolean {
   const raw = typeof process !== 'undefined' ? process.env?.AGENT_QA_DEBUG_LLM : undefined
@@ -27,7 +30,7 @@ function isEnvEnabled(): boolean {
   return value !== '' && value !== '0' && value !== 'false' && value !== 'off' && value !== 'no'
 }
 
-function modelIdOf(model: LanguageModelV3 | undefined): string {
+function modelIdOf(model: LanguageModelV4 | undefined): string {
   if (model && typeof model === 'object' && 'modelId' in model) {
     const id = (model as { modelId?: unknown }).modelId
     if (typeof id === 'string' && id.length > 0) return id
@@ -35,9 +38,9 @@ function modelIdOf(model: LanguageModelV3 | undefined): string {
   return 'unknown'
 }
 
-function requestShapeLine(params: LanguageModelV3CallOptions, model: LanguageModelV3 | undefined): string {
+function requestShapeLine(params: LanguageModelV4CallOptions, model: LanguageModelV4 | undefined): string {
   const record = params as unknown as Record<string, unknown>
-  const prompt = record.prompt as LanguageModelV3Prompt | undefined
+  const prompt = record.prompt as LanguageModelV4Prompt | undefined
   const messages = Array.isArray(prompt) ? prompt : []
   const roles = messages.map((message) => (message as { role?: unknown }).role ?? '?').join(',')
   const toolCount = Array.isArray(record.tools) ? record.tools.length : 0
@@ -133,14 +136,14 @@ export function debugLoggingMiddleware(options: DebugLoggingOptions = {}): Langu
   // Disabled ⇒ a pure passthrough: no wrap hooks at all, so behavior + performance are byte-
   // identical and the sink is never touched.
   if (!enabled) {
-    return { specificationVersion: 'v3' }
+    return { specificationVersion: 'v4' }
   }
 
   const sink = options.sink ?? ((line: string) => { process.stderr.write(`${line}\n`) })
   const emit = (line: string): void => { sink(line) }
 
   return {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
 
     wrapGenerate: async ({ doGenerate, params, model }) => {
       emit(requestShapeLine(params, model))
@@ -161,5 +164,30 @@ export function debugLoggingMiddleware(options: DebugLoggingOptions = {}): Langu
         throw err
       }
     },
+  }
+}
+
+function isAdaptedSetting(warning: Warning): boolean {
+  return (warning.type === 'unsupported' || warning.type === 'compatibility')
+    && ADAPTED_SETTINGS.has(warning.feature)
+}
+
+// An `AI_SDK_LOG_WARNINGS` logger: adapted call settings go to this log, the rest to `print`.
+export function sdkWarningLogger(
+  print: LogWarningsFunction,
+  options: DebugLoggingOptions = {},
+): LogWarningsFunction {
+  const sink = options.sink ?? ((line: string) => { process.stderr.write(`${line}\n`) })
+  return ({ warnings, provider, model }) => {
+    const rest: Warning[] = []
+    for (const warning of warnings) {
+      if (provider === undefined || !isAdaptedSetting(warning)) {
+        rest.push(warning)
+      } else if (options.enabled ?? isEnvEnabled()) {
+        sink(`${WARNING_PREFIX} provider=${provider} model=${model ?? 'unknown'} `
+          + JSON.stringify(warning))
+      }
+    }
+    if (rest.length > 0) print({ warnings: rest, provider, model })
   }
 }

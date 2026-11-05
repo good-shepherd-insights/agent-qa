@@ -90,7 +90,7 @@ function generateResult(text: string): GenerateResult {
 function scriptedModel(outputs: string[]): CuratorModel {
   let index = 0
   return {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'scripted',
     modelId: 'scripted',
     supportedUrls: {},
@@ -121,7 +121,7 @@ function capturingModel(outputs: string[]): {
   const prompts: CapturedPrompt[] = []
   let index = 0
   const model = {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'scripted',
     modelId: 'scripted',
     supportedUrls: {},
@@ -260,11 +260,7 @@ function compositeTrajectorySeed(): ProcedureTrajectorySeed {
   return seed
 }
 
-/**
- * LIVE shape (the 18-run UAT's finding, G-381-1): every real flow's FINAL step is a verify step
- * planned as assertAI — no element targets, non-replayable — so a whole-flow [0, last] proposal
- * hits buildCandidatePayload's per-step wall. Task 1 renders it; Task 2 clamps it.
- */
+// A real flow ends in a target-less verify step, so a whole-flow span hits the per-step wall.
 function liveShapedSeed(): ProcedureTrajectorySeed {
   const seed = trajectorySeed()
   seed.steps.push({
@@ -296,13 +292,7 @@ function interiorNonReplayableSeed(): ProcedureTrajectorySeed {
   return seed
 }
 
-/**
- * The LIVE binding shape (G-381-3): ordinal 1's email slot is an INTERPOLATED `{{env:PROBE_USER}}`
- * value — post-interpolation it is an ordinary literal, named only by 381-41's provenance — and
- * ordinal 2's password slot carries the redacted `[secret:PROBE_TOKEN]` marker form. Both slots
- * therefore reach the builder with a sourceName, which is what must survive into the committed
- * parameter names for consult-time fillability (D-08) to match.
- */
+// Both slots reach the builder with a `sourceName`, which must survive into the parameter names.
 function sourcedSeed(): ProcedureTrajectorySeed {
   const seed = trajectorySeed()
   seed.steps[1]!.action!.values['text'] = {
@@ -554,7 +544,7 @@ function addBundles(deltas: Delta[]) {
   })
 }
 
-describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
+describe('procedure-extraction author path', () => {
   it('yields whole-flow and sub-flow Add deltas whose bodies round-trip the codec', async () => {
     const outcome = await author([wholeFlowPlusSubFlow])(procedureJob(), [])
 
@@ -629,7 +619,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(bundle!.body).not.toContain('/evil')
   })
 
-  it('force-parameterizes a masked-secret value the proposal missed (D-03)', async () => {
+  it('force-parameterizes a masked-secret value the proposal missed', async () => {
     const outcome = await author([wholeFlowPlusSubFlow])(procedureJob(), [])
     if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
     const [wholeFlow] = addBundles(outcome.deltas)
@@ -876,7 +866,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     )
   })
 
-  it('states the span-replayability and flowName-echo contract rules in the prompt (G-381-1)', async () => {
+  it('states the span-replayability and flowName-echo contract rules in the prompt', async () => {
     const { author: run, prompts } = capturingAuthor([wholeFlowPlusSubFlow])
     await run(procedureJob(), [])
 
@@ -892,7 +882,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(system).toMatch(/never by (a )?new|never invent|verbatim/i)
   })
 
-  it('marks each presented trajectory step replayable by the builder predicate (G-381-1)', async () => {
+  it('marks each presented trajectory step replayable by the builder predicate', async () => {
     const { author: run, prompts } = capturingAuthor([naiveWholeFlowProposal])
     await run(liveShapedJob(), [])
 
@@ -921,7 +911,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     ])
   })
 
-  it('clamps a naive whole-flow span off its non-replayable tail and builds (G-381-1)', async () => {
+  it('clamps a naive whole-flow span off its non-replayable tail and builds', async () => {
     const outcome = await author([naiveWholeFlowProposal])(liveShapedJob(), [])
 
     expect(outcome.kind).toBe('authored')
@@ -935,7 +925,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(payload?.successAssertion).toBe('The checkout page is shown')
   })
 
-  it('pins the delta flow anchor to seed.flowName against an invented proposal name (G-381-1)', async () => {
+  it('pins the delta flow anchor to seed.flowName against an invented proposal name', async () => {
     const outcome = await author([naiveWholeFlowProposal])(liveShapedJob(), [])
     if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
     const [bundle] = addBundles(outcome.deltas)
@@ -971,7 +961,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     })
   })
 
-  it('still rejects a span whose INTERIOR step is non-replayable (contiguity, D-02)', async () => {
+  it('still rejects a span whose INTERIOR step is non-replayable (contiguity)', async () => {
     const proposal = JSON.stringify({
       candidates: [
         {
@@ -1010,7 +1000,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(outcome).toEqual({ kind: 'fallback-required', reason: 'malformed' })
   })
 
-  it('names the ACTUAL per-candidate constraint in procedure retry feedback (G-381-1)', async () => {
+  it('names the ACTUAL per-candidate constraint in procedure retry feedback', async () => {
     const proposal = JSON.stringify({
       candidates: [
         {
@@ -1036,7 +1026,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(retry).toMatch(/flowName/)
   })
 
-  it('shows sourceName on rendered value slots and demands it in the prompt (G-381-3)', async () => {
+  it('shows sourceName on rendered value slots and demands it in the prompt', async () => {
     const { author: run, prompts } = capturingAuthor([sourcedProposal('PROBE_USER', 'PROBE_TOKEN')])
 
     await run(sourcedJob(), [])
@@ -1052,7 +1042,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
     expect(prompts[0]!.system).toMatch(/sourceName/)
   })
 
-  it('commits the binding names against a proposal that invented its own (G-381-3)', async () => {
+  it('commits the binding names against a proposal that invented its own', async () => {
     const outcome = await author([sourcedProposal('username', 'probe_token')])(sourcedJob(), [])
     if (outcome.kind !== 'authored') throw new Error('expected authored outcome')
     const payload = parseProcedureBody(addBundles(outcome.deltas)[0]!.body)
@@ -1241,7 +1231,7 @@ describe('procedure-extraction author path (PROC-01 D-02/D-03)', () => {
   })
 })
 
-describe('C438-PROCEDURE-WRITE', () => {
+describe('procedure names and row words as written', () => {
   const WRITE_PAGE = 'https://shop.example/invoices'
 
   function writeElement(
@@ -1428,11 +1418,8 @@ describe('C438-PROCEDURE-WRITE', () => {
   })
 })
 
-// C438-HEALED-BODY (438 D-08, D-11; CR-03): a passing two-step test whose first step was healed
-// after the page shifted is projected and authored into a procedure body that names the elements
-// the healed input was sent to. The evidence comes from two real `executeStep` runs, not a
-// hand-built fixture, so the pair curation reads is the pair the loop recorded.
-describe('C438-HEALED-BODY', () => {
+// The evidence comes from real `executeStep` runs, so curation reads what the loop recorded.
+describe("a healed action's procedure body", () => {
   const HEALED_PAGE = 'https://shop.example/editor'
 
   function healedScreen(nodes: InterimNode[]): ScreenState {
@@ -1652,13 +1639,13 @@ describe('C438-HEALED-BODY', () => {
   })
 })
 
-describe('C441-CURATION', () => {
+describe('declared secrets in curated candidates', () => {
   const DECLARED = 'Hunter-42-zz'
   const EMAIL = 'qa@example.com'
   const PAGE = 'https://shop.example/account'
 
   function declaredMask(): (text: string) => string {
-    const redactor = new SecretRedactor(new SecretStore({ PW_441: DECLARED }))
+    const redactor = new SecretRedactor(new SecretStore({ ACCOUNT_PASSWORD: DECLARED }))
     return (text) => redactor.redactString(text)
   }
 
@@ -1721,7 +1708,7 @@ describe('C441-CURATION', () => {
   }
 
   it('the curation tail masks candidate prose with the mask it is handed', async () => {
-    const handoff = maskRun('r-c441-curation-tail', [
+    const handoff = maskRun('r-curation-tail', [
       maskStep({
         stepIndex: 0,
         stepText: `Sign in as ${EMAIL} with ${DECLARED}`,
@@ -1730,7 +1717,7 @@ describe('C441-CURATION', () => {
       }),
       maskStep({ stepIndex: 1, stepText: 'Open the orders page', ref: 'orders', name: 'Orders' }),
     ])
-    const root = mkdtempSync(join(tmpdir(), 'c441-curation-'))
+    const root = mkdtempSync(join(tmpdir(), 'curation-'))
     try {
       const agentQaRoot = join(root, '.agent-qa')
       const knowledgeRoot = join(root, 'agent-qa-knowledge')
@@ -1744,7 +1731,7 @@ describe('C441-CURATION', () => {
         configDir: root,
         mask: declaredMask(),
         log: { warn: () => undefined },
-        authority: { leaseId: 'c441-lease', epoch: 1 },
+        authority: { leaseId: 'lease', epoch: 1 },
         operations: {
           loadCompletedRunHandoff: () => handoff,
           resolveKnowledgeRoot: () => knowledgeRoot,
@@ -1767,20 +1754,20 @@ describe('C441-CURATION', () => {
       const procedure = queuedPayloads(knowledgeRoot, reports).find((row) => row.kind === 'procedure')
       if (procedure === undefined) throw new Error('expected a queued procedure candidate')
       const seed = parseProcedureTrajectorySeed(procedure.bodySeed)
-      const maskedText = `Sign in as ${EMAIL} with [secret:PW_441]`
+      const maskedText = `Sign in as ${EMAIL} with [secret:ACCOUNT_PASSWORD]`
       expect(seed?.steps[0]?.instruction).toBe(maskedText)
       expect(procedure.distilledObservations[0]?.step.naturalKey).toBe(maskedText)
       expect(procedure.distilledObservations[1]?.flow?.precedes).toBe(maskedText)
       expect(procedure.summarySeed).toContain(maskedText)
       expect(seed?.steps[0]?.action?.targets['ref']?.name)
-        .toBe(`Account ${EMAIL} [secret:PW_441]`)
+        .toBe(`Account ${EMAIL} [secret:ACCOUNT_PASSWORD]`)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
   it("a passed assertValue's measurement seed carries the declared marker", () => {
-    const handoff = maskRun('r-c441-measurement', [
+    const handoff = maskRun('r-measurement', [
       maskStep({
         stepIndex: 0,
         stepText: 'Check the stored session note',
@@ -1795,10 +1782,10 @@ describe('C441-CURATION', () => {
         },
       }),
     ])
-    const root = mkdtempSync(join(tmpdir(), 'c441-measurement-'))
+    const root = mkdtempSync(join(tmpdir(), 'measurement-'))
     try {
       const knowledgeRoot = join(root, 'agent-qa-knowledge')
-      const runDir = join(root, 'runs', 'r-c441-measurement')
+      const runDir = join(root, 'runs', 'r-measurement')
       mkdirSync(runDir, { recursive: true })
       const report = emitCurationCandidates({
         handoff, runDir, knowledgeRoot, mask: declaredMask(),
@@ -1808,9 +1795,9 @@ describe('C441-CURATION', () => {
         row.anchors.some((anchor) => anchor.t === 'flow' && anchor.name === 'measurement:assert-value:storage'))
       if (measurement === undefined) throw new Error('expected an assert-value:storage measurement')
       expect(measurement.summarySeed)
-        .toBe(`assert-value:storage measured as [secret:PW_441] for ${EMAIL}`)
+        .toBe(`assert-value:storage measured as [secret:ACCOUNT_PASSWORD] for ${EMAIL}`)
       expect(measurement.bodySeed)
-        .toBe(`Verified assert-value:storage value: [secret:PW_441] for ${EMAIL}.`)
+        .toBe(`Verified assert-value:storage value: [secret:ACCOUNT_PASSWORD] for ${EMAIL}.`)
       expect(payloads.length).toBeGreaterThan(1)
       expect(JSON.stringify(payloads)).not.toContain(DECLARED)
     } finally {
@@ -1819,12 +1806,12 @@ describe('C441-CURATION', () => {
   })
 })
 
-describe('C441-GAP2-CURATION', () => {
+describe('a typed value that contains a declared value', () => {
   it('a typed value that only contains a declared value is never authored as the secret parameter', async () => {
     const redactor = new SecretRedactor(new SecretStore({ PW: 'hunter2' }))
     const handoff: CompletedRunHandoff = {
       schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
-      runId: asRunId('r-c441-gap2-author'),
+      runId: asRunId('r-gap2-author'),
       scope: { tier: 'product', key: 'storefront' },
       buildOrdinal: 42,
       executionContext: 'local-interactive',

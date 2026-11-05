@@ -132,13 +132,7 @@ const expectedSurface = publicSurface as typeof publicSurface
   & ExpectedCorruptEpochSurface
 const acquireWithDeadline = acquireWriterLease as AcquireWithDeadline
 const acquireWithClaimHook = acquireWriterLease as AcquireWithClaimHook
-/**
- * The acquisition-deadline seam (D-15: a seam, never a config key).
- *
- * Needed by the contention cases below, which drive the busy-catch with a deadline that is
- * ALREADY spent by the time it runs — the only way to observe whether the `held` narrow is
- * evaluated before the deadline exit or after it.
- */
+// A deadline already spent shows whether the `held` narrow runs before the deadline exit.
 const acquireContending = acquireWriterLease as (
   knowledgeRoot: string,
   hooks: {
@@ -152,7 +146,7 @@ const acquireFailClosed = acquireWriterLease as (
 
 const PRODUCT = 'writer-authority-fencing'
 
-describe('writer authority and bundle publication are one indivisible protocol (CR-01)', () => {
+describe('writer authority and bundle publication are one indivisible protocol', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -192,7 +186,6 @@ describe('writer authority and bundle publication are one indivisible protocol (
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: authority.leaseId,
       writerEpoch: authority.epoch,
       ...(beforePublishRename === undefined
@@ -497,11 +490,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(mutations).toBe(1)
   })
 
-  /**
-   * CR-01: an authority refusal is only trustworthy when the mutation demonstrably never ran and
-   * the decision was reached with the mutation lock held. `lockAcquired`/`finalCompare` pin the
-   * decision point: the lock was taken, and the post-identity failpoint was never reached.
-   */
+  // A refusal counts only if the mutation never ran and the lock is held at the decision.
   function expectAuthorityRefusal(
     label: string,
     authority: { leaseId: string; epoch: number },
@@ -1040,15 +1029,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(second).toMatchObject({ projected: 0, removed: 0 })
   })
 
-  /**
-   * NOTE (386-20 #2 audit): this case proves the PRE-LOCK short-circuit and nothing more.
-   *
-   * Its contender's lease is fresh, so `acquireWriterLease` answers `held` at
-   * `writer-lease.ts:1308` and returns before `.writer-authority.sqlite` is ever opened. The
-   * `before`/`after` bracket therefore spans a call that provably cannot write, which is a
-   * tautology rather than a proof. It is kept as the short-circuit control; the no-write
-   * invariant itself is carried by the stale-contender case immediately below it.
-   */
+  // A fresh contender answers `held` before opening the authority store: the short-circuit control.
   it('does not replace a live lock row when a fresh holder re-enters acquisition', () => {
     const authority = acquireAuthority()
     const dbFile = join(knowledgeRoot, '.writer-authority.sqlite')
@@ -1082,24 +1063,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(before).toMatchObject({ pid: process.pid })
   })
 
-  /**
-   * 386-20 #2, non-vacuously: a contender that REACHES the authority store and is refused there
-   * leaves every byte of lock state alone — the row, and the file identity a rename-based
-   * takeover would change.
-   *
-   * `makeStale()` is the whole difference from the control above. It is the only way past the
-   * pre-lock `fresh` narrow, so this contender genuinely opens `.writer-authority.sqlite`, is
-   * denied the write lock by the holder's open transaction, and answers out of the busy-catch at
-   * `writer-lease.ts:1439`. A stale lease cannot answer `held` anywhere else in the primitive:
-   * the in-lock narrow at `:1370` requires `verdict.kind === 'fresh'`. The elapsed-time floor is
-   * the positive evidence that the refusal was paid for inside SQLite rather than short-circuited
-   * before it — an unblocked path returns in single-digit milliseconds.
-   *
-   * The takeover bound stays at its production value on purpose. Driving it to 0 would push this
-   * contender into the escalation ladder, where the only thing standing between the assertion and
-   * a CAS is the self-PID veto — borrowing redness from the escalated-takeover prohibitions
-   * instead of proving this one.
-   */
+  // Staleness gets past the pre-lock narrow; the elapsed-time floor shows SQLite did the refusing.
   it('refuses a stale contender inside the authority store without writing a byte of lock state', () => {
     const authority = acquireAuthority()
     const dbFile = join(knowledgeRoot, WRITER_AUTHORITY_DB_FILE)
@@ -1152,19 +1116,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(afterIdentity).toEqual(beforeIdentity)
   })
 
-  /**
-   * 386-36 #2, rescoped from source text to the semantics that text was protecting.
-   *
-   * The original statement froze 386-27's busy-catch "byte-for-byte", named a grep sentinel that
-   * was only ever a one-shot plan step, and was already false: 386-42 and 386-46 both edited the
-   * block. Both edits added fail-closed exits and left the contention criterion alone, so the
-   * thing worth guarding was never the bytes — it is that the criterion stays EPOCH-ONLY, and
-   * that the acquisition deadline wraps the retry loop without reordering it.
-   *
-   * The pair below is the differential. Both legs contend for a genuinely busy lock with an
-   * acquisition deadline that is already spent by the time the busy-catch runs; they differ in
-   * one variable, the published lease's epoch, and they must answer differently because of it.
-   */
+  // Both legs contend with a spent deadline and differ only in the lease's epoch, so answers vary.
   it('answers held from the busy-catch for a stale but epoch-current lease past a spent deadline', () => {
     const authority = acquireAuthority()
     let contender: ReturnType<typeof acquireWriterLease> | undefined
@@ -1354,8 +1306,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     if (outcome.kind !== 'refused') throw new Error('corrupt epoch acquisition was not refused')
     expect(expectedSurface.CorruptEpochStateError).toBeTypeOf('function')
     expect(outcome).toMatchObject({ reason: 'corrupt-epoch-state' })
-    // 386-36 added a second `refused` reason, so the arm is narrowed before its payload is read.
-    // Every assertion below is the one this case always made.
+    // `refused` has more than one reason, so the arm is narrowed before its payload is read.
     if (outcome.reason !== 'corrupt-epoch-state') {
       throw new Error(`corrupt epoch acquisition refused for the wrong reason: ${outcome.reason}`)
     }
@@ -1578,7 +1529,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     return { leaseId: successor.leaseId, epoch: successor.epoch }
   }
 
-  it('quarantines an intent from a generation reconciliation already superseded (CR-09)', () => {
+  it('quarantines an intent from a generation reconciliation already superseded', () => {
     const authority = acquireAuthority()
     const seeded = seedCompletedCandidate(authority, '100')
     const successor = takeOver()
@@ -1613,8 +1564,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
       jobsRequeued: 0,
     })
     expect(listCommitIntents(knowledgeRoot)).toEqual([])
-    // The bytes survive for post-mortem under a name reconciliation never lists. The name
-    // carries a per-invocation discriminator (W-08), so it is pinned by shape, not by equality.
+    // The name carries a per-call discriminator, so it is matched by shape, not equality.
     const quarantinedNames = readdirSync(journalDir()).filter((name) =>
       name.startsWith('.stale-'),
     )
@@ -1628,7 +1578,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(durableTailSnapshot()).toEqual(before)
   })
 
-  it('still replays the crash journal of the generation it inherits (CR-09 control)', () => {
+  it('still replays the crash journal of the generation it inherits', () => {
     const authority = acquireAuthority()
     const seeded = seedCompletedCandidate(authority, '100')
     // A predecessor crashed after publishing its intent and before its index apply.
@@ -1652,7 +1602,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(indexRecordExists(seeded.bundleId)).toBe(true)
   })
 
-  it('reconciles the same journal state twice with no second-pass effect (DAEM-09)', () => {
+  it('reconciles the same journal state twice with no second-pass effect', () => {
     const authority = acquireAuthority()
     const seeded = seedCompletedCandidate(authority, '100')
     writeCommitIntent(knowledgeRoot, {
@@ -1683,7 +1633,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(durableTailSnapshot()).toEqual(afterFirstPass)
   })
 
-  it('never lets a writer paused before the tail entry publish an intent behind its successor (CR-09)', () => {
+  it('never lets a writer paused before the tail entry publish an intent behind its successor', () => {
     const authority = acquireAuthority()
     const victim = seedMeasurementVictim(authority, '100')
     const replacement = measurementSupersede(authority, victim.bundleId, '204', 47)
@@ -1857,7 +1807,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(source).not.toContain('const beforePublish = staleEpoch(deps)')
   })
 
-  it('creates the commit intent lexically inside the tail that finalizes publication (CR-09)', () => {
+  it('creates the commit intent lexically inside the tail that finalizes publication', () => {
     const source = readFileSync(new URL('../curator/commit.ts', import.meta.url), 'utf8')
     const tailStart = source.indexOf('return withCurrentWriterAuthority(')
 
@@ -1873,12 +1823,8 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(heldTail).toContain('finalizePreparedPublicationWithinCurrentAuthority(')
   })
 
-  /**
-   * CR-02: the knowledge port used to name a writer identity it did not hold. The filter drops
-   * comment lines so the token's surviving provenance uses (hash source, error text, attribution
-   * prefixes) are deliberately out of scope — only identity positions are banned.
-   */
-  it('names no fabricated writer identity anywhere in the knowledge store (CR-02)', () => {
+  // Only identity positions are banned; the token stays legitimate as provenance and attribution.
+  it('names no fabricated writer identity anywhere in the knowledge store', () => {
     const source = readFileSync(new URL('../curator/knowledge-store.ts', import.meta.url), 'utf8')
     const identityAssignments = source
       .split('\n')
@@ -1891,7 +1837,7 @@ describe('writer authority and bundle publication are one indivisible protocol (
     expect(source).toContain("source: 'knowledge-port'")
   })
 
-  it('projects every canary canonical mutation from inside a held section (CR-02)', () => {
+  it('projects every canary canonical mutation from inside a held section', () => {
     const source = readFileSync(new URL('../curator/knowledge-store.ts', import.meta.url), 'utf8')
 
     expect(source).toContain('withCurrentWriterAuthority(')

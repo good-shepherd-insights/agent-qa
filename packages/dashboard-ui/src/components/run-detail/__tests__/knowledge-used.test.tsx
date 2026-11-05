@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-// 427 · D-05, D-06, D-10 — the Knowledge used rows a reader sees. Views are built through the real
-// projectKnowledgeView over schema-parsed projections, never by hand.
+// Views come from the real `projectKnowledgeView` over schema-parsed projections, never by hand.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -90,7 +89,7 @@ function step(stepIndex: number, served: Served) {
 function readyView(steps: ReturnType<typeof step>[]): Extract<KnowledgeView, { state: "ready" }> {
   const projection = RunKnowledgeProjectionSchema.parse({
     kind: "ready",
-    runId: "run-427-05-used",
+    runId: "run-used",
     buildOrdinal: 1,
     knowledgeStore: "bound",
     steps,
@@ -110,7 +109,7 @@ function rows(view: HTMLElement): HTMLElement[] {
   return [...view.querySelectorAll<HTMLElement>("li[data-used-record]")]
 }
 
-describe("a used row wears its record's kind (D-06)", () => {
+describe("a used row wears its record's kind", () => {
   it("KIND-LABEL: a caution reads Caution, the unknown kind reads Open question, no known kind has no label", () => {
     const view = mount(<KnowledgeUsed view={usedOf([
       step(0, {
@@ -129,7 +128,7 @@ describe("a used row wears its record's kind (D-06)", () => {
   })
 })
 
-describe("a record that can no longer be read keeps its row (D-10)", () => {
+describe("a record that can no longer be read keeps its row", () => {
   it("CONTENT-ABSENCE-KEEPS-ROW: an opened-only not-found record leads honestly and names the reason", () => {
     const view = mount(<KnowledgeUsed view={usedOf([
       step(0, { channel2: [{ id: "rec_gone", detailLevel: "full", bodyDigest: "d", contentAbsence: { reason: "not-found" } }] }),
@@ -155,7 +154,7 @@ describe("a record that can no longer be read keeps its row (D-10)", () => {
   })
 })
 
-describe("the default view speaks of records, never channels (D-05)", () => {
+describe("the default view speaks of records, never channels", () => {
   it("NO-CHANNEL-IN-DEFAULT-VIEW: used, effect and changes carry no channel eyebrow, name or number", () => {
     const view = mount(<TabKnowledge view={readyView([
       step(0, {
@@ -176,7 +175,7 @@ describe("the default view speaks of records, never channels (D-05)", () => {
   })
 })
 
-describe("a long run pages its used rows (UI-SPEC S1 paging)", () => {
+describe("a long run pages its used rows", () => {
   it("USED-PAGING: 60 records render 50, then Show all 60 records opens a second list with the other 10", () => {
     const lines = Array.from({ length: 60 }, (_, index) => line(`rec_${String(index)}`, `record number ${String(index)}`))
     const view = mount(<KnowledgeUsed view={usedOf([step(0, { channel1: lines })])} />)
@@ -225,7 +224,7 @@ describe("the heading counts records the way a person reads them", () => {
   })
 })
 
-describe("producer text is text (T-427-05-01)", () => {
+describe("producer text is text", () => {
   it("USED-HOSTILE-TEXT: a summary shaped like markup renders as text and creates no element", () => {
     const hostile = "<img src=x onerror=alert(1)>"
     const view = mount(<KnowledgeUsed view={usedOf([step(0, { channel1: [line("rec_h", hostile)] })])} />)
@@ -244,7 +243,7 @@ function appliesRow(anchors: string[], place: { product?: string; scope?: string
   return applies!
 }
 
-describe("a used row says where its record applies (D-08)", () => {
+describe("a used row says where its record applies", () => {
   it("APPLICABILITY-KNOWN-ANSWER: the demo-store record's line reads exactly the known answer", () => {
     const applies = appliesRow(
       ['{"platform":"web","t":"platform"}', '{"name":"measurement:assert-value:url","t":"flow"}'],
@@ -331,7 +330,7 @@ function describedBy(trigger: HTMLElement | null | undefined): { ids: string[]; 
   return { ids, targets: ids.map(id => document.getElementById(id)) }
 }
 
-describe("a record on trial says what that means, without the store's word for it (D-09, D-13)", () => {
+describe("a record on trial says what that means, without the store's word for it", () => {
   it("ON-TRIAL-TAG: a focusable on-trial tag with its meaning as tooltip and as its description; no other row wears it", async () => {
     const view = mountTrial()
 
@@ -353,7 +352,7 @@ describe("a record on trial says what that means, without the store's word for i
     expect(section?.textContent).not.toMatch(/canary/i)
   })
 
-  it("TRIGGER-ACCESSIBLE-NAME: the on-trial tag is a button named by its label, its meaning its one static description", async () => {
+  it("TRIGGER-ACCESSIBLE-NAME: the on-trial tag is a button named by its label, its meaning its one description, open or closed", async () => {
     const view = mountTrial()
     const [trial] = rows(view)
     const trigger = trial?.querySelector<HTMLElement>('[data-slot="tooltip-trigger"]')
@@ -376,12 +375,14 @@ describe("a record on trial says what that means, without the store's word for i
     await act(async () => { trigger?.focus() })
     const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')
     expect(tooltip?.textContent).toBe(ON_TRIAL_TOOLTIP)
-    expect(trigger?.getAttribute("aria-describedby")).toBe(ids[0])
-    expect(trigger?.getAttribute("aria-describedby")).not.toBe(tooltip?.id)
+    expect(describedBy(trigger).ids).toEqual([tooltip?.id])
+
+    await act(async () => { trigger?.blur() })
+    expect(describedBy(trigger).ids).toEqual(ids)
   })
 })
 
-describe("a record that changed since the run says how (D-09)", () => {
+describe("a record that changed since the run says how", () => {
   it("SINCE-TAG-RULE: served on trial and now superseded or proven wears the tag; unchanged or opened-only rows do not", () => {
     const view = mount(<KnowledgeUsed view={usedOf([
       step(0, {
@@ -406,7 +407,7 @@ describe("a record that changed since the run says how (D-09)", () => {
   })
 })
 
-describe("a used row opens to its whole record, counts before the curator's note (D-09, memory.md §7.5)", () => {
+describe("a used row opens to its whole record, counts before the curator's note", () => {
   it("FULL-RECORD-ORDER: status, body, counts, note — and no numeric trust, tier or evidence token anywhere", () => {
     const joined = {
       ...content("the cart page lives at /view_cart", "fact"),

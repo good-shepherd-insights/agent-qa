@@ -24,12 +24,11 @@ import { EmptyState } from "@/components/empty-state"
 import { RunsTable, type VisibleRunRow } from "@/components/runs-table"
 import { BatchActionBar } from "@/components/batch-action-bar"
 import { TestRunOptionsPopover } from "@/components/test-run-options-popover"
-import { deleteRun, deniedRunSentences, fetchRuns, fetchActiveExecutions, fetchQueueStatus, triggerRun, purgeCache, type RunRow, type QueueStatus } from "@/lib/api"
+import { deleteRun, fetchRuns, fetchActiveExecutions, fetchQueueStatus, triggerRun, purgeCache, type RunRow, type QueueStatus } from "@/lib/api"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { useRunsSearchParams } from "@/hooks/use-runs-search-params"
 import { usePageTitle } from "@/hooks/use-page-title"
 import { useSelectionQueue } from "@/hooks/use-selection-queue"
-import { useRunConfig } from "@/hooks/use-run-config"
 import { ShortcutLegend } from "@/components/shortcut-hints"
 
 const NO_STATUSES: readonly string[] = []
@@ -89,7 +88,6 @@ export default function RunsPage() {
   const [batchLoading, setBatchLoading] = useState(false)
   const [runOptionsOpen, setRunOptionsOpen] = useState(false)
   const [useCache, setUseCache] = useState(true)
-  const { hasFarm, isLoading: isRunConfigLoading } = useRunConfig()
 
   const mergeActiveExecutions = useCallback(async (
     dbRuns: RunRow[],
@@ -126,14 +124,12 @@ export default function RunsPage() {
           endedAt: null,
           failureSummary: null,
           errorLog: null,
-          memoryLog: null,
           testId: null,
           suiteId: null,
           platform: "web",
           testFileContent: null,
           modelName: null,
           llmProvider: null,
-          parentRunId: null,
           attemptNumber: 1,
           retryCount: 0,
           maxRetries: 0,
@@ -262,7 +258,7 @@ export default function RunsPage() {
     setUseCache(true)
   }, [selectionQueue])
 
-  const handleRunDestination = useCallback(async (local: boolean) => {
+  const handleRun = useCallback(async () => {
     if (selectedRuns.length === 0) return
     const runnablePaths = selectedRuns.flatMap((run) => run.filePath ? [run.filePath] : [])
     if (runnablePaths.length === 0) {
@@ -275,15 +271,13 @@ export default function RunsPage() {
       const results = await Promise.allSettled(
         runnablePaths.map((filePath) => triggerRun({
           file: filePath,
-          local,
           noCache: !useCache,
         })),
       )
       const succeeded = results.filter((r) => r.status === "fulfilled").length
       const failed = results.length - succeeded
       if (failed > 0) {
-        const denied = deniedRunSentences(results)
-        toast.error(`${succeeded} runs queued, ${failed} failed${denied === undefined ? "" : `. ${denied}`}`)
+        toast.error(`${succeeded} runs queued, ${failed} failed`)
       } else {
         toast.success(`${succeeded} runs queued`)
       }
@@ -293,35 +287,17 @@ export default function RunsPage() {
     }
   }, [selectedRuns, useCache])
 
-  const handleBatchPurgeCache = useCallback(async () => {
-    if (selectedRuns.length === 0) return
-    const filePaths = Array.from(new Set(
-      selectedRuns.flatMap((run) => run.filePath ? [run.filePath] : []),
-    ))
-    if (filePaths.length === 0) {
-      toast.error("No selected runs have file paths to purge")
-      return
-    }
-
+  const handlePurgeAllCachedPlans = useCallback(async () => {
     setBatchLoading(true)
     try {
-      const results = await Promise.allSettled(
-        filePaths.map((filePath) => purgeCache({ file: filePath })),
-      )
-      const succeeded = results.filter((r) => r.status === "fulfilled").length
-      const totalPurged = results
-        .filter((r): r is PromiseFulfilledResult<{ purged: number }> => r.status === "fulfilled")
-        .reduce((sum, r) => sum + r.value.purged, 0)
-      const failed = results.length - succeeded
-      if (failed > 0) {
-        toast.error(`Purged ${totalPurged} plans from ${succeeded} tests, ${failed} failed`)
-      } else {
-        toast.success(`Purged ${totalPurged} cached plan${totalPurged !== 1 ? 's' : ''} from ${succeeded} test${succeeded !== 1 ? 's' : ''}`)
-      }
+      const { purged } = await purgeCache()
+      toast.success(`Purged ${purged} cached plan${purged !== 1 ? "s" : ""}`)
+    } catch (err) {
+      toast.error(`Cache purge failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setBatchLoading(false)
     }
-  }, [selectedRuns])
+  }, [])
 
   const handleBatchDelete = useCallback(async () => {
     if (selectedRuns.length === 0) return
@@ -547,21 +523,19 @@ export default function RunsPage() {
               selectedCount={selectionQueue.selectedCount}
               hiddenCount={selectionQueue.hiddenCount}
               useCache={useCache}
-              browserStackAvailable={!isRunConfigLoading && hasFarm}
               open={runOptionsOpen}
               onOpenChange={setRunOptionsOpen}
               onUseCacheChange={setUseCache}
-              onRunLocal={() => handleRunDestination(true)}
-              onRunBrowserStack={() => handleRunDestination(false)}
+              onRun={handleRun}
               disabled={batchLoading}
             />
             <Button
               variant="outline"
               size="sm"
-              onClick={handleBatchPurgeCache}
+              onClick={handlePurgeAllCachedPlans}
               disabled={batchLoading}
             >
-              Purge cache
+              Purge all cached plans
             </Button>
           </div>
         )}

@@ -38,9 +38,9 @@ export {
   isLoopbackHost,
 } from './services-schema.js'
 
-export { TargetSchema, DeviceProfileSchema, ProviderConfigSchema } from './registry-schema.js'
+export { TargetSchema, DeviceProfileSchema } from './registry-schema.js'
 
-export { TransportSchema } from './primitives.js'
+export { refuseRetiredLocalBindings } from './retired-keys.js'
 
 export {
   CaptureConfigSchema,
@@ -49,8 +49,6 @@ export {
   TestDefinitionSchema,
 } from './test-schema.js'
 
-export { ActionPlanSchema } from './action-schema.js'
-export type { ActionPlan } from './action-schema.js'
 export { resolveKnowledgeRoot } from './resolve-knowledge-root.js'
 
 export { SuiteDefinitionSchema, SuiteTestEntrySchema } from './suite-schema.js'

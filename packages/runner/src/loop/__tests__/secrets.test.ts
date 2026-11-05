@@ -72,9 +72,8 @@ describe('containsRedactedSecretMarker', () => {
   })
 })
 
-// G-381-5 drift guard (Phase 381, Plan 44): Rule 23 says [secret:NAME] is a hidden declared value
-// and {{secret:NAME}} types it; both halves are pinned on one fixture so the rule cannot overpromise.
-describe('prompt/mechanism round trip (G-381-5 contract)', () => {
+// Rule 23 says `[secret:NAME]` is hidden and `{{secret:NAME}}` types it; one fixture checks both.
+describe('prompt/mechanism round trip of the secret-fill contract', () => {
   const SECRET_NAME = 'loginPassword'
   const BOUND_VALUE = 'hunter2-correct-horse'
   const TEMPLATE = `{{secret:${SECRET_NAME}}}`
@@ -105,8 +104,7 @@ describe('prompt/mechanism round trip (G-381-5 contract)', () => {
   })
 
   it('negative — the bound value never appears in redacted model-bound text', () => {
-    // Value-pattern masking re-pinned on this fixture (T-381-106): teaching the
-    // mechanism must not widen disclosure.
+    // Value masking runs on this fixture: teaching the mechanism must not widen disclosure.
     const leaked = `the field now contains ${BOUND_VALUE}`
     const redacted = redactor.redactString(leaked)
     expect(redacted).not.toContain(BOUND_VALUE)
@@ -126,7 +124,7 @@ describe('prompt/mechanism round trip (G-381-5 contract)', () => {
   })
 })
 
-describe('C441-REDACTOR', () => {
+describe('masking declared secret values', () => {
   const redactorFor = (content: string) => new SecretRedactor(SecretStore.fromEnvContent(content))
 
   it('a raw declared value becomes its named marker', () => {
@@ -188,7 +186,7 @@ describe('C441-REDACTOR', () => {
   })
 })
 
-describe('C441-GAP-REDACTOR', () => {
+describe('masking a declared value written as a marker or template name', () => {
   const redactor = () => new SecretRedactor(new SecretStore({ PW: 'hunter2' }))
 
   it('a declared value written as a marker or template name is masked', () => {
@@ -208,7 +206,7 @@ describe('C441-GAP-REDACTOR', () => {
   })
 })
 
-describe('C441-DISPATCH-REFUSAL', () => {
+describe('literal secret markers that refuse dispatch', () => {
   it('only a bracketed secret name is a literal marker', () => {
     for (const text of ['[secret:]', '[secret:a-b]', '{{secret:A}}', 'plain text']) {
       expect(literalSecretMarkerRefusal(text)).toBeUndefined()

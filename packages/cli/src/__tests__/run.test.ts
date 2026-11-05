@@ -64,7 +64,7 @@ const {
     onStepStart: vi.fn().mockResolvedValue(undefined),
     onStepEnd: vi.fn().mockResolvedValue(undefined),
   }
-  // 363-09: the bus-subscriber successors — analytics + dashboard ingest ride the run session bus.
+  // Analytics and dashboard ingest ride the run session bus.
   const analyticsRunSubscriber = {
     handler: vi.fn(),
     flush: vi.fn().mockResolvedValue(undefined),
@@ -74,7 +74,7 @@ const {
     stageSnapshots: vi.fn(),
     finalize: vi.fn().mockResolvedValue(undefined),
   }
-  // 2026-10-17 (443-08, D-03): every run opens its record, so the default handle answers its reads.
+  // Every run opens its record, so the default handle answers its reads.
   const runsDbHandle = () => ({
     close: vi.fn(),
     getRun: vi.fn(() => undefined),
@@ -86,17 +86,13 @@ const {
     finalizeRunArtifact: vi.fn(),
     finalizeOwnRun: vi.fn(() => true),
   })
-  // WINDOWS #233/#249: records the member-log-scope depth at every setRunId stamp, so a cell can
-  // assert the direct member executor actually runs INSIDE a scope. Depth, not a source grep —
-  // deleting the `logger.runInMemberScope(...)` wrap in run.ts leaves every stamp at depth 0.
+  // Records the member-log-scope depth at each `setRunId` stamp, so unwrapping the executor fails.
   const logScope = { depth: 0, stampDepths: [] as number[] }
 
   return {
     mockLogScope: logScope,
     mockAnalyticsRunSubscriberInstance: analyticsRunSubscriber,
-    // 398-10: the options argument is TYPED because two cells read it — the port-identity check
-    // for `--all` needs `calls[n][0].port`, and an untyped `vi.fn()` records a zero-length tuple
-    // that `tsc` refuses to index (vitest's own typecheck lane does not see this file's calls).
+    // Typed, because an untyped `vi.fn()` records a zero-length tuple `tsc` refuses to index.
     mockCreateAnalyticsRunSubscriber: vi.fn(function (_options: { port: unknown }) {
       return analyticsRunSubscriber
     }),
@@ -159,11 +155,10 @@ vi.mock('@vostride/agent-qa-model', async () => {
   }
 })
 
-// LLMPlanner/LLMVerifier moved to the runner package (Phase 353-07); run.ts now
-// imports them from @vostride/agent-qa-runner, so intercept them there.
+// `run.ts` imports `LLMPlanner` and `LLMVerifier` from the runner, so they are intercepted there.
 vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
-  // runHooks moved to runner in Phase 363 D-06; intercept it while keeping every other export real.
+  // Intercepts `runHooks` while keeping every other runner export real.
   return { ...actual, LLMPlanner: mockLLMPlanner, LLMVerifier: mockLLMVerifier, runHooks: mockRunHooks, runMemberTest: mockRunMemberTest }
 })
 
@@ -173,11 +168,9 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
   resolveBranch: mockResolveBranch,
   FsEventLog: mockFsEventLog,
   FsHandoffStore: mockFsHandoffStore,
-  // 363-06: buildRunPorts constructs the run-artifact store; buildScreenshotCompressor constructs
-  // the sharp compressor. Both are injected but their legs are never exercised in these unit runs.
+  // `buildRunPorts` and `buildScreenshotCompressor` construct these; no cell exercises them.
   FsRunArtifactStore: class { stage(): void {} finalize(): void {} },
-  // 367-13 CASS-02: buildRunPorts also constructs the run-scoped evidence artifact store; its legs
-  // are never exercised in these mocked unit runs, but the constructor must exist.
+  // `buildRunPorts` also constructs the run-scoped evidence artifact store; it must exist.
   FsEvidenceArtifactStore: class {
     persistDecisionScreenshot(): { id: string; sha: string } { return { id: 'decision-screenshot:mock', sha: 'mock' } }
     getBlob(): Uint8Array | undefined { return undefined }
@@ -191,27 +184,20 @@ vi.mock('@vostride/agent-qa-runner-local', () => ({
     }
   },
   nextBuildOrdinal: mockNextBuildOrdinal,
-  // 363-04: the run paths construct DockerHookExecutor here (D-06); runHooks is mocked so execute
-  // is never actually invoked, but the constructor must exist.
+  // The run paths construct `DockerHookExecutor`; `runHooks` is mocked, but it must exist.
   DockerHookExecutor: class { async execute() { return { success: true, variables: {}, output: '', stdout: '', stderr: '', duration: 0 } } },
   // The run composition's `runDirFor` roots the run's own directory via the shared run-dir slug, so
   // the mock exposes both.
   RUNS_SUBDIR: 'runs',
   slugBranch: (name: string) => String(name),
-  // 388-02: the post-run tail derives the handoff path and reads it before enqueueing
-  // analyze-run. These unit runs write no handoff, so the read refuses — which is exactly the
-  // D-07 warn-only leg, and the exit-code assertions below are what prove it stays warn-only.
+  // These runs write no handoff, so the tail's read refuses and only warns; exit codes show it.
   HANDOFF_FILE: 'handoff.json',
   loadCompletedRunHandoff: () => {
     throw new Error('no completed run handoff in this unit fixture')
   },
 }))
 
-// 398-10 (D-17/D-20): the run-completion subscriber comes from `@vostride/agent-qa-analytics` now.
-// ONLY that factory is replaced — `composeAnalytics`, the port, the transports and the closed union
-// are the REAL ones, so this command's composition root still makes the real opt-out decision and
-// still refuses an event the union does not declare. Mocking the package wholesale would have made
-// every analytics claim in this file a claim about the mock.
+// Only the run-completion subscriber factory is replaced, so the real opt-out decision still runs.
 vi.mock('@vostride/agent-qa-analytics', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-analytics')>()
   return { ...actual, createAnalyticsRunSubscriber: mockCreateAnalyticsRunSubscriber }
@@ -226,24 +212,15 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
     }
   }
 
-  // 390-08: `workspaceRelativeIdentityPath` comes from the REAL module, never a hand-spelled stub.
-  // It is the rule that decides what bytes land in the committed quarantine ledger, so a mock of it
-  // would leave these run-command pins measuring the mock's idea of identity instead of the
-  // shipped one — and a drift between the two would be exactly the defect CR-02 found.
+  // From the real module: it decides the bytes the committed quarantine ledger keys on.
   const actual = await importOriginal<typeof import('@vostride/agent-qa-core')>()
 
   return {
-  // 395-08: the two default-directory constants, FROM THE REAL MODULE. `commands/scaffold-content.ts`
-  // — D-04's one scaffold producer — reads them, and it is now in this command's module graph
-  // through the composition root. Passed through rather than spelled, so a mock cannot become a
-  // second answer about where the cache and the auth states live.
+  // From the real module, so a mock cannot give a second answer on cache and auth-state paths.
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: actual.DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_RUNS_DB_PATH: actual.DEFAULT_AGENT_QA_RUNS_DB_PATH,
   workspaceRelativeIdentityPath: actual.workspaceRelativeIdentityPath,
-  // 398-10: the shipped version reader, FROM THE REAL MODULE for the same reason as the two above.
-  // `composition/analytics-host.ts` stamps `agent_qa_version` on every event this command emits,
-  // and the union constrains that field to a semver — a stubbed string here would let a cell pass
-  // on a value the schema would refuse in production.
+  // The real version reader, because the union constrains `agent_qa_version` to a semver.
   getAgentQaVersion: actual.getAgentQaVersion,
   parseAllTests: mockParseAllTests,
   parseAllTestBindings: vi.fn(async (filePaths: string[]) => {
@@ -301,14 +278,6 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   DEFAULT_AGENT_QA_SCREENSHOTS_DIR: '.agent-qa/artifacts/screenshots',
   DEFAULT_AGENT_QA_VIDEOS_DIR: '.agent-qa/artifacts/videos',
   parseEnvFile: vi.fn(() => ({})),
-  registerAllProviders: vi.fn(),
-  getProvider: vi.fn(() => ({
-    resolveMobileCapabilities: vi.fn(async () => ({
-      provider: 'browserstack',
-      endpoint: 'wss://browserstack.example.test/playwright',
-      capabilities: {},
-    })),
-  })),
   validateUserRunAttributes: vi.fn((input: unknown, sourceLabel = 'run attributes') => {
     if (input === undefined || input === null) return {}
     if (!input || typeof input !== 'object' || Array.isArray(input)) {
@@ -319,28 +288,6 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
       if (!key) throw new Error(`${sourceLabel}: Attribute key must be non-empty`)
       if (key.startsWith('agent-qa.')) throw new Error(`${sourceLabel}: Attribute key "${key}" uses the reserved prefix "agent-qa."`)
       if (typeof value !== 'string') throw new Error(`${sourceLabel}: Attribute value for "${key}" must be a string`)
-      attributes[key] = value
-    }
-    return attributes
-  }),
-  validateTrustedRunAttributes: vi.fn((input: unknown, sourceLabel = 'run attributes') => {
-    if (input === undefined || input === null) return {}
-    if (!input || typeof input !== 'object' || Array.isArray(input)) {
-      throw new Error(`${sourceLabel}: attributes must be a plain object`)
-    }
-    const attributes: Record<string, string> = {}
-    for (const [key, value] of Object.entries(input)) {
-      if (!key) throw new Error(`${sourceLabel}: Attribute key must be non-empty`)
-      if (typeof value !== 'string') throw new Error(`${sourceLabel}: Attribute value for "${key}" must be a string`)
-      if (key === 'agent-qa.trigger' && !['cli', 'dashboard', 'api', 'mcp'].includes(value)) {
-        throw new Error(`${sourceLabel}: Attribute value for "${key}" must be one of: cli, dashboard, api, mcp`)
-      }
-      if (key === 'agent-qa.runner' && !['local', 'browserstack'].includes(value)) {
-        throw new Error(`${sourceLabel}: Attribute value for "${key}" must be one of: local, browserstack`)
-      }
-      if (key.startsWith('agent-qa.') && key !== 'agent-qa.trigger' && key !== 'agent-qa.runner') {
-        throw new Error(`${sourceLabel}: Attribute key "${key}" uses the reserved prefix "agent-qa."`)
-      }
       attributes[key] = value
     }
     return attributes
@@ -406,11 +353,9 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
     })(),
     platform: input.platform,
     targetName: input.targetName,
-    transport: 'local',
     device: {
       name: input.explicitDeviceName ?? input.useDeviceName,
       platform: input.platform,
-      transport: 'local',
       match: {},
     },
     app: {},
@@ -647,10 +592,7 @@ vi.mock('../targets.js', () => ({
   resolveTarget: mockResolveTarget,
 }))
 
-// 373-07: the run-start baseline probe (D-04) does a REAL global-fetch GET against the resolved
-// web target at the composition root — stub it here so no unit test touches the network and the
-// run body starts immediately (the classifier consumes the value; probe behavior is pinned in
-// baseline-probe.test.ts).
+// The baseline probe does a real fetch, so it is stubbed; `baseline-probe.test.ts` pins it.
 vi.mock('../commands/baseline-probe.js', () => ({
   runBaselineProbe: vi.fn(async () => ({ status: 200, elapsedMs: 1 })),
 }))
@@ -672,9 +614,8 @@ function defaultConfig() {
       envFile: defaultEnvFilePath ?? '.env',
       secretsFile: defaultSecretsFilePath ?? '.env.secrets.local',
     },
-    // Flat aliases removed — run command now reads from workspace.* (4-bucket config)
     services: {
-      cache: { dir: '.agent-qa/cache', ttl: '7d' },
+      cache: { dir: '.agent-qa/cache' },
       logging: { level: 'warn' },
       dashboard: undefined as any,
     },
@@ -721,20 +662,9 @@ let exitSpy: any
 let logSpy: any
 let errorSpy: any
 const tempDirs: string[] = []
+let defaultConfigRoot = ''
 
-/**
- * A run id unique to this test, and to this process (401-20 · CR-04).
- *
- * A caller-named run id that already names a run is now REFUSED, and these fixtures write REAL run
- * directories into `packages/cli/.agent-qa/runs/` which survive the process. A constant id
- * therefore worked exactly once per workspace and collided on every later run of this file. Unique
- * A FRESH ID PER CALL by default, because `--all` starts a suite run and a direct run in ONE
- * process and a shared mint would make the second collide with the first. Cells that need one
- * stable value across a single run pin it themselves with `mockReturnValue(freshRunId(...))`; the
- * one cell that asserts the printed id reads it back off the mint rather than typing it in.
- */
-// 418-07: OS PIDs recur across sessions while these fixture directories persist.
-// A per-suite nonce prevents historical run evidence from refusing a fresh fixture.
+// A fresh id per call; a per-suite nonce keeps ids fresh while fixture directories persist.
 const runIdSession = randomUUID().replaceAll('-', '')
 let runIdOrdinal = 0
 function freshRunId(stem: string): string {
@@ -780,8 +710,7 @@ beforeEach(() => {
   })
   mockRunSuite.mockReset()
   mockRunSuite.mockResolvedValue({ status: 'passed', duration: 100 })
-  // The suite path now runs through startRun; each member wraps executeSuiteMember (D-01). Default
-  // to a passing member TestResult so the aggregate verdict is `passed` ⇒ exit 0.
+  // The suite path runs through `startRun`; a passing member by default gives exit 0.
   mockRunMemberTest.mockReset()
   mockRunMemberTest.mockResolvedValue({
     runId: 'r_member',
@@ -828,14 +757,7 @@ beforeEach(() => {
     product: 'test-app',
     platform: 'web',
     url: 'https://example.com',
-    // 401-03 (D-06): these fixtures declare their class because the run gate now classifies
-    // every run by it, and an UNDECLARED target fails closed in a non-interactive context —
-    // which a vitest process is. `local` is the honest declaration here: nothing in this suite
-    // touches a network (the baseline probe is mocked above and the member runner is a double),
-    // so these runs drive a local fixture environment whatever the placeholder URL reads. The
-    // gate's own behaviour is measured where it belongs — `run-gate.e2e.test.ts` on the shipped
-    // binary and `run-invocation-core.test.ts` at the unit — and a control below proves these
-    // cells are green because they DECLARED, not because the gate went missing.
+    // Declared `local`, as nothing here touches a network: the probe is mocked, the runner fake.
     environment: 'local',
   })
   exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => {
@@ -850,10 +772,7 @@ afterEach(async () => {
   logSpy.mockRestore()
   errorSpy.mockRestore()
   delete process.env.AGENT_QA_RUN_ID
-  delete process.env.AGENT_QA_RUN_ATTRIBUTES_JSON
   delete process.env.AGENT_QA_LIVE_EVENTS
-  delete process.env.BROWSERSTACK_USERNAME
-  delete process.env.BROWSERSTACK_ACCESS_KEY
   defaultSecretsFilePath = undefined
   defaultEnvFilePath = undefined
   defaultHooksFilePath = undefined
@@ -871,8 +790,14 @@ async function runCommand(...args: string[]) {
 }
 
 async function runCommandWithGlobalArgs(globalArgs: string[], ...runArgs: string[]) {
+  defaultConfigRoot = mkdtempSync(join(tmpdir(), 'agent-qa-run-test-'))
+  tempDirs.push(defaultConfigRoot)
   const program = new Command()
-  program.option('--config <path>', 'config file path', 'agent-qa.config.yaml')
+  program.option(
+    '--config <path>',
+    'config file path',
+    join(defaultConfigRoot, 'agent-qa.config.yaml'),
+  )
   program.option('--log-level <level>', 'log verbosity: silent|error|warn|info|debug')
   program.option('--verbose', 'shorthand for --log-level debug')
   program.option('--quiet', 'shorthand for --log-level silent')
@@ -983,8 +908,7 @@ function suiteDefinition(name: string, testFile: string, use?: Record<string, un
   }
 }
 
-// Resolves to a per-member TestResult (the suite path now runs through executeSuiteMember, not
-// runSuite). Used to control sequential member timing inside the ONE RunSession.
+// Resolves to a per-member `TestResult`, to control member timing inside one `RunSession`.
 function deferredSuiteResult(name: string) {
   let resolveResult!: () => void
   const promise = new Promise<Record<string, unknown>>((resolvePromise) => {
@@ -1053,9 +977,7 @@ describe('run command — secrets file preflight', () => {
     const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.secretStore.require('LOGIN_PASSWORD')).toBe('super-secret')
     expect(runConfig.secretRedactor).toBeDefined()
-    // 363-11: secretsFileMetadata / the run artifact are no longer threaded through a v1 reporter
-    // (runMemberTest owns execution); the secret store + redactor threading above is the meaningful
-    // assertion — the run redactor is what keeps raw secrets out of any rendered/persisted output.
+    // The secret store and redactor threading above keeps raw secrets out of rendered output.
     void secretsPath
   })
 })
@@ -1176,18 +1098,9 @@ describe('run command — product-scoped handoff preflight', () => {
   })
 })
 
-// 401-03 (D-06/D-16): the control on every `environment: 'local'` declaration in this file.
-//
-// WHY IT IS HERE AND NOT ONLY IN THE E2E. Every fixture above declares its class, and after that
-// declaration the whole suite runs the run body exactly as it always did. A reader is entitled to
-// ask whether those cells are green because they declared, or because the gate is inert and the
-// declaration is decoration. This cell answers it in the same harness, with the same command, by
-// changing exactly one field.
-// RE-SPELLED 2026-09-30 (432-13, D-01/D-18). The control used to be an UNDECLARED target denied
-// fail-closed by the run gate. That run starts now (C432-HEADLESS-START), so the one-field control
-// is a PRODUCTION declaration the config has not opted into — the only refusal left — beside the
-// undeclared target that now reaches the member runner.
-describe('run command — the gate the declarations above are satisfying (401-03)', () => {
+// Every fixture above declares `environment: 'local'`; nothing gates a run on it, so a target that
+// declares no environment reaches the member runner the same way.
+describe('run command — a target with no declared environment runs', () => {
   const oneMember = (): void => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest({ target: 'test-app' })], errors: [] })
@@ -1199,28 +1112,6 @@ describe('run command — the gate the declarations above are satisfying (401-03
       duration: 100,
     })
   }
-
-  it('a PRODUCTION target without the opt-in is refused and never reaches the member runner', async () => {
-    oneMember()
-    mockResolveTarget.mockReturnValue({
-      name: 'test-app',
-      product: 'test-app',
-      platform: 'web',
-      url: 'https://example.com',
-      environment: 'production',
-    })
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(mockRunMemberTest).not.toHaveBeenCalled()
-    expect(mockNextBuildOrdinal).not.toHaveBeenCalled()
-    expect(exitSpy).toHaveBeenCalledWith(2)
-    const rendered = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
-    expect(rendered).toContain('Run denied')
-    expect(rendered).toContain('"test-app"')
-    expect(rendered).toContain('allowProduction: true')
-    expect(rendered).not.toContain('--trust-session')
-  })
 
   it('an UNDECLARED target now reaches the member runner, with no prompt and no refusal', async () => {
     oneMember()
@@ -1235,8 +1126,6 @@ describe('run command — the gate the declarations above are satisfying (401-03
 
     expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
     expect(exitSpy).toHaveBeenCalledWith(0)
-    const rendered = errorSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n')
-    expect(rendered).not.toContain('Run denied')
   })
 })
 
@@ -1273,19 +1162,13 @@ describe('run command — reduced flag surface and target resolution', () => {
     expect(help).not.toContain('--env ')
     expect(help).not.toContain('--env-file')
   })
-  it('418 exposes --max-ablations and refuses non-positive or non-integer budgets before running', async () => {
-    expect(createRunCommand().helpInformation()).toContain('--max-ablations <n>')
-    for (const value of ['0', '-1', '1.5', '9007199254740992']) {
-      await expect(parseRemovedRunFlag('--max-ablations', value))
-        .rejects.toMatchObject({ code: 'commander.invalidArgument' })
-    }
-    expect(mockResolveConfig).not.toHaveBeenCalled()
-  })
 
   it('classifies removed run flags as Commander unknown options', async () => {
     await expect(parseRemovedRunFlag('--app', 'staging')).rejects.toMatchObject({ code: 'commander.unknownOption' })
     await expect(parseRemovedRunFlag('--env', 'staging')).rejects.toMatchObject({ code: 'commander.unknownOption' })
     await expect(parseRemovedRunFlag('--env-file', '.env.local')).rejects.toMatchObject({ code: 'commander.unknownOption' })
+    await expect(parseRemovedRunFlag('--bail')).rejects.toMatchObject({ code: 'commander.unknownOption' })
+    await expect(parseRemovedRunFlag('--screenshot-dir', './shots')).rejects.toMatchObject({ code: 'commander.unknownOption' })
   })
 
   it('resolves target: from test YAML via resolveTarget', async () => {
@@ -1368,8 +1251,7 @@ describe('run command — reduced flag surface and target resolution', () => {
       { kind: 'api-key', apiKey: 'test-key' },
       expect.any(Function),
     )
-    // 355-07 supplies role-separated accounting ports. 366-07 adds each role's declared
-    // model profile and preserves that exact DTO reference through member-run recording.
+    // Role-separated accounting ports, each role's declared model profile passed through unchanged.
     expect(mockLLMPlanner.mock.calls[0]).toHaveLength(7)
     expect(mockLLMPlanner.mock.calls[0][0]).toBe(mockCreateModel.mock.results[0].value)
     expect(mockLLMPlanner.mock.calls[0][1]).toBe('web')
@@ -1577,7 +1459,6 @@ describe('run command — auth state consumption', () => {
         }),
       }),
     )
-    // 363-11: the member outcome is no longer surfaced via a v1 reporter; a passing run exits 0.
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
@@ -1601,7 +1482,6 @@ describe('run command — auth state consumption', () => {
     expect(mockWriteAuthStateFiles).not.toHaveBeenCalled()
     expect(mockWebStorageState).not.toHaveBeenCalled()
     expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
-    // 363-11: a failing member surfaces via the run exit code (no v1 reporter).
     expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
@@ -1623,8 +1503,7 @@ describe('run command — auth state consumption', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
-    // 363-11: the auth-capture-write failure synthesizes a failed run → exit 1 (no v1 reporter);
-    // the sensitive path must never leak to stderr.
+    // The sensitive path must never reach stderr.
     expect(exitSpy).toHaveBeenCalledWith(1)
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allErrors).not.toContain('/internal/auth')
@@ -1668,7 +1547,7 @@ describe('run command — auth state consumption', () => {
       product: 'mobile-app',
       platform: 'android',
       appPackage: 'com.example.app',
-      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      // Declared local, as on the default fixture above.
       environment: 'local',
     })
     mockResolveAuthStateForRun.mockRejectedValueOnce(
@@ -1709,6 +1588,27 @@ describe('run command — auth state consumption', () => {
       stateName: 'admin',
       storageStatePath: '/internal/auth/test-app/admin.json',
     }))
+  })
+
+  it('a web suite with no use.timeout sets the adapter up with a 2m navigation timeout', async () => {
+    const cfg = defaultConfig()
+    delete (cfg.use as any).timeout
+    mockResolveConfig.mockResolvedValue(cfg)
+    mockGlob.mockResolvedValue([])
+    const { suitePath, configPath } = await createTempSuiteWorkspace()
+    mockParseSuiteFile.mockResolvedValue({
+      name: 'Web Suite',
+      target: 'test-app',
+      tests: [{ test: 'tests/login.yaml', id: 'suite-test-1' }],
+    })
+    mockParseTestFile.mockReturnValue({
+      tests: [makeTest()],
+      errors: [],
+    })
+
+    await runCommandWithGlobalArgs(['--config', configPath], suitePath)
+
+    expect(mockWebAdapterSetup.mock.calls[0][0].timeouts.navigation).toBe(120_000)
   })
 
   it('allows a suite child test to repeat the same auth state', async () => {
@@ -1817,7 +1717,6 @@ describe('run command — mobile app state and device resolution', () => {
     ;(cfg.registry as any).devices = {
       'android-emu': {
         platform: 'android',
-        transport: 'local',
         match: { automationName: 'UiAutomator2' },
       },
     }
@@ -1831,7 +1730,7 @@ describe('run command — mobile app state and device resolution', () => {
       product: 'mobile-app',
       platform: 'android',
       appPackage: 'com.example.app',
-      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      // Declared local, as on the default fixture above.
       environment: 'local',
     })
   }
@@ -2046,7 +1945,7 @@ describe('run command — mobile app state and device resolution', () => {
       product: 'test-app',
       platform: 'web',
       url: 'https://example.com',
-      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      // Declared local, as on the default fixture above.
       environment: 'local',
     })
     mockParseSuiteFile.mockResolvedValue({
@@ -2098,8 +1997,7 @@ describe('run command — run attributes', () => {
 
     await runCommand('tests/**/*.yaml', '--run-attr', 'git.branch=phase223-main', 'user.email=CI')
 
-    // 363-11: the run artifact is no longer surfaced via a v1 reporter; the resolved run
-    // attributes remain observable in the printed run-attributes block.
+    // The resolved run attributes are observable in the printed run-attributes block.
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allOutput).toContain('Run attributes:')
     expect(allOutput).toContain('git.branch=phase223-main')
@@ -2121,7 +2019,7 @@ describe('run command — run attributes', () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'git.branch=dev', '--run-attr', 'git.branch=phase223-main')
 
     expect(warnSpy).toHaveBeenCalledWith('Warning: duplicate --run-attr key "git.branch"; using last value')
-    // 363-11: the last-value-wins result is observable in the printed run-attributes block.
+    // The last-value-wins result is observable in the printed run-attributes block.
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
     expect(allOutput).toContain('git.branch=phase223-main')
     warnSpy.mockRestore()
@@ -2136,154 +2034,6 @@ describe('run command — run attributes', () => {
     expect(allErrors).toContain('reserved prefix "agent-qa."')
   })
 
-  it('rejects invalid inherited protected run attributes before execution', async () => {
-    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
-    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-      'agent-qa.custom': 'evil',
-    })
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(exitSpy).toHaveBeenCalledWith(2)
-    expect(mockRunMemberTest).not.toHaveBeenCalled()
-    const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allErrors).toContain('inherited run attributes')
-    expect(allErrors).toContain('agent-qa.custom')
-    expect(allErrors).toContain('reserved prefix "agent-qa."')
-  })
-
-  it('recomputes inherited runner attributes after direct BrowserStack device resolution', async () => {
-    const { resolveMobileRunConfig } = await import('@vostride/agent-qa-core')
-    const cfg = defaultConfig()
-    cfg.registry.targets = {
-      'mobile-browser': {
-        platform: 'android',
-        product: 'mobile-browser',
-        url: 'https://example.com',
-      },
-    } as any
-    ;(cfg.use as any).mobile = { appState: 'preserve' }
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockResolveTarget.mockReturnValue({
-      name: 'mobile-browser',
-      product: 'mobile-browser',
-      platform: 'android',
-      url: 'https://example.com',
-      // 401-03 (D-06): declared local — see the note on the default fixture above.
-      environment: 'local',
-    })
-    vi.mocked(resolveMobileRunConfig).mockImplementationOnce((input: any) => ({
-      deviceName: 'cloud-phone',
-      platform: 'android',
-      targetName: input.targetName,
-      transport: 'browserstack',
-      device: {
-        name: 'cloud-phone',
-        platform: 'android',
-        transport: 'browserstack',
-        match: { browserName: 'chrome' },
-      },
-      app: { sourceTrace: {} },
-      appState: input.appState,
-      appium: { url: input.appiumUrl },
-      sourceTrace: [],
-    }))
-    process.env.BROWSERSTACK_USERNAME = 'user'
-    process.env.BROWSERSTACK_ACCESS_KEY = 'key'
-    process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
-    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase247-review',
-    })
-    mockGlob.mockResolvedValue(['tests/mobile.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest({ target: 'mobile-browser', use: { device: 'cloud-phone' } })],
-      errors: [],
-    })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/mobile.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-    })
-
-    await runCommand('tests/**/*.yaml')
-
-    // 363-11: the recomputed runner attribute (browserstack) is observable in the printed block.
-    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput).toContain('agent-qa.runner=browserstack')
-    expect(allOutput).toContain('git.branch=phase247-review')
-  })
-
-  it('recomputes inherited runner attributes after suite BrowserStack device resolution', async () => {
-    const { resolveMobileRunConfig } = await import('@vostride/agent-qa-core')
-    const { suitePath, configPath } = await createTempSuiteWorkspace()
-    const cfg = defaultConfig()
-    cfg.registry.targets = {
-      'mobile-browser': {
-        platform: 'android',
-        product: 'mobile-browser',
-        url: 'https://example.com',
-      },
-    } as any
-    ;(cfg.use as any).mobile = { appState: 'preserve' }
-    mockResolveConfig.mockResolvedValue(cfg)
-    mockResolveTarget.mockReturnValue({
-      name: 'mobile-browser',
-      product: 'mobile-browser',
-      platform: 'android',
-      url: 'https://example.com',
-      // 401-03 (D-06): declared local — see the note on the default fixture above.
-      environment: 'local',
-    })
-    vi.mocked(resolveMobileRunConfig).mockImplementationOnce((input: any) => ({
-      deviceName: 'cloud-phone',
-      platform: 'android',
-      targetName: input.targetName,
-      transport: 'browserstack',
-      device: {
-        name: 'cloud-phone',
-        platform: 'android',
-        transport: 'browserstack',
-        match: { browserName: 'chrome' },
-      },
-      app: { sourceTrace: {} },
-      appState: input.appState,
-      appium: { url: input.appiumUrl },
-      sourceTrace: [],
-    }))
-    process.env.BROWSERSTACK_USERNAME = 'user'
-    process.env.BROWSERSTACK_ACCESS_KEY = 'key'
-    process.env.AGENT_QA_RUN_ID = freshRunId('suite')
-    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
-      'agent-qa.trigger': 'api',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase247-review',
-    })
-    mockParseSuiteFile.mockResolvedValue({
-      name: 'Mobile Cloud Suite',
-      target: 'mobile-browser',
-      use: { device: 'cloud-phone' },
-      tests: [{ test: 'tests/login.yaml', id: 'suite-test-1' }],
-    })
-    mockParseTestFile.mockReturnValue({
-      tests: [makeTest({ target: 'mobile-browser' })],
-      errors: [],
-    })
-
-    await runCommandWithGlobalArgs(['--config', configPath], suitePath)
-
-    // 363-11: the per-member config no longer carries the suite artifact context; the recomputed
-    // runner attribute (browserstack, post device-resolution) is emitted via printRunAttributes.
-    const printed = logSpy.mock.calls.map((c: unknown[]) => c.join(' ')).join(String.fromCharCode(10))
-    expect(printed).toContain('browserstack')
-    expect(printed).toContain('phase247-review')
-  })
-
   it('rejects malformed --run-attr values before execution', async () => {
     await runCommand('tests/**/*.yaml', '--run-attr', 'noEquals')
 
@@ -2294,50 +2044,9 @@ describe('run command — run attributes', () => {
   })
 })
 
-// 2026-10-17 (443-09, D-11/D-25): the retired names are built from halves so no file spells them.
-describe('C443-ENV-RETIRED', () => {
-  it('inherits run attributes only under AGENT_QA_RUN_ID', async () => {
-    const retired = [['AGENT_QA_SUITE', '_QUEUE_ID'], ['AGENT_QA_PARENT', '_RUN_ID']]
-      .map((halves) => halves.join(''))
-    for (const name of retired) vi.stubEnv(name, freshRunId('retired'))
-    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-      'git.branch': 'phase443-inherited',
-    })
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One', filePath: 'tests/a.yaml', status: 'passed', steps: [], duration: 100,
-    })
-
-    try {
-      await runCommand('tests/**/*.yaml')
-    } finally {
-      vi.unstubAllEnvs()
-    }
-
-    const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allOutput.includes('agent-qa.trigger=cli'), 'the run carries its own trigger').toBe(true)
-    expect(allOutput.includes('git.branch=phase443-inherited'), 'inherited without AGENT_QA_RUN_ID')
-      .toBe(false)
-  })
-})
-
 describe('run command — exit codes', () => {
-  // WINDOWS #233 — the WIRE, not the mechanism.
-  //
-  // The isolation mechanism (a member's run id bound to its async scope) is pinned in core's
-  // `log-manager.test.ts` and survives a five-mutation sweep. What only THIS harness can measure is
-  // that the direct member executor is actually wired through it: `commands/run.ts` builds ONE
-  // LogManager for the whole run, and since 402-02/402-03 its members run concurrently, so a member
-  // that stamps its run id OUTSIDE a scope silently restores the corruption (measured pre-fix: every
-  // buffered line collapsed to the last stamper's id).
-  //
-  // Depth at the stamp, NOT a source grep — this phase has twice measured a grep pass on the import
-  // line alone (402-01 `timingSafeEqual`, 402-03 `resolveEffectiveWorkers`). Deleting the
-  // `logger.runInMemberScope(...)` wrap leaves every stamp at depth 0 and reds this cell.
-  it('stamps each direct member run id INSIDE a member log scope (WINDOWS #233)', async () => {
+  // One `LogManager` serves concurrent members, so each member must stamp inside its own scope.
+  it('stamps each direct member run id INSIDE a member log scope', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
     mockRunMemberTest.mockResolvedValue({
@@ -2393,8 +2102,7 @@ describe('run command — exit codes', () => {
   })
 
   it('exits 2 on parse errors', async () => {
-    // 2026-10-17 (443-08, D-03): the failure row is written whatever the config holds, so the
-    // malformed file the row snapshots exists on disk.
+    // The failure row is written whatever the config holds, so the file it snapshots exists.
     const projectDir = mkdtempSync(join(tmpdir(), 'agent-qa-run-parse-error-'))
     tempDirs.push(projectDir)
     const malformed = join(projectDir, 'a.yaml')
@@ -2418,8 +2126,7 @@ describe('run command — exit codes', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     const allOutput = logSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    // Read off the MINT rather than typed in — the id is salted per test now (401-20), and a
-    // literal here would pin one execution's value.
+    // Read off the mint, because the id is salted per test.
     expect(allOutput).toContain(`Run ID: ${mockGenerateRunId.mock.results[0]!.value as string}`)
     expect(db.insertRun).toHaveBeenCalledWith(expect.objectContaining({
       id: mockGenerateRunId.mock.results[0]!.value as string,
@@ -2435,9 +2142,7 @@ describe('run command — exit codes', () => {
     expect(exitSpy).toHaveBeenCalledWith(2)
   })
 
-  // RUNX-06: discovery resolved a file but parsing produced ZERO runnable tests (no parse errors).
-  // This previously exited 0 with a green "No tests match filters" — a silent zero-member non-run.
-  // It must now fail LOUDLY (exit 2) and never render a benign "0 of 0" run summary.
+  // Files resolving to zero runnable tests exit 2, never a benign `0 of 0` summary.
   it('exits 2 (not silent green) when files resolve but zero runnable tests parse', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [], errors: [] })
@@ -2452,40 +2157,6 @@ describe('run command — exit codes', () => {
   })
 })
 
-
-describe('run command — bail mode', () => {
-  // Phase 361 (D-01/SESSION-04): the single-test path is now ONE RunSession per invocation whose
-  // members carry NO failFastGroup, so ungrouped members never fail-fast — every discovered test runs
-  // then the run aggregates. The old --bail short-circuit is dropped (the single-test analog of Plan
-  // 10's suite-parent parallel drop); --bail is a no-op under the one-RunSession law.
-  it('runs all members in one RunSession — --bail no longer short-circuits after the first failure', async () => {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    const test1 = makeTest({ name: 'Failing Test' })
-    const test2 = makeTest2({ name: 'Second Test' })
-    mockParseAllTests.mockResolvedValue({
-      tests: [test1, test2],
-      errors: [],
-    })
-
-    let callCount = 0
-    mockRunMemberTest.mockImplementation(async () => {
-      callCount++
-      return {
-        name: callCount === 1 ? 'Failing Test' : 'Second Test',
-        filePath: 'tests/a.yaml',
-        status: 'failed',
-        steps: [],
-        duration: 100,
-      }
-    })
-
-    await runCommand('--bail', 'tests/**/*.yaml')
-
-    // Both members execute inside the one session; the failed aggregate verdict still maps to exit 1.
-    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
-    expect(exitSpy).toHaveBeenCalledWith(1)
-  })
-})
 
 describe('run command — framework error handling', () => {
   it('exits 2 on config resolution failure', async () => {
@@ -2616,10 +2287,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    // 398-10 (D-17/D-20): the subscriber is built from the PORT this command composed at its root
-    // and is handed the trigger/runner the command already resolved — no `config` reaches it, and
-    // it reads no environment of its own. `surface` moved onto the standard properties, where it is
-    // stamped once for every event of the invocation rather than per subscriber.
+    // Built from the root's port with the resolved trigger and runner; no `config` reaches it.
     expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
       port: expect.objectContaining({ capture: expect.any(Function) }),
       triggerSource: 'cli',
@@ -2647,8 +2315,7 @@ describe('run command — reporter integration', () => {
       }),
     }))
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    // 363-11: the notice fires after member execution + the analytics bus subscriber flush
-    // (the v1 reporter/analytics-reporter lifecycle is deleted).
+    // The notice fires after member execution and the analytics subscriber flush.
     expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
     expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockAnalyticsRunSubscriberInstance.flush))
     expect(exitSpy).toHaveBeenCalledWith(0)
@@ -2668,8 +2335,7 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], suitePath)
 
-    // 363-09 (D-16) / 398-10: the suite path attaches the same subscriber at the run-level startRun
-    // site, built by the SAME factory over the SAME composed port as the direct path (Pitfall 8).
+    // The suite path attaches the same subscriber, built by the same factory over the same port.
     expect(mockCreateAnalyticsRunSubscriber).toHaveBeenCalledWith(expect.objectContaining({
       port: expect.objectContaining({ capture: expect.any(Function) }),
       standardProperties: expect.objectContaining({ surface: 'cli' }),
@@ -2699,7 +2365,7 @@ describe('run command — reporter integration', () => {
     expect(exitSpy).toHaveBeenCalledWith(exitCode)
   })
 
-  it('composes analytics ONCE for a --all invocation — both subscribers hold the same port (D-19)', async () => {
+  it('composes analytics ONCE for a --all invocation — both subscribers hold the same port', async () => {
     // THE CLAIM IS OBJECT IDENTITY, not "both were configured the same way". `--all` drives the
     // suite path and then the direct path in one process; a rewire that composed at each attach
     // site would produce two ports, two opt-out decisions and two identity resolutions, and every
@@ -2722,7 +2388,7 @@ describe('run command — reporter integration', () => {
     expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
     expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
     const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    // 363-11: the notice fires after all members finish executing (no v1 reporter onRunEnd).
+    // The notice fires after all members finish executing.
     expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
@@ -2816,8 +2482,7 @@ describe('run command — reporter integration', () => {
   })
 
   it('does not fail direct test execution when analytics flush rejects', async () => {
-    // 363-09: the attach helper flushes every subscriber with allSettled, so a best-effort analytics
-    // flush rejection can never abort the run or its exit code (RUNX-03 / D-08 detach-on-error).
+    // Subscribers flush with `allSettled`, so an analytics rejection cannot abort the run.
     mockAnalyticsRunSubscriberInstance.flush.mockRejectedValueOnce(new Error('posthog unavailable'))
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -2859,14 +2524,10 @@ describe('run command — reporter integration', () => {
       ...(platform === 'android'
         ? { appPackage: 'com.example.app' }
         : { bundleId: 'com.example.app' }),
-      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      // Declared local, as on the default fixture above.
       environment: 'local',
     })
     process.env.AGENT_QA_RUN_ID = freshRunId('dashboard')
-    process.env.AGENT_QA_RUN_ATTRIBUTES_JSON = JSON.stringify({
-      'agent-qa.trigger': 'dashboard',
-      'agent-qa.runner': 'local',
-    })
     mockGlob.mockResolvedValue(['tests/mobile.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest({ target: 'mobile-app', use: { device: 'mobile-device' } })],
@@ -2875,11 +2536,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    // 363-09 (D-16): a mobile setup failure occurs BEFORE the runner emits a testFinished envelope, so
-    // its telemetry is no longer captured (the v1 per-result analytics capture is gone; analytics now
-    // rides the bus). The failure is still surfaced as a clean framework-error exit 2. The companion
-    // "never constructed the v1 reporter" assertion retired in 398-11 with the module itself: there is
-    // no longer a symbol to construct, so the claim is now enforced by the compiler, not by a mock.
+    // A mobile setup failure precedes any `testFinished`, so no telemetry; it still exits 2.
     expect(exitSpy).toHaveBeenCalledWith(2)
   })
 
@@ -2903,7 +2560,7 @@ describe('run command — reporter integration', () => {
       ...(platform === 'android'
         ? { appPackage: 'com.example.app' }
         : { bundleId: 'com.example.app' }),
-      // 401-03 (D-06): declared local — see the note on the default fixture above.
+      // Declared local, as on the default fixture above.
       environment: 'local',
     })
     mockGlob.mockResolvedValue(['tests/mobile.yaml'])
@@ -2914,16 +2571,11 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    // 363-09 (D-16): pre-runner mobile setup-failure telemetry is dropped with the v1 analytics reporter
-    // (analytics rides the bus). The failure still surfaces as a clean framework-error exit 2.
+    // The mobile setup failure surfaces as a clean framework-error exit 2.
     expect(exitSpy).toHaveBeenCalledWith(2)
   })
 
-  // 363-09 (D-01 clean cut): the CLI no longer constructs v1 core Reporters (ConsoleReporter /
-  // JUnitReporter / StdoutLiveReporter / DashboardReporter). Reporter rendering is unit-tested in
-  // src/__tests__/reporters/*.test.ts; here we pin that the selection is HONORED — v1 reporters are
-  // never constructed and the accepted selection reaches execution.
-  it('never constructs v1 core reporters for a default direct run (bus subscribers replace them)', async () => {
+  it('constructs no dashboard reporter for a default direct run', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
     mockRunMemberTest.mockResolvedValue({
@@ -2932,14 +2584,11 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    // 363-11: the v1 core reporters (ConsoleReporter / JUnitReporter / StdoutLiveReporter /
-    // DashboardReporter) were deleted; there is nothing to construct. The run still reaches
-    // execution via the bus subscribers and exits clean.
     expect(mockDashboardReporter).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  it('honors console/junit reporter selection without constructing v1 reporters', async () => {
+  it('honors console/junit reporter selection and reaches execution', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
     mockRunMemberTest.mockResolvedValue({
@@ -2948,8 +2597,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml', '--reporter', 'console,junit', '--junit-output', join(tmpdir(), 'agent-qa-selection-junit.xml'))
 
-    // The selection is accepted (no pre-execution error) and the run reaches execution + exits 0.
-    // The v1 core reporters no longer exist to construct (363-11).
+    // The selection is accepted and the run reaches execution and exits 0.
     expect(mockRunMemberTest).toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
@@ -2976,7 +2624,7 @@ describe('run command — reporter integration', () => {
     expect(allErrors).toContain('--reporter junit requires --junit-output <path>')
   })
 
-  it('treats screenshotDir as capture intent for runTestWithRetry config', async () => {
+  it('treats --screenshot-mode every-step as capture intent for runTestWithRetry config', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
@@ -2990,11 +2638,10 @@ describe('run command — reporter integration', () => {
       duration: 100,
     })
 
-    await runCommand('--screenshot-dir', './shots', 'tests/**/*.yaml')
+    await runCommand('--screenshot-mode', 'every-step', 'tests/**/*.yaml')
 
     const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig).toEqual(expect.objectContaining({ captureScreenshots: true }))
-    expect(runConfig).not.toHaveProperty('screenshotDir')
   })
 
   it('passes services.accessibility into direct test execution', async () => {
@@ -3024,8 +2671,7 @@ describe('run command — reporter integration', () => {
 
     const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig.accessibility).toEqual(accessibility)
-    // 363-11: accessibility execution is an injected handler built at the composition root (the CLI
-    // owns page acquisition + the dynamic web import); the config is threaded, the handler is present.
+    // The CLI builds the accessibility handler at the root, owning page acquisition.
     expect(runConfig.accessibilityCheck).toEqual(expect.any(Function))
   })
 
@@ -3073,8 +2719,7 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    // 363-11: the v1 reporter lifecycle is deleted; the run reaching execution is observable via
-    // the member executor receiving the discovered test.
+    // The run reaching execution shows as the member executor receiving the discovered test.
     expect(mockRunMemberTest).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Test One' }),
       expect.anything(),
@@ -3097,16 +2742,14 @@ describe('run command — reporter integration', () => {
 
     await runCommand('tests/**/*.yaml')
 
-    // 363-11: run aggregation/counts are carried by the bus, not a v1 reporter; a single passing
-    // member exits 0 after execution completes.
+    // A single passing member exits 0 after execution completes.
     expect(mockRunMemberTest).toHaveBeenCalledTimes(1)
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
   it('threads one generated run ID onto the passing member result', async () => {
     const runId = freshRunId('able')
-    // One RunSession mints a run-level id up front AND the member closure mints the per-test id;
-    // pin both so the per-test id lands on the member result (363-11: no v1 reporter to observe).
+    // The session mints a run-level id and the member closure a per-test id; both are pinned.
     mockGenerateRunId.mockReturnValue(runId)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -3232,13 +2875,12 @@ describe('run command — reporter integration', () => {
 
     await runCommandWithGlobalArgs(['--config', configPath], testPath)
 
-    // 363-11: a per-test setup-hook failure short-circuits before the member executes and fails the
-    // run (exit 1) — no v1 reporter onTestEnd/onRunEnd to observe.
+    // A per-test setup-hook failure short-circuits before the member executes and fails the run.
     expect(mockRunMemberTest).not.toHaveBeenCalled()
     expect(exitSpy).toHaveBeenCalledWith(1)
   })
 
-  it('does not pass a default screenshotDir when not specified', async () => {
+  it('captures no screenshots unless --screenshot-mode every-step is passed', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
       tests: [makeTest()],
@@ -3256,7 +2898,6 @@ describe('run command — reporter integration', () => {
 
     const runConfig = mockRunMemberTest.mock.calls[0][1]
     expect(runConfig).toEqual(expect.objectContaining({ captureScreenshots: false }))
-    expect(runConfig).not.toHaveProperty('screenshotDir')
   })
 
   it('lets test-level browser.headless false override global true', async () => {
@@ -3311,9 +2952,45 @@ describe('run command — reporter integration', () => {
     }))
   })
 
-  // Phase 361 (D-01/SESSION-04): the single-test path is now ONE sequential RunSession per invocation.
-  // `use.parallel: true` no longer starts web tests concurrently (the single-test analog of Plan 10's
-  // suite-parent parallel drop) — members run one at a time in file order inside the single session.
+  it('a test with no use.timeout sets the adapter up with a 2m navigation timeout', async () => {
+    const cfg = defaultConfig()
+    delete (cfg.use as any).timeout
+    mockResolveConfig.mockResolvedValue(cfg)
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockWebAdapterSetup.mock.calls[0][0].timeouts.navigation).toBe(120_000)
+  })
+
+  it("a test's use.timeout.navigation reaches the adapter setup", async () => {
+    const cfg = defaultConfig()
+    cfg.use.timeout = { step: 30000, test: 300000, navigation: 5_000 }
+    mockResolveConfig.mockResolvedValue(cfg)
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status: 'passed',
+      steps: [],
+      duration: 100,
+    })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(mockWebAdapterSetup.mock.calls[0][0].timeouts.navigation).toBe(5_000)
+  })
+
+  // The single-test path is one sequential session, so `use.parallel` starts nothing concurrently.
   it('runs all web tests in one sequential RunSession even when global use.parallel is true (parallel is a no-op)', async () => {
     const cfg = defaultConfig()
     ;(cfg.use as any).parallel = true
@@ -3417,10 +3094,7 @@ describe('run command — reporter integration', () => {
     expect(exitSpy).toHaveBeenCalledWith(0)
   })
 
-  // Phase 361 (D-01/SESSION-04): the suite path is now ONE RunSession per invocation that iterates
-  // ALL suite members sequentially — parallel suite-parent execution (the old pendingSuiteParents
-  // path) is intentionally dropped. `use.parallel` no longer starts suite parents concurrently;
-  // members run in file order, one at a time, inside the single session.
+  // The suite path is one session over members in file order, so `use.parallel` changes nothing.
   it('runs all suite members in one sequential RunSession even when global use.parallel is true', async () => {
     const { configPath, suiteA, suiteB } = await createMultiSuiteWorkspace()
     const cfg = defaultConfig()
@@ -3554,17 +3228,17 @@ describe('run command — DashboardReporter wiring', () => {
 
     expect(mockDashboardDatabase).toHaveBeenCalled()
     expect(mockResolveDashboardDbPath).toHaveBeenCalledWith({
-      configDir: process.cwd(),
+      configDir: defaultConfigRoot,
       configuredDbPath: undefined,
     })
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
-      dbPath: resolve(process.cwd(), '.agent-qa/runs.db'),
+      dbPath: resolve(defaultConfigRoot, '.agent-qa/runs.db'),
       runOwnership: composeRunOwnership(),
     })
-    // 363-09: dashboard history is written by the Plan-08 bus ingest, not the deleted v1 DashboardReporter.
+    // Dashboard history is written by the bus ingest.
     expect(mockCreateDashboardRunIngest).toHaveBeenCalled()
     expect(mockDashboardReporter).not.toHaveBeenCalled()
-    // 2026-10-17 (443-09, D-20): a dashboard block no longer turns screenshot capture on.
+    // A dashboard block does not turn screenshot capture on.
     expect(mockRunMemberTest.mock.calls[0][1]).toEqual(expect.objectContaining({
       captureScreenshots: false,
     }))
@@ -3590,11 +3264,11 @@ describe('run command — DashboardReporter wiring', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockResolveDashboardDbPath).toHaveBeenCalledWith({
-      configDir: process.cwd(),
+      configDir: defaultConfigRoot,
       configuredDbPath: '.agent-qa/dashboard.db',
     })
     expect(mockDashboardDatabase).toHaveBeenCalledWith({
-      dbPath: resolve(process.cwd(), '.agent-qa/dashboard.db'),
+      dbPath: resolve(defaultConfigRoot, '.agent-qa/dashboard.db'),
       runOwnership: composeRunOwnership(),
     })
   })
@@ -3656,7 +3330,7 @@ describe('run command — recording staging root', () => {
     expect(mockWebAdapterSetup).toHaveBeenCalledWith(
       expect.objectContaining({
         recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), '.agent-qa/recording-staging'),
+          videoDir: resolve(defaultConfigRoot, '.agent-qa/recording-staging'),
         }),
       }),
     )
@@ -3706,7 +3380,7 @@ describe('run command — recording staging root', () => {
     expect(mockWebAdapterSetup).toHaveBeenCalledWith(
       expect.objectContaining({
         recording: expect.objectContaining({
-          videoDir: resolve(process.cwd(), '.agent-qa', 'recording-staging'),
+          videoDir: resolve(defaultConfigRoot, '.agent-qa', 'recording-staging'),
         }),
       }),
     )
@@ -3732,7 +3406,7 @@ describe('run command — recording staging root', () => {
     await runCommand('tests/**/*.yaml')
 
     expect(mockWebAdapterSetup.mock.calls[0][0].recording).toEqual(expect.objectContaining({
-      videoDir: resolve(process.cwd(), '.agent-qa', 'recording-staging'),
+      videoDir: resolve(defaultConfigRoot, '.agent-qa', 'recording-staging'),
     }))
   })
 })
@@ -3742,7 +3416,7 @@ describe('run command — runtime cache paths', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-cache-config-'))
     tempDirs.push(configDir)
     const cfg = defaultConfig()
-    cfg.services.cache = { dir: '.agent-qa/custom-cache', ttl: '7d' } as any
+    cfg.services.cache = { dir: '.agent-qa/custom-cache' } as any
     mockResolveConfig.mockResolvedValue(cfg)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -3759,9 +3433,8 @@ describe('run command — runtime cache paths', () => {
 
     await runCommandWithGlobalArgs(['--config', join(configDir, 'agent-qa.config.yaml')], 'tests/**/*.yaml')
 
-    // Phase 356: the composition root constructs the runner-local FsActionCache with a
-    // resolved branch CachePolicy over the config-relative cache root (no ttl — the v1
-    // core file store is retired).
+    // The composition root constructs the runner-local FsActionCache with a resolved branch
+    // CachePolicy over the config-relative cache root.
     expect(mockFsActionCache).toHaveBeenCalledWith(expect.objectContaining({
       root: join(configDir, '.agent-qa/custom-cache'),
       policy: expect.objectContaining({
@@ -3849,11 +3522,8 @@ describe('run command — runtime cache paths', () => {
     expect(suiteConfig.cache).toBeDefined()
   })
 
-  it('does not recompute/purge cache entries post-run — the loop owns per-key invalidation (Phase 356)', async () => {
-    // The v1 CLI post-run batch purge (recompute a step hash -> rm dir) is retired
-    // (D-03/D-13): the redesigned per-key ActionPlanCache invalidates the exact failed
-    // decision point inside the runner loop. The CLI never recomputes an opaque masked key,
-    // so it must not touch the on-disk cache after a failed run.
+  it('does not recompute/purge cache entries post-run — the loop owns per-key invalidation', async () => {
+    // The runner's per-key cache invalidates the failed decision, so the CLI leaves the cache be.
     const configDir = mkdtempSync(join(tmpdir(), 'agent-qa-cache-invalidate-'))
     tempDirs.push(configDir)
     const cacheEntry = join(configDir, '.agent-qa/custom-cache/main')
@@ -3861,7 +3531,7 @@ describe('run command — runtime cache paths', () => {
     writeFileSync(join(cacheEntry, 'a1b2c3d4e5f60718.json'), '{"schemaVersion":10}')
 
     const cfg = defaultConfig()
-    cfg.services.cache = { dir: '.agent-qa/custom-cache', ttl: '7d' } as any
+    cfg.services.cache = { dir: '.agent-qa/custom-cache' } as any
     mockResolveConfig.mockResolvedValue(cfg)
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({

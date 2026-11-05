@@ -1,5 +1,4 @@
-// 429-11 (D-23/D-24): an explicit action acts at once and hands back a single-use Undo token. The
-// restore happens on the server, so the browser never holds or writes back a secret.
+// The restore happens on the server, so the browser never holds or writes back a secret.
 
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -47,7 +46,7 @@ interface MockResponse {
 
 const HOST = '127.0.0.1:4317'
 const SAME_SITE: IncomingHttpHeaders = { host: HOST, 'content-type': 'application/json' }
-// The undo window the server keeps a token for (D-24: longer than the page's 10 s Undo link).
+// The server keeps a token longer than the page's 10 s Undo link.
 const RETENTION_MS = 30_000
 const HEADER_SENTINEL = 'hdr-sentinel-7f3a91c2d4'
 const MODEL_COMMENT = '# gpt goes through the org proxy'
@@ -63,7 +62,7 @@ function createMockRequest(
   const req = new IncomingMessage(new Socket())
   req.method = options.method ?? 'GET'
   req.url = url
-  req.headers = options.headers ?? {}
+  req.headers = { host: '127.0.0.1:3470', ...options.headers }
   process.nextTick(() => {
     if (options.body) req.push(Buffer.from(options.body))
     req.push(null)
@@ -123,7 +122,7 @@ const WORKSPACE = [
   '  secretsFile: .env.secrets.local',
 ]
 
-const modelsConfig = (evalBlock: readonly string[] = []) => [
+const modelsConfig = () => [
   ...WORKSPACE,
   'services: {}',
   'registry:',
@@ -147,7 +146,6 @@ const modelsConfig = (evalBlock: readonly string[] = []) => [
   '  llm: a',
   '  mobile:',
   '    appState: preserve',
-  ...evalBlock,
   '',
 ].join('\n')
 
@@ -206,7 +204,7 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
 })
 
-describe('undoable config writes (429-11 Task 1)', () => {
+describe('undoable config writes', () => {
   it('UNDO-DELETE-MODEL-RESTORES: Undo puts the deleted model back at its index with its secret and comments', async () => {
     const configPath = await useConfig(modelsConfig())
 
@@ -234,32 +232,6 @@ describe('undoable config writes (429-11 Task 1)', () => {
     expect(text).toContain(MODEL_COMMENT)
     expect(text).toContain(INLINE_COMMENT)
     expect(text).toBe(modelsConfig())
-  })
-
-  it('UNDO-JUDGE-DELETE-RESTORES-BOTH: one Undo restores the model and its eval judge list', async () => {
-    const configPath = await useConfig(modelsConfig(['eval:', '  judges:', '    - gpt', '    - b']))
-
-    const deleted = await patchConfig({
-      undoable: true,
-      changes: [
-        deleteGpt,
-        { op: 'set', path: ['eval', 'judge'], value: 'b' },
-        { op: 'unset', path: ['eval', 'judges'] },
-      ],
-    })
-
-    expect(deleted.status).toBe(200)
-    const undo = undoOf(deleted)
-    const afterDelete = parseYaml(await readFile(configPath, 'utf-8')) as { eval: Record<string, unknown> }
-    expect(afterDelete.eval).toEqual({ judge: 'b' })
-
-    const restored = await postUndo(undo.token)
-
-    expect(restored.status).toBe(200)
-    expect(await llmNames(configPath)).toEqual(['a', 'gpt', 'b'])
-    const parsed = parseYaml(await readFile(configPath, 'utf-8')) as { eval: Record<string, unknown> }
-    expect(parsed.eval).toEqual({ judges: ['gpt', 'b'] })
-    expect(await readFile(configPath, 'utf-8')).toBe(modelsConfig(['eval:', '  judges:', '    - gpt', '    - b']))
   })
 
   it('UNDO-DATA-PATH: Undo of a data-path change restores the previous value', async () => {
@@ -396,9 +368,8 @@ describe('undoable config writes (429-11 Task 1)', () => {
   })
 })
 
-// 429-42 made a set-if-absent completion of use.browser.headless carry a root use.headless under
-// its new key and delete the root key; this pins that one Undo brings the owner's root key back.
-describe('undo of a set-if-absent completion (429-49)', () => {
+// One Undo restores a root `use.headless` that a set-if-absent completion moved under its new key.
+describe('undo of a set-if-absent completion', () => {
   it('UNDO-LEGACY-HEADLESS-RESTORED: Undo of a completion that moved a root use.headless puts the root key back and removes the browser keys', async () => {
     const legacy = knowledgeConfig([]).replace('use:\n', 'use:\n  headless: false\n')
     const configPath = await useConfig(legacy)
@@ -438,7 +409,7 @@ function signOut(name: string, headers: IncomingHttpHeaders = SAME_SITE): Promis
   return invokeRoute(`/api/auth/${encodeURIComponent(name)}`, { method: 'DELETE', headers })
 }
 
-describe('undoable sign-out and key removal (429-11 Task 2)', () => {
+describe('undoable sign-out and key removal', () => {
   it('UNDO-SIGN-OUT-RESTORES-SERVER-SIDE: Undo writes the identical credential back and no answer carries it', async () => {
     await useConfig(modelsConfig())
     authStore.current = { gpt: structuredClone(SIGNED_IN), other: { type: 'api', provider: 'openai-compatible', key: 'sk-other' } }
@@ -524,7 +495,7 @@ const CROSS_SITE_CALLERS: readonly { readonly name: string; readonly headers: In
   { name: 'a rebound Host', headers: { 'content-type': 'application/json', host: 'evil.example:4317', origin: 'http://evil.example:4317' } },
 ]
 
-describe('UNDO-SAME-SITE (429-11 Task 2)', () => {
+describe('UNDO-SAME-SITE', () => {
   for (const caller of CROSS_SITE_CALLERS) {
     it(`UNDO-SAME-SITE: POST /api/config/undo refuses ${caller.name} and restores nothing`, async () => {
       const configPath = await useConfig(modelsConfig())
@@ -552,6 +523,18 @@ describe('UNDO-SAME-SITE (429-11 Task 2)', () => {
       expect(refused.headers['access-control-allow-origin']).toBeUndefined()
       expect(mockWriteAuth).not.toHaveBeenCalled()
       expect(authStore.current).toEqual({})
+    })
+
+    it(`GET /api/config/undo refuses ${caller.name} before the method check`, async () => {
+      const configPath = await useConfig(modelsConfig())
+      const before = await readFile(configPath)
+
+      const refused = await invokeRoute('/api/config/undo', { method: 'GET', headers: caller.headers })
+
+      expect(refused.status).toBe(403)
+      expect(JSON.parse(refused.body)).toEqual({ error: 'cross_site_refused' })
+      expect(refused.headers['access-control-allow-origin']).toBeUndefined()
+      expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
     })
 
     it(`UNDO-SAME-SITE: DELETE /api/auth/:configName refuses ${caller.name} and removes nothing`, async () => {

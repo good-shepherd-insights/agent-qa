@@ -1,14 +1,3 @@
-// Wave-0 RED scaffold (361-01, Task 1). Pins the schema-side handoff version guard
-// BEFORE any implementation exists — RED strictly on the unresolved import of the
-// not-yet-existing `../handoff/load-completed-run-handoff` module (right-reason RED).
-//
-// Contract source: 361-CONTEXT.md D-19 (361 ships the READ side of the version
-// discipline: parse → version check → reject newer-than-known with a typed error →
-// migrate older; empty migration table at v1, but the seam exists so every future
-// consumer imports the one guard instead of re-implementing the rule) +
-// eval-and-core-types.md §A8 schema-version discipline (reject newer / migrate older).
-//
-// Schema module-discipline law: extension-less relative import specifiers, no node builtins.
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -41,7 +30,7 @@ function makeValidHandoff(): CompletedRunHandoff {
   }
 }
 
-describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
+describe('guardCompletedRunHandoff (§A8 version discipline)', () => {
   it('returns a typed handoff for a document at the current schemaVersion', () => {
     const doc = makeValidHandoff()
     const guarded = guardCompletedRunHandoff(doc)
@@ -58,7 +47,7 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
     expect(guarded.tests).toEqual([])
   })
 
-  it('rejects a pre-INST schemaVersion 1 with no migration registered', () => {
+  it('rejects a stored schemaVersion 1 with no migration registered', () => {
     const doc = { ...makeValidHandoff(), schemaVersion: 1 }
     let thrown: unknown
     try {
@@ -122,11 +111,7 @@ describe('guardCompletedRunHandoff (D-19, §A8 version discipline)', () => {
   })
 })
 
-// --- 407-03 (TRST-01, D-13): the additive `StepEvidence.retrievalRung` -----------------------
-//
-// The rung is recorded BESIDE the served brief, never inside it, so a v6 handoff stays
-// loadable and a v7 handoff that carries one is admitted only in the shape the schema
-// declares. Present-implies-valid, exactly as `retrievalTrace` next door.
+// The rung sits beside the served brief, never inside it, so an older handoff stays loadable.
 
 function makeStepWithRung(rung?: unknown): unknown {
   return {
@@ -165,7 +150,7 @@ function makeHandoffWithStep(rung?: unknown): Record<string, unknown> {
   }
 }
 
-describe('member-grain rerun markers at the load boundary (418 D-09, approved OQ-1)', () => {
+describe('member-grain rerun markers at the load boundary', () => {
   function handoffWithRerunFields(fields: Record<string, unknown>) {
     const doc = makeHandoffWithStep()
     const tests = doc.tests as Record<string, unknown>[]
@@ -205,7 +190,17 @@ describe('member-grain rerun markers at the load boundary (418 D-09, approved OQ
   })
 })
 
-describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', () => {
+describe('step cache status at the load boundary', () => {
+  it('a handoff whose step records a disabled cache loads', () => {
+    const doc = makeHandoffWithStep()
+    const tests = doc.tests as Array<{ steps: Record<string, unknown>[] }>
+    tests[0]!.steps[0]!.cacheStatus = 'disabled'
+    const guarded = guardCompletedRunHandoff(doc)
+    expect(guarded.tests[0]?.steps[0]?.cacheStatus).toBe('disabled')
+  })
+})
+
+describe('StepEvidence.retrievalRung at the load boundary', () => {
   it('the current handoff schemaVersion is 2', () => {
     expect(CURRENT_HANDOFF_SCHEMA_VERSION).toBe(2)
   })
@@ -240,15 +235,7 @@ describe('StepEvidence.retrievalRung at the load boundary (407 D-13, TRST-01)', 
   })
 })
 
-// --- 407-20 (REVIEW WR-04): a replay plan source is admitted only in the wire's own domain ---
-//
-// `hasCompletePlanSourceShape` used to admit `flow.cursor`/`flow.length` as merely FINITE numbers
-// and `guard.checksPassed`/`guard.total`/`*.procedureStepIndex` as a bare `typeof === 'number'`,
-// while `RunKnowledgePlanSourceSchema` (`../functions/runs`) declares every one of them
-// `z.number().int().nonnegative()`. `planSourceOf` picks an admitted value straight onto that
-// strict wire, so a `-1` cursor loaded here and then threw at `spec.output.parse` — the Knowledge
-// tab rendering `read_failed` for that run. A handoff carrying a negative cursor is malformed, so
-// it is refused where it is LOADED, through the same arm an unknown `miss.reason` takes today.
+// Plan-source counters load only as non-negative integers, the domain the strict wire declares.
 
 function makeReplayStep(planSource: unknown): unknown {
   return {
@@ -298,7 +285,7 @@ function replaySource(overrides: Record<string, unknown> = {}): Record<string, u
   }
 }
 
-describe("a replay plan source is admitted only in the wire's own domain (407-20, REVIEW WR-04)", () => {
+describe("a replay plan source is admitted only in the wire's own domain", () => {
   it('loads a step whose replay plan source carries the ordinals the runner writes', () => {
     const guarded = guardCompletedRunHandoff(replayHandoff(replaySource()))
     expect(guarded.tests[0]?.steps[0]?.planSource).toEqual({
@@ -367,14 +354,7 @@ describe("a replay plan source is admitted only in the wire's own domain (407-20
   })
 })
 
-// --- 407-20 (REVIEW WR-04, structural half): the loader and the wire, measured as one rule ---
-//
-// The CR-01 class is TWO PREDICATES OVER ONE SHAPE drifting apart — a member the loader admits
-// and `RunKnowledgePlanSourceSchema` refuses is not a caught error, it is a `read_failed` page
-// for a run that really replayed a procedure. `planSourceOf` (agent `ops/runs-knowledge.ts`)
-// picks exactly the members the loader admitted onto that schema, member for member, so this
-// corpus turns any future drift — a slot tightened on the wire, a slot loosened at the loader,
-// a new numeric member added to one file and not the other — into a red here.
+// `planSourceOf` copies what the loader admits onto the wire schema, so the two must agree.
 
 const ORDINAL_SLOTS = [
   'flow.cursor',
@@ -429,7 +409,7 @@ function loaderAdmits(planSource: Record<string, unknown>): boolean {
   }
 }
 
-describe('the loader and the wire admit the same replay shapes — member for member (407-20)', () => {
+describe('the loader and the wire admit the same replay shapes — member for member', () => {
   it.each(
     ORDINAL_SLOTS.flatMap((slot) =>
       ORDINAL_CORPUS.map((value) => [slot, String(value)] as const),
@@ -467,9 +447,8 @@ describe('the loader and the wire admit the same replay shapes — member for me
   })
 })
 
-// 436-09 (D-06): the run's planner limits are copied from this record onto the strict
-// acknowledgement, so the loader admits exactly the records the wire accepts.
-describe('C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plannerLimits', () => {
+// Limits are copied onto the strict acknowledgement, so the loader admits only what it accepts.
+describe('the loader and the acknowledgement agree on plannerLimits', () => {
   const entry = { testName: 'Bulk archive', filePath: 'tests/bulk.yaml', maxActions: 60, maxPlanningTurns: 30 }
   const corpus: readonly (readonly [string, unknown])[] = [
     ['run limits only', { maxActions: 30, maxPlanningTurns: 30 }],
@@ -509,8 +488,7 @@ describe('C436-EFFECTIVE-LIMITS the loader and the acknowledgement agree on plan
   })
 })
 
-// 2026-10-19 (444.1-08, D-14): a healed sub-action's dispatch pair is checked where it is loaded.
-describe('C444.1-DISPATCH-PAIR', () => {
+describe('a healed sub-action dispatch pair at the load boundary', () => {
   const saveElement = {
     ref: 'e3',
     role: 'button',
@@ -565,5 +543,57 @@ describe('C444.1-DISPATCH-PAIR', () => {
     expect(loaded.tests[0]?.steps[0]?.subActions[0]).toHaveProperty('healedDispatch', pair)
     const unhealed = guardCompletedRunHandoff(healedHandoff())
     expect(unhealed.tests[0]?.steps[0]?.subActions[0]).not.toHaveProperty('healedDispatch')
+  })
+})
+
+describe('a persisted rootCause memoryOnPath at the load boundary', () => {
+  function withRootCause(rootCause: Record<string, unknown>): unknown {
+    return JSON.parse(
+      JSON.stringify({
+        ...makeValidHandoff(),
+        aggregateVerdict: 'failed',
+        tests: [
+          {
+            testId: 't_checkout',
+            testName: 'checkout submits',
+            filePath: 'tests/checkout.yaml',
+            testIndex: 0,
+            outcome: 'failed',
+            steps: [],
+            rootCause: {
+              class: 'app_bug',
+              producer: 'analyze-run',
+              confidence: 0.8,
+              evidence: { citedSteps: [], citedAnchors: [], citedArtifacts: [], rationale: 'r' },
+              memoryMisdirectionRuledOut: true,
+              perTest: 0,
+              ...rootCause,
+            },
+          },
+        ],
+      }),
+    ) as unknown
+  }
+
+  it('round-trips a declared memoryOnPath and leaves an absent one absent', () => {
+    const memoryOnPath = [
+      { recordId: 'rec_mem_candidate', trust: 'candidate' },
+      { recordId: 'rec_mem_canary', trust: 'candidate' },
+    ]
+    const loaded = guardCompletedRunHandoff(withRootCause({ memoryOnPath }))
+    expect(loaded.tests[0]?.rootCause?.memoryOnPath).toEqual(memoryOnPath)
+    const bare = guardCompletedRunHandoff(withRootCause({}))
+    expect('memoryOnPath' in (bare.tests[0]?.rootCause ?? {})).toBe(false)
+  })
+
+  it('refuses a memoryOnPath entry outside the closed trust vocabulary or not an array', () => {
+    expect(() =>
+      guardCompletedRunHandoff(
+        withRootCause({ memoryOnPath: [{ recordId: 'rec_mem_candidate', trust: 'canary' }] }),
+      ),
+    ).toThrow()
+    expect(() =>
+      guardCompletedRunHandoff(withRootCause({ memoryOnPath: { recordId: 'rec_mem_candidate' } })),
+    ).toThrow()
   })
 })

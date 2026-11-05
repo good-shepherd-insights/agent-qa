@@ -42,7 +42,7 @@ function createCapturingModel(): {
 } {
   let captured: CapturedCallOptions | undefined
   const stub: StubLanguageModel = {
-    specificationVersion: 'v3',
+    specificationVersion: 'v4',
     provider: 'sampling-boundary-stub',
     modelId: 'sampling-boundary-stub',
     supportedUrls: {},
@@ -55,9 +55,7 @@ function createCapturingModel(): {
     },
   }
 
-  // openai-compatible declares no unsupported sampling params, so the provider-scoped
-  // stripUnsupportedParams middleware leaves temperature/topP/stop/seed intact. Capturing
-  // doGenerate therefore observes the post-middleware provider boundary required by D-13.
+  // openai-compatible strips no sampling params, so `doGenerate` sees the provider boundary.
   const model = createModel(
     {
       provider: 'openai-compatible',
@@ -110,7 +108,7 @@ async function capturePlannerRequest(
   return request
 }
 
-describe('INST-03 sampling provider-boundary proof', () => {
+describe('sampling provider-boundary proof', () => {
   it(
     'preserves pinned sampling params through createModel with a clamp-owned output cap',
     async () => {

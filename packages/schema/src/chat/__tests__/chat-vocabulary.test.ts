@@ -1,19 +1,3 @@
-// The chat vocabulary's own corpus (Phase 392 plan 01, task 2 — D-14 / D-18 / 388 C13).
-//
-// Three claims, and each one exists because a different kind of drift would otherwise be silent:
-//
-//   1. EXHAUSTIVENESS. A total `Record<ChatSessionEventKind, …>` stops compiling the day an
-//      eleventh kind is declared without somebody saying what it means. This is the `kinds.ts`
-//      double-lock idiom — the compile-time half here, the runtime half in the guard below,
-//      because the two catch different drifts.
-//   2. THE GUARD REFUSES, BY NAME AND IN ORDER. Reopen reads untrusted bytes: a file another
-//      build wrote, a line a crash tore, a hand-edited session. Every refusal is the one named
-//      error class, and the VERSION question is answered before the shape question — a version
-//      mismatch has a remedy an operator can act on, and reporting it as a missing field names
-//      the wrong problem (the `job-checkpoint-store.ts:231-237` decision).
-//   3. THE ENUMS ARE CLOSED. Receipt statuses and scenario expectations are compared as exact
-//      sets, so a fourth member cannot arrive without the corpus that gives it meaning.
-
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -58,41 +42,18 @@ function userMessage(): ChatSessionEvent {
 }
 
 describe('the chat session event vocabulary is closed and total', () => {
-  it('D-14: every declared kind has a meaning, and the union is exactly the declared list', () => {
+  it('every declared kind has a meaning, and the union is exactly the declared list', () => {
     expect(Object.keys(KIND_MEANING).sort()).toEqual([...CHAT_SESSION_EVENT_KINDS].sort())
-    // Ten from day one, including the kinds nothing emits yet (CHAT-05 names four of them). A
-    // kind declared late would make "this build does not know that kind" and "that kind did not
-    // occur" the same bytes for every reader written in between.
-    //
-    // ELEVEN AS OF 399.1-05, and the eleventh is the one exception the day-one rule contemplates:
-    // `clause_result` did not exist to be declared, because the CHANNEL it records — the turn's
-    // `results[]` — was minted by 399.1's D-05. It is additive and append-only: no reader of a
-    // ten-kind log sees a different byte, and no existing kind changed.
     expect(CHAT_SESSION_EVENT_KINDS).toHaveLength(11)
   })
 
-  it('D-11 + 399.1 D-02: the receipt statuses are exactly four, closed', () => {
-    // FOUR SINCE 2026-08-20, and the assertion is spelled out rather than counted for the reason it
-    // always was: this is a published vocabulary, every surface renders every member, and a member
-    // arriving or leaving must be a visible edit HERE and not an arithmetic change somewhere.
-    //
-    // `refused` is the addition (399.1 D-02) and the ORDER is part of the pin: it is appended, so
-    // nothing that indexed this tuple moved. A guardrail declining an op is neither `executed` — the
-    // change did not happen — nor `failed`, which sends a reader hunting a defect that is not there.
+  it('the receipt statuses are exactly four, closed', () => {
+    // The order is part of the contract: an index into this tuple must stay valid.
     expect([...CLAUSE_RECEIPT_STATUSES]).toEqual(['executed', 'failed', 'not-run', 'refused'])
   })
 
-  it('399.1-03: exactly two of the four statuses mean the capability was REACHED', () => {
-    // THE PREDICATE EVERY ROLL-CALL OVER THIS SET NOW ASKS, pinned exhaustively over the set itself
-    // rather than over a list somebody typed — so a FIFTH member arriving lands in one of these two
-    // buckets by somebody's decision, and cannot join silently on whichever side the `||` chain
-    // happens to put it.
-    //
-    // IT MATTERS BECAUSE A ROLL-CALL SPELLED OVER `executed` ALONE WENT BLIND THE DAY `refused`
-    // LANDED. D-10's atomicity claim is that a fail-closed turn carried nothing out, and both
-    // scenario runners checked it as "no receipt says executed" — a complete statement of it only
-    // while `executed` was the only word for a clause that ran and returned. An op that reached its
-    // capability and declined files a blocked proposal on the way, and that row was invisible.
+  it('exactly two of the four statuses mean the capability was REACHED', () => {
+    // Pinned over the whole set, so a new status lands in one bucket by decision, not by default.
     const reached = CLAUSE_RECEIPT_STATUSES.filter((status) => clauseReachedCapability(status))
     const unreached = CLAUSE_RECEIPT_STATUSES.filter((status) => !clauseReachedCapability(status))
 
@@ -104,14 +65,12 @@ describe('the chat session event vocabulary is closed and total', () => {
     expect(reached.length + unreached.length).toBe(CLAUSE_RECEIPT_STATUSES.length)
   })
 
-  it('CHAT-02: a scenario expects one of exactly two things', () => {
+  it('a scenario expects one of exactly two things', () => {
     expect([...SCENARIO_EXPECTATIONS]).toEqual(['should_execute', 'fail_closed'])
   })
 
-  it('CHAT-01/precision: no member of the vocabulary carries a fractional confidence', () => {
-    // Stage-1 resolution is BINARY by construction (D-09): an exact predicate hit or nothing. A
-    // confidence field anywhere in this vocabulary would be the first half of a threshold, and a
-    // threshold is how an overriding path acquires a false-positive rate.
+  it('no member of the vocabulary carries a fractional confidence', () => {
+    // Stage-1 resolution is binary, so no confidence field may appear anywhere in this vocabulary.
     const spelled = JSON.stringify({
       kinds: CHAT_SESSION_EVENT_KINDS,
       statuses: CLAUSE_RECEIPT_STATUSES,
@@ -174,7 +133,7 @@ describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
       .toThrow(ChatSessionEventSchemaError)
   })
 
-  it('D-18: accepts every kind this vocabulary declares, so the guard is not a four-kind guard', () => {
+  it('accepts every kind this vocabulary declares, so the guard is not a four-kind guard', () => {
     const samples: Record<ChatSessionEventKind, ChatSessionEvent> = {
       user_message: userMessage(),
       stage_outcome: { kind: 'stage_outcome', turnId: 't', at: AT, stage: 'resolver', outcome: 'resolved' },
@@ -194,7 +153,7 @@ describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
         at: AT,
         actionClass: 'fn:proposals.accept',
         decision: 'accept',
-        // 392 plan 08: `gate` is a person answering the inline confirm; `verb` is a person typing
+        // `gate` is a person answering the inline confirm; `verb` is a person typing
         // `/pin`. Both decide about one class, and collapsing them would leave a reviewer unable
         // to tell a refusal of one request from a standing rule set in advance.
         source: 'gate',
@@ -204,8 +163,7 @@ describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
         turnId: 't',
         at: AT,
         functionId: 'proposals.list',
-        // THE MASKED PAYLOAD, which is the whole of what this kind promises at rest (399.1-05,
-        // `.planning/phases/399.1-chat-render-contract/399.1-ADJUDICATION-transcript-cleartext.md`).
+        // The payload is stored masked; that is all this kind promises at rest.
         payload: { entries: [] },
       },
       mark_unhandled: { kind: 'mark_unhandled', turnId: 't', at: AT, clause: 'write a test', reason: 'absent' },
@@ -231,11 +189,8 @@ describe('guardChatSessionEvent refuses untrusted bytes by name', () => {
   })
 })
 
-// 432-13 (D-14/D-22): no turn writes an `approval_decision` any more — the chat confirm and the
-// `/pin` verb that wrote them are gone from chat resolution. A session a person kept from before
-// still reopens: both historical sources parse, in order, beside the events a turn writes today.
-describe('C432-HISTORICAL-READER — pre-432 approval rows still read (432-13)', () => {
-  it('C432-HISTORICAL-READER: a pre-432 session line of each approval source and decision parses unchanged', () => {
+describe('historical approval rows still read', () => {
+  it('a historical session line of each approval source and decision parses unchanged', () => {
     const historical: ChatSessionEvent[] = [
       userMessage(),
       { kind: 'approval_decision', turnId: 'turn-1', at: AT, actionClass: 'fn:runs.mark', decision: 'accept', source: 'gate' },
@@ -249,14 +204,12 @@ describe('C432-HISTORICAL-READER — pre-432 approval rows still read (432-13)',
       guardChatSessionEvent(JSON.parse(JSON.stringify(event)), CURRENT_CHAT_SESSION_SCHEMA_VERSION),
     )
     expect(reread).toEqual(historical)
-    // The kind stays declared, so a reader that folds it keeps compiling (D-22).
+    // The kind stays declared, so a reader that folds it keeps compiling.
     expect(CHAT_SESSION_EVENT_KINDS).toContain('approval_decision')
   })
 
-  // 432-42 (D-22): the reader stays and the WRITER does not. Every production source of the packages
-  // that compose or run a chat turn is read, and no code line builds an event of the kind; a line
-  // that only mentions it in a comment is not a writer.
-  it('C432-HISTORICAL-READER: no production source of a turn-writing package builds an approval event', () => {
+  // A line that only mentions the kind in a comment is not a writer.
+  it('no production source of a turn-writing package builds an approval event', () => {
     const packagesDir = fileURLToPath(new URL('../../../../', import.meta.url))
     const sources: string[] = []
     const walk = (dir: string): void => {
@@ -280,20 +233,15 @@ describe('C432-HISTORICAL-READER — pre-432 approval rows still read (432-13)',
   })
 })
 
-// RE-SPELLED 2026-10-01 (432-18, D-14): 'the pin overlay denies, and only denies (D-21)' pinned
-// `pinDenies` over `ChatPinOverlay`. Both are deleted with the session pin overlay; the absence is
-// C432-PIN-ABSENT (agent `chat/__tests__/pin-overlay.test.ts`) and C432-NO-GRANT-CONTRACTS
-// (`__tests__/432-deleted-runtime-sets.test.ts`). The historical `/pin` row (`source: 'verb'`) still
-// parses, above.
-describe('C432-PIN-ABSENT: the schema publishes no pin predicate (432-18)', () => {
-  it('C432-PIN-ABSENT: no pin member is exported beside the session vocabulary', async () => {
+describe('the schema publishes no pin predicate', () => {
+  it('no pin member is exported beside the session vocabulary', async () => {
     const barrel = await import('../index') as Record<string, unknown>
     expect(Object.keys(barrel).filter((name) => /^pin|pinOverlay/i.test(name))).toEqual([])
     expect(barrel['guardChatSessionEvent']).toBeTypeOf('function')
   })
 })
 
-describe('the scenario contract (CHAT-02)', () => {
+describe('the scenario contract', () => {
   it('validates a YAML-shaped scenario and rejects an unknown expectation', () => {
     const parsed = ChatScenarioSchema.parse({
       id: 'proposals-alias',
@@ -314,7 +262,7 @@ describe('the scenario contract (CHAT-02)', () => {
     ).toThrow()
   })
 
-  it('D-10: a fail_closed scenario can pin executed == 0 and name the clause', () => {
+  it('a fail_closed scenario can pin executed == 0 and name the clause', () => {
     const parsed = ChatScenarioSchema.parse({
       id: 'write-test-absent',
       class: 'compound',

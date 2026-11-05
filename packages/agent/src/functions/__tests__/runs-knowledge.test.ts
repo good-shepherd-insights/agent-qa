@@ -1,19 +1,4 @@
-// `runs.knowledge` — the Knowledge panel's one read (Phase 407 plan 01, LERN-01 / LERN-02).
-//
-// WHAT THESE CELLS ARE SHAPED TO CATCH. This op is a PROJECTION over a run's handoff plus three
-// sibling-op compositions, and the failure mode of a projection test is a green suite that only
-// ever compared shapes. So every fixture below carries values the op would be WRONG to pass
-// through unchanged — a step whose trace is absent beside one whose trace is present, a
-// notification row carrying exactly one of its two counts, a record change belonging to a
-// NEIGHBOURING run — because a projection fed already-correct data cannot be distinguished from
-// a coincidence.
-//
-// The three claims the phase rests on and that a shape comparison would not see:
-//   1. A pruned handoff is a RESULT (`evidence-incomplete`), never a throw (D-06).
-//   2. "No knowledge reader was bound" is derived from the DURABLE truncation marker, not from a
-//      handoff version (D-16).
-//   3. A learned change is kept only when it is ATTRIBUTABLE to this run (D-10) — attribution
-//      unknown means the row is dropped, never guessed at.
+// Fixtures carry values a pass-through would get wrong, so shape-only checks cannot pass.
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -55,8 +40,8 @@ import type {
   PostProcessingChainState,
 } from '../spec.js'
 
-const RUN_ID = 'RUN-407-01'
-const OTHER_RUN_ID = 'RUN-407-99'
+const RUN_ID = 'RUN-1'
+const OTHER_RUN_ID = 'RUN-2'
 const SCOPE: ScopeKey = { tier: 'product', key: 'shop' }
 
 const RUNG: RecordedRetrievalRung = {
@@ -65,13 +50,7 @@ const RUNG: RecordedRetrievalRung = {
   reason: 'native-runtime-unavailable',
 }
 
-/**
- * A served brief with whatever channels the cell cares about.
- *
- * `truncation` defaults to the ORDINARY empty string rather than to the D-16 marker, so a cell
- * that wants the unbound-store derivation has to ask for it by name — the marker is the whole
- * signal and a fixture that carried it by default would make cell (d) unfalsifiable.
- */
+// `truncation` defaults to empty, so only a cell that asks gets the unbound-store marker.
 function brief(overrides: Partial<ServedBrief> = {}): ServedBrief {
   return {
     scope: SCOPE,
@@ -137,9 +116,7 @@ const REPLAY: StepPlanSource = {
     total: 3,
     miss: { procedureStepIndex: 2, reason: 'page-anchor-mismatch' },
   },
-  // 407-12 (CR-01). `recordProcedureReplaySource` writes `flow` on EVERY replay it records, so a
-  // fixture without it could not see the seam at all: the arm was `.strict()` and never declared
-  // the member, and the wire refused every real replay run while this file stayed green.
+  // Every recorded replay writes `flow`, so the fixture carries it through the strict arm.
   flow: { cursor: 0, length: 3 },
 }
 
@@ -260,8 +237,6 @@ function deps(options: DepsOptions = {}): FunctionDeps {
       : {}),
     ...(options.bindProposalsInbox === true
       ? {
-          // 2026-10-02 (432-42, D-05/D-22): no inbox port is handed in. The dep key was deleted by
-          // 432-17 and nothing can read it; C432-LEFTOVERS-UNREAD pins that no source names it.
         }
       : {}),
   }
@@ -309,13 +284,7 @@ function fixedSnapshot() {
     ], breakdown: { added: 1, confirmed: 1, superseded: 1, deprecated: 1, proposed: 1 } })
 }
 
-/**
- * The fixed snapshot's changes as a REAL store's diffSince reports them (427-02 Task 1,
- * SNAPSHOT-ROWS-IN-DIFF): an Add carries the run link and no receipt token, while a confirmation,
- * deprecation or supersession of a record an earlier run created carries its token and no run.
- * Nothing here stamps sourceRunId on an unlinked change. Returned in the store's own identity order,
- * which is the order runs.knowledge serves.
- */
+// An Add carries the run link and no token; a later change to an older record carries a token.
 function realShapedDiff(snapshot: ReturnType<typeof fixedSnapshot>): RecordChange[] {
   return snapshot.rows.flatMap(row => row.changes.map(({ change: recorded }) => {
     if (recorded.change === 'added') {
@@ -331,7 +300,7 @@ function realShapedDiff(snapshot: ReturnType<typeof fixedSnapshot>): RecordChang
 const identityOf = (row: RecordChange) =>
   [row.recordId, row.change, row.atOrdinal, row.byRecordId ?? '', row.evidenceToken ?? ''].join('|')
 
-describe('423 current content and fixed historical sections', () => {
+describe('current content and fixed historical sections', () => {
 
   it('USED-ALL-CHANNELS: one union batch enriches learned and every used channel', async () => {
     const showRecords = vi.fn(async ({ recordIds }: { recordIds: readonly string[] }) => recordIds.map(currentRecord))
@@ -507,7 +476,7 @@ describe('423 current content and fixed historical sections', () => {
 
   it('JOINED-STRINGS-MASKED: joined prose crosses the live mask while exact identities stay unmasked', async () => {
     const secret = 'synthetic-secret-9f2c'
-    const local = declaredMask({ SECRET_441: secret })
+    const local = declaredMask({ SECRET_KEY: secret })
     const secretRecord = (recordId: string) => KnowledgeRecordShowResultSchema.parse({
       kind: 'found', schemaVersion: 2, summary: `summary ${secret}`, body: `body ${secret}`,
       provenance: { schemaVersion: 1, mode: 'standalone', originClass: 'agent-observed', sourceDescription: 'synthetic inspection' },
@@ -524,7 +493,7 @@ describe('423 current content and fixed historical sections', () => {
       applicability: { product: local(`shop ${secret}`), anchors: [local(`el:${secret}`)] },
       currentTrust: { evidenceTokens: [local(`token ${secret}`)], trustNarrative: local(`narrative ${secret}`) } } })
     expect(masked.learned.changes[0]).toMatchObject({ recordId: 'rec-a', sourceRunId: RUN_ID })
-    expect(masked.steps[0]?.served.channel1[0]).toHaveProperty('recordContent.content', 'body [secret:SECRET_441]')
+    expect(masked.steps[0]?.served.channel1[0]).toHaveProperty('recordContent.content', 'body [secret:SECRET_KEY]')
     await expect(ready({ ...options, secretMask: null })).rejects.toThrow(/no declared-secret mask/)
     await expect(ready({ ...options, secretMask: () => { throw new Error('synthetic unreadable secrets file') } }))
       .rejects.toThrow('synthetic unreadable secrets file')
@@ -540,15 +509,7 @@ describe('423 current content and fixed historical sections', () => {
   })
 })
 
-/**
- * The layer's no-null idiom, asserted STRUCTURALLY (407-19, IN-03).
- *
- * Serialising the DTO and searching those bytes for the four letters `n-u-l-l` — the form these
- * cells used before — reds on any record id, step text or CSS selector that merely CONTAINS them.
- * An unrelated fixture change breaks the cell and the failure says nothing about the idiom it was
- * guarding. This walks the parsed value instead and names the path of the offending member, so a
- * failure reads as an instruction.
- */
+// Walks the parsed value and names the bad path; a byte search fails on any id holding `null`.
 function assertNoNull(value: unknown, path = '$'): void {
   if (value === null) {
     expect.fail(`null at ${path} — absence in this DTO is an ABSENT KEY, never a null byte`)
@@ -584,11 +545,9 @@ async function ready(options: DepsOptions = {}) {
   return result
 }
 
-describe('the spec declares a read-tier, everywhere-bound contract (D-05)', () => {
+describe('the spec declares a read-tier, everywhere-bound contract', () => {
   it('names its id, scopes and risk the way its read siblings do', () => {
     expect(runsKnowledgeSpec.id).toBe('runs.knowledge')
-    // RE-SPELLED 2026-10-01 (432-26, D-12) from `requiredScopes` equal to ['read']: the op declares
-    // no scope. Its read tier is the read-only risk pinned below, the same as its read siblings'.
     expect(runsKnowledgeSpec).not.toHaveProperty('requiredScopes')
     expect(runsKnowledgeSpec.resultKind).toBe('unary')
     expect(runsKnowledgeSpec.risk).toEqual({
@@ -604,13 +563,8 @@ describe('the spec declares a read-tier, everywhere-bound contract (D-05)', () =
     expect(runsKnowledgeSpec.boundThrough).toBeUndefined()
   })
 
-  // RE-SPELLED 2026-10-01 (432-23, D-12): the claim compared each sibling's `requiredScopes` with
-  // this op's, so a composed sibling could not need more scope than a `read` caller was granted.
-  // Scopes are gone (`knowledge.records.diff` declares none now, and `runs.digest` none since
-  // 432-24). What survives is the half a scope stood for: a sibling this read composes must itself
-  // be a recognized read-only op, so the composition never performs a mutation the caller did not
-  // ask for and no receipt records.
-  it('composes only siblings that declare the same read tier it does (407-12, WR-08)', () => {
+  // A composed sibling must itself be read-only, so the read never performs an unrequested write.
+  it('composes only siblings that declare the same read tier it does', () => {
     expect(runsKnowledgeSpec.risk.readOnly).toBe(true)
     for (const spec of [runsPostProcessingSpec, knowledgeRecordsDiffSpec, runsDigestSpec]) {
       expect(spec.risk.readOnly, spec.id).toBe(runsKnowledgeSpec.risk.readOnly)
@@ -619,7 +573,7 @@ describe('the spec declares a read-tier, everywhere-bound contract (D-05)', () =
   })
 })
 
-describe('the Used half projects every step of every member test (LERN-01, D-03)', () => {
+describe('the Used half projects every step of every member test', () => {
   it('flat-maps both tests in order and keeps testIndex beside the per-test stepIndex', async () => {
     const result = await ready()
 
@@ -649,15 +603,14 @@ describe('the Used half projects every step of every member test (LERN-01, D-03)
     expect(result.steps[0]?.served.channel2).toEqual([
       { id: 'rec-b', detailLevel: 'summary', bodyDigest: 'body-1', contentAbsence: { reason: 'not-bound' } },
     ])
-    // Anchors are deliberately NOT projected: the panel renders a caution's sentence only.
-    // 423-34: a host binding no batch record read names that absence instead of omitting it.
+    // Anchors are not projected: the panel renders a caution's sentence only.
     expect(result.steps[0]?.served.channel3).toEqual([
       { id: 'rec-c', summary: 'the checkout button moves on mobile', contentAbsence: { reason: 'not-bound' } },
     ])
     expect(result.steps[2]?.served.channel1[0]?.servedAsCanary).toBe(true)
   })
 
-  it('answers each step with the trace it recorded, or the named absence (D-04)', async () => {
+  it('answers each step with the trace it recorded, or the named absence', async () => {
     const result = await ready()
 
     expect(result.steps[0]?.trace).toEqual({
@@ -668,11 +621,11 @@ describe('the Used half projects every step of every member test (LERN-01, D-03)
         truncated: [{ recordId: 'rec-cut', leg: 'lexical', rank: 9, score: 0.1 }],
       },
     })
-    // The honest absence — never a trace re-derived against today's index (LERN-01's prohibition).
+    // The honest absence, never a trace re-derived against today's index.
     expect(result.steps[1]?.trace).toEqual({ kind: 'no-trace', reason: 'pre-trace-run' })
   })
 
-  it('passes a replay and a hint plan source through verbatim (D-07)', async () => {
+  it('passes a replay and a hint plan source through verbatim', async () => {
     const result = await ready()
 
     expect(result.steps[0]?.planSource).toEqual(REPLAY)
@@ -682,10 +635,9 @@ describe('the Used half projects every step of every member test (LERN-01, D-03)
   })
 })
 
-describe('the plan source is PICKED onto the wire, never spread (CR-01)', () => {
+describe('the plan source is PICKED onto the wire, never spread', () => {
   it('carries the runner-written flow cursor of a real replay onto the wire', async () => {
-    // The exact input CR-01 reproduced a `ZodError` with: the arm is `.strict()`, the runner
-    // writes `flow` unconditionally, and before 407-12 this refused rather than projected.
+    // The arm is `.strict()` and the runner always writes `flow`, so this input must project.
     const result = await ready()
 
     expect(result.steps[0]?.planSource).toEqual(REPLAY)
@@ -713,10 +665,7 @@ describe('the plan source is PICKED onto the wire, never spread (CR-01)', () => 
   })
 
   it('drops a producer member this build does not declare, and still parses', async () => {
-    // The channels are field-picked so a serving-contract addition cannot silently reach a page
-    // (405's display posture). Before CR-01 the plan source alone was SPREAD, so the next
-    // producer member would have reached the strict wire and refused the whole read — exactly
-    // how `flow` shipped. A field-pick makes that class of break impossible rather than pending.
+    // Channels are field-picked, so a new serving-contract member cannot reach the strict wire.
     const evidence = step(0, {
       planSource: { ...REPLAY, futureMember: 'x' } as unknown as StepPlanSource,
     })
@@ -731,7 +680,7 @@ describe('the plan source is PICKED onto the wire, never spread (CR-01)', () => 
   })
 })
 
-describe('a pruned handoff is a result, not a throw (D-06)', () => {
+describe('a pruned handoff is a result, not a throw', () => {
   it('answers evidence-incomplete for a run the runs port cannot load', async () => {
     const result = await runsKnowledgeSpec.invoke(
       { runId: asRunId(RUN_ID) },
@@ -748,7 +697,7 @@ describe('a pruned handoff is a result, not a throw (D-06)', () => {
   })
 })
 
-describe('the store binding is derived from durable bytes (D-16)', () => {
+describe('the store binding is derived from durable bytes', () => {
   it('reads unbound when every step carries the no-reader truncation and no rung', async () => {
     const document = handoff([
       test(0, [
@@ -760,7 +709,7 @@ describe('the store binding is derived from durable bytes (D-16)', () => {
     const result = await ready({ document })
 
     expect(result.knowledgeStore).toBe('unbound')
-    // A project with no store did not degrade, so there is no rung to report (D-16).
+    // A project with no store did not degrade, so there is no rung to report.
     expect('retrievalRung' in result).toBe(false)
   })
 
@@ -776,10 +725,9 @@ describe('the store binding is derived from durable bytes (D-16)', () => {
   })
 })
 
-describe('the recorded rung is projected per step and at run level (TRST-01, D-13)', () => {
+describe('the recorded rung is projected per step and at run level', () => {
   it('lifts the first recorded rung to the run and keeps it on the step that carries it', async () => {
-    // 407-03 adds `StepEvidence.retrievalRung`; this op reads it forward-compatibly, so the
-    // fixture attaches it structurally exactly as the runner will write it.
+    // The fixture attaches `retrievalRung` exactly as the runner writes it.
     const document = handoff([
       test(0, [
         { ...step(0), retrievalRung: RUNG } as StepEvidence,
@@ -801,7 +749,7 @@ describe('the recorded rung is projected per step and at run level (TRST-01, D-1
   })
 })
 
-describe('the curation word and its counts mirror the chip (LERN-02, D-09/D-12)', () => {
+describe('the curation word and its counts mirror the chip', () => {
   it('reads pending with no counts when this host owns no queue database', async () => {
     const result = await ready()
 
@@ -836,7 +784,7 @@ describe('the curation word and its counts mirror the chip (LERN-02, D-09/D-12)'
   })
 })
 
-describe('learned changes are attributed, never windowed (LERN-02, D-10)', () => {
+describe('learned changes are attributed, never windowed', () => {
   const MINE = change({ recordId: 'rec-mine', sourceRunId: RUN_ID })
   const BY_OBSERVATION = change({ recordId: 'rec-obs', observationId: 'canary-outcome:abc' })
   const NEIGHBOUR = change({ recordId: 'rec-theirs', sourceRunId: OTHER_RUN_ID })
@@ -862,7 +810,7 @@ describe('learned changes are attributed, never windowed (LERN-02, D-10)', () =>
     expect(result.learned.changes.map((row) => row.recordId)).toEqual(['rec-mine', 'rec-obs'])
   })
 
-  it('projects only attributed canary rows, keyed by the step that served the line (D-08)', async () => {
+  it('projects only attributed canary rows, keyed by the step that served the line', async () => {
     const result = await ready({
       knowledge: {
         canaryAttributions: () => Promise.resolve({
@@ -905,12 +853,8 @@ describe('learned changes are attributed, never windowed (LERN-02, D-10)', () =>
   })
 })
 
-describe('an unrelated malformed bundle degrades the Learned enrichments, never the read (CR-03)', () => {
-  // The knowledge store's own fail-closed error, built the way the op must recognise it: BY NAME.
-  // `packages/agent` is storage-neutral and cannot import `KnowledgeMaintenanceScanError` from
-  // `knowledge-local`, and neither may this file — so the cell constructs the exact wire the op
-  // reads (403-03 D-4: read a foreign error structurally, never `instanceof` across a substrate
-  // boundary).
+describe('an unrelated malformed bundle degrades the Learned enrichments, never the read', () => {
+  // Storage-neutral code cannot import the store's error class, so the op recognises it by name.
   function scanError(path: string): Error {
     return Object.assign(
       new Error(`knowledge maintenance scan incomplete at ${path}: bundle-load: manifest-invalid`),
@@ -940,8 +884,7 @@ describe('an unrelated malformed bundle degrades the Learned enrichments, never 
       knowledge: { diffSince: () => Promise.reject(scanError(MALFORMED)) },
     })
 
-    // The whole Used half is intact — every step, and the rung the run recorded. One malformed
-    // bundle this run never touched used to make ALL of this a `read_failed` page.
+    // One malformed bundle the run never touched must not turn this into a `read_failed` page.
     expect(result.steps).toHaveLength(4)
     expect(result.retrievalRung).toEqual(RUNG)
     expect(result.learned.changes).toEqual([])
@@ -989,13 +932,8 @@ describe('an unrelated malformed bundle degrades the Learned enrichments, never 
   })
 })
 
-describe('a partial attribution walk raises the flag by CONTRACT, and the op emits rows beside it (407-19, REVIEW WR-03)', () => {
-  // Before 407-19 the ONLY reason a half-read store reached the wire as `scanIncomplete` was that
-  // `diffSince` happened to throw on the same bundle. That coupling is not a contract: it does not
-  // hold when the two reads see different stores, and it disappears the moment anyone applies
-  // 407-14's per-bundle skip to `diffSince` too. The walk now COUNTS what it could not load, and
-  // the op reads the flag off that count — so the degradation marker belongs to the read that
-  // degraded.
+describe('a partial attribution walk raises the flag by CONTRACT, and the op emits rows beside it', () => {
+  // The walk counts what it could not load, so the flag belongs to the read that degraded.
   const MINE = change({ recordId: 'rec-mine', sourceRunId: RUN_ID })
 
   const ATTRIBUTED = {
@@ -1006,9 +944,8 @@ describe('a partial attribution walk raises the flag by CONTRACT, and the op emi
     outcome: 'confirmed' as const,
   }
 
-  it('raises scanIncomplete from the walk\'s OWN count, keeping BOTH lists (the CR-01 shape)', async () => {
-    // The exact projection 407-18's rows-first view renders — now produced by the shipped op from
-    // real inputs rather than hand-built in a view fixture: rows on both lists AND the flag.
+  it('raises scanIncomplete from the walk\'s OWN count, keeping BOTH lists', async () => {
+    // Rows on both lists and the flag, produced by the shipped op from real inputs.
     const result = await ready({
       knowledge: {
         diffSince: () => Promise.resolve([MINE]),
@@ -1054,9 +991,8 @@ describe('a partial attribution walk raises the flag by CONTRACT, and the op emi
   })
 })
 
-// RE-SPELLED 432-09 (D-25) from 'the proposals line rides only where an inbox is bound (D-11)': the tab
-// shows what changed and never what awaits review, so no host joins a pending-proposal count.
-describe('no pending-proposal count rides the projection, inbox bound or not (432-09 D-25)', () => {
+// The tab shows what changed, never what awaits review, so no pending count joins it.
+describe('no pending-proposal count rides the projection, inbox bound or not', () => {
   it('carries no pendingProposalCount key on a host with no inbox', async () => {
     const result = await ready()
 
@@ -1082,8 +1018,7 @@ describe('the DTO never carries a null and always validates', () => {
   })
 
   it('the no-null walk names the member it found — the idiom is structural, not textual', () => {
-    // The control for the helper above (IN-03): a record id, a step text or a selector carrying
-    // the four letters `null` must NOT red these cells, and a real null must red them by PATH.
+    // A string containing `null` must not fail these cells, and a real null fails them by path.
     expect(() => assertNoNull({ a: [{ b: null }] })).toThrow(/a\[0\]\.b/)
     expect(() => assertNoNull({ recordId: 'rec-[data-null]', steps: ['nullable selector'] }))
       .not.toThrow()
@@ -1119,9 +1054,8 @@ describe('the DTO never carries a null and always validates', () => {
   })
 })
 
-// ── 423 D-22: versioned rung causes through the existing runs.knowledge read ──────────────────
 // Hand-spelled bytes, because this storage-neutral package cannot call the knowledge-local fold.
-describe('423 recorded rung causes on runs.knowledge (D-22)', () => {
+describe('recorded rung causes on runs.knowledge', () => {
   const CURRENT_FOLDS = [
     { face: 'absent', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-not-built' } },
     { face: 'locked', rung: { schemaVersion: 2, rung: 'bundle-scan', reason: 'index-locked' } },
@@ -1215,14 +1149,9 @@ describe('423 recorded rung causes on runs.knowledge (D-22)', () => {
   })
 })
 
-// ---- C432-ALL-OPS-AVAILABLE (432-26, D-12) ------------------------------
-//
-// `runs.knowledge` and the chip read it composes, `runs.postprocessing`, once required `read`.
-// Retried from three callers that differ in surface and origin, and that carry no scope at all,
-// both are served every time: each attempt reaches the same ports the same number of times, every
-// caller gets the same answer, and no audit row is written.
-describe('C432-ALL-OPS-AVAILABLE: the run knowledge reads serve every caller', () => {
-  it('C432-ALL-OPS-AVAILABLE: a retried runs.knowledge and runs.postprocessing are served alike to every caller', async () => {
+// Both are served to every caller, with the same port calls per attempt and no audit row.
+describe('the run knowledge reads serve every caller', () => {
+  it('a retried runs.knowledge and runs.postprocessing are served alike to every caller', async () => {
     const base = deps({
       bindPostProcessing: true,
       chain: {

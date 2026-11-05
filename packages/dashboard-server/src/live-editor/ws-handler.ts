@@ -1,5 +1,6 @@
+import { format } from 'node:util'
 import type WebSocket from 'ws'
-import { parseTestFile } from '@vostride/agent-qa-core'
+import { parseTestFile, printRunText } from '@vostride/agent-qa-core'
 import type { LiveSession } from './live-session.js'
 import { LIVE_EDITOR_SUPERSEDED_CLOSE_CODE, LIVE_EDITOR_UNKNOWN_SESSION_CLOSE_CODE } from './types.js'
 import type {
@@ -56,10 +57,7 @@ export function createSessionHandler(
     }
 
     session.clearIdleTimer()
-    // 428 WR-01: a newer socket replaces this one. It is closed by name, its log poll stops, and
-    // any command it still sends is ignored, so one page drives the session at a time.
-    // 428 WR-02: a session ended elsewhere (DELETE, idle expiry) closes this socket as gone, so the
-    // page leaves "connected". A terminate-session from this socket closes it itself.
+    // A newer socket supersedes this one, and a session ended elsewhere closes it as gone.
     const generation = session.beginAttachment((reason) => {
       if (detached || cleanedUp) return
       detached = true
@@ -81,9 +79,7 @@ export function createSessionHandler(
     })
     send(ws, { type: 'session-state', state })
 
-    // 428 CR-01: a command outlives the socket that issued it. While this socket is the attached
-    // one its replies go straight to it; once it has dropped or been superseded they go through the
-    // session to the socket attached now, or wait for the next one.
+    // A reply goes straight to this socket while attached, else via the session to the current one.
     function reply(message: ServerMessage): void {
       if (!detached && session.isCurrentAttachment(generation)) {
         send(ws, message)
@@ -216,13 +212,15 @@ export function createSessionHandler(
             try {
               raw = await testFileManager.read(msg.path)
             } catch (readErr: any) {
-              console.error(`[ws-handler] execute-test: read failed for path=${msg.path}`, readErr)
+              const line = `[ws-handler] execute-test: read failed for path=${msg.path}`
+              printRunText(format(line, readErr), () => console.error(line, readErr))
               throw new Error(`Cannot read test file "${msg.path}": ${readErr?.message ?? String(readErr)}`)
             }
 
             const parsed = parseTestFile(raw, msg.path)
             if (parsed.errors.length > 0) {
-              console.error(`[ws-handler] execute-test: parse errors for ${msg.path}`, parsed.errors)
+              const line = `[ws-handler] execute-test: parse errors for ${msg.path}`
+              printRunText(format(line, parsed.errors), () => console.error(line, parsed.errors))
               throw new Error(`Parse error in ${msg.path}: ${parsed.errors[0].message}`)
             }
             const testDef = parsed.tests[0]
@@ -232,7 +230,14 @@ export function createSessionHandler(
             const stepInstructions: string[] = testDef.steps.map((s: string | { step: string }) =>
               typeof s === 'string' ? s : s.step,
             )
-            console.log(`[ws-handler] execute-test: starting "${testDef.name}" (${stepInstructions.length} steps, setup=${(testDef.setup ?? []).length}, teardown=${(testDef.teardown ?? []).length})`)
+            const stepCount = stepInstructions.length
+            const setupCount = (testDef.setup ?? []).length
+            const teardownCount = (testDef.teardown ?? []).length
+            printRunText(
+              `[ws-handler] execute-test: starting "${testDef.name}" ` +
+                `(${stepCount} steps, setup=${setupCount}, teardown=${teardownCount})`,
+              (text) => console.log(text),
+            )
 
             reply({
               type: 'test-start',
@@ -257,7 +262,12 @@ export function createSessionHandler(
               },
             )
 
-            console.log(`[ws-handler] execute-test: finished "${testDef.name}" status=${result.status} duration=${result.duration}ms${result.error ? ` error=${result.error}` : ''}`)
+            const errorPart = result.error ? ` error=${result.error}` : ''
+            printRunText(
+              `[ws-handler] execute-test: finished "${testDef.name}" status=${result.status} ` +
+                `duration=${result.duration}ms${errorPart}`,
+              (text) => console.log(text),
+            )
             reply({
               type: 'test-complete',
               test: {
@@ -270,11 +280,9 @@ export function createSessionHandler(
             })
             reply({ type: 'session-state', state: session.getState() })
           } catch (err: any) {
-            console.error(`[ws-handler] execute-test: caught error for path=${msg.path}`, {
-              message: err?.message,
-              stack: err?.stack,
-              code: err?.code,
-            })
+            const line = `[ws-handler] execute-test: caught error for path=${msg.path}`
+            const detail = { message: err?.message, stack: err?.stack, code: err?.code }
+            printRunText(format(line, detail), () => console.error(line, detail))
             reply({
               type: 'test-error',
               test: {
@@ -392,11 +400,7 @@ export function createSessionHandler(
       }
     })
 
-    // 428 D-09: an unexpected drop DETACHES the session for the idle window so the page can
-    // reconnect to the same browser, draft, page, hook state and lease. Explicit ends go through
-    // terminate-session or DELETE and stay immediate. A superseded socket's late close is inert
-    // (RESEARCH P4), and an in-flight step is cancelled so the reconnected page and the server
-    // agree it was cancelled (RESEARCH P3, A3 taken as the default).
+    // An unexpected drop detaches for the idle window so the page can reconnect; a live step ends.
     function detach(): void {
       if (logPollInterval) clearInterval(logPollInterval)
       if (detached || cleanedUp) return

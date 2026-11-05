@@ -23,7 +23,7 @@ afterEach(async () => {
 })
 
 function project() {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-423-cold-read-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-cold-read-'))
   roots.push(root)
   const configPath = join(root, 'agent-qa.config.yaml')
   const agentQaRoot = join(root, '.agent-qa')
@@ -31,7 +31,7 @@ function project() {
   const config = {
     workspace: { testMatch: ['tests/**/*.yaml'], suiteMatch: ['suites/**/*.yaml'],
       hooksFile: 'hooks.yaml', envFile: '.env', secretsFile: '.env.secrets.local' },
-    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+    knowledge: { dir: 'agent-qa-knowledge' },
     registry: { llms: [{ name: 'unused', provider: 'openai-compatible', model: 'unused',
       baseURL: 'http://127.0.0.1:1/v1' }],
       targets: { local: { platform: 'web', url: 'http://127.0.0.1:1' } } },
@@ -101,7 +101,7 @@ function cold(p: ReturnType<typeof project>) {
   }
 }
 
-describe('Wave 18 cold read masking recovery', () => {
+describe('cold read masking recovery', () => {
   it('COLD-TWO-EVENTS reads one confirmed record with both actual checkpoint events intact', async () => {
     const p = project()
     const recorded = snapshot(p.runId)
@@ -120,8 +120,7 @@ describe('Wave 18 cold read masking recovery', () => {
     expect(read.host.jobs).not.toHaveBeenCalled()
   })
 
-  // 2026-10-14 (441-16, E3): an unreadable secrets file now refuses the knowledge read, so the
-  // withheld snapshot is the projection refusal, a raw value colliding with its recorded marker.
+  // An unreadable secrets file refuses the knowledge read; this snapshot is that refusal.
   it('COLD-KNOWLEDGE-WITHHELD keeps the knowledge read ready and names the withheld snapshot', async () => {
     const p = project()
     const first = 'first-sensitive-event'
@@ -165,8 +164,7 @@ describe('Wave 18 cold read masking recovery', () => {
       .rejects.toThrow(/Secrets file (not found|is invalid|could not be read)/)
   })
 
-  // 2026-10-14 (441-16, D-06): declared values mask to distinct names, so the duplicate is a raw
-  // value beside a recorded copy of its own marker.
+  // Declared values mask to distinct names, so the duplicate is a raw value beside its own marker.
   it('COLD-COLLISION refuses genuinely masked duplicate events without deleting history', async () => {
     const p = project()
     const first = 'first-sensitive-event'

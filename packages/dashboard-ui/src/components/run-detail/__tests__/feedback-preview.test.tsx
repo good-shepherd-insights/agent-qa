@@ -1,11 +1,5 @@
 // @vitest-environment jsdom
-// "WHAT THIS WILL DO", PAINTED FROM THE READ (426-06 · D-16, D-17, UI-SPEC S5).
-//
-// Every fixture is parsed by RunsMarkPreviewResultSchema, so each one satisfies the read's own
-// superRefines: served records lead, only a false-pass overturns or reaches an unserved record, and the
-// evidence counts are the planned effects. The section says only what the read states — four labelled
-// lines, the records on demand, the replaced mark — and no id, cassette or decision ordinal reaches a
-// text node a person reads.
+// Fixtures parse through `RunsMarkPreviewResultSchema`, so each satisfies the read's refinements.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -33,10 +27,7 @@ import {
   PREVIEW_UPDATING_TEXT,
   RECORD_EFFECT_TEXT,
   UNREADABLE_RECORD_TEXT,
-  feedbackPartsText,
-  groundTruthLine,
   knowledgeLine,
-  labelsLine,
   previewFixText,
   recordEffectLine,
   replacesLine,
@@ -49,7 +40,6 @@ const RUN_ID = generateRunId()
 const TEST_ID = generateTestId()
 const HOSTILE = '<img src=x onerror="globalThis.__previewPwned = true">'
 const PRIOR_MARK_ID = 'mark_0123456789ab'
-const DECISION_ORDINAL = 7341
 
 function content(text: string) {
   return {
@@ -64,7 +54,7 @@ function content(text: string) {
 
 const overturn = (token: string) => ({ direction: 'overturn', overturnsEvidenceToken: token, overturnsCurationJobId: 'job-curate-1' })
 
-/** A false-fail superseding mark #2: one served record confirmed and a knowledge fact to be added (432-09). */
+/** A false-fail superseding mark #2: one served record confirmed and a knowledge fact to be added. */
 function falseFail(over: Record<string, unknown> = {}): RunsMarkPreviewResult {
   return RunsMarkPreviewResultSchema.parse({
     kind: 'consequences',
@@ -75,14 +65,6 @@ function falseFail(over: Record<string, unknown> = {}): RunsMarkPreviewResult {
     resolvedStep: { stepIndex: 2, reason: 'failing-step' },
     latest: { kind: 'supersedes', markId: PRIOR_MARK_ID, ordinal: 2 },
     basis: { ledgerOrdinal: 3, priorMarkOrdinal: 2 },
-    markedDecisionCount: 1,
-    groundTruth: [{
-      testIndex: 0, stepIndex: 2, verdict: 'pass',
-      recordedVerdict: { pass: false, reasoning: 'cart total differs' }, correctedAction: false,
-    }],
-    labels: [{
-      testIndex: 0, stepIndex: 2, decisionOrdinal: DECISION_ORDINAL, sourceCassetteId: 'cas-secret-source', channel: 'user-mark',
-    }],
     knowledge: {
       servedRecordIds: ['rec-served-alpha'],
       appendsEvidence: true,
@@ -108,17 +90,6 @@ function falsePass(): RunsMarkPreviewResult {
     resolvedStep: { stepIndex: 4, reason: 'passing-verdict' },
     latest: { kind: 'first' },
     basis: { ledgerOrdinal: 0 },
-    markedDecisionCount: 2,
-    groundTruth: [
-      { testIndex: 0, stepIndex: 3, verdict: 'fail', recordedVerdict: { pass: true, reasoning: '' }, correctedAction: false },
-      { testIndex: 0, stepIndex: 4, verdict: 'fail', recordedVerdict: { pass: true, reasoning: 'receipt shown' }, correctedAction: true },
-    ],
-    labels: [
-      { testIndex: 0, stepIndex: 4, decisionOrdinal: DECISION_ORDINAL, sourceCassetteId: 'cas-a', channel: 'user-mark' },
-      { testIndex: 0, stepIndex: 4, decisionOrdinal: DECISION_ORDINAL, sourceCassetteId: 'cas-a', channel: 'overturned-verdict',
-        correction: { verdict: 'fail' } },
-      { testIndex: 0, stepIndex: 3, decisionOrdinal: 9152, sourceCassetteId: 'cas-b', channel: 'user-mark' },
-    ],
     knowledge: {
       servedRecordIds: ['rec-served-one', 'rec-served-two'],
       appendsEvidence: true,
@@ -170,8 +141,8 @@ function visibleText(): string {
   return texts.join('\n')
 }
 
-describe('426-06 the What this will do section', () => {
-  it('PREVIEW-FOUR-LINES: four labelled lines from the read, in order, and no id reaches visible text', async () => {
+describe('the What this will do section', () => {
+  it('PREVIEW-LINES: the knowledge and change lines from the read, in order, and no id reaches visible text', async () => {
     const read = falseFail()
     if (read.kind !== 'consequences') throw new Error('fixture')
     render({ state: 'consequences', current: true, read })
@@ -186,38 +157,33 @@ describe('426-06 the What this will do section', () => {
     const dl = section().querySelector('dl')!
     expect(dl.className).toContain('grid-cols-[auto_1fr]')
     expect([...dl.querySelectorAll('dt')].map((dt) => dt.textContent)).toEqual([
-      PREVIEW_LINE_LABELS.result, PREVIEW_LINE_LABELS.labels, PREVIEW_LINE_LABELS.knowledge, PREVIEW_LINE_LABELS.change,
+      PREVIEW_LINE_LABELS.knowledge, PREVIEW_LINE_LABELS.change,
     ])
     const dds = [...dl.querySelectorAll('dd')]
-    expect(dds.map((dd) => dd.getAttribute('data-preview-line'))).toEqual(['result', 'labels', 'knowledge', 'change'])
+    expect(dds.map((dd) => dd.getAttribute('data-preview-line'))).toEqual(['knowledge', 'change'])
     for (const dd of dds) {
       expect(dd.className).toContain('break-words')
       expect(dd.textContent?.trim()).not.toBe('')
     }
 
-    expect(line('result')!.textContent).toBe(feedbackPartsText(groundTruthLine(read.groundTruth[0]!)))
-    expect(line('labels')!.textContent).toBe(labelsLine(1))
     expect(line('knowledge')!.textContent).toContain(knowledgeLine(read.knowledge.evidence, 1))
     expect(line('knowledge')!.textContent).toContain(showRecordsLabel(1))
     expect(line('change')!.textContent).toBe(previewFixText(read.draft) + DRAFT_WORDING_NOT_SHOWN_TEXT)
 
     await openRecords()
-    for (const secret of ['rec-served-alpha', 'rec-target-beta', PRIOR_MARK_ID, 'cas-secret-source',
-      String(DECISION_ORDINAL), TEST_ID, RUN_ID]) {
+    for (const secret of ['rec-served-alpha', 'rec-target-beta', PRIOR_MARK_ID, TEST_ID, RUN_ID]) {
       expect(visibleText(), `visible text carries ${secret}`).not.toContain(secret)
     }
   })
 
-  it('PREVIEW-FOUR-LINES: empty facts each read a sentence and no dd renders empty', () => {
+  it('PREVIEW-LINES: empty facts each read a sentence and no dd renders empty', () => {
     const read = falseFail({
-      latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, groundTruth: [], labels: [],
+      latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 },
       knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
       draft: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
     })
     render({ state: 'consequences', current: true, read })
-    for (const name of ['result', 'labels', 'knowledge', 'change']) expect(line(name), `no ${name} line`).not.toBeNull()
-    expect(line('result')!.textContent).toBe('No step verdict changes.')
-    expect(line('labels')!.textContent).toBe('No eval labels change')
+    for (const name of ['knowledge', 'change']) expect(line(name), `no ${name} line`).not.toBeNull()
     expect(line('knowledge')!.textContent).toBe('No knowledge records are reached')
     expect(line('change')!.textContent).toBe('No fix can be made from this run')
     expect(line('replaces')).toBeNull()
@@ -241,9 +207,6 @@ describe('426-06 the What this will do section', () => {
     expect(last.textContent).toContain(RECORD_EFFECT_TEXT.overturn)
     expect(container.querySelector('li[data-preview-record] ul, li[data-preview-record] [class*="overflow-y"]')).toBeNull()
 
-    expect(line('result')!.querySelectorAll(':scope > *')).toHaveLength(2)
-    expect(line('result')!.textContent).toContain('with your corrected action')
-    expect(line('labels')!.textContent).toBe(labelsLine(3))
     expect(line('change')!.textContent).toBe(previewFixText(read.draft) + DRAFT_WORDING_NOT_SHOWN_TEXT)
   })
 
@@ -256,8 +219,6 @@ describe('426-06 the What this will do section', () => {
     expect(unreadable!.textContent).toBe(CONTENT_ABSENCE_TEXT['scan-incomplete'] + UNREADABLE_RECORD_TEXT)
   })
 
-  // RE-SPELLED 432-09 (D-11) from 'PREVIEW-REPLACES-LINE: a superseding mark reads the replaced
-  // ordinal, the time when given, and the withdrawal': a later mark withdraws nothing it applied.
   it('PREVIEW-REPLACES-LINE: a superseding mark reads the replaced ordinal, the time when given, and that its change stays', () => {
     render({ state: 'consequences', current: true, read: falseFail(), replacesTime: '14:05' })
     const replaces = line('replaces')
@@ -271,9 +232,8 @@ describe('426-06 the What this will do section', () => {
     expect(line('replaces')!.textContent).toBe('Replaces your earlier mark (#2); what it changed stays')
   })
 
-  it('PREVIEW-MASKED-ESCAPED: hostile reasoning and record content stay text and create no element', async () => {
+  it('PREVIEW-MASKED-ESCAPED: hostile record content stays text and creates no element', async () => {
     const read = falseFail({
-      groundTruth: [{ testIndex: 0, stepIndex: 2, verdict: 'pass', recordedVerdict: { pass: false, reasoning: HOSTILE }, correctedAction: false }],
       knowledge: {
         servedRecordIds: ['rec-served-alpha'], appendsEvidence: true,
         records: [{ recordId: 'rec-served-alpha', recordContent: content(HOSTILE), served: true,
@@ -284,7 +244,6 @@ describe('426-06 the What this will do section', () => {
     render({ state: 'consequences', current: true, read })
     await openRecords()
     expect(container.querySelector('img')).toBeNull()
-    expect(line('result')!.textContent).toContain(HOSTILE)
     expect(container.querySelector('li[data-preview-record]')!.textContent).toContain(HOSTILE)
     expect((globalThis as { __previewPwned?: boolean }).__previewPwned).toBeUndefined()
     expect(container.querySelectorAll('[data-feedback-preview] .truncate')).toHaveLength(0)
@@ -320,9 +279,7 @@ describe('426-06 the What this will do section', () => {
   })
 })
 
-// THE OTHER ARMS, EACH IN ITS OWN PLAIN WORDS (426-07 · D-18, D-19, UI-SPEC S5). A quarantined mark and
-// an identical repeat are muted blocks; a refusal is runs.mark's own arm in a DenialBlock with nothing
-// to do; a failed read names why, offers a Retry that says what it retries, and the CLI escape hatch.
+// A quarantined mark and an identical repeat are muted blocks; a refusal sits in a `DenialBlock`.
 const QUARANTINED = RunsMarkPreviewResultSchema.parse({
   kind: 'quarantined', runId: RUN_ID, prospective: true, markKind: 'false-fail', member: { testIndex: 0, testId: TEST_ID },
   resolvedStep: { stepIndex: 2, reason: 'failing-step' }, latest: { kind: 'first' }, basis: { ledgerOrdinal: 0 }, class: 'timeout',
@@ -342,11 +299,10 @@ const REFUSALS: Record<(typeof MARK_PREVIEW_REFUSALS)[number], RunsMarkPreviewRe
   'ambiguous-address': RunsMarkPreviewResultSchema.parse({
     kind: 'ambiguous-address', runId: RUN_ID, candidates: [{ testIndex: 0, testId: TEST_ID }, { testIndex: 1, testId: TEST_ID }],
   }),
-  'ambiguous-correction': RunsMarkPreviewResultSchema.parse({ kind: 'ambiguous-correction', runId: RUN_ID, testIndex: 0, decisionCount: 3 }),
 }
 const READ_FAILURES = ['network', 'ledger-corrupt', 'ledger-unavailable', 'refused', 'shape'] as const satisfies readonly FeedbackReadFailure[]
 
-describe('426-07 the special arms, the refusals and the failed read', () => {
+describe('the special arms, the refusals and the failed read', () => {
   it('PREVIEW-QUARANTINED: a quarantined read is one muted block naming its cause, with no consequence lines', () => {
     render({ state: 'quarantined', current: true, read: QUARANTINED })
     const block = line('quarantined')
@@ -387,14 +343,11 @@ describe('426-07 the special arms, the refusals and the failed read', () => {
     for (const secret of [RUN_ID, TEST_ID]) expect(visibleText()).not.toContain(secret)
   })
 
-  it('PREVIEW-REFUSALS: a test with no steps and an ambiguous correction read their own counts', () => {
+  it('PREVIEW-REFUSALS: a test with no steps reads that it has nothing to mark', () => {
     const noSteps = RunsMarkPreviewResultSchema.parse({ kind: 'step-not-found', runId: RUN_ID, testIndex: 0, stepIndex: 0, stepCount: 0 })
     render({ state: 'refused', current: true, read: noSteps })
     expect(section().querySelector('[data-entry="denial"]'), 'no refusal block').not.toBeNull()
     expect(section().querySelector('[data-entry="denial"]')!.textContent).toBe('This test recorded no steps, so there is nothing to mark.')
-
-    render({ state: 'refused', current: true, read: REFUSALS['ambiguous-correction'] })
-    expect(section().querySelector('[data-entry="denial"]')!.textContent).toContain('this mark covers 3.')
   })
 
   it.each([...READ_FAILURES])('PREVIEW-FAILED-RETRY: a %s failure names its reason, offers a named Retry and the CLI escape hatch', (failure) => {

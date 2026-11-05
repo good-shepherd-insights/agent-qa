@@ -1,12 +1,4 @@
-// The knowledge review-verb DTO family (Phase 387 plan 02, KREV-01 · D-15/D-17/D-19).
-//
-// These contracts are minted BEFORE the verbs that use them (384 D-16: DTOs live in schema),
-// so the only thing that can hold them honest is a rejection corpus. Every closed vocabulary
-// below is therefore probed with the arm a future author would plausibly reach for — `purge`
-// beside accept/reject/forget, `re-run` beside answered/no-trace, `exemplar-rank` beside the
-// §7.7 scrub set — rather than with a nonsense string that any check at all would refuse.
-//
-// Schema module-discipline law: extension-less relative import specifiers, no node builtins.
+// Each closed vocabulary is probed with the arm an author would plausibly add, not a nonsense word.
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 
@@ -82,15 +74,11 @@ function receipt(overrides: Record<string, unknown> = {}): Record<string, unknow
   }
 }
 
-// RE-SPELLED 2026-10-01 (432-17, D-05/D-22). The knowledge proposal payload these cells parsed is
-// deleted with the inbox, and old proposal files are never parsed again. Each surviving claim moves
-// onto the direct change contract it now belongs to, under its old name where the claim is the same;
-// the payload-only cells (the pending/applied status axis, the forget preview and its missing
-// `forgottenAt`, the empty-delta Noop proposal) left with their subject and are carried by
-// C432-NO-ENVELOPE-EXPORTS in `432-direct-contracts.test.ts`.
+// Each claim below is checked on the direct knowledge change contract it belongs to. The change
+// outputs, inputs and receipts themselves are covered by `knowledge-change-contracts.test.ts`.
 const changeDeltas = z.array(DeltaSchema)
 
-describe('the mark change stamp and the mark review input (419 D-01)', () => {
+describe('the mark change stamp and the mark review input', () => {
   const plan = {
     schemaVersion: IMPROVEMENT_PLAN_SCHEMA_VERSION, kind: 'knowledge', markId: markStamp.markId,
     feedbackSource: { runId: 'run-1', testIndex: 0, kind: 'false-fail' },
@@ -136,13 +124,12 @@ describe('the mark change stamp and the mark review input (419 D-01)', () => {
   })
 })
 
-describe('the review vocabulary and the change id (D-17)', () => {
+describe('the review vocabulary and the change id', () => {
   it('pins the verb vocabulary as an exact closed set', () => {
     expect(KNOWLEDGE_REVIEW_VERBS).toEqual(['accept', 'reject', 'forget', 'mark'])
   })
 
   it('admits every change verb and refuses one outside the union', () => {
-    // RE-SPELLED 2026-10-03 (quick 261003-cpv, IN-21): a forget carries its forget receipt by rule.
     const forgetReceipt = {
       schemaVersion: FORGET_RECEIPT_SCHEMA_VERSION, proposalId: 'prop_alpha-bravo', tombstonedRecords: [], projectionsScrubbed: ['fts'],
       resultingBundleStatus: 'forgotten', forgottenAt: 1,
@@ -213,7 +200,7 @@ describe('change deltas (§7.3 vocabulary, imported not re-minted)', () => {
   })
 })
 
-describe('ForgetReceiptV1 (D-19 + D-04)', () => {
+describe('ForgetReceiptV1', () => {
   it('accepts a full receipt enumerating every tombstoned record with provenance', () => {
     const parsed = ForgetReceiptV1Schema.parse(receipt())
 
@@ -239,8 +226,6 @@ describe('ForgetReceiptV1 (D-19 + D-04)', () => {
   })
 
   it('admits an empty scrub set on a non-empty tombstone set', () => {
-    // Whether that combination is SEMANTICALLY right is 387-08's job; the shape is closed
-    // here and must not pre-judge it.
     const parsed = ForgetReceiptV1Schema.parse(receipt({ projectionsScrubbed: [] }))
 
     expect(parsed.projectionsScrubbed).toEqual([])
@@ -262,15 +247,14 @@ describe('ForgetReceiptV1 (D-19 + D-04)', () => {
           .resultingBundleStatus,
       ).toBe(status)
     }
-    // `deprecated` is a real BUNDLE status — and it is not a status a MEM card can render,
-    // which is exactly what "designed once for both uses" has to mean (D-04 + D-19).
+    // `deprecated` is a bundle status a MEM card cannot render.
     expect(() =>
       ForgetReceiptV1Schema.parse(receipt({ resultingBundleStatus: 'deprecated' })),
     ).toThrow()
   })
 })
 
-describe('ForgetTargetRef (D-19 record-or-bundle grain)', () => {
+describe('ForgetTargetRef (record-or-bundle grain)', () => {
   it('accepts an individual record id', () => {
     const parsed = ForgetTargetRefSchema.parse({ grain: 'record', recordId: 'rec-checkout-1' })
 
@@ -312,7 +296,7 @@ describe('ForgetTargetRef (D-19 record-or-bundle grain)', () => {
   })
 })
 
-describe('BriefWhyResult (D-15 typed honest absence)', () => {
+describe('BriefWhyResult (typed honest absence)', () => {
   const trace = {
     schemaVersion: RETRIEVAL_TRACE_SCHEMA_VERSION,
     servedLines: [{ recordId: 'rec-1', leg: 'dense', rank: 1, score: 0.7 }],
@@ -430,7 +414,7 @@ describe('BriefWhyResult (D-15 typed honest absence)', () => {
   })
 })
 
-describe('review-verb input and output DTOs (KREV-01 wiring contracts)', () => {
+describe('review-verb input and output DTOs (wiring contracts)', () => {
   it('accept and reject address a target; reject additionally carries a reason', () => {
     const target = { grain: 'record', recordId: 'rec-checkout-1' }
 
@@ -445,7 +429,6 @@ describe('review-verb input and output DTOs (KREV-01 wiring contracts)', () => {
   })
 
   it('forget addresses either grain', () => {
-    // RE-SPELLED 2026-10-01 (432-17): the proposal apply input is deleted; a change applies in the call.
     expect(
       KnowledgeForgetInputSchema.parse({ target: { grain: 'bundle', shortId: 'MEM-001' } })
         .target.grain,

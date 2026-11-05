@@ -2,49 +2,7 @@
 // The DOM lib is referenced HERE because this file's `page.evaluate` callbacks are compiled as
 // TypeScript and EXECUTED in a browser — `run-detail-dom.test.ts`'s reasoning, unchanged.
 
-// A FAILED RUN'S SUMMARY, IN THE MEDIUM A PERSON LOOKS AT (Phase 405 plan 14 · DETL-02, WINDOWS #287).
-//
-// WHAT THIS FILE MEASURES THAT ITS SIBLING CANNOT. `run-detail-dom.test.ts` drives 405-09's
-// populated run, and that run PASSES — so `run.status === 'failed' && run.failureSummary` is false
-// and the failure banner never mounts. The banner was therefore the one render site on the rebuilt
-// page still painting a producer string RAW, invisible to every cell in the repository: 405-11 put
-// the overview's strings through the chip seam, 405-12 read a marker delimiter out of a sub-action
-// row and fixed it one row away, and neither could see this one. The verifier found it by reading
-// (VERIFICATION.md criterion 2, missing item 3) and WINDOWS #287 recorded the three things a fix
-// needs — a failing-run producer, parse-before-truncate, and a cell that measures it on the shipped
-// artifact. This file is the third.
-//
-// THE PRODUCER IS THE SAME ONE, WITH ONE BOOLEAN MOVED. Same stub model server, same target page,
-// same project recipe, same credential-free posture — `startStubModelServer({ plannerOutcome:
-// 'stepFailed' })` sets the shipped `stepFailed` plan field on the planner's tool call, which is
-// the product's own path to a step the planner declares impossible. Nothing in the runner changes
-// to make this run fail, which is what keeps the run a RUN rather than an arrangement.
-//
-// A BROWSER THAT CANNOT LAUNCH IS A RED, NEVER A SKIP — 404-08's law, restated by
-// `run-detail-dom.test.ts`'s own header and carried here without softening. There is no conditional
-// skip in this file. A suite that exits 0 having measured nothing is indistinguishable from one
-// that measured everything, and what this file measures is a leak.
-//
-// THE DRIVING HAPPENS ONCE, IN `beforeAll`, AND THE CELLS ASSERT ON WHAT IT RECORDED. The drive
-// records and never asserts, so each named claim can be the only red under its own mutation.
-//
-// NO RESTART LEG. Since 441-15 (D-07) the dashboard serves the text a run stored and restores
-// nothing, so a second process would read exactly what the first one does. Cell (3e) reads the
-// banner's text on the FIRST process, which is the fact this file needs.
-//
-// THE CLIPBOARD IS MEASURED HERE TOO, AND ON THE SHIPPED BUNDLE (3g · T-405-43). With the banner
-// COLLAPSED it once carried 47 words against 21 on the page, including a value the reader was never
-// shown. The cell reads the clipboard back through `navigator.clipboard.readText()` after clicking
-// copy in the TRUNCATED state, which is why this file's browser context is granted
-// `clipboard-read`/`clipboard-write`.
-//
-// THE DECLARED MARKER IS TEXT (441 D-28). The run stores a declared value as `[secret:<name>]`, and
-// the banner and the artifact drawer show that string as written, with no chip (C441-DISPLAY).
-//
-// WHAT A RED ON (3f) MEANS, STATED BEFORE ANYONE IS TEMPTED. `runs.failure_summary` is an at-rest
-// sink no PASSING run ever writes, so this file's scan covers ground 405-12's cannot. If a planted
-// value turns up there, in `events.jsonl` or in an SSE frame, that is a NEW DETL-02 at-rest
-// finding: stop and report the sink and the value. It is not an occasion to narrow the scan.
+// A failing run mounts the failure banner a passing run never shows; its sinks are scanned at rest.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -73,7 +31,6 @@ import {
   PACKAGES_ROOT,
   buildFreshness,
   cleanupTempRoots,
-  reserveEphemeralPort,
   spawnDashboard,
 } from './spawned-chat.js'
 import type { SpawnedDashboard } from './spawned-chat.js'
@@ -97,7 +54,7 @@ const BROWSER_INSTALL_INSTRUCTION =
   + 'really executed and really FAILED: run `pnpm exec playwright install chromium` and re-run. '
   + 'THEY MUST NOT BE SKIPPED WHEN THE BROWSER IS ABSENT — they are the only cells in this '
   + 'repository that measure the failure banner at all, and the banner is the render site '
-  + 'WINDOWS #287 was opened about.'
+  + 'where a reported defect lived.'
 
 /** How long the page has to mount and paint the banner. */
 const PAGE_BUDGET_MS = 60_000
@@ -143,23 +100,7 @@ function unescapeStringBody(body: string): string {
   return out
 }
 
-/**
- * A published constant, read out of the module that publishes it.
- *
- * `run-detail-dom.test.ts`'s helper, for its reason: importing a `dashboard-ui` module into a Node
- * test would drag a renderer in, and a hardcoded copy would go on passing against a page that says
- * something else.
- *
- * EITHER QUOTE STYLE, AND THE STYLE IS NOT THE CONSTANT'S BUSINESS (WINDOWS #297). This read used
- * to accept single quotes only, so a DOUBLE-quoted constant (one whose text carries an apostrophe)
- * could not be read at all, and a Prettier or ESLint quote-style change turned a working read into
- * a `beforeAll` throw that red every cell at once, for a formatting reason. The body is matched to
- * the MATCHING quote across escaped pairs, so a `\'` inside a single-quoted constant does not end
- * it early.
- *
- * A TEMPLATE LITERAL IS STILL REFUSED, deliberately: its body can interpolate, and a helper that
- * returned the source text of `${...}` would be publishing a string nothing renders.
- */
+// Either quote style, matched to the closing quote across escapes; a template literal is refused.
 function publishedConstant(relativePath: string, name: string): string {
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
   const entry = new RegExp(
@@ -174,11 +115,8 @@ function publishedConstant(relativePath: string, name: string): string {
   return unescapeStringBody(entry[2] as string)
 }
 
-// ── THE HELPER'S OWN CELL (WINDOWS #297). It is outside the drive's `describe` deliberately: it
-// reads one source file and nothing else, so it must not pull a spawned binary, a browser and a
-// real run in behind it. A helper whose failure mode is "throws in `beforeAll` and reds every cell
-// in the file at once" is worth three cells of its own.
-describe('publishedConstant reads a constant whatever quotes it carries (WINDOWS #297)', () => {
+// Outside the drive's `describe`, so the helper's cell needs no binary, browser or run.
+describe('publishedConstant reads a constant whatever quotes it carries', () => {
   it('publishedConstant reads a DOUBLE-quoted constant with its apostrophe intact', () => {
     const title = publishedConstant('lib/config-copy.ts', 'CONFIG_LOAD_FAILED_TITLE')
     expect(title).toBe("Couldn't load the config")
@@ -197,7 +135,7 @@ describe('publishedConstant reads a constant whatever quotes it carries (WINDOWS
   })
 })
 
-/** The declared value as the run stores it, and as every surface shows it (441 D-28). */
+/** The declared value as the run stores it, and as every surface shows it. */
 const DECLARED_SECRET_MARKER = `[secret:${POPULATED_SECRET_NAME}]`
 
 /** One response the browser actually received, as the cells that read it consume it. */
@@ -237,14 +175,7 @@ interface PageObservation {
   readonly finalUrl: string
   /** Why the banner never attached, when it never did. Recorded, so the cells red on the FACT. */
   readonly waitFailure?: string
-  /**
-   * Whether a `[data-failure-banner-toggle]` was present AND its click RESOLVED.
-   *
-   * BOTH HALVES, BECAUSE THE FLAG IS A CELL'S DIAGNOSIS (WINDOWS #293). It was set unconditionally
-   * on the line after a click whose rejection was swallowed, so an element that existed and could
-   * not be clicked — detached, obscured, timed out — reported `true`, and cell (3d) then red one
-   * assertion later with a message naming the wrong cause on the slowest suite in the repository.
-   */
+  // Whether the toggle was present and its click resolved, so a failed click names the right cause.
   readonly toggled: boolean
   /** Why the toggle click did not resolve, when it did not. Recorded, never thrown. */
   readonly toggleFailure?: string
@@ -262,27 +193,18 @@ interface PageObservation {
   readonly drawer: DrawerObservation
   /** Every response this page received. */
   readonly responses: readonly RecordedResponse[]
-  /** What the failure view says about circularity on THIS run (422 D-17/D-19/D-20). */
-  readonly circularity: CircularityObservation
+  /** The records on the failing path the failure view lists on THIS run. */
+  readonly memoryOnPath: MemoryOnPathObservation
 }
 
 /**
- * The circularity half of the same visit, harvested from the same page (422 D-17/D-19/D-20).
- *
- * IT IS RECORDED ON BOTH SIDES OF THE SEAM ON PURPOSE. `analysisBody` is what the shipped binary
- * put on the wire and `states` is what the shipped bundle painted from it, and (3h)'s whole claim
- * is that the two agree on an ABSENCE: this run's arbiter never ran, so `analysis.get` carries no
- * `misdirection` member and the page paints no circularity element. A DOM-only cell would pass
- * just as happily against a page that received the member and silently dropped it.
+ * The on-path half of the same visit, recorded on both sides of the seam: `analysisBody` is what
+ * the shipped binary put on the wire and `onPathRecords` is what the shipped bundle painted from it.
  */
-interface CircularityObservation {
+interface MemoryOnPathObservation {
   /** How many verdict blocks painted. Zero would make the absence claim below vacuous. */
   readonly verdictBlocks: number
-  /** Every `data-misdirection` word on the page, in document order. */
-  readonly states: readonly string[]
-  /** Every causal record chip the page named. */
-  readonly causalRecords: readonly string[]
-  /** Every exposed on-path record chip the page named. */
+  /** Every on-path record chip the page named. */
   readonly onPathRecords: readonly string[]
   /** `GET /api/runs/:id/analysis`'s body, bounded — the wire half of the claim. */
   readonly analysisBody?: string
@@ -378,12 +300,10 @@ function context(): string {
           + (response.refusalBody === undefined ? '' : ` -> ${response.refusalBody}`))
         .join(' | ') || '(none)'
     }`,
-    `circularity: verdict blocks: ${String(observed?.circularity.verdictBlocks ?? 0)}; `
-    + `states: ${(observed?.circularity.states ?? []).join(', ') || '(none)'}; `
-    + `causal: ${(observed?.circularity.causalRecords ?? []).join(', ') || '(none)'}; `
-    + `on-path: ${(observed?.circularity.onPathRecords ?? []).join(', ') || '(none)'}; `
-    + `wait failure: ${observed?.circularity.waitFailure?.split('\n')[0] ?? '(none)'}`,
-    `analysis body: ${JSON.stringify((observed?.circularity.analysisBody ?? '').slice(0, 900))}`,
+    `memory on path: verdict blocks: ${String(observed?.memoryOnPath.verdictBlocks ?? 0)}; `
+    + `on-path: ${(observed?.memoryOnPath.onPathRecords ?? []).join(', ') || '(none)'}; `
+    + `wait failure: ${observed?.memoryOnPath.waitFailure?.split('\n')[0] ?? '(none)'}`,
+    `analysis body: ${JSON.stringify((observed?.memoryOnPath.analysisBody ?? '').slice(0, 900))}`,
     `page text: ${JSON.stringify((observed?.truncated.bodyText ?? '').slice(0, 600))}`,
     recorded.failure === undefined ? '' : `drive failure: ${recorded.failure}`,
     `dashboard stderr: ${(recorded.dashboardStderr ?? '').slice(-1_200)}`,
@@ -556,9 +476,7 @@ async function observeFailureBanner(
       }
     }
 
-    // THE FLAG RECORDS THE CLICK'S OUTCOME, NOT ITS ATTEMPT (WINDOWS #293). `toggled = true` used
-    // to sit unconditionally after a `.catch(() => undefined)`, so a click that threw still
-    // reported success and (3d) blamed a missing element for a click that failed on a present one.
+    // The flag records the click's outcome, not its attempt.
     const toggle = page.locator('[data-failure-banner-toggle]')
     if ((await toggle.count()) > 0) {
       toggleFailure = await toggle.first().click().then(
@@ -574,14 +492,13 @@ async function observeFailureBanner(
     }
     const full = await harvestBanner(page)
 
-    // THE FAILURE VIEW'S OWN BLOCK (422). The wait is on the verdict block rather than on a
-    // circularity element, because the fact being measured is that NO circularity element exists:
-    // waiting for one would time out on the healthy case and record nothing about the block.
-    let circularityWaitFailure: string | undefined
+    // The wait is on the verdict block rather than on an on-path element, because this run lists
+    // no records: waiting for one would time out and record nothing about the block.
+    let blockWaitFailure: string | undefined
     await page.locator('[data-verdict-block]')
       .waitFor({ state: 'attached', timeout: PAGE_BUDGET_MS })
       .catch((error: unknown) => {
-        circularityWaitFailure = error instanceof Error ? error.message : String(error)
+        blockWaitFailure = error instanceof Error ? error.message : String(error)
       })
     const painted = await page.evaluate(() => {
       const read = (selector: string, attribute: string) =>
@@ -589,8 +506,6 @@ async function observeFailureBanner(
           .map((element) => element.getAttribute(attribute) ?? '?')
       return {
         verdictBlocks: document.querySelectorAll('[data-verdict-block]').length,
-        states: read('[data-misdirection]', 'data-misdirection'),
-        causalRecords: read('[data-misdirection-causal-record]', 'data-misdirection-causal-record'),
         onPathRecords: read('[data-misdirection-on-path-record]', 'data-misdirection-on-path-record'),
       }
     })
@@ -601,10 +516,10 @@ async function observeFailureBanner(
     await Promise.all(pendingBodies)
 
     return {
-      circularity: {
+      memoryOnPath: {
         ...painted,
         ...(analysisBody === undefined ? {} : { analysisBody }),
-        ...(circularityWaitFailure === undefined ? {} : { waitFailure: circularityWaitFailure }),
+        ...(blockWaitFailure === undefined ? {} : { waitFailure: blockWaitFailure }),
       },
       finalUrl: page.url(),
       ...(waitFailure === undefined ? {} : { waitFailure }),
@@ -624,12 +539,7 @@ async function observeFailureBanner(
   }
 }
 
-/**
- * Open the artifact drawer with its `i` shortcut, expand the suite member's raw YAML and read it.
- *
- * The run's test source is captured through the run's mask, so the member's step reads with the
- * stored `[secret:<name>]` the drawer shows as written (441 D-28).
- */
+// The test source is captured through the run's mask, so the drawer shows the marker.
 async function observeArtifactDrawer(page: Page): Promise<DrawerObservation> {
   let waitFailure: string | undefined
   const record = (error: unknown) => {
@@ -657,7 +567,7 @@ async function observeArtifactDrawer(page: Page): Promise<DrawerObservation> {
   }
 }
 
-describe('the shipped dashboard paints a FAILED run\'s summary as stored text (405-14, WINDOWS #287)', () => {
+describe('the shipped dashboard paints a FAILED run\'s summary as stored text', () => {
   beforeAll(async () => {
     if (process.platform === 'win32') {
       recorded.failure = WINDOWS_REFUSAL
@@ -698,11 +608,9 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
       { stepText: POPULATED_FAILURE_STEP_TEXT },
     )
 
-    const port = await reserveEphemeralPort()
     dashboard = await spawnDashboard(
       project.root,
       project.configPath,
-      port,
       60_000,
       populatedRunSpawnEnv(),
     )
@@ -817,7 +725,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
     ).toContain(`[secret:${POPULATED_SECRET_NAME}]`)
     expect(
       summary,
-      `the failure summary on the wire does not carry the planted email as written (D-23).${context()}`,
+      `the failure summary on the wire does not carry the planted email as written.${context()}`,
     ).toContain(POPULATED_EMAIL)
     expect(
       (summary as string).includes(POPULATED_DECLARED_SECRET_VALUE),
@@ -840,13 +748,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
       + `— and the truncated-state claims below would be measuring the full text.${context()}`,
     ).toBe('truncated')
 
-    // AND THE ATTRIBUTE IS CHECKED AGAINST THE TEXT, because an attribute is only worth reading if
-    // it can disagree with what is on the page. `data-failure-banner-state` was once derived from
-    // the toggle's `useState(false)` alone, which made `truncated` a compile-time constant on
-    // mount: this cell would have gone on passing with the truncation deleted outright. The two
-    // assertions below are the fact the sentence above claims — the preview really is SHORTER than
-    // the full text, and it really was cut — and mutation leg M6 (`truncateText` returns its input
-    // unchanged) is the measurement that this cell can lose them.
+    // The attribute is checked against the text: the preview must be shorter than the full text.
     expect(
       observed.truncated.bannerText.length,
       'the truncated banner is not shorter than the expanded one, so no truncation happened. The '
@@ -866,11 +768,11 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
       observed.truncated.bodyText.includes(POPULATED_EMAIL),
       'the planted address is not shown as written in the truncated banner. The fixture plants the '
       + 'email inside the preview budget deliberately; if the sentence drifted past the budget, fix '
-      + `the FIXTURE, never the budget (D-23).${context()}`,
+      + `the FIXTURE, never the budget.${context()}`,
     ).toBe(true)
     expect(
       observed.truncated.maskedCategories,
-      `the truncated banner painted a masked-value chip; stored text is shown as written (D-28).${context()}`,
+      `the truncated banner painted a masked-value chip; stored text is shown as written.${context()}`,
     ).toEqual([])
   })
 
@@ -890,11 +792,11 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
     ).toBe('full')
     expect(
       observed.full.maskedCategories,
-      `the expanded banner painted a masked-value chip; stored text is shown as written (D-28).${context()}`,
+      `the expanded banner painted a masked-value chip; stored text is shown as written.${context()}`,
     ).toEqual([])
     expect(
       observed.full.bodyText.includes(POPULATED_EMAIL),
-      `the planted address is not shown as written once the banner is expanded (D-23).${context()}`,
+      `the planted address is not shown as written once the banner is expanded.${context()}`,
     ).toBe(true)
   })
 
@@ -904,7 +806,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
       observed.full.bannerText.includes(POPULATED_SECRET_VALUE),
       'the `_SECRET`-named environment credential is NOT in the expanded banner. It is not a '
       + 'declared secret, so the run records it as written in `run.failureSummary` and the banner '
-      + `shows it as written (D-07, D-23).${context()}`,
+      + `shows it as written.${context()}`,
     ).toBe(true)
     // AND IT IS OUTSIDE THE PREVIEW, which is what makes (3c) and (3e) two claims. The fixture puts
     // the credential past the word budget on purpose; if it drifted into the preview, the truncated
@@ -932,9 +834,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
       `no runtime database file was found to scan — a clean scan of nothing is not a claim.${context()}`,
     ).toBeGreaterThan(0)
 
-    // `runs.failure_summary` IS A SINK NO PASSING RUN EVER WROTE, so this scan covers ground the
-    // passing-run differential cannot. A red here is a NEW DETL-02 at-rest finding: report the sink
-    // and the value. It is not an occasion to narrow the scan.
+    // Only a failing run writes `runs.failure_summary`, so this scan covers new ground.
     expect(
       (recorded.sseFrames ?? '').includes(POPULATED_DECLARED_SECRET_VALUE),
       `the declared step secret appears IN CLEAR in the run-stream frames of a FAILING run.${context()}`,
@@ -950,7 +850,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
       + `\`runs.failure_summary\` is the sink a passing run never writes.${context()}`,
     ).toBe(false)
 
-    // Undeclared values are recorded as written (D-01, D-12, D-23).
+    // Undeclared values are recorded as written.
     for (const [what, value] of [
       ['the env credential', POPULATED_SECRET_VALUE],
       ['the planted email address', POPULATED_EMAIL],
@@ -966,7 +866,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
     }
   })
 
-  it('(3g) the clipboard carries ONLY what the collapsed banner rendered (T-405-43)', () => {
+  it('(3g) the clipboard carries ONLY what the collapsed banner rendered', () => {
     const observed = visit()
     expect(
       observed.clipboardFailure,
@@ -998,7 +898,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
     expect(
       clipboard.includes(POPULATED_EMAIL),
       'the planted address is not on the clipboard as written. The collapsed banner renders it at '
-      + `word 16, so the clipboard carries it as the page showed it (D-23).${context()}`,
+      + `word 16, so the clipboard carries it as the page showed it.${context()}`,
     ).toBe(true)
 
     // AND IT IS THE RENDERED SENTENCE, WORD FOR WORD — the containment above cannot see a copy that
@@ -1011,13 +911,13 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
     ).toBe(observed.truncated.renderedText)
   })
 
-  describe('C441-DISPLAY', () => {
+  describe('declared markers on a failed run', () => {
     it('a failed run shows a declared marker as text in its banner and artifact drawer', () => {
       const observed = visit()
       expect(
         observed.truncated.renderedText,
         'the collapsed banner does not show the declared value\'s stored `[secret:<name>]` as text. '
-        + `The failing step references the value declared in the fixture's secrets file (D-28).${context()}`,
+        + `The failing step references the value declared in the fixture's secrets file.${context()}`,
       ).toContain(DECLARED_SECRET_MARKER)
       expect(
         observed.truncated.textNodes.some((text) => text.includes(DECLARED_SECRET_MARKER)),
@@ -1030,12 +930,12 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
       expect(
         observed.drawer.rawYaml,
         'the artifact drawer\'s member YAML does not show the stored marker as written. The run '
-        + `captures its test source through its own mask (D-28).${context()}`,
+        + `captures its test source through its own mask.${context()}`,
       ).toContain(DECLARED_SECRET_MARKER)
       expect(observed.drawer.text, context()).toContain(DECLARED_SECRET_MARKER)
       expect(
         observed.drawer.maskedElements,
-        `the page painted a masked-value chip with the drawer open (D-28).${context()}`,
+        `the page painted a masked-value chip with the drawer open.${context()}`,
       ).toBe(0)
       expect(observed.drawer.text, context()).not.toMatch(/masked (?:secret|email)/u)
       expect(observed.truncated.bodyText, context()).not.toMatch(/masked (?:secret|email)/u)
@@ -1046,124 +946,41 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text (4
     })
   })
 
-  // ── 422 D-17/D-19/D-20: THE CIRCULARITY EVIDENCE, ON THE RUN THIS FILE ACTUALLY DRIVES.
-  //
-  // THIS RUN'S ARBITER NEVER RAN. The fixture spends no provider call on a cross-check, publishes
-  // no `misdirection-*` sidecar and writes no verdict ledger, so `analysis.get` must carry NO
-  // `misdirection` member and the failure view must paint no circularity element. That is the
-  // ADDITIVE claim of the whole plan, and it is the one claim only this file can make: everything
-  // else about the evidence is measured against fixtures, and a fixture cannot prove that the
-  // shipped binary and the shipped bundle leave an untouched run untouched.
-  //
-  // BOTH SIDES OF THE SEAM ARE ASSERTED. A DOM-only cell would pass just as happily against a page
-  // that received the member and dropped it on the floor, and a wire-only cell would pass against a
-  // bundle that invented a "not recorded" badge under every historical failure. And the block count
-  // is asserted first, because an absence measured on a page with no blocks is an absence of
-  // nothing.
-  it('(3h) a run whose arbiter never ran carries no circularity member and paints no badge', () => {
+  // This run served no low-trust memory, so its verdict declares no `memoryOnPath` and the
+  // failure view lists no record. Both sides of the seam are asserted, and the block count first,
+  // because an absence measured on a page with no blocks is an absence of nothing.
+  it('a run with no low-trust memory on its path carries no memoryOnPath and lists no record', () => {
     const observed = visit()
     expect(
-      observed.circularity.waitFailure,
+      observed.memoryOnPath.waitFailure,
       'no `[data-verdict-block]` ever attached, so the absence below is an absence of nothing. '
       + 'The failure view paints a block for every member `analysis.get` answers a verdict for, '
       + `and this run failed one.${context()}`,
     ).toBeUndefined()
     expect(
-      observed.circularity.verdictBlocks,
+      observed.memoryOnPath.verdictBlocks,
       `the page painted no verdict block for a run with a failed member.${context()}`,
     ).toBeGreaterThan(0)
 
-    const body = observed.circularity.analysisBody
+    const body = observed.memoryOnPath.analysisBody
     expect(
       body,
       `the page never received a 200 from \`/api/runs/:id/analysis\`.${context()}`,
     ).toBeDefined()
     const analysis = JSON.parse(body as string) as {
-      verdicts?: { misdirection?: unknown }[]
+      verdicts?: { memoryOnPath?: unknown }[]
     }
     expect(
       (analysis.verdicts ?? []).length,
       `the analysis answered no verdicts at all, so the wire claim below is vacuous.${context()}`,
     ).toBeGreaterThan(0)
     expect(
-      (analysis.verdicts ?? []).filter((verdict) => 'misdirection' in verdict).length,
-      'a verdict carries a `misdirection` member on a run whose arbiter never ran. ABSENT and '
-      + 'EMPTY are two facts here: a `{ state: "not-recorded" }` on every historical verdict is a '
-      + `claim the producer never made.${context()}`,
+      (analysis.verdicts ?? []).filter((verdict) => 'memoryOnPath' in verdict).length,
+      `a verdict declares memoryOnPath on a run that served no low-trust memory.${context()}`,
     ).toBe(0)
-
     expect(
-      observed.circularity.states,
-      'the shipped bundle painted a circularity badge over evidence that was never produced. '
-      + 'This is the exact misstatement 422-17 refused on the CLI line and #427 makes live: a '
-      + `reader would conclude something was ruled out.${context()}`,
-    ).toEqual([])
-    expect(
-      observed.circularity.causalRecords,
-      `a memory record is attributed as causal on a run that cross-checked nothing.${context()}`,
-    ).toEqual([])
-    expect(
-      observed.circularity.onPathRecords,
+      observed.memoryOnPath.onPathRecords,
       `an on-path record is named on a run whose verdict declared none.${context()}`,
     ).toEqual([])
-  })
-})
-
-// ── THE TWO RECORD ROWS ARE TWO DIFFERENT NAMES (422 D-20). Source-level and outside the drive,
-// for `publishedConstant`'s reason: it reads two files and nothing else, so it must not pull a
-// spawned binary, a browser and a real run in behind it.
-//
-// WHY A CELL AT ALL. The causal row names the records whose cross-check FLIPPED and the exposure
-// row names every low-trust record the run put on the member's path; a refactor that hoisted them
-// onto one attribute would still render two lists, still pass every count assertion in the
-// dashboard suites, and would attribute a member's failure to a record whose check HELD. The wall
-// is the NAMES, because the names are what every cell that tells the rows apart addresses.
-describe('the failure view keeps causal and exposed memory records apart (422 D-20)', () => {
-  const VERDICT_BLOCK = readFileSync(
-    join(PACKAGES_ROOT, 'dashboard-ui', 'src', 'components', 'run-detail', 'verdict-block.tsx'),
-    'utf8',
-  )
-
-  it('renders the causal row and the exposure row under two distinct attribute names', () => {
-    // Read out of the SOURCE rather than typed as a pair of literals: a literal comparison is a
-    // tautology the compiler resolves, and what is being walled is the file's own text.
-    const names = [...new Set(
-      [...VERDICT_BLOCK.matchAll(/data-misdirection-[a-z-]+/gu)].map((match) => match[0]),
-    )].sort()
-    expect(
-      names.includes('data-misdirection-causal-record'),
-      'the causal row lost its own attribute name',
-    ).toBe(true)
-    expect(
-      names.includes('data-misdirection-on-path-record'),
-      'the exposure row lost its own attribute name',
-    ).toBe(true)
-    expect(
-      names.filter((name) => name.endsWith('-record')).length,
-      'the two record rows collapsed onto one name — a record whose check HELD would then be '
-      + 'rendered as the cause of the failure',
-    ).toBe(2)
-  })
-
-  it('publishes every circularity sentence as a constant, so no copy is typed at a render site', () => {
-    // The block's own law, applied to the 422 copy: a sentence lives in `lib/analysis-view.ts` and
-    // the component reads it. A literal here would drift from what the cells assert.
-    for (const name of [
-      'MISDIRECTION_NOT_RECORDED_TEXT',
-      'MISDIRECTION_HELD_TEXT',
-      'MISDIRECTION_UNRESOLVED_TEXT',
-      'MISDIRECTION_DECLARED_ONLY_TEXT',
-      'MEMORY_ON_PATH_NOT_RECORDED_TEXT',
-      'MEMORY_ON_PATH_NONE_TEXT',
-    ]) {
-      expect(publishedConstant('lib/analysis-view.ts', name).length).toBeGreaterThan(0)
-    }
-    // AND THE ONE WORD THE CLI ALREADY OWNS IS SPELLED THE SAME WAY (422-17). `post-run-tail.ts`
-    // renders `circularity guard: declared-only` for the backing an operator actually got; two
-    // surfaces describing one run in two vocabularies is worse than either being absent.
-    expect(publishedConstant('lib/analysis-view.ts', 'MISDIRECTION_DECLARED_ONLY_TEXT'))
-      .toContain('declared-only')
-    expect(publishedConstant('lib/analysis-view.ts', 'MISDIRECTION_NOT_RECORDED_TEXT'))
-      .toContain('not recorded')
   })
 })

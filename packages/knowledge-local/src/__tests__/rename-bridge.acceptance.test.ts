@@ -84,7 +84,6 @@ function publishVictim(): PublishedBundle {
     {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
     },
     {
       draft: makeBundleDraftFixture({
@@ -131,7 +130,6 @@ function publishLexicalDistractors(): void {
       {
         knowledgeRoot,
         productKey: PRODUCT,
-        commitArtifacts: 'none',
       },
       {
         draft: makeBundleDraftFixture({
@@ -259,7 +257,7 @@ function dependencies(): CommitCurationDependencies {
   }
 }
 
-describe('rename bridge fixture acceptance (DCAY-03/DCAY-04 D-22)', () => {
+describe('rename bridge fixture acceptance', () => {
   it('closes old recall and preserves scrub-safe new-to-old audit traversal', async () => {
     const victim = publishVictim()
     publishLexicalDistractors()

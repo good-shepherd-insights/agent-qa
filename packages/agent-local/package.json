@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-agent-local",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "private": false,
   "description": "StorageImplementation shell for future local agent persistence stores in agent-qa.",
   "keywords": [
@@ -29,9 +29,14 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [
@@ -40,8 +45,8 @@
     "NOTICE.md"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
@@ -55,14 +60,15 @@
     "@vostride/agent-qa-safety": "workspace:*",
     "@vostride/agent-qa-safety-local": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
-    "@vostride/agent-qa-web": "workspace:*"
+    "@vostride/agent-qa-web": "workspace:*",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/node": "~24.12.2",
+    "@types/node": "~24.19.2",
     "@vostride/agent-qa-arch": "workspace:*",
-    "tsup": "~8.5.1",
-    "typescript": "~6.0.3",
-    "vitest": "~4.1.5",
-    "yaml": "2.8.4"
+    "tsdown": "~0.23.4",
+    "typescript": "~7.0.2",
+    "vitest": "~5.0.5",
+    "yaml": "2.9.1"
   }
 }

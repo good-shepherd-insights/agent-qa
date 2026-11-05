@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-core",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "private": false,
   "description": "Core agent-qa runtime, schemas, tools, and execution services.",
   "keywords": [
@@ -30,9 +30,24 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./run-text-output": {
+      "import": {
+        "types": "./dist/run-text-output.d.ts",
+        "default": "./dist/run-text-output.js"
+      },
+      "require": {
+        "types": "./dist/run-text-output.d.cts",
+        "default": "./dist/run-text-output.cjs"
+      }
     }
   },
   "files": [
@@ -41,8 +56,8 @@
     "NOTICE.md"
   ],
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build": "tsdown",
+    "dev": "tsdown --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist .turbo"
@@ -51,24 +66,23 @@
     "@vostride/agent-qa-ids": "workspace:*",
     "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
-    "ai": "6.0.174",
+    "ai": "7.0.159",
     "bytes": "3.1.2",
-    "fast-xml-parser": "5.7.2",
-    "glob": "13.0.6",
+    "fast-xml-parser": "5.11.2",
+    "glob": "14.0.3",
     "ms": "2.1.3",
     "picocolors": "1.1.1",
-    "playwright-core": "1.61.0",
-    "semver": "7.8.1",
-    "yaml": "2.8.4",
+    "semver": "7.8.5",
+    "yaml": "2.9.1",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/bytes": "~3.1.5",
+    "@types/bytes": "~3.1.6",
     "@types/ms": "~2.1.0",
-    "@types/node": "~24.12.2",
+    "@types/node": "~24.19.2",
     "@vostride/agent-qa-arch": "workspace:*",
-    "tsup": "~8.5.1",
-    "typescript": "~6.0.3",
-    "vitest": "~4.1.5"
+    "tsdown": "~0.23.4",
+    "typescript": "~7.0.2",
+    "vitest": "~5.0.5"
   }
 }

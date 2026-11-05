@@ -1,7 +1,4 @@
-// THE CONFIG PAGE'S CLOSED SETS, PINNED BY TYPE (429 D-02/D-03, v54 bar).
-//
-// Each runtime array and its union are two spellings of one closed set; the runtime twins are the
-// C429-*-EXACT cells in config-tabs.test.ts.
+// Each runtime array and its union are two spellings of one closed set.
 
 import { expectTypeOf, test } from 'vitest'
 
@@ -31,7 +28,7 @@ import {
   type TestResult,
 } from '../config-tabs'
 
-test('C429-CONFIG-TABS-EXACT', () => {
+test('config tabs are an exact union', () => {
   type Expected = 'models' | 'targets' | 'execution' | 'project' | 'advanced'
   expectTypeOf<ConfigTab>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof CONFIG_TABS)[number]>().toEqualTypeOf<Expected>()
@@ -39,14 +36,13 @@ test('C429-CONFIG-TABS-EXACT', () => {
   expectTypeOf<Exclude<(typeof CONFIG_TABS)[number], ConfigTab>>().toEqualTypeOf<never>()
 })
 
-test('C429-CONFIG-SECTIONS-EXACT', () => {
+test('config sections are an exact union', () => {
   type Expected =
     | 'models'
     | 'screenshot-size'
     | 'planner-limits'
     | 'targets'
     | 'devices'
-    | 'device-farms'
     | 'login-states'
     | 'mobile-app-state'
     | 'browser'
@@ -63,7 +59,6 @@ test('C429-CONFIG-SECTIONS-EXACT', () => {
     | 'logging'
     | 'pass-rate-scope'
     | 'mcp'
-    | 'eval'
     | 'config-file'
   type Listed = (typeof CONFIG_SECTIONS)[ConfigTab][number]
   expectTypeOf<ConfigSectionId>().toEqualTypeOf<Expected>()
@@ -90,7 +85,6 @@ test('LEGACY-LINKS-TOTAL: the map is keyed by exactly the 21 pairs', () => {
     | 'registry:llms'
     | 'registry:targets'
     | 'registry:devices'
-    | 'registry:providers'
     | 'use:browser'
     | 'use:timeouts'
     | 'use:planner'
@@ -106,7 +100,7 @@ test('LEGACY-LINKS-TOTAL: the map is keyed by exactly the 21 pairs', () => {
   >()
 })
 
-test('C429-SAVE-STATES-EXACT', () => {
+test('save states are an exact union', () => {
   type Expected = 'idle' | 'saving' | 'saved' | 'draft' | 'failed' | 'undo'
   expectTypeOf<SaveState>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof SAVE_STATES)[number]>().toEqualTypeOf<Expected>()
@@ -114,7 +108,7 @@ test('C429-SAVE-STATES-EXACT', () => {
   expectTypeOf<Exclude<(typeof SAVE_STATES)[number], SaveState>>().toEqualTypeOf<never>()
 })
 
-test('C429-FIELD-STATES-EXACT', () => {
+test('field states are an exact union', () => {
   type Expected = 'clean' | 'draft' | 'saving' | 'failed'
   expectTypeOf<FieldState>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof FIELD_STATES)[number]>().toEqualTypeOf<Expected>()
@@ -122,7 +116,7 @@ test('C429-FIELD-STATES-EXACT', () => {
   expectTypeOf<Exclude<(typeof FIELD_STATES)[number], FieldState>>().toEqualTypeOf<never>()
 })
 
-test('C429-CONNECTION-CHOICES-EXACT', () => {
+test('connection choices are an exact union', () => {
   type Expected =
     | 'chatgpt-sign-in'
     | 'claude-sign-in'
@@ -136,7 +130,7 @@ test('C429-CONNECTION-CHOICES-EXACT', () => {
   expectTypeOf<keyof typeof CONNECTION_CHOICE_PROVIDERS>().toEqualTypeOf<ConnectionChoice>()
 })
 
-test('C429-MODEL-STATUSES-EXACT', () => {
+test('model statuses are an exact union', () => {
   type Expected = 'signed-in' | 'key-saved' | 'not-connected' | 'sign-in-expired'
   expectTypeOf<ModelStatus>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof MODEL_STATUSES)[number]>().toEqualTypeOf<Expected>()
@@ -144,7 +138,7 @@ test('C429-MODEL-STATUSES-EXACT', () => {
   expectTypeOf<Exclude<(typeof MODEL_STATUSES)[number], ModelStatus>>().toEqualTypeOf<never>()
 })
 
-test('C429-TEST-RESULTS-EXACT', () => {
+test('test results are an exact union', () => {
   type Expected = 'testing' | 'connected' | 'connected-without-key' | 'failed'
   expectTypeOf<TestResult>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof TEST_RESULTS)[number]>().toEqualTypeOf<Expected>()
@@ -152,12 +146,11 @@ test('C429-TEST-RESULTS-EXACT', () => {
   expectTypeOf<Exclude<(typeof TEST_RESULTS)[number], TestResult>>().toEqualTypeOf<never>()
 })
 
-test('C429-EXPLICIT-ACTION-KINDS-EXACT', () => {
+test('explicit action kinds are an exact union', () => {
   type Expected =
     | 'delete-model'
     | 'delete-target'
     | 'delete-device'
-    | 'delete-device-farm'
     | 'sign-out'
     | 'remove-key'
     | 'change-knowledge-dir'

@@ -12,7 +12,7 @@ const mockCleanup = vi.fn().mockResolvedValue(undefined)
 const mockExecute = vi.fn().mockResolvedValue({ success: true })
 const mockScreenshot = vi.fn().mockResolvedValue(Buffer.from('fake-screenshot'))
 const mockObserve = vi.fn().mockResolvedValue({ tree: '', elements: [], timestamp: 0, metadata: {} })
-// The web adapter's Chromium screencast, as the editor's hub sees it (428 D-07).
+// The web adapter's Chromium screencast, as the editor's hub sees it.
 let screencastEmit: ((frame: LiveFrame) => void) | undefined
 const mockScreencastStart = vi.fn(async (onFrame: (frame: LiveFrame) => void) => {
   screencastEmit = onFrame
@@ -109,8 +109,6 @@ const mockVariableStoreInstance = {
   snapshot: vi.fn(() => Object.fromEntries(variableStoreEntries)),
 }
 
-// executeStep/LLMPlanner/LLMVerifier moved to the runner package (Phase 353-07);
-// live-session now imports them from @vostride/agent-qa-runner, so intercept them there.
 vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@vostride/agent-qa-runner')>()
   return {
@@ -118,27 +116,22 @@ vi.mock('@vostride/agent-qa-runner', async (importOriginal) => {
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
-    // runHooks moved to runner in Phase 363 D-06.
     runHooks: (...args: unknown[]) => mockRunHooks(...args),
-    // Variables subsystem moved to runner in Phase 363 D-07.
     VariableStore: vi.fn().mockImplementation(function () { return mockVariableStoreInstance }),
     interpolateVariables: (...args: unknown[]) => mockInterpolateVariables(...args as Parameters<typeof mockInterpolateVariables>),
     findUnresolvedTemplates: (...args: unknown[]) => mockFindUnresolvedTemplates(...args as Parameters<typeof mockFindUnresolvedTemplates>),
-    // Inline hook parsing moved to runner in Phase 363-11; live-session imports it from runner.
     parseHookInline: (text: string) => mockParseHookInline(text),
     stripHookInline: (text: string) => mockStripHookInline(text),
   }
 })
 
-// DockerHookExecutor moved to runner-local in Phase 363 D-06; its execute() is the old
-// runHookInSandbox body behind the port.
 vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@vostride/agent-qa-runner-local')>()),
   DockerHookExecutor: class { execute(...args: unknown[]) { return mockRunHookInSandbox(...args) } },
 }))
 
 vi.mock('@vostride/agent-qa-core', async () => {
-  // 436-19: the live door checks limit leaves with the real core schemas the CLI applies.
+  // The live door checks limit leaves with the real core schemas the CLI applies.
   const actual = await vi.importActual<typeof import('@vostride/agent-qa-core')>('@vostride/agent-qa-core')
   class LocalSecretStore {
     private secrets: Record<string, string>
@@ -194,6 +187,7 @@ vi.mock('@vostride/agent-qa-core', async () => {
       }
     },
     resolveMobileRunConfig: vi.fn(),
+    getAgentQaVersion: () => '0.0.0',
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
     LLMVerifier: vi.fn().mockImplementation(function () { return { verify: vi.fn() } }),
@@ -206,6 +200,7 @@ vi.mock('@vostride/agent-qa-core', async () => {
     redactSecretValue,
     resolveSecretTemplatesInValue,
     PlannerConfigSchema: actual.PlannerConfigSchema,
+    printRunText: actual.printRunText,
     TestDefinitionSchema: actual.TestDefinitionSchema,
     SuiteDefinitionSchema: actual.SuiteDefinitionSchema,
   }
@@ -270,6 +265,18 @@ describe('LiveSession', () => {
     )
     expect(mockCreateModel).toHaveBeenCalled()
     expect(session.status).toBe('idle')
+  })
+
+  it('initialize passes the configured navigation timeout to the web adapter setup', async () => {
+    await session.initialize({ ...webConfig, navigationTimeoutMs: 30_000 })
+    expect(mockSetup).toHaveBeenCalledWith(
+      expect.objectContaining({ platform: 'web', timeouts: { navigation: 30_000 } }),
+    )
+  })
+
+  it('initialize leaves the navigation timeout to the adapter default when none is configured', async () => {
+    await session.initialize(webConfig)
+    expect(mockSetup).toHaveBeenCalledWith(expect.not.objectContaining({ timeouts: expect.anything() }))
   })
 
   it('initialize navigates to URL when provided', async () => {
@@ -898,10 +905,8 @@ describe('LiveSession', () => {
     expect(mockCleanup, 'the browser is closed once').toHaveBeenCalledTimes(1)
   })
 
-  // 428-19 (D-07): the session has no screenshot getter. The adapter's capture is reached only
-  // through the hub's snapshot producer, lazily, so an initialized session with no viewer never
-  // captures. The title is kept.
-  it('getScreenshot delegates to adapter', async () => {
+  // The session has no screenshot getter; the hub's lazy snapshot producer is the only capture.
+  it('a live session exposes no getScreenshot and takes no screenshot', async () => {
     await session.initialize(webConfig)
     expect('getScreenshot' in session).toBe(false)
     expect(mockScreenshot).not.toHaveBeenCalled()
@@ -958,8 +963,8 @@ describe('LiveSession', () => {
   })
 })
 
-// 436-09 (D-03): the live editor is a door; its limits come from the project config and the entity.
-describe('C436-EFFECTIVE-LIMITS live editor', () => {
+// The live editor is a door; its limits come from the project config and the entity.
+describe('live editor', () => {
   let session: LiveSession
 
   beforeEach(() => {
@@ -1023,8 +1028,8 @@ describe('C436-EFFECTIVE-LIMITS live editor', () => {
   })
 })
 
-// 436-19 (D-03, WR-12): a live suite session runs each child at its own effective limits.
-describe('C436-EFFECTIVE-LIMITS live suite children', () => {
+// A live suite session runs each child at its own effective limits.
+describe('live suite children', () => {
   let session: LiveSession
 
   beforeEach(() => {
@@ -1109,8 +1114,8 @@ describe('C436-EFFECTIVE-LIMITS live suite children', () => {
   })
 })
 
-// 436-19 (D-02, D-03, D-05, WR-11): the live door refuses, never ignores, a limit the CLI refuses.
-describe('C436-EFFECTIVE-LIMITS live refusal', () => {
+// The live door refuses, never ignores, a limit the CLI refuses.
+describe('live refusal', () => {
   function configManagerWith(config: Record<string, unknown>): ConfigManager {
     return { readWithRevision: async () => ({ kind: 'ok', config, raw: '', revision: 'r1' }) } as unknown as ConfigManager
   }
@@ -1221,5 +1226,75 @@ describe('C436-EFFECTIVE-LIMITS live refusal', () => {
     expect(result.teardownHookExecutions).toEqual([])
     expect(mockExecuteStep).not.toHaveBeenCalled()
     expect(mockRunHooks).not.toHaveBeenCalled()
+  })
+})
+
+describe('executeTestCommand warnings', () => {
+  const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+  const draft = {
+    testIndex: 0,
+    testId: 't_warn',
+    testName: 'Warn',
+    steps: ['archive all'],
+    setup: [],
+    teardown: [],
+  }
+  let session: LiveSession
+
+  beforeEach(async () => {
+    session = new LiveSession('warning-session')
+    vi.clearAllMocks()
+    variableStoreEntries.clear()
+    mockRunHooks.mockResolvedValue({
+      results: new Map(),
+      variables: {},
+      allPassed: true,
+      duration: 5,
+    })
+    mockExecuteStep.mockResolvedValue({
+      name: 'test-step',
+      status: 'failed',
+      duration: 100,
+      error: '::set-output name=x::y',
+    })
+    await session.initialize(webConfig)
+  })
+
+  afterEach(() => {
+    mockExecuteStep.mockResolvedValue({ name: 'test-step', status: 'passed', duration: 100 })
+    vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+  })
+
+  it('prints a failed step warning inside one pair on stdout under GitHub Actions', async () => {
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+    const writes: string[] = []
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      writes.push(String(chunk))
+      return true
+    })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await session.executeTestCommand('exec-warn', draft)
+
+    const blocks = writes.filter((chunk) => chunk.includes('executeTestCommand'))
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0]).toMatch(PAIR)
+    expect(blocks[0]).toContain('Step 1 (archive all) failed: ::set-output name=x::y')
+    expect(blocks[0]).toContain("testName: 'Warn'")
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('passes console.warn the same arguments as before off GitHub Actions', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await session.executeTestCommand('exec-warn', draft)
+
+    expect(warnSpy.mock.calls).toEqual([
+      [
+        '[live-session] executeTestCommand: Step 1 (archive all) failed: ::set-output name=x::y',
+        { testName: 'Warn' },
+      ],
+    ])
   })
 })

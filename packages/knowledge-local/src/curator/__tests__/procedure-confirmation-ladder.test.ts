@@ -38,12 +38,8 @@ const FULL_AUTHORSHIP: CurationAuthorship = {
 const FLOW_ANCHOR = normalizeAnchor({ t: 'flow', name: 'Sign in flow' })
 const CREATION_JOB_ID = 'job-ladder-seed'
 
-/**
- * D-05 ladder proof: a full-tier procedure earns replay eligibility exclusively through the
- * organic canary stream — queue -> drain -> Confirm evidence -> matcher confirmation fold —
- * with no hand-seeded outcome events. The compounding loop closes end-to-end inside M2.
- */
-describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
+// Replay eligibility comes only from the organic canary stream; no outcome events are hand-seeded.
+describe('procedure confirmation ladder', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -61,7 +57,6 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
     const outcome = publishBundle({
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'confirmation-ladder-test',
     }, {
       draft: makeProcedureBundleDraftFixture(),
@@ -108,7 +103,6 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
       candidateId: procedureId,
       runOutcome,
       benefit: 'rode-along',
-      stateValidity: 'unknown',
       runId: 'run-ladder-replay',
       testId: 'sign-in::happy-path',
       testIndex: 0,
@@ -176,7 +170,7 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
 
     const afterFirst = loaded(seeded.dir)
     expect(afterFirst.trust.counters.confirmed).toBe(bar)
-    // M2 posture: procedures never go active; Confirm evidence alone crosses the bar (D-05).
+    // Procedures stay candidates; Confirm evidence alone crosses the replay bar.
     expect(afterFirst.trust.status).toBe('candidate')
     expect(getProcedure()?.replayRecommendation).toBe('hint')
 
@@ -230,8 +224,7 @@ describe('procedure confirmation ladder (PROC-01/PROC-02 D-05)', () => {
     const report = await drain()
     expect(report).toMatchObject({ kind: 'drained', committed: 1, failures: 0 })
 
-    // Procedures degrade through the confirmation fold and 379's decay machinery,
-    // never through hard deletion: the bundle survives and still matches as a hint.
+    // Procedures degrade through the confirmation fold and decay, never hard deletion.
     const result = loaded(seeded.dir)
     expect(result.bundle.events).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'contradicted' }),

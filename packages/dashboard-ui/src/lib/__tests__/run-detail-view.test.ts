@@ -1,15 +1,4 @@
-// THE RUN-DETAIL PROJECTION, AS THE PAGE READS IT (405-06 · DETL-01, D-06/D-10/D-15/D-16..D-18).
-//
-// Every cell here drives a PURE function over the op's own `RunDetailProjection`. There is no DOM,
-// no fetch and no clock, which is the whole reason this module exists separately from the page:
-// 405-08's tree and 405-11's overview assert their copy BY CONSTANT rather than by string, so a
-// sentence moves in one place and its cells move with it (the `post-processing-view.ts` idiom).
-//
-// THE TWO CELLS WITH TEETH are the token line and the screen-state label. Both are about the
-// difference between "we measured nothing" and "we measured zero" — D-06's absent-is-not-zero law
-// restated on the read side. A `?? 0` anywhere on that path would turn "nobody measured this" into
-// "this was free", and the projection deliberately omits its three sums to make that impossible to
-// say by accident; the cells below pin that the view layer does not put it back.
+// Absent is not zero: a `?? 0` on the token path would turn an unmeasured run into a free one.
 
 import { describe, expect, it } from 'vitest'
 import type {
@@ -108,7 +97,7 @@ describe('groupRunDetail', () => {
     expect(grouped[0]?.steps[0]?.subActions.map((s) => s.subActionIndex)).toEqual([0, 1])
     expect(grouped[1]?.steps[0]?.subActions.map((s) => s.subActionIndex)).toEqual([0])
 
-    // D-18: a member whose stream began with a terminal event is STILL a group.
+    // A member whose stream began with a terminal event is still a group.
     expect(grouped[2]?.member.name).toBe('thin')
     expect(grouped[2]?.steps).toEqual([])
   })
@@ -162,7 +151,7 @@ describe('member copy', () => {
 
     expect(memberNote(thin!.member, thin!)).toBe(DID_NOT_RUN_LABEL)
     expect(memberNote(ran!.member, ran!)).toBeUndefined()
-    // The live surface and the durable surface must agree word for word (D-16).
+    // The live surface and the durable surface must agree word for word.
     expect(DID_NOT_RUN_LABEL).toBe(DID_NOT_RUN_NOTE)
   })
 
@@ -174,18 +163,8 @@ describe('member copy', () => {
   })
 })
 
-// THE HEADER SAYS IN AND OUT; THE CARD SAYS THE REST (425-05 · D-21..D-24, UI-SPEC S6).
-//
-// The header line lost its coverage clause and gained a labelled pair, because "how much of the
-// run was measured" is a caveat and the header is a glance (D-22). Every caveat moved into the
-// card BEHIND the line, and each card line is its own function gated on the fact it states — a
-// line that renders when its fact is absent is a claim nobody made.
-//
-// THE ABSENT-IS-NOT-ZERO CELLS SURVIVE THE RE-SPELLING, verbatim in claim if not in sentence.
-// They are what stop a `?? 0` from re-entering this file, and the pair is exactly as capable of
-// lying as the sum it replaces: "0 in · 0 out" for a run nobody measured would report a
-// measurement nobody took.
-describe('the header token pair (425-05 · D-21)', () => {
+// Every caveat lives in the card, each line gated on its fact; absent is never printed as zero.
+describe('the header token pair', () => {
   it('TOKEN-PAIR-LINE: labels the measured input and output, compactly', () => {
     expect(
       tokenPairLine({
@@ -198,7 +177,7 @@ describe('the header token pair (425-05 · D-21)', () => {
     ).toBe(`${formatTokens(103074)} in · ${formatTokens(456)} out`)
   })
 
-  it('TOKEN-PAIR-LINE: never says "0 in" for a run nobody measured (D-06)', () => {
+  it('TOKEN-PAIR-LINE: never says "0 in" for a run nobody measured', () => {
     const line = tokenPairLine({ measuredSteps: 0, unmeasuredSteps: 3 })
     expect(line).toBe(TOKENS_NOT_MEASURED_LABEL)
     expect(line).not.toContain('0')
@@ -225,7 +204,7 @@ describe('the header token pair (425-05 · D-21)', () => {
     ).toBe(`${formatTokens(0)} in · ${formatTokens(0)} out`)
   })
 
-  it('TOKEN-PAIR-LINE: carries no coverage clause at all (D-22)', () => {
+  it('TOKEN-PAIR-LINE: carries no coverage clause at all', () => {
     expect(
       tokenPairLine({
         measuredSteps: 2,
@@ -238,7 +217,7 @@ describe('the header token pair (425-05 · D-21)', () => {
   })
 })
 
-describe('the card totals line (425-05 · D-24)', () => {
+describe('the card totals line', () => {
   it('USAGE-TOTALS-FULL-DIGITS: spells every sum out, grouped', () => {
     expect(
       usageTotalsLine({
@@ -257,7 +236,7 @@ describe('the card totals line (425-05 · D-24)', () => {
   })
 })
 
-describe('measurement coverage (425-05 · D-22)', () => {
+describe('measurement coverage', () => {
   it('USAGE-COVERAGE-ONLY-WHEN-INCOMPLETE: silent when every step was measured', () => {
     expect(
       usageCoverageLine({
@@ -276,8 +255,7 @@ describe('measurement coverage (425-05 · D-22)', () => {
     )
   })
 
-  // WR-02 (425-14). The two cells above are the negative control: the complete run and the genuinely
-  // partial run keep exactly the answers they had. This one is the run nobody measured at all.
+  // The cells above are the negative control; this one is the run nobody measured at all.
   it('USAGE-COVERAGE-ABSENT-IS-NOT-ZERO: says nothing about coverage when no step was measured', () => {
     const failure =
       'a card that says tokens were not measured and then reports how much of the total was missed ' +
@@ -303,12 +281,8 @@ describe('measurement coverage (425-05 · D-22)', () => {
   })
 })
 
-// A CACHED CLAIM IS THE PROVIDER'S OR IT DOES NOT EXIST (425-05 · D-24, RESEARCH reconciliation 4).
-//
-// Execution `cacheStatus` is a fact about THIS product's step cache — a step whose result was
-// replayed without a model call at all. Printing it as "cached input" would attribute a discount
-// to the provider that the provider never reported, on a page a person reads as a bill.
-describe('provider-reported cached input (425-05 · D-24)', () => {
+// Execution `cacheStatus` is this product's step cache, never a provider discount on cached input.
+describe('provider-reported cached input', () => {
   it('CACHED-ONLY-WHEN-REPORTED: no cachedInputTokens, no line — whatever else is present', () => {
     expect(
       cachedInputLine({
@@ -350,7 +324,7 @@ describe('provider-reported cached input (425-05 · D-24)', () => {
   })
 })
 
-describe('model identity in the card (425-05 · D-23)', () => {
+describe('model identity in the card', () => {
   const declaredOne: RunModelSummary = {
     declared: [{ provider: 'openai', modelId: 'gpt-5.6-terra', stepCount: 3 }],
   }
@@ -425,7 +399,7 @@ describe('model identity in the card (425-05 · D-23)', () => {
   })
 })
 
-describe('screen context (RESEARCH D2)', () => {
+describe('screen context', () => {
   const HASH = 'abcdef0123456789'.repeat(4)
 
   it('shows the first 12 hex characters of the hash', () => {
@@ -445,7 +419,7 @@ describe('screen context (RESEARCH D2)', () => {
 })
 
 describe('showMemberChrome', () => {
-  it('is silent for a single-member run and grouped for a suite (D-16)', () => {
+  it('is silent for a single-member run and grouped for a suite', () => {
     expect(showMemberChrome(projection({ members: [member(0)] }))).toBe(false)
     expect(showMemberChrome(projection({ members: [] }))).toBe(false)
     expect(showMemberChrome(projection({ members: [member(0), member(1)] }))).toBe(true)
@@ -460,7 +434,7 @@ describe('the copy inventory', () => {
     for (const [name, value] of labels) {
       expect(typeof value, name).toBe('string')
       expect((value as string).length, name).toBeGreaterThan(0)
-      // Text nodes only — nothing here is ever handed to a markup parser (T-405-21).
+      // Text nodes only — nothing here is ever handed to a markup parser.
       expect((value as string).includes('<'), name).toBe(false)
     }
   })

@@ -22,7 +22,7 @@ vi.mock('../live-session.js', () => ({
       initialize: mockInitialize,
       cleanup: mockCleanup,
       getState: () => ({ ...mockGetState(), sessionId }),
-      // 428-10: the manager arms the idle window and registers the subject on create.
+      // The manager arms the idle window and registers the subject on create.
       startIdleTimer: vi.fn(),
       clearIdleTimer: vi.fn(),
       liveAttachment: vi.fn(),
@@ -32,8 +32,7 @@ vi.mock('../live-session.js', () => ({
 
 import { SessionManager } from '../session-manager.js'
 
-// Forward-contract type — plan 02 will export EntityRef from ../types.js
-// (so this local alias gets replaced by the real import once the type lands).
+// A local copy of `EntityRef`'s shape.
 interface EntityRef {
   type: 'suite' | 'test'
   id: string
@@ -48,8 +47,7 @@ const validConfig: LiveSessionConfig = {
   },
 }
 
-// Forward-contract wrapper — plan 01 used this to assert the future return shape
-// without breaking tsc on today's string-returning createSession.
+// Accepts either return shape of `createSession`, so the cells assert which one comes back.
 async function callCreateSession(
   manager: SessionManager,
   entity?: EntityRef,
@@ -63,7 +61,7 @@ async function callCreateSession(
     | { sessionId: string; sessionNumber: number | null }
 }
 
-describe('SessionManager per-entity counter (D-27, D-30)', () => {
+describe('SessionManager per-entity counter', () => {
   let manager: SessionManager
 
   beforeEach(() => {
@@ -147,7 +145,7 @@ describe('SessionManager per-entity counter (D-27, D-30)', () => {
     expect(typed.getCounter({ type: 'suite', id: 's_counted' })).toBe(2)
   })
 
-  it.skip('counter resets on server restart (documented — ephemeral per CONTEXT D-30)', () => {
+  it.skip('counter resets on server restart (documented, ephemeral)', () => {
     // Ephemeral-restart behavior is not exercised in unit tests — requires process-level
     // lifecycle. Skipped intentionally to document the contract.
   })

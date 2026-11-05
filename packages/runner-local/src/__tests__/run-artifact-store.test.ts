@@ -1,7 +1,4 @@
-// FsRunArtifactStore (Phase 363, D-08). Pins the file-side run-artifact contract: stage writes
-// config+source into artifact.json in the run dir, finalize merges terminal errors + finalizedAt,
-// the top-level runtime section is never written (RESEARCH Q5 keep/drop table), and a
-// traversal-shaped runId is neutralized by slugBranch (T-363-12) so it lands under runs/.
+// Stage and finalize write `artifact.json`; a traversal-shaped run id lands under `runs/`.
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,7 +25,7 @@ async function readArtifact(root: string, runId: string): Promise<Record<string,
   return JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>
 }
 
-describe('FsRunArtifactStore (D-08)', () => {
+describe('FsRunArtifactStore', () => {
   let root: string
 
   beforeEach(async () => {

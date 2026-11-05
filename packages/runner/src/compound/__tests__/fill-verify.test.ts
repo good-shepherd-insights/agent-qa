@@ -1,13 +1,11 @@
-// The shared fill comparator (437 D-06, D-07, D-16): four verdicts, kept apart. Exact equality;
-// normalized when the field only inserted separator characters around the typed text; mismatch for
-// anything else; unverified when nothing was read back. Secure fields are never exact.
+// The fill verdicts stay apart; secure fields are never exact.
 import { describe, it, expect } from 'vitest'
 import { compareFillReread, FILL_SEPARATORS } from '../fill-verify.js'
 
 const ERROR = (actual: string, expected: string) =>
   `field reads "${actual}" after typing "${expected}" — re-observe and retry`
 
-describe('C437-FILL-VERDICT', () => {
+describe('compareFillReread verdicts', () => {
   describe('exact', () => {
     it('a read-back equal to the requested text is exact', () => {
       const r = compareFillReread({ expected: 'abc', actual: 'abc', secure: false })
@@ -22,7 +20,7 @@ describe('C437-FILL-VERDICT', () => {
   })
 
   describe('normalized', () => {
-    it('P2: a phone number the field formatted with spaces and hyphens is normalized and keeps both values', () => {
+    it('a phone number the field formatted with spaces and hyphens is normalized and keeps both values', () => {
       const r = compareFillReread({ expected: '+13920741751', actual: '+1 392-074-1751', secure: false })
       expect(r.verdict).toBe('normalized')
       expect(r.ok).toBe(true)
@@ -61,7 +59,7 @@ describe('C437-FILL-VERDICT', () => {
       expect(compareFillReread({ expected: 'a b', actual: 'a  b', secure: false }).verdict).toBe('mismatch')
     })
 
-    it('the separator set is exactly the A6 set: no tab, newline or comma', () => {
+    it('the separator set is spaces, hyphen, brackets, dot and slash: no tab, newline, comma or colon', () => {
       expect([...FILL_SEPARATORS].sort()).toEqual(
         [' ', ' ', ' ', ' ', '-', '(', ')', '[', ']', '{', '}', '.', '/'].sort(),
       )
@@ -131,7 +129,7 @@ describe('C437-FILL-VERDICT', () => {
     })
   })
 
-  describe('clearText (D-16)', () => {
+  describe('clearText', () => {
     it('an empty read-back is exact', () => {
       const r = compareFillReread({ expected: '', actual: '', secure: false, verb: 'clearText' })
       expect(r.verdict).toBe('exact')
@@ -163,7 +161,7 @@ describe('C437-FILL-VERDICT', () => {
       }
     })
 
-    it('a secure clear that leaves text is a mismatch naming only its length (owner 2026-10-09)', () => {
+    it('a secure clear that leaves text is a mismatch naming only its length', () => {
       for (const actual of ['xxxx', '••••']) {
         const r = compareFillReread({ expected: '', actual, secure: true, verb: 'clearText' })
         expect(r.verdict).toBe('mismatch')
@@ -179,7 +177,7 @@ describe('C437-FILL-VERDICT', () => {
     })
   })
 
-  describe('D-08 mixed text', () => {
+  describe('mixed text', () => {
     const MIX = `  a,b;c|d "q" 's' é ü 中文 😀\tz  `
 
     it('the single-line Unicode mix compared with itself is exact', () => {

@@ -1,21 +1,4 @@
-// SEAM-05 unmask-boundary ROLL-CALL (Phase 363, Plan 13 — D-12 regression clause).
-//
-// 2026-10-14 (441-14, D-07): nothing restores a declared value. Every enrolled surface — the chat
-// terminal emit, the dashboard reads, and every durable, machine and egress sink — shows the
-// declared marker `[secret:<name>]` and never the value. The human-side registry, which asserted
-// restoration, is gone; its surfaces are enrolled below on the masked side.
-//
-// ENROLLMENT RULE (the house roll-call idiom — 345 role-coverage / 356 key-floor / 361 payload
-// roll-call): every surface is a NAMED registry entry walked exhaustively, and appears in the single
-// `SURFACE_ROLLCALL` union below — the enrollment guard fails on any surface that is walked but not
-// enrolled, or enrolled but not walked. New surfaces must enrol to ship.
-//
-// ONE fixture (D-12): a single `SecretRedactor` over six declared values of different shapes is
-// planted — via its `redactString` exactly where each sink puts a marker — into one envelope stream,
-// one handoff, one artifact snapshot, one cache-key input, one provider-egress request and one
-// debug-log record. The registry drives the REAL FsEventLog / FsHandoffStore / FsRunArtifactStore
-// ports, the REAL JUnit + wire reporters, the REAL masking middleware, the REAL cache-key floor
-// helpers, the REAL debug-logging middleware and the shipped dashboard routers.
+// Every enrolled surface shows `[secret:<name>]`, never the value; a walked surface must enrol.
 
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
@@ -28,8 +11,7 @@ import { createMaskingMiddleware } from '@vostride/agent-qa-safety'
 import type { ProviderRequestParams } from '@vostride/agent-qa-safety'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { debugLoggingMiddleware } from '@vostride/agent-qa-model'
-// 405-10 (D-09): the shipped subscriber, database, detail adapter and routers. A cell that
-// mounted its own would be measuring a door this product does not ship.
+// The shipped subscriber, database, detail adapter and routers, not a door of this file's own.
 import {
   DashboardDatabase,
   createDashboardRunDetailReader,
@@ -38,10 +20,7 @@ import {
   createRunServiceRoutes,
 } from '@vostride/agent-qa-dashboard'
 import type { AgentHost } from '@vostride/agent-qa-dashboard'
-// 405-10: the shipped registry and dispatcher — `runs.detail` is where the projection is computed
-// and where `RunNotFoundError` is minted, so a fixture that answered it would be a second
-// implementation of both. DEV-only edges, on `run-detail-routes.test.ts`'s own reasoning:
-// `validate:arch` walks `src` with `__tests__` excluded, so the production firewall stands.
+// The shipped registry and dispatcher, because `runs.detail` computes the projection and the error.
 import {
   ANALYSIS_GET_FUNCTION_ID,
   RUNS_ARTIFACT_FUNCTION_ID,
@@ -104,7 +83,7 @@ import type {
 
 import { createJunitReporter, createWireReporter } from '../reporters/index.js'
 
-// Counts host compositions so the C441-DISPLAY refusal cells can show none happened.
+// Counts host compositions, so the refusal cells can show none happened.
 const hostCompositions = vi.hoisted(() => ({ count: 0 }))
 vi.mock('../composition/local-agent-host.js', async (importOriginal) => {
   const actual = await importOriginal<typeof localAgentHost>()
@@ -125,11 +104,8 @@ const SECRETS = {
   error: 'sk-live-STEP-222bbb333', // rides a step error / cache input / egress / debug body
   hook: 'hook-pw-444ccc555', // rides a hook variable value + hook stdout
   summary: 'sk-live-SUM-666ddd777', // rides a failureSummary + handoff evidence + artifact snapshot
-  confirm: 'sk-live-ASK-888eee999', // rides the ask-tier confirm action name
-  // 399.1 (D-04, criterion 3): rides a CHAT clause result — the op-result payload channel
-  // `results[]` opened, which is a sink that did not exist when this roll-call was written. An op
-  // result is exactly the kind of value a masked configuration read puts a credential into, and
-  // this phase made every one of them reach a terminal.
+  confirm: 'sk-live-ASK-888eee999', // the legacy confirm sentinel
+  // Rides a chat clause result, the op-result payload a masked configuration read can carry.
   opResult: 'sk-live-OPR-000fff111',
 } as const
 
@@ -159,15 +135,11 @@ interface RollCallFixture {
   egressParams: ProviderRequestParams
   debugResponseBody: string
   confirmActionName: string
-  /** One clause result, with its payload masked as the function layer returns it (399.1 D-05). */
+  /** One clause result, with its payload masked as the function layer returns it. */
   clauseResults: ClauseResult[]
 }
 
-/**
- * Build the ONE fixture (D-12). Declare every sentinel in a single `SecretRedactor`, then plant each
- * as its marker exactly where its sink would emit it. The provider-egress request carries the RAW
- * value, which the masking middleware masks.
- */
+// One redactor declares every sentinel; the egress request carries the raw value to be masked.
 function buildRollCallFixture(): RollCallFixture {
   const declared = (Object.keys(SECRETS) as (keyof typeof SECRETS)[])
     .map((key) => [SECRET_NAMES[key], SECRETS[key]] as const)
@@ -198,8 +170,7 @@ function buildRollCallFixture(): RollCallFixture {
     suiteIndex: 0,
     suiteTotal: 1,
     totalSteps: 2,
-    // G-428-2: the authored step texts ride the already-enrolled envelope stream, masked at the
-    // producer exactly as the matching stepStarted.stepText below.
+    // Authored step texts ride the envelope stream, masked at the producer like `stepText`.
     stepTexts: [mask(`Navigate to ${SECRETS.step}`), 'Submit credentials'],
   }
 
@@ -369,8 +340,7 @@ function buildRollCallFixture(): RollCallFixture {
     egressParams,
     debugResponseBody: mask(`{"detail":"rejected ${SECRETS.error}"}`),
     confirmActionName: mask(`git push to ${SECRETS.confirm}`),
-    // MASKED AT THE SOURCE, which is the contract `results[]` carries (D-05): the session log and
-    // every `agent.ask` client hold the marker.
+    // Masked at the source: the session log and every `agent.ask` client hold the marker.
     clauseResults: [{
       functionId: 'config.auth.set',
       payload: { outcome: 'proposed', token: mask(SECRETS.opResult) },
@@ -381,17 +351,7 @@ function buildRollCallFixture(): RollCallFixture {
 const FIXTURE = buildRollCallFixture()
 const ALL_ORIGINALS = Object.values(SECRETS)
 
-/**
- * The handoff `analysis.get` reads (406-01, D-04) — one failed member carrying ONE masked quote.
- *
- * A SECOND HANDOFF RATHER THAN A SECOND FIXTURE. It is built from `FIXTURE.redactor`, so it is the
- * same declared mask every other surface in this file derives from; what differs is the SHAPE the
- * analysis path needs and the envelope stream cannot supply — a recorded sub-action `result.error`
- * (which `errorTextOf` lifts into the sentence's grounding quote) and a persisted `rootCause`, so
- * the floor leg produces a deterministic verdict rather than a minted `unknown` with no quote.
- *
- * The quote carries `SECRETS.error`'s marker, which both doors must serve as the marker.
- */
+// A second handoff from the same redactor, shaped so the floor leg produces a quoted verdict.
 const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
   schemaVersion: CURRENT_HANDOFF_SCHEMA_VERSION,
   runId: RUN_ID as unknown as RunId,
@@ -463,18 +423,11 @@ const ROLLCALL_ANALYSIS_HANDOFF: CompletedRunHandoff = {
   }],
 } as unknown as CompletedRunHandoff
 
-/**
- * The base roll-call host the run reads below spread over (400-06, narrowed by 430 D-02).
- *
- * WHAT IS SUPPLIED rather than composed is the HOST, which is an input to the routers and not the
- * thing under test. 2026-10-14 (441-15, D-07): it carries no display member — the dashboard
- * serves the text a run stored, masked at write.
- */
+// The host is supplied, not composed, and carries no display member.
 function dashboardRollCallHost(): AgentHost {
   return {
     registry: {},
-    // 2026-10-02 (432-37, D-12): no stray `scopes` key; it was never a caller field, and nothing
-    // reads a caller scope set (432-20).
+    // Nothing reads a caller scope set.
     caller: { origin: 'human', surface: 'dashboard' } as never,
     // Every op id is named so the SHAPE is complete; the run host below overrides the ids it
     // dispatches, the registry and the dispatch itself.
@@ -500,17 +453,7 @@ function dashboardRollCallHost(): AgentHost {
 }
 
 
-// ---- 405-10 (D-09 · DETL-02): THE DASHBOARD'S RUN READS --------------------------------------
-//
-// The detail page, the run list, one run's row, its execution logs, its artifact drawer and the
-// failure view each serve text a run masked; the SQLite rows, the run-stream SSE frames, the authed
-// REMOTE door's bodies and the artifact bytes are the sinks behind them. A new dashboard read route
-// that does not enrol reds the guard.
-//
-// NOTHING BELOW THE ROUTE IS FAKED. `createDashboardRunIngest` is the shipped subscriber writing a
-// real `:memory:` v2 database; `createDashboardRunDetailReader` is the shipped adapter;
-// `createFunctionRegistry` + `invokeFunction` are the shipped registry and dispatcher;
-// `createRouter` / `createRunServiceRoutes` are the shipped routers, mounted on real sockets.
+// Every dashboard run read serves text the run masked; a new read route that does not enrol fails.
 
 /** The four REQUIRED read ports, minimal by construction — `runs.detail` reaches none of them. */
 function rollCallFunctionDeps(
@@ -520,15 +463,13 @@ function rollCallFunctionDeps(
   return {
     runs: {
       list: () => Promise.resolve([ROLLCALL_ANALYSIS_HANDOFF]),
-      // 406-01: `analysis.get` reads the run through this port. Answering the handoff above is
-      // what lets the two analysis rows below be driven at all.
+      // `analysis.get` reads the run through this port, so the analysis rows can be driven.
       get: (runId: unknown) =>
         Promise.resolve(String(runId) === RUN_ID ? ROLLCALL_ANALYSIS_HANDOFF : undefined),
       readEvents: () => Promise.resolve([]),
       readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
     },
-    // 406-01: the FLOOR leg — the port is bound (so the op does not refuse by name) and there is
-    // no artifact, so the sentence is composed from the handoff's own recorded quote.
+    // The floor leg: the port is bound and there is no artifact, so the handoff's quote is used.
     analysis: { getArtifact: () => undefined },
     knowledge: {
       listBundles: () => Promise.resolve([]),
@@ -566,8 +507,7 @@ function dashboardRunRollCallHost(registry: FunctionRegistry): AgentHost {
   return {
     ...dashboardRollCallHost(),
     registry: registry as unknown as AgentHost['registry'],
-    // 2026-10-02 (432-37, D-12): no `grantedScopes` or `safeMode` (or the cast that carried them);
-    // the registry reads neither (432-20).
+    // No `grantedScopes` or `safeMode`; the registry reads neither.
     caller: {
       surface: 'dashboard',
       origin: 'human',
@@ -575,8 +515,7 @@ function dashboardRunRollCallHost(registry: FunctionRegistry): AgentHost {
     runsDetailFunctionId: RUNS_DETAIL_FUNCTION_ID,
     runsArtifactFunctionId: RUNS_ARTIFACT_FUNCTION_ID,
     analysisGetFunctionId: ANALYSIS_GET_FUNCTION_ID,
-    // 407-01 (D-05): the sixth dispatched id, widened here so every AgentHost literal in the
-    // workspace still satisfies the interface.
+    // Widened here so every `AgentHost` literal in the workspace still satisfies the interface.
     runsKnowledgeFunctionId: RUNS_KNOWLEDGE_FUNCTION_ID,
     invokeFunction: (
       handle: unknown,
@@ -599,11 +538,7 @@ interface DashboardRunRollCall {
 
 let dashboardRunRollCallOnce: Promise<DashboardRunRollCall> | undefined
 
-/**
- * Drive THIS FILE'S ONE ENVELOPE STREAM through the shipped subscriber into a real v2 database,
- * write one masked artifact blob through the shipped evidence store, and compose the host both
- * doors dispatch through. Built once and shared by all nine entries — D-12's one-fixture rule.
- */
+// This file's one envelope stream and one masked blob, shared by every entry.
 function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
   dashboardRunRollCallOnce ??= (async (): Promise<DashboardRunRollCall> => {
     const db = new DashboardDatabase({ dbPath: ':memory:' })
@@ -636,8 +571,7 @@ function dashboardRunRollCall(): Promise<DashboardRunRollCall> {
         createDashboardRunDetailReader(db),
         createEvidenceBlobReader({ agentQaRoot: TMP_ROOT }),
       ),
-      // 2026-10-02 (432-37, D-12): no `resolveExecutionContext` registry option; the registry reads
-      // no context (432-20).
+      // No `resolveExecutionContext` registry option; the registry reads no context.
     })
 
     return { db, host: dashboardRunRollCallHost(registry), artifactSha: ref.sha, artifactBytes }
@@ -718,7 +652,7 @@ function rollCallRunSession(): unknown {
 /** The REMOTE run-service door's ports — enough to reach the READ rows and nothing more. */
 async function rollCallServicePorts(): Promise<unknown> {
   const fixture = await dashboardRunRollCall()
-  // 2026-10-01 (432-21, D-12): no `verifyBearer` — the run service is tokenless.
+  // No `verifyBearer`: the run service is tokenless.
   return {
     invokeRunStart: () => Promise.reject(new Error('this fixture starts no runs')),
     attach: (runId: string) => (runId === RUN_ID ? rollCallRunSession() : undefined),
@@ -736,11 +670,7 @@ async function rollCallServicePorts(): Promise<unknown> {
   }
 }
 
-// ---- MASKED registry: every surface shows markers and no declared value (D-07) ---------------
-//
-// Each entry produces the surface's bytes from the SAME fixture and asserts a marker present AND
-// every original absent. Filesystem ports write under one tmp runtime root; the reporters use
-// their injected write targets; the egress/cache/debug surfaces call the real helpers directly.
+// Each entry asserts a marker present and every original absent, from the same fixture.
 
 const TMP_ROOT = mkdtempSync(join(tmpdir(), 'unmask-rollcall-'))
 const runDir = join(TMP_ROOT, RUNS_SUBDIR, slugBranch(RUN_ID))
@@ -770,7 +700,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     render: () => localDashboardRead(`/api/runs/${RUN_ID}/detail`),
   },
   {
-    // 406-01 (D-04 · DETL-04): the floor sentence quotes the failing step's recorded error.
+    // The floor sentence quotes the failing step's recorded error.
     name: 'dashboard:run-analysis',
     markers: [markerOf('error')],
     render: () => localDashboardRead(`/api/runs/${RUN_ID}/analysis`),
@@ -857,8 +787,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // debug log — the RUNX-04 middleware error surface, driven through the REAL middleware.
-    // 2026-10-14 (441-36, D-28): it prints the provider body as a length, so no payload reaches it.
+    // The debug log prints the provider body as a length, so no payload reaches it.
     name: 'machine:debug-log',
     payloadFree: true,
     render: async () => {
@@ -885,7 +814,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // cache key material — the 356 masked-input floor, through the REAL computeCacheKey helpers.
+    // Cache key material, the masked-input floor, through the real `computeCacheKey` helpers.
     name: 'machine:cache-key-material',
     render: () => {
       // The key hash must be stable from the masked input and must not embed the raw secret.
@@ -895,8 +824,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // provider egress — the 362-07 proof idiom, through the REAL masking middleware every model
-    // call carries (441-02, 441-04).
+    // Provider egress, through the real masking middleware every model call carries.
     name: 'machine:provider-egress',
     markers: [markerOf('error')],
     render: async () => {
@@ -911,15 +839,12 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // 399.1 (criterion 3): THE SAME RENDER, WITHOUT THE SURFACE'S EMIT. `renderClauseResults` is
-    // a render, not an emit: it hands its caller the marker form the session log and the
-    // `agent.ask` clients carry.
+    // `renderClauseResults` renders without emitting: the caller gets the log's marker form.
     name: 'machine:chat-clause-results',
     render: () => renderClauseResults(FIXTURE.clauseResults, FIXTURE.clauseResults.length).join('\n'),
   },
   {
-    // 405-10 (D-09): THE ROWS THE PAGE READS FROM, dumped whole: a cleartext value at ingest would
-    // outlive the request, survive a backup and be read by every other query in the product.
+    // The rows the page reads, dumped whole: a cleartext value at ingest would outlive the request.
     name: 'durable:dashboard-sqlite-rows',
     render: async () => {
       const fixture = await dashboardRunRollCall()
@@ -953,8 +878,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // THE AUTHED REMOTE DOOR'S DETAIL BODY (405-05): the remote dispatch calls
-    // `serveRunDetailRead` with no `boundary`, and the option defaults to `'machine'`.
+    // The remote door's detail body: `serveRunDetailRead` with no `boundary` defaults to `machine`.
     name: 'machine:remote-run-detail',
     render: async () => {
       const ports = await rollCallServicePorts()
@@ -965,7 +889,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // 406-01 (D-04): THE AUTHED REMOTE DOOR'S ANALYSIS BODY, on its detail sibling's terms.
+    // The remote door's analysis body, on its detail sibling's terms.
     name: 'machine:remote-run-analysis',
     render: async () => {
       const ports = await rollCallServicePorts()
@@ -976,11 +900,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
     },
   },
   {
-    // ARTIFACT BYTES — served exactly as stored, on every door (D-09: the seam never unmasks a
-    // blob). The blob this fixture wrote carries a marker so the masked assertion has
-    // something to see; the sha comparison INSIDE this render is the byte-identity claim, and it
-    // is made against the address the SHIPPED store minted rather than against two hex strings
-    // this file chose.
+    // Artifact bytes are served as stored; the sha is checked against the store-minted address.
     name: 'machine:artifact-bytes',
     render: async () => {
       const fixture = await dashboardRunRollCall()
@@ -998,7 +918,7 @@ const MASKED_SURFACES: MaskedSurface[] = [
   },
 ]
 
-describe('SEAM-05 unmask boundary roll-call — MASKED side keeps markers (D-11/D-12)', () => {
+describe('unmask boundary roll-call — MASKED side keeps markers', () => {
   it.each(MASKED_SURFACES.map((surface) => [surface.name, surface] as const))(
     'masked surface %s keeps markers and leaks no original',
     async (_name, surface) => {
@@ -1012,12 +932,8 @@ describe('SEAM-05 unmask boundary roll-call — MASKED side keeps markers (D-11/
   )
 })
 
-// ---- Enrollment guard: the roll-call union (T-363-31) ---------------------------------------
-//
-// The single source of truth for what is walked. A surface added to either registry without being
-// listed here (or listed here without a walking entry) fails this test — new surfaces MUST enrol.
+// A surface walked but not listed, or listed but not walked, fails this test.
 const SURFACE_ROLLCALL = [
-  // 2026-10-01 (432-19): 'confirm:ask-prompt' left with the confirm port and its decorator.
   'durable:events.jsonl',
   'durable:handoff.json',
   'durable:artifact.json',
@@ -1028,10 +944,7 @@ const SURFACE_ROLLCALL = [
   'machine:provider-egress',
   'chat:clause-results',
   'machine:chat-clause-results',
-  // 430 D-02 (2026-09-28): the dashboard's conversation emits and its replay window were deleted
-  // with the server door, so their three sinks leave the roll-call. A returning sink reds the
-  // enrollment cell below.
-  // 405-10 (D-09): the dashboard's run reads and the four sinks behind them.
+  // The dashboard's run reads and the sinks behind them.
   'dashboard:run-detail',
   'dashboard:run-list',
   'dashboard:run-row',
@@ -1041,12 +954,12 @@ const SURFACE_ROLLCALL = [
   'machine:run-stream-sse',
   'machine:remote-run-detail',
   'machine:artifact-bytes',
-  // 406-01 (D-04): the failure view's read, on both doors.
+  // The failure view's read, on both doors.
   'dashboard:run-analysis',
   'machine:remote-run-analysis',
 ] as const
 
-describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', () => {
+describe('unmask boundary roll-call — enrollment guard', () => {
   it('every walked surface is enrolled in the SURFACE_ROLLCALL union exactly once', () => {
     const walked = MASKED_SURFACES.map((s) => s.name)
     expect(new Set(walked).size).toBe(walked.length)
@@ -1061,7 +974,7 @@ describe('SEAM-05 unmask boundary roll-call — enrollment guard (T-363-31)', ()
   })
 })
 
-// ---- C441-DISPLAY: the terminal commands refuse without a readable secrets file (E3) -----------
+// The terminal commands refuse without a readable secrets file.
 
 // `composes` is whether the command composes a host once the secrets file is readable: the
 // control that makes the zero count after a refusal mean something.
@@ -1071,7 +984,7 @@ const REFUSING_COMMANDS: readonly (readonly [string, readonly string[], boolean]
   ['knowledge maintain', ['knowledge', 'rebuild-index'], false],
 ]
 
-describe('C441-DISPLAY', () => {
+describe('reads refuse an unreadable secrets file', () => {
   const roots: string[] = []
 
   afterEach(() => {
@@ -1081,7 +994,7 @@ describe('C441-DISPLAY', () => {
   it.each(REFUSING_COMMANDS)(
     '%s refuses at start when the secrets file cannot be read',
     async (_name, args, composes) => {
-      const root = mkdtempSync(join(tmpdir(), 'c441-display-refusal-'))
+      const root = mkdtempSync(join(tmpdir(), 'display-refusal-'))
       roots.push(root)
       const configPath = join(root, 'agent-qa.config.yaml')
       writeFileSync(configPath, `${JSON.stringify({

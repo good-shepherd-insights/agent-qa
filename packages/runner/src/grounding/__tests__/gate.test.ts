@@ -1,18 +1,3 @@
-// RED scaffold (Wave 0, GROUND-03 · D-04/D-08). Pins the runner-owned pre-execution
-// grounding gate BEFORE any gate body exists. Imports `groundActionPlan` / `GateResult`
-// from ../gate — created by Plan 04, so this file fails at import until then; that
-// failure IS the intended RED.
-//
-// Contract pinned here (spec §7.1/§12.17 / 357-RESEARCH Pattern 5, Pitfall 10):
-//   ref/target precedence: neither-on-required ⇒ descriptor_invalid; BOTH ⇒ prefer the
-//   committed ref (target dropped), falling back to the target when the ref is stale; a
-//   committed ref absent from the fresh refMap ⇒ ref_not_in_snapshot (the dormant factory,
-//   now raised); coordSpace-aware bounds (viewport vs metadata.viewportWidth/Height, content
-//   vs metadata.scroll.contentWidth/Height, screen unchecked) ⇒ coords_out_of_bounds; a
-//   resolvable target returns a fully-grounded action (ref set, target stripped) plus a
-//   per-rung attempts trail; ref+tree-search exhaustion appends {stage:'visual',
-//   outcome:'skipped'} (D-02); the visual rung runs only under vision:true capability
-//   negotiation (GROUND-02); the committed-ref happy path records a ref attempt.
 import { describe, expect, it } from 'vitest'
 
 import { asRef } from '@vostride/agent-qa-schema'
@@ -23,8 +8,7 @@ import { makeScreenState } from '../../testing/screen-fixtures.js'
 import { groundActionPlan } from '../gate.js'
 import type { GateResult, GroundActionPlanInput } from '../gate.js'
 
-// A fake visual rung injected via options — proves the capability-negotiation seam
-// (GROUND-02) without any visual rung shipping in M1 (D-01).
+// A fake visual rung injected via options proves the capability-negotiation seam.
 function fakeVisualRung(resolved: string) {
   return {
     stage: 'visual' as const,
@@ -59,7 +43,7 @@ function expectError(result: GateResult, code: string): GroundingError {
   return result.error
 }
 
-describe('groundActionPlan — ref/target precedence (D-04)', () => {
+describe('groundActionPlan — ref/target precedence', () => {
   it('prefers the committed ref when an action carries BOTH ref and target (target dropped)', async () => {
     const result = await gate({
       toolName: 'web_click',
@@ -98,7 +82,7 @@ describe('groundActionPlan — ref/target precedence (D-04)', () => {
   })
 })
 
-describe('groundActionPlan — committed-ref validation (GROUND-03)', () => {
+describe('groundActionPlan — committed-ref validation', () => {
   it('raises ref_not_in_snapshot when the committed ref is absent from the fresh refMap', async () => {
     const result = await gate({
       toolName: 'web_click',
@@ -124,7 +108,7 @@ describe('groundActionPlan — committed-ref validation (GROUND-03)', () => {
   })
 })
 
-describe('groundActionPlan — coordSpace-aware bounds (GROUND-03, Pitfall 10)', () => {
+describe('groundActionPlan — coordSpace-aware bounds', () => {
   it('raises coords_out_of_bounds for viewport coords beyond metadata.viewportWidth/Height', async () => {
     const result = await gate({
       toolName: 'mobile_tapCoordinate',
@@ -162,7 +146,7 @@ describe('groundActionPlan — coordSpace-aware bounds (GROUND-03, Pitfall 10)',
   })
 })
 
-describe('groundActionPlan — target descriptor ladder (D-08, GROUND-02)', () => {
+describe('groundActionPlan — target descriptor ladder', () => {
   it('resolves a target through the ladder and returns a fully-grounded, target-free action', async () => {
     const result = await gate({
       toolName: 'web_click',
@@ -177,7 +161,7 @@ describe('groundActionPlan — target descriptor ladder (D-08, GROUND-02)', () =
     expect(result.attempts).toEqual([{ stage: 'tree-search', outcome: 'resolved', resolvedRef: 'e2' }])
   })
 
-  it('appends a visual:skipped attempt and raises descriptor_unresolved when ref+tree-search exhaust (D-02)', async () => {
+  it('appends a visual:skipped attempt and raises descriptor_unresolved when ref+tree-search exhaust', async () => {
     const result = await gate({
       toolName: 'web_click',
       action: { type: 'click', target: { role: 'button', name: 'nonexistent widget' } } as never,
@@ -220,7 +204,7 @@ describe('groundActionPlan — target descriptor ladder (D-08, GROUND-02)', () =
   })
 })
 
-describe('C438-MATCHER-AMBIGUITY', () => {
+describe('groundActionPlan — an ambiguous target never picks', () => {
   function el(ref: string, role: string, name: string, parentRef?: string): ElementInfo {
     return {
       ref: asRef(ref),

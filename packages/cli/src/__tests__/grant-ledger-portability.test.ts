@@ -1,20 +1,4 @@
-// The one thing the committed grant ledger was committed FOR: an approval recorded on machine A is
-// visible in the pull request and inherited by checkout B (Phase 391, D-11 / PROP-01).
-//
-// RE-SPELLED 2026-10-01 (432-18, D-14/D-15/D-22). `init` probed `grants.jsonl` as a commit-visible
-// file and refused a knowledge `.gitignore` that hid it, because an ignored ledger would have gone on
-// authorizing on the machine that wrote it. The ledger, its reader, its path helper and its verbs are
-// deleted, and D-22 removes the probe with them: an old `grants.jsonl` is left exactly as it is and
-// never read, so whether git sees it is no longer agent-qa's concern. The three cells keep their
-// measurements and invert their claim:
-//
-//   the rules half    a real `agent-qa init` writes no rule naming the old ledger and creates no
-//                     ledger — a fresh workspace holds no approval state
-//   the verifier half `verifyEffectiveGitignore` over the SHIPPED probe table accepts a custom rule
-//                     that hides the old file, because nothing about it is checked any more
-//   the path half     nothing in knowledge-local addresses the ledger at all
-//
-// `git check-ignore` is still asked about real files in real repositories, with the same control.
+// The grant ledger is never read, so init writes no rule for it and accepts a rule that hides it.
 
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -29,7 +13,7 @@ import { KNOWLEDGE_GITIGNORE_PROBES, verifyEffectiveGitignore } from '../command
 import { createInitCommand } from '../commands/init.js'
 
 const KNOWLEDGE_ROOT_DIR = 'agent-qa-knowledge'
-/** The file name a pre-432 build committed its grants under. Nothing in this build names it. */
+/** The file name older builds committed grants under. Nothing in this build names it. */
 const LEGACY_LEDGER = 'grants.jsonl'
 
 const roots: string[] = []
@@ -68,11 +52,8 @@ async function runRealInit(dir: string): Promise<void> {
   await parent.parseAsync(['node', 'test', 'init', '--dir', dir, '--platform', 'web'])
 }
 
-describe('init neither probes nor creates the old grant ledger (432-18, D-22)', () => {
-  // RE-SPELLED 2026-10-01 (432-18) from 'escapes every rule the tool actually writes into the
-  // knowledge .gitignore': the emitted rules still do not name it, and init no longer creates or asks
-  // about it.
-  it('C432-GRANTS-UNREAD-WRITER-ABSENT: a real init writes no ledger and no rule naming it', async () => {
+describe('init neither probes nor creates the old grant ledger', () => {
+  it('a real init writes no ledger and no rule naming it', async () => {
     const root = tempRoot()
     await runRealInit(root)
     const knowledgeRoot = join(root, KNOWLEDGE_ROOT_DIR)
@@ -85,7 +66,7 @@ describe('init neither probes nor creates the old grant ledger (432-18, D-22)', 
 
     // Git's own answer about an old file a person still has: the emitted rules leave it as it is.
     initializeGit(knowledgeRoot)
-    writeFileSync(join(knowledgeRoot, LEGACY_LEDGER), 'left by a pre-432 build\n', 'utf8')
+    writeFileSync(join(knowledgeRoot, LEGACY_LEDGER), 'left by an older build\n', 'utf8')
     expect(gitIgnores(knowledgeRoot, LEGACY_LEDGER)).toBe(false)
 
     // THE CONTROL: a rule that really does match the file comes back true through the same call.
@@ -96,9 +77,7 @@ describe('init neither probes nor creates the old grant ledger (432-18, D-22)', 
     expect(gitIgnores(ignoringRoot, LEGACY_LEDGER)).toBe(true)
   }, 120_000)
 
-  // RE-SPELLED 2026-10-01 (432-18) from 'is a `visible` probe in the shipped table, so init REFUSES a
-  // rule that hides it': there is no probe, so a person's rule hiding the old file is accepted.
-  it('C432-GRANTS-UNREAD-WRITER-ABSENT: no probe names it, so a custom rule hiding it is accepted', () => {
+  it('no probe names it, so a custom rule hiding it is accepted', () => {
     expect(KNOWLEDGE_GITIGNORE_PROBES.filter((entry) => entry.path.includes('grant'))).toEqual([])
 
     const root = tempRoot()
@@ -122,7 +101,7 @@ describe('init neither probes nor creates the old grant ledger (432-18, D-22)', 
       mkdirSync(dirname(absolute), { recursive: true })
       writeFileSync(absolute, 'fixture\n')
     }
-    writeFileSync(join(root, LEGACY_LEDGER), 'left by a pre-432 build\n', 'utf8')
+    writeFileSync(join(root, LEGACY_LEDGER), 'left by an older build\n', 'utf8')
 
     expect(
       verifyEffectiveGitignore({
@@ -142,9 +121,7 @@ describe('init neither probes nor creates the old grant ledger (432-18, D-22)', 
     ).toThrow('must remain commit-visible')
   })
 
-  // RE-SPELLED 2026-10-01 (432-18) from 'addresses the ledger relative to the knowledge root — the
-  // same bytes on any checkout': nothing addresses it any more.
-  it('C432-GRANTS-UNREAD-WRITER-ABSENT: knowledge-local publishes no ledger path or file name', () => {
+  it('knowledge-local publishes no ledger path or file name', () => {
     const exported = Object.keys(knowledgeLocal)
     expect(exported).not.toContain('grantsLedgerPath')
     expect(exported).not.toContain('GRANT_LEDGER_FILENAME')

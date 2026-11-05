@@ -64,7 +64,7 @@ function readerApi(): KnowledgeReaderApi {
   return candidate as KnowledgeReaderApi
 }
 
-describe('IDX-02 degrading knowledge reader', () => {
+describe('degrading knowledge reader', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -82,7 +82,6 @@ describe('IDX-02 degrading knowledge reader', () => {
     return {
       knowledgeRoot,
       productKey,
-      commitArtifacts: 'none',
     }
   }
 

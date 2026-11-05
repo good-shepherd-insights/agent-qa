@@ -1,7 +1,7 @@
-// The CI test matrix covers every workspace package exactly once on ubuntu, every sharded package
-// with a complete 1..N shard set, and on macOS the daemon and lease packages (knowledge-local and
-// the whole of agent-qa). packages/arch's C-CI-MATRIX cells run this in CI; run it directly with
-// `node scripts/check-ci-matrix.mjs`.
+// CI's legs test every package once on ubuntu and the daemon and lease packages on macOS, with
+// whole shard sets, each leg downloads the build job's output before its --only Test step, and the
+// ci-result job always runs and needs every other job.
+// Every ubuntu leg also runs on the Node floor; the macOS legs run on .nvmrc only.
 
 import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
@@ -13,14 +13,19 @@ import { promisify } from 'node:util'
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export const PS_HOST_PACKAGES = ['@vostride/agent-qa-knowledge-local', 'agent-qa']
 const MATRIX_JOBS = [
-  { id: 'workspace', test: 'Test', expected: 'workspace' },
+  { id: 'workspace', test: 'Test', expected: 'workspace', nodeLines: ['toolchain', 'floor'] },
   { id: 'ps-hosts', test: 'Test daemon and lease packages', expected: PS_HOST_PACKAGES },
 ]
+const AGGREGATE_JOB = 'ci-result'
 
-export function loadCiWorkflow(repo = REPO_ROOT) {
+export function loadWorkflow(name, repo = REPO_ROOT) {
   // The workspace root declares no YAML parser; the CLI package's own dependency is used.
   const { parse } = createRequire(join(repo, 'packages', 'cli', 'package.json'))('yaml')
-  return parse(readFileSync(join(repo, '.github', 'workflows', 'ci.yml'), 'utf8'))
+  return parse(readFileSync(join(repo, '.github', 'workflows', name), 'utf8'))
+}
+
+export function loadCiWorkflow(repo = REPO_ROOT) {
+  return loadWorkflow('ci.yml', repo)
 }
 
 const turbo = (repo, args) =>
@@ -44,7 +49,7 @@ export function turboSelects(filter, repo = REPO_ROOT) {
 
 export const filterTokens = (filter) => String(filter ?? '').trim().split(/\s+/).filter(Boolean)
 export const matrixFilters = (ci) =>
-  [...new Set(MATRIX_JOBS.flatMap(({ id }) => (ci.jobs?.[id]?.strategy?.matrix?.include ?? []).map((entry) => filterTokens(entry.filter).join(' '))))]
+  [...new Set(MATRIX_JOBS.flatMap(({ id }) => (ci.jobs?.[id]?.strategy?.matrix?.leg ?? []).map((entry) => filterTokens(entry.filter).join(' '))))]
 
 /**
  * pnpm/turbo selection for exact package names: the union of the included names (every package
@@ -70,25 +75,31 @@ const words = (run) => String(run ?? '').trim().split(/\s+/)
 /** Every way the matrix fails its coverage contract; an empty list means it holds. */
 export function ciMatrixFailures(ci, packages) {
   const failures = []
-  for (const { id, test, expected } of MATRIX_JOBS) {
+  for (const { id, test, expected, nodeLines } of MATRIX_JOBS) {
     const job = ci.jobs?.[id]
     if (job === undefined) {
       failures.push(`ci.yml has no job ${id}`)
       continue
     }
     if (job.strategy?.['fail-fast'] !== false) failures.push(`${id}: strategy.fail-fast must be false, so one red leg cannot cancel the others`)
-    const include = job.strategy?.matrix?.include
-    if (!Array.isArray(include) || include.length === 0) {
-      failures.push(`${id}: matrix.include must be a non-empty list`)
+    const node = job.strategy?.matrix?.node
+    if (nodeLines === undefined) {
+      if (node !== undefined) failures.push(`${id}: runs on .nvmrc only and must not have a node axis`)
+    } else if (JSON.stringify(node) !== JSON.stringify(nodeLines)) {
+      failures.push(`${id}: matrix.node must be [${nodeLines.join(', ')}], so every leg also runs on the Node floor`)
+    }
+    const legs = job.strategy?.matrix?.leg
+    if (!Array.isArray(legs) || legs.length === 0) {
+      failures.push(`${id}: matrix.leg must be a non-empty list`)
       continue
     }
-    const groups = include.map((entry) => entry.group)
+    const groups = legs.map((entry) => entry.group)
     if (groups.some((group) => typeof group !== 'string' || group === '') || new Set(groups).size !== groups.length) {
       failures.push(`${id}: every leg needs a unique group name`)
     }
 
     const byFilter = new Map()
-    for (const entry of include) {
+    for (const entry of legs) {
       const key = filterTokens(entry.filter).join(' ')
       if (key === '') failures.push(`${id}/${entry.group}: missing filter`)
       else byFilter.set(key, [...(byFilter.get(key) ?? []), entry])
@@ -131,15 +142,35 @@ export function ciMatrixFailures(ci, packages) {
       continue
     }
     const run = String(steps[at].run ?? '')
-    if (!run.includes('${{ matrix.filter }}') || !run.includes('${{ matrix.vitest }}')) {
-      failures.push(`${id}/${test}: run must pass \${{ matrix.filter }} and \${{ matrix.vitest }}`)
+    if (!run.includes('${{ matrix.leg.filter }}') || !run.includes('${{ matrix.leg.vitest }}')) {
+      failures.push(`${id}/${test}: run must pass \${{ matrix.leg.filter }} and \${{ matrix.leg.vitest }}`)
     }
     if (!words(run).includes('--continue')) failures.push(`${id}/${test}: run lacks --continue`)
     if (steps[at].env?.TURBO_CONCURRENCY !== '1') failures.push(`${id}/${test}: env.TURBO_CONCURRENCY must be '1'`)
     if (words(run).includes('--only')) {
-      const build = steps.findIndex((step) => String(step.run ?? '').trim() === 'pnpm build')
-      if (build < 0 || build > at) failures.push(`${id}: --only skips the build tasks, so a pnpm build step must come before ${test}`)
+      const needs = [job.needs ?? []].flat()
+      if (!needs.includes('build')) failures.push(`${id}: must need the build job`)
+      const download = steps.findIndex((step) => String(step.uses ?? '').startsWith('actions/download-artifact@'))
+      if (download < 0 || download > at) {
+        failures.push(`${id}: --only skips the build tasks, so a download of the build artifact must come before ${test}`)
+      }
     }
+  }
+  failures.push(...aggregateFailures(ci))
+  return failures
+}
+
+// A skipped required check counts as passing.
+function aggregateFailures(ci) {
+  const aggregate = ci.jobs?.[AGGREGATE_JOB]
+  if (aggregate === undefined) return [`ci.yml has no job ${AGGREGATE_JOB}`]
+  const failures = []
+  if (!/\balways\(\)/u.test(String(aggregate.if ?? ''))) {
+    failures.push(`${AGGREGATE_JOB}: must run with if: always(), so a failed or skipped job cannot leave it skipped`)
+  }
+  const needs = [aggregate.needs ?? []].flat()
+  for (const id of Object.keys(ci.jobs)) {
+    if (id !== AGGREGATE_JOB && !needs.includes(id)) failures.push(`${AGGREGATE_JOB}: does not need ${id}`)
   }
   return failures
 }

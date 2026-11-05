@@ -1,7 +1,3 @@
-// PROC-02 loop-harness suite (381-07): step-start procedure consult, guarded per-action
-// replay riding the cache-replay discipline, one-shot miss semantics with hint demotion,
-// and the typed planSource evidence (D-09..D-12). Follows the brief-routing/failure-cautions
-// loop-harness idiom: fake adapter/planner/ports, no real model or storage.
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
@@ -316,32 +312,32 @@ const sourceAssociationPolarityRows: SourceAssociationPolarityRow[] = [
     parameters: [{ name: 'MISSING_SOURCE', type: 'string', required: true }],
     values: { text: { param: 'MISSING_SOURCE' } },
     expectedSlot: 'text <- parameter MISSING_SOURCE (string, required)',
-    variables: { OTHER_SOURCE: 'ABSENT_OTHER_RAW_38161' },
-    rawSentinels: ['ABSENT_OTHER_RAW_38161'],
+    variables: { OTHER_SOURCE: 'ABSENT_OTHER_RAW_PLANT' },
+    rawSentinels: ['ABSENT_OTHER_RAW_PLANT'],
   },
   {
     name: 'incapable number variable',
     parameters: [{ name: 'DELAY', type: 'number', required: true }],
     values: { clickDelay: { param: 'DELAY' } },
     expectedSlot: 'clickDelay <- parameter DELAY (number, required)',
-    variables: { DELAY: 'NUMBER_INCAPABLE_RAW_38161' },
-    rawSentinels: ['NUMBER_INCAPABLE_RAW_38161'],
+    variables: { DELAY: 'NUMBER_INCAPABLE_RAW_PLANT' },
+    rawSentinels: ['NUMBER_INCAPABLE_RAW_PLANT'],
   },
   {
     name: 'incapable boolean memory',
     parameters: [{ name: 'SUBMIT_NOW', type: 'boolean', required: true }],
     values: { submit: { param: 'SUBMIT_NOW' } },
     expectedSlot: 'submit <- parameter SUBMIT_NOW (boolean, required)',
-    memory: [{ key: 'SUBMIT_NOW', value: 'BOOLEAN_INCAPABLE_RAW_38161' }],
-    rawSentinels: ['BOOLEAN_INCAPABLE_RAW_38161'],
+    memory: [{ key: 'SUBMIT_NOW', value: 'BOOLEAN_INCAPABLE_RAW_PLANT' }],
+    rawSentinels: ['BOOLEAN_INCAPABLE_RAW_PLANT'],
   },
   {
     name: 'secret-only typed mismatch',
     parameters: [{ name: 'SECRET_DELAY', type: 'number', required: true }],
     values: { clickDelay: { param: 'SECRET_DELAY' } },
     expectedSlot: 'clickDelay <- parameter SECRET_DELAY (number, required)',
-    secrets: { SECRET_DELAY: 'SECRET_NUMBER_RAW_38161' },
-    rawSentinels: ['SECRET_NUMBER_RAW_38161'],
+    secrets: { SECRET_DELAY: 'SECRET_NUMBER_RAW_PLANT' },
+    rawSentinels: ['SECRET_NUMBER_RAW_PLANT'],
   },
   {
     name: 'variable before memory precedence',
@@ -349,11 +345,11 @@ const sourceAssociationPolarityRows: SourceAssociationPolarityRow[] = [
     values: { text: { param: 'CONTACT' } },
     expectedSlot: 'text <- parameter CONTACT (string, required)',
     expectedSource: { kind: 'variable', name: 'CONTACT', declaredType: 'string' },
-    variables: { CONTACT: 'VARIABLE_PRECEDENCE_RAW_38161' },
-    memory: [{ key: 'CONTACT', value: 'MEMORY_PRECEDENCE_RAW_38161' }],
+    variables: { CONTACT: 'VARIABLE_PRECEDENCE_RAW_PLANT' },
+    memory: [{ key: 'CONTACT', value: 'MEMORY_PRECEDENCE_RAW_PLANT' }],
     rawSentinels: [
-      'VARIABLE_PRECEDENCE_RAW_38161',
-      'MEMORY_PRECEDENCE_RAW_38161',
+      'VARIABLE_PRECEDENCE_RAW_PLANT',
+      'MEMORY_PRECEDENCE_RAW_PLANT',
     ],
   },
   {
@@ -362,9 +358,9 @@ const sourceAssociationPolarityRows: SourceAssociationPolarityRow[] = [
     values: { clickDelay: { param: 'MEMORY_DELAY' } },
     expectedSlot: 'clickDelay <- parameter MEMORY_DELAY (number, required)',
     expectedSource: { kind: 'memory', name: 'MEMORY_DELAY', declaredType: 'number' },
-    variables: { MEMORY_DELAY: 'MEMORY_DELAY_INCAPABLE_RAW_38161' },
-    memory: [{ key: 'MEMORY_DELAY', value: '38161042' }],
-    rawSentinels: ['MEMORY_DELAY_INCAPABLE_RAW_38161', '38161042'],
+    variables: { MEMORY_DELAY: 'MEMORY_DELAY_INCAPABLE_RAW_PLANT' },
+    memory: [{ key: 'MEMORY_DELAY', value: '52961042' }],
+    rawSentinels: ['MEMORY_DELAY_INCAPABLE_RAW_PLANT', '52961042'],
   },
   {
     name: 'string secret fallback',
@@ -372,8 +368,8 @@ const sourceAssociationPolarityRows: SourceAssociationPolarityRow[] = [
     values: { text: { param: 'SECRET_CONTACT' } },
     expectedSlot: 'text <- parameter SECRET_CONTACT (string, required)',
     expectedSource: { kind: 'secret', name: 'SECRET_CONTACT', declaredType: 'string' },
-    secrets: { SECRET_CONTACT: 'STRING_SECRET_RAW_38161' },
-    rawSentinels: ['STRING_SECRET_RAW_38161'],
+    secrets: { SECRET_CONTACT: 'STRING_SECRET_RAW_PLANT' },
+    rawSentinels: ['STRING_SECRET_RAW_PLANT'],
   },
   {
     name: 'secret parameter ignores the same-named variable',
@@ -381,11 +377,11 @@ const sourceAssociationPolarityRows: SourceAssociationPolarityRow[] = [
     values: { text: { param: 'LOGIN_SECRET' } },
     expectedSlot: 'text <- parameter LOGIN_SECRET (secret, required)',
     expectedSource: { kind: 'secret', name: 'LOGIN_SECRET', declaredType: 'secret' },
-    variables: { LOGIN_SECRET: 'VARIABLE_SECRET_MISMATCH_RAW_38161' },
-    secrets: { LOGIN_SECRET: 'SECRET_BINDING_RAW_38161' },
+    variables: { LOGIN_SECRET: 'VARIABLE_SECRET_MISMATCH_RAW_PLANT' },
+    secrets: { LOGIN_SECRET: 'SECRET_BINDING_RAW_PLANT' },
     rawSentinels: [
-      'VARIABLE_SECRET_MISMATCH_RAW_38161',
-      'SECRET_BINDING_RAW_38161',
+      'VARIABLE_SECRET_MISMATCH_RAW_PLANT',
+      'SECRET_BINDING_RAW_PLANT',
     ],
   },
   {
@@ -393,25 +389,25 @@ const sourceAssociationPolarityRows: SourceAssociationPolarityRow[] = [
     parameters: [],
     values: { text: { param: 'UNDECLARED_SOURCE' } },
     expectedSlot: 'text <- parameter UNDECLARED_SOURCE (undeclared)',
-    variables: { UNDECLARED_SOURCE: 'UNDECLARED_RAW_38161' },
-    rawSentinels: ['UNDECLARED_RAW_38161'],
+    variables: { UNDECLARED_SOURCE: 'UNDECLARED_RAW_PLANT' },
+    rawSentinels: ['UNDECLARED_RAW_PLANT'],
   },
   {
     name: 'literal-omitted slot',
     parameters: [],
-    values: { text: 'LITERAL_OMITTED_RAW_38161' },
+    values: { text: 'LITERAL_OMITTED_RAW_PLANT' },
     expectedSlot: 'text <- stored literal omitted',
-    rawSentinels: ['LITERAL_OMITTED_RAW_38161'],
+    rawSentinels: ['LITERAL_OMITTED_RAW_PLANT'],
   },
 ]
 
-describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
-  it('F-381-54-1 RED: authored prose cannot override structured parameter provenance', async () => {
+describe('procedure guarded replay', () => {
+  it('authored prose cannot override structured parameter provenance', async () => {
     const handoffBytes = readFileSync(
-      new URL('./fixtures/f-381-54-1/handoff.json', import.meta.url),
+      new URL('./fixtures/recorded-procedure/handoff.json', import.meta.url),
     )
     const recordBytes = readFileSync(
-      new URL('./fixtures/f-381-54-1/procedure-record.md', import.meta.url),
+      new URL('./fixtures/recorded-procedure/procedure-record.md', import.meta.url),
     )
     expect(createHash('sha256').update(handoffBytes).digest('hex')).toBe(
       '3a157aa7bfc864af87771c5747fde2ab4bd096ea7cb2e4f473aea43b7f5e4288',
@@ -550,18 +546,17 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       !l2.includes(authoredInstruction) &&
       l2.includes('text <- parameter PROBE_USER') &&
       l2.includes('interpolatedInCurrentStep=true')
-    expect(desiredContract, 'F-381-54-1_EXPECTED_RED_CONTRACT').toBe(true)
+    expect(desiredContract, 'RECORDED_PROCEDURE_EXPECTED_RED_CONTRACT').toBe(true)
   })
 
-  it('F-381-54-1 projects the real renamed screen as one advisory textbox candidate', async () => {
-    // 381-54-EVIDENCE records both renamed-screen failures. This row derives the candidate
-    // from the preserved stateBefore; it makes no Username/Account-name equivalence claim.
+  it('projects the real renamed screen as one advisory textbox candidate', async () => {
+    // The candidate comes from the preserved stateBefore; no Username/Account-name equivalence.
     const handoff = JSON.parse(readFileSync(
-      new URL('./fixtures/f-381-54-1/handoff.json', import.meta.url),
+      new URL('./fixtures/recorded-procedure/handoff.json', import.meta.url),
       'utf8',
     )) as CompletedRunHandoff
     const record = readFileSync(
-      new URL('./fixtures/f-381-54-1/procedure-record.md', import.meta.url),
+      new URL('./fixtures/recorded-procedure/procedure-record.md', import.meta.url),
       'utf8',
     )
     const payload = parseProcedureBody(record)
@@ -613,11 +608,11 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
   it('source-bound email recovery marks the PROBE_USER slot as supplied without exposing its value', async () => {
     const handoff = JSON.parse(readFileSync(
-      new URL('./fixtures/f-381-54-1/handoff.json', import.meta.url),
+      new URL('./fixtures/recorded-procedure/handoff.json', import.meta.url),
       'utf8',
     )) as CompletedRunHandoff
     const record = readFileSync(
-      new URL('./fixtures/f-381-54-1/procedure-record.md', import.meta.url),
+      new URL('./fixtures/recorded-procedure/procedure-record.md', import.meta.url),
       'utf8',
     )
     const payload = parseProcedureBody(record)
@@ -681,7 +676,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         type: 'fill',
         target: missingTarget,
         values: row.values,
-        instruction: 'AUTHORED_SOURCE_ASSOCIATION_PROSE_38161',
+        instruction: 'AUTHORED_SOURCE_ASSOCIATION_PROSE_PLANT',
       })
       const reader = makeReader({
         match: makeMatch({ parameterSchema: row.parameters }),
@@ -740,7 +735,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
             + `declaredType=${row.expectedSource.declaredType}); not unresolved`,
         )
       }
-      expect(learned).not.toContain('AUTHORED_SOURCE_ASSOCIATION_PROSE_38161')
+      expect(learned).not.toContain('AUTHORED_SOURCE_ASSOCIATION_PROSE_PLANT')
       for (const sentinel of row.rawSentinels) {
         expect(learned).not.toContain(sentinel)
       }
@@ -748,10 +743,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   )
 
   it('Test 1: a replay-recommendation match drives the step\'s one body step with no planning-turn LLM call', async () => {
-    // F-381-51-1 · D-09 rewrite: the old law pinned the WHOLE 2-action body replaying
-    // inside one test step (fold 2/2). The new law: each test step consumes exactly the
-    // one body step at the cursor — the fill here; the click belongs to the NEXT test
-    // step via the carry (procedure-step-boundary.test.ts pins the cross-step half).
+    // Each test step consumes the body step at the cursor; the click belongs to the next step.
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const { adapter, executed } = capturingAdapter([makeScreenState()])
     const planner = capturingPlanner([makeActionPlan()])
@@ -823,8 +815,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       kind: 'procedure-replay',
       procedureId: PROCEDURE_ID,
       guard: {
-        // Per-step fold (F-381-51-1 · D-12): total = the one stored action THIS test step
-        // attempted, not the whole body length the old law recorded here.
+        // Per-step fold: the total counts only the stored actions this test step attempted.
         checksPassed: 0,
         total: 1,
         executionFailure: { procedureStepIndex: 0 },
@@ -920,17 +911,12 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   })
 
   it('keeps a navigating carried replay guard on its own pre-action page', async () => {
-    // F-381-51-1 · D-09 rewrite: the old law pinned the whole body in one step with the
-    // FINAL action's guard on the pre-action page. The new law strengthens the pin: EVERY
-    // replayed body step's guard is evaluated on its OWN test step's pre-action screen —
-    // the navigating click replays at test step 1 via the carry, its guard passes on the
-    // login page it observes, and StepEvidence records the honest post-action navigation.
-    // Neither side may silently drift to the other's URL semantics.
+    // Each replayed body step's guard is evaluated on its own test step's pre-action screen.
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const login = makeScreenState()
     const dashboard = makeScreenState({ url: 'https://example.test/dashboard' })
-    // quick 261004-lsa: each verify-path settle reads one more frame, so step 0 consumes four.
+    // Step 0's loop-top reads and verify-path settle consume the leading `login` frames.
     const { adapter, executed } = capturingAdapter([login, login, login, login, login, login, dashboard])
     const planner = capturingPlanner([makeActionPlan()])
     const verifier = makeVerifier()
@@ -966,10 +952,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   })
 
   it('Test 2: an ambiguous carried descriptor aborts once and projects ordered structural recovery evidence', async () => {
-    // F-381-51-1 · D-09 rewrite: the old law hit the ambiguous second descriptor INSIDE
-    // one test step (fold 1-of-2 with the miss). The new law reaches body step 1 at its
-    // own test step via the carry — the miss aborts one-shot THERE (per-step fold 0-of-1),
-    // projects structural recovery, and the flow is over for the run (no carry).
+    // Body step 1 runs at its own test step via the carry; its miss is one-shot and ends the flow.
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const stable = makeScreenState()
@@ -1004,8 +987,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).not.toContain('Fill the email field')
     expect(learned).not.toContain('Click the Log in button')
     const candidates = learned.slice(learned.indexOf('fresh same-role candidates:'))
-    // 438 D-12: both candidates are named by role and exact name, in screen order, with no
-    // position for the planner to pick by.
+    // Both candidates are named by role and exact name, in screen order, with no position.
     expect(candidates).toContain(
       'fresh same-role candidates:\n- role=button; name=Log in\n- role=button; name=Log in',
     )
@@ -1176,7 +1158,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         { name: 'SECRET_NAME', type: 'secret', required: true },
       ],
       steps: [{
-        instruction: 'AUTHORED_RECOVERY_PROSE_38155',
+        instruction: 'AUTHORED_RECOVERY_PROSE_SENTINEL',
         action: {
           type: 'fill',
           targets: { ref: { role: 'textbox', nameNormalized: 'mask-me-missing' } },
@@ -1184,34 +1166,34 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
             text: { param: 'VAR_NAME' },
             clickDelay: { param: 'MEM_NAME' },
             secretField: { param: 'SECRET_NAME' },
-            literalField: 'LITERAL_RAW_38155',
-            jsonField: { json: { nested: 'JSON_RAW_38155' } },
+            literalField: 'LITERAL_RAW_SENTINEL',
+            jsonField: { json: { nested: 'JSON_RAW_SENTINEL' } },
           },
         },
         guard: {
           target: { role: 'textbox', nameNormalized: 'mask-me-missing' },
           pageAnchor: {
             t: 'page',
-            route: 'https://example.test/login?STORED_QUERY_RAW_38155',
+            route: 'https://example.test/login?STORED_QUERY_RAW_SENTINEL',
           },
         },
       }],
       successAssertion: 'The action completed',
     }
     const baseScreen = makeScreenState({
-      url: 'https://example.test/login?LIVE_QUERY_RAW_38155',
+      url: 'https://example.test/login?LIVE_QUERY_RAW_SENTINEL',
     })
     const screen: ScreenState = {
       ...baseScreen,
-      tree: `${baseScreen.tree}\nTREE_RAW_38155`,
+      tree: `${baseScreen.tree}\nTREE_RAW_SENTINEL`,
       elements: baseScreen.elements.map((element, index) =>
         index === 0
           ? {
               ...element,
-              ref: asRef('SCREEN_REF_RAW_38155'),
-              value: 'SCREEN_VALUE_RAW_38155',
-              labels: { ariaLabel: 'SCREEN_LABEL_RAW_38155' },
-              attributes: { sentinel: 'SCREEN_ATTRIBUTE_RAW_38155' },
+              ref: asRef('SCREEN_REF_RAW_SENTINEL'),
+              value: 'SCREEN_VALUE_RAW_SENTINEL',
+              labels: { ariaLabel: 'SCREEN_LABEL_RAW_SENTINEL' },
+              attributes: { sentinel: 'SCREEN_ATTRIBUTE_RAW_SENTINEL' },
             }
           : element
       ),
@@ -1230,20 +1212,20 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
         planner: planner.planner,
         knowledgeReader: spy.reader,
         recordLedger: ledgerSpy.ledger,
-        workingMemory: makeWorkingMemory([{ key: 'MEM_NAME', value: 'MEMORY_RAW_38155' }]),
-        secretStore: new SecretStore({ SECRET_NAME: 'SECRET_RAW_38155' }),
-        secretRedactor: new SecretRedactor(new SecretStore({ DESCRIPTOR_38155: 'mask-me-missing' })),
+        workingMemory: makeWorkingMemory([{ key: 'MEM_NAME', value: 'MEMORY_RAW_SENTINEL' }]),
+        secretStore: new SecretStore({ SECRET_NAME: 'SECRET_RAW_SENTINEL' }),
+        secretRedactor: new SecretRedactor(new SecretStore({ DESCRIPTOR_SENTINEL: 'mask-me-missing' })),
       }),
       context({
-        variables: { VAR_NAME: 'VARIABLE_RAW_38155' },
-        interpolatedVariables: [{ name: 'VAR_NAME', value: 'VARIABLE_RAW_38155' }],
+        variables: { VAR_NAME: 'VARIABLE_RAW_SENTINEL' },
+        interpolatedVariables: [{ name: 'VAR_NAME', value: 'VARIABLE_RAW_SENTINEL' }],
       }),
     )
 
     expect(result.status).toBe('passed')
     expect(planner.calls).toHaveLength(1)
     const learned = `${planner.calls[0].l1 ?? ''}\n${planner.calls[0].l2 ?? ''}`
-    expect(learned).toContain('name=[secret:DESCRIPTOR_38155]')
+    expect(learned).toContain('name=[secret:DESCRIPTOR_SENTINEL]')
     expect(learned).not.toContain('mask-me-missing')
     expect(learned).toContain('text <- parameter VAR_NAME (string, required)')
     expect(learned).toContain('clickDelay <- parameter MEM_NAME (number, optional)')
@@ -1256,19 +1238,19 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).toContain('interpolatedInCurrentStep=true')
     expect(learned).not.toContain('its value is already present there')
     for (const forbidden of [
-      'VARIABLE_RAW_38155',
-      'MEMORY_RAW_38155',
-      'SECRET_RAW_38155',
-      'LITERAL_RAW_38155',
-      'JSON_RAW_38155',
-      'AUTHORED_RECOVERY_PROSE_38155',
-      'TREE_RAW_38155',
-      'SCREEN_REF_RAW_38155',
-      'SCREEN_VALUE_RAW_38155',
-      'SCREEN_LABEL_RAW_38155',
-      'SCREEN_ATTRIBUTE_RAW_38155',
-      'STORED_QUERY_RAW_38155',
-      'LIVE_QUERY_RAW_38155',
+      'VARIABLE_RAW_SENTINEL',
+      'MEMORY_RAW_SENTINEL',
+      'SECRET_RAW_SENTINEL',
+      'LITERAL_RAW_SENTINEL',
+      'JSON_RAW_SENTINEL',
+      'AUTHORED_RECOVERY_PROSE_SENTINEL',
+      'TREE_RAW_SENTINEL',
+      'SCREEN_REF_RAW_SENTINEL',
+      'SCREEN_VALUE_RAW_SENTINEL',
+      'SCREEN_LABEL_RAW_SENTINEL',
+      'SCREEN_ATTRIBUTE_RAW_SENTINEL',
+      'STORED_QUERY_RAW_SENTINEL',
+      'LIVE_QUERY_RAW_SENTINEL',
       '{{secret:SECRET_NAME}}',
       'ref=e1',
       'ref=e2',
@@ -1279,7 +1261,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
   it('drops dynamic grounding errors and refs at the typed grounding-gate location', async () => {
     const baseScreen = makeScreenState()
-    const gateRef = asRef('GATE_ERROR_REF_RAW_38155')
+    const gateRef = asRef('GATE_ERROR_REF_RAW_SENTINEL')
     const screen: ScreenState = {
       ...baseScreen,
       elements: baseScreen.elements.map((element) =>
@@ -1300,7 +1282,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       type: 'click',
       target: { role: 'button', nameNormalized: 'gate target', name: 'Gate target' },
       values: {},
-      instruction: 'AUTHORED_GATE_PROSE_38155',
+      instruction: 'AUTHORED_GATE_PROSE_SENTINEL',
     })
     const spy = makeReader({ match: makeMatch({ parameterSchema: [] }), payload })
     const { adapter, executed } = capturingAdapter([screen])
@@ -1321,9 +1303,9 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     expect(learned).toContain('miss location: grounding-gate')
     expect(learned).toContain('role=button; name=Gate target')
     expect(learned).not.toContain('fresh same-role candidates:')
-    expect(learned).not.toContain('GATE_ERROR_REF_RAW_38155')
+    expect(learned).not.toContain('GATE_ERROR_REF_RAW_SENTINEL')
     expect(learned).not.toContain('ref_not_in_snapshot')
-    expect(learned).not.toContain('AUTHORED_GATE_PROSE_38155')
+    expect(learned).not.toContain('AUTHORED_GATE_PROSE_SENTINEL')
     expect(result.evidence?.planSource).toMatchObject({
       guard: { miss: { reason: 'gate-refused' } },
     })
@@ -1375,11 +1357,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   })
 
   it('Test 4: a test step never consumes past its one body step and body exhaustion leaves no carry', async () => {
-    // F-381-51-1 · D-09 rewrite: the old law pinned in-step exhaustion ("replayed actions
-    // never exceed the sequence length"). The new law: exhaustion happens ACROSS steps —
-    // the carry ends after the LAST body step's test step, so a single-step body's step
-    // both exhausts the flow and (on rejection) demotes with no replay re-entry and no
-    // carry for any later step.
+    // Exhaustion happens across steps: the carry ends after the last body step's test step.
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const payload = loginPayload()
     payload.steps = [payload.steps[1]]
@@ -1407,8 +1385,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
 
     expect(result.status).toBe('passed')
     expect(spy.countOf('getProcedure')).toBe(1)
-    // One replayed click, then the verifier rejection forced a live planning turn (no replay
-    // re-entry within the step, D-11).
+    // A replayed click, then a live planning turn after the rejection; no replay re-entry.
     expect(executed.map((action) => action.type)).toEqual(['click', 'click'])
     expect(planner.calls).toHaveLength(1)
     const l2 = planner.calls[0].l2 ?? ''
@@ -1434,11 +1411,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   })
 
   it('a verifier rejection aborts a multi-step flow with no carry — not just replay re-entry within the step', async () => {
-    // F-381-51-1 · D-09 rewrite: the old law replayed BOTH body steps in one test step and
-    // pinned the rejection of the second (fold 2/2, rejection at index 1, no in-step
-    // re-entry). The new law rejects the FIRST body step at its own test step (per-step
-    // fold 1/1, rejection at index 0) and strengthens the pin: the rejection kills the
-    // whole flow — the carry cell stays empty, so no later step can resume the body (D-11).
+    // A rejection of the first body step kills the whole flow, so the carry cell stays empty.
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const { adapter, executed } = capturingAdapter([makeScreenState()])
@@ -1570,10 +1543,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     })
     const { adapter, executed } = capturingAdapter([twoFieldScreen()])
     const planner = capturingPlanner([makeActionPlan()])
-    // F-381-51-1 · D-09 rewrite: the old law bound both parameters inside one test step.
-    // The new law binds each at its OWN test step — the carried body step re-runs the
-    // loop-side binder against the same source-tagged availability contract, and the carry
-    // substitutes the second consult entirely (one matcher call for the whole flow).
+    // Each parameter binds at its own test step; the carry replaces the second consult.
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const sharedPorts = () => ports({
       adapter,
@@ -1642,8 +1612,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
       return { availability: args[2], argsJson: call.args }
     }
 
-    // Seam agreement (PROC-01): the capability bit the matcher sees and the binder's verdict
-    // are the same shared coercion evaluated on the same raw value.
+    // The matcher's capability bit and the binder's verdict use one coercion on the same raw value.
     const incapable = await recordedAvailability('not-a-number')
     expect(incapable.availability).toEqual({
       variables: [{ name: 'delay', canBindNumber: false, canBindBoolean: false }],
@@ -1875,8 +1844,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
     payload,
   }) => {
     const spy = makeReader({
-      // Force the stale/over-admitted recommendation so this test exercises the independent
-      // loop-side half of WR-01 even though the corrected matcher now downranks it to a hint.
+      // Force an over-admitted recommendation, which the matcher would downrank, to test the loop.
       match: makeMatch({
         parameterSchema: [{ name, type, required: true }],
         replayRecommendation: 'replay',
@@ -2002,9 +1970,7 @@ describe('procedure guarded replay (PROC-02 · D-09..D-12)', () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// Task 2: planSource evidence + hint rendering through the ledger (D-12 / T-381-20)
-// ---------------------------------------------------------------------------
+// planSource evidence and hint rendering through the ledger
 
 function makeCacheSpy(hit: CachedPlanValue | null): { cache: ActionPlanCache; gets: () => number } {
   let gets = 0
@@ -2038,7 +2004,7 @@ function makeLedgerSpy(admitted: boolean): LedgerSpy {
   }
 }
 
-describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)', () => {
+describe('planSource evidence + ledger-metered hint rendering', () => {
   it('Test 1: replay planSource and cache-hit provenance never coexist on one step', async () => {
     // A replayed step: the cache is bound but never consulted; evidence carries the
     // procedure-replay planSource and no cache-hit fold.
@@ -2064,7 +2030,7 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
     const hit: CachedPlanValue = {
       plannedActions: [{ type: 'click' } as unknown as CacheablePlannedAction],
       groundedLocator: [{ role: 'button', name: 'Log in' }],
-      verificationOutcome: 'passed',
+      completesStep: true,
     }
     const hitCache = makeCacheSpy(hit)
     const { adapter: hitAdapter } = capturingAdapter([makeScreenState()])
@@ -2135,12 +2101,7 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
       .toBeGreaterThan(rendered.toLowerCase().indexOf('hypotheses'))
   })
 
-  /**
-   * G-381-4 second half: the fail-closed body read is CORRECT but was silent — a starved
-   * replay stamped a planSource byte-identical to an ordinary hint, so run 16's three earned
-   * replay recommendations were indistinguishable from ordinary hint exposure in the handoff.
-   * The demotion reason makes that observable without weakening the wall (D-12).
-   */
+  // The demotion reason tells a starved replay apart from an ordinary hint in the handoff.
   async function planSourceOf(reader: ReaderSpy) {
     const { adapter } = capturingAdapter([makeScreenState()])
     const planner = capturingPlanner([makeActionPlan()])
@@ -2224,10 +2185,7 @@ describe('planSource evidence + ledger-metered hint rendering (D-12 · T-381-20)
   })
 
   it('Test 4: post-miss recovery evidence renders in the SAME hypotheses frame', async () => {
-    // F-381-51-1 · D-09 rewrite: the old law surfaced the miss inside one test step. The
-    // new law reaches the miss at the CARRIED step's own test step — the demoted hint
-    // renders in THAT step's planning turn, in the same hypotheses frame, with the body
-    // step represented only by its generated structural facts.
+    // The miss surfaces at the carried step's own test step, in that step's planning turn.
     const flowCell: { carry?: ProcedureFlowCarry } = {}
     const spy = makeReader({ match: makeMatch(), payload: loginPayload() })
     const stable = makeScreenState()

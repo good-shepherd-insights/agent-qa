@@ -36,16 +36,14 @@ export async function createSampleWorkspaceConfigFixture(): Promise<SampleWorksp
       envFile: 'config/env/public.env',
       secretsFile: 'config/env/secrets.local',
     },
-    knowledge: { dir: 'agent-qa-knowledge', commitArtifacts: 'none' },
+    knowledge: { dir: 'agent-qa-knowledge' },
     services: {
       dashboard: {
         port: 3470,
         artifactsDir: '.agent-qa/custom-artifacts',
-        // 432-22: `runServiceTokens` is deleted, so the parsed shape no longer carries it.
       },
       cache: {
         dir: '.agent-qa/custom-cache',
-        ttl: 604_800_000,
       },
       logging: {
         level: 'warn',
@@ -104,7 +102,6 @@ describe('workspace path resolver', () => {
 
     expect(fixture.config.services?.dashboard?.artifactsDir).toBe('.agent-qa/custom-artifacts')
     expect(fixture.config.services?.cache?.dir).toBe('.agent-qa/custom-cache')
-    expect(fixture.config.services?.cache?.ttl).toBe(604_800_000)
     expect(fixture.config.services?.logging?.level).toBe('warn')
     expect(fixture.config.services?.recording?.enabled).toBe(false)
     expect(fixture.config.services?.accessibility?.enabled).toBe(false)
@@ -180,10 +177,7 @@ describe('workspace path resolver', () => {
   })
 })
 
-// The ONE spelling of the durable identity recipe (390-08 / CR-02). The committed quarantine
-// ledger keys entries on this string, so "the same file under a different checkout root answers
-// the same bytes" is not a convenience — it is the property that lets a ledger written on one
-// machine suppress on another.
+// The committed quarantine ledger keys on this string, so one machine's ledger works on another.
 describe('workspaceRelativeIdentityPath', () => {
   const CHECKOUT_A = path.join(path.sep, 'Users', 'someone', 'repo')
   const CHECKOUT_B = path.join(path.sep, 'var', 'ci', 'workspace', '4711', 'repo')

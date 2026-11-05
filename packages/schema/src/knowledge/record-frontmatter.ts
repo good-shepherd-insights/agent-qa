@@ -72,14 +72,14 @@ const recordFrontmatterSchema: z.ZodType<RecordFrontmatter> = z
       ctx.addIssue({
         code: 'custom',
         path: ['subtype'],
-        message: 'fact record frontmatter requires a fact subtype (D-06)',
+        message: 'fact record frontmatter requires a fact subtype',
       })
     }
     if (frontmatter.kind !== 'fact' && frontmatter.subtype !== undefined) {
       ctx.addIssue({
         code: 'custom',
         path: ['subtype'],
-        message: 'only fact record frontmatter may carry a subtype (D-06)',
+        message: 'only fact record frontmatter may carry a subtype',
       })
     }
   })
@@ -114,7 +114,7 @@ function validateFrontmatter(value: unknown): RecordFrontmatter {
   return recordFrontmatterSchema.parse(guardRecordFrontmatterVersion(value))
 }
 
-/** Deterministic record.md rendering over immutable-at-creation fields only (BNDL-03). */
+/** Deterministic record.md rendering over immutable-at-creation fields only. */
 export function emitRecordMarkdown(
   frontmatter: RecordFrontmatter,
   body: { summary: string; body: string },
@@ -147,7 +147,7 @@ function parseFrontmatterLines(block: string): RecordFrontmatter {
 
     const key = line.slice(0, separator)
     if (FORBIDDEN_DERIVED_KEYS.has(key)) {
-      throw new TypeError(`BNDL-03 forbids derived frontmatter key "${key}"`)
+      throw new TypeError(`frontmatter may not carry the derived key "${key}"`)
     }
     if (!FRONTMATTER_KEYS.has(key)) {
       throw new TypeError(`unknown frontmatter key "${key}"`)

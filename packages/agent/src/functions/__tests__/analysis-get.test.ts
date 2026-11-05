@@ -1,13 +1,4 @@
-// `analysis.get` — THE one producer of a run's analysis (Phase 389, D-10/D-11/D-14/D-15).
-//
-// Resolved verdicts, rendered sentences (live recurrence joins applied) and clusters, served
-// through one op that every surface calls — plan 07's CLI print, M5's run page, 392's chat.
-// Beside it, the `runs.get` rewire: the cheapest read lists class/producer/confidence through
-// the SAME accessor and never renders a sentence (the cheapest-read law).
-//
-// Absence discipline throughout: an unbound analysis port refuses BY NAME; a bound port with
-// no artifact on disk answers the handoff floor (honest parts, minted unknowns); a run with
-// no failures answers empty lists. None of those is an error, because none of them is a lie.
+// No absence is an error: unbound refuses by name, no artifact answers the floor, none is empty.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -30,7 +21,6 @@ import type {
   EvidenceBlobPresence,
   CompletedRunHandoff,
   FunctionCaller,
-  MisdirectionRecordResult,
   RunAnalysisArtifact,
   RunDetail,
   Verdict,
@@ -50,8 +40,6 @@ import type {
 import { ANALYSIS_GET_FUNCTION_ID } from '../ops/analysis-get.js'
 import { RUNS_GET_FUNCTION_ID } from '../ops/runs-get.js'
 
-// 2026-10-01 (432-29, D-12): the retired `grantedScopes` and `safeMode` caller fields and the
-// retired `resolveExecutionContext` registry option are dropped; nothing read them.
 const CALLER: FunctionCaller = {
   surface: 'test',
   origin: 'agent',
@@ -160,7 +148,7 @@ async function analysisOf(
   ) as AnalysisGetOutput
 }
 
-describe('analysis.get — binding and refusal (D-09/D-11)', () => {
+describe('analysis.get — binding and refusal', () => {
   it('lists unbound and refuses BY NAME in a composition with no analysis port', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const registry = registryWith({ handoff })
@@ -182,7 +170,7 @@ describe('analysis.get — binding and refusal (D-09/D-11)', () => {
   })
 })
 
-describe('analysis.get — the handoff floor (D-10)', () => {
+describe('analysis.get — the handoff floor', () => {
   it('answers a bound port with NO artifact via the floor: minted unknowns, honest parts', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 2, passedCount: 1 })
     const registry = registryWith({ handoff, analysis: readerOf(undefined) })
@@ -190,8 +178,7 @@ describe('analysis.get — the handoff floor (D-10)', () => {
     const output = await analysisOf(registry, String(handoff.runId))
 
     expect(output.runId).toBe(String(handoff.runId))
-    // 406 D-01: `evidence` is on every verdict, floor included — the minted unknown cites nothing
-    // and says so, rather than omitting the key and leaving a reader to guess which it meant.
+    // `evidence` is on every verdict, floor included, so a reader never guesses what absence means.
     expect(output.verdicts).toEqual([
       { perTest: 0, testId: 't_failed_0', class: 'unknown', producer: 'deterministic-classifier', confidence: 0, evidence: { citedSteps: [], citedArtifacts: [] } },
       { perTest: 1, testId: 't_failed_1', class: 'unknown', producer: 'deterministic-classifier', confidence: 0, evidence: { citedSteps: [], citedArtifacts: [] } },
@@ -202,7 +189,7 @@ describe('analysis.get — the handoff floor (D-10)', () => {
       // No recurrence dep bound: obligation c still renders, as the explicit no-history clause.
       expect(entry.sentence).toContain('no failure history is recorded for this test')
     }
-    // One shared anchor, one class: the ANLZ-04 fold, with the representative's sentence.
+    // One shared anchor and one class fold into one cluster with the representative's sentence.
     expect(output.clusters).toHaveLength(1)
     expect(output.clusters[0]!.count).toBe(2)
     expect(output.clusters[0]!.representative.sentence)
@@ -221,7 +208,7 @@ describe('analysis.get — the handoff floor (D-10)', () => {
   })
 })
 
-describe('analysis.get — the artifact leg and the one accessor (D-10/D-11)', () => {
+describe('analysis.get — the artifact leg and the one accessor', () => {
   it('serves upgraded class/producer through BOTH ops, and sentences through ONE', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const artifact = artifactFor(handoff)
@@ -272,9 +259,7 @@ describe('analysis.get — the artifact leg and the one accessor (D-10/D-11)', (
 
     expect(output.sentences[0]!.sentence)
       .toContain('failure 3 of this test in the last 5 builds')
-    // Identity is (product, filePath, testName) — the projection's own key, never testId —
-    // and 390 D-07 adds the FINGERPRINT the recurrence windows are keyed by. Both travel:
-    // the ladder join is identity-keyed, the occurrence count is fingerprint-keyed.
+    // Ladder joins key on (product, filePath, testName); occurrence counts key on the fingerprint.
     expect(asked).toEqual([{
       product: slugBranch(handoff.scope.key),
       filePath: 'tests/failed-0.yaml',
@@ -290,9 +275,7 @@ describe('analysis.get — the artifact leg and the one accessor (D-10/D-11)', (
   })
 
   it('keys the fingerprint by the RESOLVED class — an upgraded verdict queries a different window', async () => {
-    // The recipe folds the class in (389 D-13), so the same anchor failing as `unknown` and as
-    // `app_bug` are two windows. The caller must therefore key from the resolved verdict, not
-    // from the handoff's floor — which is exactly what the projection's writer does.
+    // The recipe folds the class in, so the caller keys from the resolved verdict, not the floor.
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const asked: RecurrenceQuery[] = []
     const recurrence: RecurrenceProvider = {
@@ -371,16 +354,7 @@ describe('analysis.get — the artifact leg and the one accessor (D-10/D-11)', (
   })
 })
 
-// The evidence projection (406-03, D-01/D-17, DETL-04/DETL-05).
-//
-// A verdict on the wire used to say WHAT it concluded and never WHAT it read. The failure view's
-// links are those refs, and re-deriving them in the page would be a second join over the same
-// artifact — so the op that already resolved the verdict projects its own evidence, and annotates
-// each cited artifact with whether the bytes are still there.
-//
-// FOUR PORT ARMS AND THEY ARE NOT THREE. `found` is the only `true`; both absences are `false`
-// because the bytes are gone either way; and a port with no `has` at all leaves the key ABSENT,
-// which is presence UNKNOWN — the one thing that must never render as a claimed absence.
+// `found` is the only `true`; a port with no `has` leaves the key absent, meaning presence unknown.
 
 /** A port whose `has` answers one fixed word, recording what it was asked. */
 function blobsAnswering(
@@ -396,7 +370,7 @@ function blobsAnswering(
   }
 }
 
-/** The shape every host bound before 406 — a read and nothing else. */
+/** A port with only a read and no `has`. */
 const BLOBS_WITHOUT_HAS: EvidenceBlobReaderPort = {
   read: () => Promise.resolve({ status: 'unknown_run' as const }),
 }
@@ -435,7 +409,7 @@ function artifactCiting(
   }
 }
 
-describe('analysis.get — the evidence projection (D-01)', () => {
+describe('analysis.get — the evidence projection', () => {
   it('carries every verdict\'s own citedSteps and citedArtifacts, floor included', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 2, passedCount: 1 })
     const registry = registryWith({ handoff, analysis: readerOf(undefined) })
@@ -477,7 +451,7 @@ describe('analysis.get — the evidence projection (D-01)', () => {
   })
 })
 
-describe('analysis.get — read-time presence on cited artifacts (D-17)', () => {
+describe('analysis.get — read-time presence on cited artifacts', () => {
   async function citedArtifactUnder(
     evidenceBlobs: EvidenceBlobReaderPort | undefined,
     refs: Verdict['evidence']['citedArtifacts'] = [{ id: `decision-screenshot:${CITED_SHA}`, sha: CITED_SHA }],
@@ -558,10 +532,7 @@ describe('analysis.get — read-time presence on cited artifacts (D-17)', () => 
   })
 
   it('stats each distinct sha ONCE within the ref list it is handed', async () => {
-    // WITHIN one verdict's cited list, which is the scope `annotatePresence` dedups over and the
-    // scope this cell measures. The cross-verdict case — 40 members citing one screenshot — is NOT
-    // collapsed, because both callers invoke the annotation per member; that residual is recorded
-    // on `evidence-presence.ts` rather than mitigated (T-406-12).
+    // Dedup is per verdict; a blob cited across verdicts is asked once per member.
     const seen: string[] = []
     const other = 'b'.repeat(64)
     await citedArtifactUnder(blobsAnswering('found', seen), [
@@ -573,37 +544,30 @@ describe('analysis.get — read-time presence on cited artifacts (D-17)', () => 
   })
 })
 
-// D-12 through the op, and the census that keeps it single (406-04, DETL-04).
-//
-// Two claims, and the second is what makes the first durable. The op serves the CLEANED
-// sentence — the 399 seeded-red quote read as an escape stream on every surface — and its
-// cluster representative is that same string, looked up rather than re-rendered. The census
-// then reads the source of every surface package and pins that exactly ONE file spells
-// `observed (step`: a second composer would be a second sentence for one verdict, which is
-// precisely the drift D-12 exists to forbid.
+// The op serves the cleaned sentence; the scan below pins one source composing `observed (step`.
 
 const ESC = '\u001b'
 
-/** Copied from `demo/acceptance/399/399-analysis-seeded-red.json` — Playwright's raw error. */
-const SEEDED_RED_399_QUOTE =
+/** Playwright's raw timeout error from a seeded-red run. */
+const SEEDED_RED_QUOTE =
   'locator.click: Timeout 30000ms exceeded.\n'
   + 'Call log:\n'
   + `${ESC}[2m  - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()`
   + `${ESC}[22m\n`
 
-/** The readable form D-12 pins — every non-control word of the "before", in order, on one line. */
-const SEEDED_RED_399_READABLE =
+// Every non-control word of the raw quote, in order, on one line.
+const SEEDED_RED_READABLE =
   'locator.click: Timeout 30000ms exceeded. '
   + "Call log: - waiting for getByRole('button', { name: 'Close ad', exact: true }).first()"
 
-function seededRed399Artifact(handoff: CompletedRunHandoff): RunAnalysisArtifact {
+function seededRedArtifact(handoff: CompletedRunHandoff): RunAnalysisArtifact {
   return {
     schemaVersion: CURRENT_ANALYSIS_SCHEMA_VERSION,
     runId: String(handoff.runId),
     verdicts: [upgradedAppBug(0)],
     parts: [{
       perTest: 0,
-      groundingQuote: { stepIndex: 1, quote: SEEDED_RED_399_QUOTE },
+      groundingQuote: { stepIndex: 1, quote: SEEDED_RED_QUOTE },
       discriminator: 'root cause undetermined',
       nextAction: 'inspect the run manually — no deterministic signal matched',
       links: [],
@@ -644,22 +608,20 @@ function codeOf(path: string): string {
     .join('\n')
 }
 
-describe('analysis.get — the D-12 quote leg, through the ONE renderer (406)', () => {
-  it('serves the 399 seeded-red quote as readable prose — one renderer, one sentence', async () => {
+describe('analysis.get — the quote leg, through the ONE renderer', () => {
+  it('serves the recorded seeded-red quote as readable prose — one renderer, one sentence', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const registry = registryWith({
       handoff,
-      analysis: readerOf(seededRed399Artifact(handoff)),
+      analysis: readerOf(seededRedArtifact(handoff)),
     })
 
     const output = await analysisOf(registry, String(handoff.runId))
 
     expect(output.sentences[0]!.sentence)
-      .toContain(`observed (step 1): "${SEEDED_RED_399_READABLE}"`)
+      .toContain(`observed (step 1): "${SEEDED_RED_READABLE}"`)
     expect(output.sentences[0]!.sentence).not.toContain(ESC)
     expect(output.sentences[0]!.sentence).not.toContain('\n')
-    // The cluster LOOKS THE SENTENCE UP (D-15) rather than re-rendering it, so the cleaned
-    // form cannot drift between the per-test list and the cluster header.
     expect(output.clusters[0]!.representative.sentence).toBe(output.sentences[0]!.sentence)
   })
 
@@ -674,222 +636,75 @@ describe('analysis.get — the D-12 quote leg, through the ONE renderer (406)', 
   })
 })
 
-// ── 422 D-17/D-19/D-20: THE CIRCULARITY EVIDENCE THE OP CARRIES ONTO THE DTO.
-//
-// `analysis.get` is the ONE producer the failure view reads, and the circularity ledger 422-11
-// minted, 422-12 made durable and 422-15 stamped stopped at the verdict: the DTO listed class,
-// producer and confidence and nothing about the memory the run was served. These cells pin the
-// projection's whole contract — what it carries, what it refuses to carry, and the ABSENCE that
-// keeps every pre-422 run rendering exactly as it did.
+const CANDIDATE_RECORD = asRecordId('rec_cand_0001')
+const CANARY_RECORD = asRecordId('rec_canary_01')
 
-const HELD_RECORD = asRecordId('rec_held_0001')
-const FLIPPED_RECORD = asRecordId('rec_flipped_01')
-
-function misdirectionRow(
-  runId: string,
-  over: Partial<MisdirectionRecordResult> = {},
-): MisdirectionRecordResult {
-  return {
-    runId,
-    perTest: 0,
-    stepIndex: 0,
-    decisionOrdinal: 0,
-    recordId: HELD_RECORD,
-    handoffBaseDigest: 'a'.repeat(64),
-    briefDigest: 'b'.repeat(64),
-    corpusDigest: 'c'.repeat(64),
-    profileDigest: 'd'.repeat(64),
-    crossCheck: 'held',
-    seedHonored: true,
-    ...over,
-  }
-}
-
-describe('analysis.get — the circularity evidence projection (422 D-17/D-19/D-20)', () => {
-  it('carries the per-record ledger, the block word and the declaration onto the DTO', async () => {
+describe('analysis.get — the records a verdict declared on its failing path', () => {
+  it('carries the declared memoryOnPath onto the resolved verdict', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
-    const runId = String(handoff.runId)
     const artifact: RunAnalysisArtifact = {
       ...artifactFor(handoff),
       verdicts: [{
         ...upgradedAppBug(0),
         memoryOnPath: [
-          { recordId: HELD_RECORD, trust: 'candidate' },
-          { recordId: FLIPPED_RECORD, trust: 'low-trust-active' },
+          { recordId: CANDIDATE_RECORD, trust: 'candidate' },
+          { recordId: CANARY_RECORD, trust: 'candidate' },
         ],
-        misdirectionRuledOut: {
-          crossCheck: 'flipped',
-          results: [
-            misdirectionRow(runId),
-            misdirectionRow(runId, { recordId: FLIPPED_RECORD, crossCheck: 'flipped', stepIndex: 1 }),
-          ],
-        },
       }],
     }
     const output = await analysisOf(
       registryWith({ handoff, analysis: readerOf(artifact) }),
-      runId,
+      String(handoff.runId),
     )
 
-    const misdirection = output.verdicts[0]?.misdirection
-    expect(misdirection?.state, 'a real ledger is MEASURED, never declared-only').toBe('measured')
-    expect(misdirection?.crossCheck, "the block's own word, not a recount").toBe('flipped')
-    expect(misdirection?.results).toEqual([
-      { recordId: HELD_RECORD, crossCheck: 'held' },
-      { recordId: FLIPPED_RECORD, crossCheck: 'flipped' },
-    ])
-    expect(misdirection?.memoryOnPath).toEqual([
-      { recordId: HELD_RECORD, trust: 'candidate' },
-      { recordId: FLIPPED_RECORD, trust: 'low-trust-active' },
+    expect(output.verdicts[0]?.memoryOnPath).toEqual([
+      { recordId: CANDIDATE_RECORD, trust: 'candidate' },
+      { recordId: CANARY_RECORD, trust: 'candidate' },
     ])
   })
 
-  it('OMITS the member entirely for a verdict that said nothing about circularity', async () => {
+  it('omits the member for a verdict that declared nothing', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const output = await analysisOf(
       registryWith({ handoff, analysis: readerOf(artifactFor(handoff)) }),
       String(handoff.runId),
     )
 
-    // ABSENT, not `{ state: 'not-recorded' }`. Every pre-422 run and the deterministic floor land
-    // here, and a member on every one of them would change what a historical failure view paints.
     expect(output.verdicts[0], 'the verdict is still served').toBeDefined()
-    expect('misdirection' in (output.verdicts[0] as object)).toBe(false)
+    expect('memoryOnPath' in (output.verdicts[0] as object)).toBe(false)
   })
 
-  it('keeps a DECLARED path with no ledger at not-recorded, and never invents a backing', async () => {
+  it('keeps an empty declaration empty', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 1 })
     const artifact: RunAnalysisArtifact = {
       ...artifactFor(handoff),
-      verdicts: [{
-        ...upgradedAppBug(0),
-        memoryOnPath: [{ recordId: HELD_RECORD, trust: 'candidate' }],
-      }],
+      verdicts: [{ ...upgradedAppBug(0), memoryOnPath: [] }],
     }
     const output = await analysisOf(
       registryWith({ handoff, analysis: readerOf(artifact) }),
       String(handoff.runId),
     )
 
-    const misdirection = output.verdicts[0]?.misdirection
-    expect(misdirection?.state, 'a declaration nobody cross-checked is NOT a result').toBe('not-recorded')
-    expect(misdirection?.crossCheck).toBeUndefined()
-    expect(misdirection?.results).toBeUndefined()
-    expect(misdirection?.backing, 'never the D-19 exemption').toBeUndefined()
-    expect(misdirection?.memoryOnPath).toEqual([{ recordId: HELD_RECORD, trust: 'candidate' }])
+    expect(output.verdicts[0]?.memoryOnPath).toEqual([])
   })
 
-  it('reports the D-19 declared-only backing as its own state, and keeps an EMPTY declaration empty', async () => {
-    const handoff = buildSyntheticHandoff({ failureCount: 1 })
-    const artifact: RunAnalysisArtifact = {
-      ...artifactFor(handoff),
-      verdicts: [{
-        ...upgradedAppBug(0),
-        memoryOnPath: [],
-        misdirectionRuledOut: { crossCheck: 'not-run', results: [], backing: 'declared-only' },
-      }],
-    }
-    const output = await analysisOf(
-      registryWith({ handoff, analysis: readerOf(artifact) }),
-      String(handoff.runId),
-    )
-
-    const misdirection = output.verdicts[0]?.misdirection
-    expect(misdirection?.state).toBe('declared-only')
-    expect(misdirection?.backing).toBe('declared-only')
-    expect(misdirection?.results).toEqual([])
-    // `[]` IS A CLAIM — the author declared no records — and it is not the absence above.
-    expect(misdirection?.memoryOnPath).toEqual([])
-  })
-
-  it('forwards a CLOSED not-run word and drops a reason string this DTO may not carry', async () => {
-    const handoff = buildSyntheticHandoff({ failureCount: 1 })
-    const runId = String(handoff.runId)
-    const artifact: RunAnalysisArtifact = {
-      ...artifactFor(handoff),
-      verdicts: [{
-        ...upgradedAppBug(0),
-        misdirectionRuledOut: {
-          crossCheck: 'not-run',
-          results: [
-            misdirectionRow(runId, { crossCheck: 'not-run', reason: 'posture-unavailable' }),
-            misdirectionRow(runId, {
-              recordId: FLIPPED_RECORD,
-              crossCheck: 'not-run',
-              stepIndex: 1,
-              // A root read failure's verbatim text. It has no masking boundary of its own, and
-              // this DTO crosses into a browser; the closed word above is the whole disclosure.
-              reason: 'ENOENT: open /Users/someone/secret-root/corpus.json',
-            }),
-          ],
-        },
-      }],
-    }
-    const output = await analysisOf(
-      registryWith({ handoff, analysis: readerOf(artifact) }),
-      runId,
-    )
-
-    expect(output.verdicts[0]?.misdirection?.results).toEqual([
-      { recordId: HELD_RECORD, crossCheck: 'not-run', reason: 'posture-unavailable' },
-      { recordId: FLIPPED_RECORD, crossCheck: 'not-run' },
-    ])
-    expect(JSON.stringify(output), 'no producer path text on the wire').not.toContain('secret-root')
-  })
-
-  it('carries NO digest, sample or identity binding from the durable row', async () => {
-    const handoff = buildSyntheticHandoff({ failureCount: 1 })
-    const runId = String(handoff.runId)
-    const artifact: RunAnalysisArtifact = {
-      ...artifactFor(handoff),
-      verdicts: [{
-        ...upgradedAppBug(0),
-        misdirectionRuledOut: {
-          crossCheck: 'held',
-          results: [misdirectionRow(runId, { samples: { k: 3, seeds: [7, 8, 9], modelCalls: 3 } })],
-        },
-      }],
-    }
-    const output = await analysisOf(
-      registryWith({ handoff, analysis: readerOf(artifact) }),
-      runId,
-    )
-
-    const wire = JSON.stringify(output.verdicts[0]?.misdirection)
-    for (const digest of ['a'.repeat(64), 'b'.repeat(64), 'c'.repeat(64), 'd'.repeat(64)]) {
-      expect(wire, 'a row identity is not a fact a reader acts on').not.toContain(digest)
-    }
-    expect(wire).not.toContain('samples')
-    expect(wire).not.toContain('seedHonored')
-  })
-
-  it('gives each member its OWN evidence — no verdict inherits a sibling attribution', async () => {
+  it('gives each member its own declaration', async () => {
     const handoff = buildSyntheticHandoff({ failureCount: 2 })
-    const runId = String(handoff.runId)
     const artifact: RunAnalysisArtifact = {
       ...artifactFor(handoff),
       verdicts: [
-        {
-          ...upgradedAppBug(0),
-          misdirectionRuledOut: {
-            crossCheck: 'flipped',
-            results: [misdirectionRow(runId, { recordId: FLIPPED_RECORD, crossCheck: 'flipped' })],
-          },
-        },
-        { ...upgradedAppBug(1), memoryOnPath: [{ recordId: HELD_RECORD, trust: 'candidate' }] },
+        upgradedAppBug(0),
+        { ...upgradedAppBug(1), memoryOnPath: [{ recordId: CANDIDATE_RECORD, trust: 'candidate' }] },
       ],
       parts: [],
     }
     const output = await analysisOf(
       registryWith({ handoff, analysis: readerOf(artifact) }),
-      runId,
+      String(handoff.runId),
     )
 
-    const byMember = new Map(output.verdicts.map((entry) => [entry.perTest, entry.misdirection]))
-    expect(byMember.get(0)?.state).toBe('measured')
-    expect(byMember.get(0)?.results?.map((row) => row.recordId)).toEqual([FLIPPED_RECORD])
-    expect(byMember.get(0)?.memoryOnPath, "member 0 declared nothing").toBeUndefined()
-    expect(byMember.get(1)?.state, 'member 1 cross-checked nothing').toBe('not-recorded')
-    expect(byMember.get(1)?.results, 'and inherits no ledger').toBeUndefined()
+    const byMember = new Map(output.verdicts.map((entry) => [entry.perTest, entry.memoryOnPath]))
+    expect(byMember.get(0)).toBeUndefined()
+    expect(byMember.get(1)).toEqual([{ recordId: CANDIDATE_RECORD, trust: 'candidate' }])
   })
 })

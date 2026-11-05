@@ -26,13 +26,11 @@ import {
   NO_UNIQUE_ADDRESS_TEXT,
   PREVIEW_DEBOUNCE_MS,
   SENDING_STATUS,
-  SUBMIT_REASON_INVALID_CORRECTION,
   SUBMIT_REASON_NO_UNIQUE_ADDRESS,
   SUBMIT_REASON_SENDING,
   feedbackEntryLabel,
   feedbackRecordedText,
 } from "@/lib/feedback-view"
-import { CORRECTED_ACTION_LABEL, CORRECTED_EXPECTATION_LABEL } from "@/components/run-detail/mark-correction-fields"
 import type { FeedbackEntryButtonProps } from "@/components/run-detail/feedback-entry"
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -62,15 +60,13 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   markRun: markRunMock,
   fetchRun: fetchRunMock,
   fetchRunDetail: fetchRunDetailMock,
-  // 2026-08-29 (406-01, D-04): the page's THIRD read — the failure view's. This whole-module
-  // mock replaces `@/lib/api`, so an omitted export is `undefined` at the call site and every
-  // cell here dies before it asserts. Its own behaviour is measured in `run-detail.analysis.test.tsx`.
+  // This mock replaces `@/lib/api`, so an omitted export would kill every cell before it asserts.
   fetchRunAnalysis: fetchRunAnalysisMock,
   fetchRunKnowledge: () => Promise.resolve({ kind: 'evidence-incomplete', runId: '' }),
   fetchRunArtifact: fetchRunArtifactMock,
   fetchExecutionLogs: fetchExecutionLogsMock,
   fetchRunEvidence: () => Promise.resolve({ kind: 'failed', error: 'Evidence read not configured in this fixture' }),
-  // The composer's two reads (426 Pitfall 7): without them the real helpers would fetch.
+  // The composer's two reads; without them the real helpers would fetch.
   fetchMarkPreview: fetchMarkPreviewMock,
   fetchMarksHistory: fetchMarksHistoryMock,
   triggerRun: vi.fn(),
@@ -229,14 +225,12 @@ function runRow(id: string, over: Record<string, unknown> = {}) {
     endedAt: "2026-04-18T00:00:10.000Z",
     failureSummary: null,
     errorLog: null,
-    memoryLog: null,
     testId: null,
     suiteId: "s_suite",
     platform: "web",
     testFileContent: null,
     modelName: null,
     llmProvider: null,
-    parentRunId: null,
     attemptNumber: 1,
     retryCount: 0,
     maxRetries: 0,
@@ -292,7 +286,7 @@ async function renderAt(url: string) {
   return container
 }
 
-/** A consequences read covering exactly one recorded decision, so the corrected-action field shows. */
+/** A consequences read covering exactly one recorded decision. */
 function previewFor(input: { kind: Mark; testId?: string; stepIndex?: number }): RunsMarkPreviewResult {
   return RunsMarkPreviewResultSchema.parse({
     kind: 'consequences',
@@ -303,9 +297,6 @@ function previewFor(input: { kind: Mark; testId?: string; stepIndex?: number }):
     resolvedStep: { stepIndex: input.stepIndex ?? 2, reason: input.stepIndex === undefined ? 'failing-step' : 'step-mark' },
     latest: { kind: 'first' },
     basis: { ledgerOrdinal: 0 },
-    markedDecisionCount: 1,
-    groundTruth: [],
-    labels: [],
     knowledge: { servedRecordIds: [], appendsEvidence: false, records: [], evidence: { confirmed: 0, overturned: 0 } },
     draft: input.kind === 'confirmed-bug'
       ? { kind: 'confirmed-bug' }
@@ -327,9 +318,7 @@ function historyOf(entries: readonly (Record<string, unknown> & { markId: string
         ordinal: index + 1,
         markedAt: Date.UTC(2026, 8, 23, 10, index),
         disposition: { kind: 'no-draftable-fix', checked: { servedRecords: 0, procedureReads: 0, assertionDrift: false } },
-        gold: [],
         evidence: { confirmed: 0, overturned: 0 },
-        corrected: { expectation: false, action: false },
         active: true,
         ...entry,
       })),
@@ -365,8 +354,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-// 426-12: the pill forms' scopes, re-addressed to the one composer. A target is the composer address
-// it opens and the explicit act that opens it there.
+// A target is the composer address it opens and the explicit act that opens it there.
 interface ComposerTarget {
   address: string
   open: () => Promise<void>
@@ -392,15 +380,10 @@ function memberTarget(testIndex: number): ComposerTarget {
     },
   }
 }
-const ACTION_TEXT = '{"type":"click","ref":"e1"}'
 const composer = () => container!.querySelector<HTMLElement>('[data-feedback-composer]')
 const composerTarget = () => composer()?.getAttribute('data-feedback-target') ?? null
 function inComposer<T extends Element = HTMLElement>(selector: string) {
   return composer()?.querySelector<T>(selector) ?? null
-}
-function labelled(text: string) {
-  const label = [...(composer()?.querySelectorAll('label') ?? [])].find(entry => entry.textContent === text)
-  return label === undefined ? null : document.getElementById(label.htmlFor) as HTMLTextAreaElement | null
 }
 const statusText = () => inComposer('[data-feedback-status]')?.textContent
 const submitButton = () => inComposer('[data-feedback-submit]')!
@@ -427,22 +410,16 @@ async function openComposer(target: ComposerTarget) {
   await settle()
   expect(composerTarget()).toBe(target.address)
 }
-async function draft(target: ComposerTarget, action: string | null = ACTION_TEXT) {
+async function draft(target: ComposerTarget) {
   await openComposer(target)
   await click(choice('false-fail'))
   await settle()
   await type(inComposer('[data-feedback-note]'), 'Keep this note')
-  await click('[data-feedback-composer] [data-feedback-correction]')
-  await type(labelled(CORRECTED_EXPECTATION_LABEL), 'Keep this expectation')
-  if (action !== null) await type(labelled(CORRECTED_ACTION_LABEL), action)
   await settle()
 }
-async function expectDraft(target: ComposerTarget, action: string | null = ACTION_TEXT) {
+async function expectDraft(target: ComposerTarget) {
   await openComposer(target)
   expect(inComposer<HTMLTextAreaElement>('[data-feedback-note]')?.value).toBe('Keep this note')
-  expect(labelled(CORRECTED_EXPECTATION_LABEL)?.value).toBe('Keep this expectation')
-  if (action === null) expect(labelled(CORRECTED_ACTION_LABEL)).toBeNull()
-  else expect(labelled(CORRECTED_ACTION_LABEL)?.value).toBe(action)
 }
 async function submitFeedback() {
   await click('[data-feedback-composer] [data-feedback-submit]')
@@ -456,7 +433,7 @@ async function send(target: ComposerTarget, kind: Mark) {
 function refreshed(target: ComposerTarget, receipt = marked): RunDetailProjection {
   return { ...initial, members: [{ ...initial.members[0], marks: [{ ...receipt, ...(target === STEP_TARGET ? { stepIndex: 2 } : {}) }] }] }
 }
-/** runs.detail answers `before` until a mark has been sent, then `after` (426 re-reads it on every open). */
+/** runs.detail answers `before` until a mark is sent, then `after`, re-read on every open. */
 function detailAcrossMark(before: RunDetailProjection, after: () => RunDetailProjection | Promise<RunDetailProjection>) {
   fetchRunDetailMock.mockImplementation(async () => markRunMock.mock.calls.length > 0 ? after() : before)
 }
@@ -465,10 +442,10 @@ async function navigateTo(id: string) {
   await click('[data-navigate]')
 }
 
-/** The page's own sentence for a failed mark (2026-10-02, 432-42: no typed denial is left). */
+// The page's own sentence for a failed mark.
 const MARK_FAILED_TEXT = 'Could not complete the mark or refresh its receipt.'
 
-describe('419-15 scoped draft lifecycle', () => {
+describe('scoped draft lifecycle', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     fetchRunDetailMock.mockResolvedValue(initial)
@@ -503,14 +480,14 @@ describe('419-15 scoped draft lifecycle', () => {
     expect(fetchMarksHistoryMock.mock.calls.length).toBeGreaterThan(historyReads)
   })
   for (const [name, target] of [['test', TEST_TARGET], ['step', STEP_TARGET]] as const) {
-    it.each(['denied', 'no-channel', 'ambiguous-correction', 'run-not-found', 'transport', 'refetch', 'wrong-run', 'missing', 'wrong-member', 'wrong-step', 'wrong-id', 'wrong-ordinal', 'wrong-kind'])('retains %s on the ' + name + ' target', async failure => {
+    it.each(['denied', 'no-channel', 'run-not-found', 'transport', 'refetch', 'wrong-run', 'missing', 'wrong-member', 'wrong-step', 'wrong-id', 'wrong-ordinal', 'wrong-kind'])('retains %s on the ' + name + ' target', async failure => {
       const base = failure === 'wrong-member'
         ? { ...initial, members: [...initial.members, member(8, { testId: generateTestId(), marks: [] })] }
         : initial
-      // 2026-10-02 (432-42, D-15): no typed denial is left; both legacy denial shapes are failed requests.
+      // Both legacy denial shapes are failed requests.
       if (failure === 'denied' || failure === 'no-channel') markRunMock.mockRejectedValue(new Error(failure))
       else if (failure === 'transport') markRunMock.mockRejectedValue(new Error('offline'))
-      else if (failure === 'ambiguous-correction' || failure === 'run-not-found') markRunMock.mockResolvedValue({ kind: failure })
+      else if (failure === 'run-not-found') markRunMock.mockResolvedValue({ kind: failure })
       else {
         markRunMock.mockResolvedValue({ kind: 'marked', receipt: marked })
         let next = refreshed(target)
@@ -534,30 +511,18 @@ describe('419-15 scoped draft lifecycle', () => {
       }
       expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
     })
-    it('keeps the choice, invalid text and field identity across a choice change and a close on the ' + name + ' target', async () => {
+    it('keeps the choice, the note and its field identity across a choice change and a close on the ' + name + ' target', async () => {
       await renderAt(`/runs/${RUN_ID}`)
       await draft(target)
-      await type(labelled(CORRECTED_ACTION_LABEL), '{')
-      await settle()
       const note = inComposer('[data-feedback-note]')
-      const expectation = labelled(CORRECTED_EXPECTATION_LABEL)
-      const field = labelled(CORRECTED_ACTION_LABEL)
-      await click(choice('false-fail'))
-      await settle()
-      expect(labelled(CORRECTED_ACTION_LABEL)).toBe(field)
       await click(choice('false-pass'))
       await settle()
-      await expectDraft(target, '{')
+      await expectDraft(target)
       expect(inComposer('[data-feedback-note]')).toBe(note)
-      expect(labelled(CORRECTED_EXPECTATION_LABEL)).toBe(expectation)
       expect(container!.querySelector(choice('false-pass'))?.getAttribute('aria-checked')).toBe('true')
-      expect(labelled(CORRECTED_ACTION_LABEL)?.getAttribute('aria-invalid')).toBe('true')
-      expect(submitButton().getAttribute('aria-disabled')).toBe('true')
-      expect(submitReason()).toBe(SUBMIT_REASON_INVALID_CORRECTION)
-      await submitFeedback()
       await click('[data-feedback-composer] [data-feedback-close]')
       expect(composer()).toBeNull()
-      await expectDraft(target, '{')
+      await expectDraft(target)
       expect(container!.querySelector(choice('false-pass'))?.getAttribute('aria-checked')).toBe('true')
       expect(markRunMock).not.toHaveBeenCalled()
     })
@@ -574,8 +539,7 @@ describe('419-15 scoped draft lifecycle', () => {
   it('keeps a second member draft and denial isolated across subsequent submissions', async () => {
     const secondId = generateTestId()
     fetchRunDetailMock.mockResolvedValue({ ...initial, members: [...initial.members, member(8, { testId: secondId, marks: [] })], steps: [...initial.steps, step(8, 2, 'Other cart')] })
-    // 2026-10-02 (432-42, D-15): no typed denial is left; each failed request is told apart by the
-    // address its denial renders at, not by a server-supplied reason.
+    // Each failed request is told apart by the address its denial renders at.
     markRunMock.mockRejectedValueOnce(new Error('First member denied'))
       .mockRejectedValueOnce(new Error('Second member denied'))
     await renderAt(`/runs/${RUN_ID}`)
@@ -602,11 +566,11 @@ describe('419-15 scoped draft lifecycle', () => {
     fetchRunDetailMock.mockResolvedValue({ ...initial, members: [...initial.members, member(8, { testId: TEST_ID, marks: [] })] })
     await renderAt(`/runs/${RUN_ID}`)
     const target = memberTarget(7)
-    await draft(target, null)
+    await draft(target)
     expect(submitButton().getAttribute('aria-disabled')).toBe('true')
     expect(submitReason()).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS)
     await submitFeedback()
-    await expectDraft(target, null)
+    await expectDraft(target)
     expect(markRunMock).not.toHaveBeenCalled()
     expect(fetchMarkPreviewMock).not.toHaveBeenCalled()
     expect(inComposer('[data-feedback-no-address]')?.textContent).toContain(NO_UNIQUE_ADDRESS_TEXT)
@@ -689,7 +653,7 @@ async function click(selector: string) {
 const targetHistory = () =>
   [...(composer()?.querySelectorAll('[data-feedback-history="target"] [data-history-entry]') ?? [])].map(entry => entry.getAttribute('data-mark-id'))
 
-describe('419 page mark post/refetch', () => {
+describe('page mark post/refetch', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     fetchRunDetailMock.mockResolvedValue(initial)
@@ -759,8 +723,6 @@ describe('419 page mark post/refetch', () => {
     expect(statusText()).toBe(DRAFT_KEPT_STATUS)
     expect(container!.textContent).not.toContain(feedbackRecordedText(marked.disposition))
   })
-  // RE-TITLED 2026-10-02 (432-42, D-15) from 'renders a typed denial as its reason only, without a
-  // refetch or invented mark': no typed denial is left, so a failed mark renders the page's sentence.
   it('renders a failed mark as the page\'s one sentence, without a refetch or invented mark', async () => {
     markRunMock.mockRejectedValue(new Error('The safety gate denied this mark.'))
     await renderAt(`/runs/${RUN_ID}`)

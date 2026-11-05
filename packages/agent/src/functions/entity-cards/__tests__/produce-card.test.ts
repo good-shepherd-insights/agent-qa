@@ -1,17 +1,4 @@
-// The ONE card producer, over all five kinds (Phase 387 plan 07, ENTY-02 / D-04 / D-10 / D-12).
-//
-// The gates here are shaped against the failure this phase keeps finding — a check whose LOGIC
-// is sound but whose INPUT DOMAIN never contains a case it could reject. Three of them are
-// written specifically to have such a case:
-//
-//   - determinism is measured against SHUFFLED store input, not against two calls with the
-//     same array. Two renders of one array are trivially equal for any pure map, so that
-//     comparison cannot reject a projection that preserves arrival order;
-//   - `url`'s absence is asserted as key PRESENCE (`'url' in card`), because `card.url ===
-//     undefined` is satisfied by a card that carries the key with an undefined value, and by
-//     a card that carries it as an empty string once `z.url()` stops being consulted;
-//   - the two-render equality varies something between the renders that must NOT reach the
-//     card, so it can reject a producer that started reading it.
+// Each gate is built to have a case it can reject, such as shuffled store input.
 
 import {
   FORGET_RECEIPT_SCHEMA_VERSION,
@@ -51,7 +38,7 @@ import { ForgetReceiptKindError, produceEntityCard } from '../produce-card.js'
 
 // ---- fixtures ---------------------------------------------------------------------------
 
-/** A short-ID in each kind's own address FORM (D-03): four ordinal, `TGT` slug. */
+// A short-ID in each kind's own address form; `TGT` uses a slug.
 const SHORT_IDS = {
   TST: 'TST-001',
   RUN: 'RUN-002',
@@ -122,7 +109,7 @@ function receipt(overrides: Partial<ForgetReceiptV1> = {}): ForgetReceiptV1 {
 
 // ---- Test 1: per-kind facts, closed statuses, deterministic order -------------------------
 
-describe('every kind renders through the one producer (D-12)', () => {
+describe('every kind renders through the one producer', () => {
   it('renders each kind with a status its own closed vocabulary declares', () => {
     for (const kind of ENTITY_KINDS) {
       for (const status of ENTITY_STATUSES[kind]) {
@@ -192,12 +179,7 @@ describe('every kind renders through the one producer (D-12)', () => {
   })
 
   it('is bounded BY CONSTRUCTION across the whole projection table', () => {
-    // A mutation probe measured the first version of this case vacuous: it asserted the bound
-    // against a 400-record receipt, and the projection emits five facts for any receipt, so a
-    // removed truncation left it green. The bound is not carried by a truncation — it is
-    // carried by the receipt rendering as ONE fact per QUANTITY rather than one per record,
-    // and that is what the corpus below has to be able to reject. Every kind, every declared
-    // status, with and without a receipt of 400 records.
+    // One fact per quantity, not per record, keeps every kind and status bounded.
     const many = receipt({
       tombstonedRecords: Array.from({ length: 400 }, (_unused, index) => ({
         recordId: `rec-${String(index).padStart(4, '0')}`,
@@ -219,15 +201,14 @@ describe('every kind renders through the one producer (D-12)', () => {
     const forgotten = produceEntityCard(descriptorFor('MEM'), { forgetReceipt: many })
     expect(forgotten.keyFacts.length).toBeLessThanOrEqual(ENTITY_CARD_MAX_KEY_FACTS)
 
-    // …and the enumeration inside the fact that carries it is COMPLETE (D-19: nothing
-    // silently partial). A truncation would have satisfied the bound and failed this.
+    // The enumeration is complete; a truncation would satisfy the bound and fail here.
     const ids = forgotten.keyFacts.find(
       (fact) => fact.label === FORGET_RECEIPT_FACT_LABELS.recordIds,
     )
     expect(ids?.value.split(', ')).toHaveLength(400)
   })
 
-  it('shows a rename ONLY on the slug-addressed kind, decided by the table (D-03)', () => {
+  it('shows a rename ONLY on the slug-addressed kind, decided by the table', () => {
     // The table is the one mechanism. Every kind is fed a descriptor carrying a successor —
     // the ordinal-addressed kinds cannot legally have one, which is exactly why a projection
     // that read the field for them would be building an unrepresentable address.
@@ -244,9 +225,7 @@ describe('every kind renders through the one producer (D-12)', () => {
   })
 })
 
-// ---- Test 2: D-04 honest status --------------------------------------------------------
-
-describe('a minted address renders an honest card (D-04)', () => {
+describe('a minted address renders an honest card', () => {
   it('carries a tombstoned bundle forward as tombstoned, with its provenance', () => {
     const card = produceEntityCard(descriptorFor('MEM', { statusSource: 'tombstoned' }))
     expect(card.status).toBe('tombstoned')
@@ -255,7 +234,7 @@ describe('a minted address renders an honest card (D-04)', () => {
     ])
   })
 
-  it("lets a forget receipt OVERRIDE a store status that has not caught up (D-19)", () => {
+  it("lets a forget receipt OVERRIDE a store status that has not caught up", () => {
     // The descriptor still says `active` because some projection is behind; the receipt is
     // what the permanent address resolves to afterwards, and it wins.
     const card = produceEntityCard(
@@ -279,7 +258,7 @@ describe('a minted address renders an honest card (D-04)', () => {
       .toThrow(ForgetReceiptKindError)
   })
 
-  it('shows a renamed target its successor, as a resolvable link (D-03)', () => {
+  it('shows a renamed target its successor, as a resolvable link', () => {
     const card = produceEntityCard(
       descriptorFor('TGT', { statusSource: 'renamed', successorMachineId: 'checkout-v2' }),
     )
@@ -292,8 +271,7 @@ describe('a minted address renders an honest card (D-04)', () => {
   })
 
   it('never builds a rename link for an ordinal-addressed kind', () => {
-    // `MEM-checkout-v2` is not a wrong link, it is an unrepresentable address (D-03). The
-    // resolver only sets the field for TGT; this guards the producer's own input domain.
+    // The resolver sets the field only for TGT; this guards the producer's own input domain.
     const card = produceEntityCard(
       descriptorFor('MEM', { successorMachineId: 'checkout-v2' }),
     )
@@ -302,9 +280,7 @@ describe('a minted address renders an honest card (D-04)', () => {
   })
 })
 
-// ---- Test 3: D-10 url --------------------------------------------------------------------
-
-describe('url is config-derived and absent by default (D-10)', () => {
+describe('url is config-derived and absent by default', () => {
   it('omits the KEY on every kind when no dashboard base is configured', () => {
     for (const kind of ENTITY_KINDS) {
       const card = produceEntityCard(descriptorFor(kind))
@@ -340,10 +316,7 @@ describe('url is config-derived and absent by default (D-10)', () => {
   })
 
   it('treats a base the masker ALTERED as no base at all', () => {
-    // `services.dashboard.baseUrl` is a registered address leaf, so a base carrying a path is
-    // reduced to its origin and flagged. Rendering against the reduction would drop the path
-    // prefix from every card link — a dead link shown with confidence, which is what D-10
-    // forbids. The flag is read; the value's characters are never inspected.
+    // A base with a path is reduced to its origin and flagged, so the card gets no url at all.
     const base = readDashboardUrlBase(maskedConfig([
       {
         key: DASHBOARD_BASE_URL_CONFIG_KEY,
@@ -377,9 +350,7 @@ describe('url is config-derived and absent by default (D-10)', () => {
   })
 })
 
-// ---- Test 4: idempotence, the empty edge, and D-12's no-model law -------------------------
-
-describe('rendering is pure (ENTY-02 idempotency + empty edges)', () => {
+describe('rendering is pure (idempotency and empty edges)', () => {
   it('is deeply equal across renders that vary something the card must not read', () => {
     // The input domain again: two renders of ONE input are equal for any pure function, so
     // the case that can reject a producer here is one where something DID change — a context
@@ -398,7 +369,7 @@ describe('rendering is pure (ENTY-02 idempotency + empty edges)', () => {
     expect(Array.isArray(card.actions)).toBe(true)
   })
 
-  it('has no model, LLM or provider import anywhere in the fact projections (D-12)', () => {
+  it('has no model, LLM or provider import anywhere in the fact projections', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../key-facts.ts', import.meta.url)),
       'utf8',
@@ -411,21 +382,15 @@ describe('rendering is pure (ENTY-02 idempotency + empty edges)', () => {
     expect(forbiddenModelImports(planted)).toEqual(['@vostride/agent-qa-model'])
 
     // INVERSE CONTROL: the module header names every one of those words in prose, and prose
-    // must not be flagged — the `validate:arch` extractor's own known failure mode.
+    // must not be flagged as an import.
     expect(forbiddenModelImports('// this file must never import a model or an llm provider\n'))
       .toEqual([])
   })
 })
 
-// ---- Test N: the TST quarantine flip (390 D-11/D-12, the 387 D-12 status member) ----------
-//
-// The `'quarantined'` member has been in `ENTITY_STATUSES.TST` since 387; this is the wiring
-// that serves it. Every leg below varies exactly ONE thing against the same fixture, because
-// "renders active" is the answer to four genuinely different situations — no entry, a lapsed
-// entry, a closed entry, and a store that never reported the durable identity — and a suite
-// that pinned only "absent → active" could not tell them apart.
+// Each leg varies one thing, because `active` answers several different situations.
 
-describe('the TST card serves quarantine state from the ledger (390)', () => {
+describe('the TST card serves quarantine state from the ledger', () => {
   const TEST_IDENTITY = {
     product: 'shop',
     filePath: 'tests/checkout.spec.ts',
@@ -504,7 +469,7 @@ describe('the TST card serves quarantine state from the ledger (390)', () => {
     expect(card.keyFacts.length).toBeLessThanOrEqual(ENTITY_CARD_MAX_KEY_FACTS)
   })
 
-  it('serves EXPIRED as active — suppression stopped, so the card must not claim it (D-11)', () => {
+  it('serves EXPIRED as active — suppression stopped, so the card must not claim it', () => {
     const card = produceEntityCard(tstDescriptor(), { quarantine: [entry({ state: 'expired' })] })
 
     expect(card.status).toBe('active')
@@ -526,10 +491,7 @@ describe('the TST card serves quarantine state from the ledger (390)', () => {
   })
 
   it('serves active when the store reported no durable identity to join on', () => {
-    // The join is on `(product, filePath, testName)` — never on the machine id, which is the
-    // per-run explicit test id and not a durable identity. A descriptor with no reported
-    // identity is a store that cannot answer the question, and inventing a match from the
-    // title is exactly the plausible-but-wrong attribution D-12 refuses.
+    // Joined on (product, filePath, testName), never the per-run machine id or the title.
     const card = produceEntityCard(descriptorFor('TST'), { quarantine: [entry()] })
 
     expect(card.status).toBe('active')

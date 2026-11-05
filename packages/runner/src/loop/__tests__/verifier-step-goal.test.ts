@@ -1,7 +1,3 @@
-// P6 (quick 261004-lsa): the verifier's stable tier states the expected-error rule and the
-// unrelated-error policy, and says which block of the request comes from the test definition
-// (text C). The per-call header is text B with the step position. 439 (D-11) re-pinned the tier
-// once to the per-condition contract; 446-11 (D-25) added the requested dialog account.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { generateText } from 'ai'
 import { asRef } from '@vostride/agent-qa-schema'
@@ -53,7 +49,7 @@ const before = makeScreenState()
 const after = makeScreenState({ url: 'https://example.test/after' })
 const action: Action = { type: 'click', ref: asRef('e2') }
 
-describe('buildVerifierStableTier — per-condition contract, expected errors and the error policy (P6, P2, 439 D-11)', () => {
+describe('buildVerifierStableTier — per-condition contract, expected errors and the error policy', () => {
   it('produces the pinned bytes', () => {
     expect(buildVerifierStableTier()).toBe(PINNED_STABLE)
   })
@@ -100,7 +96,7 @@ describe('buildVerifierStableTier — per-condition contract, expected errors an
   })
 })
 
-describe('buildVerificationPrompt — AI-judged actions are unverified planner claims (P5a)', () => {
+describe('buildVerificationPrompt — AI-judged actions are unverified planner claims', () => {
   it('renders an assertAI action as observation only with the unverified claim', () => {
     const assertAi = { type: 'assertAI', claim: 'The header is shown', mode: 'multimodal' } as unknown as Action
     const out = buildVerificationPrompt('Verify the header', before, after, assertAi, true, '', undefined)
@@ -108,7 +104,7 @@ describe('buildVerificationPrompt — AI-judged actions are unverified planner c
   })
 
   it('renders an extractAI action as observation only with the extraction query', () => {
-    const extractAi = { type: 'extractAI', query: 'the page title', scope: 'run' } as unknown as Action
+    const extractAi = { type: 'extractAI', query: 'the page title' } as unknown as Action
     const out = buildVerificationPrompt('Read the page title', before, after, extractAi, true, '', undefined)
     expect(out).toContain('Action taken: observation only; planner\'s extraction query: "the page title"')
   })
@@ -119,7 +115,7 @@ describe('buildVerificationPrompt — AI-judged actions are unverified planner c
   })
 })
 
-describe('VerificationResultSchema — isAppError excludes expected errors (P6)', () => {
+describe('VerificationResultSchema — isAppError excludes expected errors', () => {
   it('says an expected error is not an application error', () => {
     const description = VerificationResultSchema.shape.isAppError.description
     expect(description).toBe(
@@ -128,7 +124,7 @@ describe('VerificationResultSchema — isAppError excludes expected errors (P6)'
   })
 })
 
-describe('LLMVerifier — stable tier and the per-call header (P6, P2)', () => {
+describe('LLMVerifier — stable tier and the per-call header', () => {
   beforeEach(() => {
     vi.mocked(generateText).mockReset()
     vi.mocked(generateText).mockResolvedValue({
@@ -140,7 +136,7 @@ describe('LLMVerifier — stable tier and the per-call header (P6, P2)', () => {
   function sent(): { text: string; system: any[] } {
     const call = vi.mocked(generateText).mock.calls[0][0] as any
     const turn = call.messages[call.messages.length - 1]
-    return { text: turn.content[0].text, system: call.system }
+    return { text: turn.content[0].text, system: call.instructions }
   }
 
   it('sends the pinned tier as the system content, and the turn opens with the text B header and the position', async () => {

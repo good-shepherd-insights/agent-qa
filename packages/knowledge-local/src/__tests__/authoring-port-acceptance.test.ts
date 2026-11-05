@@ -66,7 +66,7 @@ function runLinkedProvenance(): BundleProvenance {
   }
 }
 
-describe('createAuthoringReader through the public barrels (375-08 idiom)', () => {
+describe('createAuthoringReader through the public barrels', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -83,7 +83,6 @@ describe('createAuthoringReader through the public barrels (375-08 idiom)', () =
     return {
       knowledgeRoot,
       productKey: PRODUCT,
-      commitArtifacts: 'none',
       writerLeaseId: 'authoring-acceptance',
     }
   }
@@ -166,9 +165,7 @@ describe('createAuthoringReader through the public barrels (375-08 idiom)', () =
         flake: false,
         anchorKeys: [canonicalJson(normalizeAnchor(LOGIN_PAGE))],
       }],
-      // 393 D-15: this fixture seeds the OUTCOME counters only. The suite-fingerprint deltas ride
-      // the same projection now, and an empty list is the honest value for a hand-built projection
-      // that carries no step evidence to derive elements from.
+      // An empty list is the honest value: a hand-built projection carries no step evidence.
       fingerprints: [],
     }
     const writer = openIndexWriter(knowledgeRoot)

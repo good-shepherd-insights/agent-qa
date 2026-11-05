@@ -16,7 +16,6 @@ import {
   type ProcedureBodyPayload,
   type RecordId,
   type ScopeKey,
-  type TrustPriorTable,
 } from '@vostride/agent-qa-schema'
 
 import {
@@ -26,7 +25,6 @@ import {
   type LoadedBundle,
 } from '../bundle-read.js'
 import { enumerateBundleDirs } from '../bundle-scan.js'
-import { snapshotTrustPriors } from '../promotion-gate-input.js'
 import type { AuthoredDeltaCheckpoint, DispositionProfile } from './author-contract.js'
 import {
   SCOPE_BURST_THRESHOLD,
@@ -41,20 +39,12 @@ import {
   type CanonicalBundleSnapshot,
 } from './lineage-fold.js'
 
-/** Provisional §7.3.1 cap. Phase 379 may retune it only through an explicit constant edit. */
 export const BLAST_RADIUS_MAX_SUPERSEDES_PER_ANCHOR_PER_DRAIN = 1
 
-// 407-04 (D-08/D-10): `canaryOutcomeObservationId` MOVED to `../serving/canary-observation-id.js`
-// and is re-exported here so every writer-side caller keeps its import path. The reader entry must
-// recompute the identity the writer stamped, and this file cannot be on that entry — it names the
-// bundle store and the curation queue payloads. One implementation, two
-// import paths: a second spelling would be a silent attribution failure, not a compile error.
+// Re-exported so writer callers keep their import path; the reader entry cannot import this file.
 export { canaryOutcomeObservationId } from '../serving/canary-observation-id.js'
 
-/**
- * 381-03 (PROC-01 D-02/D-03): the verified queue evidence the procedure-extraction wall
- * validates against. It is code-derived queue truth — distilled observations — never LLM text.
- */
+// Code-derived queue truth the procedure wall validates against, never model text.
 export interface ProcedureDispositionEvidence {
   distilledObservations: readonly DistilledObservation[]
 }
@@ -78,7 +68,7 @@ export interface RelationIntent {
 
 export interface DispositionDrainState {
   supersedesSeenByAnchorKey: Map<string, number>
-  /** 379 Open Question 3: one canonical O(store) scan, lazily cached per drain. */
+  /** One canonical O(store) scan, lazily cached per drain. */
   canonicalBundles?: CanonicalBundleSnapshot[]
   /** Test-only observability seam for proving the canonical scan runs once. */
   onCanonicalBundleScan?: () => void
@@ -119,7 +109,6 @@ export interface DisposeDeltaInput {
   checkpoint: AuthoredDeltaCheckpoint
   profile: DispositionProfile
   knowledgeRoot: string
-  priors?: TrustPriorTable
   /**
    * Verified queue evidence needed for anchor and new-ordinal checks. Optional only for the
    * non-mutating delta shapes; Add and Supersede fail closed when it is absent.
@@ -231,7 +220,7 @@ function deltaTargetIds(delta: Delta): RecordId[] {
   return [...ids]
 }
 
-function truthLookup(knowledgeRoot: string, priors?: TrustPriorTable): TruthLookup {
+function truthLookup(knowledgeRoot: string): TruthLookup {
   const cache = new Map<RecordId, BundleTruth | undefined>()
   return (id) => {
     if (cache.has(id)) return cache.get(id)
@@ -240,8 +229,7 @@ function truthLookup(knowledgeRoot: string, priors?: TrustPriorTable): TruthLook
       const loaded = loadBundle(entry.dir)
       if (loaded.kind !== 'loaded' || loaded.bundle.manifest.id !== id) continue
       // BundleTruth consumes lifecycle and validity ordinals only, never numerical trust.
-      // Still carry the caller's snapshot so extending this projection cannot mix defaults.
-      const trust = deriveBundleTrust(loaded.bundle, priors)
+      const trust = deriveBundleTrust(loaded.bundle)
       const truth: BundleTruth = {
         dir: entry.dir,
         bundle: loaded.bundle,
@@ -309,11 +297,7 @@ function pushUnknownResolution(
   state.unknownResolutionIntents = [...(state.unknownResolutionIntents ?? []), intent]
 }
 
-/**
- * D-07/D-08: the tripping Supersede remains the applied write. The unresolved
- * unknown is a second deterministic commit intent; it suppresses serving later,
- * never this writer path.
- */
+// The tripping Supersede stays applied; the unresolved unknown only suppresses serving later.
 function armThrashTripAndClosure(
   input: DisposeDeltaInput,
   lookup: TruthLookup,
@@ -389,12 +373,7 @@ function createdAnchors(delta: Delta): readonly Anchor[] | undefined {
   return undefined
 }
 
-/**
- * D-09/Open Question 3: evaluate the O(store) first-seen fold once per drain,
- * then increment it with committed jobs carried in drain state. Crossing the
- * provisional threshold arms one scope/window unknown without rewriting the
- * triggering Add or Supersede.
- */
+// Folds the store once per drain, then increments with committed jobs; crossing arms one unknown.
 function armScopeBurst(
   input: DisposeDeltaInput,
   state: EvaluationState,
@@ -474,10 +453,7 @@ interface MeasurementDisposition {
   confirmedDriftSupersede: boolean
 }
 
-/**
- * RATIFICATION A6: non-numeric measurement values retain the existing inequality-supersede
- * semantics outside the drift tree. Otherwise string-valued measurements could never widen.
- */
+// Non-numeric values keep inequality-supersede outside the drift tree, or strings never widen.
 function finiteMeasurementValue(value: string | undefined): number | undefined {
   if (value === undefined) return undefined
   const parsed = Number(value)
@@ -556,7 +532,7 @@ function disposeMeasurementDrift(
     return { input, confirmedDriftSupersede: true }
   }
 
-  // Pitfall 5: a widen emits no superseded event and therefore never feeds the thrash counter.
+  // A widen emits no superseded event, so it never feeds the thrash counter.
   const confirm: Delta = {
     kind: 'Confirm',
     ...envelope(delta),
@@ -570,16 +546,7 @@ function disposeMeasurementDrift(
   }
 }
 
-/**
- * Every way `checkCitedIdIntegrity` can decide this store cannot stand behind a cited id.
- *
- * The registry exists so the count stops being something a comment or a corpus has to keep in
- * step. Round 2 measured what happens when it is not one: the check's second return is a
- * three-way disjunction, the corpus and the doc comment both said "three conditions", and
- * carving `scope-mismatch` out of the refusal for every origin left 3 files / 70 tests green.
- * A fifth member added here is a compile error at `citedIdIntegrityFailure`'s derivation and at
- * the corpus's `satisfies Record<CitedIdIntegrityCondition, …>` fixture table.
- */
+// A new member is a compile error at `citedIdIntegrityFailure` and at the corpus fixture table.
 export const CITED_ID_INTEGRITY_CONDITIONS = [
   'not-a-persisted-neighbor',
   'missing-from-disk',
@@ -589,35 +556,7 @@ export const CITED_ID_INTEGRITY_CONDITIONS = [
 
 export type CitedIdIntegrityCondition = (typeof CITED_ID_INTEGRITY_CONDITIONS)[number]
 
-/**
- * The typed refusal a USER-authored delta receives when its cited-id integrity check fails.
- *
- * Thrown rather than returned, and out of the check funnel rather than out of the commit, so it
- * fires before any canonical byte moves for this delta: `disposeDelta` runs `checkCitedIdIntegrity`
- * first of the six §7.3.1 checks, ahead of every append, projection and promotion.
- * `applyReview`'s `commitAndPublish` catches it, restores the proposal to pending and rethrows,
- * which is how the caller gets a typed answer instead of a receipt for work nobody did.
- *
- * WHAT MAKES "NOTHING MOVED" TRUE, and it is not this sentence. The previous version of this
- * comment asserted whole-store neutrality as free-standing prose, naming no mechanism, and the
- * round-2 verifier measured that claim FALSE: the delta had already reached disposition through
- * `knowledge-store.ts`'s bridge, which materialized a claimed curation candidate on disk before
- * `commitWithProfile` ever called into the commit, and the throw left it there for the next
- * drain's reconcile to requeue (CR-02″). Two mechanisms now establish the claim, and each of them
- * reds if it is removed:
- *
- *   1. `bridgeDelta` is WRITE-FREE (`curator/knowledge-store.ts`). It computes the candidate's
- *      address and materializes nothing, so a check that throws at any position has nothing to
- *      leave behind. Reintroducing its two write statements reds the case in (2).
- *   2. `review/__tests__/apply-review.test.ts` asserts `hashTree(knowledgeRoot)` and the tree's
- *      full entry listing — QUEUE TREE INCLUDED — are identical across a refused `accept`, with
- *      a potency control proving the digest is falsifiable over that exact root.
- *
- * The scope of the guarantee is the knowledge root. The writer lease's own fencing state
- * (`.epoch`, `.writer-authority.sqlite`) advances on acquisition regardless of what the caller
- * then does, which is why the case above holds the lease across its measurement rather than
- * excusing those two names.
- */
+// Thrown before any canonical write; `bridgeDelta` writes nothing, so a refusal leaves no trace.
 export class UserDeltaCitationIntegrityError extends Error {
   constructor(
     readonly recordId: RecordId,
@@ -633,35 +572,7 @@ export class UserDeltaCitationIntegrityError extends Error {
   }
 }
 
-/**
- * What a cited-id-integrity failure falls back to, decided by WHO authored the delta.
- *
- * Total over the origin vocabulary by construction: the `satisfies` below makes a fifth origin
- * member a compile error AT THIS TABLE, so no future member can silently inherit a fallback
- * nobody chose for it. That is the whole mechanism — the class of defect this closes is "a guard
- * scoped to the members somebody happened to think of", and the only fix that class cannot
- * reopen is handing the enumeration to something that cannot forget a member.
- *
- * WHY each member is what it is:
- *
- *   agent   — the curation pipeline proposed this change from its own observations. A broken
- *             citation means the pipeline reasoned over a record that no longer stands, and
- *             degrading its proposal into a clarification candidate a person can adjudicate is
- *             exactly the right answer. This is the drain path's long-standing behaviour and it
- *             is PRESERVED unchanged.
- *   import  — bulk-ingested content, pipeline-authored in every sense that matters here: nobody
- *             is waiting on a typed answer for one record, and a clarification candidate is the
- *             reviewable artifact the importer wants.
- *   system  — maintenance deltas (rollback's Deprecate, the canary Confirm). Same reasoning:
- *             machine-authored content, and a refusal would turn a maintenance sweep into a hard
- *             failure over one stale citation.
- *   user    — a human INSTRUCTION about records that already exist. There is no content here to
- *             degrade: minting from it publishes a verbatim clone of the cited record under a
- *             fresh content address as a `candidate`, which serving re-admits — so an `accept`
- *             over a record the same person had already rejected RESURRECTED the fact they
- *             removed and reported success (CR-02′). The store cannot grant the instruction, so
- *             it says so.
- */
+// Machine origins degrade to a candidate; `user` is refused: minting would clone the cited record.
 const CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN = {
   agent: 'mint-unknown',
   import: 'mint-unknown',
@@ -730,12 +641,7 @@ function hasSharedAnchor(
     )
 }
 
-/**
- * 379 D-22 / RATIFICATION A3: `renamed-from` is the concrete realization of
- * memory.md §9.6's alias edge. It already round-trips from relations.json into
- * graph_edges and is traversed by retrieval expansion, so no synonym edge type
- * is added.
- */
+// `renamed-from` is the alias edge, traversed by retrieval expansion.
 function renameBridge(
   newAnchors: readonly Anchor[],
   victimAnchors: readonly Anchor[],
@@ -848,52 +754,7 @@ function checkSupersessionKey(
   return PASS
 }
 
-/**
- * Who may tombstone a record this store is currently standing behind, decided per origin.
- *
- * MECHANISM, stated so the claim can be reded rather than believed: totality is the `satisfies`
- * clause below — a fifth member of `DeltaOrigin` is a compile error AT THIS TABLE — and the
- * BEHAVIOUR of each member is pinned by the DELTA_ORIGINS walk in disposition.test.ts, whose
- * expectations are declared independently of this literal. Neither half is prose: dropping a
- * member fails `tsc`, flipping a member's value reds a named row.
- *
- * This replaces a hand-picked single-member origin comparison — one literal origin named inline,
- * every other member admitted by omission — that sat eleven lines from
- * `CITED_ID_INTEGRITY_FALLBACK_BY_ORIGIN`, whose own rationale calls `import` machine-authored.
- * The file's two origin discriminations therefore disagreed about the same word. They now share
- * one idiom and one vocabulary, which is what stops them drifting apart again.
- *
- * The retired comparison is DESCRIBED rather than quoted on purpose: a `grep -c` for its literal
- * text is a live guard against it coming back, and a quotation kept here for colour would disarm
- * that guard permanently (387-17 D-4).
- *
- * WHY each member is what it is:
- *
- *   agent   — the autonomy floor itself: a model may PROPOSE removing standing knowledge but may
- *             not perform it, so the Deprecate degrades into a reviewable candidate. Long-standing
- *             behaviour, PRESERVED unchanged.
- *   import  — machine-authored by the same reasoning the fallback table above applies to it
- *             ("bulk-ingested content, pipeline-authored in every sense that matters here"). An
- *             importer that emits a Deprecate is a pipeline nominating a removal, which is
- *             precisely what the floor exists to hold. This is the one BEHAVIOUR change here, and
- *             it is latent: no production site mints `origin: 'import'` today, which is the
- *             condition under which the old member-pick would have been wrong silently.
- *   system  — mechanical maintenance deltas, and they must pass. `appendInverseDeprecate` in
- *             rollback.ts is the written case: its comment records that `agent` "would be
- *             downgraded for an active target, while `user` would incorrectly make this lifecycle
- *             choice sovereign and permanent", and it throws if disposition does not return
- *             `apply`. Downgrading `system` here would turn every rollback into a hard failure.
- *   user    — the human decision the review verbs exist to carry. `reject` and `forget` emit
- *             user-origin Deprecates over active records and depend on reaching `apply`;
- *             downgrading them would silently convert a person's removal into a candidate the
- *             store keeps serving.
- *
- * NOT the same question as `AUTHORED_CHECKPOINT_ORIGIN_ADMISSION` in author-contract.ts, which
- * asks which origins may arrive as DRAIN-AUTHORED curator output. `system` is allowed here and
- * rejected there without contradiction: rollback and the canary reach `disposeDelta` through
- * in-process checkpoints (`maintenanceCheckpoint`, `bridgeDelta`), never through the drain's
- * authored-checkpoint recovery boundary.
- */
+// `agent` and `import` Deprecates degrade to candidates; `system` and `user` apply.
 const AUTONOMOUS_DEPRECATE_BY_ORIGIN = {
   agent: 'downgrade',
   import: 'downgrade',
@@ -1023,13 +884,7 @@ interface CoveredProcedureStep {
   observation: DistilledObservation
 }
 
-/**
- * §7.1 candidacy mapping: the emit fold's step natural key is instruction text, which may
- * legitimately repeat within a flow. Resolve coverage by a contiguous ordinal window with
- * per-position instruction equality instead of grouping by text, which falsely rejected valid
- * repeated instructions (G6/WR-05). Candidate starts are sorted so the lowest matching window
- * wins deterministically; no complete window means missing PASS evidence and fails closed.
- */
+// Instructions repeat, so coverage is the lowest contiguous ordinal window; none fails closed.
 function coveredProcedureSteps(
   payload: ProcedureBodyPayload,
   observations: readonly DistilledObservation[],
@@ -1102,13 +957,7 @@ function hasOrderedNonContiguousProcedureSpan(
   return false
 }
 
-/**
- * 381-03 (PROC-01): the deterministic procedure-extraction wall — D-02 candidacy (contiguous
- * verified-PASS span with resolved elements + coherent anchors) and Pitfall 6 replayability
- * (the ONE shared schema exclusion list, never a fork). Any failed check disposes the delta
- * as a structured Noop with a machine-readable reason; nothing here reads LLM prose for
- * authority — the body decode is fail-closed and evidence comes from the durable queue payload.
- */
+// Any failed check disposes as a structured Noop; nothing here reads model prose for authority.
 function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefined {
   const draft = procedureDraft(input.delta)
   if (draft === undefined) return undefined
@@ -1169,20 +1018,11 @@ function disposeProcedureExtraction(input: DisposeDeltaInput): string | undefine
   return undefined
 }
 
-/**
- * 2026-10-15 (441-64, WR-C01): a declared secret is the `[secret:NAME]` marker or an unexpanded
- * `{{secret:...}}` template; a test variable is a `{{env:...}}` template. The emit fold labels
- * value sources on this same contract; any such observed value surviving as a committed literal
- * is a D-03 structural reject — the secret param type only protects values that stay `{ param }`
- * referenced (T-381-02/07).
- */
+// A masked secret surviving as a committed literal is a structural reject.
 const MASKED_SECRET_VALUE_PATTERN = /\[secret:\w+\]|\{\{\s*secret:/
 const TEST_VARIABLE_VALUE_PATTERN = /\{\{\s*env:/
 
-/**
- * D-03 rule 2: a literal whose own content matches the masking contract fails closed.
- * 2026-10-15 (441-25, D-28): the field a value was typed into never makes it secret.
- */
+// A literal matching the masking contract fails closed, whatever field it came from.
 function procedureSecretLiteralReject(
   covered: readonly CoveredProcedureStep[],
 ): string | undefined {
@@ -1196,12 +1036,7 @@ function procedureSecretLiteralReject(
   return undefined
 }
 
-/**
- * D-03 rule 1: every `{ param }` ref must resolve to a declared parameter, and every
- * declared parameter must be referenced by at least one step value slot. (Param types
- * outside the closed string/number/boolean/secret union are unreachable here by
- * construction — `parseProcedureBody` already refused them at the decode wall.)
- */
+// Every `{ param }` ref resolves to a declared parameter, and every parameter is referenced.
 function procedureBindingIntegrityReject(
   payload: ProcedureBodyPayload,
 ): string | undefined {
@@ -1225,12 +1060,11 @@ function procedureBindingIntegrityReject(
  * decision is made from the persisted checkpoint and canonical bundle tree, never an index row.
  */
 export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
-  const priors = snapshotTrustPriors(input.priors)
   const procedureReject = disposeProcedureExtraction(input)
   if (procedureReject !== undefined) {
     return { kind: 'noop', reason: procedureReject }
   }
-  const lookup = truthLookup(input.knowledgeRoot, priors)
+  const lookup = truthLookup(input.knowledgeRoot)
   const measurement = disposeMeasurementDrift(input, lookup)
   const dispositionInput = measurement.input
   const state: EvaluationState = {}
@@ -1277,8 +1111,7 @@ export function disposeDelta(input: DisposeDeltaInput): DispositionOutcome {
       || dispositionInput.delta.kind === 'Deprecate'
     )
   ) {
-    // D-02 flat invariant: propose-only has zero exceptions. Even deterministically confirmed
-    // drift remains a candidate plus proposed-supersession relation in CI and cloud contexts.
+    // Propose-only has no exceptions: confirmed drift stays a candidate in CI and cloud.
     const fallback = dispositionInput.delta.kind === 'Supersede'
       ? addCandidate(dispositionInput.delta)
       : mintUnknown(dispositionInput.delta, 'propose-only', 'clarification')

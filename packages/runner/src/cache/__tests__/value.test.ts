@@ -1,8 +1,4 @@
-// The cached value is descriptor-only (CACHE-03 / D-12; 438 D-10/D-11): the observed role,
-// the exact name and, when the planner stated a row the observed row holds, those row words.
-// Never a ref/selector/coordinates, never a position and never the step `data` value. The
-// overfit guard is a deep scan of the serialized value for a sentinel ref and a sentinel data
-// value.
+// The overfit guard deep-scans the serialized value for a sentinel ref and a sentinel data value.
 import { describe, expect, it } from 'vitest'
 
 import { asRef } from '@vostride/agent-qa-schema'
@@ -27,21 +23,21 @@ function element(overrides: Partial<ElementInfo> = {}): ElementInfo {
   }
 }
 
-describe('toGroundedLocator — descriptor-only projection (CACHE-03, D-12)', () => {
+describe('toGroundedLocator — descriptor-only projection', () => {
   it('projects an action + elements to a role+nameNormalized descriptor with no ref', () => {
     const elements = [element({ ref: asRef(SENTINEL_REF), role: 'button', name: 'Cart  (3) ', nameNormalized: 'cart' })]
     const action = { type: 'click', ref: SENTINEL_REF } as unknown as Action
 
     const locator = toGroundedLocator(action, elements)
 
-    // 2026-10-09 (438-08): the exact name with spacing tidied, its badge kept; no ordinal.
+    // The exact name with spacing tidied and its badge kept; no ordinal.
     expect(locator).toEqual({ role: 'button', name: 'Cart (3)' })
     expect(Object.hasOwn(locator as object, 'ref')).toBe(false)
     expect(JSON.stringify(locator)).not.toContain(SENTINEL_REF)
   })
 })
 
-describe('buildCachedPlanValue — no ref/selector/coordinates/data in the value (D-12 overfit guard)', () => {
+describe('buildCachedPlanValue — no ref/selector/coordinates/data in the value (overfit guard)', () => {
   it('assembles a descriptor-only CachedPlanValue that omits the raw ref and step data', () => {
     const elements = [element({ ref: asRef(SENTINEL_REF), role: 'button', name: 'Checkout', nameNormalized: 'checkout' })]
     const action = { type: 'click', ref: SENTINEL_REF, data: SENTINEL_DATA } as unknown as Action
@@ -49,10 +45,10 @@ describe('buildCachedPlanValue — no ref/selector/coordinates/data in the value
     const value = buildCachedPlanValue({
       plannedActions: [action],
       elements,
-      verificationOutcome: 'passed',
+      completesStep: true,
     })
 
-    expect(value.verificationOutcome).toBe('passed')
+    expect(value.completesStep).toBe(true)
     expect(value.groundedLocator).toHaveLength(1)
     expect(value.groundedLocator[0]).toEqual({ role: 'button', name: 'Checkout' })
 
@@ -63,7 +59,7 @@ describe('buildCachedPlanValue — no ref/selector/coordinates/data in the value
   })
 })
 
-describe('toGroundedLocator — the stated row (438 D-11)', () => {
+describe('toGroundedLocator — the stated row', () => {
   const rows = [
     element({ ref: asRef('r1'), role: 'listitem', name: '', nameNormalized: '', text: 'Work 7 Elm Street, Springfield' }),
     element({ ref: asRef('e1'), role: 'button', name: 'Edit label', nameNormalized: 'edit label', hierarchy: { parentRef: asRef('r1') } }),
@@ -87,7 +83,7 @@ describe('toGroundedLocator — the stated row (438 D-11)', () => {
     const value = buildCachedPlanValue({
       plannedActions: [click('e1')],
       elements: rows,
-      verificationOutcome: 'passed',
+      completesStep: true,
       statedTargets: { ref: { role: 'button', name: 'Edit label', row: '7 Elm Street' } },
     })
 

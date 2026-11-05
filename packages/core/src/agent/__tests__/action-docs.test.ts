@@ -8,7 +8,7 @@ function actionLines(docs: string): string[] {
 
 function expectedLineCount(platform: Platform): number {
   const surfaces = EXPOSURE[platform]
-  return defaultRegistry.getAll().filter(def => def.exposed !== false && surfaces.has(def.surface)).length
+  return defaultRegistry.getAll().filter(def => surfaces.has(def.surface)).length
 }
 
 const CAT_02_WEB_IDS = [
@@ -88,7 +88,7 @@ describe('defaultRegistry.generateDocs', () => {
       }
     })
 
-    it('renders CAT-02 web additions only in the web docs', () => {
+    it('renders the web catalog additions only in the web docs', () => {
       const webDocs = defaultRegistry.generateDocs('web')
       const androidDocs = defaultRegistry.generateDocs('android')
       const iosDocs = defaultRegistry.generateDocs('ios')
@@ -148,7 +148,7 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('renders CAT-03 android additions only in the android docs', () => {
+    it('renders the android catalog additions only in the android docs', () => {
       const webDocs = defaultRegistry.generateDocs('web')
       const androidDocs = defaultRegistry.generateDocs('android')
       const iosDocs = defaultRegistry.generateDocs('ios')
@@ -187,7 +187,7 @@ describe('defaultRegistry.generateDocs', () => {
       expect(result).not.toMatch(/^- common_executeScript:/m)
     })
 
-    it('renders CAT-04 ios additions only in the ios docs', () => {
+    it('renders the ios catalog additions only in the ios docs', () => {
       const webDocs = defaultRegistry.generateDocs('web')
       const androidDocs = defaultRegistry.generateDocs('android')
       const iosDocs = defaultRegistry.generateDocs('ios')

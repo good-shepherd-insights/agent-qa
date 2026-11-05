@@ -31,7 +31,7 @@ vi.mock("@/components/ui/scroll-area", () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 
-const RUN_ID = "run-406-08"
+const RUN_ID = "run-screenshot"
 const SHA = "c".repeat(64)
 
 const RUN = {
@@ -47,14 +47,12 @@ const RUN = {
   endedAt: "2026-08-28T00:00:10.000Z",
   failureSummary: null,
   errorLog: null,
-  memoryLog: null,
   testId: null,
   suiteId: null,
   platform: "web",
   testFileContent: null,
   modelName: null,
   llmProvider: null,
-  parentRunId: null,
   attemptNumber: 1,
   retryCount: 0,
   maxRetries: 0,
@@ -107,7 +105,7 @@ function mountLightbox() {
 
 afterEach(() => { vi.unstubAllGlobals() })
 
-describe('the lightbox opens what the verdict cited (D-02)', () => {
+describe('the lightbox opens what the verdict cited', () => {
   it('mints its image src through the ONE route minter and nothing else', () => {
     const lightbox = mountLightbox()
     expect(lightbox.querySelector('img')?.getAttribute('src')).toBe(routes.runArtifact(RUN_ID, SHA))
@@ -130,7 +128,7 @@ describe('the lightbox opens what the verdict cited (D-02)', () => {
     expect(lightbox.querySelector('img')).toBeNull()
   })
 
-  it('says so when the blob vanished BETWEEN the read and the click (405 D-15)', async () => {
+  it('says so when the blob vanished BETWEEN the read and the click', async () => {
     const fetch = vi.fn().mockResolvedValue({ status: 404 })
     vi.stubGlobal('fetch', fetch)
     const lightbox = mountLightbox()

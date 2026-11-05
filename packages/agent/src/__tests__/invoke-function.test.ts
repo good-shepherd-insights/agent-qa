@@ -1,15 +1,4 @@
-// The invoke pipeline's load-bearing order and typed refusals (Phase 384, Plan 01 — FUNC-01 /
-// FUNC-03 / D-11).
-//
-// 2026-09-30 (432-13, D-14/D-15): THERE IS NO OP GATE. `invokeFunction` no longer calls
-// `evaluate`, so nothing is classified, asked or audited at dispatch. The cells that measured the
-// gate's uniform audit are re-spelled as its absence (C432-INVOKE-DIRECT); the refusals that are
-// not approvals — unknown id, invalid input, scope, origin, binding — stay measured unchanged.
-//
-// 2026-10-02 (432-39, D-10/D-12): the caller's `grantedScopes`/`safeMode`, the metadata's
-// `requiredScopes` and the registry's `resolveExecutionContext` option are deleted. Where a cell
-// proves one of them is unread, the value is SMUGGLED past the type with a cast so the cell stays
-// non-vacuous; everywhere else the fixture simply stops passing it.
+// Retired caller and metadata fields are smuggled by cast where a cell proves them unread.
 
 import {
   CURRENT_HANDOFF_SCHEMA_VERSION,
@@ -70,9 +59,7 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
         get: (runId) => Promise.resolve(
           documents.find((document) => document.runId === runId),
         ),
-        // The stream port belongs to runs-events.test.ts; it exists here because
-        // FunctionDeps is a required, non-partial record — which is exactly how an
-        // unbound port becomes a compile error rather than a silent gap (D-09).
+        // `FunctionDeps` is non-partial, so an unbound port is a compile error, not a silent gap.
         readEvents: () => Promise.resolve([]),
         readStepEvidence: () => Promise.resolve({ kind: 'run-not-recorded' } as const),
       },
@@ -82,10 +69,7 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
         diffSince: () => Promise.resolve([]),
         showRecord: ({ recordId }) => Promise.resolve({ kind: 'not-found', schemaVersion: 2, recordId } as const),
       },
-      // 387: `entities` is a REQUIRED read port on FunctionDeps. Stated here so the record
-      // typechecks, and stated as an ANSWERING stub rather than a refusing one: these cases
-      // exercise other ops, and nothing in this file mints an address, so an honest miss and a
-      // reported absence are the truthful answers.
+      // A required read port, stubbed to answer: nothing in this file mints an address.
       entities: {
         resolve: () => Promise.resolve({ kind: 'none' as const, reason: 'no-match' as const }),
         get: () => Promise.resolve(undefined),
@@ -102,9 +86,7 @@ function spyDeps(documents: readonly CompletedRunHandoff[] = []): SpyDeps {
   }
 }
 
-// 2026-10-15 (441-28, D-15): the registry takes no audit sink, so no cell captures audit rows.
-
-/** A caller smuggling a retired scope set and safe-mode flag past the type (432-39): both unread. */
+// A caller smuggling a retired scope set and safe-mode flag past the type; neither is read.
 function caller(grantedScopes: readonly string[], safeMode = false): FunctionCaller {
   return { surface: 'test', grantedScopes, safeMode, origin: 'agent' } as FunctionCaller
 }
@@ -123,22 +105,12 @@ const configSetSpec = {
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
   risk: { name: 'fn:config.set', recognized: true },
-  // 399.1-04: `classify` is a REQUIRED member now. A synthetic op's fold is the smallest honest
-  // one — the shape has a single arm, so there is nothing to discriminate.
+  // `classify` is required; a single-arm shape needs no discrimination.
   classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke: () => Promise.resolve({ ok: true as const }),
 } as FunctionSpec<Record<string, never>, { ok: true }>
 
-/**
- * A synthetic capability declaring 394's `test-write` beside the two scopes an authoring loop
- * also needs.
- *
- * The point of the multi-scope declaration is that the refusal must be SPECIFIC: a caller holding
- * `run` and `read` is missing exactly one thing, and being told which one is the difference
- * between an actionable refusal and a generic denial. Deliberately a non-registered id — the real
- * `authoring.draft.write` lands later in this phase, and pinning it here would assert a false
- * thing about a shipped op.
- */
+// A synthetic multi-scope capability under an unregistered id, asserting nothing about real ops.
 const authoringDraftWriteSpec = {
   id: 'authoring.draft.write.synthetic',
   summary: 'Synthetic test-write capability used to exercise the scope refusal by name.',
@@ -147,8 +119,7 @@ const authoringDraftWriteSpec = {
   input: z.object({}).strict(),
   output: z.object({ ok: z.literal(true) }).strict(),
   risk: { name: 'fn:authoring.draft.write.synthetic', recognized: true },
-  // 399.1-04: `classify` is a REQUIRED member now. A synthetic op's fold is the smallest honest
-  // one — the shape has a single arm, so there is nothing to discriminate.
+  // `classify` is required; a single-arm shape needs no discrimination.
   classify: () => ({ status: 'executed' as const, outcome: '' }),
   invoke: () => Promise.resolve({ ok: true as const }),
 } as FunctionSpec<Record<string, never>, { ok: true }>
@@ -183,8 +154,6 @@ describe('invokeFunction pipeline', () => {
     expect(deps.listCalls()).toBe(0)
   })
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a caller whose grants do not cover the
-  // required scopes'. The scope check is deleted: the same caller is served, exactly once.
   it('serves a caller whose grants do not cover the declared scopes, dispatching once', async () => {
     const deps = spyDeps()
     const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
@@ -193,8 +162,6 @@ describe('invokeFunction pipeline', () => {
     expect(deps.listCalls()).toBe(1)
   })
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'refuses a run+read caller at a test-write op, naming
-  // the missing scope (394 T-394-01)'. No scope is named because none is read.
   it('serves a run+read caller at a test-write op — the declared scopes are not read', async () => {
     const deps = spyDeps()
     const registry = createRegistryFromSpecs(
@@ -228,10 +195,7 @@ describe('invokeFunction pipeline', () => {
     ).resolves.toEqual({ ok: true })
   })
 
-  // RE-SPELLED 2026-09-30 (432-13) from 'audits every successful read invocation exactly once (D-11
-  // uniform gating)'. The read still dispatches exactly once; no gate decides it, so no row records
-  // a decision.
-  it('C432-INVOKE-DIRECT: a read dispatches exactly once and writes no execution-audit row', async () => {
+  it('a read dispatches exactly once and writes no execution-audit row', async () => {
     const deps = spyDeps([handoff('run-beta', 12), handoff('run-alpha', 11)])
     const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
 
@@ -249,20 +213,16 @@ describe('invokeFunction pipeline', () => {
   })
 })
 
-/**
- * A synthetic op at the tier the retired gate asked about (432-13). `mutating-shared` used to reach
- * the ask ladder: fail-closed in `ci` and `local-headless`, a confirm prompt in `local-interactive`.
- */
 function markLikeSpec(invocations: { count: number }): FunctionSpec<{ runId: string }, { ok: true }> {
-  // 432-39: the retired scope declaration is smuggled past the type; nothing reads it.
+  // A retired scope declaration smuggled past the type; nothing reads it.
   return {
     id: 'runs.mark.synthetic',
-    summary: 'Synthetic mutating-shared capability used to prove the op gate is gone.',
+    summary: 'Synthetic mutating capability used to prove the op gate is gone.',
     requiredScopes: ['run'],
     resultKind: 'unary',
     input: z.object({ runId: z.string().min(1) }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
-    risk: { name: 'fn:runs.mark.synthetic', recognized: true, declaredTier: 'mutating-shared' },
+    risk: { name: 'fn:runs.mark.synthetic', recognized: true, readOnly: false },
     classify: () => ({ status: 'executed' as const, outcome: '' }),
     invoke: () => {
       invocations.count += 1
@@ -271,14 +231,14 @@ function markLikeSpec(invocations: { count: number }): FunctionSpec<{ runId: str
   } as FunctionSpec<{ runId: string }, { ok: true }>
 }
 
-describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)', () => {
+describe('invokeFunction dispatches with no gate', () => {
   it.each(['ci', 'local-headless', 'local-interactive'] as const)(
-    'C432-INVOKE-DIRECT: a mutating-shared op in %s returns once with no confirm port and no audit row',
+    'a mutating op in %s returns once with no confirm port and no audit row',
     async (context) => {
       const invocations = { count: 0 }
       const registry = createRegistryFromSpecs([markLikeSpec(invocations) as FunctionSpec], {
         ...registryOptions(),
-        // 432-39: the deleted context option, smuggled past the type; nothing reads a context.
+        // A deleted context option smuggled past the type; nothing reads a context.
         resolveExecutionContext: () => context,
       } as CreateFunctionRegistryOptions)
 
@@ -290,7 +250,7 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
     },
   )
 
-  it('C432-INVOKE-DIRECT: invalid input and a missing binding still refuse by name, dispatching nothing', async () => {
+  it('invalid input and a missing binding still refuse by name, dispatching nothing', async () => {
     const invocations = { count: 0 }
     const registry = createRegistryFromSpecs(
       [
@@ -313,8 +273,8 @@ describe('C432-INVOKE-DIRECT — invokeFunction dispatches with no gate (432-13)
   })
 })
 
-describe('432-20 (D-12): retry and refusal order with no permission check', () => {
-  it('C432-ALL-OPS-AVAILABLE: a retry after an input refusal dispatches exactly once, for a grantless caller', async () => {
+describe('retry and refusal order with no permission check', () => {
+  it('a retry after an input refusal dispatches exactly once, for a grantless caller', async () => {
     const deps = spyDeps()
     const registry = createRegistryFromSpecs([runsListSpec], registryOptions({ deps: deps.deps }))
     const grantless: FunctionCaller = { surface: 'test', origin: 'agent' }
@@ -353,15 +313,10 @@ describe('createRegistryFromSpecs', () => {
     }
   })
 
-  // 2026-10-15 (441-28, D-15): the four cells that refused a missing or hollow audit sink are
-  // deleted with the requirement; a registry is built from its deps alone.
   it('constructs normally for every compliant composition', () => {
     expect(() => createRegistryFromSpecs([runsListSpec], registryOptions())).not.toThrow()
   })
 
-  // RE-SPELLED 2026-10-01 (432-20, D-12) from 'hides non-read capabilities from a safe-mode
-  // listing without enforcing anything'. The filter is deleted: a safe-mode caller lists and is
-  // served exactly what any other caller is.
   it('lists every capability to a safe-mode caller and serves it like any other', async () => {
     const deps = spyDeps()
     const registry = createRegistryFromSpecs(

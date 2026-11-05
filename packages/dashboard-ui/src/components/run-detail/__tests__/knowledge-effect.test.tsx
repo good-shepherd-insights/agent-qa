@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
-// 427 · D-11..D-14 — the Effect section a reader sees. Views come from the real effectSectionView
-// over schema-parsed projections; a view spanning curation states concatenates those entries.
+// Views come from the real `effectSectionView` over schema-parsed projections.
 
 import { act, type ReactElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -73,7 +72,7 @@ function projection(
 ): ReadyProjection {
   const parsed = RunKnowledgeProjectionSchema.parse({
     kind: "ready",
-    runId: "run-427-07-effect",
+    runId: "run-effect",
     buildOrdinal: 1,
     knowledgeStore: "bound",
     steps,
@@ -146,7 +145,7 @@ function glyphClass(entry: HTMLElement): string {
   return [...(entry.querySelector("svg")?.classList ?? [])].find(name => name.startsWith("lucide-")) ?? ""
 }
 
-describe("every outcome has its own glyph and tone (D-12)", () => {
+describe("every outcome has its own glyph and tone", () => {
   it("EFFECT-GLYPH-PER-OUTCOME: eight outcomes, eight distinct aria-hidden glyphs, tone classes by group", () => {
     const view = mount(<KnowledgeEffect view={everyOutcome()} />)
 
@@ -191,7 +190,7 @@ describe("every outcome has its own glyph and tone (D-12)", () => {
   })
 })
 
-describe("a procedure replayed step by step is one entry (D-11, D-12, UI-SPEC S4 grouping)", () => {
+describe("a procedure replayed step by step is one entry", () => {
   it("EFFECT-REPLAY-GROUPED: six replayed steps of one six-step procedure paint one sentence sized by its flow", () => {
     const view = mount(<KnowledgeEffect view={effectSectionView(projection([0, 1, 2, 3, 4, 5].map(index => step(
       index,
@@ -206,7 +205,7 @@ describe("a procedure replayed step by step is one entry (D-11, D-12, UI-SPEC S4
   })
 })
 
-describe("the store's words never reach the Effect section (D-12)", () => {
+describe("the store's words never reach the Effect section", () => {
   it("EFFECT-NO-STORE-WORDS: every outcome, a replay and the uncounted line say none of them", async () => {
     const view = mount(<KnowledgeEffect view={everyOutcome()} />)
 
@@ -221,7 +220,7 @@ describe("the store's words never reach the Effect section (D-12)", () => {
   })
 })
 
-describe("uncounted trials are one quiet, explained line (D-14)", () => {
+describe("uncounted trials are one quiet, explained line", () => {
   it("EFFECT-UNCOUNTED-TOOLTIP: a focusable trigger with the fixed tooltip, no glyph and no warning tone", async () => {
     const view = mount(<KnowledgeEffect view={everyOutcome()} />)
 
@@ -230,7 +229,7 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
     const trigger = line?.querySelector<HTMLElement>('[data-slot="tooltip-trigger"]')
     expect(trigger?.tabIndex).toBe(0)
     expect(trigger?.firstChild?.textContent).toBe(uncountedTrialsLine(2))
-    // The meaning is announced without hover, as the other tooltip triggers' is (UI-SPEC keyboard note).
+    // The meaning is announced without hover, as the other tooltip triggers' is.
     expect(describedBy(trigger).targets[0]?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
     expect(line?.querySelector("svg")).toBeNull()
     expect(line?.outerHTML).not.toMatch(/amber|destructive/)
@@ -239,7 +238,7 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
     expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
   })
 
-  it("TRIGGER-ACCESSIBLE-NAME: the uncounted line is a button named by its sentence, its meaning its one static description", async () => {
+  it("TRIGGER-ACCESSIBLE-NAME: the uncounted line is a button named by its sentence, its meaning its one description, open or closed", async () => {
     const view = mount(<KnowledgeEffect view={everyOutcome()} />)
     const line = view.querySelector<HTMLElement>('[data-effect-uncounted="2"]')
     const trigger = line?.querySelector<HTMLElement>('[data-slot="tooltip-trigger"]')
@@ -265,8 +264,10 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
     await act(async () => { trigger?.focus() })
     const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]')
     expect(tooltip?.textContent).toBe(UNCOUNTED_TRIALS_TOOLTIP)
-    expect(trigger?.getAttribute("aria-describedby")).toBe(ids[0])
-    expect(trigger?.getAttribute("aria-describedby")).not.toBe(tooltip?.id)
+    expect(describedBy(trigger).ids).toEqual([tooltip?.id])
+
+    await act(async () => { trigger?.blur() })
+    expect(describedBy(trigger).ids).toEqual(ids)
   })
 
   it("EFFECT-UNCOUNTED-TOOLTIP: the uncounted line follows the absence sentence when nothing else was measured", () => {
@@ -279,7 +280,7 @@ describe("uncounted trials are one quiet, explained line (D-14)", () => {
   })
 })
 
-describe("an empty Effect section states its absence (SC1)", () => {
+describe("an empty Effect section states its absence", () => {
   it("EFFECT-ABSENCE: knowledge used but nothing measured, and nothing used at all", () => {
     const measuredNothing = mount(<KnowledgeEffect view={effectSectionView(projection([step(0, [line("rec_o", "a plain line", false)])]))} />)
     expect(section(measuredNothing).querySelector("h4")?.textContent).toBe(EFFECT_HEADING)
@@ -308,7 +309,7 @@ describe("an empty Effect section states its absence (SC1)", () => {
   })
 })
 
-describe("a record summary is text, never markup (T-427-07-02)", () => {
+describe("a record summary is text, never markup", () => {
   it("EFFECT-HOSTILE-TEXT: an img-onerror summary renders as text in the record line", () => {
     const hostile = "<img src=x onerror=alert(1)>"
     const view = mount(<KnowledgeEffect view={effectSectionView(projection(
@@ -323,7 +324,7 @@ describe("a record summary is text, never markup (T-427-07-02)", () => {
   })
 })
 
-describe("the steps in an effect sentence take the reader there (D-03)", () => {
+describe("the steps in an effect sentence take the reader there", () => {
   it("EFFECT-STEP-REFS: each step number in the sentence is a step-reference control", () => {
     const onSelect = vi.fn()
     const stepRefs: StepRefContext = { onSelect, resolvable: () => true, testNames: new Map() }

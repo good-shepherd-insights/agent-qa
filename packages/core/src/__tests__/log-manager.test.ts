@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { LogManager, MemberLogScopeUnavailableError } from '../logging/log-manager.js'
 import type { MemberLogScope } from '../logging/log-manager.js'
 import type { LogStorage, LogEntry } from '../logging/types.js'
+import { formatLogEntry } from '../logging/cli-formatter.js'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 
 describe('LogManager', () => {
@@ -82,6 +83,29 @@ describe('LogManager', () => {
     expect(output).toContain('info msg')
     expect(output).toContain('warn msg')
     expect(output).toContain('error msg')
+  })
+
+  it('prints a displayed entry carrying a workflow command inside its own stop-commands pair on stdout under GitHub Actions', () => {
+    const lm = new LogManager({
+      runId: 'run-1',
+      displayLevel: 'info',
+      env: { GITHUB_ACTIONS: 'true' },
+    })
+    lm.log('info', 'agent', '::set-output name=x::y')
+    expect(stderrSpy).not.toHaveBeenCalled()
+    expect(stdoutSpy).toHaveBeenCalledTimes(1)
+    const block = String(stdoutSpy.mock.calls[0][0])
+    expect(block).toMatch(/^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u)
+    expect(block).toContain('::set-output name=x::y')
+  })
+
+  it('prints a displayed entry to stderr exactly as formatted off GitHub Actions', () => {
+    const lm = new LogManager({ runId: 'run-1', displayLevel: 'info' })
+    lm.log('info', 'agent', '::set-output name=x::y')
+    const [entry] = lm.getBuffer()
+    expect(stderrSpy).toHaveBeenCalledTimes(1)
+    expect(stderrSpy).toHaveBeenCalledWith(formatLogEntry(entry) + '\n')
+    expect(stdoutSpy).not.toHaveBeenCalled()
   })
 
   it('silent displayLevel shows nothing', () => {
@@ -170,6 +194,32 @@ describe('LogManager', () => {
     expect(json.data.model).toBe('gpt-4')
   })
 
+  it('NDJSON line carries no # under GitHub Actions and parses back to the same entry', () => {
+    const lm = new LogManager({
+      runId: 'run-1',
+      displayLevel: 'silent',
+      ndjson: true,
+      env: { GITHUB_ACTIONS: 'true' },
+    })
+    lm.log('warn', 'agent', '##[error]x', { note: '#1' })
+    const [entry] = lm.getBuffer()
+    expect(stdoutSpy).toHaveBeenCalledTimes(1)
+    const written = String(stdoutSpy.mock.calls[0][0])
+    expect(written.startsWith('AGENT_QA_EVENT:')).toBe(true)
+    expect(written).not.toContain('#')
+    expect(JSON.parse(written.slice('AGENT_QA_EVENT:'.length))).toEqual({ type: 'log', ...entry })
+  })
+
+  it('NDJSON line is the plain serialized entry off GitHub Actions', () => {
+    const lm = new LogManager({ runId: 'run-1', displayLevel: 'silent', ndjson: true })
+    lm.log('warn', 'agent', '##[error]x', { note: '#1' })
+    const [entry] = lm.getBuffer()
+    expect(stdoutSpy).toHaveBeenCalledTimes(1)
+    expect(stdoutSpy).toHaveBeenCalledWith(
+      `AGENT_QA_EVENT:${JSON.stringify({ type: 'log', ...entry })}\n`,
+    )
+  })
+
   it('data defaults to empty object when not provided', () => {
     const lm = new LogManager({ runId: 'run-1', displayLevel: 'silent' })
     lm.log('info', 'runner', 'step started')
@@ -195,7 +245,7 @@ describe('LogManager', () => {
   })
 })
 
-describe('C441-HOOK-OUTPUT', () => {
+describe('declared values in log output', () => {
   let stderrSpy: any
   let stdoutSpy: any
 
@@ -246,22 +296,8 @@ describe('C441-HOOK-OUTPUT', () => {
   })
 })
 
-// ONE LOG MANAGER, N CONCURRENT MEMBERS (WINDOWS #233).
-//
-// 402-02 made the DIRECT run path poolable and 402-03 made `workers > 1` reachable from config, so
-// `commands/run.ts` now calls `logger.setRunId(memberRunId)` from several members interleaved on
-// ONE `LogManager` — the instance is built once at run.ts:3656, outside the per-member closure.
-// Two distinct corruptions follow from a single mutable `runId` field, and they are pinned
-// separately because they fail for different reasons and a fix for one does not imply the other:
-//
-//   FORWARD  — after member B stamps, member A's SUBSEQUENT lines carry B's run id.
-//   BACKWARD — `setRunId` restamps every buffered entry, so B's stamp REWRITES lines A already
-//              wrote and had correctly attributed.
-//
-// The interleaving below is not a stress test and has no timing assertion: it is the exact
-// deterministic order the pool produces (each member mints its id inside its own closure), replayed
-// synchronously so the cells are reproducible.
-describe('LogManager — concurrent members share one instance (WINDOWS #233)', () => {
+// One `LogManager` serves concurrent members, so a stamp must not leak forward or rewrite back.
+describe('LogManager — concurrent members share one instance', () => {
   let stderrSpy: any
 
   beforeEach(() => {

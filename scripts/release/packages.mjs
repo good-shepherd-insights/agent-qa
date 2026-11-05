@@ -12,7 +12,6 @@ export const publicPackageNames = [
   '@vostride/agent-qa-agent',
   '@vostride/agent-qa-model',
   '@vostride/agent-qa-knowledge-local',
-  '@vostride/agent-qa-tools-local',
   '@vostride/agent-qa-safety-local',
   '@vostride/agent-qa-eval-local',
   '@vostride/agent-qa-core',
@@ -21,11 +20,7 @@ export const publicPackageNames = [
   '@vostride/agent-qa-android',
   '@vostride/agent-qa-ios',
   '@vostride/agent-qa-mcp',
-  // 2026-08-17 (Phase 398 plan 11): after `mcp`, which it depends on. `packages/analytics` has
-  // shipped `"private": false` with public publishConfig since 398-06 and the published `agent-qa`
-  // binary depends on it, so leaving it out of the order published a CLI whose install could not
-  // resolve. `eval`, `eval-local` and `runner-local` above are the same pre-existing defect, older
-  // and unrelated to this phase; all four are placed after every internal dependency they declare.
+  // After `mcp`, which it depends on; each package follows every internal dependency it declares.
   '@vostride/agent-qa-analytics',
   '@vostride/agent-qa-dashboard-ui',
   '@vostride/agent-qa-dashboard',
@@ -53,7 +48,7 @@ export function getPublicPackages(options = {}) {
       const pkg = readJson(manifestPath)
       return { name: pkg.name, dir, manifestPath, packageDirName: basename(dir), pkg }
     })
-    .filter(record => record.pkg.private === false)
+    .filter(record => record.pkg.private !== true)
 
   return derivePublishOrder(records)
 }
@@ -69,8 +64,11 @@ export function derivePublishOrder(records = getPublicPackages()) {
       extras.push(name)
       continue
     }
-    if (record.pkg?.private !== false) {
+    if (record.pkg?.private === true) {
       throw new Error(`private public package: ${name}`)
+    }
+    if (record.pkg?.private !== false) {
+      throw new Error(`public package must declare "private": false: ${name}`)
     }
     if (byName.has(name)) {
       throw new Error(`duplicate public package: ${name}`)

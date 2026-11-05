@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { z } from 'zod'
 import { ToolRegistry, EXPOSURE } from '../registry.js'
 import { registerAllActions } from '../actions/index.js'
-import { NON_EXPOSED } from '../actions/surface-map.js'
 import { toolCallToActionPlan } from '../builder.js'
 import type { ToolDefinition } from '../types.js'
 import type { Platform } from '@vostride/agent-qa-schema'
@@ -45,7 +44,7 @@ function idsFor(registry: ToolRegistry, platform: Platform): string[] {
 
 function expectedSliceCount(registry: ToolRegistry, platform: Platform): number {
   const surfaces = EXPOSURE[platform]
-  return registry.getAll().filter(def => def.exposed !== false && surfaces.has(def.surface)).length
+  return registry.getAll().filter(def => surfaces.has(def.surface)).length
 }
 
 describe('ToolRegistry', () => {
@@ -89,7 +88,7 @@ describe('ToolRegistry', () => {
         type: 'b',
         surface: 'common',
         description: 'B',
-        category: 'file',
+        category: 'action',
         schema: z.object({}),
       })
       expect(registry.getAll()).toHaveLength(2)
@@ -217,17 +216,6 @@ describe('ToolRegistry', () => {
       }
     })
 
-    it('omits non-exposed escape-hatch verbs from every platform slice', () => {
-      registerAllActions(registry)
-
-      for (const platform of platforms) {
-        const types = typesFor(registry, platform)
-        for (const type of NON_EXPOSED) {
-          expect(types).not.toContain(type)
-        }
-      }
-    })
-
     it('keeps nativeSelect out of web and present on mobile platforms', () => {
       registerAllActions(registry)
 
@@ -259,7 +247,7 @@ describe('ToolRegistry', () => {
     })
   })
 
-  describe('keypress schema shape (phase 137)', () => {
+  describe('keypress schema shape', () => {
     it('accepts { keys: ["Enter"] } with default convertPlatformKeys=true', () => {
       registerAllActions(registry)
       const schema = registry.getSchema('common_keypress')
@@ -492,7 +480,7 @@ describe('surface + id integrity', () => {
     expect(registry.get('common_executeScript')).toBeUndefined()
   })
 
-  it('registers CAT-02 web-tier tool definitions on the web surface only', () => {
+  it('registers web-tier tool definitions on the web surface only', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
@@ -517,7 +505,7 @@ describe('surface + id integrity', () => {
     expect(registry.get('web_uniqueValue')?.readOnly).toBe(true)
   })
 
-  it('validates CAT-02 web-tier schemas without escape-hatch shapes', () => {
+  it('validates web-tier schemas without escape-hatch shapes', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
@@ -560,8 +548,7 @@ describe('surface + id integrity', () => {
     const focusSchema = registry.getSchema('web_focus') as z.ZodObject<any>
     expect(focusSchema.safeParse({ ref: 'e1' }).success).toBe(true)
     expect(focusSchema.safeParse({ ref: 'e1', elementDescription: 'email field' }).success).toBe(true)
-    // D-05: ref is now optional because a target descriptor may replace it; the
-    // exactly-one-of ref/target rule is enforced at the Plan-04 grounding gate, not zod.
+    // A target may replace ref, so it is optional; the grounding gate checks the pair, not zod.
     expect(focusSchema.safeParse({ target: { role: 'textbox', name: 'Email' } }).success).toBe(true)
     expect(focusSchema.safeParse({ target: { name: 'Email' }, selector: '#email' }).success).toBe(false)
     expect(focusSchema.shape).toHaveProperty('ref')
@@ -570,7 +557,7 @@ describe('surface + id integrity', () => {
     expect(focusSchema.shape).not.toHaveProperty('text')
   })
 
-  it('registers CAT-03 android-tier tool definitions on the android surface only', () => {
+  it('registers android-tier tool definitions on the android surface only', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
@@ -586,7 +573,7 @@ describe('surface + id integrity', () => {
     expect(registry.get('android_keyevent')?.destructive).toBe(true)
   })
 
-  it('validates CAT-03 android schemas with typed intent extras', () => {
+  it('validates android schemas with typed intent extras', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
@@ -621,7 +608,7 @@ describe('surface + id integrity', () => {
     expect(keyeventSchema.safeParse({}).success).toBe(false)
   })
 
-  it('registers CAT-04 ios-tier tool definitions on the ios surface only', () => {
+  it('registers ios-tier tool definitions on the ios surface only', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
@@ -637,7 +624,7 @@ describe('surface + id integrity', () => {
     expect(registry.getForPlatform('ios').map(tool => tool.id)).toContain('mobile_nativeSelect')
   })
 
-  it('validates CAT-04 ios schemas with pickerSelect ref/value and ref/order variants', () => {
+  it('validates ios schemas with pickerSelect ref/value and ref/order variants', () => {
     const registry = new ToolRegistry()
     registerAllActions(registry)
 
@@ -753,8 +740,7 @@ describe('surface + id integrity', () => {
 
     expect(pinchSchema.safeParse({ scale: 2, ref: 'e1' }).success).toBe(true)
     expect(pinchSchema.safeParse({ scale: 2, x: 10, y: 20, coordSpace: 'viewport' }).success).toBe(true)
-    // D-05: the ref-branch ref is now optional (a target descriptor may replace it); the
-    // exactly-one-of ref/target rule is enforced at the Plan-04 grounding gate, not zod.
+    // A target may replace the ref-branch ref; the grounding gate checks the pair, not zod.
     expect(pinchSchema.safeParse({ scale: 2, target: { role: 'image', name: 'Map' } }).success).toBe(true)
     expect(pinchSchema.safeParse({ scale: 2, near: { nameNormalized: 'map' } }).success).toBe(false)
   })
@@ -766,7 +752,7 @@ describe('surface + id integrity', () => {
 
     expect(multiTapSchema.safeParse({ fingers: 2, ref: 'e1' }).success).toBe(true)
     expect(multiTapSchema.safeParse({ fingers: 3, x: 10, y: 20, coordSpace: 'content' }).success).toBe(true)
-    // D-05: the ref-branch ref is now optional (a target descriptor may replace it).
+    // A target descriptor may replace the ref-branch ref.
     expect(multiTapSchema.safeParse({ fingers: 2, target: { role: 'image', name: 'Canvas' } }).success).toBe(true)
     expect(multiTapSchema.safeParse({ fingers: 2, selector: '#canvas' }).success).toBe(false)
   })

@@ -1,37 +1,4 @@
-// The adversarial kill-matrix legs (Phase 385 plan 07 — JOBQ-03, D-07 / D-18 / D-19 / D-20).
-//
-// Plan 06's twelve legs interrupt the HAPPY path: a job doing its work, killed beside a checkpoint
-// publish, resumed. Every guarantee they prove is about a job that was going to succeed. These four
-// leg families interrupt the paths a job takes when something has gone wrong, and each one exists
-// because the corresponding guarantee has a shape that passes vacuously if it is asserted lazily:
-//
-//   POISON (D-18)          "the queue cannot crash-loop" is satisfied by a queue that got STUCK.
-//                          A job whose claim nobody ever released also stops crashing, and looks
-//                          identical from the outside. So the leg asserts the REASON it stopped:
-//                          the bound was spent, the row is `failed`, and the terminal host — still
-//                          configured to crash — never reaches its crash point.
-//   FAILURE PATH (D-20)    "the disposition ran exactly once" is satisfied by a disposition that
-//                          ran ZERO times, because the kill landed before it was reached. So both
-//                          legs assert the POSITIVE evidence first: the continuation rows the
-//                          producer already wrote are durable at the instant of the kill.
-//   CANCEL (D-19)          "the cancel was honoured" is satisfied by a job that failed for some
-//                          other reason. So the leg asserts the terminal status is `cancelled`
-//                          specifically, which checkpoint boundary honoured it, and that the
-//                          checkpoint after that boundary was never entered at all.
-//   STALE EPOCH (D-07)     "a stale epoch is refused" is satisfied by a store that refuses
-//                          everything. So the refused hosts are paired with a correct-epoch host
-//                          that succeeds, and the store is asserted byte-identical across both
-//                          refusals.
-//
-// THE LEASE IS FAKE, DELIBERATELY. D-07 splits the work: 385 proves the store refuses a stale token
-// and 386 binds v51's writer lease as the source of that token. `fakeWriterLease` is that seam, and
-// reaching for the real lease here would couple the two phases at exactly the point their ordering
-// exists to keep apart.
-//
-// SPAWN BUDGET: 14 children across 6 legs, on top of plan 06's 26. Nothing is sampled — every leg
-// family described above runs in full, and every host in each family is a real OS process.
-// 2026-09-02 (Phase 412): 26 rather than 32 — the retired kind's legs left with the Issue-slot
-// cleanup; the legs here are untouched.
+// Each family asserts positive evidence too, because each guarantee passes vacuously alone.
 
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -93,24 +60,7 @@ function declarationFor(kind: JobKind): JobKindDeclaration {
   return registry.require(kind)
 }
 
-/**
- * The kinds a permanent failure of `kind` actually CONTINUES INTO, asked of the producer.
- *
- * Read from the fallback rather than from `allowedSuccessors`, because the producer is what
- * the engine actually runs. Since 2026-09-01 (Phase 409) declared equals produced — analyze-run
- * declares and produces `['curate-memory']`, the reserved sixth kind having left with the
- * Issue-slot cleanup (388 D-04 introduced the split this collapsed).
- * Asking the producer is therefore a choice of instrument rather than a correction: it keeps the
- * matrix measuring the chain the product builds even if the two lists ever diverge again.
- *
- * MEASURED CONSEQUENCE, recorded rather than papered over: with one continuation, the "a
- * PARTIAL continuation set is never visible" arm of the atomicity claim below is no longer
- * reachable through any real kind — analyze-run was the only kind with a fallback producer at
- * all, and every other kind halts its chain. What still has teeth, and is what `failAndChain`
- * exists for, is the other arm: a terminal parent with NO continuation is never visible. The
- * multi-continuation arm returns by itself the day a second successor is produced, because
- * this is asked of the producer rather than restated here.
- */
+// Asked of the producer the engine runs, not `allowedSuccessors`, so the matrix tracks real chains.
 function continuationKindsFor(kind: JobKind, jobId: string, payload: unknown): readonly JobKind[] {
   const disposition = declarationFor(kind).onPermanentFailure
   if (disposition === 'halt-chain') return []
@@ -172,13 +122,7 @@ function childEnv(
   }
 }
 
-/**
- * Spawn a crash host, wait for its marker, and kill it for real.
- *
- * Returns the marker so a leg can assert the point it reached and that the pid was another OS
- * process. Every guard plan 06 built is used unchanged: the wait aborts on early child exit, the
- * child must be alive when the signal goes out, and the death must be BY the signal.
- */
+// Spawn a crash host, wait for its marker, and kill it by the signal while it is alive.
 async function crashAt(
   paths: KillMatrixPaths,
   markerPath: string,
@@ -205,7 +149,7 @@ async function crashAt(
 
 // ---- the new selector vocabulary ------------------------------------------------------------------
 
-describe('verb crash points (the seam plan 07 adds beside the checkpoint points)', () => {
+describe('verb crash points, beside the checkpoint points', () => {
   // A hook that can never fire is a leg that proves nothing while reporting success, so every
   // component of a selector is refused by name before a store is opened.
   it('refuses an unknown verb, an unknown side, and a missing selector — by name', () => {
@@ -279,9 +223,9 @@ describe('verb crash points (the seam plan 07 adds beside the checkpoint points)
   })
 })
 
-// ---- LEG FAMILY 1: the poison job (D-18, T-385-03) -------------------------------------------------
+// ---- LEG FAMILY 1: the poison job -------------------------------------------------
 
-describe('a poison job that SIGKILLs its host on every attempt (D-18, JOBQ-03)', () => {
+describe('a poison job that SIGKILLs its host on every attempt', () => {
   // `consolidate` declares maxAttempts 2, which is the cheapest bound that is still a bound.
   //
   // THE BOUND IS SPENT AT THE CLAIM, so the arithmetic is: claims 1..maxAttempts run the handler,
@@ -395,9 +339,9 @@ describe('a poison job that SIGKILLs its host on every attempt (D-18, JOBQ-03)',
   }, LEG_TIMEOUT_MS)
 })
 
-// ---- LEG FAMILY 2: a kill around the atomic failure path (D-20 / CR-07) -----------------------------
+// ---- LEG FAMILY 2: a kill around the atomic failure path -----------------------------
 
-describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () => {
+describe('SIGKILL inside the permanent-failure disposition', () => {
   const kind: JobKind = 'analyze-run'
   const REASON = 'analyze-run kill-matrix adversarial permanent failure'
   const PAYLOAD = { fail: 'permanent', reason: REASON } as const
@@ -412,9 +356,7 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
     const paths = makeRoot('failure-path-record')
     const jobId = String(await seedJob(paths.agentQaRoot, kind, PAYLOAD))
     const successors = continuationKindsFor(kind, jobId, PAYLOAD)
-    // Non-vacuity: a failure that continued into nothing would satisfy every assertion below
-    // by having nothing to satisfy. The bound is 1 rather than 2 since 388 D-04 — see
-    // continuationKindsFor for what that costs and what it does not.
+    // Non-vacuity: a failure continuing into nothing would satisfy every assertion below.
     expect(successors.length).toBeGreaterThan(0)
     const selector = verbCrashSelector('failAndChain', 'before', jobId)
 
@@ -499,7 +441,7 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
       crashed.checkpointBytes[checkpointPath(jobId, checkpointId)],
     )
     const authoredOnResume = authoredCheckpointIds(paths.invocations, authoredPreCrash.length)
-    expect(authoredOnResume, 'a recorded checkpoint must never be authored again (JOBQ-03)').not.toContain(
+    expect(authoredOnResume, 'a recorded checkpoint must never be authored again').not.toContain(
       checkpointId,
     )
     expect([...authoredOnResume].sort()).toEqual(
@@ -513,9 +455,7 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
     const paths = makeRoot('failure-path-atomic')
     const jobId = String(await seedJob(paths.agentQaRoot, kind, PAYLOAD))
     const successors = continuationKindsFor(kind, jobId, PAYLOAD)
-    // Non-vacuity: a failure that continued into nothing would satisfy every assertion below
-    // by having nothing to satisfy. The bound is 1 rather than 2 since 388 D-04 — see
-    // continuationKindsFor for what that costs and what it does not.
+    // Non-vacuity: a failure continuing into nothing would satisfy every assertion below.
     expect(successors.length).toBeGreaterThan(0)
     const selector = verbCrashSelector('failAndChain', 'after', jobId)
 
@@ -586,9 +526,9 @@ describe('SIGKILL inside the permanent-failure disposition (D-20, JOBQ-03)', () 
   }, LEG_TIMEOUT_MS)
 })
 
-// ---- LEG FAMILY 3: a cancel that crosses a crash (D-19) --------------------------------------------
+// ---- LEG FAMILY 3: a cancel that crosses a crash --------------------------------------------
 
-describe('a cancel requested mid-run, honoured across a crash (D-19, JOBQ-03)', () => {
+describe('a cancel requested mid-run, honoured across a crash', () => {
   // `curate-memory` is the only two-checkpoint kind, so it is the only one where "the boundary
   // after the crash" and "the boundary the job never reached" are different places.
   it('survives the kill with the request intact and lands cancelled at the next boundary', async () => {
@@ -613,10 +553,7 @@ describe('a cancel requested mid-run, honoured across a crash (D-19, JOBQ-03)', 
       const marker = await waitForCrashMarker(running, paths.marker, selector)
       expect(marker.pid).not.toBe(process.pid)
 
-      // THE CANCEL ARRIVES FROM ANOTHER PROCESS, while the host that holds the claim is parked.
-      // The row is claimed, so the store must only RECORD the request — cancelling it outright
-      // here is the collapse plan 05's controls exist to catch, and this is that control across a
-      // real process boundary.
+      // A cancel from another process while the holder is parked: the store only records it.
       const lease = fakeWriterLease(KILL_MATRIX_EPOCH)
       const store = openKillMatrixStore(paths.agentQaRoot)
       try {
@@ -696,9 +633,9 @@ describe('a cancel requested mid-run, honoured across a crash (D-19, JOBQ-03)', 
   }, LEG_TIMEOUT_MS)
 })
 
-// ---- LEG FAMILY 4: fencing, with a fake lease (D-07, T-385-02) -------------------------------------
+// ---- LEG FAMILY 4: fencing, with a fake lease -------------------------------------
 
-describe('a resume carrying a stale epoch, proven with a fake lease (D-07, JOBQ-03)', () => {
+describe('a resume carrying a stale epoch, proven with a fake lease', () => {
   it('refuses both the re-adoption and the stale fence, changes nothing, and lets the holder finish', async () => {
     const kind: JobKind = 'consolidate'
     const checkpointId = declarationFor(kind).checkpointSchedule[0]!
@@ -755,9 +692,7 @@ describe('a resume carrying a stale epoch, proven with a fake lease (D-07, JOBQ-
     expect(String(staleAdopt.errorMessage)).toContain(`observed ${successor.epoch}`)
     expect((await readStoreSnapshot(paths.agentQaRoot)).logicalDump).toBe(crashed.logicalDump)
 
-    // (b) THE SPLIT-BRAIN HOST does not re-adopt at all: it still holds its old token and only
-    //     discovers otherwise at the commit boundary, which is the refusal 386's adversarial test
-    //     lands on. Different guard, same named error, and nothing is mutated on the way out.
+    // (b) The split-brain host keeps its old token and is refused at the commit boundary.
     const staleFence = await runChildExpectingRefusal(
       childEnv(paths, {
         [KILL_MATRIX_ENV.role]: 'resume',
@@ -803,33 +738,10 @@ describe('a resume carrying a stale epoch, proven with a fake lease (D-07, JOBQ-
   }, LEG_TIMEOUT_MS)
 })
 
-// ---- LEG FAMILY 5: a retired-kind row at the head of the FIFO (Phase 422, D-16 / ADV-03) ----------
-//
-// The four families above all interrupt a job this build can READ. This one interrupts the queue
-// itself: a row written by an earlier build under a kind that has since been retired sits at the
-// head of the FIFO, and `rowToJob` parses every row that leaves the store through the shipped
-// five-kind contract. Before the quarantine, that parse threw INSIDE `claimNext`'s transaction, so
-// `inTransaction` rolled the claim back — the attempt the claim had just spent went with it, the
-// row returned to the queue exactly as it was found, and the next claim was offered the same row
-// again. That is the crash-loop D-18 exists to forbid, reached without a single crash, and it
-// starves every valid row behind it for as long as the poisoned row exists.
-//
-// The guarantee is therefore stated with BOTH halves, because each passes vacuously alone:
-//
-//   THE ATTEMPT COMMITS   "the queue no longer loops" is satisfied by a queue that refuses
-//                         everything. So the leg asserts the valid follower RAN, exactly once.
-//   THE HISTORY SURVIVES  "the poison row stopped being offered" is satisfied by deleting it. So
-//                         the leg asserts the original retired kind, its id and its payload bytes
-//                         are all still readable afterwards, and that the store is still stamped
-//                         at the version this build reads.
-//
-// No child processes: the failure this family describes is a transaction boundary, not a kill, and
-// a spawned host would measure the spawn.
+// ---- LEG FAMILY 5: a retired-kind row at the head of the FIFO ----------
 
-describe('a retired-kind row at the head of the FIFO (D-16, ADV-03)', () => {
-  // The Issue-slot kind retired in Phase 412. Spelled independently
-  // here rather than imported: it is precisely a kind no current vocabulary contains, so any
-  // constant this build still exported for it would be the bug.
+describe('a retired-kind row at the head of the FIFO', () => {
+  // Spelled independently: a constant this build exported for a retired kind would be the bug.
   const RETIRED_KIND = 'retired-kind-fixture'
 
   // The FIXED, MASKED reason a quarantine records. Spelled out rather than imported for the same
@@ -972,9 +884,7 @@ describe('a retired-kind row at the head of the FIFO (D-16, ADV-03)', () => {
     ])
     for (const id of ['job_retired_a', 'job_retired_b'] as const) {
       const row = rows.find((candidate) => String(candidate.id) === id)!
-      // THE ATTEMPT COMMITTED. This is the whole mechanism: the claim spent the attempt and the
-      // quarantine landed the row in the SAME transaction, so a thrown parser can no longer roll
-      // the spent attempt back and re-offer the row forever.
+      // Claim and quarantine commit in one transaction, so a thrown parser cannot unspend it.
       expect(Number(row.attempts), `${id} must have spent its claim`).toBe(1)
       expect(String(row.status)).toBe('failed')
       expect(row.claimed_at).toBeNull()

@@ -1,20 +1,11 @@
-// `agent-qa ask "<message>"` — the one-shot chat verb, over the real composition (392 D-01/D-24).
-//
-// The claim under test is a STRUCTURAL one, and it is the reason D-24 exists: the CLI owns no turn
-// capability of its own. It resolves a root, composes the local host, and calls `invokeFunction`
-// with `agent.ask` exactly as `fn` does with any other op — so everything a turn can do, it can do
-// because the function layer let it, and 397's parity suite picks the verb up from the registry
-// without the CLI being consulted.
-//
-// Nothing here is stubbed. The command builds the real registry through the real composition root
-// in both cases below; the failure case is driven by a real refusal from the real dispatch pipeline
-// rather than by a thrown fixture, which is what makes the error-reporting assertion mean anything.
+// The CLI owns no turn capability: it composes the local host and calls `agent.ask` like any op.
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 
+import type { AgentAskResult } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -29,16 +20,21 @@ import {
 } from './conformance/spawned-chat.js'
 import type { SpawnOutcome } from './conformance/spawned-chat.js'
 
-/**
- * Every composition input this command handed the real composition root (395-22 · (A3)).
- *
- * A PASS-THROUGH RECORDER AND NOT A DOUBLE. The mock below delegates to the genuine
- * `composeCliLocalAgent` — every other cell in this file drives the real registry through the real
- * composition and must keep doing so, because "the CLI owns no turn capability" is a structural
- * claim that a stubbed composition would make unmeasurable. What is added is a tap: the ARGUMENT is
- * captured on its way through, which is the only thing (A3) is about.
- */
+// A pass-through tap on the real composition, so the other cells still drive the real registry.
 const compositionInputs = vi.hoisted(() => [] as { chatPresent?: (text: string) => void }[])
+
+const standInTurn = vi.hoisted(() => ({ result: undefined as AgentAskResult | undefined }))
+
+vi.mock('@vostride/agent-qa-agent', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@vostride/agent-qa-agent')>()
+  return {
+    ...original,
+    invokeFunction: (...args: Parameters<typeof original.invokeFunction>) =>
+      standInTurn.result === undefined
+        ? original.invokeFunction(...args)
+        : Promise.resolve(standInTurn.result),
+  }
+})
 
 vi.mock('../composition/local-agent-host.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('../composition/local-agent-host.js')>()
@@ -54,6 +50,7 @@ vi.mock('../composition/local-agent-host.js', async (importOriginal) => {
 interface InvocationResult {
   stdout: string
   stderr: string
+  writes: string[]
   exitCode: number | string | undefined
 }
 
@@ -87,6 +84,11 @@ async function runAsk(configPath: string, args: string[]): Promise<InvocationRes
   const error = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
     stderr.push(values.map(String).join(' '))
   })
+  const writes: string[] = []
+  const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+    writes.push(String(chunk))
+    return true
+  })
   process.exitCode = undefined
 
   try {
@@ -95,34 +97,26 @@ async function runAsk(configPath: string, args: string[]): Promise<InvocationRes
       .addCommand(createAskCommand())
     program.exitOverride()
     await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'ask', ...args])
-    return { stdout: stdout.join('\n'), stderr: stderr.join('\n'), exitCode: process.exitCode }
+    return {
+      stdout: stdout.join('\n'),
+      stderr: stderr.join('\n'),
+      writes,
+      exitCode: process.exitCode,
+    }
   } finally {
     log.mockRestore()
     error.mockRestore()
+    write.mockRestore()
   }
 }
 
-// ---- The two inputs the 399.1-09 cells share, and why each is the input it is -------------------
-
-/**
- * Prose no capability in this build handles, so the turn it reaches fail-closes DETERMINISTICALLY.
- *
- * NO MODEL IS CONSULTED ON THIS ROAD, which is what makes it usable in a hermetic cell: the resolver
- * table matches nothing, the composition is model-unbound, and `mark_unhandled` fails the turn
- * closed. Wrapped in `/fn agent.ask`, that fail-closed inner turn becomes the outer clause's
- * RETURNED `failed` verdict — the exact ending the engine used to derive `completed` over.
- */
+// Prose no capability handles, so the turn fail-closes deterministically with no model consulted.
 const UNROUTABLE_PROSE = 'zzqq flibberwock zorptastic'
 
 /** A value that is not shaped like an environment variable's name. */
 const NOT_A_REFERENCE = 'sk-PROBE-0000000000000000000000000000'
 
-/**
- * One clause whose op reaches its capability and DECLINES: the refs-only arm, not a failure.
- *
- * 2026-10-14 (441 D-15): re-aimed from the deleted construction-scan block to the reference
- * field's shape refusal, which is decided on the input before anything is read past the set.
- */
+// One clause whose op reaches its capability and declines on the reference field's shape.
 const REFUSED_CLAUSE = `/fn config.auth.set ${JSON.stringify({
   target: 'web',
   envVarName: NOT_A_REFERENCE,
@@ -157,9 +151,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
-  // 432-13: the bare `proposals` alias left the resolver table with the inbox route (C432-CHAT-DIRECT).
-  // 432-17 deleted `proposals.list` too; the generic `/fn` passthrough reaches `runs.list` instead.
-  it('D-24: routes a deterministic utterance through agent.ask and renders the receipt', async () => {
+  it('routes a deterministic utterance through agent.ask and renders the receipt', async () => {
     const configPath = fixtureWorkspace(roots)
     const result = await runAsk(configPath, ['/fn runs.list'])
 
@@ -172,41 +164,15 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
   })
 
   it('the rendered receipt line carries the receipt\'s own `outcome`', async () => {
-    // SC-5's REPORTING half (WINDOWS 124, WTST-08's remaining half), owner-ratified 2026-08-13:
-    // the RENDERED LINE governs. The scripted surface shares the REPL's receipt wording by design
-    // (D-01: one turn, two surfaces), so it shares the omission too — fixing one alone would leave
-    // a person's scripted run and their conversation disagreeing about what an invocation cost.
-    // `Runs consumed: N (previewed up to M)` rides `ClauseReceipt.outcome`; this pins that the
-    // field reaches stdout at all, on the deterministic turn.
-    //
-    // 2026-08-20 (399.1-04): THE LINE MOVED AND THE CLAIM DID NOT. `proposals.list` declares a
-    // classifier now — `classify` is a REQUIRED member of `FunctionSpec` as of plan 04 — so the
-    // engine's `${functionId} completed` fallback is not what this op reports any more. The op's
-    // own one-line map is, and the string below is it for an EMPTY inbox, which is what this
-    // fixture workspace has. 2026-10-01 (432-17): `proposals.list` is deleted; `runs.list` is the
-    // subject now, and the string is its own map for a workspace with no completed run. It is still a contiguous string the shipped line renders only by
-    // printing `outcome`: the functionId and the clause are separate fields, and neither of them
-    // is this sentence.
+    // The rendered `outcome` line governs: the scripted surface shares the REPL's receipt wording.
     const configPath = fixtureWorkspace(roots)
     const result = await runAsk(configPath, ['/fn runs.list'])
 
     expect(result.stdout).toContain('0 completed run(s)')
   })
 
-  it('(A3) binds a presentation port on the SAME stream its confirm prompts on', async () => {
-    // 432-13: no confirm prompts on this stream any more (the door builds none); the presentation
-    // port is still bound to stdout, which is the half of this claim that survives.
-    //
-    // 395-22 · CR-03 · CFGM-05. `composeCliLocalAgent` supplies `createTtyConfirmPort()` whenever
-    // this process has two TTYs, so at a terminal this command DOES ask a person to approve gated
-    // work — and until this plan it bound no surface to show them what they were approving. Round
-    // 4's verification measured the consequence end to end: the complete set of bytes on the
-    // terminal before the decision was the approval prompt itself.
-    //
-    // THE BINDING IS THE CLAIM, MEASURED AT THE SEAM. `ask.ts` cannot decide what a turn is, and it
-    // does not: it hands the composition a writer, exactly as `chat.ts:289` does, and everything
-    // downstream is the shared composition's. So the cell asserts the argument, and then asserts
-    // what the argument DOES — a binding present but inert would pass the first half alone.
+  it('binds a presentation port on the SAME stream its confirm prompts on', async () => {
+    // The presentation port is bound to stdout; the cell asserts the binding and what it writes.
     const configPath = fixtureWorkspace(roots)
     await runAsk(configPath, ['/fn runs.list'])
 
@@ -214,11 +180,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     const chatPresent = compositionInputs[0]?.chatPresent
     expect(typeof chatPresent).toBe('function')
 
-    // AND IT WRITES TO STDOUT, WITH A TRAILING NEWLINE, THROUGH THE MASKER. The stream matters more
-    // than the bytes: a render on any other stream is a render the person answering the prompt is
-    // not reading, which is the whole content of the 2026-08-14 "reviewable binds at approval time"
-    // ruling. `process.stdout.write` is spied rather than `console.log`, because the confirm prompt
-    // this must share a stream with writes the same way.
+    // Spies `process.stdout.write`, because a render on another stream is not what a person reads.
     const written: string[] = []
     const write = vi.spyOn(process.stdout, 'write')
       .mockImplementation((chunk: string | Uint8Array): boolean => {
@@ -233,7 +195,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     expect(written.join('')).toBe('a summary line\nagent-qa.config.yaml\n--- /dev/null\n')
   })
 
-  it('D-08: a fail-closed turn reports the clause and exits non-zero', async () => {
+  it('a fail-closed turn reports the clause and exits non-zero', async () => {
     const configPath = fixtureWorkspace(roots)
     const result = await runAsk(configPath, ['write a test for two factor auth'])
 
@@ -243,15 +205,7 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     expect(result.stderr).toContain('write a test for two factor auth')
   })
 
-  // ---- 399.1-09 (gap round 1, D-12): one receipt word, one exit code ---------------------------
-  //
-  // WHAT THE CELL ABOVE COULD NOT SEE. It drives a turn that fail-closes at the TOP level, so
-  // `result.status` is `fail_closed` and the first exit gate raises. The gap-1 defect lives on the
-  // other road: a clause whose op RETURNED a non-success verdict. The engine set its `failed` flag
-  // only in the catch, so a `failed` receipt left the aggregate `completed`, `ask.ts`'s
-  // `clause-failed` branch was dead code, and a CI step went green over a turn that carried nothing
-  // out. The two cells below are that differential, in this process; the spawned describe after
-  // them is the same differential on the artifact a person installs.
+  // A clause whose op returned a non-success verdict must fail the aggregate and the shell.
 
   it('a returned failure fails the shell (in-process)', async () => {
     // The INNER turn fail-closes with no model consulted — the prose routes to no capability in
@@ -277,13 +231,8 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
     expect(result.stderr).toContain('agent.ask')
   })
 
-  it('a refused-only turn keeps the success exit (D-12, door parity with fn)', async () => {
-    // A D-12 POSTURE CONTROL, GREEN BEFORE AND AFTER THE FIX. D-11 stops on FAILURE and D-02 ruled
-    // a refusal is not one: the op ran and answered a refusal, and the verifier measured
-    // the `fn` door exiting 0 on this identical payload. E2E-02 clause 2 makes door DISAGREEMENT the
-    // defect class, so moving this door's exit unilaterally would mint a parity break inside the
-    // phase that exists to close one. The refusal is surfaced where a person and a script actually
-    // read it — the receipt word, the payload beneath it, and `agent.ask`'s own outer verdict.
+  it('a refused-only turn keeps the success exit, as fn does', async () => {
+    // A refusal is not a failure: the op answered, so this door exits 0 like the `fn` door.
     const configPath = fixtureWorkspace(roots)
     const result = await runAsk(configPath, [REFUSED_CLAUSE])
 
@@ -295,19 +244,121 @@ describe('agent-qa ask (the one-shot chat verb)', () => {
   })
 })
 
-// ---- The same differential on the SHIPPED binary (399.1-09, R5) ---------------------------------
-//
-// WHY A SEPARATE DESCRIBE WITH ITS OWN INSTRUMENT. The module-level `vi.mock` above taps this
-// process's composition root and reaches nothing inside a spawned child, which is the point: an
-// exit code is what a CI step actually reads, and a CI step runs `dist/cli.js`. The three cells are
-// one spawn each — a RETURNED failure, a THROWN failure and a refusal — so the mapping under test
-// is receipt word to exit code, never how the op happened to end.
-//
-// THE INSTRUMENT IS IMPORTED, NEVER RE-ROLLED (`spawned-chat.ts`'s own no-second-copy law): the
-// freshness guard, the hermetic environment and the fixture recipe are that module's, and a second
-// answer to "what did the child inherit" is the one thing these cells cannot afford.
+describe('agent-qa ask under GitHub Actions', () => {
+  const ANSWER = '::add-mask::secret-looking ##[error]x'
+  const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
+  const roots: string[] = []
+  let originalExitCode: typeof process.exitCode
 
-describe('agent-qa ask on the shipped binary: one receipt word, one exit code (399.1-09)', () => {
+  function turn(overrides: Partial<AgentAskResult>): AgentAskResult {
+    return {
+      sessionId: 'session-1', turnId: 'turn-1', status: 'completed', receipts: [], results: [],
+      ...overrides,
+    }
+  }
+
+  beforeEach(() => {
+    originalExitCode = process.exitCode
+    compositionInputs.length = 0
+  })
+
+  afterEach(() => {
+    standInTurn.result = undefined
+    vi.unstubAllEnvs()
+    process.exitCode = originalExitCode
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  })
+
+  it('prints a model answer as text inside one stop-commands pair', async () => {
+    const configPath = fixtureWorkspace(roots)
+    standInTurn.result = turn({ answer: ANSWER })
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await runAsk(configPath, ['what changed'])
+
+    expect(result.exitCode).toBeUndefined()
+    expect(result.stdout).toBe('')
+    expect(result.writes).toHaveLength(1)
+    expect(result.writes[0]).toMatch(PAIR)
+    expect(result.writes[0]).toContain(`\n${ANSWER}\n`)
+  })
+
+  it('prints an error carrying model text inside its own pair', async () => {
+    const configPath = fixtureWorkspace(roots)
+    standInTurn.result = turn({
+      status: 'fail_closed', unhandled: { clause: 'what changed', reason: ANSWER },
+    })
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await runAsk(configPath, ['what changed'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toBe('')
+    expect(result.writes).toHaveLength(2)
+    expect(result.writes[1]).toMatch(PAIR)
+    expect(result.writes[1]).toContain(ANSWER)
+  })
+
+  it('prints a mid-turn render inside one pair', async () => {
+    const configPath = fixtureWorkspace(roots)
+    standInTurn.result = turn({})
+    await runAsk(configPath, ['what changed'])
+    const chatPresent = compositionInputs[0]?.chatPresent
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const written: string[] = []
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation((chunk: unknown) => {
+      written.push(String(chunk))
+      return true
+    })
+    try {
+      chatPresent?.(ANSWER)
+    } finally {
+      write.mockRestore()
+    }
+
+    expect(written).toHaveLength(1)
+    expect(written[0]).toMatch(PAIR)
+    expect(written[0]).toContain(`\n${ANSWER}\n`)
+  })
+
+  it('a secrets file it cannot read is reported inside one pair', async () => {
+    const configPath = fixtureWorkspace(roots)
+    const secretsPath = join(dirname(configPath), '.env.secrets.local')
+    rmSync(secretsPath)
+    vi.stubEnv('GITHUB_ACTIONS', 'true')
+
+    const result = await runAsk(configPath, ['what changed'])
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stderr).toBe('')
+    expect(result.writes).toHaveLength(1)
+    expect(result.writes[0]).toMatch(PAIR)
+    expect(result.writes[0]).toContain(`Secrets file not found: ${secretsPath}`)
+    expect(result.writes[0]).toContain('Create the file before running tests.')
+  })
+
+  it('prints a model answer and its error exactly as before off GitHub Actions', async () => {
+    const configPath = fixtureWorkspace(roots)
+    standInTurn.result = turn({ answer: ANSWER })
+    const answered = await runAsk(configPath, ['what changed'])
+    standInTurn.result = turn({
+      status: 'fail_closed', unhandled: { clause: 'what changed', reason: ANSWER },
+    })
+    const refused = await runAsk(configPath, ['what changed'])
+
+    expect(answered.writes).toEqual([])
+    expect(answered.stdout.split('\n').at(-1)).toBe(ANSWER)
+    expect(refused.writes).toEqual([])
+    expect(stripVTControlCharacters(refused.stderr))
+      .toContain(`Ask error [fail-closed]: ${ANSWER}`)
+    expect(refused.stderr).not.toContain('::stop-commands::')
+  })
+})
+
+// A spawned child escapes the module mock, and its exit code is what a CI step reads.
+
+describe('agent-qa ask on the shipped binary: one receipt word, one exit code', () => {
   afterEach(() => {
     cleanupTempRoots()
   })
@@ -315,7 +366,7 @@ describe('agent-qa ask on the shipped binary: one receipt word, one exit code (3
   /** Spawn the built entry for one `ask`, asserting the build is the one this source describes. */
   async function spawnAsk(label: string, message: string): Promise<SpawnOutcome> {
     expect(buildFreshness(), REBUILD_INSTRUCTION).toEqual({ missing: [], stale: [] })
-    const fixture = fixtureProject(`399-1-09-exit-${label}`)
+    const fixture = fixtureProject(`exit-${label}`)
     return await spawnCollecting(
       fixture.root,
       [CLI_ENTRY, '--config', fixture.configPath, 'ask', message],
@@ -353,7 +404,7 @@ describe('agent-qa ask on the shipped binary: one receipt word, one exit code (3
     expect(outcome.code).toBe(1)
   }, 180_000)
 
-  it('keeps the success exit on a refused-only turn (D-12 posture)', async () => {
+  it('keeps the success exit on a refused-only turn', async () => {
     const outcome = await spawnAsk('refused', REFUSED_CLAUSE)
 
     // NON-VACUITY: the refusal fired on the shipped binary too.

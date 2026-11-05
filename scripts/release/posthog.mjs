@@ -1,10 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-// 2026-08-17 (Phase 398 plan 11, D-20): the generated key file moved out of
-// core's deleted analytics module and into `packages/analytics/`, together with the transport that
-// reads it. Every path below moved in the same change — a release that writes the key into a file
-// nothing imports leaves the shipped binary silently keyless, and no build step would say so.
+// The key file lives in `packages/analytics/`; writing it anywhere else ships a keyless binary.
 const host = 'https://us.i.posthog.com'
 const keyFilePath = 'packages/analytics/src/posthog-project.ts'
 const analyticsRuntimeArtifacts = [
@@ -39,8 +36,7 @@ export async function writePosthogProjectFile(options = {}) {
 function validateRuntimeArtifact(path, projectKey) {
   if (!existsSync(path)) throw new Error(`PostHog dist key artifact is missing: ${path}`)
   const distText = readFileSync(path, 'utf8')
-  if (!distText.includes('AGENT_QA_POSTHOG_KEY')) throw new Error(`PostHog dist key export is missing: ${path}`)
-  if (/AGENT_QA_POSTHOG_KEY\s*=\s*["']{2}/.test(distText)) throw new Error(`PostHog dist key is empty: ${path}`)
+  // The bundler inlines the key constant, so only the key value itself proves what shipped.
   if (!distText.includes(projectKey)) throw new Error(`PostHog dist key does not match POSTHOG_PROJECT_KEY: ${path}`)
 }
 
@@ -62,8 +58,7 @@ export function validatePosthogReleaseArtifacts(options = {}) {
   }
   if ((options.logText ?? '').includes(projectKey)) throw new Error('raw POSTHOG_PROJECT_KEY leaked in logs')
 
-  // The opt-out arm and the build-time-only key, asserted on the composition root that owns both:
-  // `compose.ts` reads the baked key and its deny arm builds no transport (447-04, D-08).
+  // Asserted on `compose.ts`, which reads the baked key and builds no transport when opted out.
   const composePath = join(rootDir, 'packages/analytics/src/compose.ts')
   if (!existsSync(composePath)) throw new Error('analytics composition source is missing')
   const composeText = readFileSync(composePath, 'utf8')

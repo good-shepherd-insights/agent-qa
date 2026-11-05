@@ -1,27 +1,4 @@
-// THE CHANGE-DRIVEN PROPERTY, ON A REAL HEADLESS CHROMIUM (403-02 Task 3 · LIVE-01 · D-05).
-//
-// THE DISCRIMINATOR THIS FILE EXISTS FOR. "Frames arrived" is satisfied by
-// `setInterval(() => page.screenshot())` just as well as by `Page.startScreencast`, and the two
-// are different products: a poller costs a browser a full rasterise several times a second on
-// every run forever, and it cannot tell a page that is changing from a page that is not. The
-// property that separates them has a NEGATIVE ARM — a page that is not moving must not produce
-// frames at a poller's cadence — so this file measures both arms, and the negative one is the one
-// with teeth. Since 428 D-15 a static page is not silent: it produces a fresh keepalive capture
-// every 2 s so the viewer's dot stays green, and STATIC-PAGE-KEEPALIVE bounds that cadence both
-// ways (a 1 s poller is too many frames, a silent screencast too few).
-//
-// K=5, ZERO TOLERATED FAILURES ON THE POSITIVE ARM. One green run is roughly 60% likely to hide a
-// 40% flake (WINDOWS: "live gate k=1 hides flakes"), and the claim here is about a timing-shaped
-// behaviour of a real compositor. Each iteration is a fresh `start`/`stop` on the same adapter and
-// reports its own index on failure, so a flaky arm names the iteration rather than the suite.
-//
-// A MISSING CHROMIUM IS A RED, NEVER A SKIP. `dashboard-dom.test.ts`'s rule: a cell that skips
-// itself when the browser is absent is a cell that is green on every machine that cannot run it.
-//
-// THIS FILE MUST NOT MOCK THE BROWSER DRIVER. `adapter.test.ts` mocks it at module scope, and a
-// module mock is process-wide within a file — which is why this is a SEPARATE file rather than a
-// describe block over there. There is nothing to measure about a screencast produced by a mock,
-// and the absence of that mock here is itself an acceptance criterion of this plan.
+// A module mock of the browser driver would cover this whole file and leave nothing to measure.
 
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -50,42 +27,20 @@ const EXPECTED_ITERATIONS = 5
 /** The positive arm's window and floor. */
 const ANIMATED_WINDOW_MS = 3_000
 const ANIMATED_MIN_FRAMES = 3
-/**
- * STATIC-PAGE-KEEPALIVE's window, count band and cadence floor (428 D-15, re-spelled from 403-02's
- * one-frame ceiling, which the keepalive retires — RESEARCH P11).
- *
- * After the first frame, a static page gets a fresh capture every `LIVE_KEEPALIVE_QUIET_MS`
- * (2_000), so 6 s holds between 2 and 4 frames: fewer is a silent producer (the dot would go amber
- * on a healthy page), more is a producer emitting faster than the keepalive — i.e. polling. The gap
- * floor sits 200 ms under the keepalive period, so a 1 s poller fails it on every pair. The
- * measured counts are printed by the cell; do not widen the band without a dated note saying what
- * was measured and why.
- */
+// Bands around the keepalive period: fewer frames is a silent producer, more is a poller.
 const STATIC_WINDOW_MS = 6_000
 const STATIC_MIN_FRAMES = 2
 const STATIC_MAX_FRAMES = 4
 const KEEPALIVE_MIN_GAP_MS = 1_800
 /** TIMESTAMP-EPOCH-MS: a capture time in epoch ms is within this of the receiver's clock. */
 const EPOCH_MS_TOLERANCE_MS = 5_000
-/**
- * The bound on each non-chromium launch in the getter-gates cell (quick 261004-lvn). Playwright's
- * default launch timeout (3 min in playwright-core 1.61.0) equals the cell's 180 s budget, so an
- * unbounded launch that hangs used up the cell before its own catch could run. Firefox 1532 never
- * launches on this macOS host (433-01: launch timeout x3 at 60 s; a 15 s probe on 2026-10-04 timed
- * out too), while WebKit 2311 launched in 703 ms and chromium in 254 ms. Two bounded probes plus
- * the adapter setups stay well under the 180_000 budget, which is unchanged.
- */
+// Playwright's default launch timeout equals the cell's budget, so a hung launch would eat it.
 const NON_CHROMIUM_LAUNCH_BOUND_MS = 30_000
 
 let page: LiveStreamFixturePage | undefined
 let tall: LiveStreamFixturePage | undefined
 
-/**
- * TAB-FOLLOW's pages: a tall document with a fixed, animating box (so the compositor keeps
- * producing frames wherever the page is scrolled), scrolled on load to `?scroll=N`. Two pages with
- * different scroll offsets are two pages a frame's `scrollOffsetY` can tell apart. Local to this
- * file so the 403 fixture page stays a byte-for-byte twin of the cli one.
- */
+// Local to this file so `live-stream-fixture-page.ts` stays a byte-for-byte twin of cli's.
 async function startTallAnimatingPage(): Promise<LiveStreamFixturePage> {
   const server = createServer((req, res) => {
     const scroll = Number(new URL(req.url ?? '/', 'http://127.0.0.1').searchParams.get('scroll') ?? 0)
@@ -214,7 +169,7 @@ async function detachPrivateScreencastSession(adapter: WebPlatformAdapter): Prom
   await session?.detach()
 }
 
-describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)', () => {
+describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled', () => {
   it('POSITIVE ARM: an animating page produces frames, k=5, zero tolerated failures', async () => {
     const adapter = await adapterOn(`${fixture().url}?animate=1`)
     const counts: number[] = []
@@ -259,8 +214,6 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
       }
       expect(counts, 'both arms run k=5 — a shrunken loop is a weaker claim, silently')
         .toHaveLength(EXPECTED_ITERATIONS)
-      // eslint-disable-next-line no-console -- the A2 evidence the SUMMARY records
-      console.log(`[403-02 A2] animated-arm frame counts over 5 iterations: ${counts.join(', ')}`)
     } finally {
       await adapter.cleanup().catch(() => undefined)
     }
@@ -314,8 +267,6 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
       }
       expect(counts, 'both arms run k=5 — a shrunken loop is a weaker claim, silently')
         .toHaveLength(EXPECTED_ITERATIONS)
-      // eslint-disable-next-line no-console -- the D-15 evidence the SUMMARY records
-      console.log(`[428-06 D-15] static-page frame counts over 5 iterations: ${counts.join(', ')}`)
     } finally {
       await adapter.cleanup().catch(() => undefined)
     }
@@ -351,7 +302,7 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
     }
   }, 180_000)
 
-  it('THE ACK IS THE THROTTLE: a viewer that never acks stops receiving frames (D-05/D-07)', async () => {
+  it('THE ACK IS THE THROTTLE: a viewer that never acks stops receiving frames', async () => {
     // The change-driven contract has TWO halves and the arms above measure only one. This is the
     // other: CDP will not produce frame N+1 until N is acked, which is what makes the ack a real
     // backpressure signal rather than a formality — and what makes the hub's ack bound and the
@@ -383,14 +334,12 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
         + `${String(unacked.length)}. If those are close, the ack is not the throttle and the `
         + 'backpressure the hub and the frame proxy are built on does not exist.',
       ).toBeGreaterThan(unacked.length * 5)
-      // eslint-disable-next-line no-console -- the backpressure evidence the SUMMARY records
-      console.log(`[403-02] ack backpressure: unacked=${String(unacked.length)} acked=${String(acked.length)} frames / 3 s`)
     } finally {
       await adapter.cleanup().catch(() => undefined)
     }
   }, 180_000)
 
-  it('TAB-FOLLOW: the running screencast follows the page the test acts on, with no end and no re-register (#273)', async () => {
+  it('TAB-FOLLOW: the running screencast follows the page the test acts on, with no end and no re-register', async () => {
     // RED while the screencast stays bound to the page it started on: every frame after the switch
     // still carries page A's scroll offset. Driven through a REAL hub, because "no end, no
     // re-register" is a fact about what a subscriber sees, not about the capability alone.
@@ -448,8 +397,6 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
   }, 180_000)
 
   it('WITHDRAWN-FALLS-BACK: a screencast withdrawn under a live browser becomes labelled 1 s snapshots, and stop() ends them', async () => {
-    // RED while a withdrawn screencast simply goes silent: the viewer keeps the last frame and the
-    // dot ages to amber on a browser that is still up (428 D-12's second half).
     const adapter = await adapterOn(`${fixture().url}?animate=1`)
     try {
       const capability = adapter.liveStream as NonNullable<WebPlatformAdapter['liveStream']>
@@ -586,7 +533,6 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
       }
       if (unmeasured !== undefined) {
         const note = `NON-CHROMIUM-GATE ${name} unmeasured: ${unmeasured}`
-        console.log(note)
         await annotate(note)
         continue
       }
@@ -596,13 +542,12 @@ describe('WebPlatformAdapter.liveStream is CHANGE-DRIVEN, not polled (LIVE-01)',
         expect(
           adapter.liveStream,
           'Page.startScreencast is a CDP call; a non-chromium target declares no stream rather '
-          + 'than falling back to screenshots (D-08\'s honest absence)',
+          + 'than falling back to screenshots, an honest absence',
         ).toBeUndefined()
       } finally {
         await adapter.cleanup().catch(() => undefined)
       }
       const note = `NON-CHROMIUM-GATE ${name} measured`
-      console.log(note)
       await annotate(note)
     }
   }, 180_000)

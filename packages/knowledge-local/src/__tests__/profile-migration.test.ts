@@ -81,7 +81,7 @@ function vecRowids(
     .sort()
 }
 
-describe('D-19 active embedding profile migration', () => {
+describe('active embedding profile migration', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -99,7 +99,6 @@ describe('D-19 active embedding profile migration', () => {
     return {
       knowledgeRoot,
       productKey,
-      commitArtifacts: 'none',
     }
   }
 
@@ -222,7 +221,7 @@ describe('D-19 active embedding profile migration', () => {
     }
   })
 
-  it('SC5 refuses a row-count-equal staging set when frozen member C is missing', async () => {
+  it('refuses a row-count-equal staging set when frozen member C is missing', async () => {
     const a = publishNamed('Alpha')
     const b = publishNamed('Bravo')
     const c = publishNamed('Charlie')

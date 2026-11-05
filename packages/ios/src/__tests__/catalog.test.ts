@@ -1,20 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// ---------------------------------------------------------------------------
-// Wave-0 RED catalog suite — Phase 360 Plan 02, Task 3 (EXEC-06).
-//
-// Pins the driver-call contract for every iOS verb gaining or changing execution this
-// phase against a call-logging mocked webdriverio driver — no live Appium, no simctl.
-// New iOS-only cases (pressButton with the simulator degradation lane, pickerSelect
-// value/index lanes, swipeFromEdge, openUniversalLink re-keyed from openLink), the fold
-// re-keys (waitFor on-shapes, keypress mode, swipe path), and the retired assert/openLink/
-// launchApp cases (pinned to the post-flip unreachable outcome so they go green when Plan
-// 07 deletes them).
-//
-// RED convention: these fail on missing / legacy-keyed case behavior (uncalled `mobile:`
-// mocks, assertNever fall-through), NEVER on compile errors — action literals are cast via
-// `as unknown as ExecAction`. The pre-existing adapter.test.ts + compound.test.ts stay GREEN.
-// ---------------------------------------------------------------------------
+// Driver-call contract for each iOS verb against a call-logging mocked driver; no live Appium.
 
 const IOS_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <AppiumAUT>
@@ -53,7 +39,7 @@ function createMockElement() {
 }
 let mockElement: ReturnType<typeof createMockElement>
 
-// listApps throwing is this codebase's simulator signal (Pitfall 5 degradation lane).
+// `listApps` throwing is the simulator signal.
 let listAppsThrows: boolean
 
 function createMockDriver() {
@@ -97,7 +83,7 @@ import { IOSPlatformAdapter } from '../adapter.js'
 
 type ExecAction = Parameters<IOSPlatformAdapter['execute']>[0]
 
-describe('IOSPlatformAdapter catalog (RED — Wave-0)', () => {
+describe('IOSPlatformAdapter catalog', () => {
   let adapter: IOSPlatformAdapter
   let mockDriver: ReturnType<typeof createMockDriver>
 
@@ -130,8 +116,8 @@ describe('IOSPlatformAdapter catalog (RED — Wave-0)', () => {
       expect(r.success).toBe(true)
       expect(mockDriver.execute).toHaveBeenCalledWith('mobile: pressButton', { name: 'home' })
     })
-    it('a volume button on a simulator-flagged session → §7.1 degradation error, success false, no throw', async () => {
-      // Plan 07 owns the simulator check; the listApps-throws signal flags a simulator session here.
+    it('a volume button on a simulator-flagged session → degradation error, success false, no throw', async () => {
+      // The listApps-throws signal flags a simulator session here.
       listAppsThrows = true
       reset()
       const r = await adapter.execute({ type: 'pressButton', button: 'volumeUp' } as unknown as ExecAction)
@@ -150,7 +136,7 @@ describe('IOSPlatformAdapter catalog (RED — Wave-0)', () => {
       expect(call).toBeDefined()
       expect(JSON.stringify(call?.[1])).toContain('March')
     })
-    it('index lane with an out-of-range order → a §7.1 range error, never a silent wrong selection', async () => {
+    it('index lane with an out-of-range order → a structured range error, never a silent wrong selection', async () => {
       const ref = await refFor('Month')
       reset()
       const r = await adapter.execute({ type: 'pickerSelect', ref, order: 99 } as unknown as ExecAction)
@@ -180,13 +166,13 @@ describe('IOSPlatformAdapter catalog (RED — Wave-0)', () => {
   })
 
   describe('fold re-keys (schema execution shapes replace legacy field reads)', () => {
-    it('waitFor {on:"selector"} returns a §7.1 web-only error (no selector waiting on native)', async () => {
+    it('waitFor {on:"selector"} returns a structured web-only error (no selector waiting on native)', async () => {
       reset()
       const r = await adapter.execute({ type: 'waitFor', on: 'selector', selector: '#done', timeoutMs: 500 } as unknown as ExecAction)
       expect(r.success).toBe(false)
       expect(r.error).toMatch(/web|selector/i)
     })
-    it('keypress mode:"press" works, mode:"down"/"up" return a §7.1 press-only error', async () => {
+    it('keypress mode:"press" works, mode:"down"/"up" return a structured press-only error', async () => {
       reset()
       const press = await adapter.execute({ type: 'keypress', keys: ['Return'], mode: 'press' } as unknown as ExecAction)
       expect(press.success).toBe(true)
@@ -222,7 +208,7 @@ describe('IOSPlatformAdapter catalog (RED — Wave-0)', () => {
     })
   })
 
-  describe('retired cases (Plan 07 deletes / re-keys them — pinned to the post-flip unreachable outcome)', () => {
+  describe('the retired assert, openLink and launchApp actions no longer succeed', () => {
     it('assert / openLink / launchApp are no longer handled as distinct successful cases', async () => {
       reset()
       const rAssert = await adapter.execute({ type: 'assert', condition: 'x' } as unknown as ExecAction)

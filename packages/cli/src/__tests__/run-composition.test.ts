@@ -2,7 +2,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import ts from 'typescript'
+import * as ts from 'typescript/unstable/ast'
+import { createVirtualFileSystem } from 'typescript/unstable/fs'
+import { API } from 'typescript/unstable/sync'
 import { afterAll, describe, it, expect, vi } from 'vitest'
 import type { RiskActionDescriptor } from '@vostride/agent-qa-schema'
 import type { RunEventEnvelope } from '@vostride/agent-qa-schema'
@@ -26,28 +28,19 @@ afterAll(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-// 363-09 Task 2 / Task 1 — the composition swap seam: the D-11 unmasking confirm decorator and the
-// shared `attachRunSubscribers` helper both startRun sites use (Pitfall 8). Reporter RENDERING is
-// unit-tested in reporters/*.test.ts; here we pin the composition contract.
+// The composition contract: `attachRunSubscribers`, shared by both `startRun` sites.
 
-// RE-SPELLED 2026-10-01 (432-19, D-14/D-15; 432-14 deferred #3). `buildUnmaskingConfirm` unmasked
-// the action name on a confirm prompt for the person reading it, paused the live line around the
-// question and left the gate's masked record untouched. It had no production caller after 432-14,
-// and the `ConfirmPort` it decorated is deleted with the gate, so it goes too. The masking claim it
-// carried — a human-facing render unmasks exactly once while the record stays masked — is held by
-// every surviving human render (`unmask-boundary-rollcall.test.ts`); what is pinned here is that the
-// decorator cannot come back as an export of this module.
-describe('buildUnmaskingConfirm (D-11 / Pitfall 4)', () => {
-  it('C432-NO-ASK-PORTS: the confirm decorator is not exported, so nothing can wrap a prompt any more', () => {
+// The confirm decorator is not exported; surviving human renders hold the masking claim.
+describe('buildUnmaskingConfirm', () => {
+  it('the confirm decorator is not exported, so nothing can wrap a prompt any more', () => {
     expect(Object.keys(runSessionComposition)).not.toContain('buildUnmaskingConfirm')
-    // Non-vacuity: the namespace is the real module, with its retained presentation symbols.
-    // (2026-10-02, 432-42: the live pause controller left too; the subscriber helper is the anchor.)
+    // Non-vacuity: the namespace is the real module; the subscriber helper is the anchor.
     expect(typeof runSessionComposition.attachRunSubscribers).toBe('function')
     expect(Object.keys(runSessionComposition)).not.toContain('createLivePauseController')
   })
 })
 
-describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
+describe('attachRunSubscribers (bus composition swap)', () => {
   function fakeSession(): { subscribe: ReturnType<typeof vi.fn> } {
     return { subscribe: vi.fn((_from: number | undefined, _h: (e: RunEventEnvelope) => void) => () => {}) }
   }
@@ -64,7 +57,7 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
       extraSubscribers: [extra],
     })
 
-    // console + junit + wire + one extra = 4 subscriptions, every one from seq 1 (D-04 full replay).
+    // Console, JUnit, wire and the extra subscriber each subscribe from seq 1.
     expect(session.subscribe).toHaveBeenCalledTimes(4)
     for (const call of session.subscribe.mock.calls) {
       expect(call[0]).toBe(1)
@@ -74,8 +67,7 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
     expect(extraFlush).toHaveBeenCalledTimes(1)
   })
 
-  // 2026-10-02 (432-42, D-14): the live seam is deleted, so the second half of this title is now its
-  // absence — a legacy controller smuggled in is never bound (old title kept for the console half).
+  // A legacy live controller smuggled in is never bound.
   it('skips the console subscriber and unbinds the live seam when console is false', async () => {
     const session = fakeSession()
     const bind = vi.fn()
@@ -88,11 +80,11 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
 
     // only the wire subscriber attaches (console skipped, no junit, no extras).
     expect(session.subscribe).toHaveBeenCalledTimes(1)
-    // nothing binds a live seam any more, so a smuggled legacy controller is never touched.
+    // Nothing binds a live seam, so a smuggled controller is never touched.
     expect(bind).not.toHaveBeenCalled()
   })
 
-  it('best-effort flush: a rejecting subscriber flush never rejects the combined flush (RUNX-03)', async () => {
+  it('best-effort flush: a rejecting subscriber flush never rejects the combined flush', async () => {
     const session = fakeSession()
     const rejecting: RunSubscriberHandle = {
       handler: vi.fn(),
@@ -113,18 +105,13 @@ describe('attachRunSubscribers (bus composition swap, 363-09)', () => {
   })
 })
 
-// ---- 390 D-15/D-16: the run-start snapshot reaches BOTH reporters from ONE input --------------
-//
-// `attachRunSubscribers` is the single place either reporter is constructed (Pitfall 8), so it is
-// the single place the disposition can be dropped. Pinned by OBSERVING both surfaces render it from
-// one `quarantined` argument — a wiring test that only asserted the argument was accepted would
-// stay green while a reporter silently ignored it.
+// `attachRunSubscribers` builds both reporters, so both are observed rendering one snapshot.
 
-describe('attachRunSubscribers threads the quarantine snapshot to both reporters (390 D-15/D-16)', () => {
+describe('attachRunSubscribers threads the quarantine snapshot to both reporters', () => {
   it('renders the disposition on the console AND in the JUnit document from one input', async () => {
     const fixture = buildReporterFixture()
     const capture = createCapture()
-    const junitPath = join(track(mkdtempSync(join(tmpdir(), 'agent-qa-390-07-'))), 'junit.xml')
+    const junitPath = join(track(mkdtempSync(join(tmpdir(), 'agent-qa-'))), 'junit.xml')
     const handlers: ((envelope: RunEventEnvelope) => void)[] = []
     const session = {
       subscribe: vi.fn((_from: number | undefined, handler: (e: RunEventEnvelope) => void) => {
@@ -147,18 +134,23 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
     expect(readFileSync(junitPath, 'utf8')).toContain(JUNIT_QUARANTINE_MARKER_BLOCK)
   })
 
-  it('BOTH startRun sites in run.ts pass the run-start snapshot (Pitfall 8)', () => {
+  it('BOTH startRun sites in run.ts pass the run-start snapshot', () => {
     const runSource = readFileSync(
       fileURLToPath(new URL('../commands/run.ts', import.meta.url)),
       'utf8',
     )
-    const sourceFile = ts.createSourceFile(
-      'run.ts',
-      runSource,
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS,
-    )
+    const api = new API({ cwd: '/', fs: createVirtualFileSystem({ '/run.ts': runSource }) })
+    let parsed: ts.SourceFile | undefined
+    try {
+      parsed = api
+        .updateSnapshot({ openFiles: ['/run.ts'] })
+        .getDefaultProjectForFile('/run.ts')
+        ?.program.getSourceFile('/run.ts')
+    } finally {
+      api.close()
+    }
+    if (parsed === undefined) throw new Error('TypeScript could not parse run.ts')
+    const sourceFile = parsed
     const calls: ts.CallExpression[] = []
     const visit = (node: ts.Node): void => {
       if (
@@ -168,7 +160,7 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
       ) {
         calls.push(node)
       }
-      ts.forEachChild(node, visit)
+      node.forEachChild(visit)
     }
     visit(sourceFile)
     expect(calls).toHaveLength(2)
@@ -191,7 +183,7 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
   })
 })
 
-// ---- 385-08 (D-13): the dissection's two load-bearing controls ------------------------------
+// The run-session module's export controls.
 
 // Control 1 — the anti-shim pin. The dissection is only real if the moved symbols stopped being
 // reachable through this path. A module that re-published them would leave every call site
@@ -199,7 +191,7 @@ describe('attachRunSubscribers threads the quarantine snapshot to both reporters
 // carve-out would then be scoping a file whose contents had gone somewhere else. So the export
 // set of the CLI-side module is pinned by exact equality, and any re-export statement at all is
 // an offender regardless of what it names.
-describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)', () => {
+describe('the CLI run-session module exports presentation ONLY', () => {
   const moduleSource = readFileSync(
     fileURLToPath(new URL('../run-session-composition.ts', import.meta.url)),
     'utf8',
@@ -212,18 +204,11 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
 
     expect(declared).toEqual([
       'AttachRunSubscribersInput',
-      // 2026-10-17 (443-05, D-22): the replay floor the drive subscribes the run's record at.
+      // The replay floor the drive subscribes the run's record at.
       'REPLAY_FROM_START',
       'attachRunSubscribers',
-      // 2026-08-17 (398-10): the run-completion analytics subscriber factory. It belongs beside
-      // `attachRunSubscribers` for that helper's own reason — `run.ts` has two `startRun` sites
-      // (Pitfall 8), and a subscriber constructed separately at each is one that can be configured
-      // differently at each. It is presentation in the same sense the reporters are: something a
-      // host attaches to the bus and flushes, which a headless drainer would substitute.
+      // The run-completion analytics subscriber, shared like the reporters so both sites agree.
       'buildAnalyticsRunSubscriber',
-      // 2026-10-15 (441-30, D-12/D-15): the per-run hook registrar's assembly left.
-      // 2026-10-01 (432-19): 'buildUnmaskingConfirm' left with the confirm port it decorated.
-      // 2026-10-02 (432-42, D-14): 'createLivePauseController' left with the pause seam it built.
     ].sort())
   })
 
@@ -233,5 +218,3 @@ describe('the CLI run-session module exports presentation ONLY (385-08 / D-13)',
   })
 })
 
-// 2026-10-15 (441-30, D-12/D-15): Control 2, the describe 'human decoration composes OUTSIDE the
-// pause timing (385-08 / D-10 / D-11)', is deleted with the per-run hook registrar it drove.

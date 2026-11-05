@@ -1,12 +1,9 @@
-// 2026-09-15, 423 D-16: the deterministic half of runs.mark, shared by the writer and its preview.
-// Nothing here opens an intent, lease, model or audit dir, mints an id or time, or writes.
-import { dirname, resolve } from 'node:path'
+// The deterministic half of `runs.mark`, shared by writer and preview; it opens and writes nothing.
+import { dirname, join, resolve } from 'node:path'
 import { chainJobIdsForRun, type KnowledgeReaderPort } from '@vostride/agent-qa-agent'
-import { createKnowledgeReader, DIGEST_JOB_ID_SOURCE, LOCAL_CURATION_CAPABILITIES, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
-import { projectRecordContent, RunsMarkInputSchema, type CompletedRunHandoff, type ImprovementPlan, type KnowledgeRecordShowResult, type KnowledgeTargetRef, type MarkAddress, type MarkPreviewKnowledge, type MarkPreviewKnowledgeRecord, type MarkQuarantineClass, type MarkReceipt, type NoDraftableFixChecked, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
-import { resolveConfiguredKnowledgeRoot } from '../config.js'
-import { trustPriorsForHost, type ResolveTrustPriors } from '../curation/trust-priors.js'
-import { canonicalJson, FsHandoffSource, FsMarkLedger, latestMarkReceiptFor, previewMarkLabels, resolveEvalSession, resolveMarkLabelTargets, slugBranch, type GoldenTrajectoryTarget, type MarkGroundTruthPreview, type MarkLabelPreviewItem } from '../eval-session-composition.js'
+import { createKnowledgeReader, DIGEST_JOB_ID_SOURCE, FsMarkLedger, HANDOFF_FILE, latestMarkReceiptFor, loadCompletedRunHandoff, LOCAL_CURATION_CAPABILITIES, RUNS_SUBDIR, type LocalCurationCapabilities } from '@vostride/agent-qa-agent-local'
+import { MARK_TARGET_REASONS, projectRecordContent, RunsMarkInputSchema, slugBranch, type CompletedRunHandoff, type ImprovementPlan, type KnowledgeRecordShowResult, type KnowledgeTargetRef, type Mark, type MarkAddress, type MarkPreviewKnowledge, type MarkPreviewKnowledgeRecord, type MarkQuarantineClass, type MarkReceipt, type NoDraftableFixChecked, type RunsMarkInput, type RunsMarkOutcome } from '@vostride/agent-qa-schema'
+import { resolveConfig, resolveConfiguredKnowledgeRoot } from '../config.js'
 
 export type MarkPlanCuration = Pick<LocalCurationCapabilities, 'triageMark' | 'servedIdsOn' | 'procedureReadOn' | 'applyFeedback' | 'readFeedbackRecord' | 'planMarkEvidence' | 'projectMarkEvidenceOutcome'>
 type MarkMember = CompletedRunHandoff['tests'][number]
@@ -14,7 +11,7 @@ type MarkStep = MarkMember['steps'][number]
 export type ServedRecordFacts = NonNullable<ReturnType<LocalCurationCapabilities['readFeedbackRecord']>>
 
 export type MarkTargetRefusal = Extract<RunsMarkOutcome, { kind: 'run-not-found' | 'member-not-found' | 'ambiguous-address' }>
-export type MarkPlanRefusal = Extract<RunsMarkOutcome, { kind: 'step-not-found' | 'ambiguous-correction' }>
+export type MarkPlanRefusal = Extract<RunsMarkOutcome, { kind: 'step-not-found' }>
 
 export function resolveMarkMember(handoff: CompletedRunHandoff, testId?: string) {
   const matches = testId === undefined ? handoff.tests : handoff.tests.filter(test => test.testId === testId)
@@ -35,7 +32,7 @@ export type MarkTarget =
 
 export function loadMarkTarget(agentQaRoot: string, input: RunsMarkInput): MarkTarget {
   let handoff: CompletedRunHandoff
-  try { handoff = new FsHandoffSource({ root: agentQaRoot, runId: input.runId }).load() }
+  try { handoff = loadCompletedRunHandoff(join(agentQaRoot, RUNS_SUBDIR, slugBranch(input.runId), HANDOFF_FILE)) }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { kind: 'run-not-found', runId: input.runId }
     throw error
@@ -53,22 +50,21 @@ export function markEvidenceCurationJobIds(runId: string): string[] {
   return [chainJobIdsForRun(runId, DIGEST_JOB_ID_SOURCE).curateMemory]
 }
 
-/** The note is deliberately absent: only the kind and the correction make a mark a repeat. */
+/** The note is deliberately not compared: only the kind makes a mark a repeat. */
 export function isIdenticalRepeat(prior: MarkReceipt, input: RunsMarkInput): boolean {
-  return prior.kind === input.kind && prior.correctedExpectation === input.correctedExpectation
-    && canonicalJson(prior.correctedAction ?? null) === canonicalJson(input.correctedAction ?? null)
+  return prior.kind === input.kind
 }
 
 /** A read-time observation, not a lock: the writer re-plans under its own transaction. */
 export interface MarkPlanBasis { ledgerOrdinal: number; priorOrdinal?: number }
 export type MarkLatest = { kind: 'first' } | { kind: 'supersedes'; markId: string; ordinal: number }
-export interface MarkResolvedStep { stepIndex: number; reason: GoldenTrajectoryTarget['reason'] }
+export interface MarkResolvedStep { stepIndex: number; reason: (typeof MARK_TARGET_REASONS)[number] }
 
 export type MarkFeedbackPlan =
   | { kind: 'already-marked'; receipt: MarkReceipt; basis: MarkPlanBasis }
   | { kind: 'refused'; outcome: MarkPlanRefusal; basis: MarkPlanBasis }
   | { kind: 'quarantined'; class: MarkQuarantineClass; resolvedStep: MarkResolvedStep; latest: MarkLatest; basis: MarkPlanBasis }
-  | { kind: 'effects'; targets: GoldenTrajectoryTarget[]; resolvedStep: MarkResolvedStep; decisionCount: number
+  | { kind: 'effects'; resolvedStep: MarkResolvedStep
     knowledge: { servedRecordIds: string[]; appendsEvidence: boolean }
     latest: MarkLatest; basis: MarkPlanBasis }
 
@@ -82,29 +78,51 @@ export interface PlanMarkFeedbackInput {
   curation: Pick<MarkPlanCuration, 'triageMark' | 'servedIdsOn'>
 }
 
-/** The writer's refusal order: repeat, unresolvable step, quarantine, then an ambiguous correction. */
+type MarkStepResolution =
+  | { kind: 'resolved'; stepIndex: number; reason: (typeof MARK_TARGET_REASONS)[number] }
+  | { kind: 'step-not-found'; stepCount: number }
+
+/** The addressed step, else the first failing step (never for a false-pass), else the last step. */
+function resolveMarkStep(handoff: CompletedRunHandoff, address: MarkAddress, kind: Mark): MarkStepResolution {
+  if (address.runId !== handoff.runId) throw new Error('mark run does not match handoff')
+  const members = handoff.tests.filter(member => member.testIndex === address.testIndex)
+  const member = members[0]
+  if (members.length !== 1 || member === undefined ||
+    (address.testId !== undefined && address.testId !== member.testId)) {
+    throw new Error('mark member does not match handoff')
+  }
+  if (address.stepIndex !== undefined) {
+    if (!Number.isInteger(address.stepIndex) || address.stepIndex < 0 || address.stepIndex >= member.steps.length) {
+      return { kind: 'step-not-found', stepCount: member.steps.length }
+    }
+    return { kind: 'resolved', stepIndex: address.stepIndex, reason: 'step-mark' }
+  }
+  if (member.steps.length === 0) return { kind: 'step-not-found', stepCount: 0 }
+  const failing = kind === 'false-pass' ? -1 : member.steps.findIndex(step => step.verifierVerdict?.pass === false)
+  return {
+    kind: 'resolved',
+    stepIndex: failing < 0 ? member.steps.length - 1 : failing,
+    reason: failing < 0 ? 'passing-verdict' : 'failing-step',
+  }
+}
+
+/** The writer's refusal order: repeat, unresolvable step, then quarantine. */
 export function planMarkFeedback({ input, handoff, member, address, prior, ledgerOrdinal, curation }: PlanMarkFeedbackInput): MarkFeedbackPlan {
   const basis: MarkPlanBasis = { ledgerOrdinal, ...(prior === undefined ? {} : { priorOrdinal: prior.ordinal }) }
   if (prior !== undefined && isIdenticalRepeat(prior, input)) return { kind: 'already-marked', receipt: prior, basis }
   const triage = curation.triageMark(member)
-  const resolution = resolveMarkLabelTargets(handoff, address, input)
+  const resolution = resolveMarkStep(handoff, address, input.kind)
   if (resolution.kind === 'step-not-found') {
     // The outcome schema exposes the numeric address only.
     return { kind: 'refused', basis, outcome: { kind: 'step-not-found', runId: address.runId, testIndex: address.testIndex,
       stepIndex: input.stepIndex ?? 0, stepCount: resolution.stepCount } }
   }
-  const target = resolution.targets[0]!
-  const resolvedStep: MarkResolvedStep = { stepIndex: target.stepIndex, reason: target.reason }
+  const resolvedStep: MarkResolvedStep = { stepIndex: resolution.stepIndex, reason: resolution.reason }
   const latest: MarkLatest = prior === undefined ? { kind: 'first' } : { kind: 'supersedes', markId: prior.markId, ordinal: prior.ordinal }
   if (triage.kind === 'quarantined') return { kind: 'quarantined', class: triage.class, resolvedStep, latest, basis }
-  if (resolution.kind === 'ambiguous-correction') {
-    return { kind: 'refused', basis, outcome: { kind: 'ambiguous-correction', runId: input.runId,
-      testIndex: member.testIndex, decisionCount: resolution.decisionCount } }
-  }
-  const servedRecordIds = resolution.targets.flatMap(item => curation.servedIdsOn(member.steps[item.stepIndex]!))
-  return { kind: 'effects', targets: resolution.targets, resolvedStep, decisionCount: resolution.decisionCount,
+  const servedRecordIds = curation.servedIdsOn(member.steps[resolvedStep.stepIndex]!)
+  return { kind: 'effects', resolvedStep,
     knowledge: { servedRecordIds, appendsEvidence: servedRecordIds.length > 0 || input.kind === 'false-pass' },
-    // 432-09 (D-11): a later mark replaces the earlier one's gold case and retracts nothing it applied.
     latest, basis }
 }
 
@@ -163,8 +181,7 @@ export type MarkConsequencePreview =
   | MarkPlanRefusal
   | Extract<MarkFeedbackPlan, { kind: 'already-marked' }>
   | (Extract<MarkFeedbackPlan, { kind: 'quarantined' }> & { member: MarkPreviewMember })
-  | { kind: 'consequences'; member: MarkPreviewMember; resolvedStep: MarkResolvedStep; decisionCount: number
-    groundTruth: MarkGroundTruthPreview[]; labels: MarkLabelPreviewItem[]
+  | { kind: 'consequences'; member: MarkPreviewMember; resolvedStep: MarkResolvedStep
     /** Unmasked: the op masks joined content and evidence tokens at its boundary. */
     knowledge: MarkPreviewKnowledge
     draft: MarkDraftPreview; latest: MarkLatest; basis: MarkPlanBasis }
@@ -174,7 +191,6 @@ export interface MarkPreviewDeps {
   agentQaRoot: string
   curation?: MarkPlanCuration
   reader?: KnowledgeReaderPort
-  resolveTrustPriors?: ResolveTrustPriors
   /** Mirrors a writer host that binds invokeAuthoringDraftEdit; the preview never invokes it. */
   canDraftTestEdit?: boolean
 }
@@ -185,10 +201,7 @@ const PLANNING_MARK_ID = 'mark_000000000000'
 
 type RecordJoin = Pick<MarkPreviewKnowledgeRecord, 'recordContent' | 'contentAbsence'>
 
-/**
- * D-17 via D-20's batch join: one maintenance scan over every reached record. No batch read is a
- * named `not-bound`, an unfinished scan is `scan-incomplete` for all, a miss is `not-found`.
- */
+// One maintenance scan over every reached record: `not-bound`, `scan-incomplete` or `not-found`.
 async function joinReachedRecords(reader: KnowledgeReaderPort, recordIds: readonly string[]): Promise<(recordId: string) => RecordJoin> {
   const showRecords = reader.showRecords
   if (showRecords === undefined) return () => ({ contentAbsence: { reason: 'not-bound' } })
@@ -215,8 +228,7 @@ export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknow
   if (target.kind !== 'target') return target
   const { handoff, member, address } = target
   const ledger = new FsMarkLedger({ root: deps.agentQaRoot, runId: input.runId })
-  // One read (WR-10). A corrupt ledger throws runs.mark's own MarkLedgerCorruptError, uncaught: the
-  // preview has exactly the writer's refusal arms and mints no ledger-corrupt arm of its own.
+  // One read; a corrupt ledger throws the writer's own `MarkLedgerCorruptError`, uncaught.
   const receipts = ledger.read()
   const plan = planMarkFeedback({ input, handoff, member, address, prior: latestMarkReceiptFor(receipts, input.runId, address),
     ledgerOrdinal: receipts.length, curation })
@@ -224,15 +236,12 @@ export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknow
   const previewMember: MarkPreviewMember = { testIndex: member.testIndex, ...(member.testId === undefined ? {} : { testId: member.testId }) }
   if (plan.kind === 'quarantined') return { ...plan, member: previewMember }
   if (plan.kind !== 'effects') return plan
-  const labels = previewMarkLabels({ handoff, address, mark: input })
-  if (labels.kind !== 'labels') throw new Error('mark label preview disagrees with the resolved mark plan')
   let store: { knowledgeRoot: string; reader: KnowledgeReaderPort } | undefined
   const storeOf = async () => {
     if (store !== undefined) return store
-    const session = await resolveEvalSession({ configPath: deps.configPath, keyOnly: true })
-    const knowledgeRoot = resolveConfiguredKnowledgeRoot(session.config, dirname(resolve(deps.configPath)))
-    store = { knowledgeRoot, reader: deps.reader ?? createKnowledgeReader(() => knowledgeRoot, undefined, undefined,
-      deps.resolveTrustPriors ?? trustPriorsForHost(deps).resolve) }
+    const config = await resolveConfig({ configPath: deps.configPath, loadAuthPlugins: false })
+    const knowledgeRoot = resolveConfiguredKnowledgeRoot(config, dirname(resolve(deps.configPath)))
+    store = { knowledgeRoot, reader: deps.reader ?? createKnowledgeReader(() => knowledgeRoot) }
     return store
   }
 
@@ -273,6 +282,6 @@ export async function previewMarkConsequences(deps: MarkPreviewDeps, raw: unknow
       : decided.kind === 'test-edit' ? { kind: 'test-edit', testRef: decided.plan.testRef }
         : { kind: 'no-draftable-fix', checked: decided.checked }
   }
-  return { kind: 'consequences', member: previewMember, resolvedStep: plan.resolvedStep, decisionCount: plan.decisionCount,
-    groundTruth: labels.groundTruth, labels: labels.labels, knowledge, draft, latest: plan.latest, basis: plan.basis }
+  return { kind: 'consequences', member: previewMember, resolvedStep: plan.resolvedStep,
+    knowledge, draft, latest: plan.latest, basis: plan.basis }
 }

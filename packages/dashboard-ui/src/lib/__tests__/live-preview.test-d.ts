@@ -1,8 +1,4 @@
-// THE LIVE PREVIEW'S CLOSED SETS AND ITS INPUT, PINNED BY TYPE (428 D-14/D-15/D-16, v54 bar).
-//
-// Each runtime array and its union are two spellings of one closed set; the runtime twin is
-// CLOSED-SETS-428 in live-preview.test.ts. NO-BUS-INPUT is D-15 rule 4: no bus envelope, liveness
-// source or socket state can reach the machine, so health read off the bus is a type error.
+// Health read off the bus is a type error: no envelope or socket state can reach the machine.
 
 import { expectTypeOf, test } from 'vitest'
 import type {
@@ -30,7 +26,7 @@ import {
 
 type FieldTypes<U> = U extends unknown ? U[keyof U] : never
 
-test('C428-PREVIEW-STATES-EXACT', () => {
+test('preview states are an exact union', () => {
   type Expected =
     | 'loading'
     | 'waiting'
@@ -50,7 +46,7 @@ test('C428-PREVIEW-STATES-EXACT', () => {
   expectTypeOf<Exclude<(typeof LIVE_PREVIEW_STATES)[number], LivePreviewStateName>>().toEqualTypeOf<never>()
 })
 
-test('C428-DOT-STATES-EXACT', () => {
+test('live dot states are an exact union', () => {
   type Expected = 'green' | 'amber' | 'red'
   expectTypeOf<LiveDotState>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof LIVE_DOT_STATES)[number]>().toEqualTypeOf<Expected>()
@@ -58,7 +54,7 @@ test('C428-DOT-STATES-EXACT', () => {
   expectTypeOf<Exclude<(typeof LIVE_DOT_STATES)[number], LiveDotState>>().toEqualTypeOf<never>()
 })
 
-test('C428-EMBED-REPORT-EVENTS-EXACT', () => {
+test('embed report events are an exact union', () => {
   type Expected = 'ready' | 'frame' | 'ended' | 'refused' | 'lost'
   expectTypeOf<LiveEmbedReportEvent>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof LIVE_EMBED_REPORT_EVENTS)[number]>().toEqualTypeOf<Expected>()
@@ -66,7 +62,7 @@ test('C428-EMBED-REPORT-EVENTS-EXACT', () => {
   expectTypeOf<Exclude<(typeof LIVE_EMBED_REPORT_EVENTS)[number], LiveEmbedReportEvent>>().toEqualTypeOf<never>()
 })
 
-test('C428-PREVIEW-ACTIONS-EXACT', () => {
+test('preview actions are an exact union', () => {
   type Expected = 'reconnect' | 'refresh' | 'start-fresh'
   expectTypeOf<LivePreviewAction>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof LIVE_PREVIEW_ACTIONS)[number]>().toEqualTypeOf<Expected>()
@@ -74,27 +70,23 @@ test('C428-PREVIEW-ACTIONS-EXACT', () => {
   expectTypeOf<Exclude<(typeof LIVE_PREVIEW_ACTIONS)[number], LivePreviewAction>>().toEqualTypeOf<never>()
 })
 
-test('C428-EMBED-STREAM-KINDS-EXACT: the parser knows every declared stream kind and no other', () => {
+test('the parser knows every declared stream kind and no other', () => {
   expectTypeOf<(typeof LIVE_EMBED_STREAM_KINDS)[number]>().toEqualTypeOf<LiveStreamKind>()
 })
 
-test('C428-EMBED-END-REASONS-EXACT', () => {
+test('embed end reasons are an exact union', () => {
   type Expected = 'runFinished' | 'handleFinished' | 'sessionEnded'
   expectTypeOf<LiveEmbedEndReason>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof LIVE_EMBED_END_REASONS)[number]>().toEqualTypeOf<Expected>()
 })
 
-test('C428-EMBED-REFUSAL-REASONS-EXACT: the token verdicts plus the three the socket alone answers', () => {
+test('the token verdicts plus the three the socket alone answers', () => {
   type Expected = LiveUrlRefusalReason | 'unknown_run' | 'unknown_handle' | 'unknown_session'
   expectTypeOf<LiveEmbedRefusalReason>().toEqualTypeOf<Expected>()
   expectTypeOf<(typeof LIVE_EMBED_REFUSAL_REASONS)[number]>().toEqualTypeOf<Expected>()
 })
 
-/**
- * The transport state a bus liveness judgement read, restated here since 428 D-03 deleted the
- * reducer's `LivenessSource`: an `EventSource.readyState` and whether the source is retrying.
- * The machine must still admit neither.
- */
+// The transport state a bus liveness judgement would read; the machine must admit neither.
 interface BusTransportState {
   readyState: number
   erroredWhileConnecting: boolean

@@ -1,29 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { WebPlatformAdapter } from '../adapter.js'
-import { FarmWebAdapter } from '../farm-adapter.js'
-
-// ---------------------------------------------------------------------------
-// Wave-0 RED catalog suite — Phase 360 Plan 02, Task 2 (EXEC-06; D-12/D-14/D-18).
-//
-// Pins the driver-call contract for every web verb gaining or changing execution this
-// phase (new cases: focus/route/unroute/networkState/storageState/handleDialog; fold
-// re-keys: navigate history/reload, tab new/switch, inspect console/network/cookies/
-// localStorage, keypress down/up, waitFor on-shapes) against a call-logging mocked
-// page/context. Every pin runs against BOTH web execute switches — the main
-// WebPlatformAdapter and the often-forgotten FarmWebAdapter — via the describe.each
-// parameterization below.
-//
-// RED convention: these fail on missing / legacy-keyed case behavior (uncalled mocks,
-// assertNever fall-through), NEVER on compile errors — execution-shaped action literals
-// are cast via `as unknown as ExecAction`, legal both before and after the Plan-04
-// Action-union flip. The mocks are injected directly onto the adapter (page/context/
-// lastRefs), bypassing setup so the same pins drive the farm switch without a live farm.
-//
-// The pre-existing adapter.test.ts + compound.test.ts stay GREEN (standalone file).
-// ---------------------------------------------------------------------------
 
 type ExecAction = Parameters<WebPlatformAdapter['execute']>[0]
-type WebAdapter = WebPlatformAdapter | FarmWebAdapter
+type WebAdapter = WebPlatformAdapter
 
 let calls: string[] = []
 
@@ -104,8 +83,7 @@ function makePage() {
     waitForSelector: vi.fn().mockImplementation(() => { calls.push('page.waitForSelector'); return Promise.resolve(null) }),
     waitForFunction: vi.fn().mockImplementation(() => { calls.push('page.waitForFunction'); return Promise.resolve(null) }),
     getByText: vi.fn().mockReturnValue({ waitFor: vi.fn().mockResolvedValue(undefined), first: vi.fn().mockReturnThis() }),
-    // 438 D-06: ':root' answers the ai snapshot the pre-dispatch binding check reads; any other
-    // selector is the observed element's aria-ref locator.
+    // `:root` serves the ai snapshot the binding check reads; any other selector is the element.
     locator: vi.fn().mockImplementation((selector: string) => (selector === ':root'
       ? { ariaSnapshot: vi.fn().mockResolvedValue('- textbox "Email" [ref=e1]') }
       : locator)),
@@ -123,8 +101,7 @@ function documentHandle() {
 }
 
 // Direct injection: page/context/lastRefs and the observation's document epoch onto the private
-// fields so a single set of pins drives BOTH the main and farm execute switches without a live
-// browser/farm session.
+// fields so the pins drive the execute switch without a live browser.
 function inject(adapter: WebAdapter): WebAdapter {
   ;(adapter as any).page = mockPage
   ;(adapter as any).context = mockContext
@@ -135,7 +112,6 @@ function inject(adapter: WebAdapter): WebAdapter {
 
 const ADAPTERS: Array<[string, () => WebAdapter]> = [
   ['WebPlatformAdapter (main execute switch)', () => new WebPlatformAdapter()],
-  ['FarmWebAdapter (farm execute switch)', () => new FarmWebAdapter()],
 ]
 
 describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
@@ -220,7 +196,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
     })
   })
 
-  describe('waitFor (schema on-shapes replace the degenerate legacy read — Pitfall 1)', () => {
+  describe('waitFor (schema on-shapes, not the legacy condition read)', () => {
     it('{on:"text"} drives real waiting logic keyed on the schema text, not the degenerate legacy condition read', async () => {
       const r = await adapter.execute({ type: 'waitFor', on: 'text', text: 'Loading', timeoutMs: 1000 } as unknown as ExecAction)
       expect(r.success).toBe(true)
@@ -248,7 +224,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
     })
   })
 
-  describe('route / unroute (new cases, D-18)', () => {
+  describe('route / unroute', () => {
     it('route registers a context.route interception for the pattern', async () => {
       const r = await adapter.execute({ type: 'route', urlPattern: '**/api/**', body: '{"ok":true}', contentType: 'application/json' } as unknown as ExecAction)
       expect(r.success).toBe(true)
@@ -264,7 +240,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
     })
   })
 
-  describe('networkState (new case, D-18)', () => {
+  describe('networkState', () => {
     it('offline → context.setOffline(true)', async () => {
       const r = await adapter.execute({ type: 'networkState', mode: 'offline' } as unknown as ExecAction)
       expect(r.success).toBe(true)
@@ -277,7 +253,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
       expect(mockContext.newCDPSession).toHaveBeenCalled()
       expect(calls).toContain('cdp:Network.emulateNetworkConditions')
     })
-    it('throttle on a non-Chromium context → structured §7.1 error naming the Chromium-only limitation, success false', async () => {
+    it('throttle on a non-Chromium context → structured error naming the Chromium-only limitation, success false', async () => {
       cdpSupported = false
       const r = await adapter.execute({ type: 'networkState', mode: 'throttle', latencyMs: 100, downloadKbps: 1000, uploadKbps: 500 } as unknown as ExecAction)
       expect(r.success).toBe(false)
@@ -285,7 +261,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
     })
   })
 
-  describe('storageState (new case, D-14 — adapter produces/consumes)', () => {
+  describe('storageState (the adapter produces and consumes it)', () => {
     it('save → context.storageState() and the state + name on the result', async () => {
       const r = await adapter.execute({ type: 'storageState', op: 'save', name: 'authed' } as unknown as ExecAction)
       expect(r.success).toBe(true)
@@ -299,7 +275,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
     })
   })
 
-  describe('handleDialog (new case, D-12)', () => {
+  describe('handleDialog', () => {
     it('arms page.once("dialog"); accept:true → dialog.accept(promptText)', async () => {
       await adapter.execute({ type: 'handleDialog', accept: true, promptText: 'yes' } as unknown as ExecAction)
       expect(mockPage.once).toHaveBeenCalledWith('dialog', expect.any(Function))
@@ -326,7 +302,7 @@ describe.each(ADAPTERS)('web catalog RED — %s', (_label, factory) => {
     })
   })
 
-  describe('teardown clears persistent route/network/dialog state (Pitfall 7)', () => {
+  describe('teardown clears persistent route/network/dialog state', () => {
     it('cleanup() calls unrouteAll and setOffline(false)', async () => {
       await adapter.cleanup()
       expect(mockContext.unrouteAll).toHaveBeenCalled()

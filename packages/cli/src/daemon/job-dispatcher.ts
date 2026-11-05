@@ -1,13 +1,4 @@
-/**
- * The daemon's resident agent-job pump and the two lifecycle events it records.
- *
- * `job-claimed` and `job-completed` carry an ADDITIVE optional `runId`, read off the claimed
- * job's payload, so an operator reading the ledger can attribute a job — a failed one above all
- * — to its run without correlating sub-second timestamps (406 D-16, closing
- * `399-friction-daemon-events-no-runid`). Nothing else from the payload crosses onto an event:
- * the daemon holds no masker, and the failure reason stays in the job store where it is read
- * through a seam that does.
- */
+// `job-claimed` and `job-completed` carry the job's `runId`; no other payload field crosses.
 import type {
   AgentJobQueue,
   JobStoreFence,
@@ -17,7 +8,6 @@ import { JOB_RECOVERY_MAX_RESUMED_JOBS } from '@vostride/agent-qa-agent-local'
 
 import type { DaemonEvent } from './events.js'
 
-/** Provisional agent-job backstop; retune from operational evidence without adding config. */
 export const AGENT_JOB_DISPATCH_POLL_MS = 5_000
 
 export interface JobDispatcherScheduler {
@@ -196,8 +186,7 @@ export function createJobDispatcher(input: CreateJobDispatcherInput): JobDispatc
       if (outcome.disposition === 'retry-scheduled') {
         doNotRunBeforeMs = input.scheduler.now() + outcome.retryDelayMs
       } else if (isSafetyProbe) {
-        // The old recovery loop stopped at the bound. A single non-empty probe proves work remains,
-        // records that fact, and yields before another batch so successor chains cannot hot-spin.
+        // A non-empty probe proves work remains, then waits one poll so chains cannot hot-spin.
         consecutiveRuns = 0
         doNotRunBeforeMs = input.scheduler.now() + AGENT_JOB_DISPATCH_POLL_MS
       }

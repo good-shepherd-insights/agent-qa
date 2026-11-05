@@ -1,27 +1,4 @@
-// THE EXPANDED STEP ROW (407-06 · LERN-01, D-03 / D-04 / D-07 / D-08, T-407-14).
-//
-// IT FILLS THE SLOT 407-02 LEFT. `tab-knowledge.tsx` shipped `<div data-step-detail />` as a
-// structural anchor precisely so this plan would be an addition rather than a re-shaping of the
-// row; this component is what goes in it.
-//
-// IT IS PRESENTATIONAL AND KNOWS NO RUN. It takes a `StepDetailView` and paints it. Every sentence
-// it renders — the channel eyebrows, the cut-candidates label, the replay/hint sentence, the rung
-// line — is an exported constant or a function of `lib/knowledge-view.ts`. Nothing here decides a
-// word.
-//
-// ONLY WHAT WAS SERVED (427 D-19). This block lives inside Retrieval details, so a channel the step
-// was not served is left out rather than named empty; a step served nothing keeps its row, which
-// says `no brief served`. Every id carries a copy button, and the plan source is plain text.
-//
-// THE PAGE IS THE OVERFLOW STRATEGY, not virtualisation (UI-SPEC). Step rows render collapsed, so
-// the tab's DOM is bounded by step count; the one unbounded case — a single step served hundreds
-// of lines — is bounded by `channelPage` and a `Show all {n} lines` disclosure. The remainder is a
-// SECOND `<ul>` inside the disclosure rather than more `<li>`s inside the first, because an `<li>`
-// nested under a `<div>` under a `<ul>` is not a list.
-//
-// ALL TEXT GOES THROUGH REACT TEXT NODES. No raw-HTML injection escape hatch appears anywhere in
-// this file — a grep for React's one is an acceptance criterion. Producer strings (caution
-// summaries here, brief summaries in `KnowledgeBriefLine`) are shown as written.
+// Collapsed rows bound the DOM; a long channel is cut by `channelPage` behind a disclosure.
 
 import { ChevronRight } from "lucide-react"
 
@@ -38,7 +15,6 @@ import {
   type StepDetailView,
 } from "@/lib/knowledge-view"
 
-/** The eyebrow role: 12px uppercase, the UI-SPEC's one label size (the 10px eyebrow is retired). */
 const EYEBROW_CLASS = "text-xs uppercase tracking-wider font-medium text-muted-foreground"
 
 /** Children of a section indent by the chevron width — `artifact-config-tab.tsx`'s own offset. */
@@ -47,7 +23,7 @@ const CHANNEL_LIST_CLASS = "pl-5 space-y-2"
 /** A record id or a cut-candidate line: mono, `tabular-nums` so a column of scores lines up. */
 const MONO_CLASS = "font-mono text-xs text-muted-foreground tabular-nums"
 
-/** The cut ledger's own eyebrow — the fourth sub-section caption of the UI-SPEC's list. */
+/** The cut ledger's own eyebrow. */
 const CUT_EYEBROW = "CUT CANDIDATES"
 
 export function KnowledgeStepDetail({ detail }: { detail: StepDetailView }) {
@@ -168,13 +144,7 @@ function Channel1({ lines }: { lines: readonly BriefLineView[] }) {
   )
 }
 
-/**
- * The procedure row: which procedure the step's plan came from, and how that went (D-07).
- *
- * Plain text since 427 D-19. The SENTENCE is the view's, and a replay that broke reads as a break
- * even at a full check count — that judgement is made once, in `planSourceView`. The tone rides
- * on `data-plan-source-outcome` only.
- */
+// The sentence is the view's, so a broken replay reads as a break even at a full check count.
 function PlanSourceRow({ planSource }: { planSource: PlanSourceView }) {
   return (
     <div data-plan-source-outcome={planSource.tone} className="space-y-1">

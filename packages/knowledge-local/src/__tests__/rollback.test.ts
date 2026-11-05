@@ -109,7 +109,7 @@ function rollbackApi(): RollbackApi {
 const PRODUCT = 'rollback-storefront'
 const SCOPE = { tier: 'product', key: PRODUCT } as const
 
-describe('DCAY-05 provenance-keyed rollback resolution', () => {
+describe('provenance-keyed rollback resolution', () => {
   let root: string
   let knowledgeRoot: string
 
@@ -127,7 +127,6 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     return {
       knowledgeRoot,
       productKey,
-      commitArtifacts: 'none',
     }
   }
 
@@ -682,7 +681,7 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     })
   })
 
-  it('never revives a SAFE-02 suppressed record through supersede, restore, and backfill', async () => {
+  it('never revives a suppressed record through supersede, restore, and backfill', async () => {
     const anchors: Anchor[] = [
       { t: 'el', role: 'button', name: 'redacted checkout' },
       { t: 'page', route: '/rollback/redacted-checkout' },
@@ -710,7 +709,7 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     })
     await knowledgeLocal.rebuildIndex({ knowledgeRoot, embedder: makeFakeEmbedder() })
 
-    // 2026-10-15 (441-24, D-27): nothing writes the terminal value now; an old row may hold it.
+    // No writer emits the terminal value; only a legacy row can hold it.
     writeLegacySuppressedRow(victim.id)
     expect(embedState(victim.id)).toEqual({
       embedStatus: EMBED_STATUS_SUPPRESSED,
@@ -740,7 +739,7 @@ describe('DCAY-05 provenance-keyed rollback resolution', () => {
     })
     expect(report.restoredVictims).toEqual([victim.id])
     expect(knowledgeLocal.deriveBundleTrust(loaded(victim)).status).toBe('active')
-    // The revival reset must be unable to match the SAFE-02 terminal value on restore.
+    // The revival reset must not match the terminal value on restore.
     expect(embedState(victim.id)).toEqual({
       embedStatus: EMBED_STATUS_SUPPRESSED,
       embeddingPresent: false,

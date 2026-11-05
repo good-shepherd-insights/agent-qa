@@ -169,7 +169,8 @@ function serializeMetadata(metadata: ScreenState['metadata']): string {
       numberValue(metadata.scroll.contentWidth),
       numberValue(metadata.scroll.contentHeight),
     ]),
-    optionalString(metadata.domContext),
+    // Fixed slot of a removed field; keeps recorded screenStateHash values stable.
+    '0',
   ]
 
   if (metadata.captureMode === 'full') {

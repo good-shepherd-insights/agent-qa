@@ -113,8 +113,7 @@ interface PlannerLimitInputProps {
   onCommit: (value: number | undefined) => void
 }
 
-// 436 D-02/D-03: a limit reaches the YAML only as a positive whole number, the value the CLI
-// accepts. Anything else stays in the box with an inline error and the YAML is left alone.
+// A limit reaches the YAML only as a positive whole number; else it stays with an inline error.
 function PlannerLimitInput({ label, value, placeholder, onCommit }: PlannerLimitInputProps) {
   const errorId = useId()
   const [text, setText] = useState(value === undefined ? '' : String(value))
@@ -449,7 +448,7 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
             <Input
               value={navTimeout ?? ''}
               onChange={(e) => handleSet(['use', 'timeout', 'navigation'], e.target.value || undefined)}
-              placeholder={ih(g?.timeout?.navigation ?? '15s')}
+              placeholder={ih(g?.timeout?.navigation ?? '2m')}
               className="h-7 text-xs"
             />
           </div>

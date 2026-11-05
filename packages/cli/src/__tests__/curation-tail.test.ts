@@ -1,6 +1,4 @@
 import { emptyCanaryCreditCounters } from '../curation/canary-credit.js'
-import { creditCanaryAttributions, type CanaryAblation } from '../curation/canary-credit.js'
-import { readRunCanaryPolicy, writeRunCanaryPolicy } from '../curation/canary-run-state.js'
 import { generateRunId } from '@vostride/agent-qa-ids'
 import { CURRENT_HANDOFF_SCHEMA_VERSION, asRecordId } from '@vostride/agent-qa-schema'
 import {
@@ -58,60 +56,6 @@ const mask = (text: string) => text
 const modelDeps = {} as RunCurationTailOptions['modelDeps']
 
 describe('canary receipt contract', () => {
-  it('curates backlog runs with their own recorded caps and sources, with explicit legacy fallback', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'agent-qa-policy-backlog-'))
-    try {
-      const handoffs = [1, 2, undefined].map(() => completeHandoffForGuard(generateRunId()))
-      const { makeScreenStateFixture } = await import(new URL('../../../knowledge-local/src/__tests__/fixtures/bundle-fixture.js', import.meta.url).href)
-      for (const h of handoffs) {
-        const state: import('@vostride/agent-qa-schema').ScreenState = makeScreenStateFixture()
-        state.url = 'https://fixture.example/checkout'
-        h.tests[0]!.steps[0]!.subActions = [{ plan: 'Open checkout', exchanges: [],
-          plannedAction: { type: 'navigate', to: 'url', url: state.url }, stateBefore: state, result: { success: true } }]
-      }
-      const dirs = handoffs.map(h => join(root, RUNS_SUBDIR, slugBranch(h.runId)))
-      dirs.forEach(dir => mkdirSync(dir, { recursive: true }))
-      writeRunCanaryPolicy(dirs[0]!, { schemaVersion: 2, runId: String(handoffs[0]!.runId), maxAblations: 1, source: 'flag' })
-      writeRunCanaryPolicy(dirs[1]!, { schemaVersion: 2, runId: String(handoffs[1]!.runId), maxAblations: 2, source: 'config' })
-      const ablation: CanaryAblation = { isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' }),
-        corpusDigest: async () => ({ kind: 'digest', corpusDigest: 'a'.repeat(64) }),
-        resolveCaps: async () => ({ maxAblations: 4, source: 'default' }),
-        ablate: vi.fn(async () => ({ kind: 'ablated' as const, crossCheck: 'flipped' as const,
-          corpusDigest: 'a'.repeat(64), k: 3, baseSeed: 11, seeds: [11, 12, 13], seedHonored: true,
-          spend: { modelCalls: 5, screens: 5, promptTokens: 0, completionTokens: 0 }, gate2Dir: root })),
-      }
-      const seen: Record<string, number> = {}
-      const operations = successfulOperations({ canaryAblation: ablation,
-        loadCompletedRunHandoff: path => handoffs[dirs.findIndex(dir => path.startsWith(dir))]!,
-        listCompletedRunDirs: () => dirs,
-        emitCanaryOutcomes: async opts => {
-          const attributed = await creditCanaryAttributions({ handoff: opts.handoff, runDir: opts.runDir,
-            completedAblations: [], saveCompletedAblation: () => undefined,
-            knowledgeRoot, maxAblations: opts.credit!.maxAblations!, ablation: opts.credit!.ablation!,
-            readBundleStateDigests: () => ({ kind: 'not-found' }), observationIdOf: row => `${row.runId}:${row.candidateId}`,
-            attributions: [0, 1, 2].map(index => ({ kind: 'outcome' as const, source: 'served-brief' as const,
-              outcome: { candidateId: asRecordId(`fixture-policy-${index}`), runId: String(opts.handoff.runId),
-                testId: opts.handoff.tests[0]!.testId, testIndex: 0, stepIndex: 0, buildOrdinal: 42,
-                briefDigest: 'brief', attribution: 'fixture exercised checkout', exercisedAnchor: { t: 'page' as const, route: 'https://fixture.example/checkout' },
-                runOutcome: 'positive' as const, benefit: 'rode-along' as const, stateValidity: 'unknown' as const } })),
-          })
-          seen[String(opts.handoff.runId)] = attributed.counters.credited
-          return { canary: attributed.counters, emitted: 3, refused: 0, unresolved: 0,
-            procedure: { emitted: 0, refused: 0, unresolved: 0 }, details: [] }
-        },
-      })
-      const info = vi.fn()
-      await runCurationTail(baseOptions(operations, { agentQaRoot: root, runId: String(handoffs[0]!.runId),
-        maxAblations: 8, log: { warn: vi.fn(), info } }))
-      expect(handoffs.map(h => seen[String(h.runId)])).toEqual([1, 2, 3])
-      expect(ablation.ablate).toHaveBeenCalledTimes(6)
-      expect(info).toHaveBeenCalledWith('canary cap: maxAblations=1 (flag)')
-      expect(info).toHaveBeenCalledWith('canary cap: maxAblations=2 (config)')
-      expect(info).toHaveBeenCalledWith(expect.stringContaining('legacy run without recorded policy'))
-      writeFileSync(join(dirs[0]!, 'canary-policy.json'), '{"schemaVersion":1,"maxAblations":8}')
-      expect(() => readRunCanaryPolicy(dirs[0]!, String(handoffs[0]!.runId))).toThrow('canary policy invalid')
-    } finally { rmSync(root, { recursive: true, force: true }) }
-  })
   it('reads a receipt with the current key set and stamp', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agent-qa-receipt-reader-'))
     try {
@@ -140,10 +84,10 @@ describe('canary receipt contract', () => {
           delete receipt.canary
         }
         if (mode === 'stamp-4') receipt.schemaVersion = 4
-        if (mode === 'missing') delete counters.staged
+        if (mode === 'missing') delete counters.rideAlongUncredited
         if (mode === 'extra') counters.unknown = 0
-        if (mode === 'negative') counters.credited = -1
-        if (mode === 'fractional') counters.ablationError = 0.5
+        if (mode === 'negative') counters.rideAlongUncredited = -1
+        if (mode === 'fractional') counters.rerunExcluded = 0.5
         if (mode === 'nonSignal-extra') counters.nonSignal = { environment: 0, timeout: 0, flake: 0, unknown: 0 }
         if (mode === 'nonSignal-missing') counters.nonSignal = { environment: 0, timeout: 0 }
         if (mode === 'nonSignal-negative') counters.nonSignal = { environment: -1, timeout: 0, flake: 0 }
@@ -164,7 +108,7 @@ describe('canary receipt contract', () => {
           runId, handoffDigest: curationTailHandoffDigest(completed), projectionVersion: RUN_OUTCOMES_PROJECTION_VERSION,
           drainKind: 'drained', handoffHolderPid: null, candidateIds: [] }))
         expect(readCurationTailReceipt(runDir)).toBeUndefined()
-        const canary = { ...emptyCanaryCreditCounters(), ablationError: 1, stagingRefused: 1 }
+        const canary = { ...emptyCanaryCreditCounters(), rideAlongUncredited: 1, rerunExcluded: 1 }
         const emit = vi.fn(async () => ({ emitted: 0, refused: 0, unresolved: 0, canary,
           procedure: { emitted: 0, refused: 0, unresolved: 0 }, details: [] }))
         const operations = successfulOperations({ loadCompletedRunHandoff: () => completed,
@@ -176,8 +120,7 @@ describe('canary receipt contract', () => {
         expect(receipt.schemaVersion).toBe(CURATION_TAIL_RECEIPT_SCHEMA_VERSION)
         expect(receipt.canary).toEqual(canary)
         expect(Object.keys(receipt).sort().join(',')).toBe('canary,candidateIds,drainKind,handoffDigest,handoffHolderPid,projectionVersion,runId,schemaVersion')
-        expect(Object.keys(receipt.canary).sort()).toEqual(['ablationCapExceeded', 'ablationError', 'ablationHeld',
-          'ablationInconclusive', 'credited', 'nonSignal', 'rerunExcluded', 'rideAlongUncredited', 'staged', 'stagingRefused'])
+        expect(Object.keys(receipt.canary).sort()).toEqual(['nonSignal', 'rerunExcluded', 'rideAlongUncredited'])
         expect(Object.keys(receipt.canary.nonSignal).sort()).toEqual(['environment', 'flake', 'timeout'])
         await runCurationTail(baseOptions(operations, { agentQaRoot: root }))
         expect(emit).toHaveBeenCalledOnce()
@@ -186,8 +129,7 @@ describe('canary receipt contract', () => {
   })
 })
 
-// 2026-10-18 (444-20, D-48): these fixtures' handoffs are `ci` runs, so an incomplete fold states
-// curation's resume limit instead of promising the next run.
+// These handoffs are `ci` runs, so an incomplete fold states curation's resume limit.
 const CI_CURATION_RESUME = /resumes only if this workspace's \.agent-qa\/ is kept and a later local run picks it up\.$/u
 
 function handoff(executionContext: CompletedRunHandoff['executionContext'] = 'ci') {
@@ -432,7 +374,7 @@ function successfulOperations(
       emitted: 0,
       refused: 0,
       unresolved: 0,
-      canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+      canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
       procedure: { emitted: 0, refused: 0, unresolved: 0 },
       details: [],
     })),
@@ -467,16 +409,13 @@ function successfulOperations(
     reconcileRunOutcomesProjection: vi.fn(() => ({ kind: 'current' as const })),
     acquireWriterLease: vi.fn(() => ({ kind: 'acquired' as const, leaseId: 'sweep-lease', epoch: 7 })),
     releaseLease: vi.fn(() => ({ kind: 'released' as const })),
-    // 2026-10-16 (442-10, D-17): each sibling run's fixture context, as its own run-config record would give it.
+    // Each sibling run's fixture context, as its own run-config record would give it.
     resolveRunCurationContext: vi.fn(async () => ({ mask, knowledgeRoot })),
     ...overrides,
   }
 }
 
-/**
- * The 390 D-08 detection member every fold report now carries. Declared once so a stub cannot
- * accidentally describe a DIFFERENT detection outcome than the tail is being asked about.
- */
+// Declared once so a stub cannot describe a different detection outcome than the one asked about.
 const NO_DETECTION = {
   quarantine: { kind: 'not-evaluated' as const, reason: 'not-requested' as const },
 }
@@ -508,72 +447,25 @@ function handedOffDrainReport() {
   }
 }
 
-describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
-  // 2026-09-30, 432-10 D-05/D-24: re-spelled. Nothing is filed any more, so a gate-inconsistent
-  // hold is disclosed only as its held line, with no proposal count or review command.
-  it.each([0, 1])('418 discloses a gate-inconsistent hold only as its held line, never a proposal: %s', async count => {
+describe('runCurationTail post-verdict fold', () => {
+  it('prints every promotion in report order', async () => {
     const info = vi.fn()
-    const operations = successfulOperations()
-    const drain = operations.drainQueue!
-    const drainQueue = vi.fn(async (...args: Parameters<typeof drain>) => ({
-      ...await drain(...args),
-      promotions: Array.from({ length: count }, () => ({ candidateId: 'c-held',
-        promotionHoldReason: 'gate-inconsistent' as const })),
-    }))
-    await runCurationTail(baseOptions({ ...operations, drainQueue }, { log: { warn: vi.fn(), info } }))
-    const lines = info.mock.calls.map(([line]) => String(line))
-    expect(lines.filter(line => /proposal|review with/.test(line))).toEqual([])
-    expect(lines.filter(line => line.includes('gate-inconsistent'))).toEqual(count === 0 ? [] : [
-      'curation: c-held held: gate-inconsistent',
-    ])
-  })
-
-  it('418 the sweep binds posture from the loaded handoff ordinal', async () => {
-    const resolver = vi.fn(() => undefined)
-    const resolvePromotionPostureForRun = vi.fn(async () => resolver)
-    const scope = { tier: 'product', key: 'shop-web' } as const
-    const operations = successfulOperations({ loadCompletedRunHandoff: () => ({ ...handoff(), buildOrdinal: 42, scope }) })
-    await runCurationTail(baseOptions(operations, { resolvePromotionPostureForRun }))
-    expect(resolvePromotionPostureForRun).toHaveBeenCalledWith(42, scope)
-    expect(operations.drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
-  })
-  it('418 resolves and discloses the cap and passes snapshot data through the capability', async () => {
-    const info = vi.fn()
-    const operations = successfulOperations({
-      canaryAblation: {
-        isNovel: async () => false, stage: async () => ({ kind: 'no-eval-root' as const }),
-        ablate: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
-        corpusDigest: vi.fn(async () => ({ kind: 'no-eval-root' as const })),
-        resolveCaps: vi.fn(async () => ({ maxAblations: 2, source: 'config' })),
-      },
-    })
-    await runCurationTail(baseOptions(operations, { log: { warn: vi.fn(), info } }))
-    expect(info).toHaveBeenCalledWith('canary cap: maxAblations=2 (config)')
-    expect(operations.emitCanaryOutcomes).toHaveBeenCalledWith(expect.objectContaining({
-      credit: { ablation: operations.canaryAblation, maxAblations: 2,
-        readBundleStateDigests: expect.any(Function) },
-    }))
-  })
-  it('threads the synchronous resolver and prints every promotion in report order', async () => {
-    const info = vi.fn()
-    const resolver = vi.fn(() => undefined)
     const drainQueue = vi.fn(async (_options: object) => ({
       ...handedOffDrainReport(),
       promotions: [
         { candidateId: 'c1', promotionPath: 'deterministic-verdict-floor' as const },
-        { candidateId: 'c2', promotionHoldReason: 'gate1-receipt-required' as const },
+        { candidateId: 'c2', promotionHoldReason: 'no-confirmed-evidence' as const },
       ],
     }))
     await runCurationTail(baseOptions(successfulOperations({ drainQueue }), {
-      resolvePromotionPosture: resolver, log: { warn: vi.fn(), info },
+      log: { warn: vi.fn(), info },
     }))
-    expect(drainQueue).toHaveBeenCalledWith(expect.objectContaining({ resolvePromotionPosture: resolver }))
-    // 2026-09-30, 432-10 D-05/D-22: the drain is handed no proposals root.
+    // The drain is handed no proposals root.
     expect(drainQueue.mock.calls[0]![0]).not.toHaveProperty('agentQaRoot')
     expect(info.mock.calls.map(([message]) => message).filter(message => message.startsWith('curation: '))).toEqual([
       'curation: handed to daemon (pid 4242)',
       'curation: c1 promoted via deterministic-verdict-floor',
-      'curation: c2 held: gate1-receipt-required',
+      'curation: c2 held: no-confirmed-evidence',
     ])
   })
   it('loads the handoff, emits candidates and canary outcomes in one scope, then drains', async () => {
@@ -585,7 +477,6 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
       candidateId: 'candidate-checkout' as CanaryOutcome['candidateId'],
       runOutcome: 'positive',
       benefit: 'rode-along',
-      stateValidity: 'unknown',
       runId,
       testId: 'checkout::happy-path',
       testIndex: 0,
@@ -661,7 +552,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           emitted: 1,
           refused: 0,
           unresolved: 0,
-          canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+          canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [{
             benefit: canaryOutcome.benefit,
@@ -681,8 +572,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         })
         expect(options).not.toHaveProperty('excluded')
         expect(options.extractAnchors).toBeTypeOf('function')
-        // 390 D-08: the tail reads the drain's wall clock ONCE and hands it down as data — the
-        // fold and the ladder read no clock of their own.
+        // The tail reads the drain's clock once and hands it down; fold and ladder read no clock.
         expect(options.quarantine?.now).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/)
         return { kind: 'applied', tests: 1, ...NO_DETECTION }
       },
@@ -889,7 +779,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
         emitted: 0,
         refused: condition === 'canary-refused' ? 1 : 0,
         unresolved: condition === 'canary-unresolved' ? 1 : 0,
-        canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+        canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
         procedure: { emitted: 0, refused: 0, unresolved: 0 },
         details: [],
       })),
@@ -1067,7 +957,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
             emitted: 0,
             refused: 0,
             unresolved: 0,
-            canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+            canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
             procedure: { emitted: 0, refused: 0, unresolved: 0 },
             details: [],
           }
@@ -1131,7 +1021,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           emitted: 0,
           refused: condition === 'canary-refused' ? 1 : 0,
           unresolved: condition === 'canary-unresolved' ? 1 : 0,
-          canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+          canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }
@@ -1227,7 +1117,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
               emitted: 1,
               refused: 1,
               unresolved: 0,
-              canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+              canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
               procedure: { emitted: 0, refused: 0, unresolved: 0 },
               details: [],
             }
@@ -1237,7 +1127,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
             emitted: 2,
             refused: 0,
             unresolved: 0,
-            canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+            canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
             procedure: { emitted: 0, refused: 0, unresolved: 0 },
             details: [],
           }
@@ -1247,7 +1137,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
           emitted: 1,
           refused: 0,
           unresolved: 0,
-          canary: { credited: 0, rideAlongUncredited: 0, ablationCapExceeded: 0, ablationHeld: 0, ablationInconclusive: 0, ablationError: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 }, staged: 0, stagingRefused: 0 },
+          canary: { rideAlongUncredited: 0, rerunExcluded: 0, nonSignal: { environment: 0, timeout: 0, flake: 0 } },
           procedure: { emitted: 0, refused: 0, unresolved: 0 },
           details: [],
         }
@@ -1452,7 +1342,7 @@ describe('runCurationTail post-verdict fold (CUR-03/CUR-05)', () => {
   )
 })
 
-describe('run-outcome projection under the extended tail receipt (381-05, D-14)', () => {
+describe('run-outcome projection under the extended tail receipt', () => {
   it('isolates a run-outcome fold failure: counted, logged, and never blocking the drain', async () => {
     const warn = vi.fn()
     const writeCurationTailReceipt = vi.fn()
@@ -1588,11 +1478,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
     }
   })
 
-  // 393 CR-02. The reconcile is the half of the version bump that re-derives rows; the receipt
-  // above is the half that re-runs them. Both pins here are about POSITION and BLAST RADIUS,
-  // because those are the two ways this wiring could be present and still wrong: a reconcile
-  // inside the loop would clear rows the loop just folded, and a reconcile that can abort the
-  // sweep would let a stale projection stop curation outright.
+  // A reconcile inside the loop would clear folded rows, and one that aborts would stop curation.
   it('reconciles the projection version exactly once, before any per-run fold', async () => {
     const order: string[] = []
     const secondRunDir = join(agentQaRoot, RUNS_SUBDIR, slugBranch('run-sibling'))
@@ -1684,14 +1570,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
 
     expect(operations.releaseLease).toHaveBeenCalledExactlyOnceWith({ knowledgeRoot, leaseId: 'sweep-lease' })
 
-    // The warn has to be true about what the throw LEFT, not just that it happened — and true of
-    // EVERY throw that can reach this catch (393 round 7, WARN-TEXT-CLASS). Two classes arrive
-    // here: one raised before any DELETE (`openIndexWriter`, `ensureRunOutcomeTables`,
-    // `readStoredProjectionVersion`), which leaves the family INTACT under its previous stamp and
-    // may not rebuild next sweep at all; and one raised after the DELETEs — including the
-    // projection/write throws that now propagate — which leaves it unstamped and possibly partial.
-    // An unconditional "failed partway / will rebuild again" was simply false of the first class,
-    // so the text states both outcomes hinged on whether the rebuild had begun.
+    // A throw before any delete leaves the family intact, one after leaves it unstamped.
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('the run-outcome projection reconcile did not complete'),
     )
@@ -1706,8 +1585,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
         'if it stopped before that, the family and its previous stamp are untouched',
       ),
     )
-    // The CLI arm no longer DISCARDS the cause the daemon arm has always printed. The injected
-    // message is deliberately absent from the static text above, so this cannot pass vacuously.
+    // The injected message is absent from the static text above, so this cannot pass vacuously.
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('reconcile failed'))
     expect(foldRunOutcomes).toHaveBeenCalledOnce()
     expect(drainQueue).toHaveBeenCalledOnce()
@@ -1715,7 +1593,7 @@ describe('run-outcome projection under the extended tail receipt (381-05, D-14)'
   })
 })
 
-describe('verdict-first CLI tail wiring (CUR-03)', () => {
+describe('verdict-first CLI tail wiring', () => {
   it('returns the fixed verdict exit code even when the defensive tail boundary catches a throw', async () => {
     const unexpected = new Error('tail contract was violated')
     const onUnexpectedError = vi.fn()
@@ -1786,7 +1664,7 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(drainQueue).toHaveBeenCalledOnce()
   })
 
-  it('warns naming every drain noop while still completing the tail (G-381-1)', async () => {
+  it('warns naming every drain noop while still completing the tail', async () => {
     const warn = vi.fn()
     const writeCurationTailReceipt = vi.fn()
     const base = successfulOperations()
@@ -1821,7 +1699,7 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(writeCurationTailReceipt).toHaveBeenCalledOnce()
   })
 
-  it('renders the empty-delta cause inside the noop parenthetical (F-381-45-1)', async () => {
+  it('renders the empty-delta cause inside the noop parenthetical', async () => {
     const warn = vi.fn()
     const base = successfulOperations()
     const operations = successfulOperations({
@@ -1850,11 +1728,10 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(noopWarning).toBeDefined()
     // The cause renders inside the existing trailing parenthetical.
     expect(noopWarning).toContain('cand-a (delta-noop: fallback-malformed)')
-    // A causeless noop renders exactly the 381-40 form.
     expect(noopWarning).toContain('cand-b (evidence-token-consumed)')
   })
 
-  it('keeps the count-anchored warn prefix the ladder extractor parses (381-48 harness compatibility)', async () => {
+  it('keeps the count-anchored warn prefix the ladder extractor parses', async () => {
     const warn = vi.fn()
     const base = successfulOperations()
     const operations = successfulOperations({
@@ -1880,8 +1757,7 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
       .map(([message]) => String(message))
       .find((message) => /noop/i.test(message))
     expect(noopWarning).toBeDefined()
-    // The same count-anchored pattern demo/init/scripts/ladder-evidence.mjs embeds in its
-    // --self-check rows; the harness ships unmodified for the 381-48 ladder re-run.
+    // The count-anchored pattern `demo/init/scripts/ladder-evidence.mjs` embeds in its self-check.
     const matches = [...String(noopWarning).matchAll(/drain produced (\d+) commit noop\(s\)[^\n]*/g)]
     expect(matches).toHaveLength(1)
     expect(Number(matches[0]![1])).toBe(1)
@@ -1923,15 +1799,7 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
     expect(source).toContain(
       ".option('--detach', 'skip the post-verdict knowledge curation tail')",
     )
-    // 388-02: the shared tail the two sites invoke is now `runPostRunTail` — the v51 curation
-    // fold is reached THROUGH it (as `curate-memory`'s body and as the prior-run sweep), so
-    // `run.ts` names it no more. The claim this case makes is unchanged: BOTH verdict sites go
-    // through the one helper, and a site that grew its own tail again fails right here.
-    //
-    // 404 D-06: the helper is `composeCliPostRunTail`, and `run.ts` no longer spells the tail's
-    // option literal at all. The composition moved because the `runs.start` door needs the SAME
-    // one — three spellings of "how this project's tail is composed" is how a field added to the
-    // tail reaches two of them.
+    // Both verdict sites use `composeCliPostRunTail`; a site growing its own tail fails here.
     expect(source.match(/composeCliPostRunTail\(/g)).toHaveLength(2)
     expect(source.match(/runPostRunTail\(/g)).toBeNull()
     expect(source.match(/runCurationTail\(/g)).toBeNull()
@@ -1939,7 +1807,7 @@ describe('verdict-first CLI tail wiring (CUR-03)', () => {
   })
 })
 
-describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
+describe('per-run candidate summary line', () => {
   const factIdA = '1a'.repeat(32)
   const factIdB = '2b'.repeat(32)
   const procedureId = '3c'.repeat(32)
@@ -1996,7 +1864,7 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
     expect([...String(line).matchAll(/drain-noops=(\d+)/g)]).toHaveLength(0)
   })
 
-  it('always names the procedure kind, even at zero projected (PROC-01 empty probe)', async () => {
+  it('always names the procedure kind, even at zero projected', async () => {
     const warn = vi.fn()
     const info = vi.fn()
 
@@ -2007,10 +1875,8 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
     )
   })
 
-  it('renders the F-381-48-1 silent class visibly and never gates on it', async () => {
-    // 381-49 adjudication: the round-11 candidate died queue-silently — 'coalesced'
-    // is the one enqueue outcome no surface rendered. It must be named on the line
-    // while the complete predicate stays byte-unchanged (receipt written, no warning).
+  it('renders the coalesced enqueue outcome visibly and never gates on it', async () => {
+    // `coalesced` must be named on the line while the complete predicate stays byte-unchanged.
     const warn = vi.fn()
     const info = vi.fn()
     const writeCurationTailReceipt = vi.fn()
@@ -2088,16 +1954,13 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
     )
   })
 
-  it('pins the complete predicate expression byte-identical (381-40 visibility-never-gates law)', () => {
+  it('pins the complete predicate expression byte-identical (visibility never gates)', () => {
     const source = readFileSync(
       fileURLToPath(new URL('../curation/curation-tail.ts', import.meta.url)),
       'utf8',
     )
 
-    // 388-02: the expression is pinned byte-identically at its new home. Extracting the
-    // per-run fold out of the sweep loop moved it two nesting levels out, so the CONTINUATION
-    // indentation is the only thing that changed — the operand list and its order are the
-    // thing this test exists to hold, and both are untouched.
+    // Pins the operand list and its order byte for byte.
     expect(source).toContain(
       `complete = candidates.refused === 0
         && candidates.capExceeded === 0
@@ -2120,7 +1983,7 @@ describe('per-run candidate summary line (381-50, F-381-48-1)', () => {
   })
 })
 
-describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
+describe('the quarantine disposition line', () => {
   const sighting = {
     product: 'shop-web',
     filePath: 'suite/checkout.test.ts',
@@ -2207,7 +2070,7 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     )
   })
 
-  it('is LOUD about an escalation the class gate withheld — it appends nothing (D-05)', async () => {
+  it('is LOUD about an escalation the class gate withheld — it appends nothing', async () => {
     const info = vi.fn()
     const warn = vi.fn()
 
@@ -2229,11 +2092,7 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Quarantine withheld for'))
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('app_bug'))
 
-    // THE PRODUCER REACHES THE LINE (390-22 / WR-03). The field was carried onto the sighting so
-    // an operator could tell an unauthorable class from an unauthored one, and it was never
-    // printed — the claim was true of the SHAPE and false of the OPERATOR. Asserted on the emitted
-    // text, not on the line's prefix: a rendering fix whose test matches only the prefix is the
-    // same defect again.
+    // Asserted on the emitted text, not the prefix, so a fix matching only the prefix still fails.
     const withheld = warn.mock.calls
       .map(([message]) => String(message))
       .filter((message) => message.startsWith('Quarantine withheld for'))
@@ -2242,24 +2101,11 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
     // And the ACTIONABLE half: this producer means a verdict was already authored, so the operator
     // learns that re-running analysis will not change the answer.
     expect(withheld[0]).toMatch(/will not change the answer/)
-    // THE DIFFERENTIAL (390-23 / CR-01): each arm's sentence is its own, two-sided. The
-    // next-applied-run remedy belongs to the UNAUTHORED arm alone — an authored verdict's class
-    // refusal is settled, and a later fold re-reads the same authored answer.
+    // The next-applied-run remedy belongs to the unauthored arm; an authored refusal is settled.
     expect(withheld[0]).not.toMatch(/next applied run/)
   })
 
-  // THE UNAUTHORED CORPUS IS BUILT FROM PRODUCIBLE SHAPES ONLY (390-30, produced-not-literal law).
-  // The leg this replaces spread `verdictClass: 'app_bug'` over `producer: 'deterministic-classifier'`
-  // — a pair NO deterministic producer can mint (`classifyRootCause` returns exactly
-  // `timeout | environment | flake | unknown`) and, worse, the class for which the sentence it pinned
-  // is FALSE. A corpus written as a literal of the type under test cannot fail; the compile-guard
-  // below is what keeps it that way. `cls` is typed `DeterministicRootCauseClass`, imported from the
-  // runner that declares it, so an `app_bug` fixture here stops COMPILING rather than passing
-  // vacuously. No `as` cast may bypass it — a cast reinstates exactly the defect.
-  //
-  // `flake` is producible by the type but unreachable on a FAILING member (a passing member carries
-  // no `failure` row, so no crossing can carry class `flake` AND the deterministic producer —
-  // detection.ts's own eligibility docstring), so the three legs below are the reachable arms.
+  // `cls` is a `DeterministicRootCauseClass`, so an unproducible `app_bug` fixture won't compile.
   function unauthoredSighting(cls: DeterministicRootCauseClass) {
     return {
       ...sighting,
@@ -2293,23 +2139,7 @@ describe('the quarantine disposition line (390 D-08, Pitfall 4)', () => {
   }
 
   it('tells a FLOOR-ELIGIBLE unauthored class that the next applied run may admit it', async () => {
-    // `timeout` is floor-eligible (QUARANTINE_FLOOR_ELIGIBILITY) and auto-quarantinable
-    // (QUARANTINE_CLASS_DISPOSITIONS), so it was withheld only for want of the per-test same-build
-    // signature or because the per-run floor cap was spent — BOTH of which a later run can supply.
-    // For this class alone the next-applied-run remedy is TRUE, and it is true by execution:
-    // a capped identity IS admitted on a later evaluation, measured 2/2/2 across three consecutive
-    // folds (round-4 verification).
-    //
-    // THE REMEDY, PINNED BY POSITIVE CONTENT (390-23 / CR-01). This arm used to name
-    // an `analyze-run` invocation under the binary's name: a job kind enqueued programmatically at
-    // post-run-tail.ts:425, absent from the top-level `program.addCommand` registry in cli.ts under
-    // any subcommand — so the string it printed was not typeable by anyone. The
-    // advice was unreachable even had the verb existed — this line is emitted inside the fold that
-    // runs AFTER analysis had its turn, and `applyRunOutcomes` answers
-    // `{ kind: 'not-evaluated', reason: 'already-applied' }` (run-outcomes.ts:424, :792), so
-    // nothing re-decides THIS crossing. Pinned as POSITIVE CONTENT rather than as a blanket ban on
-    // command-shaped strings: a correct future fix naming a REAL verb must not red this leg, and
-    // replacing the remedy sentence with any other string must.
+    // `timeout` is floor-eligible and capped identities are admitted later, so its remedy is true.
     const line = await withheldLineFor('timeout')
     expect(line).toMatch(/next applied run/)
     // Cross-arm negative twins: the other two arms' sentences belong to their own classes.

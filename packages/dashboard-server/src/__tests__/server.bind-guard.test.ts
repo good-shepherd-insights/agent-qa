@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -10,23 +10,7 @@ import { isLoopbackHost } from '@vostride/agent-qa-core'
 import { RUN_SERVICE_CONTRACT_VERSION } from '@vostride/agent-qa-schema'
 import { DashboardRemoteBindRefusedError, startServer } from '../server/server.js'
 
-/**
- * THE BIND CONTRACT (402-05, D-07 — INVK-03).
- *
- * The measured fact this file exists for: before 402-05 `startServer` called `server.listen(port)`
- * with no host, which binds every interface — so the dashboard's UNAUTHENTICATED run trigger was
- * reachable from any machine on the LAN. A constant-time compare on the authed `/run` door is
- * theatre while that is true, which is why the bind guard and the credential door ship in one
- * phase (the one-sided-hardening scar).
- *
- * WHAT EVERY CELL HERE ASSERTS IS THE SOCKET, NOT THE CONFIG. `server.address()` is read off the
- * LISTENING server; a cell that asserted "a default was passed" would pass under an implementation
- * that passed the default and then ignored it.
- *
- * THE REFUSAL IS PROVEN ON A GENUINELY NON-LOOPBACK HOST. `0.0.0.0` is refused with and without the
- * run service mounted, and (since 432-21, D-12/D-13) with and without a legacy run-service token
- * declaration in the config the server reads: there is no credential that could exempt a bind.
- */
+// Cells read `server.address()` off the listening socket; `0.0.0.0` is refused with any config.
 
 const NON_LOOPBACK_HOST = '0.0.0.0'
 
@@ -44,8 +28,7 @@ function configPathFor(legacyTokens = false): string {
   const tempDir = mkdtempSync(join(tmpdir(), 'agent-qa-bind-guard-'))
   roots.push(tempDir)
   const configPath = join(tempDir, 'agent-qa.config.yaml')
-  // 432-21 (D-12/D-22): the legacy run-service token block, as a pre-432 project would still carry
-  // it on disk. Nothing reads it; it is here so the bind refusal is measured with it present.
+  // A legacy run-service token block nothing reads, so the bind refusal is measured with it.
   writeFileSync(configPath, legacyTokens
     ? [
         'testDir: tests',
@@ -72,7 +55,6 @@ type Readiness = NonNullable<Parameters<typeof startServer>[0]['runServiceReadin
  * not merely "two functions that agree today".
  */
 function stubRunServicePorts(readiness: Readiness): ServicePorts {
-  // 2026-10-01 (432-21, D-12): no `verifyBearer` — the run service is tokenless.
   return {
     invokeRunStart: () => { throw new Error('the bind cells never start a run') },
     attach: () => undefined,
@@ -92,7 +74,7 @@ async function start(opts: {
   mountService?: boolean
   readiness?: Readiness
   legacyTokens?: boolean
-}): Promise<{ server: Server; close: () => void }> {
+}): Promise<{ server: Server; port: number; close: () => void }> {
   const db = new DashboardDatabase({ dbPath: ':memory:' })
   dbs.push(db)
   const readiness = opts.readiness ?? INERT_READINESS
@@ -136,10 +118,24 @@ async function portIsFree(port: number): Promise<boolean> {
   return free
 }
 
-describe('the dashboard bind contract (D-07)', () => {
+describe('the dashboard bind contract', () => {
   it('binds LOOPBACK by default — read off the listening socket, not off the options', async () => {
     const { server } = await start({})
     expect(boundAddress(server)).toBe('127.0.0.1')
+  })
+
+  it('announces and resolves the port the socket holds when asked for port 0', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    try {
+      const { server, port } = await start({ port: 0 })
+      const bound = (server.address() as AddressInfo).port
+      expect(bound).toBeGreaterThan(0)
+      expect(port).toBe(bound)
+      expect(log.mock.calls.map((call) => String(call[0])))
+        .toContain(`Dashboard running at http://localhost:${String(bound)}`)
+    } finally {
+      log.mockRestore()
+    }
   })
 
   it.each(['localhost', '127.0.0.1', '::1'])(
@@ -169,16 +165,26 @@ describe('the dashboard bind contract (D-07)', () => {
     expect(message).toContain('services.dashboard.host')
   })
 
-  // THE CELL THIS REPLACES PINNED THE HOLE. It asserted that declaring a run-service credential
-  // BINDS a non-loopback host, on the premise — written into the guard's own class doc — that
-  // "the operator who genuinely wants remote access declares a credential, which is the same act
-  // that makes the remote surface an authed one". Phase-402 verification measured that premise
-  // false off a real interface: with `host: 0.0.0.0` and one declared token the startup guard
-  // passed, and `POST /api/runs/trigger` with NO Authorization header answered
-  // `202 {"runId":"…","status":"queued"}` and started a run, while `GET /api/runs` answered 200
-  // with the run list. A credential authenticates exactly `ownsRunServicePath` — POST /run,
-  // GET /run/:runId/events, GET /ok — and nothing else, so the token count was never evidence
-  // about the surface the guard is protecting.
+  it('the bind refusal tells a person to forward the port with ssh', async () => {
+    const error = await start({ host: NON_LOOPBACK_HOST, port: 0 }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(DashboardRemoteBindRefusedError)
+    const message = (error as Error).message
+    expect(message).toContain(
+      'forward its port with ssh -L 3470:localhost:3470 <host> and open http://localhost:3470/.',
+    )
+    expect(message).toContain('services.dashboard.host')
+    expect(message).not.toContain('proxy')
+  })
+
+  it('the bind refusal names the requested port in the ssh forward', async () => {
+    const error = await start({ host: NON_LOOPBACK_HOST, port: 4123 }).catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(DashboardRemoteBindRefusedError)
+    const message = (error as Error).message
+    expect(message).toContain('ssh -L 4123:localhost:4123 <host>')
+    expect(message).toContain('http://localhost:4123/')
+  })
+
+  // A credential guards only the run-service paths, so it never makes a non-loopback bind safe.
   it('REFUSES a non-loopback host EVEN WITH the authed run service mounted', async () => {
     const port = await reserveFreePort()
     await expect(start({ host: NON_LOOPBACK_HOST, port, mountService: true }))
@@ -192,8 +198,7 @@ describe('the dashboard bind contract (D-07)', () => {
   })
 
   it('offers no remedy that would publish the anonymous surface', async () => {
-    // The old message told the operator to declare a credential. Following that instruction is
-    // exactly what opened the hole, so the remedy must not appear in the refusal any more.
+    // Declaring a credential is what opens the hole, so the refusal must not suggest it.
     const error = await start({ host: NON_LOOPBACK_HOST }).catch((e: unknown) => e)
     const message = (error as Error).message
     expect(message).not.toContain('runServiceTokens')
@@ -207,10 +212,7 @@ describe('the dashboard bind contract (D-07)', () => {
     }
   })
 
-  // 2026-10-01 (432-21, D-12/D-13): the run-service tokens are deleted, and the loopback bind is
-  // what D-13 keeps. The refusal is unconditional with the tokenless run service mounted, with and
-  // without a legacy token declaration on disk, and an ordinary local start still binds and serves.
-  it('C432-RETAINED-LOOPBACK: refuses a non-loopback bind with and without a legacy token block, and an ordinary local start serves', async () => {
+  it('refuses a non-loopback bind with and without a legacy token block, and an ordinary local start serves', async () => {
     for (const legacyTokens of [false, true]) {
       const port = await reserveFreePort()
       await expect(start({ host: NON_LOOPBACK_HOST, port, mountService: true, legacyTokens }),
@@ -229,16 +231,8 @@ describe('the dashboard bind contract (D-07)', () => {
   })
 })
 
-/**
- * THE LOCAL READINESS DOOR — ONE PREDICATE, TWO DOORS (402-05, D-15).
- *
- * The cells hand ONE function object to both `runService.readiness` (which the authed `/ok`
- * serves) and `runServiceReadiness` (which the local `/api/run-readiness` serves), then drive both
- * over a real socket. That is what makes the equality claim a claim about the PREDICATE: a fixture
- * that built two equal-looking objects would pass against two implementations that agree today and
- * drift tomorrow, which is the failure D-15 exists to prevent.
- */
-describe('the local readiness door (D-15)', () => {
+// One function object serves both doors, so the equality is about one predicate, not two copies.
+describe('the local readiness door', () => {
   /** A readiness whose facts MOVE, so a door that snapshotted rather than called is visible. */
   function movingReadiness(): { fn: Readiness; flip: () => void } {
     let hostComposed = false
@@ -289,9 +283,6 @@ describe('the local readiness door (D-15)', () => {
     expect(after[0].body).toMatchObject({ hostComposed: true })
   })
 
-  // RE-SPELLED 2026-10-01 (432-21, D-12/D-13) from 'answers the LOCAL door with no token at all —
-  // the bind guard is what keeps it local'. Neither door asks for a token now; the bind guard still
-  // keeps both local, and the run service's same-site guard refuses a cross-site readiness probe.
   it('answers BOTH doors with no token at all — the bind guard is what keeps them local', async () => {
     const { fn } = movingReadiness()
     const { server } = await start({ mountService: true, readiness: fn })
@@ -304,8 +295,7 @@ describe('the local readiness door (D-15)', () => {
   })
 
   it('answers honestly with NO run service mounted — never a 404', async () => {
-    // An in-process mount with no service (since 432-21 the shipped command always mounts it): the
-    // composition still hands over the producer, and the browser preflight gets a readable answer.
+    // An in-process mount with no service still hands over the producer, so preflight is answered.
     const { server } = await start({
       readiness: () => ({
         service: 'up',

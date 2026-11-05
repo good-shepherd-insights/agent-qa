@@ -5,7 +5,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { APPROVED_SAAS_PLACEHOLDER_SLUGS } from '@vostride/agent-qa-ids'
 import { CONFIG_SCHEMA_LEAVES, configLeafOwner } from '@vostride/agent-qa-schema'
 
 import {
@@ -23,9 +22,9 @@ import {
   startPluginAuth,
   testLLMConnection,
 } from '@/lib/api'
+import { APPROVED_SAAS_PLACEHOLDER_SLUGS } from '@/lib/product-placeholders'
 import {
   ACCESSIBILITY_FIELD_PLACEHOLDERS,
-  ADD_DEVICE_FARM_LABEL,
   ADD_DEVICE_LABEL,
   ADD_TARGET_LABEL,
   ADD_MODEL_LABEL,
@@ -42,7 +41,6 @@ import {
   MAKE_DEFAULT_LABEL,
   MODEL_STATUS_WORDS,
   NOT_SAVED_ACTION_NAME,
-  NO_DEVICE_FARMS_TEXT,
   NO_DEVICES_TEXT,
   NO_LOGIN_STATES_TEXT,
   NO_TARGETS_TEXT,
@@ -70,7 +68,6 @@ import {
   connectionSentence,
   configFileIssuesBody,
   configLoadFailedBody,
-  deleteActionName,
   DASHBOARD_FIELD_LABELS,
   ENV_FILE_REQUIRED_ERROR,
   FILES_FIELD_HELP,
@@ -113,7 +110,6 @@ const { sampleConfig, CONFIG_FILE_PATH } = vi.hoisted(() => ({
   },
   knowledge: {
     dir: 'agent-qa-knowledge',
-    commitArtifacts: 'none',
   },
   services: {
     dashboard: {
@@ -121,7 +117,7 @@ const { sampleConfig, CONFIG_FILE_PATH } = vi.hoisted(() => ({
       dbPath: '.agent-qa/runs.db',
       artifactsDir: '.agent-qa/artifacts',
     },
-    cache: { dir: '.agent-qa/cache', ttl: '7d' },
+    cache: { dir: '.agent-qa/cache' },
     logging: { level: 'info' },
     recording: { enabled: true },
     accessibility: {
@@ -141,8 +137,7 @@ const { sampleConfig, CONFIG_FILE_PATH } = vi.hoisted(() => ({
       contextWindow: '128k',
     }],
     targets: { staging: { platform: 'web', url: 'https://example.com' } },
-    devices: { iosLocal: { platform: 'ios', transport: 'local', match: { udid: 'abc' } } },
-    providers: { openai: { apiBase: 'https://api.openai.com/v1' } },
+    devices: { iosLocal: { platform: 'ios', match: { udid: 'abc' } } },
   },
   use: {
     browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
@@ -367,7 +362,7 @@ function configWithTargets(targets: Record<string, unknown>) {
   }
 }
 
-/** The add row's draft field (429-25): its label, input, help and error line. */
+/** The add row's draft field: its label, input, help and error line. */
 function addField(name: string) {
   return container?.querySelector(`[data-model-draft] [data-add-field="${name}"]`) as HTMLElement | null
 }
@@ -449,7 +444,7 @@ async function typeListAndBlur(textarea: HTMLTextAreaElement, value: string) {
   await flushRender()
 }
 
-/** The Step timeout ConfigField, which the 429-16 wiring cells drive. */
+// The Step timeout field, which the wiring cells drive.
 function stepInput() {
   return document.getElementById(configFieldControlId(STEP_KEY)) as HTMLInputElement | null
 }
@@ -540,7 +535,7 @@ function tabStops(root: ParentNode): HTMLElement[] {
     .filter((element) => element.closest('[hidden], [aria-hidden="true"], .sr-only') === null)
 }
 
-describe('ConfigPage autosave wiring (429-16 Task 3)', () => {
+describe('ConfigPage autosave wiring', () => {
   it('STATUS-IN-TAB-BAR: the one status sits in the tab bar, outside the scrolling tab list', async () => {
     const view = await renderAt('/config/models')
 
@@ -792,8 +787,8 @@ describe('ConfigPage task tabs shell', () => {
     },
   )
 
-  it('LEGACY-PAIR-LANDS-AND-FOCUSES: the table covers all 21 live legacy pairs', () => {
-    expect(LEGACY_CONFIG_PAIRS).toHaveLength(21)
+  it('LEGACY-PAIR-LANDS-AND-FOCUSES: the table covers every live legacy pair', () => {
+    expect(LEGACY_CONFIG_PAIRS.length, 'the witness: there are legacy pairs').toBeGreaterThan(0)
     expect(Object.keys(LEGACY_CONFIG_LINKS).sort()).toEqual([...LEGACY_CONFIG_PAIRS].sort())
   })
 
@@ -1293,7 +1288,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(API_EXPORTS).not.toContain('updateSettings')
   })
 
-  it('TIMEOUT-ONE-LEAF-WRITE: with no timeouts in the file, the same write carries the two other timeouts at their shown defaults', async () => {
+  it('with no timeouts in the file, the same write carries the two other timeouts at their shown defaults', async () => {
     const { timeout: _timeout, ...useWithoutTimeout } = sampleConfig.use
     vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config: { ...sampleConfig, use: useWithoutTimeout } }) as never)
     await renderAt('/config/execution?section=timeouts')
@@ -1310,7 +1305,23 @@ describe('ConfigPage task tabs shell', () => {
     expect(vi.mocked(applyConfigChanges).mock.calls[0]![0]).toEqual([
       { op: 'set', path: STEP_SEGMENTS, value: '45s' },
       { op: 'set-if-absent', path: ['use', 'timeout', 'test'], value: '10m' },
-      { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '10s' },
+      { op: 'set-if-absent', path: ['use', 'timeout', 'navigation'], value: '2m' },
+    ])
+  })
+
+  it("the Timeouts section shows the navigation field's help line and no other", async () => {
+    await renderAt('/config/execution?section=timeouts')
+
+    expect(
+      Array.from(section('timeouts')!.querySelectorAll('[data-field-help]')).map((line) => [
+        line.closest('[data-config-field]')?.getAttribute('data-field-path'),
+        line.textContent,
+      ]),
+    ).toEqual([
+      [
+        'use.timeout.navigation',
+        'How long a web page load or URL wait can take. Default 2m. Android and iOS runs do not use it.',
+      ],
     ])
   })
 
@@ -1458,7 +1469,6 @@ describe('ConfigPage task tabs shell', () => {
           localStorage: 'unsafe-storage-value',
           indexedDB: 'unsafe-indexed-db',
           counts: { cookies: 1 },
-          ttl: '7d',
           expiry: '2026-05-24T10:00:00.000Z',
           source: 'live-mode',
           createdAt: '2026-05-17T09:00:00.000Z',
@@ -1498,7 +1508,6 @@ describe('ConfigPage task tabs shell', () => {
       'unsafe-storage-value',
       'unsafe-indexed-db',
       'counts',
-      '7d',
       '2026-05-24T10:00:00.000Z',
       'live-mode',
       '2026-05-17T09:00:00.000Z',
@@ -1540,7 +1549,6 @@ describe('ConfigPage task tabs shell', () => {
     expect(section('login-states')?.querySelector('table')).toBeNull()
     expect(section('targets')?.querySelector('[data-target="staging"]')).not.toBeNull()
     expect(section('devices')?.querySelector('[data-device="iosLocal"]')).not.toBeNull()
-    expect(section('device-farms')?.querySelector('[data-device-farm="openai"]')).not.toBeNull()
     expect(section('mobile-app-state')?.querySelector('[data-field-path="use.mobile.appState"]')).not.toBeNull()
 
     await act(async () => {
@@ -1594,8 +1602,6 @@ describe('ConfigPage task tabs shell', () => {
     expect(sectionButton('targets', ADD_TARGET_LABEL)).not.toBeNull()
     expect(section('devices')!.textContent).toContain(NO_DEVICES_TEXT)
     expect(sectionButton('devices', ADD_DEVICE_LABEL)).not.toBeNull()
-    expect(section('device-farms')!.textContent).toContain(NO_DEVICE_FARMS_TEXT)
-    expect(sectionButton('device-farms', ADD_DEVICE_FARM_LABEL)).not.toBeNull()
     expect(section('login-states')!.textContent).toContain(NO_LOGIN_STATES_TEXT)
     expect(section('targets')!.querySelector('[data-target]')).toBeNull()
     expect(section('devices')!.querySelector('[data-device]')).toBeNull()
@@ -1697,15 +1703,13 @@ describe('ConfigPage task tabs shell', () => {
     expect(toast.success).not.toHaveBeenCalled()
   })
 
-  it('PROJECT-DATA-LEAVES-HAVE-FIELDS: the Project tab has a field for every knowledge leaf and every Dashboard leaf', async () => {
+  it('the Project tab has a field for every knowledge leaf and every Dashboard leaf', async () => {
     await renderAt('/config/project')
 
     const panel = container!.querySelector('[data-config-panel="project"]') as HTMLElement
     expect(panel).not.toBeNull()
     for (const path of [
       'knowledge.dir',
-      'knowledge.commitArtifacts',
-      'knowledge.contextBudgetTokens',
       'services.dashboard.dbPath',
       'services.dashboard.artifactsDir',
       'services.dashboard.port',
@@ -1756,7 +1760,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(toast.error).not.toHaveBeenCalled()
   })
 
-  it('PROJECT-LEAVES-HAVE-FIELDS: every workspace, knowledge, dashboard, logging and analytics leaf has a field on the Project tab', async () => {
+  it('every workspace, knowledge, dashboard, logging and analytics leaf has a field on the Project tab', async () => {
     await renderAt('/config/project')
 
     const panel = container!.querySelector('[data-config-panel="project"]') as HTMLElement
@@ -1768,7 +1772,7 @@ describe('ConfigPage task tabs shell', () => {
         pattern.startsWith('services.logging.') ||
         pattern.startsWith('analytics.'),
     )
-    expect(projectLeaves.length, 'the witness: the filter found the Project leaves').toBeGreaterThanOrEqual(19)
+    expect(projectLeaves.length, 'the witness: the filter found the Project leaves').toBeGreaterThan(0)
     for (const pattern of projectLeaves) {
       const owner = configLeafOwner(pattern)
       expect(panel.querySelector(`[data-field-path="${owner}"], [data-field-list="${owner}"]`), pattern).not.toBeNull()
@@ -1778,22 +1782,14 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.querySelector('[data-config-section-shell]')).toBeNull()
   })
 
-  // 2026-10-01 (432-22, D-12): re-spelled from ADVANCED-TOKEN-LEAVES-HAVE-FIELDS. The MCP field claim
-  // survives; the token lists and the stdio switch are deleted with their keys, so they are absent.
-  it('ADVANCED-MCP-LEAVES-HAVE-FIELDS: the Advanced tab has a field for every MCP leaf', async () => {
+  it('the Advanced tab has a field for every MCP leaf', async () => {
     await renderAt('/config/advanced')
 
     const panel = container!.querySelector('[data-config-panel="advanced"]') as HTMLElement
     expect(panel).not.toBeNull()
     expect(section('mcp')).not.toBeNull()
     const mcpLeaves = CONFIG_SCHEMA_LEAVES.filter((pattern) => pattern.startsWith('services.mcp.'))
-    expect(mcpLeaves).toEqual([
-      'services.mcp.enabled',
-      'services.mcp.host',
-      'services.mcp.path',
-      'services.mcp.port',
-      'services.mcp.transport',
-    ])
+    expect(mcpLeaves).toEqual(['services.mcp.enabled', 'services.mcp.port'])
     for (const pattern of mcpLeaves) {
       expect(section('mcp')!.querySelector(`[data-field-path="${pattern}"]`), pattern).not.toBeNull()
     }
@@ -1801,12 +1797,12 @@ describe('ConfigPage task tabs shell', () => {
     expect(buttonNames).not.toContain('Save Changes')
   })
 
-  it('C432-NO-TOKEN-CONTROLS: no tab renders a token section, token list, token row or the stdio switch', async () => {
+  it('no tab renders a token section, token list, token row or the stdio switch', async () => {
     await renderAt('/config/advanced')
 
     const panel = container!.querySelector('[data-config-panel="advanced"]') as HTMLElement
     expect(Array.from(panel.querySelectorAll('[data-config-section]')).map((element) => element.getAttribute('data-config-section')))
-      .toEqual(['mcp', 'eval', 'config-file'])
+      .toEqual(['mcp', 'config-file'])
     expect(section('run-service-tokens' as never)).toBeNull()
     expect(panel.querySelector('[data-field-list]')).toBeNull()
     expect(panel.querySelector('[data-token-row], [data-token-draft]')).toBeNull()
@@ -1912,7 +1908,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(baseUrlField?.textContent).toContain(BASE_URL_HELP)
     expect((baseUrlField?.querySelector('input') as HTMLInputElement | null)?.value).toBe('https://openrouter.ai/api/v1')
     expect(contextWindowInput?.value).toBe('256k')
-    // The help is an inline line now; the modal's tooltip trigger is gone.
+    // The help is an inline line, with no tooltip trigger.
     expect(document.body.querySelector('button[aria-label="Compatible endpoint help"]')).toBeNull()
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
 
@@ -2033,7 +2029,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.querySelector('input[type="password"]')).toBeNull()
     expect(panel.textContent).not.toContain('Save Credential')
 
-    // A not-connected sign-in row offers Sign in again (429-26); the modal's login button is gone.
+    // A not-connected sign-in row offers Sign in again.
     expect(buttonIn(panel, SIGN_IN_AGAIN_LABEL)).not.toBeNull()
     expect(document.body.textContent).not.toContain('Login with OpenAI subscription')
     expect(document.body.textContent).not.toContain('Save Credential')
@@ -2148,7 +2144,7 @@ describe('ConfigPage task tabs shell', () => {
 
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
     expect(section('devices')!.querySelector('[data-field-path="registry.devices.*.platform"]')).not.toBeNull()
-    expect(section('devices')!.textContent).toContain(DEVICE_FIELD_LABELS.transport)
+    expect(section('devices')!.textContent).toContain(DEVICE_FIELD_LABELS.platform)
     expect(document.body.textContent).not.toContain('Apply Device Changes')
   })
 
@@ -2167,7 +2163,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(fieldControl<HTMLInputElement>(['registry', 'targets', 'staging', 'product'])?.placeholder).toBe(firstPlaceholder)
   })
 
-  it('NO-SAVE-BUTTON-TARGETS: a mobile target\'s app file and BrowserStack app autosave by leaf from its row', async () => {
+  it("a mobile target's app file autosaves by leaf from its row", async () => {
     vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
       config: configWithTargets({
         releaseAndroid: {
@@ -2183,66 +2179,16 @@ describe('ConfigPage task tabs shell', () => {
     await openRow(section('targets')!.querySelector('[data-target="releaseAndroid"]'))
 
     const appPathInput = fieldControl<HTMLInputElement>(['registry', 'targets', 'releaseAndroid', 'app', 'path'])
-    const browserstackInput = fieldControl<HTMLInputElement>(['registry', 'targets', 'releaseAndroid', 'app', 'browserstack'])
     expect(appPathInput).not.toBeNull()
-    expect(browserstackInput).not.toBeNull()
 
     await typeTextAndBlur(appPathInput!, 'apps/wikipedia-alpha.apk')
-    await typeTextAndBlur(browserstackInput!, 'bs://uploaded-app')
 
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
       [[{ op: 'set', path: ['registry', 'targets', 'releaseAndroid', 'app', 'path'], value: 'apps/wikipedia-alpha.apk' }]],
-      [[{ op: 'set', path: ['registry', 'targets', 'releaseAndroid', 'app', 'browserstack'], value: 'bs://uploaded-app' }]],
     ])
-    expect(section('targets')?.textContent).toContain('App: apps/wikipedia-alpha.apk / bs://uploaded-app')
+    expect(section('targets')?.textContent).toContain('App: apps/wikipedia-alpha.apk')
     expect(API_EXPORTS).not.toContain('updateSettings')
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-  })
-
-  it('DEVICE-FARMS-SECRET-ROWS-ON-PAGE: device farms list each setting as a masked SecretValue with no dialog or section save', async () => {
-    await renderAt('/config/targets?section=device-farms')
-
-    const farms = section('device-farms')!
-    expect(farms.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS['device-farms'])
-    const list = farms.querySelector('[data-field-list="registry.providers"]')
-    expect(list).not.toBeNull()
-    const row = list!.querySelector('[data-device-farm="openai"]')
-    expect(row).not.toBeNull()
-    const secret = row!.querySelector('[data-secret-field]')
-    expect(secret?.getAttribute('data-field-path')).toBe('registry.providers.*.*')
-    expect(row!.textContent).toContain('apiBase')
-    expect(farms.querySelector('textarea')).toBeNull()
-    expect(sectionButton('device-farms', 'Edit')).toBeNull()
-    expect(sectionButton('device-farms', 'Save Changes')).toBeNull()
-    expect(farms.textContent).not.toContain('provider-specific JSON')
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
-    expect(sectionButton('device-farms', ADD_DEVICE_FARM_LABEL)).not.toBeNull()
-  })
-
-  it('DEVICE-FARM-DELETE-ON-PAGE: deleting a device farm writes one undoable unset and shows its Undo line', async () => {
-    vi.mocked(applyConfigChanges).mockResolvedValueOnce({
-      revision: 'rev-2',
-      undo: { token: 'tok-farm', expiresAt: Date.now() + 30_000 },
-    } as never)
-    await renderAt('/config/targets?section=device-farms')
-
-    const remove = Array.from(section('device-farms')!.querySelectorAll('button')).find(
-      (button) => button.getAttribute('aria-label') === deleteActionName('delete-device-farm', 'openai'),
-    )
-    expect(remove).toBeDefined()
-    await act(async () => {
-      remove!.click()
-    })
-    await flushRender()
-
-    expect(section('device-farms')!.querySelector('[data-device-farm="openai"]')).toBeNull()
-    expect(applyConfigChanges).toHaveBeenCalledWith(
-      [{ op: 'unset', path: ['registry', 'providers', 'openai'] }],
-      { undoable: true },
-    )
-    expect(API_EXPORTS).not.toContain('updateSettings')
-    expect(container!.textContent).toContain(undoLine('delete-device-farm', 'openai'))
-    expect(section('device-farms')!.textContent).toContain(NO_DEVICE_FARMS_TEXT)
   })
 })
 

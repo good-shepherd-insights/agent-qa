@@ -6,17 +6,13 @@ import type { RefMap } from './types.js'
 
 const ACTIONS_WITHOUT_REF = new Set(['navigate', 'waitFor', 'delay', 'waitForUrl', 'assertValue'])
 
-/**
- * The adapter-private native binding of an observation (438 D-06). Each builder ref whose node
- * carried a Playwright ai-mode ref keeps that native ref plus the observed role, exact name and
- * row text; a node without one gets no entry. `elements` is the built state's element list, index
- * aligned with `nodes`.
- */
+// `elements` is index-aligned with `nodes`; a node without a native ref gets no entry.
 export function buildRefMap(
   binding: Record<Ref, RefBinding>,
   nodes: InterimNode[],
   nativeRefs: (string | undefined)[],
   elements: readonly ElementInfo[],
+  inChildFrame: readonly boolean[] = [],
 ): RefMap {
   const refs: RefMap = {}
   for (const [ref, bind] of Object.entries(binding)) {
@@ -28,6 +24,7 @@ export function buildRefMap(
     const rowText = rowTextOf(element, elements)
     if (rowText !== undefined) entry.rowText = rowText
     if (node.bounds !== undefined) entry.bounds = node.bounds
+    if (inChildFrame[bind.index] === true) entry.inChildFrame = true
     refs[ref] = entry
   }
   return refs

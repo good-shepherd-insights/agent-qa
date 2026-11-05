@@ -1,28 +1,3 @@
-// THE run-id codec, and the census that makes "one codec" a claim about the boundary (CR-04).
-//
-// WHY A CENSUS AND NOT A CELL PER SITE. `packages/schema/src` is not one door onto a run's
-// identity; before this plan it declared FOUR bare `z.string().transform(asRunId)` codecs, and
-// hardening the one a report names is the one-sided hardening this phase has shipped repeatedly.
-// The claim worth making is a COMPLETE-SET claim — every declaration in this package either IS the
-// shared hardened codec or carries a recorded verdict — and a claim of that shape can only be
-// discharged by enumerating.
-//
-// THREE PREDICATES, DELIBERATELY DIFFERENT IN SHAPE, because a census is only as complete as its
-// discovery rule and a self-check only ever sees narrowings that reach the members it names:
-//
-//   P1  SYMBOL-shaped. Every declaration that turns a string into a branded `RunId` — i.e. every
-//       use of `asRunId` in a codec position. Complete-set: exactly one file, `run/run-id.ts`.
-//   P2  KEY-shaped. Every `runId:` / `runRef:` field declared with a zod value, keyed on the
-//       PROPERTY rather than on the symbol — so a future codec spelled without `asRunId`
-//       (`z.string().transform(v => v as RunId)`) is still seen. Partitioned per FILE against a
-//       written verdict table.
-//   P3  RUNTIME-shaped. The surfaces P1/P2 name are asserted to hold the SAME OBJECT, and to
-//       REFUSE a path-shaped id when actually parsed. Text cannot fake this one, and it is the
-//       only predicate that measures behaviour rather than source.
-//
-// P2 exists because P1 alone is a grep for a name. P1 exists because P2 alone is a grep for a key
-// and would miss a codec assigned to a differently-named field. P3 exists because both are text.
-
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -33,8 +8,6 @@ import { AnalysisGetInputSchema } from '../../functions/analysis-get'
 import { RunSummarySchema, RunsStartInputSchema } from '../../functions/runs'
 import { jobSchema } from '../../job/job'
 import { RunsDigestInputSchema } from '../../notification/run-digest'
-import { CandidateInjectionSchema } from '../../knowledge/candidate-injection'
-import { gate1TargetSchema } from '../../knowledge/gate-receipt'
 import { runIdSchema } from '../run-id'
 
 /** `packages/schema/src/run/__tests__` → two levels up is the package's whole shipped source. */
@@ -65,20 +38,13 @@ function shippedSourceFiles(root: string): string[] {
   return found
 }
 
-/** P1 — a declaration that BRANDS a string as a `RunId`. */
+/** A declaration that brands a string as a `RunId`. */
 const BRANDING_DECLARATION_RE = /\.(?:transform|pipe)\s*\(\s*asRunId\s*\)|as\s+RunId\b/g
 
-/** P2 — a run-identifying field declared with a zod value. */
+/** A run-identifying field declared with a zod value. */
 const RUN_ID_FIELD_RE = /\brun(?:Id|Ref|Ids|Refs)\s*:\s*(runIdSchema|z\.[A-Za-z0-9_.()' ,-]*)/g
 
-/**
- * Files that MUST be in the scanned set, named here rather than read off the scan.
- *
- * The 399/400 scar: a discovery predicate pinned to its own output is green at rest, and a walker
- * rooted at a wrong-but-EXISTING directory returns a plausible set and reports every file clean.
- * These are the files the claim is ABOUT — the four that declared a bare codec before this plan,
- * the file the shared one now lives in, and the sanitizer it derives its rule from.
- */
+// Named by hand: a walker rooted at a wrong but existing directory would report every file clean.
 const REQUIRED_CENSUS_MEMBERS = [
   join('run', 'run-id.ts'),
   join('functions', 'runs.ts'),
@@ -86,7 +52,6 @@ const REQUIRED_CENSUS_MEMBERS = [
   join('job', 'job.ts'),
   join('notification', 'run-digest.ts'),
   join('ids', 'slug.ts'),
-  join('knowledge', 'candidate-injection.ts'),
   join('knowledge', 'gate-receipt.ts'),
 ] as const
 
@@ -109,30 +74,27 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
     hardened: 12,
     plainString: 7,
     verdict:
-      '2026-09-14 (423-29 D-04) adds the TWELFTH: `RunsEvidenceInput.runId` scopes the recorded-row and blob reads through the same exact-path codec. '
-      + 'hardened here — `RunsStartInput.runId` is the caller-supplied id the run executes under and '
-      + 'becomes `runs/<slugBranch(runId)>/`. 2026-08-25 (403-01 D-03) adds the EIGHTH: '
-      + '`RunsLiveUrlInput.runId` is caller-supplied over HTTP, is looked up in the live-session '
-      + 'registry, and is INTERPOLATED INTO THE MINTED URL and into the signed claims — so an id '
-      + 'that could be rewritten on the way through would be an id a viewer could be pointed at. '
-      + '2026-08-27 (405-01 D-03) adds the NINTH: `RunsDetailInput.runId` arrives as an untrusted '
-      + 'path segment of `GET /api/runs/:id/detail` and is the id the dashboard projection is read '
+      'hardened here — `RunsStartInput.runId` is the caller-supplied id the run executes under and '
+      + 'becomes `runs/<slugBranch(runId)>/`. `RunsLiveUrlInput.runId` is caller-supplied over '
+      + 'HTTP, is looked up in the live-session registry, and is INTERPOLATED INTO THE MINTED URL '
+      + 'and into the signed claims — so an id that could be rewritten on the way through would be '
+      + 'an id a viewer could be pointed at. `RunsDetailInput.runId` arrives as an untrusted path '
+      + 'segment of `GET /api/runs/:id/detail` and is the id the dashboard projection is read '
       + 'under — the read resolves it against rows it enumerates rather than a path join, and the '
-      + 'codec is what makes an id the path layer would REWRITE a refusal instead (T-405-01). '
-      + '2026-08-27 (405-05 D-12/D-13) adds the TENTH: `RunsArtifactInput.runId` arrives as an '
-      + 'untrusted path segment of `GET /api/runs/:runId/artifacts/:sha` on both doors and is the '
-      + 'run the evidence store is scoped to — the codec refuses the ids `slugBranch` would '
-      + 'REWRITE, so a rewritten id can never address another run\'s blobs (T-405-14). Its `sha` '
-      + 'is NOT a run-identifying field and carries its own 64-lowercase-hex regex instead. '
-      + '2026-08-29 (407-01 D-05) adds the ELEVENTH: `RunsKnowledgeInput.runId` arrives as an '
+      + 'codec is what makes an id the path layer would REWRITE a refusal instead. '
+      + '`RunsArtifactInput.runId` arrives as an untrusted path segment of `GET '
+      + '/api/runs/:runId/artifacts/:sha` on both doors and is the run the evidence store is '
+      + 'scoped to — the codec refuses the ids `slugBranch` would REWRITE, so a rewritten id can '
+      + 'never address another run\'s blobs. Its `sha` is NOT a run-identifying field and carries '
+      + 'its own 64-lowercase-hex regex instead. `RunsKnowledgeInput.runId` arrives as an '
       + 'untrusted path segment of `GET /api/runs/:id/knowledge` and is the run whose handoff is '
       + 'read — the runs port resolves it against the runs it enumerates rather than a path join, '
       + 'and the codec is what makes an id the path layer would REWRITE a refusal before any '
-      + 'dispatch happens (T-407-01). '
-      + 'The seven plain fields are ACKNOWLEDGEMENT/EVENT/PROJECTION/RESULT '
-      + 'projections (`RunStartAcknowledgement`, the bus envelope, `PostProcessingStatus`, '
-      + '405-01\'s `RunDetailProjection.runId`, 405-05\'s `RunsArtifactResult.runId` and both '
-      + 'arms of 407-01\'s `RunKnowledgeProjection` — the `evidence-incomplete` arm echoes the id '
+      + 'dispatch happens. `RunsEvidenceInput.runId` scopes the recorded-row and blob reads '
+      + 'through the same exact-path codec. The seven plain fields are '
+      + 'ACKNOWLEDGEMENT/EVENT/PROJECTION/RESULT projections (`RunStartAcknowledgement`, the bus '
+      + 'envelope, `PostProcessingStatus`, `RunDetailProjection.runId`, `RunsArtifactResult.runId` '
+      + 'and both arms of `RunKnowledgeProjection` — the `evidence-incomplete` arm echoes the id '
       + 'for a run whose handoff is GONE, so hardening it would refuse to name the very run a '
       + 'reader is asking about) whose interfaces declare `string`: each echoes an id a run '
       + 'already recorded, and none is an input.',
@@ -150,7 +112,7 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
     hardened: 1,
     plainString: 4,
     verdict:
-      'hardened here — 2026-09-28 (431 D-06) `RunsOverviewInput.runId` is caller-supplied and is '
+      'hardened here — `RunsOverviewInput.runId` is caller-supplied and is '
       + 'the run whose handoff and projection rows are read; the runs port resolves it against the '
       + 'runs it enumerates. The four plain fields are OUTPUT echoes of a completed run the read '
       + 'already resolved: `RunOverviewProjection.runId` and the `runId` of the artifact, evidence '
@@ -161,7 +123,7 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
     hardened: 0,
     plainString: 1,
     verdict:
-      'reaches no path join — 2026-09-02 (411-01 D-06) lifts `AuthoringStop.runId` to the stop '
+      'reaches no path join — `AuthoringStop.runId` sits at the stop '
       + "payload's top level so a NULL failure point still names the run it read. It echoes the "
       + 'LAST gate run on a receipt the loop itself just executed: an OUTPUT arm of '
       + '`authoring.draft.write`, named by no caller and resolved against nothing on disk.',
@@ -194,8 +156,9 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
     plainString: 3,
     verdict:
       'reaches no path join — a gate-run reference rendered on a receipt, plus TWO `runRefs` '
-      + 'arrays. THE ARRAYS ARE WHY P2 EXISTS: the symbol-shaped predicate and a `runId:`-only '
-      + 'grep both see one field in this file, and there are three. Nothing here is an input.',
+      + 'arrays. THE ARRAYS ARE WHY THE KEY-SHAPED PREDICATE EXISTS: the symbol-shaped predicate '
+      + 'and a `runId:`-only grep both see one field in this file, and there are three. Nothing '
+      + 'here is an input.',
   },
   'authoring/proposal-arms.ts': {
     hardened: 0,
@@ -220,70 +183,42 @@ const RUN_ID_FIELD_VERDICTS: Readonly<
   },
   'knowledge/gate-receipt.ts': {
     hardened: 0,
-    plainString: 3,
+    plainString: 1,
     verdict:
-      'reaches no path join — 2026-09-06 (416-02 D-02) adds the historical run reference on '
-      + 'a Gate3 receipt. It records attribution in bundle evidence and is returned as a string '
-      + 'by the read operation; it neither brands a RunId nor addresses run files. The strict '
-      + 'receipt contract requires a nonempty reference without rewriting historical ids. '
-      + '2026-09-07 (417-03 D-01) adds the SECOND: Gate1 targets[].runId records the '
-      + 'originating run of an already-compared target decision. It is receipt attribution, '
-      + 'not the input that locates or executes a run; it preserves the recorded string. '
-      + '2026-09-07 (418-01 D-12) adds the THIRD: optional Gate2 runId identifies the '
-      + 'attributed run for stale-state confirmation across different runs. It is compared '
-      + 'as receipt evidence, never used as a path or rewritten as a canonical run id.',
-  },
-  'knowledge/candidate-injection.ts': {
-    hardened: 0,
-    plainString: 2,
-    verdict:
-      '2026-09-07 (417-03 D-01): TWO projections of committed bundle provenance, not '
-      + 'caller-supplied run-execution ids. provenance.runIds preserves opaque historical '
-      + 'equality keys for gate-set exclusion, so normalizing them would change which runs '
-      + 'contributed. target.runId echoes BundleProvenanceSchema.runId verbatim as the '
-      + 'optional run/step address; hardening this read DTO would reject historical bundle '
-      + 'evidence the bundle schema already accepts. The reader joins no path with either '
-      + 'field. Plan 05 owns target lookup: exact corpus identity, then the existing '
-      + 'slugBranch-sanitized handoff location; that lookup must verify loaded evidence '
-      + 'identity rather than treat a rewritten directory name as run identity. '
-      + 'This DTO grants no authority to use either string as an unchecked path segment.',
+      'reaches no path join — the mark receipt carries the historical run reference of a mark. '
+      + 'It records attribution in bundle evidence and is returned as a string by the read '
+      + 'operation; it neither brands a RunId nor addresses run files. The strict receipt '
+      + 'contract requires a nonempty reference without rewriting historical ids.',
   },
   'functions/feedback.ts': {
-    hardened: 15,
+    hardened: 14,
     plainString: 0,
     verdict:
-      '2026-09-09 (419): the eight mark address/input/outcome/trace fields, including '
-      + 'the review-added ambiguous-correction outcome, reuse '
+      'The mark address, input, outcome and trace fields, the marks-history input and its four '
+      + 'result arms, and the mark preview\'s prospective and already-marked arms reuse '
       + 'runIdSchema.in, the canonical path validator before its type-only branding '
       + 'transform. Mark DTOs preserve the same bytes and rejection predicate while '
       + 'supporting output JSON-schema projection; no second path rule is declared. '
-      + '2026-09-15 (423-36): the marks-history input and its four result arms add five '
-      + 'fields on the same hardened validator. '
-      + '2026-09-15 (423-37): the mark preview adds two, the shared prospective arm shape and '
-      + 'the already-marked arm; its five refusal arms are runs.mark\'s own objects, not new fields.',
+      + 'The preview\'s four refusal arms are runs.mark\'s own objects, not new fields.',
   },
   'knowledge/change.ts': {
     hardened: 0,
     plainString: 1,
     verdict:
-      '2026-09-08 (419-01): MarkProposalStamp.runId is persisted attribution on a '
-      + 'knowledge proposal, not an unchecked path segment or a run-execution input. '
-      + 'The mark input and plan address have already crossed the canonical codec; '
-      + 'the stamp preserves the originating run reference as evidence. '
-      + '2026-10-01 (432-17): the stamp moved to knowledge/change.ts as MarkChangeStamp with '
-      + 'the direct change contracts, and proposal/envelope.ts (optional run attribution on a '
-      + 'proposal envelope) is deleted with the inbox.',
+      'MarkChangeStamp.runId is persisted attribution on a knowledge change, not an unchecked '
+      + 'path segment or a run-execution input. The mark input and plan address have already '
+      + 'crossed the canonical codec; the stamp preserves the originating run reference as '
+      + 'evidence.',
   },
   'knowledge/review-verbs.ts': {
     hardened: 0,
-    // 2026-09-30 (432-12): 2 -> 1. The change ops' input carries no run attribution; what remains
-    // is `BriefWhyInput.runId`, the address of the run a why-question is about.
+    // The one plain string is `BriefWhyInput.runId`, the run a why-question is about.
     plainString: 1,
     verdict: "reaches no path join — the run a brief-why question addresses, read through the runs port.",
   },
 }
 
-describe('P1 — the SYMBOL-shaped predicate, and its own self-check first', () => {
+describe('the SYMBOL-shaped predicate, and its own self-check first', () => {
   const seen = (source: string): boolean => {
     BRANDING_DECLARATION_RE.lastIndex = 0
     return BRANDING_DECLARATION_RE.test(stripComments(source))
@@ -324,8 +259,8 @@ describe('P1 — the SYMBOL-shaped predicate, and its own self-check first', () 
   })
 })
 
-describe('P2 — the KEY-shaped predicate: every run-identifying field carries a verdict', () => {
-  it('sees a field declared without `asRunId` at all — the case P1 cannot', () => {
+describe('the KEY-shaped predicate: every run-identifying field carries a verdict', () => {
+  it('sees a field declared without `asRunId` at all — the case the symbol-shaped predicate cannot', () => {
     const probe = (source: string): boolean => {
       RUN_ID_FIELD_RE.lastIndex = 0
       return RUN_ID_FIELD_RE.test(source)
@@ -362,19 +297,7 @@ describe('P2 — the KEY-shaped predicate: every run-identifying field carries a
   })
 })
 
-describe('P3 — the RUNTIME-shaped predicate: the same object, and it refuses', () => {
-  it('preserves historical replay references as strings while the execution codec refuses rewrites', () => {
-    const historical = 'legacy/run 2026'
-    expect(runIdSchema.safeParse(historical).success).toBe(false)
-    expect(CandidateInjectionSchema.shape.provenance.shape.runIds.parse([historical]))
-      .toEqual([historical])
-    const targetRunId = CandidateInjectionSchema.shape.target.unwrap().shape.runId
-    expect(targetRunId.parse(historical)).toBe(historical)
-    expect(gate1TargetSchema.shape.runId.parse(historical)).toBe(historical)
-    expect(targetRunId.safeParse('').success).toBe(false)
-    expect(gate1TargetSchema.shape.runId.safeParse('').success).toBe(false)
-  })
-
+describe('the RUNTIME-shaped predicate: the same object, and it refuses', () => {
   it('every hardened surface holds the SAME codec instance', () => {
     expect(RunsStartInputSchema.shape.runId.unwrap()).toBe(runIdSchema)
     expect(RunSummarySchema.shape.runId).toBe(runIdSchema)

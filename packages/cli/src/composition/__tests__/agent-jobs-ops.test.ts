@@ -1,15 +1,4 @@
-// The five cells behind 413 D-04 / D-06 (RESEARCH F15, OQ-4 option (b)).
-//
-// What is under test is not "a pump works" — the engine's own suites cover that. It is the
-// narrower claim the campaign rests on: a host can drain ONE kind and leave the successor that
-// kind enqueues sitting queued and unclaimed. F15 measured that no shipped host could do this
-// (global FIFO, no kind filter), so every assertion here is about what the pump did NOT touch as
-// much as about what it ran.
-//
-// The harness composes `composeJobRecovery` with `createRealJobKindRegistry()` — no capabilities,
-// so every kind gets the stand-in handler whose payload script decides completion, chaining and
-// failure. That is deliberate: the D-06 guarantee must hold for a `curate-memory` row whose
-// handler WOULD run if it were ever claimed, which is exactly what the stand-in is.
+// A host drains one job kind and leaves the successor that kind enqueues queued and unclaimed.
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -60,7 +49,15 @@ const NEVER_AUTHORS: JobModelCapability = {
   generate: () => Promise.reject(new Error('the stand-in never authors')),
 }
 
-const clock = { now: (): string => new Date().toISOString() }
+// Strictly increasing: the store claims same-millisecond rows in id order, so two enqueues in one
+// millisecond would otherwise not claim in enqueue order.
+let lastTick = 0
+const clock = {
+  now: (): string => {
+    lastTick = Math.max(Date.now(), lastTick + 1)
+    return new Date(lastTick).toISOString()
+  },
+}
 
 interface Harness {
   readonly deps: AgentJobsOpsDeps
@@ -81,7 +78,7 @@ interface Harness {
 let roots: string[] = []
 
 function makeHarness(): Harness {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-413-10-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-'))
   roots.push(root)
   const agentQaRoot = join(root, '.agent-qa')
   const knowledgeRoot = join(root, 'knowledge')
@@ -107,10 +104,7 @@ function makeHarness(): Harness {
           queue: host.queue,
           model: NEVER_AUTHORS,
           idSource: DIGEST_JOB_ID_SOURCE,
-          // The composed host's belt, as DATA. `composeJobRecovery` builds no posture, so this
-          // double states the empty set explicitly rather than omitting the field: an omission
-          // would make every cell below silently measure the braces alone, which is exactly the
-          // hole CR-02 was.
+          // Stated empty, not omitted, or the cells would measure only the `--only` braces.
           unclaimableKinds: [],
         },
         close: async () => {
@@ -164,7 +158,7 @@ afterEach(() => {
   roots = []
 })
 
-describe('pumpAgentJobs — the kind-filtered, lease-holding drain (413 D-04/D-06)', () => {
+describe('pumpAgentJobs — the kind-filtered, lease-holding drain', () => {
   it('runs only analyze-run and leaves the curate-memory successor queued and unclaimed', async () => {
     const harness = makeHarness()
     await harness.enqueue('analyze-run', { runId: 'r_fixture', chain: true }, 'r_fixture')
@@ -181,14 +175,13 @@ describe('pumpAgentJobs — the kind-filtered, lease-holding drain (413 D-04/D-0
     })
     expect(outcome.stoppedOn).toBe('empty')
     expect([...outcome.excludedKinds].sort()).toEqual(
-      ['chat', 'consolidate', 'curate-memory', 'propose-improvements'],
+      ['chat', 'consolidate', 'curate-memory'],
     )
 
     const rows = await harness.dump()
     const analyze = rows.find((row) => row.kind === 'analyze-run')
     expect(analyze?.status).toBe('done')
 
-    // THE D-06 CLAIM. The successor exists — the chain really did fire — and nothing touched it.
     const successor = rows.find((row) => row.kind === 'curate-memory')
     expect(successor).toBeDefined()
     expect(successor?.claimed).toBe(false)
@@ -297,41 +290,9 @@ describe('pumpAgentJobs — the kind-filtered, lease-holding drain (413 D-04/D-0
   })
 })
 
-// ————— the composition the SHIPPED pump actually runs (defaultAgentJobsOpsDeps) —————
-//
-// Everything above drives an INJECTED `AgentJobsOpsDeps` whose registry is
-// `createRealJobKindRegistry()` — no capabilities, stand-in handlers. That seam is right for the
-// D-06 claim (the guarantee must hold for a `curate-memory` row whose handler WOULD run), and it
-// is exactly why the defect below survived Plan 10: the composition the CLI command actually
-// reaches for, `defaultAgentJobsOpsDeps`, had no cell at all.
-//
-// What it composed was a host with NO `postRun`, and `postRunCapabilities()` answers `undefined`
-// for the WHOLE bundle when `postRun` is absent — so `persistAnalysis` was discarded together with
-// `curateRun`, and `createRealJobKindRegistry(undefined)` handed analyze-run its scripted
-// stand-in, which publishes `verdicts-authored` and reports `complete` having written nothing.
-// Measured over 413-08's 19-leg campaign: 19/19 legs recorded `analyzeRun: "completed"` and 0/19
-// wrote `analysis.json`. The row claimed an analysis that did not exist — the masked fallback
-// 413-07 named as the defect class this phase guards against.
-//
-// The two cells below hold the two properties apart, because a fix that satisfied one by breaking
-// the other would be worse than the defect:
-//
-//   1. THE ARTIFACT. A campaign leg in miniature through the real composition — a run directory
-//      with a handoff on disk, an analyze-run row enqueued against its digest, one
-//      `agent-qa agent-jobs pump --only analyze-run` — asserting that `analysis.json` lands and
-//      that the successor the completion enqueues is left queued, unclaimed, attempts 0.
-//   2. THE BELT. The composed host's OWN queue, with the pump's `--only` exclusion nowhere in
-//      sight, still refuses to claim a `curate-memory` row. That is `'no-masker'` folding through
-//      `UNCLAIMABLE_BY_PROSE_POSTURE`, and it is what makes the guarantee survive an edit to
-//      `pumpAgentJobs` — and what proves `PUMP_NEVER_CURATES` is never reached.
-//
-// The fixture's one member carries a PERSISTED `rootCause`, so the deterministic floor has no
-// `unknown` member and the author reaches no model (`kinds.ts`: "a floor with no unknown members
-// ... reaches no model"). That is deliberate: `defaultAgentJobsOpsDeps` resolves its own model
-// from the config and this cell cannot inject one, so the assertion must not depend on what that
-// resolution answers.
+// The member carries a persisted `rootCause`, so the floor has no unknown member and no model runs.
 
-const PUMPED_RUN_ID = 'run-413-10-pumped'
+const PUMPED_RUN_ID = 'run-pumped'
 
 /** A config a project could actually have: enough for `resolveConfig` to name a knowledge root. */
 const PUMP_CONFIG = `workspace:
@@ -408,7 +369,7 @@ interface ComposedFixture {
 
 /** A project on disk: a config, a runtime root, and one completed run's handoff. */
 function composedFixture(): ComposedFixture {
-  const root = mkdtempSync(join(tmpdir(), 'agent-qa-413-10-composed-'))
+  const root = mkdtempSync(join(tmpdir(), 'agent-qa-composed-'))
   roots.push(root)
   const configPath = join(root, 'agent-qa.config.yaml')
   writeFileSync(configPath, PUMP_CONFIG, 'utf8')
@@ -435,7 +396,7 @@ function composedFixture(): ComposedFixture {
   }
 }
 
-describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs (413-10 defect)', () => {
+describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs', () => {
   it('persists analysis.json for a pumped analyze-run and leaves curate-memory unclaimed', async () => {
     const fixture = composedFixture()
 
@@ -478,9 +439,7 @@ describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs (413
     expect(artifact.runId).toBe(PUMPED_RUN_ID)
     expect(artifact.verdicts.map((verdict) => verdict.class)).toEqual(['timeout'])
 
-    // AND D-06, undamaged. The successor exists at all only because the REAL body ran — the
-    // stand-in returned `next: []` for an unscripted payload, which is why the campaign enqueued
-    // zero curate-memory jobs where D-06 expected 19.
+    // The successor exists only because the real body ran; the stand-in returns `next: []`.
     const reader = fixture.open()
     let dump
     try {
@@ -533,21 +492,7 @@ describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs (413
       reader.close()
     }
   })
-  // CR-02. The file claimed the curator was held back "twice over" — the host's own
-  // posture-derived belt plus the pump's `--only` braces. Only the braces existed. `pumpAgentJobs`
-  // builds a FRESH `createAgentJobQueue` over the raw `jobs.store`, so the belt the cell above
-  // measures governs a queue that never drains, and `ComposedAgentJobs.jobs` was a `Pick<…>` that
-  // dropped `unclaimableKinds` — the one published field on `LocalAgentJobs` that exists so a
-  // re-composer can honour it. The claim was not merely unused; it was unreachable.
-  //
-  // `--only curate-memory` is a parser-accepted operator command, so the hole was reachable by
-  // typing a valid flag value. With one exclusion the curator became claimable, the real handler
-  // ran, `curateRun` = `PUMP_NEVER_CURATES` threw, and the engine's handler-throw path had already
-  // spent the attempt at claim (D-18): `retry-scheduled`, then `failed` at the bound — which is a
-  // chain terminal, minting a `failed` receipt for a curation nobody ever attempted.
-  //
-  // This cell asserts the union, not the refusal: the row a `--only curate-memory` pump names must
-  // come out of it exactly as it went in.
+  // `pumpAgentJobs` builds its own queue, so the host's unclaimable kinds are unioned into it.
   it('will not claim curate-memory even when --only names it, because the belt is unioned in', async () => {
     const fixture = composedFixture()
     const enqueuer = fixture.open()
@@ -573,7 +518,7 @@ describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs (413
     // The belt, VISIBLE in the DTO the operator reads: the kind they named is excluded, so the
     // empty drain is reported rather than looking like an empty queue.
     expect([...outcome.excludedKinds].sort()).toEqual(
-      ['analyze-run', 'chat', 'consolidate', 'curate-memory', 'propose-improvements'],
+      ['analyze-run', 'chat', 'consolidate', 'curate-memory'],
     )
 
     // The row, untouched. `attempts: 0` is the load-bearing one: the engine spends an attempt at
@@ -604,20 +549,9 @@ describe('defaultAgentJobsOpsDeps — the composition the shipped pump runs (413
 
 })
 
-// ————— requeueAgentJob — the operator's explicit forget (413-14) —————
-//
-// The 413-08 campaign left 19 `analyze-run` rows `done` with nothing authored, and the store dedups
-// on `(kind, idempotencyKey)`, so a second enqueue for the same run is impossible — and would be
-// wrong anyway, because `chainJobIdsForRun` derives chain identity from that pair. `requeue` is the
-// only way back: the row itself returns to `queued`, and the checkpoints its last attempt recorded
-// are forgotten in both media.
-//
-// The forget is the load-bearing half, and the first cell asserts it directly rather than trusting
-// the status. `selectLatestCheckpoint` is `ORDER BY attempt DESC LIMIT 1`, so a status-only reset
-// would hand the REAL handler the stand-in's empty `verdicts-authored` payload as recorded
-// authorship — it would author nothing and report `completed`, reproducing the defect exactly.
+// Requeue forgets the last attempt's checkpoints too, or the real handler replays empty authorship.
 
-describe('requeueAgentJob — returning a terminal agent job to the queue (413-14)', () => {
+describe('requeueAgentJob — returning a terminal agent job to the queue', () => {
   it('a requeued analyze-run runs its author again and re-chains its successor exactly once', async () => {
     const harness = makeHarness()
     await harness.enqueue('analyze-run', { runId: 'r_requeue', chain: true }, 'r_requeue')
@@ -665,9 +599,7 @@ describe('requeueAgentJob — returning a terminal agent job to the queue (413-1
     const after = await harness.dump()
     expect(after.find((row) => row.id === analyzeId)?.status).toBe('done')
 
-    // D-06 HELD TWICE. The successor key `${id}->curate-memory` is derived from a row id the
-    // requeue deliberately preserved, so the re-chain dedupes onto the existing slot instead of
-    // doubling it — and the row it dedupes onto is still queued, unclaimed, attempts 0.
+    // The successor key comes from the kept row id, so the re-chain dedupes onto that slot.
     const successors = after.filter((row) => row.kind === 'curate-memory')
     expect(successors).toHaveLength(1)
     expect(successors[0]).toMatchObject({ status: 'queued', attempts: 0, claimed: false })

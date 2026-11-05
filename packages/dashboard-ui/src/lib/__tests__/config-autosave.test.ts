@@ -1,8 +1,4 @@
-// THE CONFIG PAGE'S SAVE STATE, PROVEN WHERE TIME IS FREE (429 D-19/D-20/D-21/D-24 · SC3).
-//
-// Every clock is a parameter: `reduceConfigAutosave(state, event, now)` and
-// `deriveSaveStatus(state, now)`. The window cells sit on either side of a half-open boundary,
-// the shape a wall clock would turn into a flake.
+// Every clock is a parameter, so window cells sit on either side of the half-open boundary.
 
 import { describe, expect, it } from 'vitest'
 
@@ -49,7 +45,7 @@ function stateWith(flags: ReadonlySet<Flag>, now: number): ConfigAutosaveState {
   }
 }
 
-describe('the save-status precedence (429-15 Task 1)', () => {
+describe('the save-status precedence', () => {
   it('STATUS-PRECEDENCE: every combination shows the first of failed, undo, saving, draft, saved, else idle', () => {
     const now = 50_000
     const wrong: string[] = []
@@ -64,7 +60,7 @@ describe('the save-status precedence (429-15 Task 1)', () => {
   })
 })
 
-describe('a failed write (429-15 Task 1)', () => {
+describe('a failed write', () => {
   it('FAILED-WRITE-NEVER-SAVED: after write-failed the status is failed at every later now until a write succeeds', () => {
     const failed = fold([
       [{ type: 'edit', fieldKey: BROWSER, raw: 'firefox', valid: true }, 100],
@@ -158,7 +154,7 @@ describe('a failed write (429-15 Task 1)', () => {
   })
 })
 
-describe('a partial write (429-15 Task 1)', () => {
+describe('a partial write', () => {
   it('PARTIAL-SHOWS-NOT-SAVED: a write that lands beside a remaining draft shows Not saved until the draft clears', () => {
     const landed = fold([
       [{ type: 'edit', fieldKey: BROWSER, raw: 'firefox', valid: true }, 1_000],
@@ -202,7 +198,7 @@ describe('a partial write (429-15 Task 1)', () => {
   })
 })
 
-describe('the windows (429-15 Task 1)', () => {
+describe('the windows', () => {
   it('SAVED-FADES: Saved shows for SAVED_VISIBLE_MS after the write lands, then idle', () => {
     const t = 5_000
     const landed = fold([
@@ -266,14 +262,13 @@ describe('the windows (429-15 Task 1)', () => {
         name: 'gpt',
         token: 'second',
         expiresAt: t + 100 + UNDO_WINDOW_MS,
-        judge: true,
       },
       t + 100,
     )
     expect(second.undo?.token).toBe('second')
     expect(deriveSaveStatus(second, t + 100)).toMatchObject({
       state: 'undo',
-      undo: { line: 'Deleted gpt, an eval judge', name: 'gpt', token: 'second' },
+      undo: { line: 'Deleted gpt', name: 'gpt', token: 'second' },
     })
     const afterSecond = t + 100 + UNDO_WINDOW_MS
     expect(deriveSaveStatus(second, afterSecond).state).toBe('idle')
