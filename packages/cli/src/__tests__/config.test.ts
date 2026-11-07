@@ -3,7 +3,10 @@ import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { MARKER_WRITTEN_BACK_SENTENCE } from '@vostride/agent-qa-schema'
 import { formatConfigDebug, loadConfigFile, loadRequiredConfigFile, loadEnvOverrides, mergeConfigs, mergeWithTestConfig, mergeUseBlocks, resolveConfig } from '../config.js'
 import { HARD_CUT_STEPS, INVALID_CONFIG_FIX } from '../hard-cut.js'
+import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
+import { isPromptCancel, PromptCancelled } from '../composition/cli-refusal.js'
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
+import { PassThrough } from 'node:stream'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -92,6 +95,63 @@ describe('loadConfigFile', () => {
     const dir = join(TMP_DIR, 'is-a-dir.yaml')
     await mkdir(dir)
     await expect(loadConfigFile(dir)).rejects.toThrow()
+  })
+
+  it('reads a config whose remote url yaml would warn about without printing the warning, and still refuses text that does not parse', async () => {
+    const url = 'wss://grid.example.com/routepart-5e21?team=queryvalue-a904'
+    const configPath = join(TMP_DIR, 'agent-qa.config.yaml')
+    await writeFile(
+      configPath,
+      [
+        'workspace:',
+        '  testMatch:',
+        '    - "tests/**/*.yaml"',
+        '  suiteMatch:',
+        '    - "suites/**/*.suite.yaml"',
+        '  hooksFile: hooks.yaml',
+        '  envFile: .env',
+        '  secretsFile: .env.secrets.local',
+        'registry:',
+        '  llms:',
+        '    - name: judge',
+        '      provider: anthropic-compatible',
+        '      model: m',
+        '      baseURL: https://llm.example.com/v1',
+        '      providerHeaders:',
+        `        ? [ &u !endpoint ${url} ]`,
+        '        : x',
+        '  remotes:',
+        '    - name: grid',
+        '      protocol: playwright',
+        '      url: *u',
+        'use:',
+        '  browser:',
+        '    name: chromium',
+        '    remote: grid',
+        '',
+      ].join('\n'),
+    )
+    await writeFile(join(TMP_DIR, '.env.secrets.local'), '')
+    const brokenPath = join(TMP_DIR, 'broken.config.yaml')
+    await writeFile(
+      brokenPath,
+      ['registry:', '  remotes: [', '    { url: wss://grid.example.com/'].join('\n'),
+    )
+    const warned = vi.spyOn(process, 'emitWarning').mockImplementation(() => undefined)
+    try {
+      const loads = [await loadConfigFile(configPath), await loadRequiredConfigFile(configPath)]
+      for (const loaded of loads) {
+        const remotes = (loaded as { registry: { remotes: { url: unknown }[] } }).registry.remotes
+        expect(remotes[0]?.url).toBe(url)
+      }
+      expect(createDeclaredSecretMask(configPath).mask('plain text')).toBe('plain text')
+      await expect(loadRequiredConfigFile(brokenPath)).rejects.toMatchObject({
+        name: 'ConfigFileNotYamlError',
+      })
+      expect(warned).not.toHaveBeenCalled()
+    } finally {
+      warned.mockRestore()
+    }
   })
 })
 
@@ -482,6 +542,40 @@ describe('config show and set with declared secrets', () => {
     expect(table).toContain('sk-env-only-cache')
     expect(table).not.toContain('<redacted>')
   })
+
+  it('the --debug table shows a remote by name, protocol and origin only', () => {
+    const globalConfig = makeValidConfig({
+      registry: {
+        remotes: [
+          {
+            name: 'grid',
+            protocol: 'playwright',
+            url: 'wss://grid.example.com/p4th-t0ken/session?q=QUERY_SECRET',
+            query: { tag: 'QUERY_VALUE' },
+            headers: { 'X-Team': 'HEADER_VALUE' },
+            basicAuth: { user: 'BASIC_USER', password: 'BASIC_PASS' },
+          },
+        ],
+      },
+    })
+
+    const table = formatConfigDebug(globalConfig, {}, {}, (text) => text)
+
+    expect(table).toContain('grid')
+    expect(table).toContain('playwright')
+    expect(table).toContain('wss://grid.example.com:443')
+    for (const hidden of [
+      'p4th-t0ken',
+      'QUERY_SECRET',
+      'QUERY_VALUE',
+      'HEADER_VALUE',
+      'X-Team',
+      'BASIC_USER',
+      'BASIC_PASS',
+    ]) {
+      expect(table, hidden).not.toContain(hidden)
+    }
+  })
 })
 
 describe('config set with a declared value', () => {
@@ -564,6 +658,58 @@ describe('config set refuses a shown marker', () => {
     expect(stderr).toContain(MARKER_WRITTEN_BACK_SENTENCE)
     expect(stdout).not.toContain('saved to')
     expect(await readFile(join(dir, 'agent-qa.config.yaml'), 'utf-8')).toBe(before)
+  })
+})
+
+describe('the config value prompt', () => {
+  function promptStreams(): { input: PassThrough; output: PassThrough; terminal: boolean } {
+    const output = new PassThrough()
+    output.resume()
+    return { input: new PassThrough(), output, terminal: true }
+  }
+
+  it('Ctrl-C at the prompt rejects as a cancel', async () => {
+    const { plainPrompt } = await import('../commands/config.js')
+    const streams = promptStreams()
+
+    const answer = plainPrompt('Enter value for x: ', streams)
+    streams.input.write('\x03')
+
+    const error = await answer.then(
+      () => undefined,
+      (err: unknown) => err,
+    )
+    expect(isPromptCancel(error)).toBe(true)
+  })
+
+  it('input that ends before an answer rejects as a cancel', async () => {
+    const { plainPrompt } = await import('../commands/config.js')
+    const streams = promptStreams()
+
+    const answer = plainPrompt('Enter value for x: ', streams)
+    streams.input.end()
+
+    await expect(answer).rejects.toBeInstanceOf(PromptCancelled)
+  })
+
+  it('an answer resolves trimmed', async () => {
+    const { plainPrompt } = await import('../commands/config.js')
+    const streams = promptStreams()
+
+    const answer = plainPrompt('Enter value for x: ', streams)
+    streams.input.write('  value  \n')
+
+    await expect(answer).resolves.toBe('value')
+  })
+
+  it('config set with an empty value prints No value provided. and exits 1', async () => {
+    const dir = join(TMP_DIR, 'set-empty')
+    await mkdir(dir, { recursive: true })
+
+    const { stderr, exitCode } = await runConfigCommand(dir, ['set', 'x', ''])
+
+    expect(stderr).toContain('No value provided.')
+    expect(exitCode).toBe(1)
   })
 })
 

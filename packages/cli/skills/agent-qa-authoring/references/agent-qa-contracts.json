@@ -40,5 +40,35 @@
     "marker": "[secret:<name>]",
     "template": "{{secret:<name>}}",
     "advice": "Only the values in workspace.secretsFile are masked, and nothing else is. The one exception: the dashboard's model connection check keeps the key or header value it is testing out of the provider's error message. Use temporary, limited test credentials."
+  },
+  "remotes": {
+    "path": "registry.remotes",
+    "requiredKeys": ["name", "protocol", "url"],
+    "optionalKeys": ["query", "headers", "basicAuth", "connectTimeout", "context", "capabilities"],
+    "pluginRequiredKeys": ["name", "plugin"],
+    "pluginOptionalKeys": ["settings", "connectTimeout", "uploadTimeout", "context", "capabilities"],
+    "keys": {
+      "name": "A lowercase slug, unique in the list. local is reserved for this machine.",
+      "protocol": "playwright for a Playwright server (ws:// or wss://), cdp for a CDP endpoint (ws://, wss://, http:// or https://; Chromium only), or appium for an Appium server devices run on (http:// or https://). use.browser.remote picks a playwright, cdp or plugin remote, never an appium one.",
+      "url": "The endpoint with its scheme, host and port written out. {{secret:<name>}} and {{playwright:version}} may appear only in its path and query, never as user:password@.",
+      "query": "Parameters added to the url when agent-qa connects. A value is a string, or a nested map sent as JSON.",
+      "headers": "Headers sent when agent-qa connects.",
+      "basicAuth": "user and password; the password is a {{secret:<name>}} reference. Use it or an Authorization header, not both.",
+      "connectTimeout": "A duration such as 45s that bounds the connect, and on a plugin remote the plugin's answer before it; 5m by default.",
+      "context": "cdp and plugin remotes only: new (the default) opens agent-qa's own context; reuse uses the browser's first context.",
+      "capabilities": "appium and plugin remotes only: Appium capabilities sent for every device on this remote; a device's own capabilities win over them. A key that names a credential holds a {{secret:<name>}} reference.",
+      "plugin": "The name of a plugins entry; account options live on that entry. A remote has plugin or url, never both, and a plugin remote has no protocol, query, headers or basicAuth.",
+      "settings": "This remote's values for its plugin, defined by the plugin; a key naming a credential holds a {{secret:<name>}} reference.",
+      "uploadTimeout": "Plugin remotes only: a duration such as 15m that bounds an app upload; 10m by default."
+    },
+    "protocols": ["playwright", "cdp", "appium"],
+    "credentials": "Every credential is a {{secret:<name>}} reference to a name in workspace.secretsFile. The strict parse refuses a literal string or number under a header or query name that carries a credential word such as token, key, secret, password, cookie, authorization or jwt: in nested maps, inside a JSON value and in the url's own query. Strings and numbers there must be references; true, false or null under such a name is accepted. A credential goes over ws:// or http:// only to this machine. A remote's secrets serve its connection only; steps, expected values, target urls and hooks cannot use them.",
+    "pick": {
+      "key": "use.browser.remote",
+      "value": "A name listed under registry.remotes, or local for this machine.",
+      "setIn": ["agent-qa.config.yaml use.browser", "a suite's use.browser", "a test's use.browser"],
+      "order": "The suite's pick wins, then the test's, then the config's; with none, the test runs here. A suite runs in one place, so when it names none, its members must agree."
+    },
+    "writes": "agent_qa_change_config can set use.browser.remote but never changes registry.remotes or plugins; a person edits those in the file."
   }
 }

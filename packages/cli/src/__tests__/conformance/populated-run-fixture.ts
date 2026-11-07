@@ -603,6 +603,10 @@ export interface StubModelServerOptions {
   readonly holdAnalysis?: boolean
   // A curator request with a neighbor gets a Supersede of the first; one with none, prose.
   readonly curatorOutcome?: 'supersede-first'
+  // Appended to every planner turn's reasoning, as a model that repeats what it saw would.
+  readonly plannerNote?: string
+  // The tool every planner turn calls in place of `web_click`, such as `common_delay` on a device.
+  readonly plannerTool?: { readonly name: string; readonly args: Readonly<Record<string, unknown>> }
 }
 
 export async function startStubModelServer(
@@ -673,7 +677,7 @@ export async function startStubModelServer(
       }
 
       if (Array.isArray(body.tools) && body.tools.length > 0) {
-        const toolName = clickToolName(body)
+        const toolName = options.plannerTool?.name ?? clickToolName(body)
         if (toolName === undefined) {
           record('unknown', 400)
           refuse(
@@ -689,9 +693,12 @@ export async function startStubModelServer(
           : { ref }
         const answerPlanner = (failing: boolean): void => {
           const args = {
-            ...targeting,
-            elementDescription: POPULATED_BUTTON_LABEL,
-            reasoning: failing ? plannerFailureReasoning() : plannerReasoning(),
+            ...(options.plannerTool === undefined
+              ? { ...targeting, elementDescription: POPULATED_BUTTON_LABEL }
+              : options.plannerTool.args),
+            reasoning: `${failing ? plannerFailureReasoning() : plannerReasoning()}${
+              options.plannerNote === undefined ? '' : ` ${options.plannerNote}`
+            }`,
             confidence: 0.95,
             stepComplete: !failing,
             ...(failing ? { stepFailed: true } : {}),

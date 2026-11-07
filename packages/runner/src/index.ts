@@ -21,6 +21,8 @@ export type {
   ServedRunBrief,
 } from './knowledge-hint-reader.js'
 export { assertNever } from './platform.js'
+export * from './remote.js'
+export * from './remote-heartbeat.js'
 // Lets runner consumers build branded refs without a direct schema dependency.
 export { asRef } from '@vostride/agent-qa-schema'
 export type { Ref } from '@vostride/agent-qa-schema'
@@ -257,6 +259,7 @@ export type {
   PostVerdictPort,
   PostVerdictStepInput,
   PostVerdictOutcome,
+  RemoteProgressRelay,
 } from './run/ports.js'
 export { POST_VERDICT_STEP_BUDGET_MS } from './run/ports.js'
 export { createStepModelScope, withStepModelCall } from './run/step-model-observations.js'
@@ -324,16 +327,20 @@ export {
 export {
   SecretStore,
   SecretRedactor,
+  RunSecretRedactor,
+  pluginMaskName,
   SecretConfigError,
   MissingSecretError,
   findSecretTemplates,
+  basicAuthMaskEntries,
+  basicAuthorizationValue,
   interpolateSecretTemplates,
   resolveSecretTemplatesInValue,
   redactSecretValue,
   containsRedactedSecretMarker,
   literalSecretMarkerRefusal,
 } from './loop/secrets.js'
-export type { SecretTemplate, SecretFileMetadata } from './loop/secrets.js'
+export type { MaskExtra, SecretTemplate, SecretFileMetadata } from './loop/secrets.js'
 
 // Re-exporting runs registerAllActions on defaultRegistry; nothing here shrinks the tool slice.
 export {

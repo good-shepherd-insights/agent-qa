@@ -1,6 +1,6 @@
 {
   "name": "agent-qa",
-  "version": "0.2.6",
+  "version": "0.3.3",
   "private": false,
   "description": "The self-improving Agentic QA harness with Memory",
   "keywords": [
@@ -112,6 +112,7 @@
     "@vostride/agent-qa-knowledge-local": "workspace:*",
     "@vostride/agent-qa-mcp": "workspace:*",
     "@vostride/agent-qa-model": "workspace:*",
+    "@vostride/agent-qa-plugin-kit": "workspace:*",
     "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-runner-local": "workspace:*",
     "@vostride/agent-qa-safety-local": "workspace:*",

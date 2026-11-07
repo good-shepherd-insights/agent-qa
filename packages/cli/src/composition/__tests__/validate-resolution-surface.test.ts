@@ -1,4 +1,5 @@
-// Validates what the shipped `init --platform web` writes, its declared auth plugin uninstalled.
+// Validates what the shipped `init --platform web` writes, with its declared auth plugin installed
+// and without it.
 
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
@@ -94,8 +95,11 @@ function scaffoldWithShippedInit(): string {
   // never had the problem.
   expect(
     configText,
-    'the default `init --platform web` scaffold must declare the auth plugin for F-05 to exist',
-  ).toMatch(/plugins:\s*\n\s*auth:\s*\n\s*-\s*package:/)
+    'the default `init --platform web` scaffold declares the subscription entry, or the cells below '
+      + 'measure a project without the plugin',
+  ).toMatch(
+    /plugins:\s*\n\s*-\s*name:\s*subscription\s*\n\s*package:\s*["']?@vostride\/agent-qa-subscription-auth/,
+  )
   return configText
 }
 
@@ -119,6 +123,18 @@ function writeFileUnder(relativePath: string, text: string): void {
   const absolute = join(root, relativePath)
   mkdirSync(dirname(absolute), { recursive: true })
   writeFileSync(absolute, text)
+}
+
+// validate reads only the manifest, so the package carries no code.
+function installDeclaredPlugin(): void {
+  writeFileUnder(
+    join('node_modules', '@vostride', 'agent-qa-subscription-auth', 'package.json'),
+    JSON.stringify({
+      name: SUBSCRIPTION_AUTH_PACKAGE,
+      version: '0.0.0',
+      'agent-qa': { plugin: { kind: 'model-auth', runs: 'in-process', entry: './dist/index.js' } },
+    }),
+  )
 }
 
 /** The scaffolded config, made SCHEMA-INVALID at a field the schema names, carrying a credential. */
@@ -145,6 +161,7 @@ afterEach(() => {
 describe('a project the product scaffolds is validated, not attested over an empty set', () => {
   it('bare `validate` in an init-scaffolded project CHECKS FILES', () => {
     scaffoldWithShippedInit()
+    installDeclaredPlugin()
     writeFileUnder(join('tests', 'z1-added.yaml'), VALID_TEST)
 
     const expected = discoveredFileCount()
@@ -169,6 +186,23 @@ describe('a project the product scaffolds is validated, not attested over an emp
       `the discovered set does not contain the added member:\n${second.combined}`,
     ).toContain('z1-membership.yaml')
     expect(second.status, `a member with errors is an error exit:\n${second.combined}`).toBe(1)
+  }, 180_000)
+
+  it('bare `validate` refuses the declared plugin the scaffold has not installed, with its install line', () => {
+    scaffoldWithShippedInit()
+
+    const { status, combined } = runShippedCli('validate')
+
+    expect(status, `a project missing its declared plugin is an error exit:\n${combined}`).toBe(1)
+    expect(combined, `validate did not name the missing entry:\n${combined}`).toContain(
+      `Plugin entry subscription names ${SUBSCRIPTION_AUTH_PACKAGE}, which is not installed.`,
+    )
+    expect(combined, `validate did not print the install line:\n${combined}`).toContain(
+      `Run npm install --save-dev ${SUBSCRIPTION_AUTH_PACKAGE}.`,
+    )
+    expect(combined, `validate attested a project run refuses:\n${combined}`).not.toContain(
+      SUCCESS_SENTENCE,
+    )
   }, 180_000)
 
   it('a config that cannot be resolved is named LOUDLY, exits non-zero, and leaks nothing', () => {
@@ -198,30 +232,28 @@ describe('a project the product scaffolds is validated, not attested over an emp
     expect(status, `an unresolvable config is a non-zero exit:\n${combined}`).not.toBe(0)
   }, 180_000)
 
-  it('the verbs that DO load the declared plugin name the package and the remedy, not a require stack', () => {
-    // `run` and `devices list` reach the plugin loader by different roads, so both are driven.
+  it('run, which loads the declared plugin, names the package and the remedy, not a require stack', () => {
     scaffoldWithShippedInit()
 
-    for (const verb of [['run', 'tests/examples/komazon-checkout.yaml'], ['devices', 'list']]) {
-      const { status, combined } = runShippedCli(...verb)
+    const { status, combined } = runShippedCli('run', 'tests/examples/komazon-checkout.yaml')
 
-      expect(status, `a project missing its declared plugin must still fail (${verb.join(' ')}):\n${combined}`)
-        .not.toBe(0)
-      expect(combined, `the failure did not name the package (${verb.join(' ')}):\n${combined}`)
-        .toContain(SUBSCRIPTION_AUTH_PACKAGE)
-      expect(combined, `the failure did not name the remedy (${verb.join(' ')}):\n${combined}`)
-        .toMatch(/npm install @vostride\/agent-qa-subscription-auth/)
-      // A message still carrying Node's loader boilerplate means the typed error replaced nothing.
-      expect(combined, `the failure still speaks Node's loader dialect (${verb.join(' ')}):\n${combined}`)
-        .not.toContain('Require stack')
-      expect(combined, `the failure still speaks Node's loader dialect (${verb.join(' ')}):\n${combined}`)
-        .not.toContain('Cannot find module')
-    }
+    expect(status, `a project missing its declared plugin must still fail:\n${combined}`)
+      .not.toBe(0)
+    expect(combined, `the failure did not name the package:\n${combined}`)
+      .toContain(SUBSCRIPTION_AUTH_PACKAGE)
+    expect(combined, `the failure did not name the remedy:\n${combined}`)
+      .toMatch(/npm install @vostride\/agent-qa-subscription-auth/)
+    // A message still carrying Node's loader boilerplate means the typed error replaced nothing.
+    expect(combined, `the failure still speaks Node's loader dialect:\n${combined}`)
+      .not.toContain('Require stack')
+    expect(combined, `the failure still speaks Node's loader dialect:\n${combined}`)
+      .not.toContain('Cannot find module')
   }, 180_000)
 
   it('the workspace-match gate is BACK in the init-scaffolded project — the amplifier road is closed', () => {
     // `hooks.yaml` matches neither `testMatch` nor `suiteMatch`, so the workspace gate answers.
     scaffoldWithShippedInit()
+    installDeclaredPlugin()
     writeFileUnder(
       'hooks.yaml',
       `${readFileSync(join(root, 'hooks.yaml'), 'utf-8')}
@@ -273,6 +305,7 @@ apiToken: ${PLANTED_HOOKS_CREDENTIAL}
 
   it('`--config staging.yaml validate` validates STAGING.YAML — the flag is not ignored', () => {
     const configText = scaffoldWithShippedInit()
+    installDeclaredPlugin()
     // THE NON-DEFAULT NAME, AND NO DEFAULT FILE AT ALL. With `agent-qa.config.yaml` still present the
     // cell could pass on the defect: the fallback would find a valid config and report a real count.
     // Removing it makes the flag load-bearing.

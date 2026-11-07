@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import ms from 'ms'
 import bytes from 'bytes'
+import { NAME_SLUG_PATTERN } from '@vostride/agent-qa-schema'
 
 export const DurationString = z.string()
   .refine((v) => ms(v as ms.StringValue) !== undefined, {
@@ -129,7 +130,7 @@ const ModelConfigBaseSchema = z.strictObject({
 export const ModelConfigSchema = ModelConfigBaseSchema.superRefine(validateModelConfig)
 
 export const NameSlugSchema = z.string()
-  .regex(/^[a-z0-9][a-z0-9.-]*$/, 'Name must be lowercase letters, digits, hyphens and dots, starting with a letter or digit')
+  .regex(NAME_SLUG_PATTERN, 'Name must be lowercase letters, digits, hyphens and dots, starting with a letter or digit')
 
 export const NamedLLMConfigSchema = z.strictObject({
   ...ModelConfigBaseSchema.shape,
@@ -152,6 +153,7 @@ export const BrowserConfigSchema = z.strictObject({
     width: z.number(),
     height: z.number(),
   }).optional(),
+  remote: NameSlugSchema.optional(),
 })
 
 // Positive integers with no unlimited value; `resolvePlannerLimits` supplies the default.

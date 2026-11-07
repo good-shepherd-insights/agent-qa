@@ -12,6 +12,12 @@ import type {
   ScreenState,
 } from '@vostride/agent-qa-schema'
 import type { ConsoleLogEntry, NetworkLogEntry } from './result.js'
+import type {
+  RemoteBrowserConfig,
+  RemoteDeviceConfig,
+  RemotePluginBrowserConfig,
+  RemotePluginDeviceConfig,
+} from './remote.js'
 
 // Runtime-owned schema action members outside the planner catalog; they add no union members.
 export type RunnerRuntimeVerbs =
@@ -111,6 +117,8 @@ export interface RuntimeAuthStateConfig {
 
 export interface PlatformConfig {
   platform: 'web' | 'android' | 'ios'
+  targetName?: string
+  appRef?: string
   browser?: BrowserConfig
   device?: DeviceConfig
   bundleId?: string
@@ -125,18 +133,26 @@ export interface PlatformConfig {
   verbose?: boolean
   logCapture?: { console?: boolean; network?: boolean }
   authState?: RuntimeAuthStateConfig
+  // What a remote's plugin may be told about the run; the host sends only what it declares.
+  runFacts?: { testName?: string }
 }
 
 export interface BrowserConfig {
   name: 'chromium' | 'firefox' | 'webkit'
   headless?: boolean
   viewport?: { width: number; height: number }
+  remote?: RemoteBrowserConfig | RemotePluginBrowserConfig
 }
 
 export interface DeviceConfig {
   name: string
   platform: 'android' | 'ios'
-  match: Record<string, unknown>
+  model?: string
+  os?: string
+  id?: string
+  remote?: RemoteDeviceConfig | RemotePluginDeviceConfig
+  capabilities?: Record<string, unknown>
+  here?: { udid?: string; avd?: string; name?: string; os?: string }
 }
 
 export interface TimeoutConfig {

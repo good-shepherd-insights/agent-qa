@@ -120,6 +120,35 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
     (await importOriginal<typeof import('@vostride/agent-qa-core')>()).workspaceRelativeIdentityPath,
   getAgentQaVersion:
     (await importOriginal<typeof import('@vostride/agent-qa-core')>()).getAgentQaVersion,
+  selectWebPlace:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).selectWebPlace,
+  selectSuitePlace:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).selectSuitePlace,
+  selectDevicePlace:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).selectDevicePlace,
+  runnerForPlaces:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).runnerForPlaces,
+  anyRemoteDevice:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).anyRemoteDevice,
+  webdriverLogLevel:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).webdriverLogLevel,
+  projectRemotesInConfigText:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).projectRemotesInConfigText,
+  // From the real module: the run start refuses a remote's secret misused or undeclared.
+  splitConnectionSecrets:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).splitConnectionSecrets,
+  missingRemoteSecrets:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).missingRemoteSecrets,
+  isUrlRemoteEntry:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).isUrlRemoteEntry,
+  missingRemoteSecretSentence:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).missingRemoteSecretSentence,
+  missingDeviceSecrets:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).missingDeviceSecrets,
+  missingDeviceSecretSentence:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).missingDeviceSecretSentence,
+  connectionSecretMisuse:
+    (await importOriginal<typeof import('@vostride/agent-qa-core')>()).connectionSecretMisuse,
   // The two run-attribute KEYS, from the real module: `run.ts` reads the resolved attributes to
   // tell the subscriber this run's trigger and runner, and a stubbed key would silently look up
   // nothing — the subscriber would then normalise a missing value to `unknown` and this file would

@@ -13,12 +13,18 @@ import {
   visit,
   type Node,
 } from 'yaml'
-import { AgentQaConfigSchema } from '@vostride/agent-qa-core'
 import {
+  AgentQaConfigSchema,
+  leftoverLocalFileRefusal,
+  projectRemotesInConfigText,
+} from '@vostride/agent-qa-core'
+import {
+  closedConfigFieldsChanged,
   CONFIG_NAMED_ARRAYS,
   CONFIG_REVISION_ABSENT,
   MARKER_WRITTEN_BACK_SENTENCE,
   maskPayloadTree,
+  projectConfigRemotes,
   type ConfigChange,
   type ConfigPathSegment,
   type ConfigWriteIssue,
@@ -146,26 +152,37 @@ export class ConfigManager {
 
   // A half-edited file is named, never served as the partial config yaml recovers.
   async readWithRevision(): Promise<ConfigReadOutcome> {
+    const leftover = this.leftoverLocalFile()
+    if (leftover !== undefined) throw new Error(leftover)
     const read = await this.readParsed()
     if (read.kind !== 'ok') return read
     return { kind: 'ok', config: read.config, raw: read.raw, revision: read.revision }
   }
 
-  // The payload and the file view pass through the declared mask and nothing else.
+  // Both views pass the declared mask and show a remote only by name, protocol and origin.
   async readMasked(): Promise<MaskedConfigOutcome> {
     const read = await this.readParsed()
+    const leftover = this.leftoverLocalFile()
+    if (leftover !== undefined) {
+      const revision = read.kind === 'absent' ? CONFIG_REVISION_ABSENT : read.revision
+      return { kind: 'file_invalid', message: this.maskSummary(leftover), revision }
+    }
     if (read.kind === 'absent') {
       return { kind: 'ok', config: {}, revision: CONFIG_REVISION_ABSENT, lines: [], fileIssues: [] }
     }
     if (read.kind === 'file_invalid') return { ...read, message: this.maskSummary(read.message) }
     const masked = maskDocument(read.doc, this.mask)
-    const config = (masked.toJSON() as Record<string, unknown> | null) ?? {}
+    const config = projectConfigRemotes((masked.toJSON() as Record<string, unknown> | null) ?? {})
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(read.config))
     const fileIssues = parsed.success
       ? []
       : parsed.error.issues.map((issue) => maskedIssue(issue, this.mask))
-    const lines = fileLines(this.mask(read.raw))
+    const lines = fileLines(this.mask(projectRemotesInConfigText(read.raw)))
     return { kind: 'ok', config, revision: read.revision, lines, fileIssues }
+  }
+
+  private leftoverLocalFile(): string | undefined {
+    return leftoverLocalFileRefusal([dirname(resolve(this.configPath))])
   }
 
   // A file that does not parse can leave the declared secrets unreadable; its message is then withheld.
@@ -191,7 +208,8 @@ export class ConfigManager {
     }
     const revision = createHash('sha256').update(bytes).digest('hex')
     const raw = bytes.toString('utf-8')
-    const doc = parseDocument(raw)
+    // yaml's warnings quote the file's text, so only its errors are reported.
+    const doc = parseDocument(raw, { logLevel: 'error' })
     if (doc.errors.length > 0) {
       return { kind: 'file_invalid', message: parseErrorSummary(doc), revision }
     }
@@ -256,7 +274,7 @@ export class ConfigManager {
   private async restorePriorsOnce(priors: ConfigPriors): Promise<RestorePriorsOutcome> {
     let doc: Document
     try {
-      doc = parseDocument(await readFile(this.configPath, 'utf-8'))
+      doc = parseDocument(await readFile(this.configPath, 'utf-8'), { logLevel: 'error' })
     } catch (err: unknown) {
       if (isMissingFile(err)) return { kind: 'refused', error: 'undo_conflict' }
       throw err
@@ -288,7 +306,7 @@ export class ConfigManager {
     try {
       const bytes = await readFile(this.configPath)
       baseRevision = createHash('sha256').update(bytes).digest('hex')
-      doc = parseDocument(bytes.toString('utf-8'))
+      doc = parseDocument(bytes.toString('utf-8'), { logLevel: 'error' })
     } catch (err: unknown) {
       if (!isMissingFile(err)) throw err
       // A missing file starts empty and goes through `setIn`, so no dotted top-level key is made.
@@ -297,6 +315,7 @@ export class ConfigManager {
     }
     // yaml recovers a partial tree from a broken file and refuses to stringify it: never rewrite one.
     if (doc.errors.length > 0) return { kind: 'refused', error: 'file_invalid' }
+    const asRead: unknown = doc.toJS()
     // Every expect is checked against the file as read, before anything applies.
     const expects = changes.filter((change) => change.op === 'expect')
     for (const change of expects) {
@@ -359,6 +378,11 @@ export class ConfigManager {
       if (capturePriors) {
         priors.push({ kind: 'path', path: [...LEGACY_HEADLESS_PATH], before, after: { present: false } })
       }
+    }
+
+    // Judged by effect, so an ancestor set, a move, an unset or a whole root cannot route around it.
+    if (closedConfigFieldsChanged(asRead, doc.toJS())) {
+      return { kind: 'refused', error: 'path_not_writable' }
     }
 
     const parsed = AgentQaConfigSchema.safeParse(normalizeForValidation(doc.toJSON()))

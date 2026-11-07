@@ -37,6 +37,36 @@ export type { ConfigLeafPattern } from './leaves'
 export { CONFIG_SCHEMA_LEAVES, configLeafOwner, isConfigSchemaPath } from './leaves'
 export type { BrowserConfig } from './browser'
 export { appStateSchema, browserConfigSchema, viewportSchema } from './browser'
+export type {
+  PluginEntryDisplay,
+  RemoteDisplay,
+  RemoteEntryIssue,
+  RemoteEntryLike,
+  RemoteOrigin,
+} from './remote'
+export {
+  appRefIssues,
+  capabilityCredentialIssues,
+  closedConfigFieldsChanged,
+  configConnectionSecretNames,
+  connectionSecretNames,
+  formatRemoteOrigin,
+  isLoopbackHost,
+  NAME_SLUG_PATTERN,
+  PLAYWRIGHT_VERSION_TOKEN,
+  pluginValueCredentialIssues,
+  projectConfigRemotes,
+  projectRemotesForDisplay,
+  REMOTE_CREDENTIAL_TERMS,
+  REMOTE_PROTOCOLS,
+  remoteEntryIssues,
+  remoteLabel,
+  remoteOrigin,
+  SECRET_REFERENCE_PATTERN,
+  SUBSCRIPTION_AUTH_ENTRY_NAME,
+  SUBSCRIPTION_AUTH_PACKAGE,
+  secretReferenceNames,
+} from './remote'
 export type { DeviceConfig } from './device'
 export { deviceConfigSchema } from './device'
 export type { EffectiveWorkersInput } from './use'

@@ -1,4 +1,4 @@
-// The shipped contracts file is the config, test, suite and hook schemas.
+// The shipped contracts file is the config, test, suite, hook and remote entry schemas.
 
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -12,10 +12,19 @@ import {
   HookDefinitionSchema,
   HooksFileSchema,
   McpConfigSchema,
+  PluginRemoteEntrySchema,
   SuiteDefinitionSchema,
   SuiteTestEntrySchema,
   TestDefinitionSchema,
+  UrlRemoteEntrySchema,
 } from '@vostride/agent-qa-core'
+import {
+  CONFIG_SCHEMA_LEAVES,
+  connectionSecretNames,
+  REMOTE_PROTOCOLS,
+  type RemoteEntryLike,
+} from '@vostride/agent-qa-schema'
+import { parse } from 'yaml'
 
 const AGENT_QA_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
 const CONTRACTS_REFERENCE = path.join('agent-qa-authoring', 'references', 'agent-qa-contracts.json')
@@ -23,6 +32,9 @@ const CONTRACTS_COPIES = [
   path.join(AGENT_QA_ROOT, 'skills', CONTRACTS_REFERENCE),
   path.join(AGENT_QA_ROOT, 'packages', 'cli', 'skills', CONTRACTS_REFERENCE),
 ]
+const SKILL_COPIES = CONTRACTS_COPIES.map((copy) =>
+  path.join(path.dirname(path.dirname(copy)), 'SKILL.md'),
+)
 const UNSHIPPED_COPY = path.join(
   AGENT_QA_ROOT,
   'packages',
@@ -40,6 +52,12 @@ type Contracts = {
   suite?: KeyLists
   hooks?: KeyLists
   secrets?: { source?: unknown }
+  remotes?: KeyLists & {
+    path?: string
+    keys?: Record<string, string>
+    protocols?: string[]
+    pick?: { key?: string }
+  }
 }
 
 function keysOf(schema: { shape: Shape }): string[] {
@@ -93,6 +111,28 @@ function relativeCopy(copy: string): string {
   return path.relative(AGENT_QA_ROOT, copy).split(path.sep).join('/')
 }
 
+const EXAMPLE_WORKSPACE = {
+  testMatch: ['tests/**/*.yaml'],
+  suiteMatch: ['suites/**/*.suite.yaml'],
+  hooksFile: 'hooks.yaml',
+  envFile: '.env',
+  secretsFile: '.env.secrets.local',
+}
+
+// The first yaml block under a skill heading, with a workspace so it is a whole config.
+function sectionExample(copy: string, heading: string): Record<string, unknown> {
+  const body = readFileSync(copy, 'utf8')
+  const at = relativeCopy(copy)
+  const section = body.indexOf(`\n## ${heading}\n`)
+  expect(section, `${at} has no ${heading} section`).toBeGreaterThan(-1)
+  const example = /```yaml\n([\s\S]*?)```/.exec(body.slice(section))?.[1]
+  expect(example, `${at} ${heading} has no yaml example`).toBeDefined()
+  return {
+    workspace: EXAMPLE_WORKSPACE,
+    ...(parse(example ?? '') as Record<string, unknown>),
+  }
+}
+
 describe('the contracts reference matches the schemas', () => {
   it('config.rootKeys in both copies are the config schema root keys in schema order', () => {
     expect(
@@ -126,6 +166,78 @@ describe('the contracts reference matches the schemas', () => {
       )
       expectKeyList(`${at} hooks.rootKeys`, hooks?.rootKeys, keysOf(HooksFileSchema))
       expectKeyList(`${at} hooks.hookKeys`, hooks?.hookKeys, keysOf(HookDefinitionSchema))
+    }
+  })
+
+  it("remotes in both copies lists both remote forms' keys in schema order, what each is for, the protocols and the pick key", () => {
+    const entry = splitOf(UrlRemoteEntrySchema)
+    const pluginEntry = splitOf(PluginRemoteEntrySchema)
+    const urlKeys = keysOf(UrlRemoteEntrySchema)
+    const allKeys = [
+      ...urlKeys,
+      ...keysOf(PluginRemoteEntrySchema).filter((key) => !urlKeys.includes(key)),
+    ]
+    for (const copy of CONTRACTS_COPIES) {
+      const { remotes } = readContracts(copy)
+      const at = relativeCopy(copy)
+      expect(remotes?.path, at).toBe('registry.remotes')
+      const remoteLeaves = CONFIG_SCHEMA_LEAVES.filter((leaf) =>
+        leaf.startsWith('registry.remotes[].'),
+      )
+      expect(remoteLeaves.length, at).toBeGreaterThan(0)
+      expectKeyList(`${at} remotes.requiredKeys`, remotes?.requiredKeys, entry.required)
+      expectKeyList(`${at} remotes.optionalKeys`, remotes?.optionalKeys, entry.optional)
+      expectKeyList(
+        `${at} remotes.pluginRequiredKeys`,
+        remotes?.pluginRequiredKeys,
+        pluginEntry.required,
+      )
+      expectKeyList(
+        `${at} remotes.pluginOptionalKeys`,
+        remotes?.pluginOptionalKeys,
+        pluginEntry.optional,
+      )
+      const purposes = remotes?.keys ?? {}
+      expectKeyList(`${at} remotes.keys`, Object.keys(purposes), allKeys)
+      for (const [key, purpose] of Object.entries(purposes)) {
+        expect(purpose.trim(), `${at} remotes.keys.${key}`).not.toBe('')
+      }
+      expect(remotes?.protocols, at).toEqual([...REMOTE_PROTOCOLS])
+      expect(CONFIG_SCHEMA_LEAVES, at).toContain(remotes?.pick?.key)
+    }
+  })
+
+  it("the authoring skill's remote example passes the strict parse in both copies", () => {
+    for (const copy of SKILL_COPIES) {
+      const at = relativeCopy(copy)
+      const config = sectionExample(copy, 'Remote browsers')
+      const result = AgentQaConfigSchema.safeParse(config)
+      const messages = result.success ? [] : result.error.issues.map((issue) => issue.message)
+      expect(messages, at).toEqual([])
+      const remotes = (config.registry as { remotes: RemoteEntryLike[] }).remotes
+      expect(connectionSecretNames(remotes).length, at).toBeGreaterThan(0)
+    }
+  })
+
+  it("the authoring skill's device example passes the strict parse in both copies", () => {
+    for (const copy of SKILL_COPIES) {
+      const at = relativeCopy(copy)
+      const config = sectionExample(copy, 'Devices')
+      const result = AgentQaConfigSchema.safeParse(config)
+      const messages = result.success ? [] : result.error.issues.map((issue) => issue.message)
+      expect(messages, at).toEqual([])
+      const registry = config.registry as {
+        remotes: RemoteEntryLike[]
+        devices: Record<string, { remote?: string }>
+      }
+      const remoteNames = registry.remotes
+        .filter((remote) => remote.protocol === 'appium')
+        .map((remote) => remote.name)
+      const devicesOnRemotes = Object.values(registry.devices).filter(
+        (device) => device.remote !== undefined,
+      )
+      expect(devicesOnRemotes.length, at).toBeGreaterThan(0)
+      for (const device of devicesOnRemotes) expect(remoteNames, at).toContain(device.remote)
     }
   })
 

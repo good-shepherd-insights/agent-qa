@@ -4,6 +4,7 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export type PluginDeclarationLike = {
+  name: string
   package?: string
   path?: string
 }
@@ -34,7 +35,21 @@ function stripAbsolutePaths(text: string, baseDir: string): string {
   )
 }
 
+// npm's grammar, legacy capitals included: an optional scope, then a URL-safe name that starts
+// with no dot or underscore. A person runs what is suggested, and a name joins a node_modules path.
+export const NPM_PACKAGE_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i
+
+export function isNpmPackageName(name: string): boolean {
+  return name.length <= 214 && NPM_PACKAGE_NAME.test(name)
+}
+
+function joinsAsPackagePath(packageName: string): boolean {
+  if (packageName.includes('\\')) return false
+  return packageName.split('/').every((part) => part !== '' && part !== '.' && part !== '..')
+}
+
 export function findPackageJson(packageName: string, baseDir: string): string | null {
+  if (!joinsAsPackagePath(packageName)) return null
   let current = resolve(baseDir)
   while (true) {
     const candidate = resolve(current, 'node_modules', ...packageName.split('/'), 'package.json')
@@ -122,9 +137,6 @@ export function declarationLabel(declaration: PluginDeclarationLike, baseDir: st
 
 export type PluginDeclarationKind = 'auth' | 'provider'
 
-// The command is offered only for a real npm name, because a person runs what is suggested.
-const NPM_PACKAGE_NAME = /^(?:@[a-z0-9-._~]+\/)?[a-z0-9-._~]+$/
-
 export class PluginNotInstalledError extends Error {
   readonly pluginKind: PluginDeclarationKind
   readonly pluginPackage: string | null
@@ -134,18 +146,18 @@ export class PluginNotInstalledError extends Error {
     const label = kind === 'auth' ? 'Auth' : 'Provider'
     const packageName = packageDeclarationValue(declaration)
     const pluginPath = pathDeclarationValue(declaration)
-    const remedy = NPM_PACKAGE_NAME.test(packageName)
-      ? `Install it with your package manager (for example: npm install ${packageName}), or remove `
-        + `the plugins.${kind} entry that declares it.`
-      : `Install it with your package manager, or remove the plugins.${kind} entry that declares it.`
+    const removal = `remove the plugins entry ${declaration.name}.`
+    const remedy = isNpmPackageName(packageName)
+      ? `Install it with your package manager (for example: npm install ${packageName}), or `
+        + removal
+      : `Install it with your package manager, or ${removal}`
     // No `cause`: the wrapped error's require stack holds absolute paths `util.inspect` prints.
     super(
       packageName
         ? `${label} plugin package "${packageName}" is declared in agent-qa.config.yaml but is not `
           + `installed. ${remedy}`
         : `${label} plugin file "${pluginPath}" is declared in agent-qa.config.yaml but could not be `
-          + `loaded. Check that the path is correct and the file exists, or remove the `
-          + `plugins.${kind} entry that declares it.`,
+          + `loaded. Check that the path is correct and the file exists, or ${removal}`,
     )
     this.name = 'PluginNotInstalledError'
     this.pluginKind = kind

@@ -52,6 +52,7 @@ export const CONFIG_SECTION_LABELS = {
   'screenshot-size': 'Screenshot size',
   'planner-limits': 'Planner limits',
   targets: 'Targets',
+  remotes: 'Remotes',
   devices: 'Devices',
   'login-states': 'Saved login states',
   'mobile-app-state': 'Mobile app state',
@@ -392,7 +393,7 @@ export function connectedSavedText(name: string): string {
 export const BECAME_DEFAULT_TEXT = "It's now the default model."
 /** A sign-in choice whose auth plugin is not registered; the CLI names the same package. */
 export function signInPluginMissingText(choiceLabel: string): string {
-  return `${choiceLabel} needs the @vostride/agent-qa-subscription-auth plugin. Install it and list it under plugins.auth in agent-qa.config.yaml.`
+  return `${choiceLabel} needs the @vostride/agent-qa-subscription-auth plugin. Install it and add it to plugins as name: subscription in agent-qa.config.yaml.`
 }
 
 export const SAVE_WITHOUT_TESTING_LABEL = 'Save without testing'
@@ -641,6 +642,63 @@ export const LOG_CAPTURE_FIELD_LABELS = {
 } as const
 
 export const NO_TARGETS_TEXT = 'No targets yet.'
+
+export const REMOTES_COPY = {
+  defaultLabel: 'Default for web tests',
+  inherit:
+    'Tests and suites inherit this default from agent-qa.config.yaml and can override it in their settings.',
+  thisMachine: 'This machine',
+  runsOnLabel: 'Runs on',
+  suiteWinsHint: "When a suite picks where it runs, the suite's choice wins.",
+  // A url remote's protocol or a plugin remote's plugins entry, and its origin or plugin source.
+  columns: { name: 'Name', kind: 'Kind', origin: 'Origin' },
+  missingValue: '—',
+  pluginNotDeclared: 'not declared under plugins',
+  empty: 'No remotes are listed. Add one under registry.remotes in agent-qa.config.yaml:',
+  example: [
+    'registry:',
+    '  remotes:',
+    '    - name: grid',
+    '      protocol: playwright # or cdp',
+    '      url: wss://grid.example.com/playwright',
+    '      query: # or headers, with the same {{secret:NAME}} values',
+    '        token: "{{secret:GRID_TOKEN}}"',
+  ].join('\n'),
+  pick: 'Pick one with use.browser.remote: <name> in agent-qa.config.yaml, a suite or a test. Use local to run on this machine.',
+  listed: 'Remotes are defined under registry.remotes in agent-qa.config.yaml and picked with use.browser.remote.',
+  pluginsTitle: 'Plugins',
+  pluginColumns: { name: 'Name', source: 'Package or path' },
+  pluginsListed: 'Plugins are declared under plugins in agent-qa.config.yaml; their options stay in the file.',
+} as const
+
+export function pluginRemoteText(entry: string): string {
+  return `plugin ${entry}`
+}
+
+// The strict parse refuses this default, but the page still shows a config that fails to parse.
+export function remoteNotListedParts<T>(name: T): [T, string] {
+  return [
+    name,
+    ' is not listed under registry.remotes, so web tests that use this default cannot run. List it, or change use.browser.remote.',
+  ]
+}
+
+export function remoteUnlistedChoiceParts<T>(name: T): [T, string] {
+  return [name, ' (not listed)']
+}
+
+export function remotePickNotListedParts<T>(name: T): [T, string] {
+  return [name, " is not listed under the config's remotes."]
+}
+
+export function remoteChoiceParts<T>(name: T, protocol: string | undefined): [T, string] {
+  return [name, protocol === undefined ? '' : ` (${protocol})`]
+}
+
+export function remoteCredentialsLine(secretsFile: string | undefined): string {
+  const file = secretsFile ?? 'your secrets file (set workspace.secretsFile)'
+  return `Write credentials as {{secret:NAME}} references to names declared in ${file}.`
+}
 export const NO_DEVICES_TEXT = 'No devices yet.'
 export const NO_LOGIN_STATES_TEXT = 'No saved login states yet. Save one from a web Live Mode session.'
 export const LOGIN_STATES_LOADING_TEXT = 'Loading saved login states…'
@@ -705,8 +763,21 @@ export const TARGET_FIELD_LABELS = {
   appPackage: 'App package',
   appActivity: 'App activity',
   appPath: 'App file',
+  appRef: 'App reference',
+  device: 'Default device',
   environment: 'Environment',
 } as const satisfies Record<string, string>
+
+export const TARGET_DEVICE_NONE = 'None'
+export const TARGET_DEVICE_HELP =
+  'Tests on this target run on this device unless a suite or test picks another.'
+export const TARGET_APP_REF_NOTE =
+  'The app a remote device installs. Set it in agent-qa.config.yaml; this page shows it read-only.'
+
+/** A target's device that no device of the target's platform matches, kept in its select. */
+export function targetDeviceUnlistedChoice(name: string): string {
+  return `${name} (not listed for this platform)`
+}
 
 /** Before an app file in a mobile target's summary. */
 export const TARGET_APP_SUMMARY_PREFIX = 'App'
@@ -726,8 +797,10 @@ export function targetNameTakenError(name: string): string {
 export const DEVICE_FIELD_LABELS = {
   name: 'Name',
   platform: 'Platform',
-  key: 'Setting',
-  value: 'Value',
+  model: 'Model',
+  os: 'OS version',
+  id: 'Device ID',
+  capabilities: 'Capabilities',
 } as const satisfies Record<string, string>
 
 export const DEVICE_NAME_REQUIRED_ERROR = 'Add a name for the device.'
@@ -736,18 +809,19 @@ export function deviceNameTakenError(name: string): string {
   return `A device named ${name} already exists.`
 }
 
-/** Under Add setting on a device: the settings that device can match on. */
-export function deviceMatchKeysHelp(platform: string, keys: readonly string[]): string {
-  return `An ${platform} device can match on ${keys.join(', ')}.`
+export const DEVICE_ID_HELP =
+  'Needed only when two identical devices are attached at once: an Android serial or an iOS simulator udid.'
+export const DEVICE_CAPABILITIES_NOTE =
+  'Set capabilities in agent-qa.config.yaml; this page shows them read-only.'
+
+/** A capability's accessible label, so each value names its own device and key. */
+export function deviceCapabilityLabel(device: string, key: string): string {
+  return `${device} capability ${key}`
 }
 
-/** A device setting's accessible label, so each eye and Replace value names its own device and key. */
-export function deviceMatchSettingLabel(device: string, key: string): string {
-  return `${device} ${key}`
-}
-
-export function removeMatchSettingName(device: string, key: string): string {
-  return `Remove setting ${key} from ${device}`
+/** A device's remote, shown read-only: pointing a device at a server is a file edit. */
+export function deviceRemoteText(remote: string): string {
+  return `Runs on remote ${remote}`
 }
 
 export const MCP_FIELD_LABELS = {
@@ -787,7 +861,6 @@ export function keepValueName(label: string): string {
 
 export const SAVE_SETTING_LABEL = 'Save setting'
 export const DISCARD_SETTING_LABEL = 'Discard setting'
-export const ADD_SETTING_LABEL = 'Add setting'
 
 export const TOUR_LLM_SETUP_BODY =
   "A run needs a model. Add one: choose how you connect, and it's tested and saved as soon as it works."

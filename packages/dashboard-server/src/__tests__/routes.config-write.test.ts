@@ -515,8 +515,8 @@ const policyConfig = baseConfig.replace('registry: {}', [
   '      baseURL: https://llm.example.test/v1',
 ].join('\n')) + [
   'plugins:',
-  '  auth:',
-  '    - path: ./auth-plugin.mjs',
+  '  - name: local',
+  '    path: ./auth-plugin.mjs',
   '',
 ].join('\n')
 
@@ -527,10 +527,10 @@ describe('PATCH /api/config path policy', () => {
     const before = await readFile(configPath)
     mockRename.mockClear()
     const denied = [
-      { op: 'set', path: ['plugins', 'auth', 0, 'path'], value: './evil.mjs' },
-      { op: 'append', path: ['plugins', 'providers'], value: { path: './evil-provider.mjs' } },
+      { op: 'set', path: ['plugins', 0, 'path'], value: './evil.mjs' },
+      { op: 'append', path: ['plugins'], value: { name: 'evil', path: './evil-provider.mjs' } },
       { op: 'set', path: ['safety', 'trustMode'], value: true },
-      { op: 'move', from: ['use', 'timeout', 'step'], path: ['plugins', 'auth', 0, 'package'] },
+      { op: 'move', from: ['use', 'timeout', 'step'], path: ['plugins', 0, 'package'] },
       { op: 'expect', path: ['safety', 'trustMode'], value: false },
     ]
 
@@ -545,6 +545,63 @@ describe('PATCH /api/config path policy', () => {
       changes: [setStep('45s').changes[0], { op: 'set', path: ['safety', 'trustMode'], value: true }],
     })
     expect(mixed.status).toBe(422)
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
+  it('a whole registry that changes the remotes is refused and nothing is written', async () => {
+    const configPath = await useConfigWorkspace(policyConfig.replace('registry:', [
+      'registry:',
+      '  remotes:',
+      '    - name: grid',
+      '      protocol: playwright',
+      '      url: wss://grid.example.com/playwright',
+    ].join('\n')))
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+    const registry = (parseYaml(before.toString('utf-8')) as { registry: { remotes: object[] } }).registry
+    const redirected = { ...registry, remotes: [{ ...registry.remotes[0], url: 'wss://evil.example.com/' }] }
+
+    const response = await patchConfig({ changes: [{ op: 'set', path: ['registry'], value: redirected }] })
+
+    expect(response.status).toBe(422)
+    expect(JSON.parse(response.body)).toEqual({ error: 'path_not_writable' })
+    expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
+    expect(mockRename).not.toHaveBeenCalled()
+  })
+
+  it('the default remote is set to a listed name and removed through the page door, while a remote entry stays refused', async () => {
+    const configPath = await useConfigWorkspace(policyConfig.replace('registry:', [
+      'registry:',
+      '  remotes:',
+      '    - name: grid',
+      '      protocol: playwright',
+      '      url: wss://grid.example.com/playwright',
+    ].join('\n')))
+    const remote = ['use', 'browser', 'remote']
+    const browserOf = async () =>
+      (parseYaml(await readFile(configPath, 'utf-8')) as { use: { browser: unknown } }).use.browser
+
+    const picked = await patchConfig({ changes: [{ op: 'set', path: remote, value: 'grid' }] })
+    expect(picked.status, picked.body).toBe(200)
+    expect(await browserOf()).toEqual({ name: 'chromium', headless: false, remote: 'grid' })
+
+    const unlisted = await patchConfig({ changes: [{ op: 'set', path: remote, value: 'gird' }] })
+    expect(unlisted.status).toBe(422)
+    expect(JSON.parse(unlisted.body).error).toBe('validation_failed')
+    expect(await browserOf()).toEqual({ name: 'chromium', headless: false, remote: 'grid' })
+
+    const removed = await patchConfig({ changes: [{ op: 'unset', path: remote }] })
+    expect(removed.status, removed.body).toBe(200)
+    expect(await browserOf()).toEqual({ name: 'chromium', headless: false })
+
+    const before = await readFile(configPath)
+    mockRename.mockClear()
+    const entry = await patchConfig({
+      changes: [{ op: 'set', path: ['registry', 'remotes', 0, 'url'], value: 'wss://evil.example.com/' }],
+    })
+    expect(entry.status).toBe(422)
+    expect(JSON.parse(entry.body)).toEqual({ error: 'path_not_writable' })
     expect(Buffer.compare(await readFile(configPath), before)).toBe(0)
     expect(mockRename).not.toHaveBeenCalled()
   })

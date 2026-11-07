@@ -81,16 +81,34 @@ test('lists plugins as the only denied write root', () => {
   expect(api.CONFIG_WRITE_DENIED_ROOTS).toEqual(['plugins'])
 })
 
-// The page write door admits exactly the page-owned leaves and refuses every retired key's path as
-// an unknown path.
-test('the write policy admits the page-owned leaves and refuses the retired paths', () => {
+// The page write door admits exactly the page-owned leaves, refuses the plugin, remote entry, device
+// remote and capabilities and app reference leaves, and refuses every retired key's path as an
+// unknown path.
+test('the write policy admits the page-owned leaves and refuses the plugin, remote, device placement, app reference and retired paths', () => {
   const writable = api.CONFIG_SCHEMA_LEAVES.filter(pattern => api.isPageWritableConfigPath(concreteLeafPath(pattern, true)))
-  expect(writable).toEqual(expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns']))
+  expect(writable).toEqual(expect.arrayContaining(['use.planner.maxActions', 'use.planner.maxPlanningTurns', 'use.browser.remote']))
   expect(api.CONFIG_SCHEMA_LEAVES.filter(pattern => !writable.includes(pattern))).toEqual([
-    'plugins.auth[].package',
-    'plugins.auth[].path',
-    'plugins.providers[].package',
-    'plugins.providers[].path',
+    'plugins[].name',
+    'plugins[].options.*',
+    'plugins[].package',
+    'plugins[].path',
+    'registry.devices.*.capabilities.*',
+    'registry.devices.*.remote',
+    'registry.remotes[].basicAuth.password',
+    'registry.remotes[].basicAuth.user',
+    'registry.remotes[].capabilities.*',
+    'registry.remotes[].connectTimeout',
+    'registry.remotes[].context',
+    'registry.remotes[].headers.*',
+    'registry.remotes[].name',
+    'registry.remotes[].plugin',
+    'registry.remotes[].protocol',
+    'registry.remotes[].query.*',
+    'registry.remotes[].query.*.*',
+    'registry.remotes[].settings.*',
+    'registry.remotes[].uploadTimeout',
+    'registry.remotes[].url',
+    'registry.targets.*.app.ref',
   ])
   const retired: api.ConfigPathSegment[][] = [
     ['safety'],
@@ -138,7 +156,12 @@ function concreteLeafPath(pattern: string, named: boolean): api.ConfigPathSegmen
 test('PAGE-WRITABLE-EVERY-RENDERED-LEAF', () => {
   const denied = api.CONFIG_WRITE_DENIED_ROOTS as readonly string[]
   for (const pattern of api.CONFIG_SCHEMA_LEAVES) {
-    const expected = !denied.includes(pattern.split('.')[0]!)
+    const expected =
+      !denied.includes(pattern.split(/[.[]/)[0]!) &&
+      !pattern.startsWith('registry.remotes[]') &&
+      pattern !== 'registry.devices.*.remote' &&
+      !pattern.startsWith('registry.devices.*.capabilities') &&
+      !pattern.startsWith('registry.targets.*.app.ref')
     for (const named of [false, true]) {
       const path = concreteLeafPath(pattern, named)
       expect({ pattern, path, writable: api.isPageWritableConfigPath(path) }).toEqual({
@@ -155,12 +178,24 @@ test('PAGE-WRITABLE-EVERY-RENDERED-LEAF', () => {
     ['registry', 'targets', 'k'],
     ['workspace', 'testMatch'],
     ['use', 'timeout'],
+    ['use', 'browser', 'remote'],
+    ['registry', 'devices'],
+    ['registry', 'devices', 'pixel'],
+    ['registry', 'devices', 'pixel', 'model'],
   ]
   const refused: api.ConfigPathSegment[][] = [
     [],
     ['use', 'bogus'],
     ['plugins'],
-    ['plugins', 'auth', 0, 'path'],
+    ['plugins', 0, 'path'],
+    ['registry', 'remotes'],
+    ['registry', 'remotes', 0],
+    ['registry', 'remotes', { name: 'k' }, 'url'],
+    ['registry', 'remotes', 0, 'headers', 'k'],
+    ['registry', 'devices', 'pixel', 'remote'],
+    ['registry', 'devices', 'pixel', 'capabilities'],
+    ['registry', 'devices', 'pixel', 'capabilities', 'appium:noReset'],
+    ['registry', 'targets', 'shop', 'app', 'ref'],
     // A retired root is refused as an unknown path, not as a denied root.
     ['safety', 'trustMode'],
     ['registry', 'llms', { name: 'k' }, 'nope'],
@@ -174,7 +209,7 @@ test('PAGE-WRITABLE-EVERY-RENDERED-LEAF', () => {
   for (const path of refused) {
     expect({ path, writable: api.isPageWritableConfigPath(path) }).toEqual({ path, writable: false })
   }
-  expect(api.isConfigSchemaPath(['plugins', 'auth', 0, 'path'])).toBe(true)
+  expect(api.isConfigSchemaPath(['plugins', 0, 'path'])).toBe(true)
   expect(api.isConfigSchemaPath(['use', 'bogus'])).toBe(false)
 })
 

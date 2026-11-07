@@ -1,8 +1,9 @@
 import { Command } from 'commander'
 import { execFileSync, execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import pc from 'picocolors'
+import { parse as parseYaml } from 'yaml'
 import { loadConfigFile } from '../config.js'
 import { HARD_CUT_STEPS, INVALID_CONFIG_FIX, isHardCutIssue } from '../hard-cut.js'
 import { loadAuthPluginsForRawConfig, toModelProfileAndAuth, type LLMModelAdapter } from '../llm-utils.js'
@@ -17,9 +18,13 @@ import {
   type AgentQaConfig,
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
-import { isGitHubActions, printRunText } from '@vostride/agent-qa-core/run-text-output'
+import { guardJsonText, isGitHubActions, printRunText } from '@vostride/agent-qa-core/run-text-output'
+import { isLoopbackHost } from '@vostride/agent-qa-schema'
 import { createModel, getProvider } from '@vostride/agent-qa-model'
 import { createKnowledgeChecks } from './doctor-knowledge-checks.js'
+import { createPluginChecks } from './doctor-plugin-checks.js'
+import { doorLogLevel, pluginDebugLog } from '../composition/plugin-host.js'
+import { createRemoteChecks, listedRemotes } from './doctor-remote-checks.js'
 import {
   composeRow,
   formatCheckRow,
@@ -316,7 +321,7 @@ function checkSubscriptionAuth(config: Record<string, unknown> | null): DoctorCh
   const name = configuredLLMName(config)
   return {
     name: 'Subscription Auth',
-    fixInstructions: `Install \`@vostride/agent-qa-subscription-auth\` (\`npm install -D @vostride/agent-qa-subscription-auth\`), declare it in plugins.auth, then run \`agent-qa auth login --config ${name}\``,
+    fixInstructions: `Install \`@vostride/agent-qa-subscription-auth\` (\`npm install -D @vostride/agent-qa-subscription-auth\`), add it to plugins as name: subscription with that package, then run \`agent-qa auth login --config ${name}\``,
     check: async () => {
       const llm = getActiveLLMConfig(config)
       if (getProvider(llm.provider)?.subscription !== true) {
@@ -400,15 +405,15 @@ function checkLLMConnection(config: Record<string, unknown> | null): DoctorCheck
   }
 }
 
-function checkPlaywright(config: Record<string, unknown> | null): DoctorCheck {
+function checkPlaywright(config: Record<string, unknown> | null, placement: WebPlacement): DoctorCheck {
   return {
     name: 'Playwright',
     fixInstructions: 'Run `agent-qa install-browsers --chromium`',
     check: async () => {
-      // Skip if no browser config (mobile-only)
-      const browsers = config?.browsers as unknown[] | undefined
-      const hasBrowsers = browsers && browsers.length > 0
-      if (!hasBrowsers && !isWebPlatform(config)) {
+      if (placement.everyWebTestRemote) {
+        return { status: 'skip', message: 'every web test runs on a remote' }
+      }
+      if (!isWebPlatform(config)) {
         return { status: 'skip', message: 'not configured' }
       }
 
@@ -430,11 +435,18 @@ function mobileDriverInstallCommand(): string {
   return 'agent-qa install-mobile-drivers --all'
 }
 
-function checkAppium(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
+function checkAppium(
+  config: Record<string, unknown> | null,
+  configPath: string,
+  skips: DeviceToolSkips,
+): DoctorCheck {
   return {
     name: 'Appium',
     fixInstructions: `${formatAppiumInstallGuidance()} Then run \`${mobileDriverInstallCommand()}\`.`,
     check: async () => {
+      if (skips.appium !== undefined) {
+        return { status: 'skip', message: skips.appium }
+      }
       if (!isMobilePlatform(config)) {
         return { status: 'skip', message: 'not configured' }
       }
@@ -450,11 +462,18 @@ function checkAppium(config: Record<string, unknown> | null, configPath: string)
   }
 }
 
-function checkAppiumDrivers(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
+function checkAppiumDrivers(
+  config: Record<string, unknown> | null,
+  configPath: string,
+  skips: DeviceToolSkips,
+): DoctorCheck {
   return {
     name: 'Appium drivers',
     fixInstructions: `Run \`${mobileDriverInstallCommand()}\``,
     check: async () => {
+      if (skips.appium !== undefined) {
+        return { status: 'skip', message: skips.appium }
+      }
       if (!isMobilePlatform(config)) {
         return { status: 'skip', message: 'not configured' }
       }
@@ -474,11 +493,17 @@ function checkAppiumDrivers(config: Record<string, unknown> | null, configPath: 
   }
 }
 
-function checkAndroidSDK(config: Record<string, unknown> | null): DoctorCheck {
+function checkAndroidSDK(
+  config: Record<string, unknown> | null,
+  skips: DeviceToolSkips,
+): DoctorCheck {
   return {
     name: 'Android SDK',
     fixInstructions: 'Install Android Studio and set ANDROID_HOME environment variable',
     check: async () => {
+      if (skips.androidSdk !== undefined) {
+        return { status: 'skip', message: skips.androidSdk }
+      }
       if (!hasAndroidPlatform(config)) {
         return { status: 'skip', message: 'not configured' }
       }
@@ -497,11 +522,14 @@ function checkAndroidSDK(config: Record<string, unknown> | null): DoctorCheck {
   }
 }
 
-function checkXcode(config: Record<string, unknown> | null): DoctorCheck {
+function checkXcode(config: Record<string, unknown> | null, skips: DeviceToolSkips): DoctorCheck {
   return {
     name: 'Xcode',
     fixInstructions: 'Install Xcode from the Mac App Store and run `xcode-select --install`',
     check: async () => {
+      if (skips.xcode !== undefined) {
+        return { status: 'skip', message: skips.xcode }
+      }
       if (!hasIOSPlatform(config)) {
         return { status: 'skip', message: 'not configured' }
       }
@@ -588,12 +616,104 @@ function checkTestDiscovery(config: Record<string, unknown> | null, configPath: 
 }
 
 // Helpers to detect platform from config
-function getTargetPlatforms(config: Record<string, unknown> | null): string[] {
+function getTargets(config: Record<string, unknown> | null): Record<string, Record<string, unknown>> {
   const registry = config?.registry as { targets?: Record<string, Record<string, unknown>> } | undefined
-  const targets = registry?.targets
+  return registry?.targets
     ?? (config?.targets as Record<string, Record<string, unknown>> | undefined)
-  if (!targets) return []
-  return Object.values(targets).map((t) => (t.platform as string) ?? 'web')
+    ?? {}
+}
+
+function getTargetPlatforms(config: Record<string, unknown> | null): string[] {
+  return Object.values(getTargets(config)).map((t) => (t.platform as string) ?? 'web')
+}
+
+interface WebPlacement {
+  everyWebTestRemote: boolean
+  loopbackTargetsByRemote: ReadonlyMap<string, readonly string[]>
+}
+
+const LOCAL_PICK = 'local'
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function rawRemotePick(value: unknown): string | undefined {
+  const use = isRecord(value) ? value.use : undefined
+  const browser = isRecord(use) ? use.browser : undefined
+  const remote = isRecord(browser) ? browser.remote : undefined
+  return typeof remote === 'string' ? remote : undefined
+}
+
+// The host is read by pattern so a url with a templated port still counts.
+const URL_HOST = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]+)/i
+
+function loopbackWebTargets(config: Record<string, unknown> | null): Set<string> {
+  const names = new Set<string>()
+  for (const [name, target] of Object.entries(getTargets(config))) {
+    if (((target.platform as string | undefined) ?? 'web') !== 'web') continue
+    const host = typeof target.url === 'string' ? URL_HOST.exec(target.url)?.[1] : undefined
+    if (host !== undefined && isLoopbackHost(host)) names.add(name)
+  }
+  return names
+}
+
+async function readPlacedFiles(
+  workspace: ResolvedWorkspacePaths | undefined,
+): Promise<{ pick?: string; target?: string }[]> {
+  if (!workspace) return []
+  try {
+    const records = (await Promise.all([
+      discoverWorkspaceFiles({ workspace, kind: 'test' }),
+      discoverWorkspaceFiles({ workspace, kind: 'suite' }),
+    ])).flat()
+    return records.flatMap((record) => {
+      try {
+        const parsed: unknown = parseYaml(readFileSync(record.absolutePath, 'utf-8'))
+        const target = isRecord(parsed) && typeof parsed.target === 'string' ? parsed.target : undefined
+        return [{ pick: rawRemotePick(parsed), target }]
+      } catch {
+        return []
+      }
+    })
+  } catch {
+    return []
+  }
+}
+
+async function resolveWebPlacement(
+  config: Record<string, unknown> | null,
+  workspace: ResolvedWorkspacePaths | undefined,
+): Promise<WebPlacement> {
+  if (!config) return { everyWebTestRemote: false, loopbackTargetsByRemote: new Map() }
+  const configPick = rawRemotePick(config)
+  const files = await readPlacedFiles(workspace)
+  const loopbackTargets = loopbackWebTargets(config)
+  const loopbackTargetsByRemote = new Map<string, string[]>()
+  for (const file of files) {
+    if (file.target === undefined || !loopbackTargets.has(file.target)) continue
+    const remote = file.pick ?? configPick
+    if (remote === undefined || remote === LOCAL_PICK) continue
+    const targets = loopbackTargetsByRemote.get(remote) ?? []
+    if (!targets.includes(file.target)) targets.push(file.target)
+    loopbackTargetsByRemote.set(remote, targets)
+  }
+  return {
+    everyWebTestRemote:
+      configPick !== undefined
+      && configPick !== LOCAL_PICK
+      && !files.some((file) => file.pick === LOCAL_PICK),
+    loopbackTargetsByRemote,
+  }
+}
+
+function unknownRemoteSentence(name: string, config: Record<string, unknown> | null): string | undefined {
+  const names = listedRemotes(config).map((remote) => remote.name)
+  if (names.includes(name)) return undefined
+  const listed = names.length === 0
+    ? 'registry.remotes lists no remotes.'
+    : `registry.remotes lists: ${names.join(', ')}.`
+  return `Unknown remote "${name}". ${listed}`
 }
 
 function isWebPlatform(config: Record<string, unknown> | null): boolean {
@@ -615,6 +735,30 @@ function hasIOSPlatform(config: Record<string, unknown> | null): boolean {
   return getTargetPlatforms(config).some((p) => p === 'ios')
 }
 
+interface DeviceToolSkips {
+  appium?: string
+  androidSdk?: string
+  xcode?: string
+}
+
+// A device with a remote runs on that server, so the local tools that drive a device are not
+// needed for it. A row skips only when the config lists devices and every one it covers is remote.
+function deviceToolSkips(config: Record<string, unknown> | null): DeviceToolSkips {
+  const registry = config?.registry
+  const listed = isRecord(registry) ? registry.devices : undefined
+  const devices = isRecord(listed) ? Object.values(listed).filter(isRecord) : []
+  const isRemote = (device: Record<string, unknown>): boolean =>
+    typeof device.remote === 'string' && device.remote !== ''
+  const everyRemote = (some: Record<string, unknown>[]): boolean =>
+    some.length > 0 && some.every(isRemote)
+  const onPlatform = (platform: string) => devices.filter((device) => device.platform === platform)
+  return {
+    ...(everyRemote(devices) ? { appium: 'every device is remote' } : {}),
+    ...(everyRemote(onPlatform('android')) ? { androidSdk: 'every android device is remote' } : {}),
+    ...(everyRemote(onPlatform('ios')) ? { xcode: 'every iOS device is remote' } : {}),
+  }
+}
+
 function getGlobalConfigPath(command: Command): string {
   return command.parent?.opts<{ config?: string }>().config ?? 'agent-qa.config.yaml'
 }
@@ -622,7 +766,9 @@ function getGlobalConfigPath(command: Command): string {
 export function createDoctorCommand(): Command {
   const cmd = new Command('doctor')
     .description('Validate environment and dependencies')
-    .action(async function (this: Command) {
+    .option('--remote <name>', 'Show only this remote among the remote rows')
+    .option('--json', 'emit the checks as JSON')
+    .action(async function (this: Command, options: { remote?: string; json?: boolean }) {
       const configPath = getGlobalConfigPath(this)
 
       // Try loading config (non-validated, just raw YAML)
@@ -638,6 +784,22 @@ export function createDoctorCommand(): Command {
         // Config load failed — doctor will report it
       }
 
+      if (options.remote !== undefined) {
+        const unknown = unknownRemoteSentence(options.remote, config)
+        if (unknown !== undefined) {
+          console.error(unknown)
+          process.exitCode = 2
+          return
+        }
+      }
+
+      const resolved = config ? resolveDoctorWorkspace(config, configPath) : undefined
+      const workspace = resolved?.ok ? resolved.workspace : undefined
+      const placement = await resolveWebPlacement(config, workspace)
+      const skips = deviceToolSkips(config)
+      const doorFlags = this.parent?.opts<Parameters<typeof doorLogLevel>[0]>() ?? {}
+      const debugLog = pluginDebugLog(doorLogLevel(doorFlags, config))
+
       const checks: DoctorCheck[] = [
         checkNodeVersion(),
         checkConfigFile(configPath),
@@ -651,21 +813,54 @@ export function createDoctorCommand(): Command {
         checkLLMApiKey(config),
         checkSubscriptionAuth(config),
         checkLLMConnection(config),
-        checkPlaywright(config),
-        checkAppium(config, configPath),
-        checkAppiumDrivers(config, configPath),
-        checkAndroidSDK(config),
-        checkXcode(config),
+        checkPlaywright(config, placement),
+        ...createRemoteChecks({
+          config,
+          configPath,
+          secretsFile: workspace?.secretsFile,
+          only: options.remote,
+          loopbackTargetsByRemote: placement.loopbackTargetsByRemote,
+        }),
+        ...createPluginChecks({
+          config,
+          configDir: dirname(resolve(configPath)),
+          secretsFile: workspace?.secretsFile,
+          only: options.remote,
+          ...(debugLog === undefined ? {} : { debugLog }),
+        }),
+        checkAppium(config, configPath, skips),
+        checkAppiumDrivers(config, configPath, skips),
+        checkAndroidSDK(config, skips),
+        checkXcode(config, skips),
         checkTestDiscovery(config, configPath),
         checkValidation(config, configPath),
       ]
 
+      let hasFailure = false
+      const results: { check: DoctorCheck; result: CheckResult }[] = []
+
+      if (options.json === true) {
+        for (const check of checks) {
+          const result = await check.check()
+          results.push({ check, result })
+          if (result.status === 'fail') hasFailure = true
+        }
+        const document = {
+          ok: !hasFailure,
+          checks: results.map(({ check, result }) => ({
+            name: check.name,
+            status: result.status,
+            message: result.message,
+          })),
+        }
+        console.log(guardJsonText(JSON.stringify(document, null, 2)))
+        if (hasFailure) process.exitCode = 1
+        return
+      }
+
       console.log('')
       console.log(pc.bold('  agent-qa doctor'))
       console.log('')
-
-      let hasFailure = false
-      const results: { check: DoctorCheck; result: CheckResult }[] = []
 
       // Colour is applied only here, through the `composeRow` the formatter uses for plain lines.
       const width = resolveTerminalWidth()

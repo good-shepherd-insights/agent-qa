@@ -1,8 +1,20 @@
-import { ChevronRight } from "lucide-react"
+import { ChevronRight, ExternalLink } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import type { RunArtifactResponse } from "@/lib/api"
-import { DRAWER_COPY, ranAgainstParts } from "@/lib/drawer-view"
+import {
+  couldNotRunOnLine,
+  deviceDetail,
+  DRAWER_COPY,
+  droppedOnLine,
+  isDroppedSessionKind,
+  pluginLine,
+  ranAgainstParts,
+  ranHereLine,
+  ranOnLine,
+  sessionLink,
+  type SessionLink,
+} from "@/lib/drawer-view"
 import { routes } from "@/lib/routes"
 import { ArtifactAttributeRows } from "./artifact-attribute-rows"
 import { formatArtifactValue, InspectorSection, isArtifactArray, isArtifactRecord, KeyValueRows, KeyValueTree, RawBlock } from "./artifact-renderers"
@@ -50,12 +62,105 @@ function getRunAttributes(response: RunArtifactResponse): Record<string, string>
   return stringAttributesFrom(recordAt(metadata, "attributes"))
 }
 
+interface PlaceLine {
+  text: string
+  // The remote refused the test or dropped its session.
+  failed: boolean
+  notes: string[]
+  plugin: string | null
+  link: SessionLink | null
+}
+
+function placeNotes(place: Record<string, unknown> | null): string[] {
+  return arrayAt(place, "notes")
+    .filter((note): note is string => typeof note === "string" && note.length > 0)
+}
+
+function placeLine(runtime: unknown): PlaceLine | null {
+  const place = recordAt(isArtifactRecord(runtime) ? runtime : null, "place")
+  const kind = textAt(place, "place")
+  const notes = placeNotes(place)
+  if (kind === "here") {
+    return {
+      text: ranHereLine(textAt(place, "deviceType")),
+      failed: false,
+      notes,
+      plugin: null,
+      link: null,
+    }
+  }
+  const name = textAt(place, "name")
+  if (kind !== "remote" || !name) return null
+  const served = {
+    plugin: pluginLine(valueAt(place, "plugin")),
+    link: sessionLink(valueAt(place, "link")),
+  }
+  const protocol = textAt(place, "protocol")
+  const where = [protocol, textAt(place, "origin")].filter(Boolean).join(" ")
+  const version = protocol === "appium"
+    ? deviceDetail(textAt(place, "appiumVersion"), textAt(place, "deviceType"))
+    : textAt(place, "browserVersion")
+  const failureKind = textAt(place, "failureKind")
+  if (failureKind === null) {
+    return { text: ranOnLine(name, where, version), failed: false, notes, ...served }
+  }
+  if (isDroppedSessionKind(failureKind)) {
+    const text = droppedOnLine(name, where, version, failureKind)
+    return { text, failed: true, notes, ...served }
+  }
+  return { text: couldNotRunOnLine(name, where, failureKind), failed: true, notes, ...served }
+}
+
+function placeClass(place: PlaceLine): string {
+  return place.failed ? "text-destructive" : "text-foreground"
+}
+
+function PlaceServedBy({ place }: { place: PlaceLine }) {
+  if (place.plugin === null && place.link === null) return null
+  return (
+    <div data-place-plugin className="flex flex-wrap gap-x-2 pb-1.5 text-xs text-muted-foreground">
+      {place.plugin === null ? null : <span>{place.plugin}</span>}
+      {place.link === null ? null : (
+        <a
+          data-place-link
+          className="inline-flex items-center gap-1 text-primary underline underline-offset-2"
+          href={place.link.href}
+          target={place.link.target}
+          rel={place.link.rel}
+        >
+          {place.link.label}
+          <ExternalLink className="size-3" aria-hidden="true" />
+          <span className="sr-only">{` ${DRAWER_COPY.opensInNewTab}`}</span>
+        </a>
+      )}
+    </div>
+  )
+}
+
+function PlaceNotes({ notes }: { notes: string[] }) {
+  return notes.map((note, index) => (
+    <div key={index} data-place-note className="pb-1.5 text-xs text-muted-foreground">
+      {note}
+    </div>
+  ))
+}
+
 function MemberConfig({ config }: { config: Record<string, unknown> }) {
   const runtime = valueAt(config, "runtime")
   const timeouts = valueAt(config, "timeouts")
   const model = valueAt(config, "model")
+  const place = placeLine(runtime)
   return (
     <div data-member-config>
+      {place ? (
+        <>
+          <div data-member-place className={`py-1.5 text-xs ${placeClass(place)}`}>
+            {place.text}
+          </div>
+          <PlaceServedBy place={place} />
+          <PlaceNotes notes={place.notes} />
+        </>
+      ) : null}
       {runtime == null ? null : <KeyValueTree label="runtime" value={runtime} />}
       {timeouts == null ? null : <KeyValueTree label="timeouts" value={timeouts} />}
       {model == null ? null : <KeyValueTree label="model" value={model} />}
@@ -151,15 +256,28 @@ function SuiteMembers({
 
 export function ArtifactTestTab({ response }: { response: RunArtifactResponse }) {
   const payload = response.artifact?.payload
-  const source = recordAt(isArtifactRecord(payload) ? payload : null, "source")
+  const payloadRecord = isArtifactRecord(payload) ? payload : null
+  const source = recordAt(payloadRecord, "source")
   const capturedSource = response.missingSections.includes("source") ? null : source
   const kind = textAt(source, "kind")
   const rawYaml = textAt(capturedSource, "rawYaml")
   const definition = valueAt(capturedSource, "resolvedDefinition")
   const attributes = getRunAttributes(response)
+  const runConfig = response.missingSections.includes("config") ? null : recordAt(payloadRecord, "config")
+  // A run of several tests files each test's place on its own member.
+  const runPlace = kind === "tests" ? null : placeLine(valueAt(runConfig, "runtime"))
 
   return (
     <div className="space-y-4">
+      {runPlace ? (
+        <div>
+          <div data-run-place className={`py-1.5 text-xs ${placeClass(runPlace)}`}>
+            {runPlace.text}
+          </div>
+          <PlaceServedBy place={runPlace} />
+          <PlaceNotes notes={runPlace.notes} />
+        </div>
+      ) : null}
       {kind === "tests" ? null : (
         <>
           <InspectorSection title={DRAWER_COPY.testAsWritten} data-drawer-section="test-as-written">

@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import { RemoteChoice, RemoteName, RemoteUnlistedChoice } from '@/components/config-manager/remotes-section'
+import { REMOTES_COPY, remotePickNotListedParts } from '@/lib/config-copy'
 import {
   Select,
   SelectTrigger,
@@ -21,6 +23,9 @@ interface TestSettingsPanelProps {
   selectedTarget?: string
   showMeta?: boolean
 }
+
+// No remote name has parentheses, so this option can only mean "inherit".
+const INHERIT_PLACE = '(inherited)'
 
 const BROWSERS = [
   { value: 'chromium', label: 'Chromium' },
@@ -178,11 +183,13 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
     }
   }
 
-  const { targets: targetDetails, globalUse: g } = useTargetDetails()
+  const { targets: targetDetails, globalUse: g, remotes, isLoading: detailsLoading } = useTargetDetails()
   const targetPlatform = selectedTarget ? targetDetails[selectedTarget]?.platform : undefined
   const isMobile = targetPlatform === 'android' || targetPlatform === 'ios'
 
   const browser = getIn(['use', 'browser', 'name']) as string | undefined
+  const rawRemote = getIn(['use', 'browser', 'remote'])
+  const remote = rawRemote === undefined || rawRemote === null ? undefined : String(rawRemote)
   const headless = getIn(['use', 'browser', 'headless']) as boolean | undefined
   const viewportWidth = getIn(['use', 'browser', 'viewport', 'width']) as number | undefined
   const viewportHeight = getIn(['use', 'browser', 'viewport', 'height']) as number | undefined
@@ -211,6 +218,19 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
   const record = getIn(['meta', 'record']) as boolean | undefined
 
   const gHeadless = g?.browser?.headless
+  const gRemote = g?.browser?.remote
+  const inheritedPlace =
+    gRemote === undefined || gRemote === 'local' ? (
+      ih(REMOTES_COPY.thisMachine)
+    ) : (
+      <>
+        <RemoteName name={gRemote} /> (inherited)
+      </>
+    )
+  const unlistedRemote =
+    remote !== undefined && remote !== '' && remote !== 'local' && !remotes.some(({ name }) => name === remote)
+      ? remote
+      : undefined
   const gLogConsole = g?.logCapture?.console
   const gLogNetwork = g?.logCapture?.network
   const gParallel = g?.parallel
@@ -283,6 +303,37 @@ export function TestSettingsPanel({ content, onChange, selectedTarget, showMeta 
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-[11px] text-muted-foreground">{REMOTES_COPY.runsOnLabel}</Label>
+              <Select
+                value={remote ?? INHERIT_PLACE}
+                onValueChange={(val) => handleSet(['use', 'browser', 'remote'], val === INHERIT_PLACE ? undefined : val)}
+              >
+                <SelectTrigger className="w-full h-7 text-xs">
+                  <SelectValue placeholder={inheritedPlace} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT_PLACE}>{inheritedPlace}</SelectItem>
+                  <SelectItem value="local">{REMOTES_COPY.thisMachine}</SelectItem>
+                  {remotes.map(({ name, protocol }) => (
+                    <SelectItem key={name} value={name}><RemoteChoice name={name} protocol={protocol} /></SelectItem>
+                  ))}
+                  {unlistedRemote !== undefined && (
+                    <SelectItem value={unlistedRemote}>
+                      {detailsLoading ? <RemoteName name={unlistedRemote} /> : <RemoteUnlistedChoice name={unlistedRemote} />}
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+              {unlistedRemote !== undefined && !detailsLoading && (
+                <p data-remote-pick-unlisted className="text-[11px] text-destructive">
+                  {remotePickNotListedParts(<RemoteName key="name" name={unlistedRemote} />)}
+                </p>
+              )}
+              {showMeta && (
+                <p className="text-[11px] text-muted-foreground">{REMOTES_COPY.suiteWinsHint}</p>
+              )}
             </div>
             <div className="flex items-center justify-between">
               <Label className="text-[11px] text-muted-foreground">Headless {headless === undefined && <span className="text-muted-foreground/50">{ihBool(gHeadless)}</span>}</Label>

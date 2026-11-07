@@ -72,6 +72,7 @@ import {
   withRunDoor,
 } from '../composition/local-agent-host.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
+import { doorLogLevel, pluginDebugLog } from '../composition/plugin-host.js'
 import { composeRunOwnership } from '../composition/run-owner-probe.js'
 import type { ComposeCliLocalAgentInput } from '../composition/local-agent-host.js'
 import {
@@ -80,6 +81,7 @@ import {
   type LLMConfigLike,
 } from '../llm-utils.js'
 import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
+import { processRemoteSessions, releaseRemoteSessions, REMOTE_RELEASE_BOUND_MS } from './run.js'
 
 // The dot-path the entity card's `url` is read from, spelled as the producer reads it.
 export const DASHBOARD_BASE_URL_CONFIG_KEY = 'services.dashboard.baseUrl'
@@ -92,6 +94,47 @@ export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
   ...CLI_FUNCTION_CALLER,
   surface: 'dashboard',
 })
+
+// How long past the release bound the shutdown waits before it exits anyway.
+export const SHUTDOWN_WAIT_MARGIN_MS = 500
+
+export interface DashboardShutdownDeps {
+  close(): void
+  closeMcp(): void
+  dispose(): void
+  cleanupSessions(boundMs: number): Promise<void>
+  releaseRemoteSessions(boundMs: number): Promise<void>
+  exit(code: number): void
+}
+
+/** Waits for live-editor cleanup and remote releases, within the bound, then closes and exits 0. */
+export async function shutdownDashboard(deps: DashboardShutdownDeps): Promise<void> {
+  const waits = Promise.all([
+    settled(() => deps.cleanupSessions(REMOTE_RELEASE_BOUND_MS)),
+    settled(() => deps.releaseRemoteSessions(REMOTE_RELEASE_BOUND_MS)),
+  ])
+  let limit: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    waits,
+    new Promise<void>((passed) => {
+      limit = setTimeout(passed, REMOTE_RELEASE_BOUND_MS + SHUTDOWN_WAIT_MARGIN_MS)
+      limit.unref()
+    }),
+  ])
+  clearTimeout(limit)
+  deps.close()
+  deps.closeMcp()
+  deps.dispose()
+  deps.exit(0)
+}
+
+async function settled(wait: () => Promise<void>): Promise<void> {
+  try {
+    await wait()
+  } catch {
+    // A failed wait is over; the shutdown goes on.
+  }
+}
 
 // Published so the conformance suite composes the host as the command does; it decides nothing.
 export function composeDashboardAgentHost(host: LocalAgentHost): AgentHost {
@@ -271,11 +314,12 @@ export interface DashboardRunDoor {
 
 /** Structural, so this module names the dashboard package's own type without importing its value. */
 type DashboardExecutionBackend = import('@vostride/agent-qa-dashboard').ExecutionBackend
+type AppiumProvider = import('@vostride/agent-qa-dashboard').AppiumProvider
 
 /** What the door holds for a run between `runs.start` going in and the run coming out. */
 interface DashboardRunEntry {
   readonly onSession: (session: RunSession) => void
-  readonly appiumUrl?: string
+  readonly appium?: AppiumProvider
   readonly flags: DashboardRunFlags
   readonly attributes?: RunAttributes
 }
@@ -365,7 +409,7 @@ export async function createDashboardRunDoor(input: {
         return entry.attributes === undefined ? {} : { attributes: entry.attributes }
       },
     },
-    resolveAppiumUrl: (runId: string): string | undefined => entries.get(runId)?.appiumUrl,
+    appiumFor: (runId: string): AppiumProvider | undefined => entries.get(runId)?.appium,
     resolveRunFlags: (runId: string): DashboardRunFlags | undefined => entries.get(runId)?.flags,
     onExecution: (execution: Promise<unknown>): void => { track(executions, execution) },
     onPostRun: (settled: Promise<void>): void => { track(postRun, settled) },
@@ -388,7 +432,7 @@ export async function createDashboardRunDoor(input: {
 
       entries.set(opts.runId, {
         onSession,
-        ...(opts.appiumUrl === undefined ? {} : { appiumUrl: opts.appiumUrl }),
+        ...(opts.appium === undefined ? {} : { appium: opts.appium }),
         flags,
         ...(opts.attributes === undefined ? {} : { attributes: opts.attributes }),
       })
@@ -634,11 +678,17 @@ async function startDashboardBackedServices(
 ): Promise<void> {
   try {
     const program = command.parent!
-    const globalOpts = program.opts<{ config?: string; verbose?: boolean }>()
+    const globalOpts = program.opts<{
+      config?: string
+      verbose?: boolean
+      quiet?: boolean
+      logLevel?: string
+    }>()
 
     const config = await resolveConfig({
       configPath: globalOpts.config,
     })
+    const pluginLog = pluginDebugLog(doorLogLevel(globalOpts, config))
 
     const configFilePath = resolve(globalOpts.config ?? 'agent-qa.config.yaml')
     const configDir = dirname(configFilePath)
@@ -750,7 +800,7 @@ async function startDashboardBackedServices(
     // The same host the local door serves, so both detail routes are one capability.
     const runService = composeRunServicePorts({ door: runDoor, sessions, agentHost })
 
-    const { close, port: listeningPort } = await startServer({
+    const { close, cleanupSessions, port: listeningPort } = await startServer({
       db,
       port,
       // A non-loopback host is refused before listen, as a security decision, not a parse error.
@@ -789,6 +839,9 @@ async function startDashboardBackedServices(
       executionBackend: runDoor.backend,
       // Always present, because the run service mounts without tokens.
       runService: runService.ports,
+      // The registry every run door here uses, so a shutdown releases the live editor's remote too.
+      remoteSessions: processRemoteSessions,
+      ...(pluginLog === undefined ? {} : { pluginDebugLog: pluginLog }),
     })
 
     // Loopback rather than a hostname, matching where this server binds.
@@ -841,16 +894,23 @@ async function startDashboardBackedServices(
       if (shuttingDown) return
       shuttingDown = true
       console.log(pc.dim(`\nShutting down ${labels.shutdown}...`))
-      close()
-      // the co-hosted MCP listener is this command's to close, beside the dashboard's
-      // own — it is a socket this process bound, and a shutdown that left it listening would leave
-      // an endpoint over a registry whose door is closing underneath it.
-      mcpServer?.close()
-      // Unregisters the session observer, or the observer set keeps every finished run's bus alive.
-      runService.dispose()
-      // The hoisted registry is the command's to dispose; `composeRunServicePorts` leaves it alone.
-      sessions.dispose()
-      process.exit(0)
+      await shutdownDashboard({
+        close,
+        // the co-hosted MCP listener is this command's to close, beside the dashboard's
+        // own — it is a socket this process bound, and a shutdown that left it listening would
+        // leave an endpoint over a registry whose door is closing underneath it.
+        closeMcp: () => mcpServer?.close(),
+        dispose: () => {
+          // Unregisters the session observer, or the observer set keeps every finished run's bus.
+          runService.dispose()
+          // The hoisted registry is the command's to dispose; `composeRunServicePorts` leaves it.
+          sessions.dispose()
+        },
+        cleanupSessions,
+        releaseRemoteSessions,
+        // Explicit, because a silent remote's socket and its close timer keep the loop alive.
+        exit: (code) => process.exit(code),
+      })
     }
 
     process.on('SIGINT', shutdown)

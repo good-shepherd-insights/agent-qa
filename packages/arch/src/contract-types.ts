@@ -7,6 +7,8 @@ export type PackageClass =
   | 'adapter'
   | 'surface'
   | 'util'
+  | 'pluginKit'
+  | 'plugin'
   | 'transitional'
 
 export interface LedgerEntry {
@@ -77,6 +79,23 @@ export const PACKAGE_CLASS_RULES = {
   util: {
     allowed: ['pure helper code with minimal dependencies'],
     forbidden: ['non-trivial dependencies', 'host access', 'storage access', 'provider access'],
+  },
+  pluginKit: {
+    allowed: [
+      'the public plugin protocol, the stdio loop, schema emission and conformance testing for plugin authors',
+    ],
+    forbidden: [
+      'any @vostride/agent-qa-* runtime dependency',
+      'vendor code',
+      ...NATIVE_STORE_DENYLIST,
+    ],
+  },
+  plugin: {
+    allowed: ['vendor code for one service behind the public plugin protocol'],
+    forbidden: [
+      'any @vostride/agent-qa-* runtime dependency except the plugin kit',
+      ...NATIVE_STORE_DENYLIST,
+    ],
   },
   transitional: {
     allowed: ['declared migration debt carried only by ledger entries'],

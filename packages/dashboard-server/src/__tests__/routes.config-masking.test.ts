@@ -158,8 +158,7 @@ const secretConfig = [
   '  devices:',
   '    phone:',
   '      platform: ios',
-  '      match:',
-  `        udid: ${SENTINELS.udid}`,
+  `      id: ${SENTINELS.udid}`,
   'analytics:',
   '  passRateScope:',
   '    attributes:',
@@ -168,8 +167,8 @@ const secretConfig = [
   `        ${SENTINELS.certificate}-one`,
   `        ${SENTINELS.certificate}-two`,
   'plugins:',
-  '  auth:',
-  '    - package: "@example/agent-qa-auth"',
+  '  - name: acme',
+  '    package: "@example/agent-qa-auth"',
   'use:',
   '  llm: gpt',
   '  mobile:',
@@ -237,7 +236,7 @@ describe('GET /api/config through the declared mask', () => {
     expect(config.registry.llms[0].providerHeaders['x-org-access']).toBe('[secret:ACCESS_KEY]')
     expect(config.analytics.passRateScope.attributes.certificate)
       .toBe(`${SENTINELS.certificate}-one\n${SENTINELS.certificate}-two\n`)
-    expect(config.registry.devices.phone.match.udid).toBe(SENTINELS.udid)
+    expect(config.registry.devices.phone.id).toBe(SENTINELS.udid)
     expect(config.analytics.passRateScope.attributes.branch).toBe(SENTINELS.attribute)
     expect(config.workspace.secretsFile).toBe(SENTINELS.secretsFile)
     expect(config.registry.llms[0].baseURL).toBe('https://llm.example.test/v1')
@@ -273,7 +272,7 @@ describe('GET /api/config through the declared mask', () => {
     expect(lines.map((line) => line.n)).toEqual(lines.map((_, i) => i + 1))
     expect(lines.map((line) => line.text)).toEqual(onDisk.trimEnd().split('\n'))
     expect(lines[0]).toEqual({ n: 1, text: '# owner notes: the access key rotates monthly' })
-    expect(lineHolding(lines, 'package:').text).toBe('    - package: "@example/agent-qa-auth"')
+    expect(lineHolding(lines, 'package:').text).toBe('    package: "@example/agent-qa-auth"')
     expect(body).not.toHaveProperty('fileIssues')
   })
 
@@ -288,7 +287,7 @@ describe('GET /api/config through the declared mask', () => {
     const certificate = lineHolding(lines, 'certificate:')
     expect(lines[certificate.n]!.text).toBe('        [secret:CERT]-one')
     expect(lines[certificate.n + 1]!.text).toBe('        [secret:CERT]-two')
-    expect(lineHolding(lines, 'udid:').text).toBe(`        udid: ${SENTINELS.udid}`)
+    expect(lineHolding(lines, ' id:').text).toBe(`      id: ${SENTINELS.udid}`)
   })
 
   it('REVISION-CHANGES-ON-OUTSIDE-EDIT: the revision read follows the bytes and matches a PATCH answer', async () => {

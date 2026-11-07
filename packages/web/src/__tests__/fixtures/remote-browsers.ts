@@ -1,0 +1,470 @@
+// Remote browsers on loopback: a Playwright server, a CDP Chromium, a session-counting proxy, a
+// credential-checking proxy and services that refuse a connect.
+
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { createServer as createHttpServer, STATUS_CODES } from 'node:http'
+import type { IncomingMessage, Server as HttpServer } from 'node:http'
+import { createRequire } from 'node:module'
+import { connect, createServer } from 'node:net'
+import type { AddressInfo, Server, Socket } from 'node:net'
+import { dirname, join } from 'node:path'
+
+import { chromium } from 'playwright-core'
+import type { Browser, BrowserServer } from 'playwright-core'
+
+export function refuseWithoutChromium(): void {
+  if (!existsSync(chromium.executablePath())) {
+    throw new Error('Playwright Chromium missing; never skip')
+  }
+}
+
+export async function freePort(): Promise<number> {
+  const server = createServer()
+  await new Promise<void>((ready, failed) => {
+    server.once('error', failed)
+    server.listen(0, '127.0.0.1', () => ready())
+  })
+  const { port } = server.address() as AddressInfo
+  await new Promise<void>((closed) => server.close(() => closed()))
+  return port
+}
+
+export interface PlaywrightServer {
+  readonly wsEndpoint: string
+  close(): Promise<void>
+}
+
+export async function startPlaywrightServer(): Promise<PlaywrightServer> {
+  refuseWithoutChromium()
+  let server: BrowserServer | undefined
+  const close = async (): Promise<void> => {
+    const running = server
+    server = undefined
+    await running?.close()
+  }
+  try {
+    server = await chromium.launchServer({ host: '127.0.0.1' })
+    return { wsEndpoint: server.wsEndpoint(), close }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}
+
+export interface CdpBrowser {
+  /** The DevTools HTTP endpoint, `http://127.0.0.1:<port>`. */
+  readonly endpoint: string
+  readonly port: number
+  /** The browser as launched; closing it ends the process and removes its temporary profile. */
+  readonly owner: Browser
+  close(): Promise<void>
+}
+
+const DEVTOOLS_WAIT_MS = 5_000
+const CDP_LAUNCH_TRIES = 3
+
+// True once the port answers DevTools discovery as this browser; false if it never does.
+async function answersAsDevTools(port: number, version: string): Promise<boolean> {
+  const deadline = Date.now() + DEVTOOLS_WAIT_MS
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${String(port)}/json/version`, {
+        signal: AbortSignal.timeout(1_000),
+      })
+      if (response.ok) {
+        const body = (await response.json()) as { Browser?: unknown }
+        return typeof body.Browser === 'string' && body.Browser.endsWith(`/${version}`)
+      }
+    } catch {
+      // Not listening yet, or the port went to another process.
+    }
+    await new Promise((settle) => setTimeout(settle, 100))
+  }
+  return false
+}
+
+// Launched through Playwright, whose default switches keep the macOS keychain out of it. The
+// free port can be taken before Chromium binds it, so a launch whose port does not answer as
+// this browser is closed and tried again on another port.
+export async function startCdpBrowser(): Promise<CdpBrowser> {
+  refuseWithoutChromium()
+  for (let attempt = 1; ; attempt += 1) {
+    let owner: Browser | undefined
+    const close = async (): Promise<void> => {
+      const running = owner
+      owner = undefined
+      await running?.close()
+    }
+    try {
+      const port = await freePort()
+      owner = await chromium.launch({
+        headless: true,
+        args: [`--remote-debugging-port=${String(port)}`],
+      })
+      if (await answersAsDevTools(port, owner.version())) {
+        return { endpoint: `http://127.0.0.1:${String(port)}`, port, owner, close }
+      }
+      await close()
+    } catch (error) {
+      await close()
+      throw error
+    }
+    if (attempt === CDP_LAUNCH_TRIES) {
+      throw new Error(`Chromium did not open its DevTools port in ${String(attempt)} launches`)
+    }
+  }
+}
+
+export interface CountingProxy {
+  readonly port: number
+  /** Connections whose first chunk asked for a WebSocket upgrade. */
+  sessions(): number
+  /** Every TCP connection the proxy accepted. */
+  connections(): number
+  /** WebSocket close frames the clients sent, forwarded or not. */
+  closeFrames(): number
+  /** Every WebSocket frame the clients sent after their upgrade, forwarded or not. */
+  clientFrames(): number
+  /** Stops forwarding in both directions and keeps every socket open, so the remote goes silent. */
+  blackhole(): void
+  close(): Promise<void>
+}
+
+const WEBSOCKET_UPGRADE = /\r\nupgrade:\s*websocket\s*\r\n/i
+const WEBSOCKET_CLOSE_OPCODE = 0x8
+
+// Reads a client's frames after its upgrade request and reports each frame's opcode.
+function frameReader(onFrame: (opcode: number) => void): (chunk: Buffer) => void {
+  let pending = Buffer.alloc(0)
+  let upgraded = false
+  return (chunk) => {
+    pending = Buffer.concat([pending, chunk])
+    if (!upgraded) {
+      const headersEnd = pending.indexOf('\r\n\r\n')
+      if (headersEnd < 0) return
+      upgraded = true
+      pending = pending.subarray(headersEnd + 4)
+    }
+    for (;;) {
+      if (pending.length < 2) return
+      const opcode = pending[0]! & 0x0f
+      let length = pending[1]! & 0x7f
+      let offset = 2
+      if (length === 126) {
+        if (pending.length < 4) return
+        length = pending.readUInt16BE(2)
+        offset = 4
+      } else if (length === 127) {
+        if (pending.length < 10) return
+        length = Number(pending.readBigUInt64BE(2))
+        offset = 10
+      }
+      if ((pending[1]! & 0x80) !== 0) offset += 4
+      if (pending.length < offset + length) return
+      onFrame(opcode)
+      pending = pending.subarray(offset + length)
+    }
+  }
+}
+
+export async function startCountingProxy(targetPort: number): Promise<CountingProxy> {
+  let proxy: Server | undefined
+  const sockets = new Set<Socket>()
+  let sessions = 0
+  let connections = 0
+  let closeFrames = 0
+  let clientFrames = 0
+  let silent = false
+
+  const close = async (): Promise<void> => {
+    for (const socket of sockets) socket.destroy()
+    sockets.clear()
+    const open = proxy
+    proxy = undefined
+    if (open !== undefined) await new Promise<void>((closed) => open.close(() => closed()))
+  }
+
+  try {
+    proxy = createServer((client) => {
+      connections += 1
+      const upstream = connect(targetPort, '127.0.0.1')
+      sockets.add(client)
+      sockets.add(upstream)
+      const end = (): void => {
+        client.destroy()
+        upstream.destroy()
+        sockets.delete(client)
+        sockets.delete(upstream)
+      }
+      client.on('error', end).on('close', end)
+      upstream.on('error', end).on('close', end)
+      let first = true
+      let readFrames: ((chunk: Buffer) => void) | undefined
+      client.on('data', (chunk: Buffer) => {
+        if (first && WEBSOCKET_UPGRADE.test(chunk.toString('latin1'))) {
+          sessions += 1
+          readFrames = frameReader((opcode) => {
+            clientFrames += 1
+            if (opcode === WEBSOCKET_CLOSE_OPCODE) closeFrames += 1
+          })
+        }
+        first = false
+        readFrames?.(chunk)
+        if (!silent) upstream.write(chunk)
+      })
+      upstream.on('data', (chunk: Buffer) => {
+        if (!silent) client.write(chunk)
+      })
+    })
+    const listening = proxy
+    await new Promise<void>((ready, failed) => {
+      listening.once('error', failed)
+      listening.listen(0, '127.0.0.1', () => ready())
+    })
+    const { port } = listening.address() as AddressInfo
+    const blackhole = (): void => {
+      silent = true
+    }
+    return {
+      port,
+      sessions: () => sessions,
+      connections: () => connections,
+      closeFrames: () => closeFrames,
+      clientFrames: () => clientFrames,
+      blackhole,
+      close,
+    }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}
+
+export interface LoopbackService {
+  readonly port: number
+  close(): Promise<void>
+}
+
+async function listenOnLoopback(server: Server | HttpServer): Promise<number> {
+  await new Promise<void>((ready, failed) => {
+    server.once('error', failed)
+    server.listen(0, '127.0.0.1', () => ready())
+  })
+  return (server.address() as AddressInfo).port
+}
+
+// Answers every WebSocket upgrade and every plain request, DevTools discovery included, with one status.
+export async function startStatusServer(
+  status: number,
+  body: string,
+): Promise<LoopbackService> {
+  const sockets = new Set<Socket>()
+  const reason = STATUS_CODES[status] ?? 'Refused'
+  const server = createHttpServer((_request, response) => {
+    response.writeHead(status, { 'content-type': 'text/plain', connection: 'close' })
+    response.end(body)
+  })
+  server.on('connection', (socket: Socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+  server.on('upgrade', (_request, socket: Socket) => {
+    const head = [
+      `HTTP/1.1 ${String(status)} ${reason}`,
+      'Content-Type: text/plain',
+      `Content-Length: ${String(Buffer.byteLength(body))}`,
+      'Connection: close',
+    ]
+    socket.end(`${head.join('\r\n')}\r\n\r\n${body}`)
+  })
+  const close = async (): Promise<void> => {
+    for (const socket of sockets) socket.destroy()
+    sockets.clear()
+    await new Promise<void>((closed) => server.close(() => closed()))
+  }
+  try {
+    return { port: await listenOnLoopback(server), close }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}
+
+// Accepts connections and never answers, so a connect waits out its timeout.
+export async function startSilentSocket(): Promise<LoopbackService> {
+  const sockets = new Set<Socket>()
+  const server = createServer((socket) => {
+    sockets.add(socket)
+    socket.on('error', () => undefined)
+    socket.on('close', () => sockets.delete(socket))
+  })
+  const close = async (): Promise<void> => {
+    for (const socket of sockets) socket.destroy()
+    sockets.clear()
+    await new Promise<void>((closed) => server.close(() => closed()))
+  }
+  try {
+    return { port: await listenOnLoopback(server), close }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}
+
+export interface MismatchedRunServer {
+  readonly wsEndpoint: string
+  close(): Promise<void>
+}
+
+const RUN_SERVER_LISTENING = /Listening on (ws:\/\/\S+)/
+
+// Playwright's own run-server, told it is another release, refuses this client's version.
+export async function startMismatchedRunServer(): Promise<MismatchedRunServer> {
+  const require = createRequire(import.meta.url)
+  const cli = join(dirname(require.resolve('playwright-core/package.json')), 'cli.js')
+  let child: ChildProcess | undefined
+  const close = async (): Promise<void> => {
+    const running = child
+    child = undefined
+    if (running === undefined || running.exitCode !== null || running.signalCode !== null) return
+    await new Promise<void>((exited) => {
+      running.once('exit', () => exited())
+      running.kill('SIGKILL')
+    })
+  }
+  try {
+    const started = spawn(
+      process.execPath,
+      [cli, 'run-server', '--host', '127.0.0.1', '--port', '0'],
+      { env: { ...process.env, PW_VERSION_OVERRIDE: '1.63.0' }, stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    child = started
+    const wsEndpoint = await new Promise<string>((listening, failed) => {
+      let output = ''
+      const timer = setTimeout(() => failed(new Error('run-server did not start')), 30_000)
+      started.stdout?.on('data', (chunk: Buffer) => {
+        output += chunk.toString('utf8')
+        const found = RUN_SERVER_LISTENING.exec(output)
+        if (found?.[1] !== undefined) {
+          clearTimeout(timer)
+          listening(found[1])
+        }
+      })
+      started.stderr?.resume()
+      started.once('error', (error) => {
+        clearTimeout(timer)
+        failed(error)
+      })
+      started.once('exit', (code) => {
+        clearTimeout(timer)
+        failed(new Error(`run-server exited with ${String(code)}`))
+      })
+    })
+    return { wsEndpoint, close }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}
+
+export interface CredentialExpectation {
+  /** Header values by lower-case name. */
+  readonly headers?: Readonly<Record<string, string>>
+  /** Decoded query values by name. */
+  readonly query?: Readonly<Record<string, string>>
+}
+
+export interface RecordedUpgrade {
+  /** The request line as sent, query included. */
+  readonly requestLine: string
+  /** The path and query as sent. */
+  readonly url: string
+  /** Header values by lower-case name. */
+  readonly headers: Readonly<Record<string, string>>
+}
+
+export interface CredentialCheckingProxy {
+  readonly port: number
+  /** Every upgrade request the proxy received, accepted or not. */
+  requests(): readonly RecordedUpgrade[]
+  close(): Promise<void>
+}
+
+function meetsExpectation(request: RecordedUpgrade, expected: CredentialExpectation): boolean {
+  const query = new URL(request.url, 'http://127.0.0.1').searchParams
+  const headers = Object.entries(expected.headers ?? {})
+  const values = Object.entries(expected.query ?? {})
+  return (
+    headers.every(([name, value]) => request.headers[name] === value) &&
+    values.every(([name, value]) => query.get(name) === value)
+  )
+}
+
+function upgradeHead(request: IncomingMessage): string {
+  const lines = [`${request.method ?? 'GET'} ${request.url ?? '/'} HTTP/${request.httpVersion}`]
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    lines.push(`${request.rawHeaders[index] ?? ''}: ${request.rawHeaders[index + 1] ?? ''}`)
+  }
+  return `${lines.join('\r\n')}\r\n\r\n`
+}
+
+// Lets a WebSocket upgrade through to the target only when its headers and query match.
+export async function startCredentialCheckingProxy(options: {
+  target: number
+  expect: CredentialExpectation
+}): Promise<CredentialCheckingProxy> {
+  const sockets = new Set<Socket>()
+  const recorded: RecordedUpgrade[] = []
+  const track = (socket: Socket): void => {
+    sockets.add(socket)
+    socket.on('error', () => undefined)
+    socket.on('close', () => sockets.delete(socket))
+  }
+  const server = createHttpServer((_request, response) => {
+    response.writeHead(404, { connection: 'close' })
+    response.end()
+  })
+  server.on('connection', track)
+  server.on('upgrade', (request: IncomingMessage, client: Socket, head: Buffer) => {
+    const headers: Record<string, string> = {}
+    for (const [name, value] of Object.entries(request.headers)) {
+      if (value !== undefined) headers[name] = Array.isArray(value) ? value.join(', ') : value
+    }
+    const url = request.url ?? '/'
+    const upgrade = {
+      requestLine: `${request.method ?? 'GET'} ${url} HTTP/${request.httpVersion}`,
+      url,
+      headers,
+    }
+    recorded.push(upgrade)
+    if (!meetsExpectation(upgrade, options.expect)) {
+      client.end('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+      return
+    }
+    const upstream = connect(options.target, '127.0.0.1')
+    track(upstream)
+    const end = (): void => {
+      client.destroy()
+      upstream.destroy()
+    }
+    client.on('close', end)
+    upstream.on('close', end)
+    upstream.write(upgradeHead(request))
+    if (head.length > 0) upstream.write(head)
+    upstream.pipe(client)
+    client.pipe(upstream)
+  })
+  const close = async (): Promise<void> => {
+    for (const socket of sockets) socket.destroy()
+    sockets.clear()
+    await new Promise<void>((closed) => server.close(() => closed()))
+  }
+  try {
+    return { port: await listenOnLoopback(server), requests: () => [...recorded], close }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}

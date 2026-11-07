@@ -14,6 +14,7 @@ import {
   GATE_RECEIPT_SCHEMA_VERSION,
   CURRENT_HANDOFF_SCHEMA_VERSION,
   MASKED_RESOLVED_CONFIG_SCHEMA_VERSION,
+  SUBSCRIPTION_AUTH_PACKAGE,
   stampReceiptDigest,
 } from '@vostride/agent-qa-schema'
 import { describe, expect, it } from 'vitest'
@@ -613,7 +614,7 @@ describe('the gate read and auth writer serve every caller', () => {
         ) => {
           fieldsSet.push({ path, value })
           const before = bytes === undefined ? '' : decoder.decode(bytes)
-          const after = `${before}plugins:\n  auth: ${JSON.stringify(value)}\n`
+          const after = `${before}plugins: ${JSON.stringify(value)}\n`
           return Promise.resolve({ bytes: encoder.encode(after) })
         },
         mintHookId: () => 'h_unused',
@@ -662,7 +663,7 @@ describe('the gate read and auth writer serve every caller', () => {
           { recordId: 'rec-9' }, caller))
         // The reference is a plugin package.
         answers.push(await invokeFunction(registry, 'config.auth.set',
-          { target: 'shop', pluginPackage: '@acme/auth' }, caller))
+          { target: 'shop', pluginPackage: SUBSCRIPTION_AUTH_PACKAGE }, caller))
         answers.push(await invokeFunction(registry, 'config.auth.set',
           { target: 'shop', pluginPackage: 'not a name; rm -rf' }, caller))
       }
@@ -674,14 +675,14 @@ describe('the gate read and auth writer serve every caller', () => {
     expect(answers[1]).toEqual({ kind: 'not-found', recordId: 'rec-9' })
     const applied = answers[2] as ConfigChangeOutput
     expect(applied).toMatchObject({
-      outcome: 'applied', files: [configFile], fields: ['plugins.auth.0.package'],
+      outcome: 'applied', files: [configFile], fields: ['plugins.0.name', 'plugins.0.package'],
     })
     expect(answers[3]).toMatchObject({ outcome: 'refused', reason: 'refs-only' })
     // Only the named reference reaches construction, validation and the writer, once per attempt.
     expect(fieldsSet).toEqual(Array.from({ length: 6 }, () =>
-      ({ path: 'plugins.auth', value: [{ package: '@acme/auth' }] })))
+      ({ path: 'plugins', value: [{ name: 'subscription', package: SUBSCRIPTION_AUTH_PACKAGE }] })))
     expect(validations).toBe(6)
     expect(written).toEqual(Array.from({ length: 6 }, () =>
-      [{ op: 'append', path: ['plugins', 'auth'], value: { package: '@acme/auth' } }]))
+      [{ op: 'append', path: ['plugins'], value: { name: 'subscription', package: SUBSCRIPTION_AUTH_PACKAGE } }]))
   })
 })

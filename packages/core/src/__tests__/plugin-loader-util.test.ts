@@ -107,7 +107,11 @@ describe('an installed package that fails to load is not called missing', () => 
 
     let thrown: unknown
     try {
-      await importDeclaredPluginModule({ package: INSTALLED_BUT_BROKEN_PACKAGE }, root, 'auth')
+      await importDeclaredPluginModule(
+        { name: 'acme', package: INSTALLED_BUT_BROKEN_PACKAGE },
+        root,
+        'auth',
+      )
     } catch (err) {
       thrown = err
     }
@@ -136,7 +140,10 @@ describe('an installed package that fails to load is not called missing', () => 
     // resolves a `file://` URL and hands it to `await import(...)`; importing that same specifier
     // here raises the ESM code, never the CJS one. Without this, the cell above could be read as a
     // CJS reproduction whose absence of an absolute path proves nothing about the road taken.
-    const specifier = resolveModuleSpecifier({ package: INSTALLED_BUT_BROKEN_PACKAGE }, root)
+    const specifier = resolveModuleSpecifier(
+      { name: 'acme', package: INSTALLED_BUT_BROKEN_PACKAGE },
+      root,
+    )
     expect(specifier.startsWith('file:'), `not a module URL: ${specifier}`).toBe(true)
     let underlyingCode: unknown
     try {
@@ -154,7 +161,11 @@ describe('an installed package that fails to load is not called missing', () => 
   it('a genuinely absent package is still reported as not installed', async () => {
     let thrown: unknown
     try {
-      await importDeclaredPluginModule({ package: GENUINELY_ABSENT_PACKAGE }, root, 'auth')
+      await importDeclaredPluginModule(
+        { name: 'acme', package: GENUINELY_ABSENT_PACKAGE },
+        root,
+        'auth',
+      )
     } catch (err) {
       thrown = err
     }
@@ -184,7 +195,7 @@ describe('an installed package that fails to load is not called missing', () => 
 
     let thrown: unknown
     try {
-      await importDeclaredPluginModule({ package: LEGIBILITY_PACKAGE }, root, 'auth')
+      await importDeclaredPluginModule({ name: 'acme', package: LEGIBILITY_PACKAGE }, root, 'auth')
     } catch (err) {
       thrown = err
     }
@@ -207,13 +218,11 @@ describe('an installed package that fails to load is not called missing', () => 
 
 describe('the install suggestion is a command only when the name is one', () => {
   it('a package string carrying shell metacharacters composes NO command line', () => {
-    // NOT RCE, AND THE CELL DOES NOT PRETEND IT IS: the config is the person's own file and nothing
-    // here executes anything. What it is, is a string from a DATA FILE arriving inside a command the
-    // CLI tells a person to paste — and the schema behind that string is
-    // `z.string().trim().min(1)`, which accepts every byte below.
+    // Nothing here executes anything. The string comes from a data file, or from a caller that
+    // never ran the config schema's npm-name check, and arrives inside a command a person pastes.
     const hostile = 'evil; rm -rf ~ #'
 
-    const message = new PluginNotInstalledError({ package: hostile }, 'auth').message
+    const message = new PluginNotInstalledError({ name: 'acme', package: hostile }, 'auth').message
 
     expect(message, `a runnable command was composed from an unvalidated string:\n${message}`)
       .not.toContain('npm install')
@@ -222,13 +231,13 @@ describe('the install suggestion is a command only when the name is one', () => 
     expect(message, `the package was not named:\n${message}`).toContain(hostile)
     expect(message, `the person was left with no remedy:\n${message}`)
       .toContain('Install it with your package manager')
-    expect(message).toContain('remove the plugins.auth entry that declares it')
+    expect(message).toContain('remove the plugins entry acme')
   })
 
   it('an ordinary scoped name keeps the runnable example', () => {
     // An ordinary name keeps the runnable command; dropping it everywhere is the cheap wrong fix.
     const message = new PluginNotInstalledError(
-      { package: '@vostride/agent-qa-subscription-auth' },
+      { name: 'subscription', package: '@vostride/agent-qa-subscription-auth' },
       'auth',
     ).message
 
@@ -237,14 +246,21 @@ describe('the install suggestion is a command only when the name is one', () => 
 
   it('the gate accepts npm\'s grammar and refuses what is not in it', () => {
     const composes = (name: string): boolean =>
-      new PluginNotInstalledError({ package: name }, 'auth').message.includes('npm install')
+      new PluginNotInstalledError({ name: 'acme', package: name }, 'auth').message.includes(
+        'npm install',
+      )
 
     // Accepted: the shapes npm actually publishes.
     expect(composes('lodash')).toBe(true)
     expect(composes('@scope/name')).toBe(true)
     expect(composes('some.pkg_name-2~x')).toBe(true)
-    // Refused: every byte class that could turn a suggestion into a second command.
-    for (const hostile of ['a b', 'a;b', 'a&&b', 'a|b', 'a`b`', 'a$(b)', 'a\nb', '../../etc/passwd']) {
+    // Refused: every byte class that could turn a suggestion into a second command, and names npm
+    // refuses because they start with a dot or an underscore.
+    const hostiles = [
+      ...['a b', 'a;b', 'a&&b', 'a|b', 'a`b`', 'a$(b)', 'a\nb', '../../etc/passwd'],
+      ...['..', '@scope/..', '.hidden', '_private'],
+    ]
+    for (const hostile of hostiles) {
       expect(composes(hostile), `"${hostile}" must not be composed into a command line`).toBe(false)
     }
   })
@@ -252,7 +268,7 @@ describe('the install suggestion is a command only when the name is one', () => 
 
 describe('the map key and the person\'s name for a declaration are different strings', () => {
   it('a path declaration reads back relative to baseDir, while the key stays absolute', () => {
-    const declaration = { path: 'plugins/local-auth.js' }
+    const declaration = { name: 'acme', path: 'plugins/local-auth.js' }
 
     // THE KEY KEEPS ITS JOB: absolute, so two relative routes to one file collide in the loaders'
     // dedup set, and prefixed, so a package cannot collide with a file.
@@ -268,16 +284,16 @@ describe('the map key and the person\'s name for a declaration are different str
 
   it('an absolute declaration under baseDir renders relative; one outside renders as declared', () => {
     const inside = join(root, 'plugins', 'inside.js')
-    expect(declarationLabel({ path: inside }, root)).toBe(join('plugins', 'inside.js'))
+    expect(declarationLabel({ name: 'acme', path: inside }, root)).toBe(join('plugins', 'inside.js'))
 
     // A `../../..` chain is not more readable than the path the person typed, so a declaration
     // outside the project renders as declared.
     const outside = resolve(root, '..', 'elsewhere', 'outside.js')
-    expect(declarationLabel({ path: outside }, root)).toBe(outside)
+    expect(declarationLabel({ name: 'acme', path: outside }, root)).toBe(outside)
   })
 
   it('a package declaration labels as the bare package name', () => {
-    expect(declarationLabel({ package: '@vostride/agent-qa-subscription-auth' }, root))
-      .toBe('@vostride/agent-qa-subscription-auth')
+    const declaration = { name: 'subscription', package: '@vostride/agent-qa-subscription-auth' }
+    expect(declarationLabel(declaration, root)).toBe('@vostride/agent-qa-subscription-auth')
   })
 })

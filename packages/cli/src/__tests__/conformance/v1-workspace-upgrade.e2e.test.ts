@@ -129,10 +129,24 @@ function output(leg: Leg | undefined): string {
   return leg === undefined ? '' : `${leg.stdout}${leg.stderr}`
 }
 
+let home: string | undefined
+
+// init refuses the home folder, so the CLI's home is a folder apart from the project.
+function cliHome(): string {
+  home ??= trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-hard-cut-home-')))
+  return home
+}
+
 function cli(root: string, args: readonly string[]): Leg {
   const result = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
     cwd: root,
-    env: { ...hermeticEnv(root), CI: 'true', NO_COLOR: '1' },
+    env: {
+      ...hermeticEnv(root),
+      HOME: cliHome(),
+      USERPROFILE: cliHome(),
+      CI: 'true',
+      NO_COLOR: '1',
+    },
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -224,8 +238,8 @@ function v1Config(): string {
     '      platform: web',
     '      url: https://www.w3.org/WAI/demos/bad/before/home.html',
     'plugins:',
-    '  auth:',
-    '    - package: "@vostride/agent-qa-subscription-auth"',
+    '  - name: subscription',
+    '    package: "@vostride/agent-qa-subscription-auth"',
     'use:',
     '  timeout:',
     '    step: 5m',
@@ -326,7 +340,6 @@ function buildV1Workspace(): string {
     '    network: true',
     '',
   ].join('\n'))
-  write(root, 'agent-qa.local.yaml', 'devices:\napps:\nproviders:\n')
   write(root, '.gitignore', [
     '.agent-qa/',
     '.agent-qa/auth-states/',
@@ -340,6 +353,13 @@ function buildV1Workspace(): string {
     private: true,
     devDependencies: { '@vostride/agent-qa-subscription-auth': '*' },
   }, null, 2)}\n`)
+  // The declared devDependency is installed, as in a project that ran its install; validate reads
+  // only its manifest.
+  write(root, 'node_modules/@vostride/agent-qa-subscription-auth/package.json', `${JSON.stringify({
+    name: '@vostride/agent-qa-subscription-auth',
+    version: '0.0.0',
+    'agent-qa': { plugin: { kind: 'model-auth', runs: 'in-process', entry: './dist/index.js' } },
+  })}\n`)
   write(root, '.env', 'OWN_ENV=kept-value\n')
   write(root, '.env.secrets.local', '', 0o600)
   for (const path of USER_TESTS) {
@@ -483,10 +503,10 @@ describe('upgrading a v1 workspace', () => {
     expect(scene.treeKeptAfterRefusal, `the refusal changed no file\n${seen()}`).toBe(true)
   })
 
-  it('the old knowledge gitignore refusal prints its message and exits 1 with no stack frame', () => {
+  it('the old knowledge gitignore refusal prints its message and exits 2 with no stack frame', () => {
     assertFreshBuild()
     expect(scene.error, seen()).toBeUndefined()
-    expect(exited(scene.refusedInit), seen()).toEqual({ code: 1, signal: null })
+    expect(exited(scene.refusedInit), seen()).toEqual({ code: 2, signal: null })
     const text = output(scene.refusedInit)
     expect(text, seen()).toContain('Add ".writer-authority.sqlite*"')
     const lines = text.split('\n')

@@ -409,7 +409,7 @@ describe('INIT-PREFLIGHT-NO-WRITES: an unsafe root AGENTS.md refuses before any 
   })
 })
 
-describe('INIT-MARKER-LAST: the root block publishes after the scaffold and before the config marker', () => {
+describe('the root block publishes after the scaffold and before the config marker', () => {
   it('writes the .gitignore block first, AGENTS.md next to last and the config marker last', async () => {
     const dir = tempProject()
     const order: string[] = []
@@ -434,6 +434,7 @@ describe('INIT-MARKER-LAST: the root block publishes after the scaffold and befo
     })
 
     await expect(run).rejects.toThrow(/agent-qa\.config\.yaml was not written, so this project is not initialized/)
+    await expect(run).rejects.toMatchObject({ name: 'CliRefusal', exitCode: 2 })
     expect(armed).toBe(true)
     expect(existsSync(join(dir, 'agent-qa.config.yaml'))).toBe(false)
     expect(existsSync(join(dir, 'AGENTS.md'))).toBe(false)

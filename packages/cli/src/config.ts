@@ -5,11 +5,13 @@ import pc from 'picocolors'
 import {
   AgentQaConfigSchema,
   KnowledgeConfigSchema,
+  leftoverLocalFileRefusal,
   loadLLMAuthPlugins,
   resolveKnowledgeRoot,
   yamlParseFailureMessage,
 } from '@vostride/agent-qa-core'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
+import { projectConfigRemotes } from '@vostride/agent-qa-schema'
 import type { MaskFn } from '@vostride/agent-qa-schema'
 import { HARD_CUT_STEPS, INVALID_CONFIG_FIX, isHardCutIssue } from './hard-cut.js'
 
@@ -76,7 +78,8 @@ export async function loadConfigFile(configPath: string): Promise<unknown> {
     throw err
   }
   try {
-    return parseYaml(content) ?? {}
+    // yaml's warnings quote the file's text, so only its errors are reported.
+    return parseYaml(content, { logLevel: 'error' }) ?? {}
   } catch (err: unknown) {
     throw new ConfigFileNotYamlError(configPath, err)
   }
@@ -104,7 +107,7 @@ export async function loadRequiredConfigFile(configPath: string): Promise<unknow
     throw err
   }
   try {
-    return parseYaml(content) ?? {}
+    return parseYaml(content, { logLevel: 'error' }) ?? {}
   } catch (err: unknown) {
     throw new ConfigFileNotYamlError(configPath, err)
   }
@@ -217,20 +220,23 @@ function flattenObject(
 
 type ConfigSource = 'global config' | 'test yaml' | 'cli flag'
 
-// Values print as written, through the caller's declared-secret mask.
+// Values print as written, through the caller's declared-secret mask; a remote shows its origin.
 export function formatConfigDebug(
   globalConfig: unknown,
   testConfig: unknown,
   flagOverrides: Record<string, unknown>,
   mask: MaskFn,
 ): string {
+  const shownGlobal = projectConfigRemotes(globalConfig)
+  const shownTest = projectConfigRemotes(testConfig)
+  const shownFlags = projectConfigRemotes(flagOverrides)
   const layers: { flat: Record<string, unknown>; label: ConfigSource }[] = [
-    { flat: flattenObject(globalConfig), label: 'global config' },
-    { flat: flattenObject(testConfig), label: 'test yaml' },
-    { flat: flattenObject(flagOverrides), label: 'cli flag' },
+    { flat: flattenObject(shownGlobal), label: 'global config' },
+    { flat: flattenObject(shownTest), label: 'test yaml' },
+    { flat: flattenObject(shownFlags), label: 'cli flag' },
   ]
 
-  const merged = mergeWithTestConfig(globalConfig, testConfig, flagOverrides)
+  const merged = mergeWithTestConfig(shownGlobal, shownTest, shownFlags)
   const mergedFlat = flattenObject(merged)
 
   const colorize: Record<ConfigSource, (s: string) => string> = {
@@ -295,6 +301,8 @@ export async function resolveConfig(options: {
   loadAuthPlugins?: boolean
 }): Promise<AgentQaConfig> {
   const configPath = options.configPath ?? 'agent-qa.config.yaml'
+  const leftover = leftoverLocalFileRefusal([dirname(resolvePath(configPath)), process.cwd()])
+  if (leftover !== undefined) throw new Error(leftover)
   const fileConfig = await loadRequiredConfigFile(configPath)
   const envOverrides = loadEnvOverrides()
   const merged = mergeConfigs(fileConfig, envOverrides, options.flags ?? {})
@@ -348,8 +356,9 @@ export async function resolveConfig(options: {
 }
 
 export async function loadConfigPlugins(config: AgentQaConfig, configPath: string): Promise<void> {
-  await loadLLMAuthPlugins(config.plugins?.auth, {
+  await loadLLMAuthPlugins(config.plugins ?? [], {
     baseDir: dirname(resolvePath(configPath)),
+    remotes: config.registry?.remotes ?? [],
   })
   const { loadProviderPluginsForRawConfig } = await import('./provider-plugins.js')
   await loadProviderPluginsForRawConfig(config, configPath)

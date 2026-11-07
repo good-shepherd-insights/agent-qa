@@ -15,9 +15,12 @@ export const SECRET_ADJACENT_CONFIG_FIELDS = [
   'workspace.envFile',
   'workspace.secretsFile',
   'services.authState',
-  'plugins.auth',
-  'plugins.providers',
+  'plugins',
   'registry.targets.*.authState',
+  'registry.remotes',
+  'registry.devices.*.remote',
+  'registry.devices.*.capabilities',
+  'registry.targets.*.app.ref',
   'use.authState',
 ] as const
 

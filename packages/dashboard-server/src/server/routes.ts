@@ -22,7 +22,10 @@ import { carriesNonJsonBody, readJsonBody } from './body-parser.js'
 import {
   LiveNavigationTimeoutRefusedError,
   LivePlannerLimitsRefusedError,
+  LiveRemotesRefusedError,
+  readLiveRemotes,
   resolveLiveNavigationTimeoutMs,
+  resolveLivePlace,
   resolveLivePlannerLimits,
 } from '../live-editor/live-session.js'
 import { refuseCrossSiteRequest } from './cross-site.js'
@@ -80,8 +83,13 @@ import {
 import { createConnectInFlight, registerLlmConnectRoute } from './llm-connect-route.js'
 import type { PostProcessingRelay } from '../execution/post-processing-relay.js'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
-import { AuthStateNameSchema, buildInternalRunAttributes, DEFAULT_AGENT_QA_CACHE_DIR, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NameSlugSchema, TimeoutConfigSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, hookRunnerImage, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString } from '@vostride/agent-qa-core'
-import { SecretStore, SecretRedactor } from '@vostride/agent-qa-runner'
+import { AuthStateNameSchema, buildInternalRunAttributes, DEFAULT_AGENT_QA_CACHE_DIR, mergeRunAttributes, readAuth, writeAuth, removeAuth, getAgentQaVersion, getAgentQaUpdateStatus, getLLMAuthProviderPlugin, listAuthStateMetadata, listLLMAuthProviderPlugins, ModelConfigSchema, NameSlugSchema, TimeoutConfigSchema, AgentQaConfigSchema, TestDefinitionSchema, SuiteDefinitionSchema, parseEnvFile, serializeEnvFile, parseHooksFile, hookRunnerImage, validateUserRunAttributes, discoverWorkspaceFiles, isWorkspacePathMatch, resolveWorkspaceFileTarget, SizeString, splitConnectionSecrets } from '@vostride/agent-qa-core'
+import {
+  SecretStore,
+  SecretRedactor,
+  RunSecretRedactor,
+  basicAuthMaskEntries,
+} from '@vostride/agent-qa-runner'
 import { DockerHookExecutor, purgeActionCache } from '@vostride/agent-qa-runner-local'
 import type { ResolvedWorkspacePaths, RunAttributes, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, fetchLiveModels, getModelCatalog, listProviders, mergeCatalog, resolveVisionConfig, type ProviderDescriptor } from '@vostride/agent-qa-model'
@@ -227,6 +235,11 @@ function withDeclaredMask<T>(mask: MaskFn | undefined, build: (mask: MaskFn) => 
   } catch {
     return undefined
   }
+}
+
+// By name, because the error can come from another copy of the runner package.
+function isRemoteRefusal(error: unknown): boolean {
+  return error instanceof Error && error.name === 'RemoteRefusalError'
 }
 
 // The target list answers masked names, so a save whose target holds one writes the marker.
@@ -4350,6 +4363,8 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
         return
       }
       ;(async () => {
+        // Error text can repeat a declared secret, so the reply passes the session's mask.
+        let replyRedactor: SecretRedactor | undefined
         try {
           const body = await readJsonBody<{
             platform?: string
@@ -4393,7 +4408,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           }
           let envVars: Record<string, string> | undefined
           let secretStore: SecretStore | undefined
-          let secretRedactor: SecretRedactor | undefined
+          let connectionSecretStore: SecretStore | undefined
+          let connectionSecretNames: ReadonlySet<string> | undefined
+          let secretRedactor: RunSecretRedactor | undefined
           let resolvedHooks = new Map<string, import('@vostride/agent-qa-core').HookDefinition>()
           let hookRegistryError: string | undefined
           if (!workspacePaths) {
@@ -4409,10 +4426,22 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             return
           }
 
+          const remotes = await readLiveRemotes(configManager)
+          const liveConfig = configManager === undefined ? {} : await readConfigValues(configManager)
           try {
             const secretsContent = await readFile(workspacePaths.secretsFile.absolutePath, 'utf-8')
-            secretStore = SecretStore.fromEnvContent(secretsContent)
-            secretRedactor = new SecretRedactor(secretStore)
+            const declared = SecretStore.fromEnvContent(secretsContent)
+            // Hooks, steps and the start url get the step store; the adapter and mask the full one.
+            const split = splitConnectionSecrets(declared, liveConfig)
+            secretStore = split.stepStore
+            connectionSecretStore = declared
+            connectionSecretNames = split.connectionNames
+            // The session's own redactor: a plugin's answer mask values join it at acquire.
+            secretRedactor = new RunSecretRedactor(
+              declared,
+              basicAuthMaskEntries(remotes, declared),
+            )
+            replyRedactor = secretRedactor
           } catch {
             json(res, { error: `workspace.secretsFile file could not be loaded: ${workspacePaths.secretsFile.workspaceRelativePath}` }, 400)
             return
@@ -4425,6 +4454,7 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
           const entityReaders = {
             ...(testFileManager === undefined ? {} : { findTest: (id: string) => testFileManager.findByTestId(id) }),
             ...(suiteFileManager === undefined ? {} : { findSuite: (id: string) => suiteFileManager.findBySuiteId(id) }),
+            ...(testFileManager === undefined ? {} : { readTest: (file: string) => testFileManager.read(file) }),
           }
           const plannerLimits = await resolveLivePlannerLimits(configManager, entityRef, entityReaders)
           const navigationTimeoutMs = await resolveLiveNavigationTimeoutMs(
@@ -4432,6 +4462,15 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
             entityRef,
             entityReaders,
           )
+          // The place comes from the files by the run's rule; nothing in the request names it.
+          const placed = platform === 'web'
+            ? await resolveLivePlace(configManager, entityRef, entityReaders)
+            : undefined
+          if (placed !== undefined && 'refusal' in placed) {
+            json(res, { error: placed.refusal }, 400)
+            return
+          }
+          const remote = placed?.place.kind === 'remote' ? placed.place.remote : undefined
           // Each test a session runs gets project, then the session's suite, then its own `use`:
           // the chain the CLI suite producer resolves per member.
           const sessionSuiteRef = entityRef?.type === 'suite' ? entityRef : undefined
@@ -4453,6 +4492,9 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               authFetch: runtimeLLM.authFetch,
               envVars,
               secretStore,
+              connectionSecretStore,
+              connectionSecretNames,
+              secretsFile: workspacePaths.secretsFile.workspaceRelativePath,
               secretRedactor,
               setupHooks,
               teardownHooks,
@@ -4461,23 +4503,23 @@ export function createRouter(dbOrDeps: DashboardDatabase | RouterDeps): (req: In
               url: body?.url,
               headless: body?.headless ?? false,
               navigationTimeoutMs,
+              ...(remote === undefined ? {} : { remote }),
               useDeviceName: typeof body?.useDeviceName === 'string' ? body.useDeviceName : undefined,
               appState: body?.appState === 'preserve' || body?.appState === 'reset' ? body.appState : undefined,
-              bundleId: typeof body?.bundleId === 'string' ? body.bundleId : undefined,
-              appPackage: typeof body?.appPackage === 'string' ? body.appPackage : undefined,
-              appActivity: typeof body?.appActivity === 'string' ? body.appActivity : undefined,
-              device: body?.device as import('../live-editor/types.js').LiveSessionConfig['device'],
             },
             entityRef,
           )
           json(res, { sessionId, sessionNumber }, 201)
         } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : String(err)
+          const raw = err instanceof Error ? err.message : String(err)
+          const message = replyRedactor?.redactString(raw) ?? raw
           // A planner limit or navigation timeout the CLI refuses is refused here, before any
           // session exists.
           const refused =
             err instanceof LivePlannerLimitsRefusedError ||
-            err instanceof LiveNavigationTimeoutRefusedError
+            err instanceof LiveNavigationTimeoutRefusedError ||
+            err instanceof LiveRemotesRefusedError ||
+            isRemoteRefusal(err)
           const status = refused ? 400 : 500
           json(res, { error: message }, status)
         }

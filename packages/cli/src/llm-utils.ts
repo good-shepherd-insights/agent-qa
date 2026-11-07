@@ -3,6 +3,7 @@ import { createModel, createTokenAccounting, getProviderOptions, resolveCapabili
 import { generateText } from 'ai'
 import { createDeclaredSecretMask } from './composition/declared-secrets.js'
 import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
+import { pluginRemotesOfRawConfig } from './plugin-remotes.js'
 import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
 
 import type { ChatLanguageModel, JobModelCapability } from '@vostride/agent-qa-agent'
@@ -82,12 +83,13 @@ function normalizeLLMConfig(raw: NamedLLMConfigLike & Record<string, unknown>): 
 }
 
 export async function loadAuthPluginsForRawConfig(raw: unknown, configPath = 'agent-qa.config.yaml'): Promise<void> {
-  const declarations = (raw as { plugins?: { auth?: unknown } } | null)?.plugins?.auth
-  if (!Array.isArray(declarations) || declarations.length === 0) return
+  const entries = (raw as { plugins?: unknown } | null)?.plugins
+  if (!Array.isArray(entries) || entries.length === 0) return
 
   const { loadLLMAuthPlugins } = await import('@vostride/agent-qa-core')
-  await loadLLMAuthPlugins(declarations as Parameters<typeof loadLLMAuthPlugins>[0], {
+  await loadLLMAuthPlugins(entries as Parameters<typeof loadLLMAuthPlugins>[0], {
     baseDir: dirname(resolvePath(configPath)),
+    remotes: pluginRemotesOfRawConfig(raw),
   })
 }
 

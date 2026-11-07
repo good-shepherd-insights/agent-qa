@@ -6,8 +6,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { parse as parseYaml } from 'yaml'
 
 import { TestSettingsPanel } from '@/components/test-settings-panel'
+import { REMOTES_COPY } from '@/lib/config-copy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
 
 const targetState = vi.hoisted(() => ({
   targets: {
@@ -15,16 +20,22 @@ const targetState = vi.hoisted(() => ({
     'mobile-app': { platform: 'android', appPackage: 'com.example.app' },
   },
   globalUse: {
-    browser: { name: 'chromium', headless: true },
+    browser: { name: 'chromium', headless: true, remote: undefined as string | undefined },
     mobile: { appState: 'preserve' },
   },
+  remotes: [
+    { name: 'grid', protocol: 'playwright' },
+    { name: 'lab', protocol: 'cdp' },
+  ],
+  isLoading: false,
 }))
 
 vi.mock('@/hooks/use-target-details', () => ({
   useTargetDetails: () => ({
     targets: targetState.targets,
     globalUse: targetState.globalUse,
-    isLoading: false,
+    remotes: targetState.remotes,
+    isLoading: targetState.isLoading,
   }),
 }))
 
@@ -32,7 +43,7 @@ let container: HTMLDivElement
 let root: Root
 let latestYaml = ''
 
-function renderPanel(initialContent: string, selectedTarget = 'web-app') {
+function renderPanel(initialContent: string, selectedTarget = 'web-app', showMeta = true) {
   function Harness() {
     const [content, setContent] = useState(initialContent)
     latestYaml = content
@@ -44,6 +55,7 @@ function renderPanel(initialContent: string, selectedTarget = 'web-app') {
           setContent(next)
         }}
         selectedTarget={selectedTarget}
+        showMeta={showMeta}
       />
     )
   }
@@ -85,6 +97,8 @@ function expectSwitchState(id: string, checked: boolean) {
 }
 
 beforeEach(() => {
+  targetState.globalUse.browser.remote = undefined
+  targetState.isLoading = false
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -227,5 +241,147 @@ describe('the limit inputs', () => {
     setInputValue(limitInput('Max Actions'), '')
     expect(plannerOf(latestYaml)).toEqual({ maxPlanningTurns: 12 })
     expect(limitInput('Max Actions').getAttribute('aria-invalid')).toBeNull()
+  })
+})
+
+describe('the Runs on select', () => {
+  function runsOn(): HTMLElement {
+    const owner = Array.from(document.querySelectorAll('label')).find((el) => el.textContent === REMOTES_COPY.runsOnLabel)
+    const trigger = owner?.parentElement?.querySelector('[role="combobox"]')
+    if (!(trigger instanceof HTMLElement)) throw new Error('Missing the Runs on select')
+    return trigger
+  }
+
+  function open(): HTMLElement[] {
+    act(() => {
+      runsOn().focus()
+      runsOn().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    return Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]
+  }
+
+  function choose(text: string) {
+    const option = open().find((item) => item.textContent?.trim() === text)
+    if (!option) throw new Error(`Missing option ${text}`)
+    act(() => {
+      option.focus()
+      option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+  }
+
+  function remoteOf(yaml: string): unknown {
+    return (parseYaml(yaml) as { use?: { browser?: { remote?: unknown } } } | null)?.use?.browser?.remote
+  }
+
+  it('shows the global default as inherited, and this machine when the config picks none or local', () => {
+    targetState.globalUse.browser.remote = 'grid'
+    renderPanel('name: Demo\nsteps: []\n')
+    expect(runsOn().textContent).toBe('grid (inherited)')
+
+    for (const global of [undefined, 'local']) {
+      targetState.globalUse.browser.remote = global
+      renderPanel('name: Demo\nsteps: []\n')
+      expect(runsOn().textContent).toBe(`${REMOTES_COPY.thisMachine} (inherited)`)
+    }
+  })
+
+  it('offers the inherited place, this machine and each listed remote with its protocol, each name in mono, and no other name', () => {
+    targetState.globalUse.browser.remote = 'grid'
+    renderPanel('name: Demo\nsteps: []\n')
+
+    const options = open()
+    expect(options.map((option) => option.textContent)).toEqual([
+      'grid (inherited)',
+      REMOTES_COPY.thisMachine,
+      'grid (playwright)',
+      'lab (cdp)',
+    ])
+    expect(options.map((option) => option.querySelector('[data-remote-name]')?.className)).toEqual([
+      'font-mono',
+      undefined,
+      'font-mono',
+      'font-mono',
+    ])
+  })
+
+  it('choosing a listed remote writes its name, and this machine writes local', () => {
+    renderPanel('name: Demo\nsteps: []\n')
+
+    choose('lab (cdp)')
+    expect(remoteOf(latestYaml)).toBe('lab')
+    expect(runsOn().textContent).toBe('lab (cdp)')
+
+    choose(REMOTES_COPY.thisMachine)
+    expect(remoteOf(latestYaml)).toBe('local')
+    expect(runsOn().textContent).toBe(REMOTES_COPY.thisMachine)
+  })
+
+  it('choosing the inherited place deletes use.browser.remote from the file', () => {
+    targetState.globalUse.browser.remote = 'grid'
+    renderPanel('name: Demo\nuse:\n  browser:\n    remote: lab\nsteps: []\n')
+    expect(runsOn().textContent).toBe('lab (cdp)')
+
+    choose('grid (inherited)')
+
+    expect(parseYaml(latestYaml)).toEqual({ name: 'Demo', steps: [] })
+    expect(runsOn().textContent).toBe('grid (inherited)')
+  })
+
+  it('choosing the inherited place while the file already inherits leaves the file as written', () => {
+    targetState.globalUse.browser.remote = 'grid'
+    const written = 'steps: []\nname: Demo\nuse: { browser: { name: firefox } }\n'
+    renderPanel(written)
+
+    choose('grid (inherited)')
+
+    expect(latestYaml).toBe(written)
+    expect(runsOn().textContent).toBe('grid (inherited)')
+  })
+
+  it('shows a pick no listed remote matches as not listed, with a hint, rather than an empty box', () => {
+    for (const pick of ['gird', 'Grid!']) {
+      renderPanel(`name: Demo\nuse:\n  browser:\n    remote: ${JSON.stringify(pick)}\nsteps: []\n`)
+      expect(runsOn().textContent).toBe(`${pick} (not listed)`)
+      const hint = document.querySelector('[data-remote-pick-unlisted]')
+      expect(hint?.textContent).toBe(`${pick} is not listed under the config's remotes.`)
+      expect(hint?.className).toContain('text-destructive')
+      expect(open().map((option) => option.textContent)).toEqual([
+        `${REMOTES_COPY.thisMachine} (inherited)`,
+        REMOTES_COPY.thisMachine,
+        'grid (playwright)',
+        'lab (cdp)',
+        `${pick} (not listed)`,
+      ])
+      act(() => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+    }
+  })
+
+  it('shows the pick by name with no hint while the config is still loading', () => {
+    targetState.isLoading = true
+    renderPanel('name: Demo\nuse:\n  browser:\n    remote: grid\nsteps: []\n')
+    expect(runsOn().textContent).toBe('grid (playwright)')
+
+    targetState.remotes = []
+    try {
+      renderPanel('name: Demo\nuse:\n  browser:\n    remote: grid\nsteps: []\n')
+      expect(runsOn().textContent).toBe('grid')
+      expect(document.querySelector('[data-remote-pick-unlisted]')).toBeNull()
+    } finally {
+      targetState.remotes = [
+        { name: 'grid', protocol: 'playwright' },
+        { name: 'lab', protocol: 'cdp' },
+      ]
+    }
+  })
+
+  it("says in a test's settings that a suite's pick wins, and not in a suite's", () => {
+    const hint = "When a suite picks where it runs, the suite's choice wins."
+    renderPanel('name: Demo\nsteps: []\n')
+    expect(document.body.textContent).toContain(hint)
+
+    renderPanel('name: Demo\nsteps: []\n', 'web-app', false)
+    expect(document.body.textContent).not.toContain(hint)
   })
 })

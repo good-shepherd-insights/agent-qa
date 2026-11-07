@@ -108,6 +108,7 @@ import type {
 import { buildScaffoldFileSet } from '../commands/scaffold-content.js'
 import { TARGET_GITIGNORE_ENTRIES } from '../commands/init-filesystem.js'
 import {
+  closedConfigFieldsChanged,
   CONFIG_REVISION_ABSENT,
   CONFIG_SET_DEFAULT_HOOKS_FILE,
   KnowledgeChangeOutputSchema,
@@ -246,19 +247,20 @@ function createComposedRunExecution(input: {
             runRecord,
             // Subscribed directly: `attachRunSubscribers`' wire reporter can print to stdout.
             ...(analytics === undefined || runSession === undefined ? {} : {
-              subscribers: ({ session }) => {
+              subscribers: ({ session, runner, remotePlugins }) => {
                 const subscriber = runSession.buildAnalyticsRunSubscriber({
                   analytics,
                   triggerSource: trigger,
-                  runner: 'local',
+                  ...(runner === undefined ? {} : { runner }),
+                  ...(remotePlugins === undefined ? {} : { remotePlugins }),
                 })
                 session.subscribe(runSession.REPLAY_FROM_START, subscriber.handler)
                 return { flush: async () => { await subscriber.flush?.() } }
               },
             }),
-            ...(input.runBridge?.resolveAppiumUrl === undefined
+            ...(input.runBridge?.appiumFor === undefined
               ? {}
-              : { resolveAppiumUrl: input.runBridge.resolveAppiumUrl }),
+              : { appiumFor: input.runBridge.appiumFor }),
             ...(input.runBridge?.resolveRunFlags === undefined
               ? {}
               : { resolveRunFlags: input.runBridge.resolveRunFlags }),
@@ -355,8 +357,8 @@ export interface ComposeCliLocalAgentInput {
     readonly onSession?: (session: RunSession) => void
     /** The host's runs.db handle and its queue's rows. */
     readonly record?: RunRecordHostBinding
-    /** The Appium this host leased for a named run, if it leases any. */
-    readonly resolveAppiumUrl?: InProcessCliRunExecutionOptions['resolveAppiumUrl']
+    // The Appium this host leases for a named run, asked only for a device here.
+    readonly appiumFor?: InProcessCliRunExecutionOptions['appiumFor']
     /** Per-run flags this host's own UI offers that the request DTO has no field for. */
     readonly resolveRunFlags?: InProcessCliRunExecutionOptions['resolveRunFlags']
     // The dashboard's live push channel, handed to `composeCliPostRunTail` as `relay`.
@@ -1008,7 +1010,8 @@ export function createConfigValidatePort(): ConfigValidatePortLike {
 
         let parsed: unknown
         try {
-          parsed = parseYaml(Buffer.from(member.bytes).toString('utf8'))
+          // yaml's warnings quote the file's text, so only its errors are reported.
+          parsed = parseYaml(Buffer.from(member.bytes).toString('utf8'), { logLevel: 'error' })
         } catch (error) {
           // Position only: the yaml library's message quotes the person's source line.
           issues.push({ path: member.path, message: yamlParseFailureMessage(error) })
@@ -1133,6 +1136,9 @@ export function createConfigWritePort(configPath: string, mask: MaskFn): ConfigW
         if (ConfigManager.addsShownMarker(existing, file.bytes)) {
           return { kind: 'refused', reason: 'marker_written_back', path: file.path, written: [] }
         }
+        if (identity === configIdentity && changesClosedConfigFields(existing, file.bytes)) {
+          return { kind: 'refused', reason: 'path_not_writable', path: file.path, written: [] }
+        }
         planned.push({
           identity,
           absolutePath,
@@ -1210,6 +1216,20 @@ export function createScaffoldContentPort(): ConfigScaffoldContentPortLike {
   }
 }
 
+// New bytes that are not YAML are left to the write path; current bytes that are not YAML hold
+// nothing a write may keep, so any remote or plugin in the new bytes counts as a change.
+function changesClosedConfigFields(current: Uint8Array | undefined, next: Uint8Array): boolean {
+  const after = yamlValueOf(next)
+  if (after === undefined) return false
+  const before = current === undefined ? undefined : yamlValueOf(current)
+  return closedConfigFieldsChanged(before?.value ?? {}, after.value)
+}
+
+function yamlValueOf(bytes: Uint8Array): { value: unknown } | undefined {
+  const doc = parseDocument(Buffer.from(bytes).toString('utf-8'), { logLevel: 'error' })
+  return doc.errors.length > 0 ? undefined : { value: doc.toJS() }
+}
+
 // Raw bytes, no decoding: the digest over this value is compared with one over the file's bytes.
 function readTargetIfPresent(absolutePath: string): Buffer | undefined {
   try {
@@ -1228,7 +1248,11 @@ function readTargetIfPresent(absolutePath: string): Buffer | undefined {
  */
 function projectRunsDbPath(configPath: string): string | undefined {
   try {
-    const merged = mergeConfigs(parseYaml(readFileSync(configPath, 'utf8')) ?? {}, loadEnvOverrides(), {})
+    const merged = mergeConfigs(
+      parseYaml(readFileSync(configPath, 'utf8'), { logLevel: 'error' }) ?? {},
+      loadEnvOverrides(),
+      {},
+    )
     const config = AgentQaConfigSchema.parse(normalizeConfigForValidation(merged))
     const configured = config.services?.dashboard?.dbPath?.trim()
     return resolve(dirname(resolve(configPath)), configured || DEFAULT_AGENT_QA_RUNS_DB_PATH)

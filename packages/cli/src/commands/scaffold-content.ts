@@ -1,6 +1,6 @@
 // One pure producer of scaffold content for `init` and `config.project.scaffold`.
 
-import { DEFAULT_PLANNER_LIMITS } from '@vostride/agent-qa-schema'
+import { DEFAULT_PLANNER_LIMITS, SUBSCRIPTION_AUTH_ENTRY_NAME } from '@vostride/agent-qa-schema'
 import { parseDocument, stringify } from 'yaml'
 
 import {
@@ -160,9 +160,7 @@ export function buildScaffoldConfig(
     },
     ...(facts.usesSubscriptionAuth
       ? {
-          plugins: {
-            auth: [{ package: SUBSCRIPTION_AUTH_PACKAGE }],
-          },
+          plugins: [{ name: SUBSCRIPTION_AUTH_ENTRY_NAME, package: SUBSCRIPTION_AUTH_PACKAGE }],
         }
       : {}),
     use: {
@@ -200,7 +198,7 @@ export function addYamlComments(yamlStr: string): string {
       result += '#   dir: agent-qa-knowledge\n'
       result += '\n# Named resource definitions (LLM configs, app targets)\n'
     } else if (line.startsWith('plugins:')) {
-      result += '\n# Optional subscription auth plugin declarations\n'
+      result += '\n# Plugins agent-qa loads, each a named entry\n'
     } else if (line.startsWith('use:')) {
       result += '\n# Execution settings (cascades: global -> suite -> test -> CLI flags)\n'
     } else if (line === '  accessibility:') {
@@ -225,10 +223,11 @@ export function addYamlComments(yamlStr: string): string {
       result += '    # Optional: persist dashboard state to a custom SQLite path.\n'
       result += '    # dbPath: .agent-qa/dashboard.sqlite\n'
     } else if (line === 'registry:') {
-      result += '  # Optional: local device profiles.\n'
+      result += '  # Optional: devices, described by what people call them. agent-qa finds them on this machine.\n'
       result += '  # devices:\n'
-      result += '  #   android-emu:\n'
+      result += '  #   pixel:\n'
       result += '  #     platform: android\n'
+      result += '  #     model: Pixel 8\n'
     } else if (line === '  targets:') {
       result += '    # Optional: add more web or mobile targets here.\n'
       result += '    # my-mobile:\n'
@@ -237,9 +236,7 @@ export function addYamlComments(yamlStr: string): string {
       result += '    #   appActivity: .MainActivity\n'
       result += '    #   app:\n'
       result += '    #     path: apps/example.apk\n'
-    } else if (line === '  llm: codex' || line === '  llm: claude-code' || line === '  llm: default') {
-      result += '  # Optional: bind mobile runs to a configured device profile.\n'
-      result += '  # device: android-emu\n'
+      result += '    #   device: pixel # its tests run here unless a suite or test sets use.device\n'
     }
   }
 

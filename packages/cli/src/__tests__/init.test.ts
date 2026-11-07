@@ -134,6 +134,7 @@ import password from '@inquirer/password'
 import { getAgentQaVersion, resolveAppiumExecutable, writeAuth } from '@vostride/agent-qa-core'
 import { clearProviderRegistry, registerProvider, type ProviderDescriptor } from '@vostride/agent-qa-model'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { reportCliFailure } from '../cli-error-handler.js'
 
 const mockWriteFileSync = vi.mocked(writeFileSync)
 const mockExistsSync = vi.mocked(existsSync)
@@ -290,17 +291,21 @@ describe('init command', () => {
     expect(content).not.toContain('  # recording:')
     expect(content).not.toContain('  # memory:')
     expect(content).toContain('# Named resource definitions')
-    expect(content).toContain('  # devices:')
-    expect(content).toContain('  #     platform: android')
+    expect(content).toContain(
+      '  # Optional: devices, described by what people call them. agent-qa finds them on this machine.\n  # devices:\n  #   pixel:\n  #     platform: android\n  #     model: Pixel 8\n',
+    )
+    expect(content).not.toContain('android-emu')
     expect(content).toContain('    # my-mobile:')
     expect(content).toContain('    #   appPackage: com.example.app')
     expect(content).toContain('    #   appActivity: .MainActivity')
     expect(content).toContain('    #     path: apps/example.apk')
+    expect(content).toContain('    #   device: pixel')
     expect(content).not.toContain('  # logCapture:')
     expect(content).not.toContain('  #   console: true')
     expect(content).not.toContain('  #   network: true')
     expect(content).not.toContain('  # parallel: false')
-    expect(content).toContain('  # device: android-emu')
+    expect(content).not.toContain('bind mobile runs')
+    expect(content).not.toMatch(/^  # device:/m)
     expect(content).not.toContain('# Optional configuration examples (uncomment only what you need)')
     expect(content).not.toContain('# workspace:')
     expect(content).not.toContain('# services:')
@@ -459,9 +464,9 @@ describe('init command', () => {
       expect(config.services).not.toHaveProperty('memory')
       expect(config.workspace).not.toHaveProperty('agentRules')
       expect(config.services).not.toHaveProperty('mcp')
-      expect(config.plugins).toEqual({
-        auth: [{ package: '@vostride/agent-qa-subscription-auth' }],
-      })
+      expect(config.plugins).toEqual([
+        { name: 'subscription', package: '@vostride/agent-qa-subscription-auth' },
+      ])
       if (platform === 'web' || platform === 'web+android' || platform === 'web+ios') {
         expect(config.services.accessibility).toEqual({
           enabled: true,
@@ -728,31 +733,17 @@ describe('init command', () => {
     expect(mockWriteFileSync.mock.calls.some((call) => (call[0] as string).endsWith('.env.secrets.local'))).toBe(true)
   })
 
-  it('creates an ignored local override template', async () => {
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web'])
+  it.each(['web', 'android', 'ios'] as const)(
+    'a %s init writes no agent-qa.local.yaml and prints no step to edit one',
+    async (platform) => {
+      await runInit(['--dir', '/tmp/test-project', '--platform', platform])
 
-    const localCall = mockWriteFileSync.mock.calls.find(
-      (call) => (call[0] as string).endsWith('agent-qa.local.yaml'),
-    )
-    expect(localCall).toBeDefined()
-
-    const content = localCall![1] as string
-    expect(content.startsWith('# This file is for machine-specific device and app bindings.')).toBe(true)
-    expect(content).toContain('# Keep it out of git.')
-    expect(content).toContain('# Add agent-qa.local.yaml to .gitignore.')
-    expect(content).toContain('devices:\n')
-    expect(content).toContain('apps:\n')
-    expect(content).toContain('  # android-emu:')
-    expect(content).toContain('  #   avd: Pixel_8_API_35')
-    expect(content).toContain('  # example-android:')
-    expect(content).toContain('  #   path: apps/example.apk')
-    expect(content).not.toContain('devices: {}')
-    expect(content).not.toContain('# devices:')
-    expect(content).not.toContain('# apps:')
-
-    const output = consoleOutput()
-    expect(output).toContain('agent-qa.local.yaml')
-  })
+      expect(findWriteCallEndingWith('agent-qa.local.yaml')).toBeUndefined()
+      const plannedPaths = mockPreflightInitPlan.mock.calls[0]![0].map(plan => plan.path)
+      expect(plannedPaths).not.toContain('/tmp/test-project/agent-qa.local.yaml')
+      expect(consoleOutput()).not.toContain('Edit agent-qa.local.yaml')
+    },
+  )
 
   it('places a complete managed .gitignore block after existing entries', async () => {
     mockExistsSync.mockImplementation((p) => {
@@ -805,20 +796,142 @@ describe('init command', () => {
     expect((content.match(/^\.agent-qa\/auth-states\/$/gm) || []).length).toBe(2)
   })
 
-  it('skips if config exists and no --force', async () => {
-    mockExistsSync.mockImplementation((p) => {
-      if ((p as string).endsWith('agent-qa.config.yaml')) return true
-      return false
+  describe('an initialized project', () => {
+    const alreadyInitialized =
+      'Project is already initialized at /tmp/test-project. Use --force to rebuild it.'
+
+    beforeEach(() => {
+      process.exitCode = undefined
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      mockExistsSync.mockImplementation(
+        (p) => p === join('/tmp/test-project', 'agent-qa.config.yaml'),
+      )
     })
 
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web'])
+    afterEach(() => {
+      process.exitCode = undefined
+    })
 
-    // Should not write config file
-    const configCall = mockWriteFileSync.mock.calls.find(
-      (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
-    )
-    expect(configCall).toBeUndefined()
-    expect(consoleOutput()).toContain('Preserved:\n    • agent-qa.config.yaml')
+    it('an initialized project asks nothing and writes nothing without --force', async () => {
+      await runInit(['--dir', '/tmp/test-project'], { isTTY: true })
+
+      expect(mockCheckbox).not.toHaveBeenCalled()
+      expect(mockSelect).not.toHaveBeenCalled()
+      expect(mockInput).not.toHaveBeenCalled()
+      expect(mockWriteConfigMarkerLast).not.toHaveBeenCalled()
+      expect(findWriteCallEndingWith('agent-qa.config.yaml')).toBeUndefined()
+      expect(consoleOutput()).toContain(alreadyInitialized)
+      expect(consoleOutput()).toContain('Preserved:\n    • agent-qa.config.yaml')
+      expect(process.exitCode).toBeUndefined()
+    })
+
+    it('a flag init would refuse is not checked on an initialized project', async () => {
+      await runInit([
+        '--dir',
+        '/tmp/test-project',
+        '--llm',
+        'codex',
+        '--base-url',
+        'https://x.test/v1',
+      ])
+
+      expect(consoleOutput()).toContain(alreadyInitialized)
+      expect(vi.mocked(console.error)).not.toHaveBeenCalled()
+      expect(process.exitCode).toBeUndefined()
+    })
+
+    it('with --force an initialized project is asked the questions and rebuilt', async () => {
+      mockCheckbox.mockResolvedValueOnce(['web'])
+      mockSelect.mockResolvedValueOnce('gemini')
+      mockInput.mockResolvedValueOnce('gemini-3-flash-preview')
+
+      await runInit(['--dir', '/tmp/test-project', '--force'], { isTTY: true })
+
+      expect(mockCheckbox).toHaveBeenCalledTimes(1)
+      expect(consoleOutput()).not.toContain(alreadyInitialized)
+      expect(findWriteCallEndingWith(join('/tmp/test-project', 'agent-qa.config.yaml')))
+        .toBeDefined()
+    })
+
+    it('a folder inside an initialized project is set up as its own project', async () => {
+      await runInit(['--dir', '/tmp/test-project/pkg', '--platform', 'web'])
+
+      expect(findWriteCallEndingWith(join('/tmp/test-project/pkg', 'agent-qa.config.yaml')))
+        .toBeDefined()
+      expect(consoleOutput()).not.toContain('already initialized')
+    })
+  })
+
+  describe('a bug on the write path', () => {
+    const typeError = new TypeError("Cannot read properties of undefined (reading 'mode')")
+
+    it.each([
+      { name: 'a TypeError', thrown: typeError },
+      {
+        name: 'a TypeError the writer wrapped in a plain Error',
+        thrown: new Error(`${typeError.message} Disposition: retained.`, { cause: typeError }),
+      },
+    ])('$name exits 1 with Unexpected error: and the stack', async ({ thrown }) => {
+      mockWriteScaffoldFileAtomic.mockImplementationOnce(() => {
+        throw thrown
+      })
+      const error = await runInit(['--dir', '/tmp/test-project', '--platform', 'web']).catch(
+        (error) => error,
+      )
+      const printed: string[] = []
+
+      const code = reportCliFailure(error, {
+        print: (text) => printed.push(text),
+        printFixed: (line) => printed.push(line),
+        mask: (text) => text,
+        setExitCode: () => {},
+        flush: async () => {},
+        exit: () => {},
+        env: {},
+      })
+
+      expect(code).toBe(1)
+      expect(printed.join('\n')).toMatch(/^Unexpected error: Cannot read properties of undefined/)
+      expect(printed.join('\n')).toMatch(/^\s+at /m)
+    })
+  })
+
+  describe('the folders init refuses', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    function expectNothingAskedOrWritten(): void {
+      expect(mockCheckbox).not.toHaveBeenCalled()
+      expect(mockSelect).not.toHaveBeenCalled()
+      expect(mockInput).not.toHaveBeenCalled()
+      expect(mockPreflightInitPlan).not.toHaveBeenCalled()
+      expect(mockWriteFileSync).not.toHaveBeenCalled()
+    }
+
+    it('the filesystem root is refused with exit 2 before any prompt', async () => {
+      const error = await runInit(['--dir', '/'], { isTTY: true }).catch((error) => error)
+
+      expect(error).toMatchObject({ name: 'CliRefusal', exitCode: 2 })
+      expect(error.message).toBe(
+        "agent-qa init does not set up the filesystem root (/). Run it in the project's folder, or pass --dir <folder>.",
+      )
+      expectNothingAskedOrWritten()
+    })
+
+    it('the home folder is refused with exit 2 before any prompt', async () => {
+      const home = tmpdir()
+      vi.stubEnv('HOME', home)
+      vi.stubEnv('USERPROFILE', home)
+
+      const error = await runInit(['--dir', home], { isTTY: true }).catch((error) => error)
+
+      expect(error).toMatchObject({ name: 'CliRefusal', exitCode: 2 })
+      expect(error.message).toBe(
+        `agent-qa init does not set up your home folder (${home}). Run it in the project's folder, or pass --dir <folder>.`,
+      )
+      expectNothingAskedOrWritten()
+    })
   })
 
   it('overwrites with --force', async () => {
@@ -836,21 +949,7 @@ describe('init command', () => {
     expect(configCall).toBeDefined()
   })
 
-  it('preserves existing local override file without --force', async () => {
-    mockExistsSync.mockImplementation((p) => {
-      if ((p as string).endsWith('agent-qa.local.yaml')) return true
-      return false
-    })
-
-    await runInit(['--dir', '/tmp/test-project', '--platform', 'web'])
-
-    const localCall = mockWriteFileSync.mock.calls.find(
-      (call) => (call[0] as string).endsWith('agent-qa.local.yaml'),
-    )
-    expect(localCall).toBeUndefined()
-  })
-
-  it('overwrites existing local override file with --force', async () => {
+  it('init --force does not rewrite a leftover agent-qa.local.yaml', async () => {
     mockExistsSync.mockImplementation((p) => {
       if ((p as string).endsWith('agent-qa.config.yaml')) return true
       if ((p as string).endsWith('agent-qa.local.yaml')) return true
@@ -859,10 +958,8 @@ describe('init command', () => {
 
     await runInit(['--dir', '/tmp/test-project', '--platform', 'web', '--force'])
 
-    const localCall = mockWriteFileSync.mock.calls.find(
-      (call) => (call[0] as string).endsWith('agent-qa.local.yaml'),
-    )
-    expect(localCall).toBeDefined()
+    expect(findWriteCallEndingWith('agent-qa.local.yaml')).toBeUndefined()
+    expect(findWriteCallEndingWith('agent-qa.config.yaml')).toBeDefined()
   })
 
   describe('credential-file scaffold policy', () => {
@@ -977,13 +1074,11 @@ describe('init command', () => {
         const path = p as string
         return path === envPath || path === secretsPath
           || path.endsWith('agent-qa.config.yaml')
-          || path.endsWith('agent-qa.local.yaml')
           || path.endsWith('hooks.yaml')
       })
 
       await runInit(['--dir', projectDir, '--platform', 'web', '--force'])
 
-      expect(findWriteCallEndingWith('agent-qa.local.yaml')).toBeDefined()
       expect(findWriteCallEndingWith('hooks.yaml')).toBeDefined()
       expect(findWriteCallEndingWith('agent-qa.config.yaml')).toBeDefined()
     })
@@ -1291,7 +1386,6 @@ skills/.staging/
       '/tmp/test-project/agent-qa-knowledge/README.md',
       '/tmp/test-project/agent-qa-knowledge/policies/global.md',
       '/tmp/test-project/agent-qa.config.yaml',
-      '/tmp/test-project/agent-qa.local.yaml',
       '/tmp/test-project/hooks.yaml',
       '/tmp/test-project/package.json',
       '/tmp/test-project/scripts/examples/make-shipping-address.mjs',

@@ -7,8 +7,8 @@ export {
   UseSchema,
   AuthStateUseSchema,
   PluginsSchema,
-  AuthPluginDeclarationSchema,
-  ProviderPluginDeclarationSchema,
+  PluginEntrySchema,
+  type PluginEntry,
   MobileAppStateSchema,
   MobileUseSchema,
   MobileUseOverrideSchema,
@@ -27,6 +27,17 @@ export {
 } from './config-schema.js'
 
 export {
+  RemoteEntrySchema,
+  UrlRemoteEntrySchema,
+  PluginRemoteEntrySchema,
+  isPluginRemoteEntry,
+  isUrlRemoteEntry,
+  type RemoteEntry,
+  type UrlRemoteEntry,
+  type PluginRemoteEntry,
+} from './remote-schema.js'
+
+export {
   DashboardConfigSchema,
   McpConfigSchema,
   CacheConfigSchema,
@@ -40,7 +51,14 @@ export {
 
 export { TargetSchema, DeviceProfileSchema } from './registry-schema.js'
 
-export { refuseRetiredLocalBindings } from './retired-keys.js'
+export {
+  LOCAL_FILE_NAME,
+  RETIRED_LOCAL_FILE_MESSAGE,
+} from './retired-keys.js'
+
+export { leftoverLocalFileRefusal } from './leftover-local-file.js'
+
+export { configShapeScan } from './config-shape-scan.js'
 
 export {
   CaptureConfigSchema,

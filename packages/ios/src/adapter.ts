@@ -8,9 +8,15 @@ import type {
   ConsoleLogEntry,
   Direction,
   InterimNode,
+  IOSDeviceType,
   LiveStreamCapability,
   PlatformAdapter,
   PlatformConfig,
+  RemoteDeviceConfig,
+  RemoteHeartbeat,
+  RemoteLease,
+  RemoteLeaseEnded,
+  RemotePlaceEvidence,
   ScrollPrimitives,
   SwipeSignal,
 } from '@vostride/agent-qa-runner'
@@ -18,25 +24,35 @@ import {
   assertNever,
   buildScreenState,
   compareFillReread,
+  createRemoteHeartbeat,
   createSnapshotLiveStream,
+  isPluginRemote,
+  REMOTE_RELEASE_BOUND_MS,
   resolveAppName,
   runDirectionScroll,
   runToEndScroll,
   runUntilVisibleLoop,
 } from '@vostride/agent-qa-runner'
 import type { Ref, ScreenState } from '@vostride/agent-qa-schema'
+import { formatRemoteOrigin, remoteOrigin } from '@vostride/agent-qa-schema'
 import {
   KEY_MAP,
   MobileElementResolver,
   MobileSetupError,
   buildRefEntries,
+  capabilityValue,
+  classifyCommandFailure,
   computeFingerPositions,
   computePinch,
   computeSwipe,
   deriveMobileScroll,
   IOS_EDITABLE_TYPES,
+  iosDeviceTypeFromInfo,
+  isUnknownCommandError,
   parseMobileSource,
   printRunText,
+  remoteDeviceLostSentence,
+  scrubDeviceEndpoint,
   warnIfOutOfBounds,
 } from '@vostride/agent-qa-core'
 import type { MobileRefMap } from '@vostride/agent-qa-core'
@@ -44,10 +60,12 @@ import { alignToWindow } from '@vostride/agent-qa-runner-local'
 import {
   IOS_SNAPSHOT_FALLBACK_DEPTH,
   IOS_SNAPSHOT_MAX_DEPTH,
+  browserModeName,
   createIOSSession,
+  createPluginIOSSession,
   resolveIOSSnapshotDepth,
 } from './session.js'
-import type { IOSAdapterConfig } from './types.js'
+import type { IOSAdapterConfig, IOSAdapterOptions } from './types.js'
 
 const IOS_NATIVE_SELECT_TYPES = new Set([
   'XCUIElementTypePickerWheel',
@@ -93,7 +111,7 @@ type TextBox = { coordinates: { x: number; y: number }; boundingBox: Rect }
 const MULTI_LINE_SUBMIT_NOTICE =
   'submit not sent: Return would add a new line in this multi-line field; tap its send or submit control'
 
-// pressButton: schema button → XCUITest hardware name. Volume buttons are real-devices-only.
+// pressButton: schema button → XCUITest hardware name. A simulator has no volume buttons.
 const IOS_BUTTON_NAME: Record<'home' | 'volumeUp' | 'action', string> = {
   home: 'home',
   volumeUp: 'volumeup',
@@ -107,6 +125,71 @@ const IOS_SAFARI_BUNDLE_ID = 'com.apple.mobilesafari'
 const IOS_SPRINGBOARD_BUNDLE_ID = 'com.apple.springboard'
 const IOS_LINK_HANDOFF_POLLS = 12
 const IOS_LINK_HANDOFF_PAUSE_MS = 500
+
+type TouchDriver = Pick<WebdriverIO.Browser, 'releaseActions'>
+
+// The touch has run once perform resolves; a server that does not know the release has none to do.
+async function releaseTouch(driver: TouchDriver): Promise<void> {
+  try {
+    await driver.releaseActions()
+  } catch (error) {
+    if (!isUnknownCommandError(error)) throw error
+  }
+}
+
+async function performTouch(
+  driver: TouchDriver,
+  chain: { perform: (skipRelease?: boolean) => Promise<void> },
+): Promise<void> {
+  await chain.perform(true)
+  await releaseTouch(driver)
+}
+
+async function performTouches(
+  driver: TouchDriver & Pick<WebdriverIO.Browser, 'performActions'>,
+  chains: ReadonlyArray<{ toJSON: () => unknown }>,
+): Promise<void> {
+  await driver.performActions(
+    chains.map((chain) => chain.toJSON()) as Parameters<WebdriverIO.Browser['performActions']>[0],
+  )
+  await releaseTouch(driver)
+}
+
+// XCUITest's own refusals name the device type a command needs; a server's unknown verb names none.
+function unsupportedOn(err: unknown, deviceType: IOSDeviceType | undefined): string | undefined {
+  const text = errorNameAndMessage(err)
+  if (/can only be performed on Simulator/i.test(text)) return 'real device'
+  if (/can only be performed on a real device/i.test(text)) return 'simulator'
+  const name = err instanceof Error ? err.name : ''
+  if (!isUnknownCommandError(err) && name !== 'unsupported operation') return undefined
+  return deviceType === 'simulator' || deviceType === 'real device' ? deviceType : 'device'
+}
+
+function actionVerb(action: ActionsFor<'ios'>): string {
+  if (action.type === 'pressButton') return `pressButton "${action.button}"`
+  if (action.type === 'executeScript') return `executeScript "${action.command}"`
+  return action.type
+}
+
+function remoteOriginText(url: string): string {
+  const origin = remoteOrigin(url)
+  return origin ? formatRemoteOrigin(origin) : 'invalid url'
+}
+
+// A healthy server's delete may take longer than a signal's release, but far less than a command.
+const CLEANUP_RELEASE_BOUND_MS = 10 * REMOTE_RELEASE_BOUND_MS
+
+function withinBound(work: Promise<unknown>, boundMs: number): Promise<void> {
+  return new Promise<void>((settled) => {
+    const timer = setTimeout(settled, boundMs)
+    timer.unref?.()
+    const done = (): void => {
+      clearTimeout(timer)
+      settled()
+    }
+    work.then(done, done)
+  })
+}
 
 function firstErrorLine(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).split('\n')[0]
@@ -285,6 +368,8 @@ function parseIOSSyslogLine(message: string, timestamp: number, bundleId: string
 export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   readonly platform = 'ios' as const
 
+  constructor(private readonly options: IOSAdapterOptions = {}) {}
+
   private driver: WebdriverIO.Browser | null = null
   private lastRefs: MobileRefMap = {}
   private config: IOSAdapterConfig | null = null
@@ -298,38 +383,129 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   private consoleDrainIndex = 0
   private captureConsole = true
   private bundleId: string | null = null
-  // `null` means not yet enumerated, or unavailable because simulators throw on `listApps`.
+  // `null` means not yet enumerated, or unavailable: a simulator has no `listApps`.
   private appRegistry: AppRegistryEntry[] | null = null
+  // Read once per session from `mobile: deviceInfo`; undefined before setup.
+  private deviceType: IOSDeviceType | undefined
   private sessionSnapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
   private snapshotDepth = IOS_SNAPSHOT_MAX_DEPTH
   private readsAtLoweredDepth = 0
   private snapshotDepthWarned = false
+  private remote: RemoteDeviceConfig | undefined
+  private deviceName = 'ios'
+  private place: RemotePlaceEvidence | undefined
+  private heartbeat: RemoteHeartbeat | undefined
+  private unregisterRelease: (() => void) | undefined
+  private released: Promise<void> | undefined
+  // Set by the first command a remote leaves unanswered or ends; nothing is sent again after it.
+  private disconnectKind: 'lost' | 'ended' | undefined
+  private disconnectError: unknown
+  private lease: RemoteLease | undefined
+  private releaseLease: (() => Promise<void>) | undefined
+  private unwatchLease: (() => void) | undefined
+  // Set when the plugin that leased this session stopped under the test.
+  private leaseEnded: RemoteLeaseEnded | undefined
+  private link: string | undefined
 
   async setup(config: PlatformConfig): Promise<void> {
     this.config = config as IOSAdapterConfig
     this.captureConsole = config.logCapture?.console !== false
-    this.bundleId = this.config.bundleId ?? (config.device?.match?.bundleId as string | undefined) ?? null
+    this.bundleId = this.config.bundleId ?? null
     this.sessionSnapshotDepth = resolveIOSSnapshotDepth()
     this.snapshotDepth = this.sessionSnapshotDepth
     this.readsAtLoweredDepth = 0
     this.snapshotDepthWarned = false
+    this.deviceName = config.device?.name ?? 'ios'
+    this.disconnectKind = undefined
+    this.disconnectError = undefined
+    this.released = undefined
+    this.deviceType = undefined
+    this.leaseEnded = undefined
+    this.link = undefined
+    this.remote = undefined
 
-    this.driver = await createIOSSession(this.config)
+    const sessionOptions = {
+      connectionSecrets: this.options.connectionSecrets,
+      secretsFile: this.options.secretsFile,
+      refusalMemory: this.options.refusalMemory,
+      mask: this.options.mask,
+      commandBoundMs: this.options.timing?.commandBoundMs,
+    }
+    const configured = config.device?.remote
+    if (configured !== undefined && isPluginRemote(configured)) {
+      const leased = await createPluginIOSSession(this.config, configured, {
+        ...sessionOptions,
+        pluginSessions: this.options.pluginSessions,
+      })
+      this.driver = leased.driver
+      this.remote = leased.remote
+      this.lease = leased.lease
+      this.releaseLease = leased.release
+    } else {
+      this.remote = configured
+      this.driver = await createIOSSession(this.config, sessionOptions)
+    }
+    const remote = this.remote
+    if (remote === undefined) {
+      this.place = { place: 'here' }
+      this.deviceType = await this.probeDeviceType(this.driver)
+      return this.prepareSession(config)
+    }
+    await this.openedRemote(this.driver, remote)
+    this.deviceType = await this.probeDeviceType(this.driver)
+    this.refuseAfterDisconnect()
+    try {
+      await this.prepareSession(config)
+    } catch (error) {
+      throw this.withoutEndpoint(error)
+    }
+    this.heartbeat?.start()
+  }
 
+  // One probe per session; a failed call or an unreadable reply is unknown, never a guess.
+  private async probeDeviceType(driver: WebdriverIO.Browser): Promise<IOSDeviceType> {
+    try {
+      return iosDeviceTypeFromInfo(
+        await this.holdingHeartbeat(() => driver.execute('mobile: deviceInfo')),
+      )
+    } catch {
+      return 'unknown'
+    }
+  }
+
+  // A real iPhone keeps its app data unless the session reinstalls the app.
+  private appDataNotes(): string[] {
+    const config = this.config
+    if (config?.appState !== 'reset' || this.deviceType !== 'real device') return []
+    const requested = (this.driver as { requestedCapabilities?: unknown } | null)
+      ?.requestedCapabilities
+    const capabilities =
+      typeof requested === 'object' && requested !== null
+        ? ((requested as { alwaysMatch?: Record<string, unknown> }).alwaysMatch ??
+          (requested as Record<string, unknown>))
+        : {}
+    if (capabilityValue(capabilities, 'app') !== undefined) return []
+    const target = config.targetName ?? 'ios'
+    return [
+      `App data was not cleared: device ${this.deviceName} is a real iPhone, and target ${target} has no app.ref to reinstall from.`,
+    ]
+  }
+
+  private async prepareSession(config: PlatformConfig): Promise<void> {
+    const driver = this.driver
     const bundleId = this.bundleId
-    if (bundleId) {
-      try {
-        await this.driver.activateApp(bundleId)
-      } catch (err) {
-        throw new MobileSetupError({
-          category: 'app-launch',
-          message: `Failed to launch iOS app "${bundleId}": ${err instanceof Error ? err.message : String(err)}`,
-          platform: 'ios',
-          deviceName: config.device?.name,
-          appId: bundleId,
-          cause: err,
-        })
-      }
+    if (!driver || !bundleId) return
+    try {
+      await this.holdingHeartbeat(() => driver.activateApp(bundleId))
+    } catch (err) {
+      throw new MobileSetupError({
+        category: 'app-launch',
+        message: `Failed to launch iOS app "${bundleId}": ${err instanceof Error ? err.message : String(err)}`,
+        platform: 'ios',
+        deviceName: config.device?.name,
+        appId: bundleId,
+        cause: err,
+      })
     }
   }
 
@@ -337,14 +513,41 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     try { await this.liveStreamCapability?.stop() } catch { /* best-effort */ }
     this.liveStreamCapability = undefined
 
-    try {
-      if (this.driver) {
-        await this.driver.deleteSession()
+    this.heartbeat?.stop()
+    this.unregisterRelease?.()
+    this.unregisterRelease = undefined
+    this.unwatchLease?.()
+    this.unwatchLease = undefined
+    const driver = this.driver
+    if (driver && this.remote !== undefined) {
+      // An ended session has nothing to delete; a lost one gets only the release bound.
+      if (this.disconnectKind === 'lost') {
+        await withinBound(this.releaseRemote(driver), REMOTE_RELEASE_BOUND_MS)
+      } else if (this.disconnectKind === undefined) {
+        const boundMs = this.options.timing?.cleanupReleaseBoundMs ?? CLEANUP_RELEASE_BOUND_MS
+        await withinBound(this.releaseRemote(driver), boundMs)
       }
-    } catch {
-      // session may already be closed
+    } else {
+      try {
+        if (driver) {
+          await driver.deleteSession()
+        }
+      } catch {
+        // session may already be closed
+      }
     }
+    // A leased device goes back to its plugin after its session is deleted.
+    const releaseLease = this.releaseLease
+    this.lease = undefined
+    this.releaseLease = undefined
+    this.link = undefined
+    this.leaseEnded = undefined
+    await releaseLease?.()
     this.driver = null
+    this.heartbeat = undefined
+    this.place = undefined
+    this.remote = undefined
+    this.deviceType = undefined
     this.lastRefs = {}
     this.config = null
     this.consoleLogs = []
@@ -361,11 +564,25 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
   // `takeScreenshot()` only: `screenshot()` switches the Appium context mid-step.
   get liveStream(): LiveStreamCapability {
-    this.liveStreamCapability ??= createSnapshotLiveStream({ capture: () => this.captureScreenshot() })
+    this.liveStreamCapability ??= createSnapshotLiveStream({
+      capture: () => this.holdingHeartbeat(() => this.captureScreenshot()),
+    })
     return this.liveStreamCapability
   }
 
   async observe(): Promise<ScreenState> {
+    if (!this.driver) {
+      throw new Error('IOSPlatformAdapter not initialized — call setup() first')
+    }
+    this.refuseAfterDisconnect()
+    try {
+      return await this.holdingHeartbeat(() => this.observeScreen())
+    } catch (error) {
+      throw this.withoutEndpoint(error)
+    }
+  }
+
+  private async observeScreen(): Promise<ScreenState> {
     if (!this.driver) {
       throw new Error('IOSPlatformAdapter not initialized — call setup() first')
     }
@@ -413,15 +630,31 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     if (!this.driver) {
       throw new Error('IOSPlatformAdapter not initialized — call setup() first')
     }
+    const lost = this.disconnectSummary
+    if (lost !== undefined) return { success: false, error: lost }
+    const result = await this.holdingHeartbeat(() => this.executeOnDevice(action))
+    if (this.remote === undefined || result.error === undefined) return result
+    return { ...result, error: scrubDeviceEndpoint(result.error, this.remote) }
+  }
 
+  private async executeOnDevice(action: ActionsFor<'ios'>): Promise<ActionResult> {
     try {
       return await this.executeAction(action)
     } catch (err) {
+      this.remoteCommandFailed(err)
+      const unsupported =
+        this.disconnectKind === undefined ? unsupportedOn(err, this.deviceType) : undefined
+      if (unsupported !== undefined) {
+        const error = `${actionVerb(action)} is not supported on this iOS ${unsupported}.`
+        return { success: false, error }
+      }
       let screenshot: Buffer | undefined
-      try {
-        screenshot = await this.captureScreenshot()
-      } catch {
-        // ignore screenshot failure
+      if (this.disconnectKind === undefined) {
+        try {
+          screenshot = await this.captureScreenshot()
+        } catch {
+          // ignore screenshot failure
+        }
       }
       return {
         success: false,
@@ -432,6 +665,15 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   }
 
   async screenshot(): Promise<Buffer | undefined> {
+    this.refuseAfterDisconnect()
+    try {
+      return await this.holdingHeartbeat(() => this.screenshotScreen())
+    } catch (error) {
+      throw this.withoutEndpoint(error)
+    }
+  }
+
+  private async screenshotScreen(): Promise<Buffer | undefined> {
     try { await this.ensureContext('NATIVE_APP') } catch { /* best-effort */ }
     const raw = await this.captureScreenshot()
     if (!raw || !this.driver) return raw
@@ -446,15 +688,186 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     }
   }
 
+  // Where this test ran; undefined before setup and after cleanup.
+  get placeEvidence(): RemotePlaceEvidence | undefined {
+    const place = this.place
+    const deviceType = this.deviceType
+    if (place === undefined) return undefined
+    if (place.place === 'here') return deviceType === undefined ? place : { ...place, deviceType }
+    if (place.protocol !== 'appium') return place
+    const notes = this.appDataNotes()
+    const plugin = this.lease?.plugin
+    const failureKind = this.leaseEnded?.kind ?? this.disconnectKind
+    return {
+      ...place,
+      ...(deviceType !== undefined ? { deviceType } : {}),
+      ...(plugin !== undefined ? { plugin } : {}),
+      ...(plugin !== undefined && this.link !== undefined ? { link: this.link } : {}),
+      ...(this.heartbeat !== undefined ? { heartbeat: this.heartbeat.counts() } : {}),
+      ...(failureKind !== undefined ? { failureKind } : {}),
+      ...(notes.length > 0 ? { notes } : {}),
+    }
+  }
+
+  // The device a plugin leased for this test; undefined on a url remote, here, and after cleanup.
+  get remoteLease(): RemoteLease | undefined {
+    return this.lease
+  }
+
+  // The session's page at the plugin's vendor, from started or else the acquire's answer.
+  get remoteLink(): string | undefined {
+    return this.link
+  }
+
+  get isBrowserDisconnected(): boolean {
+    return this.disconnectKind !== undefined
+  }
+
+  // The sentence a test whose remote session was lost or ended fails with.
+  get disconnectSummary(): string | undefined {
+    const remote = this.remote
+    const kind = this.disconnectKind
+    if (remote === undefined || kind === undefined) return undefined
+    if (this.leaseEnded !== undefined) return this.leaseEnded.message
+    return remoteDeviceLostSentence(kind, {
+      remote,
+      device: this.deviceName,
+      ...(this.disconnectError !== undefined ? { error: this.disconnectError } : {}),
+    })
+  }
+
+  private async openedRemote(
+    driver: WebdriverIO.Browser,
+    remote: RemoteDeviceConfig,
+  ): Promise<void> {
+    // Registered before any further request, so a signal releases a session that just opened;
+    // a leased device goes back to its plugin after its session is deleted.
+    const sessions = this.options.sessions
+    const releaseLease = this.releaseLease
+    if (sessions !== undefined) {
+      this.unregisterRelease = sessions.register(() =>
+        releaseLease === undefined
+          ? this.releaseRemote(driver)
+          : this.releaseRemote(driver).then(releaseLease, releaseLease),
+      )
+    }
+    // The plugin host registers the lease's release too, so the lease itself waits for the delete
+    // whichever path releases it first. An ended session has nothing to delete.
+    this.lease?.beforeRelease(() =>
+      this.disconnectKind === 'ended' ? Promise.resolve() : this.releaseRemote(driver),
+    )
+    driver.on('result', (event: { command?: string; result?: unknown }) => {
+      if (this.driver !== driver) return
+      if (event.command === 'deleteSession' || event.command === 'status') return
+      const result = event.result
+      if (typeof result === 'object' && result !== null && 'error' in result) {
+        this.remoteCommandFailed((result as { error: unknown }).error)
+      }
+    })
+    // A server's status describes the server, which may be a hub in front of the session's Appium,
+    // so only a plugin's started answer names the session's version.
+    const lease = this.lease
+    let appiumVersion: string | undefined
+    if (lease !== undefined) {
+      this.watchLease(lease, driver)
+      let started: { link?: string; appiumVersion?: string } = {}
+      try {
+        started = await lease.started(driver.sessionId ? { sessionId: driver.sessionId } : {})
+      } catch {
+        // A plugin's started is a courtesy; the session it leased is already open.
+      }
+      this.link = started.link ?? lease.link
+      appiumVersion = started.appiumVersion
+    }
+    this.place = {
+      place: 'remote',
+      name: remote.name,
+      protocol: 'appium',
+      origin: remoteOriginText(remote.url),
+      device: this.deviceName,
+      ...(appiumVersion !== undefined ? { appiumVersion } : {}),
+      ...(driver.sessionId ? { sessionId: driver.sessionId } : {}),
+    }
+    const intervalMs = this.options.timing?.heartbeatIntervalMs
+    // Appium answers the timeouts from memory: it touches neither the device nor the app.
+    this.heartbeat = createRemoteHeartbeat({
+      ...(intervalMs !== undefined ? { intervalMs } : {}),
+      beat: () => driver.getTimeouts(),
+    })
+  }
+
+  // A plugin that stopped took its device with it, so the test ends as if the session was lost.
+  private watchLease(lease: RemoteLease, driver: WebdriverIO.Browser): void {
+    this.unwatchLease?.()
+    this.unwatchLease = lease.onEnded((ended) => {
+      if (this.driver !== driver || this.leaseEnded !== undefined) return
+      this.leaseEnded = ended
+      this.disconnectKind = 'lost'
+      this.heartbeat?.stop()
+    })
+  }
+
+  // Deletes the session once, whether a signal or cleanup asks first; the server keeps running.
+  private releaseRemote(driver: WebdriverIO.Browser): Promise<void> {
+    this.heartbeat?.stop()
+    this.released ??= driver.deleteSession()
+    return this.released
+  }
+
+  private remoteCommandFailed(error: unknown): void {
+    if (this.remote === undefined || this.disconnectKind !== undefined) return
+    const kind = classifyCommandFailure(error)
+    if (kind === undefined) return
+    this.disconnectKind = kind
+    this.disconnectError = error
+    this.heartbeat?.stop()
+  }
+
+  private refuseAfterDisconnect(): void {
+    const lost = this.disconnectSummary
+    if (lost !== undefined) throw new Error(lost)
+  }
+
+  // Every device operation holds the heartbeat off, so a beat never overlaps it.
+  private async holdingHeartbeat<T>(work: () => Promise<T>): Promise<T> {
+    const heartbeat = this.heartbeat
+    if (heartbeat === undefined) return work()
+    await heartbeat.enter()
+    try {
+      return await work()
+    } finally {
+      heartbeat.leave()
+    }
+  }
+
+  // WebdriverIO's errors repeat the full request url, with its path and session id.
+  private withoutEndpoint(error: unknown): unknown {
+    const remote = this.remote
+    if (remote === undefined) return error
+    if (typeof error === 'string') return scrubDeviceEndpoint(error, remote)
+    let current: unknown = error
+    for (let depth = 0; current instanceof Error && depth < 8; depth += 1) {
+      current.message = scrubDeviceEndpoint(current.message, remote)
+      if (typeof current.stack === 'string') {
+        current.stack = scrubDeviceEndpoint(current.stack, remote)
+      }
+      current = current.cause
+    }
+    return error
+  }
+
   // ---------------------------------------------------------------------------
   // Device log capture
   // ---------------------------------------------------------------------------
 
   async pollDeviceLogs(): Promise<void> {
     if (!this.captureConsole) return
-    if (!this.driver) return
+    if (!this.driver || this.disconnectKind !== undefined) return
+    const driver = this.driver
     try {
-      const logs = await this.driver.getLogs('syslog') as { message: string; timestamp?: number; level?: string }[]
+      const logs = await this.holdingHeartbeat(
+        () => driver.getLogs('syslog') as Promise<{ message: string; timestamp?: number; level?: string }[]>,
+      )
       for (const entry of logs) {
         const parsed = parseIOSSyslogLine(entry.message, entry.timestamp ?? Date.now(), this.bundleId)
         if (parsed) {
@@ -523,8 +936,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   }
 
   private isBrowserSession(): boolean {
-    const browserName = this.config?.device?.match?.browserName
-    return typeof browserName === 'string' && browserName.trim().length > 0
+    return this.config !== null && browserModeName(this.config) !== undefined
   }
 
   private async ensureContext(target: string): Promise<void> {
@@ -602,12 +1014,12 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   }
 
   private async tapAt(point: { x: number; y: number }): Promise<void> {
-    await this.driver!.action('pointer', { parameters: { pointerType: 'touch' } })
+    const driver = this.driver!
+    await performTouch(driver, driver.action('pointer', { parameters: { pointerType: 'touch' } })
       .move({ x: Math.round(point.x), y: Math.round(point.y) })
       .down({ button: 0 })
       .pause(IOS_TAP_HOLD_MS)
-      .up({ button: 0 })
-      .perform()
+      .up({ button: 0 }))
   }
 
   private async readRect(elementId: string): Promise<Rect | undefined> {
@@ -838,12 +1250,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           sy = Math.round(center.y)
         }
         const pts = computeSwipe(sx, sy, fingerDirectionFor(direction), distance)
-        await driver.action('pointer', { parameters: { pointerType: 'touch' } })
+        await performTouch(driver, driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: pts.startX, y: pts.startY })
           .down({ button: 0 })
           .move({ x: pts.endX, y: pts.endY, duration: 300 })
-          .up({ button: 0 })
-          .perform()
+          .up({ button: 0 }))
         // XCUITest/WDA report no movement or boundary for a swipe or a direction scroll.
         return 'unknown'
       },
@@ -867,7 +1278,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
     }
   }
 
-  // Simulators throw on `listApps`, so `appName` needs a real device; `bundleId` works without it.
+  // A simulator has no `listApps`, so `appName` needs a real device; `bundleId` works without it.
   private async openApp(action: { appName: string } | { bundleId: string }): Promise<ActionResult> {
     const driver = this.driver!
     const registry = await this.ensureAppRegistry()
@@ -963,14 +1374,16 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
   /** Return the cached registry, enumerating once on first use. Failed enumeration returns null (uncached). */
   private async ensureAppRegistry(): Promise<AppRegistryEntry[] | null> {
     if (this.appRegistry !== null) return this.appRegistry
+    if (this.deviceType === 'simulator') return null
     const enumerated = await this.enumerateApps()
     if (enumerated !== null) this.appRegistry = enumerated
     return enumerated
   }
 
-  // Driver only, no simctl; `listApps` throws on simulators, which leaves enumeration unavailable.
+  // Driver only, no simctl; a device of unknown type that refuses `listApps` leaves it unavailable.
   private async enumerateApps(): Promise<AppRegistryEntry[] | null> {
     const driver = this.driver!
+    if (this.deviceType === 'simulator') return null
     try {
       const raw = await driver.execute('mobile: listApps')
       return this.mapListApps(raw)
@@ -1166,12 +1579,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         warnIfOutOfBounds({ x: pts.endX, y: pts.endY }, { width, height }, 'swipe')
         const swipeDuration = action.durationMs
 
-        await driver.action('pointer', { parameters: { pointerType: 'touch' } })
+        await performTouch(driver, driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: pts.startX, y: pts.startY })
           .down({ button: 0 })
           .move({ x: pts.endX, y: pts.endY, duration: swipeDuration })
-          .up({ button: 0 })
-          .perform()
+          .up({ button: 0 }))
         return {
           success: true,
           startCoordinates: { x: pts.startX, y: pts.startY },
@@ -1197,7 +1609,7 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         const { finger1Start, finger1End, finger2Start, finger2End } = computePinch(pcx, pcy, action.scale)
         const pinchDuration = 500
 
-        await driver.actions([
+        await performTouches(driver, [
           driver.action('pointer', { parameters: { pointerType: 'touch' } })
             .move({ x: Math.round(finger1Start.x), y: Math.round(finger1Start.y) })
             .down({ button: 0 })
@@ -1228,7 +1640,8 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         warnIfOutOfBounds({ x: mtcx, y: mtcy }, { width: mtW, height: mtH }, 'multiTap')
 
         const positions = computeFingerPositions(mtcx, mtcy, action.fingers)
-        await driver.actions(
+        await performTouches(
+          driver,
           positions.map(pos =>
             driver.action('pointer', { parameters: { pointerType: 'touch' } })
               .move({ x: Math.round(pos.x), y: Math.round(pos.y) })
@@ -1242,12 +1655,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
 
       case 'longpress': {
         const { center } = resolver.resolve(action.ref)
-        await driver.action('pointer', { parameters: { pointerType: 'touch' } })
+        await performTouch(driver, driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: Math.round(center.x), y: Math.round(center.y) })
           .down({ button: 0 })
           .pause(action.duration ?? 1000)
-          .up({ button: 0 })
-          .perform()
+          .up({ button: 0 }))
         return { success: true }
       }
 
@@ -1458,13 +1870,12 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       case 'drag': {
         const from = resolver.resolve(action.fromRef)
         const to = resolver.resolve(action.toRef)
-        await driver.action('pointer', { parameters: { pointerType: 'touch' } })
+        await performTouch(driver, driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: Math.round(from.center.x), y: Math.round(from.center.y) })
           .down({ button: 0 })
           .pause(300)
           .move({ x: Math.round(to.center.x), y: Math.round(to.center.y), duration: 500 })
-          .up({ button: 0 })
-          .perform()
+          .up({ button: 0 }))
         return { success: true }
       }
 
@@ -1472,14 +1883,13 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
         const { center, bounds } = resolver.resolve(action.ref)
         const x = Math.round(center.x)
         const y = Math.round(center.y)
-        await driver.action('pointer', { parameters: { pointerType: 'touch' } })
+        await performTouch(driver, driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x, y })
           .down({ button: 0 })
           .up({ button: 0 })
           .pause(50)
           .down({ button: 0 })
-          .up({ button: 0 })
-          .perform()
+          .up({ button: 0 }))
         return { success: true, coordinates: center, boundingBox: bounds }
       }
 
@@ -1513,19 +1923,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
       // --- iOS hardware / native verbs ---
 
       case 'pressButton': {
-        // mobile: pressButton maps the schema button to the XCUITest hardware name. Volume buttons
-        // are real-devices-only; on a simulator session `mobile: listApps` is unavailable (the 359
-        // listApps precedent) — probe it and mint a §7.1 degradation error rather than crash.
         const name = IOS_BUTTON_NAME[action.button]
-        if (VOLUME_BUTTONS.has(action.button)) {
-          const registry = await this.enumerateApps()
-          if (registry === null) {
-            return {
-              success: false,
-              error:
-                `pressButton "${action.button}" (a volume hardware button) is only supported on real devices; `
-                + `this appears to be an iOS simulator session, where volume buttons are unavailable. Run against a real device to use volume controls.`,
-            }
+        if (VOLUME_BUTTONS.has(action.button) && this.deviceType === 'simulator') {
+          return {
+            success: false,
+            error: `pressButton "${action.button}" is not supported on this iOS simulator.`,
           }
         }
         await driver.execute('mobile: pressButton', { name })
@@ -1586,12 +1988,11 @@ export class IOSPlatformAdapter implements PlatformAdapter<'ios'> {
           case 'bottom':
             start = { x: midX, y: height - 1 }; end = { x: midX, y: Math.round(height * 0.4) }; break
         }
-        await driver.action('pointer', { parameters: { pointerType: 'touch' } })
+        await performTouch(driver, driver.action('pointer', { parameters: { pointerType: 'touch' } })
           .move({ x: start.x, y: start.y })
           .down({ button: 0 })
           .move({ x: end.x, y: end.y, duration: 300 })
-          .up({ button: 0 })
-          .perform()
+          .up({ button: 0 }))
         return { success: true, startCoordinates: start, endCoordinates: end }
       }
 

@@ -11,6 +11,15 @@
     "test": {
       "dependsOn": ["build"]
     },
+    "agent-qa#test": {
+      "dependsOn": [
+        "build",
+        "@vostride/agent-qa-plugin-kernel#build",
+        "@vostride/agent-qa-plugin-browserstack#build",
+        "@vostride/agent-qa-plugin-steel#build",
+        "@vostride/agent-qa-plugin-hyperbrowser#build"
+      ]
+    },
     "@vostride/agent-qa-arch#test": {
       "dependsOn": [
         "^build",
@@ -18,6 +27,7 @@
         "@vostride/agent-qa-schema#build",
         "@vostride/agent-qa-agent#build",
         "@vostride/agent-qa-core#build",
+        "@vostride/agent-qa-plugin-kit#build",
         "agent-qa#build"
       ],
       "cache": false
@@ -28,6 +38,7 @@
         "@vostride/agent-qa-schema#build",
         "@vostride/agent-qa-agent#build",
         "@vostride/agent-qa-core#build",
+        "@vostride/agent-qa-plugin-kit#build",
         "agent-qa#build"
       ]
     },

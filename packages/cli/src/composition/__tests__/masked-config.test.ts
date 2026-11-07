@@ -1,7 +1,7 @@
 // The `config.get` view, asserted on the builder itself.
 //
-// Every value is rendered as written and passed through the host's declared-secret mask, and
-// nothing else: no path map, no URL reduction, no placeholder.
+// Every value is rendered as written and passed through the host's declared-secret mask. The one
+// reduction is a remote, which shows only its name, protocol and origin.
 
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { MASKED_RESOLVED_CONFIG_SCHEMA_VERSION } from '@vostride/agent-qa-schema'
@@ -30,15 +30,15 @@ describe('buildMaskedResolvedConfig', () => {
     const config = buildMaskedResolvedConfig({
       configPath: 'agent-qa.config.yaml',
       resolved: {
-        plugins: { auth: [{ package: SCOPED_PACKAGE_NAME }] },
+        plugins: [{ name: 'subscription', package: SCOPED_PACKAGE_NAME }],
         knowledge: { dir: 'agent-qa-knowledge' },
       },
       layers: [],
       mask: declaredMask,
     })
 
-    expect(config.entries.find((entry) => entry.key === 'plugins.auth.0.package')).toEqual({
-      key: 'plugins.auth.0.package',
+    expect(config.entries.find((entry) => entry.key === 'plugins.0.package')).toEqual({
+      key: 'plugins.0.package',
       value: SCOPED_PACKAGE_NAME,
       source: 'default',
       masked: false,
@@ -99,7 +99,7 @@ describe('buildMaskedResolvedConfig', () => {
       resolved: {
         workspace: { testMatch: [GLOB_WILDCARD_VALUE], testPathIgnore: [IGNORE_GLOB_VALUE] },
         services: { accessibility: { exclude: [CSS_SELECTOR_VALUE] } },
-        plugins: { providers: [{ package: OVER_MASK_PACKAGE_VALUE }] },
+        plugins: [{ name: 'provider', package: OVER_MASK_PACKAGE_VALUE }],
       },
       layers: [],
       mask: declaredMask,
@@ -109,7 +109,7 @@ describe('buildMaskedResolvedConfig', () => {
       ['workspace.testMatch.0', GLOB_WILDCARD_VALUE],
       ['workspace.testPathIgnore.0', IGNORE_GLOB_VALUE],
       ['services.accessibility.exclude.0', CSS_SELECTOR_VALUE],
-      ['plugins.providers.0.package', OVER_MASK_PACKAGE_VALUE],
+      ['plugins.0.package', OVER_MASK_PACKAGE_VALUE],
     ] as const) {
       expect(config.entries.find((entry) => entry.key === key), key)
         .toMatchObject({ value, masked: false })
@@ -180,6 +180,52 @@ describe('buildMaskedResolvedConfig', () => {
     expect(bySource['services.logging.level']).toBe('env')
     // A key no layer supplied came from a schema default.
     expect(bySource['knowledge.dir']).toBe('default')
+  })
+
+  it('shows a remote as exactly its name, protocol and origin', () => {
+    const remote = {
+      name: 'grid',
+      protocol: 'playwright',
+      url: 'wss://grid.example.com/p4th-t0ken/session?q=QUERY_SECRET',
+      query: { tag: 'QUERY_VALUE' },
+      headers: { 'X-Team': 'HEADER_VALUE' },
+      basicAuth: { user: 'BASIC_USER', password: '{{secret:BASIC_PASS}}' },
+    }
+    const resolved = { registry: { remotes: [remote] }, use: { remote: 'grid' } }
+    const config = buildMaskedResolvedConfig({
+      configPath: 'agent-qa.config.yaml',
+      resolved,
+      layers: [{ source: 'config-file', values: resolved }],
+      mask: identity,
+    })
+
+    expect(config.entries.filter((entry) => entry.key.startsWith('registry.remotes.'))).toEqual([
+      { key: 'registry.remotes.0.name', value: 'grid', source: 'config-file', masked: false },
+      {
+        key: 'registry.remotes.0.protocol',
+        value: 'playwright',
+        source: 'config-file',
+        masked: false,
+      },
+      {
+        key: 'registry.remotes.0.url',
+        value: 'wss://grid.example.com:443',
+        source: 'config-file',
+        masked: false,
+      },
+    ])
+    const served = JSON.stringify(config)
+    for (const hidden of [
+      'p4th-t0ken',
+      'QUERY_SECRET',
+      'QUERY_VALUE',
+      'X-Team',
+      'HEADER_VALUE',
+      'BASIC_USER',
+      'BASIC_PASS',
+    ]) {
+      expect(served, hidden).not.toContain(hidden)
+    }
   })
 
   it('emits entries in a deterministic key order', () => {
@@ -266,7 +312,7 @@ describe('declared values in the config.get view', () => {
           baseURL: userinfoUrl,
           providerHeaders: { 'X-Api-Key': credentialShaped },
         }],
-        devices: { pixel: { platform: 'android', match: { jwt: credentialShaped } } },
+        devices: { pixel: { platform: 'android', id: credentialShaped } },
       },
     }
     const config = buildMaskedResolvedConfig({
@@ -279,7 +325,7 @@ describe('declared values in the config.get view', () => {
     for (const [key, value] of [
       ['registry.llms.0.baseURL', userinfoUrl],
       ['registry.llms.0.providerHeaders.X-Api-Key', credentialShaped],
-      ['registry.devices.pixel.match.jwt', credentialShaped],
+      ['registry.devices.pixel.id', credentialShaped],
     ] as const) {
       expect(config.entries, key).toContainEqual({ key, value, source: 'config-file', masked: false })
     }

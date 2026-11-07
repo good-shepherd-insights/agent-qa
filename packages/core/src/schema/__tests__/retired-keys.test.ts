@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { AgentQaConfigSchema } from '../config-schema.js'
-import { refuseRetiredLocalBindings } from '../retired-keys.js'
 
 const validWorkspace = {
   testMatch: ['tests/**/*.yaml'],
@@ -145,13 +144,49 @@ describe('retired-key pre-scan: removed production keys', () => {
   })
 })
 
+const PLUGINS_AUTH_MESSAGE =
+  'plugins.auth was removed: plugins is now a list of entries, each with a name and a package. For subscription sign-in, add name: subscription with package: @vostride/agent-qa-subscription-auth. Delete this block.'
+const PLUGINS_PROVIDERS_MESSAGE =
+  'plugins.providers was removed: plugins is now a list of entries, each with a name and a package. Model-provider plugins load only from @vostride/agent-qa-* packages. Delete this block.'
+
+describe('retired-key pre-scan: per-kind plugin keys', () => {
+  it('plugins.auth and plugins.providers are refused with their removal messages', () => {
+    const config = {
+      ...validBase,
+      plugins: {
+        auth: [{ package: '@vostride/agent-qa-subscription-auth' }],
+        providers: [{ package: '@vostride/agent-qa-acme-provider' }],
+      },
+    }
+    expect(issueMessageAt(config, 'plugins.auth')).toBe(PLUGINS_AUTH_MESSAGE)
+    expect(paramsAt(config, 'plugins.auth')).toEqual({ retired: true })
+    expect(issueMessageAt(config, 'plugins.providers')).toBe(PLUGINS_PROVIDERS_MESSAGE)
+    expect(paramsAt(config, 'plugins.providers')).toEqual({ retired: true })
+  })
+
+  it('a 0.2 config declaring subscription auth under plugins.auth is refused, not read', () => {
+    const config = {
+      ...validBase,
+      registry: {
+        llms: [{ name: 'claude', provider: 'anthropic-subscription', model: 'claude-sonnet' }],
+      },
+      use: { ...validBase.use, llm: 'claude' },
+      plugins: { auth: [{ package: '@vostride/agent-qa-subscription-auth' }] },
+    }
+    const result = AgentQaConfigSchema.safeParse(config)
+    expect(result.success).toBe(false)
+    expect(issueMessageAt(config, 'plugins.auth')).toBe(PLUGINS_AUTH_MESSAGE)
+    expect(issueAt(config, 'plugins.providers')).toBeUndefined()
+  })
+})
+
 describe('retired-key pre-scan: removed BrowserStack keys', () => {
   it('registry.providers is refused with its removal message, an empty block included', () => {
     for (const providers of [null, {}, { browserstack: { username: 'u', accessKey: 'k' } }]) {
       const config = { ...validBase, registry: { providers } }
       const label = JSON.stringify(providers)
       expect(issueMessageAt(config, 'registry.providers'), label).toBe(
-        'registry.providers was removed: BrowserStack is no longer supported; runs use local Playwright and Appium. Delete this block.',
+        'registry.providers was removed: list remote browsers and Appium servers under registry.remotes, with credentials as {{secret:NAME}} references to workspace.secretsFile. Delete this block.',
       )
       expect(paramsAt(config, 'registry.providers'), label).toEqual({ retired: true })
       const result = AgentQaConfigSchema.safeParse(config)
@@ -161,13 +196,13 @@ describe('retired-key pre-scan: removed BrowserStack keys', () => {
 
   it("a device's transport is refused with its removal message, local included", () => {
     const message =
-      'registry.devices.<name>.transport was removed: devices run on local Appium. Delete this line.'
+      "registry.devices.<name>.transport was removed: to use an Appium server agent-qa doesn't start, list it under registry.remotes with protocol: appium and set the device's remote to its name. Delete this line."
     const configs = [
       { devices: { 'android-emu': { platform: 'android', transport: 'local' } }, names: ['android-emu'] },
       { devices: { iphone: { platform: 'ios', transport: 'browserstack' } }, names: ['iphone'] },
       {
         devices: {
-          pixel: { platform: 'android', transport: 'local', match: { avd: 'Pixel_7' } },
+          pixel: { platform: 'android', transport: 'local', model: 'Pixel 7' },
           sim: { platform: 'ios', transport: 'local' },
         },
         names: ['pixel', 'sim'],
@@ -181,6 +216,24 @@ describe('retired-key pre-scan: removed BrowserStack keys', () => {
         expect(paramsAt(config, path), path).toEqual({ retired: true })
       }
     }
+  })
+
+  it("a device's match is refused with what replaces it, whatever the block holds", () => {
+    const message =
+      'registry.devices.<name>.match was removed: describe the device with model and os (id pins one unit), move appPackage, appActivity and bundleId to the target, and put other Appium settings in capabilities. Delete this block.'
+    const devices = {
+      pixel: { platform: 'android', match: { avd: 'Pixel_7', appPackage: 'org.wikipedia.alpha' } },
+      iphone: { platform: 'ios', model: 'iPhone 16', match: {} },
+      sim: { platform: 'ios', match: { udid: 'sim-udid', noReset: true } },
+    }
+    const config = { ...validBase, registry: { devices } }
+    for (const name of Object.keys(devices)) {
+      const path = `registry.devices.${name}.match`
+      expect(issueMessageAt(config, path), path).toBe(message)
+      expect(paramsAt(config, path), path).toEqual({ retired: true })
+    }
+    const result = AgentQaConfigSchema.safeParse(config)
+    expect(result.error?.issues.filter(i => i.code === 'unrecognized_keys')).toEqual([])
   })
 
   it("a target's app.browserstack is refused with its removal message", () => {
@@ -198,7 +251,7 @@ describe('retired-key pre-scan: removed BrowserStack keys', () => {
     }
     const path = 'registry.targets.release-android.app.browserstack'
     expect(issueMessageAt(config, path)).toBe(
-      'registry.targets.<name>.app.browserstack was removed: BrowserStack is no longer supported; app.path is the app file. Delete this line.',
+      "registry.targets.<name>.app.browserstack was removed: set app.ref to the app a remote device installs, an https URL or the server's own reference; app.path stays the file for devices here. Delete this line.",
     )
     expect(paramsAt(config, path)).toEqual({ retired: true })
   })
@@ -276,54 +329,6 @@ describe('retired-key pre-scan: removed knowledge keys', () => {
       expect(paramsAt(config, 'knowledge.commitArtifacts'), commitArtifacts).toEqual({ retired: true })
       const result = AgentQaConfigSchema.safeParse(config)
       expect(result.error?.issues.filter(i => i.code === 'unrecognized_keys'), commitArtifacts).toEqual([])
-    }
-  })
-})
-
-describe('agent-qa.local.yaml refusals', () => {
-  const filePath = '/work/project/agent-qa.local.yaml'
-
-  function thrownMessage(raw: unknown): string {
-    try {
-      refuseRetiredLocalBindings(raw, filePath)
-    } catch (err) {
-      return (err as Error).message
-    }
-    throw new Error('expected refuseRetiredLocalBindings to throw')
-  }
-
-  it("the local file's providers block is refused with its removal message, an empty block included", () => {
-    for (const raw of [
-      { providers: null },
-      { providers: {} },
-      { devices: {}, providers: { browserstack: { username: 'u', accessKey: 'k' } } },
-    ]) {
-      expect(thrownMessage(raw), JSON.stringify(raw)).toBe(
-        `${filePath}:\n  providers: providers was removed: BrowserStack is no longer supported. Delete this block.`,
-      )
-    }
-  })
-
-  it("a local app's browserstack is refused with its removal message", () => {
-    const message = thrownMessage({
-      apps: {
-        'release-android': { path: 'a.apk', browserstack: 'bs://x' },
-        'release-ios': { path: 'b.app' },
-      },
-    })
-    expect(message).toBe(
-      `${filePath}:\n  apps.release-android.browserstack: apps.<name>.browserstack was removed: BrowserStack is no longer supported; apps.<name>.path is the app file. Delete this line.`,
-    )
-  })
-
-  it('a local file with devices and app paths only is accepted', () => {
-    for (const raw of [
-      null,
-      'text',
-      { devices: { 'android-emu': { avd: 'Pixel_8_API_35' } }, apps: { 'release-android': { path: 'a.apk' } } },
-      { devices: null, apps: null },
-    ]) {
-      expect(() => refuseRetiredLocalBindings(raw, filePath), JSON.stringify(raw)).not.toThrow()
     }
   })
 })

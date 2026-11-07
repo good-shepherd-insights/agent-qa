@@ -2,7 +2,12 @@
 
 import { createHash } from 'node:crypto'
 
-import { isSecretAdjacentConfigField, utf8Decode, utf8Encode } from '@vostride/agent-qa-schema'
+import {
+  SUBSCRIPTION_AUTH_PACKAGE,
+  isSecretAdjacentConfigField,
+  utf8Decode,
+  utf8Encode,
+} from '@vostride/agent-qa-schema'
 import type {
   ConfigChange,
   ConfigChangeOutput,
@@ -545,7 +550,7 @@ describe('config.auth.set — refs only, refused on the INPUT', () => {
     const test = harness()
     const answer = await call(test, 'config.auth.set', {
       target: 'shop',
-      pluginPackage: '@acme/auth',
+      pluginPackage: SUBSCRIPTION_AUTH_PACKAGE,
     })
     assertTheCfgm01Sentence(test, answer, {
       action: 'config.auth.set',
@@ -555,7 +560,7 @@ describe('config.auth.set — refs only, refused on the INPUT', () => {
     expect(answer.crossBoundaryReasons).toEqual(['secret-adjacent-field'])
     // THE DIFF CONTAINS A REFERENCE AND NOTHING ELSE: a package name, at the one path this
     // configuration declares an auth plugin.
-    expect(answer.shownDiff).toContain('@acme/auth')
+    expect(answer.shownDiff).toContain(SUBSCRIPTION_AUTH_PACKAGE)
   })
 
   it('authStateName is refused on the input by all three ops, and nothing is written', async () => {
@@ -572,32 +577,32 @@ describe('config.auth.set — refs only, refused on the INPUT', () => {
   })
 
   it('lands blocked schema-fail when the candidate does not validate', async () => {
-    const test = harness()
+    const test = harness({ config: `${CONFIG}# ${INVALID_MARKER}\n` })
     const answer = await call(test, 'config.auth.set', {
       target: 'shop',
-      pluginPackage: `@acme/${INVALID_MARKER}`,
+      pluginPackage: SUBSCRIPTION_AUTH_PACKAGE,
     })
     expect(answer.outcome).toBe('blocked')
     if (answer.outcome !== 'blocked') throw new Error('unreachable')
     expect(answer.blockedReason).toBe('schema-fail')
   })
 
-  it('appends a plugin declaration past the end rather than over the last one', async () => {
+  it('appends the subscription entry past the end rather than over the last one', async () => {
     const withPlugins = harness({
-      config: `${CONFIG}plugins:\n  auth:\n    - package: "@vostride/agent-qa-subscription-auth"\n`,
+      config: `${CONFIG}plugins:\n  - name: acme\n    package: "@acme/auth"\n`,
     })
     const answer = await call(withPlugins, 'config.auth.set', {
       target: 'shop',
-      pluginPackage: '@acme/auth',
+      pluginPackage: SUBSCRIPTION_AUTH_PACKAGE,
     })
     if (answer.outcome !== 'applied') throw new Error('unreachable')
     const content = withPlugins.text(CONFIG_FILE) ?? ''
-    // BOTH declarations, in order. This reds on a write at a fixed index (the existing one is gone)
+    // BOTH entries, in order. This reds on a write at a fixed index (the existing one is gone)
     // and on writing the whole sequence back (the existing one is gone too, differently).
-    expect(content.indexOf('@vostride/agent-qa-subscription-auth'))
-      .toBeLessThan(content.indexOf('@acme/auth'))
-    expect(content).toContain('- package: "@vostride/agent-qa-subscription-auth"')
-    expect(content).toContain('- package: "@acme/auth"')
+    expect(content.indexOf('@acme/auth'))
+      .toBeLessThan(content.indexOf(SUBSCRIPTION_AUTH_PACKAGE))
+    expect(content).toContain('- name: acme\n    package: "@acme/auth"')
+    expect(content).toContain(`- name: subscription\n    package: "${SUBSCRIPTION_AUTH_PACKAGE}"`)
     expect(answer.crossBoundaryReasons).toEqual(['secret-adjacent-field'])
   })
 
@@ -617,7 +622,7 @@ describe('config.auth.set — refs only, refused on the INPUT', () => {
     // codebase's summary channel really does print values it is given.
     expect(test.filed).toHaveLength(0)
     expect(test.written).toHaveLength(0)
-    expect(configFieldSetSummaryLine('plugins.auth', unnamed)).toContain(unnamed)
+    expect(configFieldSetSummaryLine('plugins', unnamed)).toContain(unnamed)
     for (const window of windows(unnamed)) expect(answer.detail).not.toContain(window)
 
     // THE GUARD REJECTS SOMETHING ITS OWN ASSUMPTION ADMITS, in the other direction: a legal
@@ -625,7 +630,7 @@ describe('config.auth.set — refs only, refused on the INPUT', () => {
     const legal = harness()
     const proposed = await call(legal, 'config.auth.set', {
       target: 'shop',
-      pluginPackage: '@acme/auth',
+      pluginPackage: SUBSCRIPTION_AUTH_PACKAGE,
     })
     expect(proposed.outcome).toBe('applied')
   })
@@ -634,7 +639,7 @@ describe('config.auth.set — refs only, refused on the INPUT', () => {
     const test = harness()
     const answer = await call(test, 'config.auth.set', {
       target: 'checkout',
-      pluginPackage: '@acme/auth',
+      pluginPackage: SUBSCRIPTION_AUTH_PACKAGE,
     })
     expect(answer.outcome).toBe('refused')
     if (answer.outcome !== 'refused') throw new Error('unreachable')
@@ -972,19 +977,19 @@ describe('auth, hook and scaffold write in the call as well', () => {
       const test = harness()
       const answer = await change(test, 'config.auth.set', {
         target: 'shop',
-        pluginPackage: '@acme/auth',
+        pluginPackage: SUBSCRIPTION_AUTH_PACKAGE,
       })
 
       expect(answer).toMatchObject({
         outcome: 'applied',
         files: [CONFIG_FILE],
-        fields: ['plugins.auth.0.package'],
+        fields: ['plugins.0.name', 'plugins.0.package'],
         crossBoundaryReasons: ['secret-adjacent-field'],
       })
       expect(test.written).toEqual([{
         kind: 'fields',
         changes: [
-          { op: 'append', path: ['plugins', 'auth'], value: { package: '@acme/auth' } },
+          { op: 'append', path: ['plugins'], value: { name: 'subscription', package: SUBSCRIPTION_AUTH_PACKAGE } },
         ],
       }])
       expect(test.filed).toHaveLength(0)
@@ -1119,4 +1124,19 @@ describe('a partial publication is reported as exactly what happened', () => {
       expect(answer.detail).toContain(HOOKS_FILE)
       expect(answer.detail).toContain('nothing was written')
     })
+
+  it('a whole file that would change a closed field is answered as a refused write', async () => {
+    const test = harness({
+      config: null,
+      publish: () => ({ kind: 'refused', reason: 'path_not_writable', path: CONFIG_FILE, written: [] }),
+    })
+    const answer = await change(test, 'config.project.scaffold', { domain: 'booking.com' })
+    expect(answer).toEqual({
+      outcome: 'refused',
+      reason: 'write-refused',
+      detail:
+        `${CONFIG_FILE} refused this change as it now stands: a path the change names cannot be `
+        + 'written, so nothing was written.',
+    })
+  })
 })

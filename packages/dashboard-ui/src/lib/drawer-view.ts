@@ -23,7 +23,99 @@ export const DRAWER_COPY = {
   captureSealedAt: 'Capture sealed at',
   copyRunId: 'Copy run ID',
   retry: 'Retry loading run details',
+  ranHere: 'Ran on this machine',
+  opensInNewTab: '(opens in a new tab)',
 } as const
+
+/** Where a test ran: the remote's name, then its protocol and origin, then its browser version. */
+export function ranOnLine(name: string, where: string, version: string | null): string {
+  return `Ran on ${name}${where ? ` (${where})` : ''}${version ? `, ${version}` : ''}`
+}
+
+const DROPPED_SESSION_ENDINGS = {
+  lost: 'until the connection was lost',
+  ended: 'until the remote ended the session',
+} as const
+
+export type DroppedSessionKind = keyof typeof DROPPED_SESSION_ENDINGS
+
+export function isDroppedSessionKind(kind: string): kind is DroppedSessionKind {
+  return Object.hasOwn(DROPPED_SESSION_ENDINGS, kind)
+}
+
+/** A test that ran on a remote until its session dropped. */
+export function droppedOnLine(
+  name: string,
+  where: string,
+  version: string | null,
+  kind: DroppedSessionKind,
+): string {
+  return `${ranOnLine(name, where, version)}, ${DROPPED_SESSION_ENDINGS[kind]}`
+}
+
+const REFUSAL_WORDING: ReadonlyMap<string, string> = new Map([['refused', 'session refused']])
+
+/** A remote that refused the test before it ran, and the failure kind its evidence records. */
+export function couldNotRunOnLine(name: string, where: string, failureKind: string): string {
+  const reason = REFUSAL_WORDING.get(failureKind) ?? failureKind
+  return `Could not run on ${name}${where ? ` (${where})` : ''}: ${reason}`
+}
+
+const DEVICE_TYPES = ['simulator', 'real device'] as const
+
+export type ShownDeviceType = (typeof DEVICE_TYPES)[number]
+
+export function isShownDeviceType(value: string | null): value is ShownDeviceType {
+  return DEVICE_TYPES.some((type) => type === value)
+}
+
+/** What a device session ran on: the Appium server's version, then the iOS device type. */
+export function deviceDetail(
+  appiumVersion: string | null,
+  deviceType: string | null,
+): string | null {
+  const parts = [
+    appiumVersion ? `Appium ${appiumVersion}` : null,
+    isShownDeviceType(deviceType) ? deviceType : null,
+  ].filter((part): part is string => part !== null)
+  return parts.length > 0 ? parts.join(', ') : null
+}
+
+/** A test that ran here, with its iOS device type when one was recorded. */
+export function ranHereLine(deviceType: string | null): string {
+  return isShownDeviceType(deviceType)
+    ? `${DRAWER_COPY.ranHere}, ${deviceType}`
+    : DRAWER_COPY.ranHere
+}
+
+/** The plugins entry that served a session: its entry, then its package or path and version. */
+export function pluginLine(plugin: unknown): string | null {
+  const shown = record(plugin)
+  const entry = text(shown.entry)
+  if (entry === undefined) return null
+  const source = [text(shown.package) ?? text(shown.path), text(shown.version)].filter(Boolean)
+  return source.length > 0 ? `Plugin ${entry} (${source.join(' ')})` : `Plugin ${entry}`
+}
+
+export interface SessionLink {
+  href: string
+  label: 'Session page'
+  target: '_blank'
+  rel: 'noopener noreferrer'
+}
+
+/** A plugin's page for the session, opened in a new tab without a referrer; only http and https. */
+export function sessionLink(link: unknown): SessionLink | null {
+  if (typeof link !== 'string') return null
+  let url: URL
+  try {
+    url = new URL(link)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  return { href: url.href, label: 'Session page', target: '_blank', rel: 'noopener noreferrer' }
+}
 
 export const RUN_ARTIFACT_KIND_LABELS = {
   test: 'Test',

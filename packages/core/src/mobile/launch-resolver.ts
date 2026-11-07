@@ -1,5 +1,19 @@
 import { existsSync } from 'node:fs'
 import { dirname, resolve as resolvePath } from 'node:path'
+import {
+  isPluginRemote,
+  RemoteRefusalError,
+  type RemoteDeviceConfig,
+  type RemotePluginDeviceConfig,
+} from '@vostride/agent-qa-runner'
+import type { RemoteEntry } from '../schema/remote-schema.js'
+import {
+  capabilityValue,
+  mergeCapabilities,
+  remoteAppCapability,
+  runStartCapabilityContradictions,
+} from './device-plan.js'
+import { selectDevicePlace } from './select-device.js'
 
 export type MobilePlatform = 'android' | 'ios'
 export type MobileAppState = 'preserve' | 'reset'
@@ -48,7 +62,11 @@ export class MobileSetupError extends Error {
 export interface ResolvedMobileDevice {
   name: string
   platform: MobilePlatform
-  match: Record<string, unknown>
+  model?: string
+  os?: string
+  id?: string
+  capabilities?: Record<string, unknown>
+  remote?: RemoteDeviceConfig | RemotePluginDeviceConfig
 }
 
 export interface ResolvedMobileAppInstall {
@@ -57,6 +75,7 @@ export interface ResolvedMobileAppInstall {
 }
 
 export interface ResolvedMobileApp {
+  ref?: string
   bundleId?: string
   appPackage?: string
   appActivity?: string
@@ -65,14 +84,19 @@ export interface ResolvedMobileApp {
   sourceTrace: Record<string, string>
 }
 
+// A device on a remote connects there; a device here is searched for on this machine.
+export type MobileDevicePlan =
+  | { kind: 'remote'; remote: RemoteDeviceConfig | RemotePluginDeviceConfig }
+  | { kind: 'here'; search: { model?: string; os?: string; id?: string } }
+
 export interface ResolvedMobileRunConfig {
   platform: MobilePlatform
   targetName: string
   deviceName: string
   device: ResolvedMobileDevice
+  plan: MobileDevicePlan
   app: ResolvedMobileApp
   appState: MobileAppState
-  appium: { url?: string; managed?: boolean }
   sourceTrace: string[]
 }
 
@@ -83,14 +107,7 @@ export interface ResolveMobileRunConfigInput {
   explicitDeviceName?: string
   useDeviceName?: string
   appState?: MobileAppState
-  localBindings?: {
-    devices?: Record<string, Record<string, unknown>>
-    apps?: Record<string, { path?: string }>
-    filePath?: string
-  } | null
   configFilePath?: string
-  localConfigFilePath?: string
-  appiumUrl?: string
 }
 
 interface TargetEntry {
@@ -100,13 +117,18 @@ interface TargetEntry {
   appActivity?: string
   app?: {
     path?: string
+    ref?: string
   }
   device?: string
 }
 
 interface DeviceProfile {
   platform?: string
-  match?: Record<string, unknown>
+  model?: string
+  os?: string
+  id?: string
+  capabilities?: Record<string, unknown>
+  remote?: string
 }
 
 function isMobilePlatform(value: unknown): value is MobilePlatform {
@@ -115,6 +137,10 @@ function isMobilePlatform(value: unknown): value is MobilePlatform {
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function isAbsoluteAppInstallValue(value: string): boolean {
@@ -151,10 +177,14 @@ function appInstallError(
   })
 }
 
-function chooseDeviceName(input: ResolveMobileRunConfigInput): { name?: string; source?: string } {
+function chooseDeviceName(
+  input: ResolveMobileRunConfigInput,
+  target: TargetEntry,
+): { name?: string; source?: string } {
   const candidates = [
     ['explicitDeviceName', input.explicitDeviceName],
     ['use.device', input.useDeviceName],
+    [`registry.targets.${input.targetName}.device`, target.device],
   ] as const
 
   for (const [source, value] of candidates) {
@@ -168,63 +198,24 @@ function chooseDeviceName(input: ResolveMobileRunConfigInput): { name?: string; 
 function resolveAppField(
   field: 'bundleId' | 'appPackage' | 'appActivity',
   targetValue: unknown,
-  deviceValue: unknown,
   targetName: string,
-  deviceName: string,
-  input: ResolveMobileRunConfigInput,
 ): { value?: string; source?: string } {
-  const targetString = asOptionalString(targetValue)
-  const deviceString = asOptionalString(deviceValue)
-
-  if (targetString && deviceString && targetString !== deviceString) {
-    throw setupError(
-      `Conflicting ${field} for mobile target "${targetName}" and device "${deviceName}": target has "${targetString}", device has "${deviceString}"`,
-      input,
-      {
-        deviceName,
-        appId: targetString,
-      },
-    )
-  }
-
-  if (targetString) {
-    return {
-      value: targetString,
-      source: `registry.targets.${targetName}.${field}`,
-    }
-  }
-  if (deviceString) {
-    return {
-      value: deviceString,
-      source: `registry.devices.${deviceName}.match.${field}`,
-    }
-  }
-  return {}
+  const value = asOptionalString(targetValue)
+  return value ? { value, source: `registry.targets.${targetName}.${field}` } : {}
 }
 
+// The server installs a remote device's app, so its file is only needed here.
 function resolveAppInstall(
   target: TargetEntry,
   input: ResolveMobileRunConfigInput,
   platform: MobilePlatform,
   deviceName: string,
   sourceTrace: string[],
+  here: boolean,
 ): ResolvedMobileAppInstall | undefined {
-  const localApp = input.localBindings?.apps?.[input.targetName]
   const installSourceTrace: Record<string, string> = {}
-
-  const localPath = asOptionalString(localApp?.path)
-  const targetPath = asOptionalString(target.app?.path)
-  const pathValue = localPath ?? targetPath
-  const pathSource = localPath
-    ? `agent-qa.local.yaml apps.${input.targetName}.path`
-    : targetPath
-      ? `agent-qa.config.yaml registry.targets.${input.targetName}.app.path`
-      : undefined
-  const pathBaseDir = localPath
-    ? baseDirFor(input.localConfigFilePath ?? input.localBindings?.filePath)
-    : targetPath
-      ? baseDirFor(input.configFilePath)
-      : undefined
+  const pathValue = asOptionalString(target.app?.path)
+  const pathSource = `agent-qa.config.yaml registry.targets.${input.targetName}.app.path`
 
   const install: ResolvedMobileAppInstall = { sourceTrace: installSourceTrace }
 
@@ -237,8 +228,8 @@ function resolveAppInstall(
         sourceTrace: [...sourceTrace, `app.path=${pathSource}`],
       })
     }
-    const resolvedPath = resolvePath(pathBaseDir ?? process.cwd(), pathValue)
-    if (!existsSync(resolvedPath)) {
+    const resolvedPath = resolvePath(baseDirFor(input.configFilePath), pathValue)
+    if (here && !existsSync(resolvedPath)) {
       throw appInstallError(`Configured app path not found: ${resolvedPath}`, input, {
         platform,
         deviceName,
@@ -247,10 +238,8 @@ function resolveAppInstall(
       })
     }
     install.path = resolvedPath
-    if (pathSource) {
-      installSourceTrace['app.path'] = pathSource
-      sourceTrace.push(`app.path=${pathSource}`)
-    }
+    installSourceTrace['app.path'] = pathSource
+    sourceTrace.push(`app.path=${pathSource}`)
   }
 
   return install.path ? install : undefined
@@ -285,10 +274,12 @@ export function resolveMobileRunConfig(input: ResolveMobileRunConfigInput): Reso
     )
   }
 
-  const chosenDevice = chooseDeviceName(input)
+  const chosenDevice = chooseDeviceName(input, target)
   if (!chosenDevice.name) {
     throw setupError(
-      `No device specified for mobile target "${input.targetName}"`,
+      `No device specified for mobile target "${input.targetName}". ` +
+        `Set device on registry.targets.${input.targetName}, ` +
+        'use.device in the test or its suite, or pass --device.',
       input,
       { platform },
     )
@@ -314,8 +305,16 @@ export function resolveMobileRunConfig(input: ResolveMobileRunConfigInput): Reso
     )
   }
 
-  const localMatch = input.localBindings?.devices?.[deviceName] ?? null
-  const mergedMatch = { ...(deviceProfile.match ?? {}), ...(localMatch ?? {}) }
+  let remote: RemoteDeviceConfig | RemotePluginDeviceConfig | undefined
+  if (deviceProfile.remote !== undefined) {
+    const selected = selectDevicePlace({
+      devices: devices ?? {},
+      remotes: (input.config.registry?.remotes ?? []) as readonly RemoteEntry[],
+      device: deviceName,
+    })
+    if ('refusal' in selected) throw setupError(selected.refusal, input, { platform, deviceName })
+    if (selected.place.kind === 'remote') remote = selected.place.remote
+  }
 
   const appSourceTrace: Record<string, string> = {}
   const sourceTrace = [
@@ -327,8 +326,8 @@ export function resolveMobileRunConfig(input: ResolveMobileRunConfigInput): Reso
 
   let app: ResolvedMobileApp
   if (platform === 'android') {
-    const appPackage = resolveAppField('appPackage', target.appPackage, mergedMatch.appPackage, input.targetName, deviceName, input)
-    const appActivity = resolveAppField('appActivity', target.appActivity, mergedMatch.appActivity, input.targetName, deviceName, input)
+    const appPackage = resolveAppField('appPackage', target.appPackage, input.targetName)
+    const appActivity = resolveAppField('appActivity', target.appActivity, input.targetName)
     if (appPackage.source) appSourceTrace.appPackage = appPackage.source
     if (appActivity.source) appSourceTrace.appActivity = appActivity.source
     app = {
@@ -340,7 +339,7 @@ export function resolveMobileRunConfig(input: ResolveMobileRunConfigInput): Reso
     if (appPackage.source) sourceTrace.push(`app.appPackage=${appPackage.source}`)
     if (appActivity.source) sourceTrace.push(`app.appActivity=${appActivity.source}`)
   } else {
-    const bundleId = resolveAppField('bundleId', target.bundleId, mergedMatch.bundleId, input.targetName, deviceName, input)
+    const bundleId = resolveAppField('bundleId', target.bundleId, input.targetName)
     if (bundleId.source) appSourceTrace.bundleId = bundleId.source
     app = {
       bundleId: bundleId.value,
@@ -350,10 +349,82 @@ export function resolveMobileRunConfig(input: ResolveMobileRunConfigInput): Reso
     if (bundleId.source) sourceTrace.push(`app.bundleId=${bundleId.source}`)
   }
 
-  const install = resolveAppInstall(target, input, platform, deviceName, sourceTrace)
+  const appRef = asOptionalString(target.app?.ref)
+  if (appRef) {
+    app.ref = appRef
+    appSourceTrace['app.ref'] = `registry.targets.${input.targetName}.app.ref`
+  }
+
+  const deviceCapabilities = isRecord(deviceProfile.capabilities)
+    ? deviceProfile.capabilities
+    : undefined
+  const stated = mergeCapabilities(remote?.capabilities, deviceCapabilities)
+  const browserMode = asOptionalString(capabilityValue(stated, 'browserName')) !== undefined
+  const refusalDetails = remote === undefined ? {} : { remote: remote.name }
+  const contradictions = runStartCapabilityContradictions({
+    device: deviceName,
+    target: {
+      name: input.targetName,
+      ...(app.appPackage ? { appPackage: app.appPackage } : {}),
+      ...(app.appActivity ? { appActivity: app.appActivity } : {}),
+      ...(app.bundleId ? { bundleId: app.bundleId } : {}),
+    },
+    appState,
+    browserMode,
+    ...(remote === undefined
+      ? {}
+      : {
+          remote: {
+            name: remote.name,
+            ...(remote.capabilities ? { capabilities: remote.capabilities } : {}),
+          },
+        }),
+    ...(deviceCapabilities ? { capabilities: deviceCapabilities } : {}),
+  })
+  if (contradictions.length > 0) {
+    throw new RemoteRefusalError(contradictions.join('\n'), refusalDetails)
+  }
+
+  // A plugin remote may upload the target's app.path; its plugin refuses when it cannot.
+  if (remote !== undefined && !isPluginRemote(remote) && !browserMode) {
+    const pathValue = asOptionalString(target.app?.path)
+    const remoteApp = remoteAppCapability({
+      device: deviceName,
+      remote: remote.name,
+      target: input.targetName,
+      ...(appRef ? { appRef } : {}),
+      ...(pathValue ? { appPath: pathValue } : {}),
+      capabilities: stated,
+    })
+    if ('refusal' in remoteApp) throw new RemoteRefusalError(remoteApp.refusal, refusalDetails)
+  }
+
+  const install = resolveAppInstall(
+    target,
+    input,
+    platform,
+    deviceName,
+    sourceTrace,
+    remote === undefined,
+  )
   if (install) {
     app.install = install
   }
+
+  const model = asOptionalString(deviceProfile.model)
+  const os = asOptionalString(deviceProfile.os)
+  const id = asOptionalString(deviceProfile.id)
+  const plan: MobileDevicePlan =
+    remote === undefined
+      ? {
+          kind: 'here',
+          search: {
+            ...(model ? { model } : {}),
+            ...(os ? { os } : {}),
+            ...(id ? { id } : {}),
+          },
+        }
+      : { kind: 'remote', remote }
 
   return {
     platform,
@@ -362,14 +433,15 @@ export function resolveMobileRunConfig(input: ResolveMobileRunConfigInput): Reso
     device: {
       name: deviceName,
       platform,
-      match: mergedMatch,
+      ...(model ? { model } : {}),
+      ...(os ? { os } : {}),
+      ...(id ? { id } : {}),
+      ...(deviceCapabilities ? { capabilities: deviceCapabilities } : {}),
+      ...(remote === undefined ? {} : { remote }),
     },
+    plan,
     app,
     appState,
-    appium: {
-      url: input.appiumUrl,
-      managed: !input.appiumUrl,
-    },
     sourceTrace,
   }
 }

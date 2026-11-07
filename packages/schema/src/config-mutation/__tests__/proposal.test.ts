@@ -310,9 +310,15 @@ describe('the secret-adjacent field set is roots, and matching is by subtree', (
       'workspace.envFile',
       'workspace.secretsFile',
       'services.authState',
-      'plugins.auth',
-      'plugins.providers',
+      'plugins',
       'registry.targets.*.authState',
+      // A remote's url, query, headers and basicAuth carry a service's credentials by reference.
+      'registry.remotes',
+      // A device's remote and capabilities and a target's app reference decide where a device
+      // runs and what it installs, and carry a farm's credentials by reference.
+      'registry.devices.*.remote',
+      'registry.devices.*.capabilities',
+      'registry.targets.*.app.ref',
       // The committed config binds an auth state at `use.authState`, not under targets.
       'use.authState',
     ])
@@ -339,10 +345,13 @@ describe('the secret-adjacent field set is roots, and matching is by subtree', (
   it('flags anything UNDER a root, whether or not anybody enumerated it', () => {
     for (const path of [
       'services.authState.dir',
-      'plugins.auth.0.package',
-      'plugins.providers.0.path',
+      'plugins.0.package',
+      'plugins.1.path',
       'use.authState.capture',
       'registry.targets.shop.authState.name',
+      'registry.remotes.0.headers.Authorization',
+      'registry.devices.galaxy-farm.capabilities.farm:options',
+      'registry.targets.shop.app.ref',
     ]) {
       expect({ path, flagged: isSecretAdjacentConfigField(path) }).toEqual({ path, flagged: true })
     }

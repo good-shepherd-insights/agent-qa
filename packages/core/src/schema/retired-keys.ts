@@ -50,13 +50,27 @@ const RETIRED_ALLOW_PRODUCTION_MESSAGE =
   'allowProduction was removed: production targets run like any other target. Delete this line.'
 
 const RETIRED_REGISTRY_PROVIDERS_MESSAGE =
-  'registry.providers was removed: BrowserStack is no longer supported; runs use local Playwright and Appium. Delete this block.'
+  'registry.providers was removed: list remote browsers and Appium servers under registry.remotes, with credentials as {{secret:NAME}} references to workspace.secretsFile. Delete this block.'
+
+const RETIRED_PLUGINS_AUTH_MESSAGE =
+  'plugins.auth was removed: plugins is now a list of entries, each with a name and a package. For subscription sign-in, add name: subscription with package: @vostride/agent-qa-subscription-auth. Delete this block.'
+
+const RETIRED_PLUGINS_PROVIDERS_MESSAGE =
+  'plugins.providers was removed: plugins is now a list of entries, each with a name and a package. Model-provider plugins load only from @vostride/agent-qa-* packages. Delete this block.'
+
+const RETIRED_DEVICE_MATCH_MESSAGE =
+  'registry.devices.<name>.match was removed: describe the device with model and os (id pins one unit), move appPackage, appActivity and bundleId to the target, and put other Appium settings in capabilities. Delete this block.'
 
 const RETIRED_DEVICE_TRANSPORT_MESSAGE =
-  'registry.devices.<name>.transport was removed: devices run on local Appium. Delete this line.'
+  "registry.devices.<name>.transport was removed: to use an Appium server agent-qa doesn't start, list it under registry.remotes with protocol: appium and set the device's remote to its name. Delete this line."
 
 const RETIRED_APP_BROWSERSTACK_MESSAGE =
-  'registry.targets.<name>.app.browserstack was removed: BrowserStack is no longer supported; app.path is the app file. Delete this line.'
+  "registry.targets.<name>.app.browserstack was removed: set app.ref to the app a remote device installs, an https URL or the server's own reference; app.path stays the file for devices here. Delete this line."
+
+export const LOCAL_FILE_NAME = 'agent-qa.local.yaml'
+
+export const RETIRED_LOCAL_FILE_MESSAGE =
+  'agent-qa.local.yaml is no longer read: describe each device under registry.devices with model and os (id pins one unit), and set app.path on the target. Delete the file.'
 
 const RETIRED_CACHE_TTL_MESSAGE =
   'services.cache.ttl was removed: cached plans do not expire by age. Delete this line.'
@@ -77,12 +91,6 @@ const RETIRED_KNOWLEDGE_KEY_MESSAGES: Record<string, string> = {
   commitArtifacts:
     'knowledge.commitArtifacts was removed: knowledge bundles never commit images. Delete this line.',
 }
-
-const RETIRED_LOCAL_PROVIDERS_MESSAGE =
-  'providers was removed: BrowserStack is no longer supported. Delete this block.'
-
-const RETIRED_LOCAL_APP_BROWSERSTACK_MESSAGE =
-  'apps.<name>.browserstack was removed: BrowserStack is no longer supported; apps.<name>.path is the app file. Delete this line.'
 
 // The old refilling planner key is cut with no alias, migration or fallback. The same message
 // fires for the project config and for test and suite `use` overrides.
@@ -177,8 +185,35 @@ export const retiredKeyScan = z.any().superRefine((value, ctx) => {
     })
   }
 
+  if (isPlainObject(value.plugins)) {
+    if (Object.hasOwn(value.plugins, 'auth')) {
+      ctx.addIssue({
+        code: 'custom',
+        params: { retired: true },
+        path: ['plugins', 'auth'],
+        message: RETIRED_PLUGINS_AUTH_MESSAGE,
+      })
+    }
+    if (Object.hasOwn(value.plugins, 'providers')) {
+      ctx.addIssue({
+        code: 'custom',
+        params: { retired: true },
+        path: ['plugins', 'providers'],
+        message: RETIRED_PLUGINS_PROVIDERS_MESSAGE,
+      })
+    }
+  }
+
   if (isPlainObject(value.registry) && isPlainObject(value.registry.devices)) {
     for (const [name, device] of Object.entries(value.registry.devices)) {
+      if (isPlainObject(device) && Object.hasOwn(device, 'match')) {
+        ctx.addIssue({
+          code: 'custom',
+          params: { retired: true },
+          path: ['registry', 'devices', name, 'match'],
+          message: RETIRED_DEVICE_MATCH_MESSAGE,
+        })
+      }
       if (isPlainObject(device) && Object.hasOwn(device, 'transport')) {
         ctx.addIssue({
           code: 'custom',
@@ -264,29 +299,6 @@ export const retiredKeyScan = z.any().superRefine((value, ctx) => {
     })
   }
 })
-
-// Refusals for removed agent-qa.local.yaml keys. Both local-file readers call this on the raw YAML
-// value before they normalize it. The message names the file and each key's path, never a value.
-export function refuseRetiredLocalBindings(raw: unknown, filePath: string): void {
-  if (!isPlainObject(raw)) return
-
-  const issues: Array<{ path: string; message: string }> = []
-  if (Object.hasOwn(raw, 'providers')) {
-    issues.push({ path: 'providers', message: RETIRED_LOCAL_PROVIDERS_MESSAGE })
-  }
-  if (isPlainObject(raw.apps)) {
-    for (const [name, app] of Object.entries(raw.apps)) {
-      if (isPlainObject(app) && Object.hasOwn(app, 'browserstack')) {
-        issues.push({ path: `apps.${name}.browserstack`, message: RETIRED_LOCAL_APP_BROWSERSTACK_MESSAGE })
-      }
-    }
-  }
-  if (issues.length === 0) return
-
-  throw new Error(
-    [`${filePath}:`, ...issues.map(issue => `  ${issue.path}: ${issue.message}`)].join('\n'),
-  )
-}
 
 // The pre-stage for a test or suite `use` override, for the same strict-parse reason as above.
 export const retiredUseKeyScan = z.any().superRefine((value, ctx) => {

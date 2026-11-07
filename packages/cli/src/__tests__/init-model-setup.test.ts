@@ -165,7 +165,7 @@ describe('init model connection flags', () => {
       { name: 'codex', provider: 'openai-subscription', model: registryDefault('openai-subscription') },
     ])
     expect(config.use.llm).toBe('codex')
-    expect(config.plugins.auth).toEqual([{ package: SUBSCRIPTION_AUTH_PACKAGE }])
+    expect(config.plugins).toEqual([{ name: 'subscription', package: SUBSCRIPTION_AUTH_PACKAGE }])
     expectNoPrompt()
   })
 
@@ -181,7 +181,7 @@ describe('init model connection flags', () => {
       },
     ])
     expect(config.use.llm).toBe('claude-code')
-    expect(config.plugins.auth).toEqual([{ package: SUBSCRIPTION_AUTH_PACKAGE }])
+    expect(config.plugins).toEqual([{ name: 'subscription', package: SUBSCRIPTION_AUTH_PACKAGE }])
     for (const path of [
       'tests/examples/komazon-checkout.yaml',
       'tests/examples/komazon-cart-total-bug.yaml',
@@ -258,7 +258,7 @@ describe('init model connection flags', () => {
 
   it('a base URL is refused for a provider that takes none or when it is not an absolute http or https URL', async () => {
     await initOk(['--platform', 'web', '--llm', 'codex', '--base-url', 'https://x.test/v1'])
-    expect(process.exitCode).toBe(1)
+    expect(process.exitCode).toBe(2)
     expect(refusalOutput())
       .toContain('--base-url applies only to --llm openai-compatible or anthropic-compatible')
     expectNothingWritten()
@@ -267,7 +267,7 @@ describe('init model connection flags', () => {
     stderr = []
     process.exitCode = undefined
     await initOk(['--platform', 'web', '--llm', 'openai-compatible', '--base-url', 'ftp://x.test'])
-    expect(process.exitCode).toBe(1)
+    expect(process.exitCode).toBe(2)
     expect(refusalOutput()).toContain('--base-url must be an absolute http or https URL')
     expectNothingWritten()
     expectNoPrompt()
@@ -465,6 +465,23 @@ describe('init next steps', () => {
       .toBeLessThan(output.indexOf('npx agent-qa validate'))
     expect(output).not.toContain('auth login')
     expect(output).not.toContain(SUBSCRIPTION_AUTH_PACKAGE)
+  })
+
+  it('a --config name a shell would split is quoted in the next steps', async () => {
+    const parent = new Command().option('--config <path>', 'config file path')
+    parent.exitOverride()
+    parent.addCommand(createInitCommand({ isTTY: false } as Parameters<typeof createInitCommand>[0]))
+    await parent.parseAsync([
+      'node',
+      'agent-qa',
+      '--config',
+      `${DIR}/it's my qa.yaml`,
+      'init',
+      '--platform',
+      'web',
+    ])
+
+    lineWith(printed(), `npx agent-qa --config 'it'\\''s my qa.yaml' validate`)
   })
 
   it('the next steps of every workspace name validate', async () => {

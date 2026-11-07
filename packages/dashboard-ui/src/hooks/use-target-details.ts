@@ -1,3 +1,4 @@
+import { NAME_SLUG_PATTERN } from '@vostride/agent-qa-schema'
 import { useState, useEffect } from 'react'
 import { fetchConfig } from '@/lib/api'
 
@@ -16,7 +17,12 @@ export interface TargetDetail {
 }
 
 export interface GlobalUseConfig {
-  browser?: { name?: string; headless?: boolean; viewport?: { width?: number; height?: number } }
+  browser?: {
+    name?: string
+    headless?: boolean
+    viewport?: { width?: number; height?: number }
+    remote?: string
+  }
   mobile?: { appState?: 'preserve' | 'reset' }
   timeout?: { step?: string; test?: string; navigation?: string }
   planner?: { maxActions?: number; maxPlanningTurns?: number; previousStepCount?: number }
@@ -25,16 +31,45 @@ export interface GlobalUseConfig {
   parallel?: boolean
 }
 
+export interface RemoteChoice {
+  name: string
+  protocol?: string
+}
+
 interface TargetDetailsState {
   targets: Record<string, TargetDetail>
   globalUse: GlobalUseConfig | null
+  remotes: RemoteChoice[]
   isLoading: boolean
 }
 
-let cached: { targets: Record<string, TargetDetail>; globalUse: GlobalUseConfig | null } | null = null
+let cached: Omit<TargetDetailsState, 'isLoading'> | null = null
 let cachedAt = 0
 const TTL = 30_000
 let pendingPromise: Promise<void> | null = null
+
+// The listed names a test or suite may pick; `local` is this machine, never a remote, a name the
+// strict parse refuses is served as placeholder text, never a pick, and an appium remote serves
+// devices.
+function remoteChoices(remotes: unknown): RemoteChoice[] {
+  if (!Array.isArray(remotes)) return []
+  const choices: RemoteChoice[] = []
+  for (const entry of remotes) {
+    const name: unknown = entry?.name
+    const protocol: unknown = entry?.protocol
+    if (typeof name !== 'string' || !NAME_SLUG_PATTERN.test(name) || name === 'local') continue
+    if (protocol === 'appium') continue
+    if (choices.some((choice) => choice.name === name)) continue
+    choices.push(typeof protocol === 'string' && protocol !== '' ? { name, protocol } : { name })
+  }
+  return choices
+}
+
+// A config write can change the inherited defaults, so the next reader fetches afresh.
+export function invalidateTargetDetails(): void {
+  cached = null
+  cachedAt = 0
+}
 
 function isCacheValid(): boolean {
   return cached !== null && Date.now() - cachedAt < TTL
@@ -43,13 +78,13 @@ function isCacheValid(): boolean {
 export function useTargetDetails(): TargetDetailsState {
   const [state, setState] = useState<TargetDetailsState>(() =>
     isCacheValid()
-      ? { targets: cached!.targets, globalUse: cached!.globalUse, isLoading: false }
-      : { targets: {}, globalUse: null, isLoading: true },
+      ? { ...cached!, isLoading: false }
+      : { targets: {}, globalUse: null, remotes: [], isLoading: true },
   )
 
   useEffect(() => {
     if (isCacheValid()) {
-      setState({ targets: cached!.targets, globalUse: cached!.globalUse, isLoading: false })
+      setState({ ...cached!, isLoading: false })
       return
     }
 
@@ -85,11 +120,11 @@ export function useTargetDetails(): TargetDetailsState {
             }
           }
           const globalUse: GlobalUseConfig | null = cfg?.use ?? null
-          cached = { targets: parsed, globalUse }
+          cached = { targets: parsed, globalUse, remotes: remoteChoices(cfg?.registry?.remotes) }
           cachedAt = Date.now()
         })
         .catch(() => {
-          cached = { targets: {}, globalUse: null }
+          cached = { targets: {}, globalUse: null, remotes: [] }
           cachedAt = Date.now()
         })
         .finally(() => {
@@ -98,7 +133,7 @@ export function useTargetDetails(): TargetDetailsState {
     }
 
     pendingPromise.then(() => {
-      setState({ targets: cached!.targets, globalUse: cached!.globalUse, isLoading: false })
+      setState({ ...cached!, isLoading: false })
     })
   }, [])
 

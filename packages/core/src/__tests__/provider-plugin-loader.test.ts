@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -7,54 +7,36 @@ import {
   loadProviderPlugins,
 } from '../providers/plugin-loader.js'
 
+async function writeProviderPackage(root: string, name: string, source: string): Promise<void> {
+  const packageDir = join(root, 'node_modules', ...name.split('/'))
+  await mkdir(packageDir, { recursive: true })
+  await writeFile(
+    join(packageDir, 'package.json'),
+    JSON.stringify({
+      name,
+      version: '0.0.0',
+      type: 'module',
+      exports: './index.mjs',
+      'agent-qa': { plugin: { kind: 'model-provider', runs: 'in-process', entry: './index.mjs' } },
+    }),
+  )
+  await writeFile(join(packageDir, 'index.mjs'), source)
+}
+
 describe('loadProviderPlugins', () => {
   let tempDir: string
-  let warnSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'agent-qa-provider-plugin-loader-'))
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
   })
 
   afterEach(async () => {
     clearLoadedProviderPluginModules()
-    warnSpy.mockRestore()
     await rm(tempDir, { recursive: true, force: true })
   })
 
-  it('loads provider descriptors from an explicit path declaration', async () => {
-    const pluginPath = join(tempDir, 'path-plugin.mjs')
-    await writeFile(pluginPath, `
-      export default {
-        id: 'path-provider',
-        label: 'Path provider',
-        authModes: ['api-key'],
-        adapter(transport, modelId) { return { transport, modelId, source: 'path' } },
-      }
-    `)
-
-    const providers = await loadProviderPlugins([{ path: pluginPath }], { baseDir: tempDir })
-
-    expect(providers).toHaveLength(1)
-    expect(providers[0]?.id).toBe('path-provider')
-    expect(providers[0]?.label).toBe('Path provider')
-    expect(providers[0]?.authModes).toEqual(['api-key'])
-    expect(providers[0]?.adapter({ baseURL: 'http://local' }, 'demo-model')).toEqual({
-      transport: { baseURL: 'http://local' },
-      modelId: 'demo-model',
-      source: 'path',
-    })
-  })
-
-  it('loads provider descriptors from a package declaration resolved from config directory', async () => {
-    const packageDir = join(tempDir, 'node_modules', '@scope', 'provider-plugin')
-    await mkdir(packageDir, { recursive: true })
-    await writeFile(join(packageDir, 'package.json'), JSON.stringify({
-      name: '@scope/provider-plugin',
-      type: 'module',
-      exports: './index.mjs',
-    }))
-    await writeFile(join(packageDir, 'index.mjs'), `
+  it('loads provider descriptors from a package entry resolved from the config directory', async () => {
+    await writeProviderPackage(tempDir, '@vostride/agent-qa-acme-provider', `
       export const provider = {
         id: 'package-provider',
         label: 'Package provider',
@@ -64,15 +46,17 @@ describe('loadProviderPlugins', () => {
       }
     `)
 
-    const providers = await loadProviderPlugins([{ package: '@scope/provider-plugin' }], { baseDir: tempDir })
+    const providers = await loadProviderPlugins(
+      [{ name: 'provider', package: '@vostride/agent-qa-acme-provider' }],
+      { baseDir: tempDir },
+    )
 
     expect(providers.map((provider) => provider.id)).toEqual(['package-provider'])
     expect(providers[0]?.needsBaseURL).toBe(true)
   })
 
   it('accepts a single default descriptor and providers array bundle shapes', async () => {
-    const defaultDescriptorPath = join(tempDir, 'default-descriptor.mjs')
-    await writeFile(defaultDescriptorPath, `
+    await writeProviderPackage(tempDir, '@vostride/agent-qa-acme-default-provider', `
       export default {
         id: 'default-descriptor',
         label: 'Default descriptor',
@@ -80,8 +64,7 @@ describe('loadProviderPlugins', () => {
         adapter() { return { source: 'default' } },
       }
     `)
-    const providersArrayPath = join(tempDir, 'providers-array.mjs')
-    await writeFile(providersArrayPath, `
+    await writeProviderPackage(tempDir, '@vostride/agent-qa-acme-array-provider', `
       export default {
         providers: [{
           id: 'array-provider',
@@ -93,16 +76,15 @@ describe('loadProviderPlugins', () => {
     `)
 
     const providers = await loadProviderPlugins([
-      { path: defaultDescriptorPath },
-      { path: providersArrayPath },
+      { name: 'default', package: '@vostride/agent-qa-acme-default-provider' },
+      { name: 'array', package: '@vostride/agent-qa-acme-array-provider' },
     ], { baseDir: tempDir })
 
     expect(providers.map((provider) => provider.id)).toEqual(['default-descriptor', 'array-provider'])
   })
 
-  it('does not return descriptors for the same declaration twice', async () => {
-    const pluginPath = join(tempDir, 'once-plugin.mjs')
-    await writeFile(pluginPath, `
+  it('does not return descriptors for the same entry twice', async () => {
+    await writeProviderPackage(tempDir, '@vostride/agent-qa-acme-once-provider', `
       export const providers = [{
         id: 'once-provider',
         label: 'Once provider',
@@ -111,48 +93,16 @@ describe('loadProviderPlugins', () => {
       }]
     `)
 
-    const first = await loadProviderPlugins([{ path: pluginPath }], { baseDir: tempDir })
-    const second = await loadProviderPlugins([{ path: pluginPath }], { baseDir: tempDir })
+    const entries = [{ name: 'once', package: '@vostride/agent-qa-acme-once-provider' }]
+    const first = await loadProviderPlugins(entries, { baseDir: tempDir })
+    const second = await loadProviderPlugins(entries, { baseDir: tempDir })
 
     expect(first.map((provider) => provider.id)).toEqual(['once-provider'])
     expect(second).toHaveLength(0)
   })
 
-  it('warns once for non-empty provider declarations and not for empty loads', async () => {
-    const firstPath = join(tempDir, 'first-plugin.mjs')
-    await writeFile(firstPath, `
-      export default {
-        id: 'first-provider',
-        label: 'First provider',
-        authModes: ['api-key'],
-        adapter() { return { source: 'first' } },
-      }
-    `)
-    const secondPath = join(tempDir, 'second-plugin.mjs')
-    await writeFile(secondPath, `
-      export default {
-        id: 'second-provider',
-        label: 'Second provider',
-        authModes: ['api-key'],
-        adapter() { return { source: 'second' } },
-      }
-    `)
-
-    await expect(loadProviderPlugins([], { baseDir: tempDir })).resolves.toEqual([])
-    await expect(loadProviderPlugins(undefined, { baseDir: tempDir })).resolves.toEqual([])
-    expect(warnSpy).not.toHaveBeenCalled()
-
-    await loadProviderPlugins([{ path: firstPath }], { baseDir: tempDir })
-    await loadProviderPlugins([{ path: secondPath }], { baseDir: tempDir })
-
-    expect(warnSpy).toHaveBeenCalledTimes(1)
-    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/first-party/i)
-    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/in-process/i)
-  })
-
   it('returns descriptors without registering them in core', async () => {
-    const pluginPath = join(tempDir, 'return-only-plugin.mjs')
-    await writeFile(pluginPath, `
+    await writeProviderPackage(tempDir, '@vostride/agent-qa-acme-return-only-provider', `
       globalThis.__agentQaProviderPluginRegisterCalls = (globalThis.__agentQaProviderPluginRegisterCalls ?? 0) + 1
       export default {
         id: 'return-only-provider',
@@ -162,19 +112,59 @@ describe('loadProviderPlugins', () => {
       }
     `)
 
-    const providers = await loadProviderPlugins([{ path: pluginPath }], { baseDir: tempDir })
+    const providers = await loadProviderPlugins(
+      [{ name: 'provider', package: '@vostride/agent-qa-acme-return-only-provider' }],
+      { baseDir: tempDir },
+    )
 
     expect(providers.map((provider) => provider.id)).toEqual(['return-only-provider'])
     expect((globalThis as { __agentQaProviderPluginRegisterCalls?: number }).__agentQaProviderPluginRegisterCalls).toBe(1)
   })
 
-  it('rejects ambiguous provider plugin declarations before import', async () => {
-    await expect(loadProviderPlugins([
-      { package: '@scope/provider-plugin', path: './plugin.mjs' } as never,
-    ], { baseDir: tempDir })).rejects.toThrow(/either package or path/)
+  it('returns nothing for an empty or missing list', async () => {
+    await expect(loadProviderPlugins([], { baseDir: tempDir })).resolves.toEqual([])
+    await expect(loadProviderPlugins(undefined, { baseDir: tempDir })).resolves.toEqual([])
+  })
 
-    await expect(loadProviderPlugins([
-      {} as never,
-    ], { baseDir: tempDir })).rejects.toThrow(/specify package or path/)
+  it('refuses a third-party package with an in-process manifest and returns nothing', async () => {
+    await writeProviderPackage(tempDir, '@acme/agent-qa-provider', `
+      globalThis.__agentQaThirdPartyProviderImported = true
+      export default {
+        id: 'third-party-provider',
+        label: 'Third-party provider',
+        authModes: ['api-key'],
+        adapter() { return { source: 'third-party' } },
+      }
+    `)
+
+    await expect(
+      loadProviderPlugins([{ name: 'acme', package: '@acme/agent-qa-provider' }], {
+        baseDir: tempDir,
+      }),
+    ).rejects.toThrow(
+      'Plugin entry acme names @acme/agent-qa-provider, which declares a model-provider plugin; '
+        + 'only @vostride/agent-qa-* packages load inside agent-qa. Remove the entry.',
+    )
+    expect(
+      (globalThis as { __agentQaThirdPartyProviderImported?: boolean })
+        .__agentQaThirdPartyProviderImported,
+    ).toBeUndefined()
+  })
+
+  it('refuses a declared plugin that is not installed, naming its entry and install line', async () => {
+    const entries = [{ name: 'p', package: '@vostride/agent-qa-provider-missing' }]
+
+    await expect(loadProviderPlugins(entries, { baseDir: tempDir })).rejects.toThrow(
+      'Plugin entry p names @vostride/agent-qa-provider-missing, which is not installed. Run npm '
+        + 'install --save-dev @vostride/agent-qa-provider-missing.',
+    )
+  })
+
+  it('leaves a missing entry a remote names to run start', async () => {
+    const entries = [{ name: 'farm', package: '@acme/agent-qa-plugin-farm' }]
+
+    await expect(
+      loadProviderPlugins(entries, { baseDir: tempDir, remotes: [{ name: 'lab', plugin: 'farm' }] }),
+    ).resolves.toEqual([])
   })
 })

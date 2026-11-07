@@ -1,0 +1,81 @@
+{
+  "name": "@vostride/agent-qa-plugin-browserstack",
+  "version": "0.3.3",
+  "private": false,
+  "description": "agent-qa plugin for BrowserStack: runs web tests on BrowserStack browsers over the Playwright protocol and device tests on BrowserStack devices over Appium.",
+  "keywords": [
+    "agent-qa",
+    "agent-qa-plugin",
+    "browserstack"
+  ],
+  "license": "FSL-1.1-ALv2",
+  "homepage": "https://github.com/vostride/agent-qa#readme",
+  "bugs": {
+    "url": "https://github.com/vostride/agent-qa/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vostride/agent-qa.git",
+    "directory": "plugins/browserstack"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "skill",
+    "LICENSE.md",
+    "NOTICE.md"
+  ],
+  "scripts": {
+    "build": "tsdown && node scripts/emit.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@vostride/agent-qa-plugin-kit": "workspace:*",
+    "browserstack-local": "1.5.16"
+  },
+  "devDependencies": {
+    "@types/node": "~24.19.2",
+    "@vostride/agent-qa-arch": "workspace:*",
+    "tsdown": "~0.23.4",
+    "typescript": "~7.0.2",
+    "vitest": "~5.0.5"
+  },
+  "agent-qa": {
+    "plugin": {
+      "kind": "remote",
+      "runs": "process",
+      "protocol": 1,
+      "entry": "./dist/main.js",
+      "serves": [
+        "playwright",
+        "appium"
+      ],
+      "methods": [
+        "check",
+        "uploadApp",
+        "started",
+        "end"
+      ],
+      "options": "./dist/options.schema.json",
+      "settings": "./dist/settings.schema.json",
+      "runFacts": [
+        "testName",
+        "runId",
+        "failure"
+      ],
+      "skill": "./skill"
+    }
+  }
+}

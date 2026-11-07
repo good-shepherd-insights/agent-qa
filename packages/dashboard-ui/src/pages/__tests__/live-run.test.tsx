@@ -628,6 +628,63 @@ describe('NO-LIVENESS-PILL: the page makes no claim about the bus channel', () =
   })
 })
 
+describe("a running test's plugin progress", () => {
+  const remoteProgress = (payload: Record<string, unknown>) =>
+    envelope('remoteProgress', { remote: 'bs-chrome', ...payload })
+  const progressText = () => qa('[data-remote-progress]').map((node) => node.textContent)
+
+  it('shows the latest line for a running test, with its percentage, until the test finishes', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'the member', 1), stepStarted())
+    await emit(remoteProgress({ message: 'queued, 3 ahead', testIndex: 0, queued: 3 }))
+    expect(progressText()).toEqual(['Remote bs-chrome: queued, 3 ahead'])
+
+    await emit(remoteProgress({ message: 'uploading app (12 MB)', testIndex: 0, percent: 40 }))
+    expect(progressText()).toEqual(['Remote bs-chrome: uploading app (12 MB) 40%'])
+    expect(q('[data-remote-progress]')?.className).toContain('text-muted-foreground')
+
+    await emit(testFinished(0, 'passed'))
+    expect(progressText()).toEqual([])
+  })
+
+  it("shows a suite session's shared line once, without a test name", async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'checkout', 1), testStarted(1, 'login', 1))
+    await emit(remoteProgress({ message: 'queued, 3 ahead', queued: 3 }))
+
+    expect(progressText()).toEqual(['Remote bs-chrome: queued, 3 ahead'])
+  })
+
+  it("names each running test before its line when the tests' lines differ", async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'checkout', 1), testStarted(1, 'login', 1))
+    await emit(
+      remoteProgress({ message: 'queued, 3 ahead', testIndex: 0 }),
+      remoteProgress({ message: 'uploading app', testIndex: 1, percent: 40 }),
+    )
+
+    expect(progressText()).toEqual([
+      'checkout · Remote bs-chrome: queued, 3 ahead',
+      'login · Remote bs-chrome: uploading app 40%',
+    ])
+  })
+
+  it('announces the lines from one polite live region', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'checkout', 1))
+    await emit(remoteProgress({ message: 'queued, 3 ahead', testIndex: 0 }))
+
+    const region = q('[data-remote-progress]')?.parentElement
+    expect(region?.getAttribute('role')).toBe('status')
+    expect(region?.getAttribute('aria-live')).toBe('polite')
+    expect(qa('[role="status"] [data-remote-progress]')).toHaveLength(1)
+  })
+})
+
 describe('the header is the title, the file path, Cancel and view run detail', () => {
   const header = (): Element => {
     const found = q('[data-tour-id="tour-live-run-status"]')?.parentElement

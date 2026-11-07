@@ -1,6 +1,6 @@
 {
   "name": "@vostride/agent-qa-core",
-  "version": "0.2.6",
+  "version": "0.3.3",
   "private": false,
   "description": "Core agent-qa runtime, schemas, tools, and execution services.",
   "keywords": [
@@ -64,9 +64,11 @@
   },
   "dependencies": {
     "@vostride/agent-qa-ids": "workspace:*",
+    "@vostride/agent-qa-plugin-kit": "workspace:*",
     "@vostride/agent-qa-runner": "workspace:*",
     "@vostride/agent-qa-schema": "workspace:*",
     "ai": "7.0.159",
+    "ajv": "8.20.0",
     "bytes": "3.1.2",
     "fast-xml-parser": "5.11.2",
     "glob": "14.0.3",

@@ -82,6 +82,12 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'direct run member assembly; relocates with the run-session composition root',
   },
   {
+    file: 'packages/cli/src/commands/doctor-plugin-checks.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "doctor's plugin rows resolve plugins entries and run each plugin's account check through core's plugin host pool directly; joins the environment action class",
+  },
+  {
     file: 'packages/cli/src/commands/doctor.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
@@ -128,6 +134,24 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     specifier: '@vostride/agent-qa-mcp',
     clearedBy: '396',
     reason: 'spawns the v1 MCP server; rewritten with the SDK re-derivation',
+  },
+  {
+    file: 'packages/cli/src/commands/plugin-remote-refusals.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '386',
+    reason: 'the run command keeps its plugin remote refusals here, split out of run.ts; relocates with the run-session composition root',
+  },
+  {
+    file: 'packages/cli/src/commands/plugin-remote-refusals.ts',
+    specifier: '@vostride/agent-qa-runner',
+    clearedBy: '386',
+    reason: 'the run command keeps its plugin remote refusals here, split out of run.ts; relocates with the run-session composition root',
+  },
+  {
+    file: 'packages/cli/src/commands/plugins.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: 'plugins list, describe and validate read plugin entries, manifests and shipped schemas through core directly; joins the typed config action class',
   },
   {
     file: 'packages/cli/src/commands/run.ts',
@@ -210,6 +234,25 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'the direct config writer shares the dashboard config transaction; rewired when the dashboards enter the firewall in M5',
   },
   {
+    file: 'packages/cli/src/composition/plugin-host.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "the run's plugin host composes core's plugin host pool with the config's plugins entries, core's host versions and secret resolver; joins the typed config action class",
+  },
+  {
+    file: 'packages/cli/src/composition/plugin-host.ts',
+    specifier: '@vostride/agent-qa-runner',
+    clearedBy: '395',
+    reason: "the run's plugin host types its declared secrets and session registry with the runner's ports; joins the typed config action class",
+  },
+  {
+    // Moved out of run.ts so the daemon and MCP hosts release sessions without loading the run.
+    file: 'packages/cli/src/composition/remote-sessions.ts',
+    specifier: '@vostride/agent-qa-runner',
+    clearedBy: '386',
+    reason: "the process's remote-session registry, shared by the run, daemon and MCP hosts; relocates with the run-session composition root",
+  },
+  {
     file: 'packages/cli/src/config.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
@@ -256,12 +299,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     specifier: '@vostride/agent-qa-runner-local',
     clearedBy: '388',
     reason: 'candidate emission writes knowledge directly; moves behind the curate-memory job',
-  },
-  {
-    file: 'packages/cli/src/devices.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '395',
-    reason: 'device/target resolution over host config; joins the environment action class',
   },
   {
     file: 'packages/cli/src/eval-report-render.ts',

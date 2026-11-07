@@ -5,9 +5,9 @@
  * passes inside the super-repository and fails only in the release layout, so this census walks
  * every test and test-helper file and fails on any path it resolves above the repository root.
  *
- * THE UNIVERSE is every .ts/.tsx/.mts/.mjs/.js file under packages/<name>/src and
- * scripts/__tests__ that sits in a __tests__ directory or carries a .test. name. Build output
- * and dependencies are skipped.
+ * THE UNIVERSE is every .ts/.tsx/.mts/.mjs/.js file under packages/<name>/src,
+ * plugins/<name>/src and scripts/__tests__ that sits in a __tests__ directory or carries a
+ * .test. name. Build output and dependencies are skipped.
  *
  * ONLY CALL AND `new` EXPRESSIONS ARE READ, through the TypeScript AST, plus declared names for
  * the parent-root naming rule. Comments never reach the AST, and a string held as an object
@@ -18,7 +18,17 @@
  * Every needle in the planted sources below is assembled from two halves at run time, so this
  * file's raw text spells none of them and the self-match cell scans it like any other file.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as ts from 'typescript/unstable/ast'
@@ -39,6 +49,7 @@ interface Hit {
   rule: Rule
 }
 
+const WORKSPACE_ROOTS = ['packages', 'plugins']
 const SKIPPED_DIRS = new Set(['node_modules', 'dist', '.turbo', 'coverage'])
 const EXTENSIONS = /\.(?:ts|tsx|mts|mjs|js)$/
 
@@ -51,21 +62,30 @@ function walkFiles(dir: string, out: string[]): void {
   }
 }
 
-function universe(): string[] {
+function universe(root: string): string[] {
   const roots: string[] = []
-  for (const name of readdirSync(join(REPO_ROOT, 'packages'))) {
-    const src = join(REPO_ROOT, 'packages', name, 'src')
+  for (const workspaceRoot of WORKSPACE_ROOTS) {
+    let names: string[]
     try {
-      if (statSync(src).isDirectory()) roots.push(src)
+      names = readdirSync(join(root, workspaceRoot))
     } catch {
-      // a member without src has nothing to scan
+      continue
+    }
+    for (const name of names) {
+      const src = join(root, workspaceRoot, name, 'src')
+      try {
+        if (statSync(src).isDirectory()) roots.push(src)
+      } catch {
+        // a member without src has nothing to scan
+      }
     }
   }
-  roots.push(join(REPO_ROOT, 'scripts', '__tests__'))
+  const scripts = join(root, 'scripts', '__tests__')
+  if (existsSync(scripts)) roots.push(scripts)
   const files: string[] = []
-  for (const root of roots) walkFiles(root, files)
+  for (const dir of roots) walkFiles(dir, files)
   return files
-    .map(path => relative(REPO_ROOT, path).split(sep).join('/'))
+    .map(path => relative(root, path).split(sep).join('/'))
     .filter(file => EXTENSIONS.test(file) && (file.split('/').includes('__tests__') || file.includes('.test.')))
     .sort()
 }
@@ -214,7 +234,7 @@ function scanSource(file: string, text: string, parsed?: ts.SourceFile): Hit[] {
 
 const describeHit = (hit: Hit) => `${hit.file}:${hit.line} ${hit.rule}`
 
-const UNIVERSE = universe()
+const UNIVERSE = universe(REPO_ROOT)
 const TEXTS = new Map(UNIVERSE.map(file => [file, readFileSync(join(REPO_ROOT, file), 'utf8')]))
 const SOURCES = parseAll(TEXTS)
 const REAL_HITS = [...TEXTS].flatMap(([file, text]) => scanSource(file, text, SOURCES.get(file)))
@@ -228,6 +248,29 @@ describe('test code reads nothing outside the agent-qa root', () => {
   it('the scan universe is the workspace\'s test and test-helper code', () => {
     expect(UNIVERSE.length).toBeGreaterThanOrEqual(1_500)
     expect(UNIVERSE).toContain('packages/eval-local/src/__tests__/replay-composition.test.ts')
+  })
+
+  it('the scan universe takes test code from packages, plugins and scripts alike', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-qa-universe-'))
+    try {
+      const plant = (file: string) => {
+        mkdirSync(dirname(join(root, file)), { recursive: true })
+        writeFileSync(join(root, file), '')
+      }
+      plant('packages/a/src/__tests__/a.test.ts')
+      plant('plugins/b/src/__tests__/b.test.ts')
+      plant('plugins/b/src/__tests__/helper.ts')
+      plant('plugins/b/src/b.ts')
+      plant('scripts/__tests__/c.test.mjs')
+      expect(universe(root)).toEqual([
+        'packages/a/src/__tests__/a.test.ts',
+        'plugins/b/src/__tests__/b.test.ts',
+        'plugins/b/src/__tests__/helper.ts',
+        'scripts/__tests__/c.test.mjs',
+      ])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('every detection rule fires on its planted shape and ignores comments and data strings', () => {

@@ -220,6 +220,24 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: actual.DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_RUNS_DB_PATH: actual.DEFAULT_AGENT_QA_RUNS_DB_PATH,
   workspaceRelativeIdentityPath: actual.workspaceRelativeIdentityPath,
+  selectWebPlace: actual.selectWebPlace,
+  selectSuitePlace: actual.selectSuitePlace,
+  selectDevicePlace: actual.selectDevicePlace,
+  selectTestDevice: actual.selectTestDevice,
+  selectSuiteDevice: actual.selectSuiteDevice,
+  runnerForPlaces: actual.runnerForPlaces,
+  // From the real module: whether a session may log is decided by the config's devices.
+  anyRemoteDevice: actual.anyRemoteDevice,
+  webdriverLogLevel: actual.webdriverLogLevel,
+  projectRemotesInConfigText: actual.projectRemotesInConfigText,
+  // From the real module: the run start refuses a remote's secret misused or undeclared.
+  splitConnectionSecrets: actual.splitConnectionSecrets,
+  missingRemoteSecrets: actual.missingRemoteSecrets,
+  isUrlRemoteEntry: actual.isUrlRemoteEntry,
+  missingRemoteSecretSentence: actual.missingRemoteSecretSentence,
+  missingDeviceSecrets: actual.missingDeviceSecrets,
+  missingDeviceSecretSentence: actual.missingDeviceSecretSentence,
+  connectionSecretMisuse: actual.connectionSecretMisuse,
   // The real version reader, because the union constrains `agent_qa_version` to a semver.
   getAgentQaVersion: actual.getAgentQaVersion,
   parseAllTests: mockParseAllTests,
@@ -356,11 +374,9 @@ vi.mock('@vostride/agent-qa-core', async (importOriginal) => {
     device: {
       name: input.explicitDeviceName ?? input.useDeviceName,
       platform: input.platform,
-      match: {},
     },
     app: {},
     appState: input.appState,
-    appium: { url: input.appiumUrl },
     sourceTrace: [],
   })),
   SecretStore: class MockSecretStore {
@@ -1550,6 +1566,7 @@ describe('run command — auth state consumption', () => {
       // Declared local, as on the default fixture above.
       environment: 'local',
     })
+    ;(cfg.registry as any).devices = { 'android-emu': { platform: 'android' } }
     mockResolveAuthStateForRun.mockRejectedValueOnce(
       new Error('auth state is only supported for web targets. For native mobile, use use.mobile.appState: preserve.'),
     )
@@ -1717,7 +1734,7 @@ describe('run command — mobile app state and device resolution', () => {
     ;(cfg.registry as any).devices = {
       'android-emu': {
         platform: 'android',
-        match: { automationName: 'UiAutomator2' },
+        capabilities: { 'appium:automationName': 'UiAutomator2' },
       },
     }
     ;(cfg.use as any).mobile = { appState: 'preserve' }
@@ -1880,7 +1897,7 @@ describe('run command — mobile app state and device resolution', () => {
     }))
   })
 
-  it('fails mobile suites with no suite or child device', async () => {
+  it('refuses a mobile suite that names no device when a member picks none', async () => {
     const { suitePath, configPath } = await createTempSuiteWorkspace()
     mockResolveConfig.mockResolvedValue(mobileConfig())
     mockMobileTarget()
@@ -1898,14 +1915,17 @@ describe('run command — mobile app state and device resolution', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allErrors).toContain('Select a device for this mobile suite')
+    expect(allErrors).toContain('Suite Mobile Suite runs its tests on one device, but ')
+    expect(allErrors).toContain('picks none. Set use.device in the suite, or device on its target.')
   })
 
-  it('fails mobile suites whose child tests use multiple devices', async () => {
+  it('refuses a mobile suite that names no device when its members pick different ones', async () => {
     const { rootDir, suitePath, configPath } = await createTempSuiteWorkspace()
     await writeFile(join(rootDir, 'tests', 'a.yaml'), 'name: A\n')
     await writeFile(join(rootDir, 'tests', 'b.yaml'), 'name: B\n')
-    mockResolveConfig.mockResolvedValue(mobileConfig())
+    const cfg = mobileConfig()
+    ;(cfg.registry as any).devices['pixel-emu'] = { platform: 'android' }
+    mockResolveConfig.mockResolvedValue(cfg)
     mockMobileTarget()
     mockParseSuiteFile.mockResolvedValue({
       name: 'Mobile Suite',
@@ -1920,7 +1940,7 @@ describe('run command — mobile app state and device resolution', () => {
         makeTest({
           name: file.includes('b.yaml') ? 'Test Two' : 'Test One',
           target: 'mobile-app',
-          use: { device: file.includes('b.yaml') ? 'ios-sim' : 'android-emu' },
+          use: { device: file.includes('b.yaml') ? 'pixel-emu' : 'android-emu' },
         }),
       ],
       errors: [],
@@ -1930,8 +1950,11 @@ describe('run command — mobile app state and device resolution', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(2)
     const allErrors = errorSpy.mock.calls.map((c: string[]) => c.join(' ')).join('\n')
-    expect(allErrors).toContain('Mobile suite child tests use multiple devices')
-    expect(allErrors).toContain('set suite use.device or split the suite')
+    expect(allErrors).toContain('Suite Mobile Suite runs its tests on one device, but ')
+    expect(allErrors).toContain('tests/a.yaml picks android-emu and ')
+    expect(allErrors).toContain(
+      'tests/b.yaml picks pixel-emu. Set use.device in the suite or make the tests agree.',
+    )
   })
 
   it('runs web suites without device settings', async () => {

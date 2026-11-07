@@ -187,6 +187,8 @@ vi.mock('@vostride/agent-qa-core', async () => {
       }
     },
     resolveMobileRunConfig: vi.fn(),
+    findDeviceHere: actual.findDeviceHere,
+    chooseAppiumEndpoint: actual.chooseAppiumEndpoint,
     getAgentQaVersion: () => '0.0.0',
     executeStep: (...args: unknown[]) => mockExecuteStep(...args),
     LLMPlanner: vi.fn().mockImplementation(function () { return { plan: vi.fn() } }),
@@ -200,6 +202,10 @@ vi.mock('@vostride/agent-qa-core', async () => {
     redactSecretValue,
     resolveSecretTemplatesInValue,
     PlannerConfigSchema: actual.PlannerConfigSchema,
+    connectionSecretMisuse: actual.connectionSecretMisuse,
+    RemoteEntrySchema: actual.RemoteEntrySchema,
+    selectSuitePlace: actual.selectSuitePlace,
+    selectWebPlace: actual.selectWebPlace,
     printRunText: actual.printRunText,
     TestDefinitionSchema: actual.TestDefinitionSchema,
     SuiteDefinitionSchema: actual.SuiteDefinitionSchema,
@@ -217,7 +223,7 @@ vi.mock('@vostride/agent-qa-model', async () => {
 
 import { LivePlannerLimitsRefusedError, LiveSession, resolveLivePlannerLimits } from '../live-editor/live-session.js'
 import type { ConfigManager } from '../config/index.js'
-import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
+import { RunSecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { resolvePlannerLimits } from '@vostride/agent-qa-schema'
 
 const webConfig: LiveSessionConfig = {
@@ -228,6 +234,38 @@ const webConfig: LiveSessionConfig = {
     baseURL: 'https://anthropic-proxy.example/messages',
   },
   headless: true,
+}
+
+// A mobile session is built only from the project config, through a managed Appium lease.
+async function configuredAndroidSession(): Promise<LiveSession> {
+  const core = await import('@vostride/agent-qa-core')
+  ;(core.resolveMobileRunConfig as unknown as Mock).mockReturnValue({
+    platform: 'android',
+    targetName: 'android-app',
+    deviceName: 'pixel',
+    device: { name: 'pixel', platform: 'android', model: 'Pixel 8' },
+    plan: { kind: 'here', search: { model: 'Pixel 8' } },
+    app: { appPackage: 'com.example.app', deepLinkAppId: 'com.example.app', sourceTrace: {} },
+    appState: 'preserve',
+    sourceTrace: [],
+  })
+  const configManager = {
+    readWithRevision: async () => ({ kind: 'ok', config: {}, raw: '', revision: 'r1' }),
+  } as unknown as ConfigManager
+  return new LiveSession('mobile-session', {
+    appiumManager: {
+      acquireLease: vi.fn().mockResolvedValue(undefined),
+      releaseLease: vi.fn().mockReturnValue(true),
+      getUrl: vi.fn(() => 'http://localhost:4723'),
+    } as never,
+    configManager,
+    configPath: '/tmp/agent-qa.config.yaml',
+    listDevicesHere: async () => ({
+      attached: [{ serial: 'emulator-5554', state: 'device', model: 'Pixel 8' }],
+      avds: [],
+    }),
+    appiumEnvUrl: '',
+  })
 }
 
 describe('LiveSession', () => {
@@ -290,7 +328,7 @@ describe('LiveSession', () => {
       ...webConfig,
       url: 'https://example.com/{{secret:START_URL_TOKEN}}',
       secretStore,
-      secretRedactor: new SecretRedactor(secretStore),
+      secretRedactor: new RunSecretRedactor(secretStore),
     })
 
     expect(mockExecute).toHaveBeenCalledWith({ type: 'navigate', to: 'url', url: 'https://example.com/runtime-url-token' })
@@ -335,8 +373,29 @@ describe('LiveSession', () => {
   })
 
   it('initialize throws when android adapter is not available', async () => {
+    const mobileSession = await configuredAndroidSession()
+    const mobileConfig: LiveSessionConfig = { ...webConfig, platform: 'android', targetName: 'android-app' }
+    await expect(mobileSession.initialize(mobileConfig)).rejects.toThrow('Failed to load Android adapter')
+  })
+
+  it('refuses a mobile session without the project config, naming what is missing', async () => {
+    const { AndroidPlatformAdapter } = await import('@vostride/agent-qa-android')
     const mobileConfig: LiveSessionConfig = { ...webConfig, platform: 'android' }
-    await expect(session.initialize(mobileConfig)).rejects.toThrow('Failed to load Android adapter')
+
+    await expect(session.initialize(mobileConfig)).rejects.toThrow(
+      'device-resolution: An Android live session is built only from the project config; missing: Appium manager, config manager, config path, target name',
+    )
+    expect(AndroidPlatformAdapter).not.toHaveBeenCalled()
+  })
+
+  it('refuses a configured mobile session that names no target', async () => {
+    const mobileSession = await configuredAndroidSession()
+    const { AndroidPlatformAdapter } = await import('@vostride/agent-qa-android')
+
+    await expect(
+      mobileSession.initialize({ ...webConfig, platform: 'android' }),
+    ).rejects.toThrow(/project config; missing: target name$/)
+    expect(AndroidPlatformAdapter).not.toHaveBeenCalled()
   })
 
   it('executeStepCommand calls executeStep with correct config', async () => {
@@ -385,7 +444,7 @@ describe('LiveSession', () => {
     await session.initialize({
       ...webConfig,
       secretStore,
-      secretRedactor: new SecretRedactor(secretStore),
+      secretRedactor: new RunSecretRedactor(secretStore),
     })
     const result = await session.executeStepCommand(
       'Fill password with {{secret:loginPassword}}',
@@ -853,8 +912,9 @@ describe('LiveSession', () => {
       }
     })
 
-    await session.initialize({ ...webConfig, platform: 'android', appPackage: 'com.example.app' })
-    const attachment = session.liveAttachment()
+    const mobileSession = await configuredAndroidSession()
+    await mobileSession.initialize({ ...webConfig, platform: 'android', targetName: 'android-app' })
+    const attachment = mobileSession.liveAttachment()
 
     expect(attachment.streamCapabilityOf(0)).toEqual({ kind: 'snapshot' })
     const subscription = attachment.subscribeFrames(0, () => {})

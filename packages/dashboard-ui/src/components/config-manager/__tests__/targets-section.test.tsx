@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-// Device match values are secret-class: keys in clear, values saved only through Save setting.
+// A device's capabilities and a target's app reference are file edits, shown read-only.
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -18,20 +18,20 @@ import {
 import { applyConfigChanges, fetchConfig, fetchConfigRevision, undoConfigAction } from '@/lib/api'
 import {
   ADD_DEVICE_LABEL,
-  ADD_SETTING_LABEL,
   ADD_TARGET_LABEL,
+  DEVICE_CAPABILITIES_NOTE,
   DEVICE_FIELD_LABELS,
+  DEVICE_ID_HELP,
   NO_DEVICES_TEXT,
   NO_TARGETS_TEXT,
-  SAVE_SETTING_LABEL,
   SETTLE_DELAY_MS,
   TARGET_ENVIRONMENT_CHOICE_LABELS,
+  TARGET_APP_REF_NOTE,
+  TARGET_DEVICE_NONE,
   TARGET_ENVIRONMENT_LABELS,
   TARGET_FIELD_LABELS,
   TARGET_URL_REQUIRED_ERROR,
   deleteActionName,
-  deviceMatchSettingLabel,
-  replaceValueName,
   undoLine,
 } from '@/lib/config-copy'
 
@@ -45,19 +45,33 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
+
 const CONFIG_PATH = '/work/agent-qa.config.yaml'
-const MASK = '[masked]'
 
 const records = {
   registry: {
     targets: {
       alpha: { platform: 'web', url: 'https://alpha.example.com' },
       staging: { platform: 'web', url: 'https://staging.example.com' },
-      gamma: { platform: 'android', appPackage: 'com.example.gamma' },
+      gamma: {
+        platform: 'android',
+        appPackage: 'com.example.gamma',
+        app: { path: 'apps/gamma.apk', ref: 'gamma-latest' },
+      },
     },
     devices: {
-      iosLocal: { platform: 'ios', match: { udid: MASK } },
-      pixel: { platform: 'android', match: {} },
+      iosLocal: { platform: 'ios', model: 'iPhone 16' },
+      pixel: {
+        platform: 'android',
+        model: 'Pixel 8',
+        capabilities: { 'appium:automationName': 'Espresso', 'farm:options': { accessKey: '[secret:FARM_KEY]' } },
+      },
     },
   },
 }
@@ -139,11 +153,6 @@ function buttonIn(scope: ParentNode | null | undefined, text: string) {
   return buttons.find((button) => button.textContent?.trim() === text || button.getAttribute('aria-label') === text) ?? null
 }
 
-function inputLabelled(scope: ParentNode | null | undefined, label: string) {
-  const inputs = Array.from(scope?.querySelectorAll('input') ?? []) as HTMLInputElement[]
-  return inputs.find((input) => input.getAttribute('aria-label') === label) ?? null
-}
-
 function fieldInput(segments: readonly string[]) {
   return document.getElementById(configFieldControlId(configFieldKeyOf(segments))) as HTMLInputElement | null
 }
@@ -181,6 +190,36 @@ async function waitPastSettle() {
     await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS * 3)
   })
   await flush()
+}
+
+async function chooseOption(trigger: HTMLElement | null, text: string) {
+  expect(trigger, 'the select trigger').not.toBeNull()
+  await act(async () => {
+    trigger!.focus()
+    trigger!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  })
+  await flush()
+  const option = optionTexts().includes(text)
+    ? (Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).find(
+        (item) => item.textContent?.trim() === text,
+      )
+    : undefined
+  expect(option, text).toBeDefined()
+  await act(async () => {
+    option!.focus()
+    option!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+  })
+  await flush()
+}
+
+function optionTexts() {
+  return (Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).map((option) =>
+    option.textContent?.trim(),
+  )
+}
+
+function controlsIn(scope: Element | null) {
+  return scope?.querySelectorAll('input, select, button, textarea, [role="combobox"], [contenteditable]') ?? []
 }
 
 function deferred<T>() {
@@ -321,41 +360,90 @@ describe('TargetsSection and DevicesSection', () => {
     expect(document.activeElement).toBe(buttonIn(section('devices'), ADD_DEVICE_LABEL))
   })
 
-  it('DEVICE-MATCH-SECRET-ROWS: each match key is in clear with its value through SecretValue, and Add setting writes only on Save setting', async () => {
+  it("a mobile target's default device is a select of that platform's devices, with none allowed", async () => {
     await mount()
 
-    await click(rowHeader(deviceRow('iosLocal')))
-    const row = deviceRow('iosLocal')!
-    const secret = row.querySelector('[data-secret-field]') as HTMLElement | null
-    expect(secret?.getAttribute('data-field-path')).toBe('registry.devices.*.match.*')
-    expect(secret?.querySelector('code')?.textContent).toBe(MASK)
-    expect(secret?.querySelectorAll('button')).toHaveLength(1)
-    expect(row.querySelector('dt')?.textContent).toBe('udid')
-    expect(buttonIn(row, replaceValueName(deviceMatchSettingLabel('iosLocal', 'udid')))).not.toBeNull()
-    expect(row.querySelector('input[type="password"], textarea, pre')).toBeNull()
+    await click(rowHeader(targetRow('gamma')))
+    const trigger = fieldInput(['registry', 'targets', 'gamma', 'device'])
+    expect(trigger?.getAttribute('role')).toBe('combobox')
+    expect(trigger?.textContent).toBe(TARGET_DEVICE_NONE)
+    expect(targetRow('gamma')!.textContent).toContain(TARGET_FIELD_LABELS.device)
 
-    await click(buttonIn(row, ADD_SETTING_LABEL))
-    const key = inputLabelled(deviceRow('iosLocal'), DEVICE_FIELD_LABELS.key)
-    const value = inputLabelled(deviceRow('iosLocal'), DEVICE_FIELD_LABELS.value)
-    expect(value?.type).toBe('password')
-
-    await type(key, 'serial')
-    await type(value, 'device-secret')
-    expect(buttonIn(deviceRow('iosLocal'), SAVE_SETTING_LABEL)?.disabled).toBe(true)
-
-    await type(key, 'bundleId')
-    await waitPastSettle()
-    expect(applyConfigChanges).not.toHaveBeenCalled()
-    expect(localStorage.length).toBe(0)
-
-    await click(buttonIn(deviceRow('iosLocal'), SAVE_SETTING_LABEL))
-
+    await chooseOption(trigger, 'pixel')
     expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
-      [[{ op: 'set', path: ['registry', 'devices', 'iosLocal', 'match', 'bundleId'], value: 'device-secret' }]],
+      [[{ op: 'set', path: ['registry', 'targets', 'gamma', 'device'], value: 'pixel' }]],
     ])
-    expect(deviceRow('iosLocal')!.querySelectorAll('[data-secret-field]')).toHaveLength(2)
-    // The landed write is mirrored as written.
-    expect(container!.textContent).toContain('device-secret')
+    expect(fieldInput(['registry', 'targets', 'gamma', 'device'])?.textContent).toBe('pixel')
+
+    await chooseOption(fieldInput(['registry', 'targets', 'gamma', 'device']), TARGET_DEVICE_NONE)
+    expect(vi.mocked(applyConfigChanges).mock.calls.at(-1)).toEqual([
+      [{ op: 'unset', path: ['registry', 'targets', 'gamma', 'device'] }],
+    ])
+  })
+
+  it('the device select offers only devices of the target platform, and a web target has none', async () => {
+    await mount()
+
+    await click(rowHeader(targetRow('gamma')))
+    const trigger = fieldInput(['registry', 'targets', 'gamma', 'device'])
+    await act(async () => {
+      trigger!.focus()
+      trigger!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    })
+    await flush()
+    expect(optionTexts()).toEqual([TARGET_DEVICE_NONE, 'pixel'])
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    await flush()
+
+    await click(rowHeader(targetRow('staging')))
+    expect(fieldInput(['registry', 'targets', 'staging', 'device'])).toBeNull()
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+  })
+
+  it("a target's app reference shows read-only, with no control and no field path", async () => {
+    await mount()
+
+    await click(rowHeader(targetRow('gamma')))
+    const ref = targetRow('gamma')!.querySelector('[data-target-app-ref]')
+    expect(ref?.querySelector('[data-read-only-path="registry.targets.*.app.ref"] code')?.textContent).toBe('gamma-latest')
+    expect(ref?.textContent).toContain(TARGET_FIELD_LABELS.appRef)
+    expect(ref?.textContent).toContain(TARGET_APP_REF_NOTE)
+    expect(controlsIn(ref)).toHaveLength(0)
+    expect(section('targets')!.querySelector('[data-field-path="registry.targets.*.app.ref"]')).toBeNull()
+    expect(fieldInput(['registry', 'targets', 'gamma', 'app', 'path'])?.value).toBe('apps/gamma.apk')
+  })
+
+  it("a device's id is a field, and its capabilities show read-only as key and value rows", async () => {
+    await mount()
+
+    await click(rowHeader(deviceRow('pixel')))
+    const row = deviceRow('pixel')!
+    const id = fieldInput(['registry', 'devices', 'pixel', 'id'])
+    expect(id).not.toBeNull()
+    expect(row.textContent).toContain(DEVICE_FIELD_LABELS.id)
+    expect(row.textContent).toContain(DEVICE_ID_HELP)
+
+    const capabilities = row.querySelector('[data-device-capabilities]')
+    expect(Array.from(capabilities?.querySelectorAll('dt') ?? []).map((dt) => dt.textContent)).toEqual([
+      'appium:automationName',
+      'farm:options',
+    ])
+    expect(Array.from(capabilities?.querySelectorAll('[data-read-only-path="registry.devices.*.capabilities.*"] code') ?? [])
+      .map((code) => code.textContent)).toEqual(['Espresso', '{"accessKey":"[secret:FARM_KEY]"}'])
+    expect(capabilities?.textContent).toContain(DEVICE_CAPABILITIES_NOTE)
+    expect(controlsIn(capabilities)).toHaveLength(0)
+    expect(row.querySelector('[data-field-path^="registry.devices.*.capabilities"]')).toBeNull()
+
+    await type(id, 'R58M41ABCDE')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(SETTLE_DELAY_MS)
+    })
+    await flush()
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: ['registry', 'devices', 'pixel', 'id'], value: 'R58M41ABCDE' }]],
+    ])
   })
 
   it('ADD-ROW-DRAFT-UNTIL-VALID: Add target opens an inline draft row that writes nothing until it is valid, then one set of the whole target', async () => {

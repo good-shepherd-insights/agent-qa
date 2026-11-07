@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander'
 import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import pc from 'picocolors'
 import select from '@inquirer/select'
 import input from '@inquirer/input'
@@ -57,6 +57,9 @@ import {
   renderManagedBlock,
   type ManagedBlockContent,
 } from './managed-block.js'
+import { CliRefusal } from '../composition/cli-refusal.js'
+import { InitRefusal, isInitRefusal } from './init-refusal.js'
+import { initFolderRefusal, resolveInitProject } from './init-project-folder.js'
 
 // Re-exported because this module is their public door.
 export { SUPPORTED_INIT_PLATFORMS, parseInitPlatform } from './scaffold-content.js'
@@ -66,6 +69,7 @@ const INIT_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const INIT_AUTH_STATES_DIR = DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth-states'
 
 const PACKAGE_JSON_FILE = 'package.json'
+const DEFAULT_CONFIG_FILE_NAME = 'agent-qa.config.yaml'
 // Kept here rather than moved: it feeds `buildGitignoreEntries`, the deliberate literal
 // copy this file keeps pinned against `init-filesystem.ts`'s own — see scaffold-content.ts.
 const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
@@ -273,10 +277,8 @@ function objectRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function configUsesSubscriptionAuth(config: Record<string, unknown>): boolean {
-  const plugins = objectRecord(config.plugins)
-  const authPlugins = plugins?.auth
-  if (!Array.isArray(authPlugins)) return false
-  return authPlugins.some(plugin => objectRecord(plugin)?.package === SUBSCRIPTION_AUTH_PACKAGE)
+  if (!Array.isArray(config.plugins)) return false
+  return config.plugins.some(entry => objectRecord(entry)?.package === SUBSCRIPTION_AUTH_PACKAGE)
 }
 
 type SubscriptionAuthDependencyPlan = {
@@ -286,6 +288,17 @@ type SubscriptionAuthDependencyPlan = {
 
 type SubscriptionAuthDependencyResult = InitFileResult & {
   range: string
+}
+
+function parsePackageJson(packageJsonPath: string, text: string): Record<string, unknown> {
+  try {
+    return JSON.parse(text) as Record<string, unknown>
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new InitRefusal(
+      `Refusing to update ${packageJsonPath}: it is not valid JSON (${message}).`,
+    )
+  }
 }
 
 function buildSubscriptionAuthPackageDependencyPlan(
@@ -298,10 +311,12 @@ function buildSubscriptionAuthPackageDependencyPlan(
     : null
   const pkg = existing === null
     ? { private: true } as Record<string, unknown>
-    : JSON.parse(existing) as Record<string, unknown>
+    : parsePackageJson(packageJsonPath, existing)
 
   if (!objectRecord(pkg)) {
-    throw new Error(`${PACKAGE_JSON_FILE} must contain a JSON object to add ${SUBSCRIPTION_AUTH_PACKAGE}`)
+    throw new InitRefusal(
+      `${packageJsonPath} must contain a JSON object to add ${SUBSCRIPTION_AUTH_PACKAGE}`,
+    )
   }
 
   const dependencyBlocks = [
@@ -393,6 +408,7 @@ function buildGitignoreEntries(): string[] {
     // Spelled literally because the init suite mocks init-filesystem.js; a test pins both equal.
     'tests/.agent-qa-drafts/',
     'node_modules/',
+    // init no longer writes this file; the rule keeps one an older init wrote out of git.
     DEFAULT_LOCAL_CONFIG_FILE,
     DEFAULT_ENV_FILE,
     DEFAULT_SECRETS_FILE,
@@ -404,23 +420,6 @@ function buildGitignoreEntries(): string[] {
     // pinned together by the runtime-versus-defaults agreement test.
     '.*.agent-qa-init-*.tmp',
   ]
-}
-
-function buildLocalConfigTemplate(): string {
-  return `# This file is for machine-specific device and app bindings.
-# Keep it out of git.
-# Add agent-qa.local.yaml to .gitignore.
-
-devices:
-  # Example local device binding:
-  # android-emu:
-  #   avd: Pixel_8_API_35
-
-apps:
-  # Example app install binding:
-  # example-android:
-  #   path: apps/example.apk
-`
 }
 
 const KNOWLEDGE_ROOT_DIR = 'agent-qa-knowledge'
@@ -634,11 +633,33 @@ function connectionSteps(config: Record<string, unknown>, dir: string): InitNext
   return steps
 }
 
+const AGENT_QA_COMMAND = 'npx agent-qa '
+
+// Quoted only when a shell would split or expand it, so a plain name prints as it is.
+function shellWord(word: string): string {
+  return /^[\w.-]+$/u.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`
+}
+
+// A config under another name is only found when every agent-qa command names it.
+function withConfigName(steps: readonly InitNextStep[], configName: string): InitNextStep[] {
+  if (configName === DEFAULT_CONFIG_FILE_NAME) return [...steps]
+  const name = shellWord(configName)
+  return steps.map((step) =>
+    step.command.startsWith(AGENT_QA_COMMAND)
+      ? {
+          ...step,
+          command: `${AGENT_QA_COMMAND}--config ${name} ${step.command.slice(AGENT_QA_COMMAND.length)}`,
+        }
+      : step,
+  )
+}
+
 // The same commands, in the same order, as the published quickstart.
 function initNextSteps(
   platform: InitPlatformInput,
   config: Record<string, unknown>,
   dir: string,
+  configName: string,
 ): InitNextStep[] {
   const steps: InitNextStep[] = []
   if (hasWeb(platform)) {
@@ -654,9 +675,6 @@ function initNextSteps(
     })
   }
   steps.push(...connectionSteps(config, dir))
-  if (!hasWeb(platform)) {
-    steps.push({ command: 'Edit agent-qa.local.yaml', description: 'Bind your mobile app' })
-  }
   steps.push({ command: 'npx agent-qa validate', description: 'Check the config and the tests' })
   if (hasWeb(platform)) {
     steps.push({
@@ -668,7 +686,7 @@ function initNextSteps(
     command: GETTING_STARTED_URL,
     description: 'The rest of the route: the hook sample, the dashboard and what the run taught agent-qa',
   })
-  return steps
+  return withConfigName(steps, configName)
 }
 
 const ROOT_AGENT_INSTRUCTIONS_FILE = 'AGENTS.md'
@@ -686,14 +704,24 @@ function agentInstructionPointerBlock(): string {
 }
 
 // The config marker records completion, so a failed root block reports the scaffold incomplete.
-function incompleteScaffoldError(error: unknown): Error {
+function incompleteScaffoldError(error: unknown, configName: string): Error {
   const reason = error instanceof Error ? error.message : String(error)
-  return new Error(
-    `${reason}\nThe other scaffold files were written, but agent-qa.config.yaml was not written, `
+  const message =
+    `${reason}\nThe other scaffold files were written, but ${configName} was not written, `
     + 'so this project is not initialized. Fix the cause above and rerun agent-qa init; '
-    + 'files it already wrote are kept.',
-    { cause: error },
-  )
+    + 'files it already wrote are kept.'
+  return isInitRefusal(error)
+    ? new InitRefusal(message, { cause: error })
+    : new Error(message, { cause: error })
+}
+
+// A refusal exits 2 with its message alone; a bug or a prompt cancel passes through unchanged.
+function asInitRefusal(error: unknown): unknown {
+  if (error instanceof CliRefusal) return error
+  if (isInitRefusal(error)) {
+    return new CliRefusal([pc.red(error.message)], 2, { cause: error })
+  }
+  return error
 }
 
 // Printed flush left: an indented marker line is not a marker, and the writer would refuse it.
@@ -750,12 +778,6 @@ function buildScaffoldFilePlans(
       dir,
       DEFAULT_HOOKS_FILE,
       hasWeb(platform) ? buildExampleHooksFile() : buildHooksFile(platform),
-      force,
-    ),
-    scaffoldFilePlan(
-      dir,
-      DEFAULT_LOCAL_CONFIG_FILE,
-      buildLocalConfigTemplate(),
       force,
     ),
     // The knowledge root's own covering rule goes down BEFORE any other write inside the
@@ -840,10 +862,11 @@ function printNextSteps(
   platform: InitPlatformInput,
   config: Record<string, unknown>,
   dir: string,
+  configName: string,
 ): void {
   console.log('')
   console.log('  Next steps:')
-  for (const [index, step] of initNextSteps(platform, config, dir).entries()) {
+  for (const [index, step] of initNextSteps(platform, config, dir, configName).entries()) {
     console.log(`    ${index + 1}. ${pc.cyan(step.command)}  ${step.description}`)
   }
 }
@@ -875,286 +898,297 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
       'print the JSON capability manifest (catalog and local posture) and exit; writes nothing',
     )
     .action(async (opts, command: Command) => {
+      // Taken first and released only after the document: a failure's block must go to stderr.
+      const releaseStdout = opts.agent === true ? reserveStdoutForData() : undefined
+      const { projectDir, configPath } = await resolveInitProject(command, opts.dir)
       // `--agent` is a read that returns before any prompt or file, so no branch below can write.
       if (opts.agent === true) {
-        const releaseStdout = reserveStdoutForData()
-        try {
-          // IMPORTED HERE AND NOT AT THE TOP, deliberately. The manifest reads the local
-          // composition's posture, so its module graph reaches the agent host, and `init`'s
-          // ordinary job is to write a scaffold into a directory where no host could compose yet.
-          // A top-level import would make every `init` run (and every test of one) evaluate a
-          // composition root that only this branch has any use for. It also breaks
-          // `init.test.ts`, whose partial `node:fs` mock the durable-store module underneath that
-          // graph needs more of.
-          const { buildAgentManifest } = await import('../capability-catalog/manifest.js')
-          const globalOpts = command.parent?.opts<{ config?: string }>() ?? {}
-          // `--dir`-relative when no explicit `--config` was given: `init` is a command aimed at a
-          // directory, and reporting a posture read out of the caller's shell instead would
-          // describe the wrong workspace.
-          const configPath = globalOpts.config ?? join(resolve(opts.dir), 'agent-qa.config.yaml')
-          const manifest = await buildAgentManifest({ configPath })
-          // STDOUT AND NOTHING ELSE ON IT. The whole of this command's output under `--agent` is
-          // one JSON document, so it pipes into a parser without a filter in between.
-          console.log(guardJsonText(JSON.stringify(manifest, null, 2)))
-        } finally {
-          releaseStdout()
-        }
+        // IMPORTED HERE AND NOT AT THE TOP, deliberately. The manifest reads the local
+        // composition's posture, so its module graph reaches the agent host, and `init`'s
+        // ordinary job is to write a scaffold into a directory where no host could compose yet.
+        // A top-level import would make every `init` run (and every test of one) evaluate a
+        // composition root that only this branch has any use for. It also breaks
+        // `init.test.ts`, whose partial `node:fs` mock the durable-store module underneath that
+        // graph needs more of.
+        const { buildAgentManifest } = await import('../capability-catalog/manifest.js')
+        // The posture is read from the config init resolved: the `--config` file, or the one in
+        // `--dir`, never the caller's shell folder.
+        const manifest = await buildAgentManifest({ configPath })
+        // STDOUT AND NOTHING ELSE ON IT. The whole of this command's output under `--agent` is
+        // one JSON document, so it pipes into a parser without a filter in between.
+        console.log(guardJsonText(JSON.stringify(manifest, null, 2)))
+        releaseStdout?.()
         // `--agent` writes nothing, so it emits no init event.
         return
       }
 
-      const initStartedAt = Date.now()
-      const dir = resolve(opts.dir)
-      const force = opts.force ?? false
-      // The one path the opt-out read consults: `--dir`-relative unless `--config` is given.
-      const analyticsConfigPath =
-        command.parent?.opts<{ config?: string }>().config ?? join(dir, 'agent-qa.config.yaml')
+      try {
+        const dir = projectDir
+        const folderRefusal = await initFolderRefusal(dir)
+        if (folderRefusal !== undefined) throw new CliRefusal([pc.red(folderRefusal)], 2)
+        const initStartedAt = Date.now()
+        const force = opts.force ?? false
 
-      const tty = hooks.isTTY ?? process.stdin.isTTY === true
-      let asked = false
+        const tty = hooks.isTTY ?? process.stdin.isTTY === true
+        let asked = false
 
-      // Derives the outcome from file outcomes; a scaffold that throws reaches neither call site.
-      const emitInitCompleted = async (
-        results: readonly { readonly outcome: InitFileResult['outcome'] }[],
-      ): Promise<void> => {
-        const { analyticsEvent, composeAnalyticsHost } = await import(
-          '../composition/analytics-host.js'
-        )
-        // Reads this command's own config for the opt-out; an absent config yields `undefined`.
-        const { readAnalyticsPrivacyDeclaration, resolveConfig } = await import('../config.js')
-        let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
-        try {
-          config = await resolveConfig({
-            configPath: analyticsConfigPath,
-            loadAuthPlugins: false,
+        // Derives the outcome from file outcomes; a scaffold that throws reaches neither call site.
+        const emitInitCompleted = async (
+          results: readonly { readonly outcome: InitFileResult['outcome'] }[],
+        ): Promise<void> => {
+          const { analyticsEvent, composeAnalyticsHost } = await import(
+            '../composition/analytics-host.js'
+          )
+          // Reads this command's own config for the opt-out; an absent config yields `undefined`.
+          const { readAnalyticsPrivacyDeclaration, resolveConfig } = await import('../config.js')
+          let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
+          try {
+            config = await resolveConfig({
+              configPath,
+              loadAuthPlugins: false,
+            })
+          } catch {
+            config = undefined
+          }
+          // Reuses `configPath`, so the declaration comes from the file already chosen.
+          const analyticsConfig = config ?? (await readAnalyticsPrivacyDeclaration(configPath))
+          const analytics = await (hooks.composeAnalytics ?? composeAnalyticsHost)({
+            surface: 'cli',
+            ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
           })
-        } catch {
-          config = undefined
+          try {
+            const createdCount = results.filter((result) => result.outcome === 'created').length
+            const updatedCount = results.filter((result) => result.outcome === 'updated').length
+            analytics.port.capture(analyticsEvent(analytics, 'agent-qa.init.completed', {
+              init_mode: asked ? 'interactive' : 'scaffold',
+              outcome: createdCount > 0 ? 'created' : updatedCount > 0 ? 'updated' : 'unchanged',
+              created_file_count: createdCount,
+              duration_ms: Date.now() - initStartedAt,
+            }))
+          } finally {
+            await analytics.shutdown()
+          }
         }
-        // Reuses `analyticsConfigPath`, so the declaration comes from the file already chosen.
-        const analyticsConfig = config ?? await readAnalyticsPrivacyDeclaration(analyticsConfigPath)
-        const analytics = await (hooks.composeAnalytics ?? composeAnalyticsHost)({
-          surface: 'cli',
-          ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
-        })
-        try {
-          const createdCount = results.filter((result) => result.outcome === 'created').length
-          const updatedCount = results.filter((result) => result.outcome === 'updated').length
-          analytics.port.capture(analyticsEvent(analytics, 'agent-qa.init.completed', {
-            init_mode: asked ? 'interactive' : 'scaffold',
-            outcome: createdCount > 0 ? 'created' : updatedCount > 0 ? 'updated' : 'unchanged',
-            created_file_count: createdCount,
-            duration_ms: Date.now() - initStartedAt,
-          }))
-        } finally {
-          await analytics.shutdown()
-        }
-      }
 
-      const refuseBaseUrl = (provider: string): boolean => {
-        const refusal = opts.baseUrl === undefined ? undefined : baseUrlRefusal(provider, opts.baseUrl)
-        if (refusal) {
-          console.error(pc.red(refusal))
-          process.exitCode = 1
-        }
-        return refusal !== undefined
-      }
-      const askLlm = tty && opts.llm === undefined
-      const flaggedLlm = (opts.llm ?? 'claude-code') as InitLLMChoice
-      if (!askLlm && refuseBaseUrl(INIT_LLM_ENTRIES[flaggedLlm].provider)) return
-
-      let platform: InitPlatformInput
-      if (tty && opts.platform === undefined) {
-        asked = true
-        const capabilities = await checkbox<PlatformCapability>({
-          message: 'What platform will you test?',
-          choices: [
-            { value: 'web', name: 'Web', description: 'Test web apps with Playwright', checked: true },
-            { value: 'mobile', name: 'Mobile', description: 'Test Android or iOS apps with Appium', checked: false },
-          ],
-          required: true,
-          validate: (value) => value.length > 0 || 'Select at least one platform.',
-        }) as PlatformCapability[]
-
-        const mobileRuntimes: MobileRuntime[] = capabilities.includes('mobile') ? ['android', 'ios'] : []
-
-        platform = { capabilities, mobileRuntimes }
-      } else {
-        platform = (opts.platform ?? 'web') as Platform
-      }
-
-      let llm: InitLLMChoice = opts.llm ?? 'claude-code'
-      if (askLlm) {
-        asked = true
-        llm = await select<InitLLMChoice>({
-          message: 'Which model connection?',
-          choices: INIT_LLM_CHOICES.map(value => ({ value, name: INIT_LLM_NAMES[value] })),
-          default: 'claude-code',
-        })
-      }
-      const { name: llmName, provider } = INIT_LLM_ENTRIES[llm]
-      if (askLlm && refuseBaseUrl(provider)) return
-
-      let model: string = opts.model ?? defaultModelForProvider(provider)
-      if (tty && opts.model === undefined && !isSubscriptionProvider(provider)) {
-        asked = true
-        model = (await input({
-          message: 'Model:',
-          default: model,
-          validate: (value) => value.trim().length > 0 || 'Enter a model id.',
-        })).trim()
-      }
-
-      const needsBaseURL = getProvider(provider)?.needsBaseURL === true
-      let baseURL: string | undefined = needsBaseURL
-        ? opts.baseUrl ?? INIT_BASE_URL_DEFAULTS[provider]
-        : undefined
-      if (tty && opts.baseUrl === undefined && needsBaseURL) {
-        asked = true
-        baseURL = (await input({
-          message: 'Base URL:',
-          default: baseURL,
-          validate: (value) => baseUrlFormRefusal(value.trim()) ?? true,
-        })).trim()
-      }
-
-      const configPath = join(dir, 'agent-qa.config.yaml')
-      const configClassification = classifyInitPath(configPath, dir)
-      if (configClassification === 'regular' && !force) {
-        const completed = [{ path: configPath, outcome: 'preserved' }] as const
-        console.log(pc.yellow(`Project is already initialized at ${dir}. Use --force to rebuild it.`))
-        printOutcomeSummary(dir, completed)
-        hooks.onComplete?.(completed)
-        await emitInitCompleted(completed)
-        return
-      }
-
-      const config = buildDefaultConfig(platform, [{ name: llmName, provider, model, baseURL }])
-      const usesSubscriptionAuth = configUsesSubscriptionAuth(config)
-      const subscriptionAuthDependency = usesSubscriptionAuth
-        ? buildSubscriptionAuthPackageDependencyPlan(dir)
-        : null
-      const filePlans = buildScaffoldFilePlans(dir, platform, force)
-      const targetGitignorePath = join(dir, '.gitignore')
-      const targetGitignorePlan: InitPathPlan = {
-        root: dir,
-        path: targetGitignorePath,
-        content: '',
-      }
-      const configPlan: InitPathPlan = {
-        root: dir,
-        path: configPath,
-        content: renderScaffoldConfigYaml(config),
-        force,
-      }
-      const agentInstructionsPlan: ManagedBlockUpsertPlan | null = opts.writeAgentInstructions === true
-        ? {
-          root: dir,
-          path: join(dir, ROOT_AGENT_INSTRUCTIONS_FILE),
-          content: agentInstructionPointerContent(),
-        }
-        : null
-      const completePlan = [
-        ...filePlans,
-        ...(subscriptionAuthDependency ? [subscriptionAuthDependency.plan] : []),
-        targetGitignorePlan,
-        ...(agentInstructionsPlan ? [{ root: dir, path: agentInstructionsPlan.path, content: '' }] : []),
-        configPlan,
-      ]
-      const preflight = preflightInitPlan(completePlan)
-      if (agentInstructionsPlan) preflightManagedBlock(agentInstructionsPlan)
-
-      const knowledgeGitignorePath = join(dir, KNOWLEDGE_ROOT_DIR, '.gitignore')
-      const knowledgeGitignoreWasPresent = preflight.some(
-        result => result.path === knowledgeGitignorePath
-          && result.classification === 'regular',
-      )
-      if (knowledgeGitignoreWasPresent) {
-        // The refusal prints its message only, never a stack trace.
-        try {
-          warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
-          verifyEffectiveGitignore({
-            cwd: join(dir, KNOWLEDGE_ROOT_DIR),
-            label: 'existing agent-qa-knowledge/.gitignore',
-            probes: KNOWLEDGE_GITIGNORE_PROBES,
-            // Nothing has been written yet at this point in the run.
-            written: 'nothing',
-          })
-        } catch (error) {
-          console.error(pc.red(error instanceof Error ? error.message : String(error)))
-          process.exitCode = 1
+        const configClassification = classifyInitPath(configPath, dir)
+        if (configClassification === 'regular' && !force) {
+          const completed = [{ path: configPath, outcome: 'preserved' }] as const
+          console.log(pc.yellow(`Project is already initialized at ${dir}. Use --force to rebuild it.`))
+          printOutcomeSummary(dir, completed)
+          hooks.onComplete?.(completed)
+          await emitInitCompleted(completed)
           return
         }
-      }
 
-      const outcomes: InitFileResult[] = []
-      let boundary = 0
-      const recordOutcome = (result: InitFileResult): void => {
-        outcomes.push(result)
-        if (result.outcome === 'preserved') return
-        boundary += 1
-        hooks.afterWrite?.(result, boundary)
-      }
-
-      // Written first, so no later scaffold temporary exists before its ignore rule does.
-      recordOutcome(upsertManagedGitignoreBlock(
-        targetGitignorePath,
-        buildGitignoreEntries(),
-      ))
-      verifyEffectiveGitignore({
-        cwd: dir,
-        label: 'target .gitignore',
-        probes: TARGET_GITIGNORE_PROBES,
-        // The managed block is on disk by now — the refusal must not say otherwise.
-        written: 'managed-gitignore',
-      })
-
-      for (const plan of filePlans) {
-        recordOutcome(writeScaffoldFileAtomic(plan, {}))
-      }
-
-      if (!knowledgeGitignoreWasPresent) {
-        verifyEffectiveGitignore({
-          cwd: join(dir, KNOWLEDGE_ROOT_DIR),
-          label: 'agent-qa-knowledge/.gitignore',
-          probes: KNOWLEDGE_GITIGNORE_PROBES,
-          // This one runs AFTER the scaffold loop: the whole scaffold is published.
-          written: 'managed-gitignore-and-scaffold',
-        })
-      }
-
-      if (subscriptionAuthDependency) {
-        recordOutcome(writeScaffoldFileAtomic(subscriptionAuthDependency.plan, {}))
-      }
-
-      if (agentInstructionsPlan) {
-        try {
-          recordOutcome(upsertManagedBlock(agentInstructionsPlan))
-        } catch (error) {
-          throw incompleteScaffoldError(error)
+        const refuseBaseUrl = (provider: string): boolean => {
+          const refusal = opts.baseUrl === undefined ? undefined : baseUrlRefusal(provider, opts.baseUrl)
+          if (refusal) {
+            console.error(pc.red(refusal))
+            process.exitCode = 2
+          }
+          return refusal !== undefined
         }
+        const askLlm = tty && opts.llm === undefined
+        const flaggedLlm = (opts.llm ?? 'claude-code') as InitLLMChoice
+        if (!askLlm && refuseBaseUrl(INIT_LLM_ENTRIES[flaggedLlm].provider)) return
+
+        let platform: InitPlatformInput
+        if (tty && opts.platform === undefined) {
+          asked = true
+          const capabilities = await checkbox<PlatformCapability>({
+            message: 'What platform will you test?',
+            choices: [
+              { value: 'web', name: 'Web', description: 'Test web apps with Playwright', checked: true },
+              { value: 'mobile', name: 'Mobile', description: 'Test Android or iOS apps with Appium', checked: false },
+            ],
+            required: true,
+            validate: (value) => value.length > 0 || 'Select at least one platform.',
+          }) as PlatformCapability[]
+
+          const mobileRuntimes: MobileRuntime[] = capabilities.includes('mobile') ? ['android', 'ios'] : []
+
+          platform = { capabilities, mobileRuntimes }
+        } else {
+          platform = (opts.platform ?? 'web') as Platform
+        }
+
+        let llm: InitLLMChoice = opts.llm ?? 'claude-code'
+        if (askLlm) {
+          asked = true
+          llm = await select<InitLLMChoice>({
+            message: 'Which model connection?',
+            choices: INIT_LLM_CHOICES.map(value => ({ value, name: INIT_LLM_NAMES[value] })),
+            default: 'claude-code',
+          })
+        }
+        const { name: llmName, provider } = INIT_LLM_ENTRIES[llm]
+        if (askLlm && refuseBaseUrl(provider)) return
+
+        let model: string = opts.model ?? defaultModelForProvider(provider)
+        if (tty && opts.model === undefined && !isSubscriptionProvider(provider)) {
+          asked = true
+          model = (await input({
+            message: 'Model:',
+            default: model,
+            validate: (value) => value.trim().length > 0 || 'Enter a model id.',
+          })).trim()
+        }
+
+        const needsBaseURL = getProvider(provider)?.needsBaseURL === true
+        let baseURL: string | undefined = needsBaseURL
+          ? opts.baseUrl ?? INIT_BASE_URL_DEFAULTS[provider]
+          : undefined
+        if (tty && opts.baseUrl === undefined && needsBaseURL) {
+          asked = true
+          baseURL = (await input({
+            message: 'Base URL:',
+            default: baseURL,
+            validate: (value) => baseUrlFormRefusal(value.trim()) ?? true,
+          })).trim()
+        }
+
+        const config = buildDefaultConfig(platform, [{ name: llmName, provider, model, baseURL }])
+        const usesSubscriptionAuth = configUsesSubscriptionAuth(config)
+        const subscriptionAuthDependency = usesSubscriptionAuth
+          ? buildSubscriptionAuthPackageDependencyPlan(dir)
+          : null
+        const filePlans = buildScaffoldFilePlans(dir, platform, force)
+        const targetGitignorePath = join(dir, '.gitignore')
+        const targetGitignorePlan: InitPathPlan = {
+          root: dir,
+          path: targetGitignorePath,
+          content: '',
+        }
+        const configPlan: InitPathPlan = {
+          root: dir,
+          path: configPath,
+          content: renderScaffoldConfigYaml(config),
+          force,
+        }
+        const agentInstructionsPlan: ManagedBlockUpsertPlan | null = opts.writeAgentInstructions === true
+          ? {
+            root: dir,
+            path: join(dir, ROOT_AGENT_INSTRUCTIONS_FILE),
+            content: agentInstructionPointerContent(),
+          }
+          : null
+        const completePlan = [
+          ...filePlans,
+          ...(subscriptionAuthDependency ? [subscriptionAuthDependency.plan] : []),
+          targetGitignorePlan,
+          ...(agentInstructionsPlan ? [{ root: dir, path: agentInstructionsPlan.path, content: '' }] : []),
+          configPlan,
+        ]
+        const preflight = preflightInitPlan(completePlan)
+        if (agentInstructionsPlan) preflightManagedBlock(agentInstructionsPlan)
+
+        const knowledgeGitignorePath = join(dir, KNOWLEDGE_ROOT_DIR, '.gitignore')
+        const knowledgeGitignoreWasPresent = preflight.some(
+          result => result.path === knowledgeGitignorePath
+            && result.classification === 'regular',
+        )
+        if (knowledgeGitignoreWasPresent) {
+          // The refusal prints its message only, never a stack trace.
+          try {
+            warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
+            verifyEffectiveGitignore({
+              cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+              label: 'existing agent-qa-knowledge/.gitignore',
+              probes: KNOWLEDGE_GITIGNORE_PROBES,
+              // Nothing has been written yet at this point in the run.
+              written: 'nothing',
+            })
+          } catch (error) {
+            if (!isInitRefusal(error)) throw error
+            console.error(pc.red(error.message))
+            process.exitCode = 2
+            return
+          }
+        }
+
+        // The config must stay commit-visible under whatever name it has.
+        const targetGitignoreProbes = TARGET_GITIGNORE_PROBES.map((probe) =>
+          probe.path === DEFAULT_CONFIG_FILE_NAME
+            ? { ...probe, path: basename(configPath) }
+            : probe,
+        )
+
+        const outcomes: InitFileResult[] = []
+        let boundary = 0
+        const recordOutcome = (result: InitFileResult): void => {
+          outcomes.push(result)
+          if (result.outcome === 'preserved') return
+          boundary += 1
+          hooks.afterWrite?.(result, boundary)
+        }
+
+        // Written first, so no later scaffold temporary exists before its ignore rule does.
+        recordOutcome(upsertManagedGitignoreBlock(
+          targetGitignorePath,
+          buildGitignoreEntries(),
+        ))
+        verifyEffectiveGitignore({
+          cwd: dir,
+          label: 'target .gitignore',
+          probes: targetGitignoreProbes,
+          // The managed block is on disk by now — the refusal must not say otherwise.
+          written: 'managed-gitignore',
+        })
+
+        for (const plan of filePlans) {
+          recordOutcome(writeScaffoldFileAtomic(plan, {}))
+        }
+
+        if (!knowledgeGitignoreWasPresent) {
+          verifyEffectiveGitignore({
+            cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+            label: 'agent-qa-knowledge/.gitignore',
+            probes: KNOWLEDGE_GITIGNORE_PROBES,
+            // This one runs AFTER the scaffold loop: the whole scaffold is published.
+            written: 'managed-gitignore-and-scaffold',
+          })
+        }
+
+        if (subscriptionAuthDependency) {
+          recordOutcome(writeScaffoldFileAtomic(subscriptionAuthDependency.plan, {}))
+        }
+
+        if (agentInstructionsPlan) {
+          try {
+            recordOutcome(upsertManagedBlock(agentInstructionsPlan))
+          } catch (error) {
+            throw incompleteScaffoldError(error, basename(configPath))
+          }
+        }
+
+        recordOutcome(writeConfigMarkerLast(configPlan, {}))
+        hooks.onComplete?.([...outcomes])
+
+        // AFTER the config marker — the scaffold's last write — so the event describes a
+        // project that exists rather than one being attempted.
+        await emitInitCompleted(outcomes)
+
+        console.log('')
+        console.log(pc.green(pc.bold('✓ agent-qa project initialized!')))
+        console.log('')
+        printOutcomeSummary(dir, outcomes)
+        const secretsPath = join(dir, DEFAULT_SECRETS_FILE)
+        const secretsPreserved = outcomes.some(
+          result => result.path === secretsPath && result.outcome === 'preserved',
+        )
+        if (hasWeb(platform) && secretsPreserved) printExampleSecretLine()
+        printNextSteps(platform, config, dir, basename(configPath))
+        if (!agentInstructionsPlan) printAgentInstructionPointer()
+        console.log('')
+      } catch (error) {
+        throw asInitRefusal(error)
       }
-
-      recordOutcome(writeConfigMarkerLast(configPlan, {}))
-      hooks.onComplete?.([...outcomes])
-
-      // AFTER the config marker — the scaffold's last write — so the event describes a project
-      // that exists rather than one being attempted.
-      await emitInitCompleted(outcomes)
-
-      console.log('')
-      console.log(pc.green(pc.bold('✓ agent-qa project initialized!')))
-      console.log('')
-      printOutcomeSummary(dir, outcomes)
-      const secretsPath = join(dir, DEFAULT_SECRETS_FILE)
-      const secretsPreserved = outcomes.some(
-        result => result.path === secretsPath && result.outcome === 'preserved',
-      )
-      if (hasWeb(platform) && secretsPreserved) printExampleSecretLine()
-      printNextSteps(platform, config, dir)
-      if (!agentInstructionsPlan) printAgentInstructionPointer()
-      console.log('')
     })
+
+  // Commander has printed its own line; a usage error exits 2, and help returns so commander exits 0.
+  cmd.exitOverride((error) => {
+    if (error.exitCode !== 0) throw new CliRefusal([], 2, { cause: error })
+  })
 
   return cmd
 }

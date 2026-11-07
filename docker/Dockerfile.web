@@ -30,12 +30,17 @@ COPY packages/ios/package.json packages/ios/
 COPY packages/knowledge-local/package.json packages/knowledge-local/
 COPY packages/mcp/package.json packages/mcp/
 COPY packages/model/package.json packages/model/
+COPY packages/plugin-kit/package.json packages/plugin-kit/
 COPY packages/runner/package.json packages/runner/
 COPY packages/runner-local/package.json packages/runner-local/
 COPY packages/safety/package.json packages/safety/
 COPY packages/safety-local/package.json packages/safety-local/
 COPY packages/schema/package.json packages/schema/
 COPY packages/web/package.json packages/web/
+COPY plugins/browserstack/package.json plugins/browserstack/
+COPY plugins/hyperbrowser/package.json plugins/hyperbrowser/
+COPY plugins/kernel/package.json plugins/kernel/
+COPY plugins/steel/package.json plugins/steel/
 
 RUN pnpm install --frozen-lockfile
 

@@ -50,11 +50,13 @@ import {
   MOBILE_APP_STATE_LABELS,
   MOBILE_FIELD_LABELS,
   RELOAD_LOGIN_STATES_LABEL,
+  TARGET_DEVICE_NONE,
   TARGET_FIELD_LABELS,
   DEVICE_FIELD_LABELS,
   PORT_RESTART_HELP,
   PROVIDER_FALLBACK_LABELS,
   RELOAD_CONFIG_LABEL,
+  REMOTES_COPY,
   RETRY_LABEL,
   SAVE_STATUS_WORDS,
   SETTLE_DELAY_MS,
@@ -137,7 +139,7 @@ const { sampleConfig, CONFIG_FILE_PATH } = vi.hoisted(() => ({
       contextWindow: '128k',
     }],
     targets: { staging: { platform: 'web', url: 'https://example.com' } },
-    devices: { iosLocal: { platform: 'ios', match: { udid: 'abc' } } },
+    devices: { iosLocal: { platform: 'ios', model: 'iPhone 16' } },
   },
   use: {
     browser: { name: 'chromium', headless: true, viewport: { width: 1280, height: 720 } },
@@ -492,6 +494,23 @@ function refusedWrite() {
  * then lands on the active tab).
  */
 const APP_STATE_SEGMENTS = ['use', 'mobile', 'appState']
+const REMOTE_SEGMENTS = ['use', 'browser', 'remote']
+
+// As GET /api/config serves remotes: name, protocol and origin only.
+function configWithRemotes(remote?: string) {
+  return {
+    ...sampleConfig,
+    registry: {
+      ...sampleConfig.registry,
+      remotes: [
+        { name: 'grid', protocol: 'playwright', url: 'wss://grid.example.com:443' },
+        { name: 'lab', protocol: 'cdp', url: 'ws://10.0.0.5:9222' },
+        { url: 'wss://unnamed.example.com:443' },
+      ],
+    },
+    use: { ...sampleConfig.use, browser: { ...sampleConfig.use.browser, ...(remote ? { remote } : {}) } },
+  }
+}
 
 function deferredValue<T>() {
   let resolve!: (value: T) => void
@@ -1208,6 +1227,105 @@ describe('ConfigPage task tabs shell', () => {
     ])
     expect(API_EXPORTS).not.toContain('updateSettings')
     expect(section('mobile-app-state')!.textContent).toContain(MOBILE_APP_STATE_LABELS.preserve)
+  })
+
+  it('the Remotes default offers this machine and each listed remote with its protocol, each name in mono, and shows the current one', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config: configWithRemotes('grid') }))
+    await renderAt('/config/targets?section=remotes')
+
+    const field = section('remotes')!.querySelector('[data-field-path="use.browser.remote"]')
+    expect(field?.querySelector('label')?.textContent).toBe(REMOTES_COPY.defaultLabel)
+    const trigger = fieldControl(REMOTE_SEGMENTS)!
+    expect(trigger.getAttribute('role')).toBe('combobox')
+    expect(trigger.textContent).toBe('grid (playwright)')
+    await pressKey(trigger, 'Enter')
+    const options = Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]
+    expect(options.map((option) => option.textContent)).toEqual([
+      REMOTES_COPY.thisMachine,
+      'grid (playwright)',
+      'lab (cdp)',
+    ])
+    expect(options.map((option) => option.querySelector('[data-remote-name]')?.className)).toEqual([
+      undefined,
+      'font-mono',
+      'font-mono',
+    ])
+    await pressKey(document.activeElement!, 'Escape')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+  })
+
+  it('the Remotes default offers no name the strict parse refuses, which the config serves as placeholder text', async () => {
+    const config = configWithRemotes()
+    config.registry.remotes.push({ name: 'invalid name', protocol: 'invalid protocol', url: 'invalid url' })
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config }))
+    await renderAt('/config/targets?section=remotes')
+
+    await pressKey(fieldControl(REMOTE_SEGMENTS)!, 'Enter')
+    expect((Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).map((option) => option.textContent)).toEqual([
+      REMOTES_COPY.thisMachine,
+      'grid (playwright)',
+      'lab (cdp)',
+    ])
+    await pressKey(document.activeElement!, 'Escape')
+  })
+
+  it('the Remotes default offers no appium remote, which serves devices', async () => {
+    const config = configWithRemotes()
+    config.registry.remotes.push({ name: 'farm', protocol: 'appium', url: 'https://farm.example.com:443' })
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config }))
+    await renderAt('/config/targets?section=remotes')
+
+    await pressKey(fieldControl(REMOTE_SEGMENTS)!, 'Enter')
+    expect((Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).map((option) => option.textContent)).toEqual([
+      REMOTES_COPY.thisMachine,
+      'grid (playwright)',
+      'lab (cdp)',
+    ])
+    await pressKey(document.activeElement!, 'Escape')
+  })
+
+  it('the Remotes default shows a default no listed remote matches as not listed, beside the warning', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config: configWithRemotes('gird') }))
+    await renderAt('/config/targets?section=remotes')
+
+    const trigger = fieldControl(REMOTE_SEGMENTS)!
+    expect(trigger.textContent).toBe('gird (not listed)')
+    expect(section('remotes')!.querySelector('[data-remote-unlisted]')).not.toBeNull()
+    await pressKey(trigger, 'Enter')
+    expect((Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).map((option) => option.textContent)).toEqual([
+      REMOTES_COPY.thisMachine,
+      'grid (playwright)',
+      'lab (cdp)',
+      'gird (not listed)',
+    ])
+    await pressKey(document.activeElement!, 'Escape')
+    expect(applyConfigChanges).not.toHaveBeenCalled()
+  })
+
+  it('the Remotes default shows this machine when the config picks no remote, with the inherit sentence as muted help', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config: configWithRemotes() }))
+    await renderAt('/config/targets?section=remotes')
+
+    expect(fieldControl(REMOTE_SEGMENTS)!.textContent).toBe(REMOTES_COPY.thisMachine)
+    const help = section('remotes')!.querySelector('[data-field-path="use.browser.remote"] [data-field-help]')
+    expect(help?.textContent).toBe(
+      'Tests and suites inherit this default from agent-qa.config.yaml and can override it in their settings.',
+    )
+    expect(help?.className).toContain('text-xs')
+    expect(help?.className).toContain('text-muted-foreground')
+  })
+
+  it('choosing a remote as the default writes use.browser.remote, and choosing this machine removes it', async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({ config: configWithRemotes() }))
+    await renderAt('/config/targets?section=remotes')
+
+    await chooseOption(fieldControl(REMOTE_SEGMENTS), 'lab (cdp)')
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([[[{ op: 'set', path: REMOTE_SEGMENTS, value: 'lab' }]]])
+    expect(fieldControl(REMOTE_SEGMENTS)!.textContent).toBe('lab (cdp)')
+
+    await chooseOption(fieldControl(REMOTE_SEGMENTS), REMOTES_COPY.thisMachine)
+    expect(vi.mocked(applyConfigChanges).mock.calls[1]).toEqual([[{ op: 'unset', path: REMOTE_SEGMENTS }]])
+    expect(fieldControl(REMOTE_SEGMENTS)!.textContent).toBe(REMOTES_COPY.thisMachine)
   })
 
   it('keeps browser headless out of the Models tab defaults: the default model is a row badge, and Make default writes only the default model', async () => {
@@ -2189,6 +2307,75 @@ describe('ConfigPage task tabs shell', () => {
     expect(section('targets')?.textContent).toContain('App: apps/wikipedia-alpha.apk')
     expect(API_EXPORTS).not.toContain('updateSettings')
     expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it("a mobile target's default device is picked from its platform's devices, and its app reference shows read-only", async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
+      config: {
+        ...sampleConfig,
+        registry: {
+          ...sampleConfig.registry,
+          targets: {
+            shopIos: { platform: 'ios', bundleId: 'com.example.shop', app: { path: 'builds/Shop.app', ref: '[secret:SHOP_REF]' } },
+          },
+          devices: {
+            iosLocal: { platform: 'ios', model: 'iPhone 16' },
+            pixel: { platform: 'android', model: 'Pixel 8' },
+          },
+        },
+      },
+    }))
+    await renderAt('/config/targets')
+    await openRow(section('targets')!.querySelector('[data-target="shopIos"]'))
+
+    const device = fieldControl(['registry', 'targets', 'shopIos', 'device'])
+    expect(device?.textContent).toBe(TARGET_DEVICE_NONE)
+    await pressKey(device!, 'Enter')
+    expect((Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).map((option) => option.textContent)).toEqual([
+      TARGET_DEVICE_NONE,
+      'iosLocal',
+    ])
+    await pressKey(document.activeElement!, 'Escape')
+    await chooseOption(fieldControl(['registry', 'targets', 'shopIos', 'device']), 'iosLocal')
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: ['registry', 'targets', 'shopIos', 'device'], value: 'iosLocal' }]],
+    ])
+
+    const ref = section('targets')!.querySelector('[data-target="shopIos"] [data-target-app-ref]')
+    expect(ref?.querySelector('code')?.textContent).toBe('[secret:SHOP_REF]')
+    expect(ref?.querySelectorAll('input, button, [role="combobox"]')).toHaveLength(0)
+  })
+
+  it("a device's id autosaves by leaf, and its capabilities show read-only with no control", async () => {
+    vi.mocked(fetchConfig).mockResolvedValueOnce(readAnswer({
+      config: {
+        ...sampleConfig,
+        registry: {
+          ...sampleConfig.registry,
+          devices: {
+            rack: {
+              platform: 'android',
+              model: 'SM-S921B',
+              capabilities: { 'appium:automationName': 'Espresso' },
+            },
+          },
+        },
+      },
+    }))
+    await renderAt('/config/targets?section=devices')
+    await openRow(section('devices')!.querySelector('[data-device="rack"]'))
+
+    const capabilities = section('devices')!.querySelector('[data-device="rack"] [data-device-capabilities]')
+    expect(capabilities?.querySelector('dt')?.textContent).toBe('appium:automationName')
+    expect(capabilities?.querySelector('code')?.textContent).toBe('Espresso')
+    expect(capabilities?.querySelectorAll('input, button, [role="combobox"]')).toHaveLength(0)
+
+    const id = fieldControl<HTMLInputElement>(['registry', 'devices', 'rack', 'id'])
+    expect(id).not.toBeNull()
+    await typeTextAndBlur(id!, 'R58M41ABCDE')
+    expect(vi.mocked(applyConfigChanges).mock.calls).toEqual([
+      [[{ op: 'set', path: ['registry', 'devices', 'rack', 'id'], value: 'R58M41ABCDE' }]],
+    ])
   })
 })
 

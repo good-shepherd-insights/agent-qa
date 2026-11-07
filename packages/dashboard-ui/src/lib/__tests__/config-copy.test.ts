@@ -54,14 +54,36 @@ function functionOutputs(): string[] {
     copy.attributeValueLabel('git.branch'),
     copy.removeAttributeName('git.branch'),
     copy.targetNameTakenError('staging'),
+    copy.remoteNotListedParts('grid').join(''),
+    copy.remoteChoiceParts('grid', 'playwright').join(''),
+    copy.remoteChoiceParts('grid', undefined).join(''),
+    copy.remoteUnlistedChoiceParts('gird').join(''),
+    copy.remotePickNotListedParts('gird').join(''),
+    copy.remoteCredentialsLine('.env.secrets.local'),
+    copy.remoteCredentialsLine(undefined),
     copy.deviceNameTakenError('pixel'),
-    copy.deviceMatchKeysHelp('iOS', ['udid', 'bundleId']),
-    copy.deviceMatchSettingLabel('pixel', 'serial'),
-    copy.removeMatchSettingName('pixel', 'serial'),
   ]
 }
 
 const everyString = () => [...collectStrings(Object.values(copy)), ...functionOutputs()]
+
+// The Remotes section picks only the default and points to the file for the rest, so it names
+// the keys typed there.
+const REMOTE_KEY_PATHS = ['registry.remotes', 'use.browser.remote'] as const
+
+function remotesStrings(): string[] {
+  return [
+    ...collectStrings(copy.REMOTES_COPY),
+    copy.remoteNotListedParts('grid').join(''),
+    copy.remoteCredentialsLine('.env.secrets.local'),
+    copy.remoteCredentialsLine(undefined),
+  ]
+}
+
+function storageWords(text: string, allowed: readonly string[]): string[] {
+  const rest = allowed.reduce((left, path) => left.split(path).join(''), text.toLowerCase())
+  return ['bucket', 'registry.', 'use.'].filter((word) => rest.includes(word))
+}
 
 const GENERIC_BUTTON_WORDS = ['Save', 'Cancel', 'OK', 'Submit', 'Replace', 'Reset', 'Discard', 'Try again']
 const OWNER_LOCKED_ONE_WORD = ['Connect', 'Apply', 'Undo', 'Retry']
@@ -133,13 +155,17 @@ describe('the Config strings of record', () => {
     expect(copy.connectionSentence('not-connected', 'Claude', { signIn: true })).toBe('Not signed in.')
   })
 
-  it('no string carries storage vocabulary', () => {
+  it('no string carries storage vocabulary, save the two remote key paths in the Remotes copy', () => {
+    const remotes = new Set(remotesStrings())
     for (const text of everyString()) {
-      const lower = text.toLowerCase()
-      expect(lower, text).not.toContain('bucket')
-      expect(lower, text).not.toContain('registry.')
-      expect(lower, text).not.toContain('use.')
+      expect(storageWords(text, remotes.has(text) ? REMOTE_KEY_PATHS : []), text).toEqual([])
     }
+    for (const path of REMOTE_KEY_PATHS) {
+      expect([...remotes].some((text) => text.includes(path)), path).toBe(true)
+    }
+    const planted = 'use.browser.remote, registry.targets and use.llm'
+    expect(storageWords(planted, REMOTE_KEY_PATHS)).toEqual(['registry.', 'use.'])
+    expect(storageWords('registry.remotes', [])).toEqual(['registry.'])
   })
 
   it('no button label is a bare generic word, and only four owner-locked words stand alone', () => {

@@ -13,7 +13,12 @@ import {
   refuseUnparseableRequest,
   tryParseRequestUrl,
 } from './request-url.js'
-import type { ExecutionBackend, RunSettledDetails, RunSettledStatus } from '../execution/execution-backend.js'
+import type {
+  AppiumProvider,
+  ExecutionBackend,
+  RunSettledDetails,
+  RunSettledStatus,
+} from '../execution/execution-backend.js'
 import { JobQueue } from '../queue/job-queue.js'
 import { TestFileManager } from '../tests/test-file-manager.js'
 import { SuiteFileManager } from '../tests/suite-file-manager.js'
@@ -50,6 +55,7 @@ import {
   type RunServicePorts,
 } from '../run-service/run-service-routes.js'
 import type { RunServiceReadiness } from '@vostride/agent-qa-schema'
+import { REMOTE_RELEASE_BOUND_MS, type RemoteSessionRegistry } from '@vostride/agent-qa-runner'
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -94,6 +100,10 @@ export const DEFAULT_DASHBOARD_HOST = '127.0.0.1'
 
 interface StartServerOptions {
   db: DashboardDatabase
+  // The host process's registry, handed to every live-editor adapter so a shutdown releases it.
+  remoteSessions?: RemoteSessionRegistry
+  // A plugin's stderr and the host's own lines, masked; the dashboard gives one only at debug.
+  pluginDebugLog?: (line: string) => void
   port?: number
   /** Defaults to loopback; any other value is refused before anything listens. */
   host?: string
@@ -135,6 +145,8 @@ export async function startServer(opts: StartServerOptions): Promise<{
   server: Server
   port: number
   close: () => void
+  // Settles once every live-editor session is cleaned up, or at the bound, whichever is first.
+  cleanupSessions: (boundMs: number) => Promise<void>
 }> {
   const { db, port = 3470, uiDir, workspacePaths, configPath, llmConfig, authFetch, agentHost, executionBackend, runService, runServiceReadiness, liveView, liveEditorSubjects, postProcessingRelay } = opts
   // The explicit port wins; `runService.attach` is the fallback for callers that pass only that.
@@ -293,34 +305,27 @@ export async function startServer(opts: StartServerOptions): Promise<{
     requestStop: (runId) => executionBackend?.kill(runId) ?? false,
   })
   console.log(`Run queue started with ${concurrency} concurrency slot(s)`)
-  console.log('Appium lifecycle manager initialized (auto-start on first mobile test)')
+  console.log('Appium lifecycle manager initialized (started only for a run on a device here)')
 
-  jobQueue.on('execute', async (run) => {
-    if (!executionBackend) return
-
-    const platform = run.platform ?? 'web'
-    const isMobile = platform === 'ios' || platform === 'android'
-
-    // Ensure Appium is running before mobile test execution
-    if (isMobile) {
+  // A run asks for Appium only when its device is here and AGENT_QA_APPIUM_URL is unset.
+  const appiumFor = (runId: string): AppiumProvider => ({
+    acquire: async (platform) => {
       try {
-        await appiumManager.acquireLease({ runId: run.id, platform })
-        mobileRuns.set(run.id, platform)
+        await appiumManager.acquireLease({ runId, platform })
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err)
-        printRunText(`Failed to start Appium for run ${run.id}: ${message}`, (text) =>
+        printRunText(`Failed to start Appium for run ${runId}: ${message}`, (text) =>
           console.error(text),
         )
-        db.updateRun(run.id, {
-          status: 'failed',
-          failureSummary: `Appium server failed to start: ${message}`,
-          endedAt: new Date().toISOString(),
-        })
-        finalizeRunArtifactBestEffort(run.id, 'appium-startup', 'appium-startup', `Appium server failed to start: ${message}`, { status: 'failed' })
-        jobQueue.onSlotFreed(run.id)
-        return
+        throw err
       }
-    }
+      mobileRuns.set(runId, platform)
+      return appiumManager.getUrl()
+    },
+  })
+
+  jobQueue.on('execute', (run) => {
+    if (!executionBackend) return
 
     const meta = (run.metadata ?? {}) as Record<string, unknown>
     const args = Array.isArray(meta.args)
@@ -336,7 +341,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
       attributes: run.attributes,
       // The backend takes `opts.timeout ?? defaultTimeout`, so an unusable value falls back here.
       timeout: sanitizeQueuedExecutionTimeout(meta.timeout),
-      ...(isMobile ? { appiumUrl: appiumManager.getUrl() } : {}),
+      appium: appiumFor(run.id),
     })
   })
 
@@ -354,6 +359,8 @@ export async function startServer(opts: StartServerOptions): Promise<{
     configPath: resolvedConfigPath,
     // Each created session registers here, which is what the frame socket attaches.
     ...(liveEditorSubjects === undefined ? {} : { liveEditorSubjects }),
+    ...(opts.remoteSessions === undefined ? {} : { remoteSessions: opts.remoteSessions }),
+    ...(opts.pluginDebugLog === undefined ? {} : { pluginDebugLog: opts.pluginDebugLog }),
   })
 
   // The proxy dispatches on the token's signed kind, so a missing registry only answers nothing.
@@ -603,8 +610,19 @@ export async function startServer(opts: StartServerOptions): Promise<{
     }
   })
 
-  const gracefulShutdown = () => {
-    sessionManager.cleanupAll()
+  const cleanupSessions = (boundMs: number): Promise<void> => {
+    let bound: ReturnType<typeof setTimeout> | undefined
+    return Promise.race([
+      sessionManager.cleanupAll(),
+      new Promise<void>((settled) => {
+        bound = setTimeout(settled, boundMs)
+        bound.unref()
+      }),
+    ]).finally(() => clearTimeout(bound))
+  }
+
+  const gracefulShutdown = async (): Promise<void> => {
+    await cleanupSessions(REMOTE_RELEASE_BOUND_MS)
   }
   process.on('SIGTERM', gracefulShutdown)
   process.on('SIGINT', gracefulShutdown)
@@ -614,7 +632,7 @@ export async function startServer(opts: StartServerOptions): Promise<{
     executionBackend?.killAll()
     releaseAllMobileAppiumLeases('server-startup-error')
     appiumManager.shutdown()
-    sessionManager.cleanupAll()
+    void sessionManager.cleanupAll()
     db.close()
   }
 
@@ -638,12 +656,13 @@ export async function startServer(opts: StartServerOptions): Promise<{
       resolve({
         server,
         port: boundPort,
+        cleanupSessions,
         close: () => {
           jobQueue.stop()
           executionBackend?.killAll()
           releaseAllMobileAppiumLeases('server-close')
           appiumManager.shutdown()
-          sessionManager.cleanupAll()
+          void sessionManager.cleanupAll()
           server.close()
           db.close()
         },

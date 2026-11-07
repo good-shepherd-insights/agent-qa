@@ -29,6 +29,7 @@ import {
   createDeclaredSecretMask,
   DeclaredSecretsUnavailableError,
 } from '../composition/declared-secrets.js'
+import { CANCELLED_LINE } from '../composition/cli-refusal.js'
 import {
   CLI_FUNCTION_CALLER,
   composeCliLocalAgent,
@@ -60,7 +61,9 @@ interface ChatOptions {
 export interface ChatCommandDeps {
   input?: NodeJS.ReadableStream
   output?: NodeJS.WritableStream
+  terminal?: boolean
   onInterruptHandler?: (handler: () => Promise<void>) => void
+  exit?: (code: number) => void
   // Substitutable because the default reaches a provider, so a suite could not run offline.
   chatCapabilities?: (configPath: string) => Promise<CliChatCapabilities | undefined>
   // Substitutable so a suite neither touches a real home directory nor misses an emission.
@@ -329,6 +332,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
           // the suite drives) readline simply never calls it, so the degrade is silence rather
           // than a wrong suggestion.
           completer: createChatCompleter(catalog.rows, CHAT_HELP_ENTRIES),
+          ...(deps.terminal === undefined ? {} : { terminal: deps.terminal }),
         })
 
         // The starter prompts: three suggestions rendered from catalog rows, deterministic in
@@ -347,6 +351,23 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
         prompt.on('close', () => {
           promptClosed = true
         })
+        // With no listener, readline closes on Ctrl-C and the session would end as a clean exit.
+        let cancelled: Promise<void> | undefined
+        let turnInFlight = false
+        prompt.on('SIGINT', () => {
+          if (cancelled !== undefined) return
+          console.error(CANCELLED_LINE)
+          cancelled = interrupt()
+          if (turnInFlight) {
+            // A running turn cannot be stopped in place, so the process ends, as on a SIGINT.
+            const exit = deps.exit ?? ((code: number) => process.exit(code))
+            void cancelled.then(() => exit(130), () => exit(130))
+            return
+          }
+          // Awaited again after the loop; handled here so a failed abort is never unhandled.
+          cancelled.catch(() => {})
+          prompt.close()
+        })
 
         let announced = sessionId !== undefined
         if (announced) emitHuman(print, pc.dim(`session ${String(sessionId)}`))
@@ -360,6 +381,7 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
           }
 
           const turnStartedAt = Date.now()
+          turnInFlight = true
           try {
             const result = (await invokeFunction(
               host.registry,
@@ -369,6 +391,9 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
                 : { message: utterance, sessionId: activeSessionId },
               CLI_FUNCTION_CALLER,
             )) as AgentAskResult
+            turnInFlight = false
+            // The turn was cancelled: it is neither shown nor counted.
+            if (cancelled !== undefined) break
 
             // `tool_call_count` counts clause receipts; tokens are absent, as the result has none.
             turnCount += 1
@@ -387,6 +412,8 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
             }
             emitHuman(print, renderTurn(result))
           } catch (error) {
+            turnInFlight = false
+            if (cancelled !== undefined) break
             // A refused or failed TURN ends the turn, never the conversation. The person is still
             // here and their next line is still a request; exiting on a refusal would make one
             // unroutable clause cost them the session.
@@ -408,6 +435,10 @@ export function createChatCommand(deps: ChatCommandDeps = {}): Command {
           if (!promptClosed) prompt.prompt()
         }
         prompt.close()
+        if (cancelled !== undefined) {
+          await cancelled
+          process.exitCode = 130
+        }
       } catch (error) {
         endReason = 'error'
         reportError(error, mask)

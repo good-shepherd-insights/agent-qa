@@ -205,6 +205,12 @@ function setNamedConfig(config: Record<string, unknown>): void {
   })
 }
 
+function promptCancel(): Error {
+  return Object.assign(new Error('User force closed the prompt with SIGINT'), {
+    name: 'ExitPromptError',
+  })
+}
+
 const TEST_TOKENS = {
   access: 'access-token',
   refresh: 'refresh-token',
@@ -310,14 +316,14 @@ describe('auth provider mode contract', () => {
     await expect(runAuthCommand(['login', '--config', 'codex'])).resolves.toBeUndefined()
     expect(getOutput()).toContain('Provider "openai-subscription" is configured for "codex", but no auth plugin is registered.')
     expect(getOutput()).toContain('"devDependencies": { "@vostride/agent-qa-subscription-auth": "<agent-qa version>" }')
-    expect(getOutput()).toContain('plugins.auth')
+    expect(getOutput()).toContain('    - name: subscription')
     expect(getOutput()).toContain('Then run: agent-qa auth login --config codex')
     expect(getOutput()).not.toContain('requires an auth plugin')
 
     await expect(runAuthCommand(['login', '--config', 'claude'])).resolves.toBeUndefined()
     expect(getOutput()).toContain('Provider "anthropic-subscription" is configured for "claude", but no auth plugin is registered.')
     expect(getOutput()).toContain('"devDependencies": { "@vostride/agent-qa-subscription-auth": "<agent-qa version>" }')
-    expect(getOutput()).toContain('plugins.auth')
+    expect(getOutput()).toContain('    - name: subscription')
     expect(getOutput()).toContain('Then run: agent-qa auth login --config claude')
     expect(getOutput()).not.toContain('requires an auth plugin')
 
@@ -395,6 +401,36 @@ describe('auth provider mode contract', () => {
       tokens,
     })
     expect(getOutput()).toContain('Authenticated claude-subscription with Anthropic subscription')
+  })
+
+  it('a cancelled authorization code prompt ends auth login as a cancel and saves nothing', async () => {
+    const cancel = promptCancel()
+    const cleanup = vi.fn()
+    const plugin = createMockAuthPlugin({
+      providerId: 'anthropic-subscription',
+      credentialProviderId: 'anthropic-subscription',
+      label: 'Anthropic subscription',
+      modelAdapter: 'anthropic-messages',
+      dashboardAuth: { mode: 'manual-code', buttonLabel: 'Login with Anthropic subscription' },
+      startAuth: vi.fn(async () => ({
+        authorizeUrl: 'https://auth.example/anthropic',
+        sessionState: { verifier: 'verifier-1' },
+        cleanup,
+      })),
+    })
+    mockGetLLMAuthProviderPlugin.mockReturnValue(plugin)
+    mockInput.mockRejectedValueOnce(cancel)
+    setNamedConfig({
+      name: 'claude-subscription',
+      provider: 'anthropic-subscription',
+      model: 'claude-sonnet-4-20250514',
+    })
+
+    await expect(runAuthCommand(['login', '--config', 'claude-subscription'])).rejects.toBe(cancel)
+
+    expect(mockWriteAuth).not.toHaveBeenCalled()
+    expect(cleanup).toHaveBeenCalled()
+    expect(getOutput()).not.toContain('User force closed')
   })
 
   it('auth login names the command-line fix when a manual-code plugin cannot exchange a code', async () => {
@@ -710,6 +746,22 @@ describe('auth set', () => {
       provider: 'gemini',
       key: 'prompt-secret',
     })
+  })
+
+  it('a cancelled secret prompt ends auth set as a cancel and saves nothing', async () => {
+    const cancel = promptCancel()
+    mockPassword.mockRejectedValueOnce(cancel)
+    setNamedConfig({
+      name: 'gemini-fast',
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+    })
+
+    await expect(
+      runAuthCommand(['set', '--config', 'gemini-fast', '--type', 'api-key']),
+    ).rejects.toBe(cancel)
+
+    expect(mockWriteAuth).not.toHaveBeenCalled()
   })
 
   it('rejects bearer-token credentials for non anthropic-compatible configs', async () => {

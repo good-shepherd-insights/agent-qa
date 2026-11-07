@@ -85,6 +85,16 @@ vi.mock('@vostride/agent-qa-runner-local', async (importOriginal) => ({
 
 vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
   printRunText: (await importOriginal<typeof import('@vostride/agent-qa-core')>()).printRunText,
+  connectionSecretMisuse: (await importOriginal<typeof import('@vostride/agent-qa-core')>())
+    .connectionSecretMisuse,
+  RemoteEntrySchema: (await importOriginal<typeof import('@vostride/agent-qa-core')>())
+    .RemoteEntrySchema,
+  selectSuitePlace: (await importOriginal<typeof import('@vostride/agent-qa-core')>())
+    .selectSuitePlace,
+  selectWebPlace: (await importOriginal<typeof import('@vostride/agent-qa-core')>()).selectWebPlace,
+  findDeviceHere: (await importOriginal<typeof import('@vostride/agent-qa-core')>()).findDeviceHere,
+  chooseAppiumEndpoint: (await importOriginal<typeof import('@vostride/agent-qa-core')>())
+    .chooseAppiumEndpoint,
   MobileSetupError: class MobileSetupError extends Error {
     category: string
     constructor(options: { category: string; message: string }) {
@@ -227,15 +237,15 @@ describe('LiveSession.executeTestCommand (suite-mode orchestration)', () => {
       device: {
         name: 'release-android-emu',
         platform: 'android',
-        match: {},
+        model: 'Pixel 8',
       },
+      plan: { kind: 'here', search: { model: 'Pixel 8' } },
       app: {
         appPackage: 'org.wikipedia.alpha',
         deepLinkAppId: 'org.wikipedia.alpha',
         sourceTrace: { appPackage: 'registry.targets.release-android-wikipedia.appPackage' },
       },
       appState: 'preserve',
-      appium: {},
       sourceTrace: [],
     })
     mockVariableStoreInstance.getAll.mockReturnValue(new Map())
@@ -488,7 +498,7 @@ describe('LiveSession.executeTestCommand (suite-mode orchestration)', () => {
               devices: {
                 'release-android-emu': {
                   platform: 'android',
-                  match: {},
+                  model: 'Pixel 8',
                 },
               },
             },
@@ -496,6 +506,11 @@ describe('LiveSession.executeTestCommand (suite-mode orchestration)', () => {
         }),
       } as any,
       configPath: '/tmp/agent-qa.config.yaml',
+      listDevicesHere: async () => ({
+        attached: [{ serial: 'emulator-5554', state: 'device', model: 'Pixel 8' }],
+        avds: [],
+      }),
+      appiumEnvUrl: '',
     })
     mockAndroidSetup.mockRejectedValueOnce(new Error('app not installed'))
 

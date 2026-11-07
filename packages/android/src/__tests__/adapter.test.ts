@@ -34,6 +34,7 @@ function createMockPointerAction() {
   chain.up = vi.fn().mockReturnValue(chain)
   chain.pause = vi.fn().mockReturnValue(chain)
   chain.perform = vi.fn().mockResolvedValue(undefined)
+  chain.toJSON = vi.fn().mockReturnValue({ type: 'pointer', actions: [] })
   return chain
 }
 
@@ -45,8 +46,9 @@ function createMockDriver() {
     getWindowSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
     takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
     deleteSession: vi.fn().mockResolvedValue(undefined),
+    releaseActions: vi.fn().mockResolvedValue(undefined),
+    performActions: vi.fn().mockResolvedValue(undefined),
     action: vi.fn().mockReturnValue(pointerAction),
-    actions: vi.fn().mockResolvedValue(undefined),
     keys: vi.fn().mockResolvedValue(undefined),
     pause: vi.fn().mockResolvedValue(undefined),
     activateApp: vi.fn().mockResolvedValue(undefined),
@@ -94,7 +96,8 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'pixel-7',
           platform: 'android',
-          match: { automationName: 'UiAutomator2', platformVersion: '14', serial: 'RZCT90BCMWW' },
+          id: 'RZCT90BCMWW',
+          os: '14',
         },
       }
 
@@ -108,12 +111,13 @@ describe('AndroidPlatformAdapter', () => {
           platformName: 'Android',
           'appium:automationName': 'UiAutomator2',
           'appium:deviceName': 'pixel-7',
-          'appium:platformVersion': '14',
           'appium:udid': 'RZCT90BCMWW',
           'appium:noReset': true,
           'appium:newCommandTimeout': 300,
         }),
       }))
+      const call = vi.mocked(remote).mock.calls[0][0] as any
+      expect(call.capabilities).not.toHaveProperty('appium:platformVersion')
     })
 
     it('strips undefined capability values', async () => {
@@ -136,7 +140,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          match: { automationName: 'UiAutomator2' },
         },
         appPath: '/tmp/wikipedia.apk',
       })
@@ -154,7 +157,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          match: { automationName: 'UiAutomator2' },
         },
       })
 
@@ -170,7 +172,7 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-chrome',
           platform: 'android',
-          match: { automationName: 'UiAutomator2', browserName: 'Chrome' },
+          capabilities: { browserName: 'Chrome' },
         },
       })
 
@@ -179,29 +181,13 @@ describe('AndroidPlatformAdapter', () => {
       expect(call.capabilities).not.toHaveProperty('appium:noReset')
     })
 
-    it('uses appState instead of stale match.noReset', async () => {
-      await adapter.setup({
-        platform: 'android',
-        appState: 'reset',
-        device: {
-          name: 'android-emu',
-          platform: 'android',
-          match: { automationName: 'UiAutomator2', noReset: true },
-        },
-      })
-
-      const { remote } = await import('webdriverio')
-      const call = vi.mocked(remote).mock.calls[0][0] as any
-      expect(call.capabilities['appium:noReset']).toBe(false)
-    })
-
     it('rejects browserName with app path before session creation', async () => {
       await expect(adapter.setup({
         platform: 'android',
         device: {
           name: 'android-chrome',
           platform: 'android',
-          match: { automationName: 'UiAutomator2', browserName: 'Chrome' },
+          capabilities: { browserName: 'Chrome' },
         },
         appPath: '/tmp/wikipedia.apk',
       })).rejects.toMatchObject({ category: 'app-install' })
@@ -216,7 +202,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'org.wikipedia.alpha',
       })
@@ -230,7 +215,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
       })
@@ -249,7 +233,6 @@ describe('AndroidPlatformAdapter', () => {
           device: {
             name: 'android-emu',
             platform: 'android',
-            match: { automationName: 'UiAutomator2' },
           },
           appPackage: 'app.linear',
         })
@@ -268,6 +251,109 @@ describe('AndroidPlatformAdapter', () => {
         platform: 'android',
         appPackage: 'org.wikipedia.alpha',
       })).rejects.toMatchObject({ category: 'app-launch' })
+    })
+  })
+
+  describe('a local session dials the endpoint it is given and hands over the device that was found', () => {
+    const ENV = 'AGENT_QA_APPIUM_URL'
+    let savedEnv: string | undefined
+
+    beforeEach(() => {
+      savedEnv = process.env[ENV]
+    })
+
+    afterEach(() => {
+      if (savedEnv === undefined) delete process.env[ENV]
+      else process.env[ENV] = savedEnv
+    })
+
+    function device(fields: Partial<NonNullable<PlatformConfig['device']>> = {}): PlatformConfig['device'] {
+      return { name: 'pixel', platform: 'android', ...fields }
+    }
+
+    async function opened(config: Partial<PlatformConfig> & { appiumUrl?: string }) {
+      await adapter.setup({ platform: 'android', ...config } as PlatformConfig)
+      const { remote } = await import('webdriverio')
+      return vi.mocked(remote).mock.calls[0][0] as any
+    }
+
+    it('an https endpoint is dialled over https with its port and path', async () => {
+      const call = await opened({ appiumUrl: 'https://127.0.0.1:8443/wd/hub' })
+      expect(call).toMatchObject({ protocol: 'https', hostname: '127.0.0.1', port: 8443, path: '/wd/hub' })
+    })
+
+    it('an endpoint without a port takes the port of its scheme', async () => {
+      const call = await opened({ appiumUrl: 'https://127.0.0.1/wd/hub' })
+      expect(call).toMatchObject({ protocol: 'https', port: 443, path: '/wd/hub' })
+    })
+
+    it('no endpoint dials the Appium on localhost port 4723', async () => {
+      const call = await opened({})
+      expect(call).toMatchObject({ protocol: 'http', hostname: 'localhost', port: 4723, path: '/' })
+    })
+
+    it('AGENT_QA_APPIUM_URL does not change the endpoint', async () => {
+      process.env[ENV] = 'https://127.0.0.2:9999/elsewhere'
+      const call = await opened({ appiumUrl: 'http://127.0.0.1:4724' })
+      expect(call).toMatchObject({ protocol: 'http', hostname: '127.0.0.1', port: 4724, path: '/' })
+    })
+
+    it('a running device that was found is handed over by udid, with its name and no version', async () => {
+      const call = await opened({
+        device: device({ model: 'Pixel 8', os: '14', here: { udid: 'R58M41ABCDE', name: 'Pixel 8' } }),
+      })
+      expect(call.capabilities).toMatchObject({
+        'appium:udid': 'R58M41ABCDE',
+        'appium:deviceName': 'Pixel 8',
+        'appium:chromedriverAutodownload': true,
+      })
+      expect(call.capabilities).not.toHaveProperty('appium:avd')
+      expect(call.capabilities).not.toHaveProperty('appium:platformVersion')
+    })
+
+    it('an AVD that was found and is not running is handed over by name', async () => {
+      const call = await opened({ device: device({ os: '16', here: { avd: 'Pixel_10_Pro' } }) })
+      expect(call.capabilities['appium:avd']).toBe('Pixel_10_Pro')
+      expect(call.capabilities).not.toHaveProperty('appium:udid')
+      expect(call.capabilities).not.toHaveProperty('appium:platformVersion')
+    })
+
+    it('a device id becomes the udid when nothing was found', async () => {
+      const call = await opened({ device: device({ id: 'emulator-5554' }) })
+      expect(call.capabilities['appium:udid']).toBe('emulator-5554')
+      expect(call.capabilities['appium:deviceName']).toBe('pixel')
+    })
+
+    it('a model names the device and an os is the version when no device was handed over', async () => {
+      const call = await opened({ device: device({ model: 'Pixel 8', os: '14' }) })
+      expect(call.capabilities).toMatchObject({
+        'appium:deviceName': 'Pixel 8',
+        'appium:platformVersion': '14',
+      })
+    })
+
+    it("the device's capabilities override the derived driver", async () => {
+      const call = await opened({
+        device: device({ capabilities: { 'appium:automationName': 'Espresso' } }),
+      })
+      expect(call.capabilities['appium:automationName']).toBe('Espresso')
+    })
+
+    it('a null capability removes the derived key', async () => {
+      const call = await opened({
+        device: device({ capabilities: { 'appium:chromedriverAutodownload': null } }),
+      })
+      expect(call.capabilities).not.toHaveProperty('appium:chromedriverAutodownload')
+      expect(call.capabilities['appium:newCommandTimeout']).toBe(300)
+    })
+
+    it('a browserName capability opens the device in browser mode', async () => {
+      const call = await opened({
+        appPackage: 'com.example.shop',
+        device: device({ capabilities: { browserName: 'Chrome' } }),
+      })
+      expect(call.capabilities).toMatchObject({ browserName: 'Chrome', 'appium:autoWebview': true })
+      expect(call.capabilities).not.toHaveProperty('appium:appPackage')
     })
   })
 
@@ -377,7 +463,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
       })
@@ -409,7 +494,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
       })
@@ -446,7 +530,7 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-chrome',
           platform: 'android',
-          match: { automationName: 'UiAutomator2', browserName: 'Chrome' },
+          capabilities: { browserName: 'Chrome' },
         },
       })
       const state = await adapter.observe()
@@ -467,7 +551,6 @@ describe('AndroidPlatformAdapter', () => {
         device: {
           name: 'android-emu',
           platform: 'android',
-          match: { automationName: 'UiAutomator2' },
         },
         appPackage: 'app.linear',
       })

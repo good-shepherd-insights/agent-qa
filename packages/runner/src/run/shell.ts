@@ -18,7 +18,7 @@ import { createRunEventBus } from './bus.js'
 import { createLiveStreamHub } from './live-stream-hub.js'
 import { deriveAggregateVerdict, deriveMemberOutcome } from './verdict.js'
 import { classifyRootCause } from './root-cause.js'
-import { createMemberEventSink } from './event-sink.js'
+import { createMemberEventSink, guardEmit } from './event-sink.js'
 import { assembleHandoff, assemblePerTestOutcome, skippedPerTestOutcome } from './handoff-assembly.js'
 import type { MemberEvidenceContext, PostVerdictOutcome, RunConfig, RunTimerPort } from './ports.js'
 import { POST_VERDICT_STEP_BUDGET_MS } from './ports.js'
@@ -129,6 +129,28 @@ export function startRun(config: RunConfig): RunSession {
     configDigests: config.configDigests,
     memberTestCount: config.members.length,
     handles: config.members.map(memberHandleIndex),
+  })
+
+  // A plugin's progress reaches the bus masked, between runStarted and the verdict, and the relay
+  // is detached once, before the verdict or when the run throws.
+  let detachRemoteProgress: (() => void) | undefined
+  const detachProgress = (): void => {
+    const detach = detachRemoteProgress
+    detachRemoteProgress = undefined
+    guardEmit(bus, () => detach?.())
+  }
+  guardEmit(bus, () => {
+    detachRemoteProgress = ports.remoteProgress?.attach((payload) => {
+      guardEmit(bus, () => {
+        bus.publish('remoteProgress', {
+          remote: payload.remote,
+          message: mask(payload.message),
+          ...(payload.testIndex === undefined ? {} : { testIndex: payload.testIndex }),
+          ...(payload.queued === undefined ? {} : { queued: payload.queued }),
+          ...(payload.percent === undefined ? {} : { percent: payload.percent }),
+        })
+      })
+    })
   })
 
   // Stage the artifact once after runStarted; a store throw warns and never gates the run.
@@ -300,7 +322,8 @@ export function startRun(config: RunConfig): RunSession {
       if (
         (outcome === 'failed' || outcome === 'timeout') &&
         member.failFastGroup !== undefined &&
-        !quarantined
+        !quarantined &&
+        result.remoteRefusal !== true
       ) {
         poisonedGroups.add(member.failFastGroup)
       }
@@ -434,6 +457,7 @@ export function startRun(config: RunConfig): RunSession {
       quarantined: memberQuarantined,
     })
 
+    detachProgress()
     // `verdict` exactly once, before any post-processing event.
     bus.publish('verdict', { verdict })
     status = verdict
@@ -515,7 +539,7 @@ export function startRun(config: RunConfig): RunSession {
     bus.close()
 
     return { verdict, handoff }
-  })()
+  })().finally(detachProgress)
 
   return {
     id: config.runId,

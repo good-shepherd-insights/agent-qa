@@ -1,17 +1,26 @@
 import { randomUUID } from 'node:crypto'
-import { dirname, resolve as resolvePath } from 'node:path'
+import { dirname, posix, resolve as resolvePath } from 'node:path'
 import { format } from 'node:util'
 import {
   AUTH_STATE_SCHEMA_VERSION,
   MobileSetupError,
   PlannerConfigSchema,
+  PluginsSchema,
+  RemoteEntrySchema,
   SuiteDefinitionSchema,
   TestDefinitionSchema,
   TimeoutConfigSchema,
+  configShapeScan,
+  connectionSecretMisuse,
+  createPluginHostPool,
   getAgentQaVersion,
+  pluginHostVersions,
+  pluginSecretResolver,
   printRunText,
   readAuthStateMetadata,
   resolveAuthStatePaths,
+  selectSuitePlace,
+  selectWebPlace,
   writeAuthStateFiles,
 } from '@vostride/agent-qa-core'
 import {
@@ -28,7 +37,10 @@ import {
   parseHookInline,
   stripHookInline,
   createLiveStreamHub,
+  createRemoteRefusalMemory,
+  isPluginRemote,
   liveStreamFor,
+  pluginMaskName,
 } from '@vostride/agent-qa-runner'
 import { DockerHookExecutor } from '@vostride/agent-qa-runner-local'
 import {
@@ -43,6 +55,11 @@ import type {
   AuthStateMetadata,
   HookDefinition,
   MobilePlatform,
+  PluginHostPool,
+  PluginHostPoolInput,
+  RemoteConnectionFields,
+  RemoteEntry,
+  SelectWebPlaceResult,
 } from '@vostride/agent-qa-core'
 import { resolvePlannerLimits } from '@vostride/agent-qa-schema'
 import type { DeclaredModelProfile, PlannerLimits } from '@vostride/agent-qa-schema'
@@ -58,11 +75,12 @@ import type {
   SecretStore,
   StorageStatePort,
   LiveStreamHub,
+  RemoteSessionRegistry,
 } from '@vostride/agent-qa-runner'
 import type { LanguageModel } from 'ai'
 import { authFromFetch, authFromRuntimeConfig, toModelProfileAndAuth } from '../llm-model-mapping.js'
 import { prepareMobileLiveSession } from './mobile-bootstrap.js'
-import type { MobileLiveAppiumLease } from './mobile-bootstrap.js'
+import type { LiveDevicesHereLister, MobileLiveAppiumLease } from './mobile-bootstrap.js'
 import type { AppiumManager } from '../execution/appium-manager.js'
 import { readConfigValues, type ConfigManager } from '../config/index.js'
 import type { LiveEditorAttachment } from '../live-view/editor-subjects.js'
@@ -88,8 +106,10 @@ function isConfigRecord(value: unknown): value is Record<string, unknown> {
 
 /** The workspace readers the create door already holds, by canonical id. */
 export interface LiveEntityDefinitionReaders {
-  findTest?(testId: string): Promise<{ content: string } | null>
-  findSuite?(suiteId: string): Promise<{ content: string } | null>
+  findTest?(testId: string): Promise<{ path?: string; content: string } | null>
+  findSuite?(suiteId: string): Promise<{ path?: string; content: string } | null>
+  // A suite member, by the config-relative path the suite file lists.
+  readTest?(file: string): Promise<string>
 }
 
 async function readEntityUse(
@@ -233,7 +253,196 @@ export async function resolveLiveNavigationTimeoutMs(
   return navigation
 }
 
+function stringEntries(value: unknown): Record<string, string> | undefined {
+  if (!isConfigRecord(value)) return undefined
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string',
+    ),
+  )
+}
+
+// The project's url remotes, read as the run reads them; a malformed field carries no reference.
+// A plugin remote has no connection fields here: its plugin answers with them at acquire.
+export async function readLiveRemotes(
+  configManager: ConfigManager | undefined,
+): Promise<RemoteConnectionFields[]> {
+  const config = configManager === undefined ? {} : await readConfigValues(configManager)
+  const remotes = isConfigRecord(config.registry) ? config.registry.remotes : undefined
+  if (!Array.isArray(remotes)) return []
+  const urlRemotes = remotes
+    .filter(isConfigRecord)
+    .filter((entry) => !Object.hasOwn(entry, 'plugin'))
+  return urlRemotes.map((entry) => {
+    const headers = stringEntries(entry.headers)
+    const basicAuth = isConfigRecord(entry.basicAuth) ? entry.basicAuth : undefined
+    return {
+      name: typeof entry.name === 'string' ? entry.name : '',
+      protocol: typeof entry.protocol === 'string' ? entry.protocol : '',
+      url: typeof entry.url === 'string' ? entry.url : '',
+      ...(isConfigRecord(entry.query) ? { query: entry.query } : {}),
+      ...(headers === undefined ? {} : { headers }),
+      ...(typeof basicAuth?.user === 'string' && typeof basicAuth.password === 'string'
+        ? { basicAuth: { user: basicAuth.user, password: basicAuth.password } }
+        : {}),
+    }
+  })
+}
+
+export class LiveRemotesRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LiveRemotesRefusedError'
+  }
+}
+
+// The live editor always launches Chromium, so a Chromium-only remote fits every session.
+const LIVE_ENGINE = 'chromium'
+
+function browserRemotePick(use: unknown): string | undefined {
+  if (!isConfigRecord(use) || !isConfigRecord(use.browser)) return undefined
+  return typeof use.browser.remote === 'string' ? use.browser.remote : undefined
+}
+
+function parsedRecord(content: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = parseYaml(content)
+    return isConfigRecord(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function findEntityFile(
+  find: ((id: string) => Promise<{ path?: string; content: string } | null>) | undefined,
+  id: string,
+): Promise<{ path?: string; record: Record<string, unknown> } | undefined> {
+  if (find === undefined) return undefined
+  try {
+    const found = await find(id)
+    if (found === null) return undefined
+    const record = parsedRecord(found.content)
+    return record === undefined ? undefined : { path: found.path, record }
+  } catch {
+    return undefined
+  }
+}
+
+interface LiveParseIssue {
+  readonly path: readonly PropertyKey[]
+  readonly message: string
+}
+
+// The CLI's sentence for a shape neither form takes comes first, before the strict parse's own.
+function liveParseRefusal(
+  key: 'registry.remotes' | 'plugins',
+  shapeIssues: readonly LiveParseIssue[],
+  parseIssues: readonly LiveParseIssue[],
+): LiveRemotesRefusedError {
+  const prefix = key.split('.').length
+  const shaped = shapeIssues[0]
+  const issue =
+    shaped === undefined ? parseIssues[0] : { ...shaped, path: shaped.path.slice(prefix) }
+  const at = (issue?.path ?? [])
+    .map((part) => (typeof part === 'number' ? `[${part}]` : `.${String(part)}`))
+    .join('')
+  return new LiveRemotesRefusedError(
+    `project config sets ${key}${at}: ${(issue?.message ?? 'invalid value').replace(/\.$/, '')}. The CLI refuses this file too.`,
+  )
+}
+
+function shapeIssues(config: unknown): readonly LiveParseIssue[] {
+  const scanned = configShapeScan.safeParse(config)
+  return scanned.success ? [] : scanned.error.issues
+}
+
+// The remotes the strict config parse accepts; an entry it refuses refuses every session, as a run.
+function liveRemoteEntries(registry: unknown): RemoteEntry[] {
+  const remotes = isConfigRecord(registry) ? registry.remotes : undefined
+  if (remotes === undefined) return []
+  const shaped = shapeIssues({ registry: { remotes } })
+  const parsed = RemoteEntrySchema.array().safeParse(remotes)
+  if (parsed.success && shaped.length === 0) return parsed.data
+  throw liveParseRefusal('registry.remotes', shaped, parsed.success ? [] : parsed.error.issues)
+}
+
+function memberFile(file: string): string {
+  return posix.normalize(file.split('\\').join('/')).replace(/^\.\//, '')
+}
+
+/**
+ * Where a live web session runs, read from the files by the rule `agent-qa run` applies: a suite
+ * by the suite's pick and its members', a test by its own pick then the config's, no entity by
+ * the config's. Never from the request.
+ */
+export async function resolveLivePlace(
+  configManager: ConfigManager | undefined,
+  entity: EntityRef | undefined,
+  readers: LiveEntityDefinitionReaders,
+): Promise<SelectWebPlaceResult> {
+  const config = configManager === undefined ? {} : await readConfigValues(configManager)
+  const remotes = liveRemoteEntries(config.registry)
+  const configPick = browserRemotePick(config.use)
+
+  if (entity?.type === 'suite') {
+    const suite = await findEntityFile(readers.findSuite, entity.id)
+    if (suite !== undefined) {
+      const entries = Array.isArray(suite.record.tests) ? suite.record.tests : []
+      const members: Array<{ file: string; pick?: string }> = []
+      for (const entry of entries) {
+        if (!isConfigRecord(entry) || typeof entry.test !== 'string') continue
+        const file = memberFile(entry.test)
+        let content: string
+        try {
+          if (readers.readTest === undefined) continue
+          content = await readers.readTest(file)
+        } catch {
+          // A member the run cannot load is not placed, there or here.
+          continue
+        }
+        const member = parsedRecord(content)
+        if (member === undefined) continue
+        const pick = browserRemotePick(member.use)
+        members.push({ file, ...(pick === undefined ? {} : { pick }) })
+      }
+      const suitePick = browserRemotePick(suite.record.use)
+      return selectSuitePlace({
+        remotes,
+        suiteName: typeof suite.record.name === 'string' ? suite.record.name : entity.id,
+        suiteFile: suite.path ?? entity.id,
+        ...(suitePick === undefined ? {} : { suite: suitePick }),
+        ...(configPick === undefined ? {} : { config: configPick }),
+        members,
+        engine: LIVE_ENGINE,
+      })
+    }
+  }
+
+  if (entity?.type === 'test') {
+    const test = await findEntityFile(readers.findTest, entity.id)
+    if (test !== undefined) {
+      const testPick = browserRemotePick(test.record.use)
+      return selectWebPlace({
+        remotes,
+        ...(testPick === undefined ? {} : { test: testPick }),
+        ...(configPick === undefined ? {} : { config: configPick }),
+        ...(test.path === undefined ? {} : { file: test.path }),
+        engine: LIVE_ENGINE,
+      })
+    }
+  }
+
+  return selectWebPlace({
+    remotes,
+    ...(configPick === undefined ? {} : { config: configPick }),
+    engine: LIVE_ENGINE,
+  })
+}
+
 export const IDLE_TIMEOUT_MS = 5 * 60 * 1000
+
+// A session on a remote ends this long after the last command a person caused, attached or not.
+export const REMOTE_INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000
 
 /** How long teardown waits for the live hub to close before it tears the browser down anyway. */
 export const LIVE_HUB_CLOSE_LIMIT_MS = 2_000
@@ -248,6 +457,25 @@ export interface LiveSessionDeps {
   appiumManager?: AppiumManager
   configManager?: ConfigManager
   configPath?: string
+  // The host's registry, which a dashboard shutdown releases beside the session's own cleanup.
+  remoteSessions?: RemoteSessionRegistry
+  // This machine's devices; the platform's own lister when unset.
+  listDevicesHere?: LiveDevicesHereLister
+  // AGENT_QA_APPIUM_URL; the process environment when unset.
+  appiumEnvUrl?: string
+  // REMOTE_INACTIVITY_TIMEOUT_MS when unset.
+  remoteInactivityMs?: number
+  // A plugin's stderr and the host's own lines, masked; the dashboard gives one only at debug.
+  pluginDebugLog?: (line: string) => void
+}
+
+// The plugins entries the strict config parse accepts; an entry it refuses refuses the session.
+function livePluginEntries(plugins: unknown): PluginHostPoolInput['plugins'] {
+  if (plugins === undefined) return []
+  const shaped = shapeIssues({ plugins })
+  const parsed = PluginsSchema.safeParse(plugins)
+  if (parsed.success && shaped.length === 0) return parsed.data
+  throw liveParseRefusal('plugins', shaped, parsed.success ? [] : parsed.error.issues)
 }
 
 export interface LiveStepExecutionResult extends StepResult {
@@ -430,6 +658,8 @@ export class LiveSession {
   private currentUrl: string | null = null
   private executing = false
   private idleTimer: ReturnType<typeof setTimeout> | null = null
+  private remoteInactivityTimer: ReturnType<typeof setTimeout> | null = null
+  private onRemoteInactivity: (() => void) | null = null
   private _modelName = 'unknown'
   private vision: { screenshotSize?: number; effectiveResolution?: number } | undefined
   private visionGate: VisionGate | undefined
@@ -445,7 +675,11 @@ export class LiveSession {
   private messageSink: ((message: ServerMessage) => void) | null = null
   private hookCaptures = new Set<LiveHookPayload[]>()
   private mobileAppiumLease: MobileLiveAppiumLease | null = null
+  // Created only for a session on a plugin remote, and shut down when the session ends.
+  private pluginPool: PluginHostPool | null = null
+  private onRemote = false
   private secretStore: SecretStore | undefined
+  private connectionSecretNames: ReadonlySet<string> = new Set()
   private secretRedactor: SecretRedactor | undefined
   // One hub per session at handle 0, created once the adapter exists; no adapter means no hub.
   private liveHub: LiveStreamHub | null = null
@@ -466,6 +700,11 @@ export class LiveSession {
 
   get modelName(): string {
     return this._modelName
+  }
+
+  // A remote browser or device is billed while held.
+  get runsOnRemote(): boolean {
+    return this.onRemote
   }
 
   /** What the editor-subject registry holds for this session: its hub, read at call time. */
@@ -688,7 +927,7 @@ export class LiveSession {
       throw new Error('Live session is busy')
     }
 
-    this.executing = true
+    this.beginExecution()
     this.status = 'executing'
     const hookName = this.resolvedHooks.get(hookId)?.name ?? hookId
     this.currentStep = `${phase} hook: ${hookName}`
@@ -710,7 +949,7 @@ export class LiveSession {
         createdAt: new Date().toISOString(),
       }
     } finally {
-      this.executing = false
+      this.endExecution()
       this.currentStep = null
       this.status = 'idle'
     }
@@ -722,61 +961,75 @@ export class LiveSession {
     this.mobileAppiumLease = null
   }
 
-  private legacyMobilePlatformConfig(config: LiveSessionConfig): PlatformConfig {
-    const platform = config.platform as MobilePlatform
-    return {
-      platform,
-      bundleId: config.bundleId,
-      appPackage: config.appPackage,
-      appActivity: config.appActivity,
-      deepLinkAppId: platform === 'android' ? config.appPackage : config.bundleId,
-      appState: config.appState,
-      device: config.device
-        ? {
-            name: config.device.name,
-            platform,
-            match: config.device,
-          }
-        : undefined,
-    }
-  }
-
   private async resolveMobilePlatformConfig(config: LiveSessionConfig): Promise<PlatformConfig> {
-    if (
-      this.deps.appiumManager
-      && this.deps.configManager
-      && this.deps.configPath
-      && config.targetName
-    ) {
-      const prepared = await prepareMobileLiveSession({
-        sessionId: this.sessionId,
-        platform: config.platform as MobilePlatform,
-        targetName: config.targetName,
-        useDeviceName: config.useDeviceName,
-        appState: config.appState,
-        appiumManager: this.deps.appiumManager,
-        configManager: this.deps.configManager,
-        configPath: this.deps.configPath,
+    const platform = config.platform as MobilePlatform
+    const { appiumManager, configManager, configPath } = this.deps
+    const targetName = config.targetName
+    if (!appiumManager || !configManager || !configPath || !targetName) {
+      const missing = [
+        ...(appiumManager ? [] : ['Appium manager']),
+        ...(configManager ? [] : ['config manager']),
+        ...(configPath ? [] : ['config path']),
+        ...(targetName ? [] : ['target name']),
+      ]
+      throw new MobileSetupError({
+        category: 'device-resolution',
+        message: `${platform === 'ios' ? 'An iOS' : 'An Android'} live session is built only from the project config; missing: ${missing.join(', ')}`,
+        platform,
+        ...(targetName ? { targetName } : {}),
       })
-      this.mobileAppiumLease = prepared.appiumLease
-      return prepared.platformConfig
     }
 
-    return this.legacyMobilePlatformConfig(config)
+    const prepared = await prepareMobileLiveSession({
+      sessionId: this.sessionId,
+      platform,
+      targetName,
+      useDeviceName: config.useDeviceName,
+      appState: config.appState,
+      appiumManager,
+      configManager,
+      configPath,
+      ...(this.deps.listDevicesHere === undefined
+        ? {}
+        : { listDevicesHere: this.deps.listDevicesHere }),
+      ...(this.deps.appiumEnvUrl === undefined ? {} : { envUrl: this.deps.appiumEnvUrl }),
+    })
+    this.mobileAppiumLease = prepared.appiumLease ?? null
+    return prepared.platformConfig
   }
 
   private async setupMobileAdapter(platform: MobilePlatform, config: LiveSessionConfig): Promise<void> {
     let adapter: PlatformAdapter | null = null
     try {
       const platformConfig = await this.resolveMobilePlatformConfig(config)
+      const remote = platformConfig.device?.remote
+      this.onRemote = remote !== undefined
       const platformLabel = platform === 'android' ? 'Android' : 'iOS'
+      const redactor = config.secretRedactor
+      const mask =
+        redactor === undefined
+          ? this.deps.configManager?.mask
+          : (text: string) => redactor.redactString(text)
+      const pluginSessions =
+        remote !== undefined && isPluginRemote(remote) ? await this.openPluginPool(config) : undefined
+      // The same connection options the web adapter gets, plus the declared mask.
+      const options = {
+        refusalMemory: createRemoteRefusalMemory(),
+        ...(config.connectionSecretStore === undefined
+          ? {}
+          : { connectionSecrets: config.connectionSecretStore }),
+        ...(config.secretsFile === undefined ? {} : { secretsFile: config.secretsFile }),
+        ...(this.deps.remoteSessions === undefined ? {} : { sessions: this.deps.remoteSessions }),
+        ...(mask === undefined ? {} : { mask }),
+        ...(pluginSessions === undefined ? {} : { pluginSessions }),
+      }
       try {
         if (platform === 'android') {
           const { AndroidPlatformAdapter } = await import('@vostride/agent-qa-android')
-          adapter = new AndroidPlatformAdapter()
+          adapter = new AndroidPlatformAdapter(options)
         } else {
           const { IOSPlatformAdapter } = await import('@vostride/agent-qa-ios')
-          adapter = new IOSPlatformAdapter()
+          adapter = new IOSPlatformAdapter(options)
         }
       } catch (err) {
         throw new MobileSetupError({
@@ -808,14 +1061,54 @@ export class LiveSession {
     }
   }
 
+  // One process per plugins entry the session uses, started on first acquire. Without the project
+  // config there is no plugins list, and the adapter refuses the plugin remote itself.
+  private async openPluginPool(config: LiveSessionConfig): Promise<PluginHostPool | undefined> {
+    const { configManager, configPath } = this.deps
+    if (configManager === undefined || configPath === undefined) return undefined
+    const redactor = config.secretRedactor
+    if (redactor === undefined) {
+      throw new LiveRemotesRefusedError(
+        'A plugin remote needs the session redactor, which masks what the plugin answers; this session has none.',
+      )
+    }
+    const values = await readConfigValues(configManager)
+    this.pluginPool = createPluginHostPool({
+      configDir: dirname(resolvePath(configPath)),
+      plugins: livePluginEntries(values.plugins),
+      agentQaVersion: getAgentQaVersion(),
+      hostVersions: pluginHostVersions(import.meta.url),
+      resolveSecrets: pluginSecretResolver(
+        config.connectionSecretStore,
+        config.secretsFile ?? 'workspace.secretsFile',
+      ),
+      mask: (text) => redactor.redactString(text),
+      // An answer's mask values join the session's redactor before the session is used.
+      onMask: (entry, masked) =>
+        redactor.addMaskExtras(masked.map((value) => [pluginMaskName(entry), value] as const)),
+      ...(this.deps.remoteSessions === undefined ? {} : { sessions: this.deps.remoteSessions }),
+      ...(this.deps.pluginDebugLog === undefined ? {} : { debugLog: this.deps.pluginDebugLog }),
+    })
+    return this.pluginPool
+  }
+
+  private async shutdownPluginPool(): Promise<void> {
+    const pool = this.pluginPool
+    this.pluginPool = null
+    // Best-effort, as the CLI's run closes its plugin hosts: teardown hooks still run.
+    await pool?.shutdown().catch(() => undefined)
+  }
+
   async initialize(config: LiveSessionConfig): Promise<void> {
     this.platform = config.platform
+    this.onRemote = config.platform === 'web' && config.remote !== undefined
     this.targetName = typeof config.targetName === 'string' && config.targetName.trim().length > 0
       ? config.targetName.trim()
       : null
     this._modelName = config.llmConfig.model ?? 'unknown'
     this.variableStore = new VariableStore()
     this.secretStore = config.secretStore
+    this.connectionSecretNames = config.connectionSecretNames ?? new Set()
     this.secretRedactor = config.secretRedactor
     if (config.envVars) {
       this.variableStore.setAll(config.envVars, 'env')
@@ -846,10 +1139,27 @@ export class LiveSession {
       this.currentUrl = null
     } else {
       const { WebPlatformAdapter } = await import('@vostride/agent-qa-web')
-      const adapter = new WebPlatformAdapter()
+      const pluginSessions =
+        config.remote !== undefined && isPluginRemote(config.remote)
+          ? await this.openPluginPool(config)
+          : undefined
+      // Only the adapter gets the full store, so a remote's references resolve at connect alone.
+      const adapter = new WebPlatformAdapter({
+        refusalMemory: createRemoteRefusalMemory(),
+        ...(config.connectionSecretStore === undefined
+          ? {}
+          : { connectionSecrets: config.connectionSecretStore }),
+        ...(config.secretsFile === undefined ? {} : { secretsFile: config.secretsFile }),
+        ...(this.deps.remoteSessions === undefined ? {} : { sessions: this.deps.remoteSessions }),
+        ...(pluginSessions === undefined ? {} : { pluginSessions }),
+      })
       await adapter.setup({
         platform: 'web',
-        browser: { name: 'chromium', headless: config.headless ?? true },
+        browser: {
+          name: 'chromium',
+          headless: config.headless ?? true,
+          ...(config.remote === undefined ? {} : { remote: config.remote }),
+        },
         ...(config.navigationTimeoutMs === undefined
           ? {}
           : { timeouts: { navigation: config.navigationTimeoutMs } }),
@@ -1135,6 +1445,18 @@ export class LiveSession {
   ): Promise<LiveStepExecutionResult> {
     this.abortController = new AbortController()
     try {
+      // Refused before any inline hook runs or any template resolves.
+      const testName = draft?.testName?.trim()
+      const misuse = connectionSecretMisuse({
+        names: this.connectionSecretNames,
+        file: testName ? `the draft "${testName}"` : 'this draft',
+        steps: [stepInstruction],
+      })
+      if (misuse.length > 0) {
+        this.stepsExecuted++
+        const error = misuse.join('\n')
+        return this.buildPreparationFailureResult(stepInstruction, error, stepInstruction, [])
+      }
       const prepared = await this.resolveStepInstruction(stepInstruction)
       if (prepared.preparationError) {
         const result = this.buildPreparationFailureResult(
@@ -1225,7 +1547,7 @@ export class LiveSession {
       throw new Error('Step already executing')
     }
 
-    this.executing = true
+    this.beginExecution()
     this.status = 'executing'
     this.currentStep = stepInstruction
     try {
@@ -1237,7 +1559,7 @@ export class LiveSession {
         this.plannerLimits ?? resolvePlannerLimits(),
       )
     } finally {
-      this.executing = false
+      this.endExecution()
       this.currentStep = null
       this.status = 'idle'
     }
@@ -1264,7 +1586,7 @@ export class LiveSession {
       throw new Error('Test already executing')
     }
 
-    this.executing = true
+    this.beginExecution()
     this.status = 'executing'
     this.currentStep = `test: ${testDraft.testName}`
     const start = performance.now()
@@ -1431,7 +1753,7 @@ export class LiveSession {
         teardownHookExecutions: teardownHookPayloads,
       })
     } finally {
-      this.executing = false
+      this.endExecution()
       this.currentStep = null
       this.status = 'idle'
     }
@@ -1622,6 +1944,57 @@ export class LiveSession {
     }
   }
 
+  startRemoteInactivityTimer(onExpire: () => void): void {
+    this.clearRemoteInactivityTimer()
+    if (this.cleanupRun !== null) return
+    this.onRemoteInactivity = onExpire
+    this.armRemoteInactivityTimer()
+  }
+
+  clearRemoteInactivityTimer(): void {
+    this.onRemoteInactivity = null
+    if (this.remoteInactivityTimer) {
+      clearTimeout(this.remoteInactivityTimer)
+      this.remoteInactivityTimer = null
+    }
+  }
+
+  // Only a command a person caused restarts the window; frames, pushes and heartbeats never do.
+  noteUserActivity(): void {
+    this.restartRemoteInactivityWindow()
+  }
+
+  private restartRemoteInactivityWindow(): void {
+    if (this.onRemoteInactivity === null || this.cleanupRun !== null) return
+    this.armRemoteInactivityTimer()
+  }
+
+  // A step, test or hook the person started holds the window; it restarts when the work ends.
+  private beginExecution(): void {
+    this.executing = true
+    if (this.remoteInactivityTimer) {
+      clearTimeout(this.remoteInactivityTimer)
+      this.remoteInactivityTimer = null
+    }
+  }
+
+  private endExecution(): void {
+    this.executing = false
+    this.restartRemoteInactivityWindow()
+  }
+
+  private armRemoteInactivityTimer(): void {
+    if (this.remoteInactivityTimer) clearTimeout(this.remoteInactivityTimer)
+    this.remoteInactivityTimer = null
+    const onExpire = this.onRemoteInactivity
+    if (onExpire === null || this.executing) return
+    this.remoteInactivityTimer = setTimeout(
+      onExpire,
+      this.deps.remoteInactivityMs ?? REMOTE_INACTIVITY_TIMEOUT_MS,
+    )
+    this.remoteInactivityTimer.unref?.()
+  }
+
   /** Idempotent: every later or concurrent call shares the first run, so teardown happens once. */
   cleanup(): Promise<void> {
     if (this.status === 'terminated') return Promise.resolve()
@@ -1631,6 +2004,7 @@ export class LiveSession {
 
   private async runCleanup(): Promise<void> {
     this.clearIdleTimer()
+    this.clearRemoteInactivityTimer()
     this.readyForInteraction = false
     // The attached control socket is told the session is gone, however it ended.
     const release = this.releaseAttachment
@@ -1654,6 +2028,7 @@ export class LiveSession {
       await this.adapter?.cleanup()
     } finally {
       try {
+        await this.shutdownPluginPool()
         await this.runLifecycleHooks('teardown', this.teardownHooks)
       } finally {
         this.releaseMobileAppiumLease('session-cleanup')

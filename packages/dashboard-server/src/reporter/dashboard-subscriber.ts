@@ -37,6 +37,8 @@ type ConfigSnapshot = RunArtifactConfigSnapshot | ArtifactRecord
 export interface DashboardRunIngestSnapshots {
   config?: ConfigSnapshot
   source?: SourceSnapshot
+  /** The one member a later snapshot speaks for, such as the member that saw its remote drop. */
+  memberIndex?: number
 }
 
 export interface DashboardRunIngestDeps {
@@ -66,7 +68,8 @@ export interface DashboardRunIngestFinalizeExtra {
 
 export interface DashboardRunIngest {
   handler(envelope: RunEventEnvelope): void
-  // Writes a section only where absent or still queued, so the first snapshot wins.
+  // Writes a section only where absent or still queued, so the first snapshot wins; a later
+  // snapshot of the same source replaces its config.
   stageSnapshots(input: DashboardRunIngestSnapshots): void
   finalize(extra?: DashboardRunIngestFinalizeExtra): Promise<void>
 }
@@ -157,6 +160,14 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     return stored === undefined || (isRecord(stored) && stored.loadStatus === 'queued')
   }
 
+  // A producer re-emits its own source when what it learned later changes the config it stored.
+  function sameLoadedSource(stored: unknown, incoming: unknown): boolean {
+    if (!isRecord(stored) || !isRecord(incoming)) return false
+    if (stored.loadStatus !== 'loaded' || stored.kind !== incoming.kind) return false
+    const keys = ['testId', 'suiteId', 'name', 'filePath'] as const
+    return keys.every((key) => stored[key] === incoming[key])
+  }
+
   function pickMember(
     pool: readonly number[],
     snapshot: { testId?: string; name?: string; filePath?: string },
@@ -175,11 +186,14 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
     source: Record<string, unknown>,
     config: ConfigSnapshot | undefined,
     taken: ReadonlySet<number>,
+    memberIndex: number | undefined,
   ): RunArtifactSuiteMemberSnapshot | undefined {
     const testId = readString(source.testId)
     const filePath = readString(source.filePath)
     const index = pickMember(
-      runMembers.map((_, position) => position),
+      memberIndex !== undefined && runMembers[memberIndex] !== undefined
+        ? [memberIndex]
+        : runMembers.map((_, position) => position),
       { testId, name: readString(source.name), filePath },
       taken,
     )
@@ -236,18 +250,41 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
       .filter((entry): entry is RunArtifactSuiteMemberSnapshot => isRecord(entry) && typeof entry.index === 'number')
     const taken = new Set(entries.map((entry) => entry.index))
     const config = isRecord(input.config) ? input.config : undefined
+    const memberIndex = typeof input.memberIndex === 'number' ? input.memberIndex : undefined
     const added: RunArtifactSuiteMemberSnapshot[] = []
+    // A member already filed takes a later snapshot of its own source as its config.
+    let refiled: (entry: RunArtifactSuiteMemberSnapshot) => boolean = () => false
     if (isRecord(input.source) && input.source.kind === 'test') {
-      const entry = testMemberEntry(input.source, config, taken)
-      if (entry !== undefined) added.push(entry)
+      const source = input.source
+      const own = entries.find((candidate) => candidate.index === memberIndex)
+      const entry = own === undefined ? testMemberEntry(source, config, taken, memberIndex) : undefined
+      if (own !== undefined) refiled = (candidate) => candidate === own
+      else if (entry !== undefined) added.push(entry)
+      else {
+        const testId = readString(source.testId)
+        const filed = entries.find((candidate) =>
+          candidate.name === (readString(source.name) ?? null)
+          && candidate.filePath === (readString(source.filePath) ?? null)
+          && (testId === undefined || candidate.testId === testId))
+        refiled = (candidate) => candidate === filed
+      }
     }
     if (isRecord(input.source) && input.source.kind === 'suite') {
+      const suiteId = readString(input.source.suiteId)
       added.push(...suiteMemberEntries(input.source, config, new Set(taken)))
+      // A later snapshot naming one member, such as one whose remote dropped, refiles that member only.
+      refiled = (candidate) =>
+        memberIndex !== undefined
+          ? candidate.index === memberIndex
+          : suiteId !== undefined && runMembers[candidate.index]?.suiteId === suiteId
     }
-    if (added.length === 0) return
+    const kept = config === undefined
+      ? entries
+      : entries.map((entry) => (refiled(entry) ? { ...entry, config } : entry))
+    if (added.length === 0 && kept.every((entry, position) => entry === entries[position])) return
     const source: RunArtifactTestsSourceSnapshot = {
       kind: 'tests',
-      members: [...entries, ...added].sort((a, b) => a.index - b.index),
+      members: [...kept, ...added].sort((a, b) => a.index - b.index),
     }
     db.stageRunArtifact(id, { source })
   }
@@ -266,7 +303,8 @@ export function createDashboardRunIngest(deps: DashboardRunIngestDeps): Dashboar
       if (!artifact || artifact.finalizedAt) return
       const stored = artifact.payload as unknown as Record<string, unknown>
       const patch: RunArtifactStageInput = {}
-      if (isRecord(input.config) && stored.config === undefined) {
+      const ownSource = sameLoadedSource(stored.source, input.source)
+      if (isRecord(input.config) && (stored.config === undefined || ownSource)) {
         patch.config = input.config as RunArtifactStageInput['config']
       }
       if (isRecord(input.source) && sourceReplaceable(stored.source)) {

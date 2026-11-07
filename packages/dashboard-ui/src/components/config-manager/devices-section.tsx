@@ -1,8 +1,7 @@
-// Match values show through `SecretValue` and save only through Save setting; delete has Undo.
+// Deleting a device has Undo. A device's remote and capabilities show read-only: the write door refuses them.
 
-import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent } from "react"
-import { Plus, X } from "lucide-react"
-import type { ConfigChange } from "@vostride/agent-qa-schema"
+import { useEffect, useId, useRef, useState, type FocusEvent } from "react"
+import { Plus } from "lucide-react"
 
 import { ConfigField } from "@/components/config-manager/config-field"
 import {
@@ -16,7 +15,6 @@ import {
 } from "@/components/config-manager/record-list"
 import { SecretValue } from "@/components/config-manager/secret-value"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
@@ -27,19 +25,17 @@ import {
 } from "@/hooks/use-config-autosave"
 import {
   ADD_DEVICE_LABEL,
-  ADD_SETTING_LABEL,
+  DEVICE_CAPABILITIES_NOTE,
   DEVICE_FIELD_LABELS,
+  DEVICE_ID_HELP,
   DEVICE_NAME_REQUIRED_ERROR,
   DISCARD_DEVICE_LABEL,
-  DISCARD_SETTING_LABEL,
   NO_DEVICES_TEXT,
-  SAVE_SETTING_LABEL,
   TARGET_PLATFORM_LABELS,
   deleteActionName,
-  deviceMatchKeysHelp,
-  deviceMatchSettingLabel,
+  deviceCapabilityLabel,
   deviceNameTakenError,
-  removeMatchSettingName,
+  deviceRemoteText,
 } from "@/lib/config-copy"
 
 type DevicePlatform = "android" | "ios"
@@ -48,14 +44,10 @@ const DEVICE_PLATFORM_OPTIONS: { value: DevicePlatform; label: string }[] = [
   { value: "ios", label: TARGET_PLATFORM_LABELS.ios },
 ]
 
-const LOCAL_MATCH_FIELDS: Record<DevicePlatform, readonly string[]> = {
-  android: ["avd", "serial", "appPackage", "appActivity", "automationName", "browserName", "platformVersion"],
-  ios: ["udid", "bundleId", "automationName", "platformVersion"],
-}
-
 interface DeviceEntry {
   platform?: string
-  match?: Record<string, unknown>
+  remote?: unknown
+  capabilities?: unknown
 }
 
 interface DevicesSectionProps {
@@ -64,7 +56,7 @@ interface DevicesSectionProps {
 }
 
 const LIST_REF: ConfigFieldRef = { segments: ["registry", "devices"], tab: "targets" }
-const MATCH_PATTERN = "registry.devices.*.match.*"
+const CAPABILITY_PATTERN = "registry.devices.*.capabilities.*"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -160,22 +152,7 @@ export function DevicesSection({ config }: DevicesSectionProps) {
 }
 
 function DeviceFields({ name, device }: { name: string; device: DeviceEntry }) {
-  const autosave = useConfigAutosaveContext()
-  const [removingKeys, setRemovingKeys] = useState<ReadonlySet<string>>(new Set())
   const at = (...rest: string[]) => ({ segments: ["registry", "devices", name, ...rest], tab: "targets" as const })
-  const match = isRecord(device.match) ? device.match : {}
-  const keys = Object.keys(match).filter((key) => !removingKeys.has(key))
-
-  async function removeKey(key: string) {
-    setRemovingKeys((current) => new Set(current).add(key))
-    await autosave.runExplicit([{ op: "unset", path: ["registry", "devices", name, "match", key] }])
-    setRemovingKeys((current) => {
-      const next = new Set(current)
-      next.delete(key)
-      return next
-    })
-  }
-
   return (
     <>
       <ConfigField
@@ -184,149 +161,54 @@ function DeviceFields({ name, device }: { name: string; device: DeviceEntry }) {
         kind="select"
         options={DEVICE_PLATFORM_OPTIONS}
       />
-      <div className="space-y-2">
-        {keys.length > 0 ? (
-          <dl data-field-list="registry.devices.*.match" className="space-y-2">
-            {keys.map((key) => (
-              <div key={key} className="grid items-center gap-1 sm:grid-cols-[minmax(8rem,auto)_1fr] sm:gap-3">
-                <dt className="font-mono text-xs text-muted-foreground wrap-anywhere">{key}</dt>
-                <dd className="flex min-w-0 items-center gap-1">
-                  <div className="min-w-0 flex-1">
-                    <SecretValue
-                      field={{ segments: ["registry", "devices", name, "match", key], pattern: MATCH_PATTERN }}
-                      label={deviceMatchSettingLabel(name, key)}
-                      maskedText={maskedTextOf(match[key])}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={removeMatchSettingName(name, key)}
-                    className="hover:text-destructive"
-                    onClick={() => void removeKey(key)}
-                  >
-                    <X className="size-3.5" aria-hidden="true" />
-                  </Button>
-                </dd>
-              </div>
-            ))}
-          </dl>
-        ) : null}
-        <AddMatchSetting
-          device={name}
-          existingKeys={Object.keys(match)}
-          platform={platformOf(device.platform)}
-        />
-      </div>
+      {typeof device.remote === "string" ? (
+        <p data-device-remote={device.remote} className="text-sm text-muted-foreground">
+          {deviceRemoteText(device.remote)}
+        </p>
+      ) : null}
+      <ConfigField
+        field={{ ...at("model"), pattern: "registry.devices.*.model" }}
+        label={DEVICE_FIELD_LABELS.model}
+        kind="text"
+      />
+      <ConfigField
+        field={{ ...at("os"), pattern: "registry.devices.*.os" }}
+        label={DEVICE_FIELD_LABELS.os}
+        kind="text"
+      />
+      <ConfigField
+        field={{ ...at("id"), pattern: "registry.devices.*.id" }}
+        label={DEVICE_FIELD_LABELS.id}
+        help={DEVICE_ID_HELP}
+        kind="text"
+      />
+      {isRecord(device.capabilities) && Object.keys(device.capabilities).length > 0 ? (
+        <DeviceCapabilities name={name} capabilities={device.capabilities} />
+      ) : null}
     </>
   )
 }
 
-interface SettingDraft {
-  key: string
-  value: string
-}
-
-const EMPTY_SETTING: SettingDraft = { key: "", value: "" }
-
-function AddMatchSetting({
-  device,
-  existingKeys,
-  platform,
-}: {
-  device: string
-  existingKeys: readonly string[]
-  platform: DevicePlatform
-}) {
-  const autosave = useConfigAutosaveContext()
-  const [open, setOpen] = useState(false)
-  const [draft, setDraft] = useState<SettingDraft>(EMPTY_SETTING)
-  const [saving, setSaving] = useState(false)
-  const addButton = useRef<HTMLButtonElement>(null)
-  const focusAddNext = useRef(false)
-  const helpId = useId()
-  const key = draft.key.trim()
-  const allowed = LOCAL_MATCH_FIELDS[platform]
-  const ready = key !== "" && draft.value !== "" && !existingKeys.includes(key) && allowed.includes(key)
-
-  useEffect(() => {
-    if (!open && focusAddNext.current) {
-      focusAddNext.current = false
-      addButton.current?.focus()
-    }
-  }, [open])
-
-  function close() {
-    setDraft(EMPTY_SETTING)
-    focusAddNext.current = true
-    setOpen(false)
-  }
-
-  async function save() {
-    if (!ready || saving) return
-    setSaving(true)
-    const change: ConfigChange = { op: "set", path: ["registry", "devices", device, "match", key], value: draft.value }
-    const landed = await autosave.runExplicit([change])
-    setSaving(false)
-    if (landed) close()
-  }
-
-  function keyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") {
-      event.preventDefault()
-      void save()
-    } else if (event.key === "Escape") {
-      event.preventDefault()
-      close()
-    }
-  }
-
-  if (!open) {
-    return (
-      <Button ref={addButton} type="button" variant="ghost" size="xs" onClick={() => setOpen(true)}>
-        <Plus className="size-3" aria-hidden="true" />
-        {ADD_SETTING_LABEL}
-      </Button>
-    )
-  }
-
-  const platformLabel = TARGET_PLATFORM_LABELS[platform]
+function DeviceCapabilities({ name, capabilities }: { name: string; capabilities: Record<string, unknown> }) {
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-1">
-        <Input
-          type="text"
-          autoComplete="off"
-          autoFocus
-          aria-label={DEVICE_FIELD_LABELS.key}
-          aria-describedby={helpId}
-          placeholder={DEVICE_FIELD_LABELS.key}
-          value={draft.key}
-          onChange={(event) => setDraft({ ...draft, key: event.target.value })}
-          onKeyDown={keyDown}
-          className="h-8 w-36 font-mono"
-        />
-        <Input
-          type="password"
-          autoComplete="off"
-          aria-label={DEVICE_FIELD_LABELS.value}
-          placeholder={DEVICE_FIELD_LABELS.value}
-          value={draft.value}
-          onChange={(event) => setDraft({ ...draft, value: event.target.value })}
-          onKeyDown={keyDown}
-          className="h-8 min-w-0 flex-1 font-mono"
-        />
-        <Button type="button" variant="outline" size="sm" disabled={!ready || saving} onClick={() => void save()}>
-          {SAVE_SETTING_LABEL}
-        </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={close}>
-          {DISCARD_SETTING_LABEL}
-        </Button>
-      </div>
-      <p id={helpId} className="text-xs text-muted-foreground break-words">
-        {deviceMatchKeysHelp(platformLabel, allowed)}
-      </p>
+    <div data-device-capabilities className="space-y-2">
+      <p className="text-sm font-medium">{DEVICE_FIELD_LABELS.capabilities}</p>
+      <dl className="space-y-2">
+        {Object.entries(capabilities).map(([key, value]) => (
+          <div key={key} className="grid items-center gap-1 sm:grid-cols-[minmax(8rem,auto)_1fr] sm:gap-3">
+            <dt className="font-mono text-xs text-muted-foreground wrap-anywhere">{key}</dt>
+            <dd className="min-w-0">
+              <SecretValue
+                field={{ segments: ["registry", "devices", name, "capabilities", key], pattern: CAPABILITY_PATTERN }}
+                label={deviceCapabilityLabel(name, key)}
+                maskedText={maskedTextOf(value)}
+                readOnly
+              />
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="text-xs text-muted-foreground">{DEVICE_CAPABILITIES_NOTE}</p>
     </div>
   )
 }

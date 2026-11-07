@@ -30,9 +30,11 @@ import {
   isMintedCliRunId,
   mintCliRunId,
   produceMembersFromPatterns,
+  producedRunner,
   resolveRunInvocationInputs,
 } from '../commands/run.js'
 import type {
+  AppiumProvider,
   ProducedCliRunMembers,
   RunArtifactSnapshotListener,
   RunInvocationInputs,
@@ -82,6 +84,10 @@ export interface RunSubscriberAttachInput {
   readonly mask: MaskFn
   // A door's dashboard ingest registers here to stage each member's masked test and config.
   readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
+  // The runner the producer read from the files, so a door's analytics names it.
+  readonly runner?: string
+  // The analytics ids of the plugins the producer's places use.
+  readonly remotePlugins?: readonly string[]
 }
 
 /** What a door's post-verdict tail is handed, INSIDE the run's own safety scope. */
@@ -165,7 +171,7 @@ export interface InProcessCliRunExecutionOptions {
   /** Where a quarantine-fold warning goes. The door owns its rendering. */
   readonly warn?: (message: string) => void
   // Takes the run id because one door port serves many runs and a lease belongs to one.
-  readonly resolveAppiumUrl?: (runId: string) => string | undefined
+  readonly appiumFor?: (runId: string) => AppiumProvider | undefined
   // UI flags `RunsStartInput` lacks, added one named field at a time, never as `RunOptions`.
   readonly resolveRunFlags?: (runId: string) => { readonly disableCache?: boolean } | undefined
 }
@@ -189,6 +195,8 @@ export async function runInProcessCliRun(
 ): Promise<CliRunOutcome> {
   const configPath = request.configPath ?? options.configPath
   const runId = request.runId ?? mintCliRunId()
+  // The door's per-run provider, bound to this run's id here, the one place the id is decided.
+  const appium = options.appiumFor?.(runId)
 
   // A DOOR THAT BROUGHT ITS OWN PRODUCER BROUGHT ITS OWN INPUTS TOO. Resolving them here anyway
   // would re-read the config and the secrets file for a door that already has both, and would make
@@ -201,11 +209,7 @@ export async function runInProcessCliRun(
         }),
         runId,
         runRecord: options.runRecord,
-        // The door's per-run resolver, BOUND to this run's id here — the one place the id is
-        // decided. See `resolveAppiumUrl` on the options.
-        ...(options.resolveAppiumUrl === undefined
-          ? {}
-          : { resolveAppiumUrl: (): string | undefined => options.resolveAppiumUrl!(runId) }),
+        ...(appium === undefined ? {} : { appium }),
         ...(options.resolveRunFlags === undefined
           ? {}
           : { opts: { ...options.resolveRunFlags(runId) } as RunOptions }),
@@ -260,7 +264,10 @@ export async function runInProcessCliRun(
         executionContext: assemblyContext.executionContext,
         configDir: assemblyContext.configDir,
         knowledgeRoot: produced.knowledgeRoot,
-        ports: assemblyContext.ports,
+        // The producer's plugin progress reaches this run's bus while it is open.
+        ports: produced.remoteProgress === undefined
+          ? assemblyContext.ports
+          : { ...assemblyContext.ports, remoteProgress: produced.remoteProgress },
         secretRedactor: produced.secretRedactor,
         members: produced.members,
         executor: produced.executor,
@@ -285,11 +292,14 @@ export async function runInProcessCliRun(
       startedSession = session
       produced.bindSession(session)
       options.onSession?.(session)
+      const runner = producedRunner(produced)
       startedSubscribers = options.subscribers?.({
         session,
         quarantined,
         mask,
         ...(produced.onMemberSnapshot === undefined ? {} : { onMemberSnapshot: produced.onMemberSnapshot }),
+        ...(runner === undefined ? {} : { runner }),
+        ...(produced.remotePlugins === undefined ? {} : { remotePlugins: produced.remotePlugins }),
       })
       // Subscribed directly, never through `attachRunSubscribers`: its wire reporter can print to
       // stdout, which is the protocol on the MCP stdio server and `fn --json`.
@@ -440,6 +450,9 @@ export async function runInProcessCliRun(
         // The record flushes on every path; its own failure never replaces the run's.
         try {
           await startedRecord?.flush()
+        } catch {}
+        try {
+          await produced.closePluginHosts?.()
         } catch {}
         if (!preparationDisclosureOwnedByDoor && postVerdictHandoff?.completion !== undefined) {
           const handoff = postVerdictHandoff

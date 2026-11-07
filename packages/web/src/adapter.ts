@@ -10,14 +10,35 @@ import type {
   PlatformAdapter,
   PlatformConfig,
   RecordingCapability,
+  RemoteBrowserConfig,
+  RemoteLease,
+  RemoteLeaseEnded,
+  RemoteLeaseSource,
+  RemotePlaceEvidence,
+  RemotePluginBrowserConfig,
+  RemoteHeartbeat,
+  RemoteRefusalMemory,
+  RemoteSessionRegistry,
+  RemoteUnsupported,
+  SecretResolver,
 } from '@vostride/agent-qa-runner'
 import type { LiveFrame } from '@vostride/agent-qa-schema'
-import { DEFAULT_NAVIGATION_TIMEOUT_MS } from '@vostride/agent-qa-schema'
+import {
+  DEFAULT_NAVIGATION_TIMEOUT_MS,
+  formatRemoteOrigin,
+  remoteLabel,
+  remoteOrigin,
+} from '@vostride/agent-qa-schema'
 import {
   assertNever,
   buildScreenState,
+  createRemoteHeartbeat,
   createSnapshotLiveStream,
+  isPluginRemote,
   LIVE_KEEPALIVE_QUIET_MS,
+  MIN_PLUGIN_CONNECT_MS,
+  releasingOnce,
+  RemoteRefusalError,
 } from '@vostride/agent-qa-runner'
 import type { ScreenState } from '@vostride/agent-qa-schema'
 import { convertKeysForPlatform, isMacPlatform } from '@vostride/agent-qa-runner'
@@ -38,8 +59,18 @@ import { waitForPageReady } from './smart-wait.js'
 import { runWebFillCompound, runWebScrollCompound, webOpenAppError } from './compound-web.js'
 import type { RefMap } from './types.js'
 import { formatMissingBrowserError, isPlaywrightMissingBrowserError } from './browser-install-error.js'
+import {
+  classifyDisconnect,
+  debugEnablesPlaywright,
+  disconnectSentence,
+  resolveRemoteConnection,
+  rewriteConnectError,
+  scrubRemoteEndpoint,
+  withinConnectTimeout,
+} from './remote-connection.js'
 import { createScreencastRecording, type ScreencastRecording } from './recording.js'
 import { isHeadlessLaunch, OperationCapture } from './operation-capture.js'
+import type { PluginConnect, RemoteDisconnectKind } from './remote-connection.js'
 import type { CapturedOperations } from './operation-capture.js'
 
 interface PageLogBuffers {
@@ -61,6 +92,24 @@ const OBSERVE_SNAPSHOT: SnapshotRootOptions = {
 }
 /** The longest screenshot() waits before it gives up and returns undefined. */
 export const SCREENSHOT_TIMEOUT_MS = 5_000
+/** The longest a remote cleanup waits on the remote before it disconnects anyway. */
+export const REMOTE_CLEANUP_BOUND_MS = 2_000
+// The disconnect's grace: a silent remote never answers its close, and what waited on it rejects.
+const REMOTE_CLEANUP_SETTLE_MS = 250
+
+// Waits for `work` or `ms`, whichever comes first; a step still running then is abandoned.
+async function withinBound(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms)
+    timer.unref?.()
+  })
+  try {
+    await Promise.race([work.then(() => undefined, () => undefined), bound])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 // The loop masks this metadata, moves it onto `operationEvidence` and drops both keys.
 function withOperationMetadata(result: ActionResult, captured: CapturedOperations | undefined): ActionResult {
@@ -122,9 +171,84 @@ function decodeBase64(data: string): Uint8Array {
   return bytes
 }
 
+// Refused before Playwright loads: its own logging prints a remote's address and requests, and
+// SELENIUM_REMOTE_URL sends a local launch to another machine.
+function refuseLeakingEnvironment(
+  remote: RemoteBrowserConfig | RemotePluginBrowserConfig | undefined,
+): void {
+  if (remote !== undefined) {
+    if (!debugEnablesPlaywright(process.env.DEBUG)) return
+    const label = isPluginRemote(remote)
+      ? remoteLabel({ name: remote.name, plugin: remote.plugin.entry })
+      : remoteLabel(remote)
+    throw new RemoteRefusalError(
+      `Remote ${label} cannot be used while DEBUG turns on Playwright's own logging, which would print its address and requests. Unset DEBUG to run this test.`,
+      { remote: label },
+    )
+  }
+  if ((process.env.SELENIUM_REMOTE_URL ?? '') !== '') {
+    throw new RemoteRefusalError(
+      "SELENIUM_REMOTE_URL would send this test's local browser to another machine. Unset it, or list that service under registry.remotes.",
+    )
+  }
+}
+
+const NO_DOWNLOAD_BYTES = 'a cdp remote returns no download bytes'
+const REMOTE_DECIDES_WINDOW = 'the remote decides whether its browser shows a window'
+const SHARED_CONTEXT = "the browser's own context is shared with other sessions"
+
+// What a connected browser cannot give, each with why, so evidence never reads it as an empty success.
+function remoteUnsupported(
+  remote: RemoteBrowserConfig,
+  browserName: 'chromium' | 'firefox' | 'webkit',
+): RemoteUnsupported[] {
+  const unsupported: RemoteUnsupported[] = [
+    { capability: 'launch flags', reason: "a remote browser starts with the service's own flags" },
+  ]
+  if (remote.protocol === 'cdp') unsupported.push({ capability: 'downloads', reason: NO_DOWNLOAD_BYTES })
+  unsupported.push({ capability: 'clipboard read-back', reason: REMOTE_DECIDES_WINDOW })
+  if (remote.protocol === 'cdp' && remote.context === 'reuse') {
+    unsupported.push({ capability: 'clipboard probe', reason: SHARED_CONTEXT })
+  }
+  if (browserName !== 'chromium') {
+    unsupported.push({
+      capability: 'live screencast',
+      reason: 'Firefox and WebKit show a one-second snapshot preview',
+    })
+  }
+  return unsupported
+}
+
+function remoteCaptureReason(remote: RemoteBrowserConfig): string {
+  const parts: string[] = []
+  if (remote.protocol === 'cdp') parts.push(NO_DOWNLOAD_BYTES)
+  parts.push(`clipboard read-back is off because ${REMOTE_DECIDES_WINDOW}`)
+  if (remote.protocol === 'cdp' && remote.context === 'reuse') {
+    parts.push(`the clipboard probe is off because ${SHARED_CONTEXT}`)
+  }
+  return parts.join('; ')
+}
+
+function remoteOriginText(url: string): string {
+  const origin = remoteOrigin(url)
+  return origin ? formatRemoteOrigin(origin) : 'invalid url'
+}
+
 export interface WebPlatformAdapterOptions {
   // Set only by a host with its own SIGINT, SIGTERM and SIGHUP handling, such as `agent-qa run`.
   readonly hostOwnsSignals?: true
+  // Shared by every adapter of one run, so a remote that refused is not asked again.
+  readonly refusalMemory?: RemoteRefusalMemory
+  // The configured secrets file a credential refusal names.
+  readonly secretsFile?: string
+  // Every declared secret, so a remote's references resolve at connect and nowhere else.
+  readonly connectionSecrets?: SecretResolver
+  // The host process's open sessions, so a signal can release this one without waiting for cleanup.
+  readonly sessions?: RemoteSessionRegistry
+  // Tests only: a shorter heartbeat interval than the fixed one hosts get.
+  readonly heartbeatIntervalMs?: number
+  // The run's plugin hosts, which lease a session for a remote that names a plugins entry.
+  readonly pluginSessions?: RemoteLeaseSource
 }
 
 export class WebPlatformAdapter implements PlatformAdapter<'web'> {
@@ -135,6 +259,21 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private browser: Browser | null = null
   private context: BrowserContext | null = null
   private page: Page | null = null
+  private remote: RemoteBrowserConfig | undefined
+  private ownsContext = true
+  // Pages a reused context already had; cleanup leaves them open.
+  private borrowedPages = new Set<Page>()
+  // Read once from a remote browser at setup; a launch here asks this machine at each keypress.
+  private remoteIsMac: boolean | undefined
+  private place: RemotePlaceEvidence | undefined
+  private heartbeat: RemoteHeartbeat | undefined
+  private unregisterRelease: (() => void) | undefined
+  private lease: RemoteLease | undefined
+  private link: string | undefined
+  private releaseLease: (() => Promise<void>) | undefined
+  private unwatchLease: (() => void) | undefined
+  // Set when the plugin that leased this session stopped under the test.
+  private leaseEnded: RemoteLeaseEnded | undefined
   // Adapter-private: observe returns only the `ScreenState`, never the native binding.
   private lastRefs: RefMap = {}
   private epoch: ObservationEpoch | undefined
@@ -143,6 +282,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   private navigationTimeoutMs = DEFAULT_NAVIGATION_TIMEOUT_MS
   private disconnected = false
   private intentionalClose = false
+  // Set the moment a remote session drops; the probe may turn `lost` into `ended`.
+  private disconnectKind: RemoteDisconnectKind | undefined
+  private disconnectSettled: Promise<void> | undefined
   // Routes persist until unroute and a dialog arm until its dialog; `cleanup()` drains both.
   private armedRoutes = new Set<string>()
   private pendingDialogArm: ((dialog: Dialog) => void) | null = null
@@ -167,48 +309,219 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
   async setup(config: PlatformConfig): Promise<void> {
     this.recordingConfig = config.recording
+    const configured = config.browser?.remote
+    refuseLeakingEnvironment(configured)
+    const browserName = config.browser?.name ?? 'chromium'
+    let remote: RemoteBrowserConfig | undefined
+    let releaseLease: (() => Promise<void>) | undefined
+    let plugin: PluginConnect | undefined
+    if (configured !== undefined && isPluginRemote(configured)) {
+      const leased = await this.leaseSession(configured, browserName, config.runFacts?.testName)
+      remote = leased.remote
+      plugin = { entry: configured.plugin.entry, connectTimeoutMs: configured.connectTimeoutMs }
+      releaseLease = releasingOnce(leased.lease)
+      this.lease = leased.lease
+      this.releaseLease = releaseLease
+    } else {
+      remote = configured
+    }
     const { chromium, firefox, webkit } = await import('playwright-core')
     const launchers = { chromium, firefox, webkit } as const
-    const browserName = config.browser?.name ?? 'chromium'
     this.browserName = browserName
     const launcher = launchers[browserName]
     const headless = config.browser?.headless ?? true
 
-    try {
-      this.browser = await launcher.launch({
-        headless,
-        ...(browserName === 'chromium' ? { args: ['--disable-blink-features=AutomationControlled'] } : {}),
-        ...(this.options.hostOwnsSignals === true
-          ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false }
-          : {}),
-      })
-    } catch (error) {
-      if (isPlaywrightMissingBrowserError(error)) {
-        throw new Error(formatMissingBrowserError(browserName))
+    this.remote = remote
+    if (remote !== undefined) {
+      // A leased remote was checked before its acquire, and its lease must not be dropped here.
+      const remembered =
+        releaseLease === undefined ? this.options.refusalMemory?.refusalFor(remote.name) : undefined
+      if (remembered !== undefined) throw remembered
+      // A plugin's answer is already resolved: it carries values, not references.
+      const { url, headers } =
+        releaseLease !== undefined
+          ? { url: remote.url, headers: remote.headers ?? {} }
+          : resolveRemoteConnection(remote, {
+              secrets: this.options.connectionSecrets,
+              secretsFile: this.options.secretsFile,
+            })
+      try {
+        // Headless, launch args and signal handling belong to a browser launched here.
+        this.browser =
+          remote.protocol === 'cdp'
+            ? await chromium.connectOverCDP(url, { headers, timeout: remote.connectTimeoutMs })
+            : await launcher.connect(url, { headers, timeout: remote.connectTimeoutMs })
+      } catch (error) {
+        const refused = rewriteConnectError(error, remote, {
+          ...(this.options.secretsFile !== undefined
+            ? { secretsFile: this.options.secretsFile }
+            : {}),
+          ...(plugin === undefined ? {} : { plugin }),
+        })
+        if (releaseLease !== undefined) {
+          this.lease = undefined
+          this.releaseLease = undefined
+          await releaseLease()
+        }
+        throw this.options.refusalMemory?.remember(remote.name, refused) ?? refused
       }
-      throw error
+    } else {
+      try {
+        this.browser = await launcher.launch({
+          headless,
+          ...(browserName === 'chromium' ? { args: ['--disable-blink-features=AutomationControlled'] } : {}),
+          ...(this.options.hostOwnsSignals === true
+            ? { handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false }
+            : {}),
+        })
+      } catch (error) {
+        if (isPlaywrightMissingBrowserError(error)) {
+          throw new Error(formatMissingBrowserError(browserName))
+        }
+        throw error
+      }
     }
 
     this.disconnected = false
     this.intentionalClose = false
-    this.browser.on('disconnected', () => {
-      if (!this.intentionalClose) {
-        this.disconnected = true
-      }
+    this.disconnectKind = undefined
+    this.disconnectSettled = undefined
+    this.leaseEnded = undefined
+    const browser = this.browser
+    // An earlier session's late event must not mark this adapter's next session.
+    browser.on('disconnected', () => {
+      if (this.browser !== browser || this.intentionalClose || this.leaseEnded !== undefined) return
+      this.disconnected = true
+      if (remote !== undefined) this.remoteDropped(remote)
     })
+    if (remote !== undefined) this.registerRelease(browser, releaseLease)
+    const lease = this.lease
+    if (remote !== undefined && lease !== undefined) this.watchLease(lease, browser, remote)
 
-    const contextOptions: Record<string, unknown> = {
-      viewport: config.browser?.viewport ?? { width: 1280, height: 720 },
+    if (remote === undefined) return this.openSession(config, undefined, browserName, headless)
+    try {
+      await withinConnectTimeout(
+        this.openSession(config, remote, browserName, headless),
+        remote,
+        plugin,
+      )
+    } catch (error) {
+      const scrubbed = this.withoutEndpoint(error)
+      if (!(scrubbed instanceof RemoteRefusalError)) throw scrubbed
+      throw this.options.refusalMemory?.remember(remote.name, scrubbed) ?? scrubbed
     }
-    if (config.authState?.storageStatePath) {
-      contextOptions.storageState = config.authState.storageStatePath
+    if (this.lease !== undefined) {
+      let started: { link?: string } = {}
+      try {
+        started = await this.lease.started({})
+      } catch {
+        // A plugin's started is a courtesy; the session it leased is already open.
+      }
+      this.link = started.link ?? this.lease.link
     }
-    this.context = await this.browser.newContext(contextOptions)
+  }
+
+  // The plugin's answer becomes a url remote; the acquire's time comes out of its connect budget.
+  private async leaseSession(
+    configured: RemotePluginBrowserConfig,
+    engine: 'chromium' | 'firefox' | 'webkit',
+    testName: string | undefined,
+  ): Promise<{ lease: RemoteLease; remote: RemoteBrowserConfig }> {
+    const { name } = configured
+    const sessions = this.options.pluginSessions
+    if (sessions === undefined) {
+      throw new RemoteRefusalError(
+        `Remote ${name} names plugin entry ${configured.plugin.entry}, and this host started no plugin host for it.`,
+        { remote: name, kind: 'refused' },
+      )
+    }
+    const memory = this.options.refusalMemory
+    const remembered = memory?.refusalFor(name)
+    if (remembered !== undefined) throw remembered
+    const startedAt = Date.now()
+    let lease: RemoteLease
+    try {
+      lease = await sessions.acquire({
+        remote: name,
+        plugin: configured.plugin,
+        deadlineMs: configured.connectTimeoutMs,
+        session: { platform: 'web', engine, context: configured.context ?? 'new' },
+        ...(testName === undefined ? {} : { testName }),
+      })
+    } catch (error) {
+      if (!(error instanceof RemoteRefusalError)) throw error
+      throw memory?.remember(name, error) ?? error
+    }
+    const answer = lease.connection
+    if (answer.protocol === 'appium') {
+      await releasingOnce(lease)()
+      const refused = new RemoteRefusalError(
+        `Remote ${name}: plugin entry ${configured.plugin.entry} answered a web test with an appium session.`,
+        { remote: name, kind: 'refused' },
+      )
+      throw memory?.remember(name, refused) ?? refused
+    }
+    const remaining = configured.connectTimeoutMs - (Date.now() - startedAt)
+    return {
+      lease,
+      remote: {
+        name,
+        protocol: answer.protocol,
+        url: answer.url,
+        ...(answer.headers === undefined ? {} : { headers: answer.headers }),
+        connectTimeoutMs: Math.max(MIN_PLUGIN_CONNECT_MS, remaining),
+        ...(configured.context === undefined ? {} : { context: configured.context }),
+      },
+    }
+  }
+
+  // The session a plugin leased for this test; undefined on a url remote, here, and after cleanup.
+  get remoteLease(): RemoteLease | undefined {
+    return this.lease
+  }
+
+  // The session's page at the plugin's vendor, from started or else the acquire's answer.
+  get remoteLink(): string | undefined {
+    return this.link
+  }
+
+  private async openSession(
+    config: PlatformConfig,
+    remote: RemoteBrowserConfig | undefined,
+    browserName: 'chromium' | 'firefox' | 'webkit',
+    headless: boolean,
+  ): Promise<void> {
+    if (this.browser === null) throw new Error('WebPlatformAdapter has no browser to open')
+    const viewport = config.browser?.viewport ?? { width: 1280, height: 720 }
+    const storageStatePath = config.authState?.storageStatePath
+    let reused: BrowserContext | undefined
+    if (remote?.protocol === 'cdp' && remote.context === 'reuse') {
+      reused = this.browser.contexts()[0]
+      if (reused === undefined) {
+        const label = remoteLabel(remote)
+        throw new RemoteRefusalError(
+          `Remote ${label} has no browser context to reuse. Set its context to new in registry.remotes, or open a context in the service first.`,
+          { remote: label },
+        )
+      }
+    }
+    if (reused !== undefined) {
+      this.context = reused
+      this.ownsContext = false
+      this.borrowedPages = new Set(reused.pages())
+      if (storageStatePath) await reused.setStorageState(storageStatePath)
+    } else {
+      const contextOptions: Record<string, unknown> = { viewport }
+      if (storageStatePath) contextOptions.storageState = storageStatePath
+      this.context = await this.browser.newContext(contextOptions)
+      this.ownsContext = true
+      this.borrowedPages = new Set()
+    }
     this.navigationTimeoutMs = config.timeouts?.navigation ?? DEFAULT_NAVIGATION_TIMEOUT_MS
     this.context.setDefaultNavigationTimeout(this.navigationTimeoutMs)
 
-    // Clipboard write permission — chromium only (firefox/webkit reject this permission)
-    if (browserName === 'chromium') {
+    // Chromium only: Firefox and WebKit reject it. A borrowed context keeps no grant of ours.
+    if (browserName === 'chromium' && reused === undefined) {
       await this.context.grantPermissions(['clipboard-write'])
     }
 
@@ -220,16 +533,167 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     })
 
     this.page = await this.context.newPage()
+    if (reused !== undefined) await this.page.setViewportSize(viewport)
+    if (remote !== undefined) {
+      const platform = await this.page.evaluate(() => navigator.platform)
+      this.remoteIsMac = /^Mac/.test(platform)
+    }
     this.attachLogListeners(this.page)
 
-    if (browserName === 'chromium') {
-      // A headed or undetermined launch never reads the clipboard.
-      this.operationCapture = new OperationCapture({ headless: isHeadlessLaunch({ headless }, process.env) })
-      await this.operationCapture.attach(this.context)
-      this.operationCaptureSupport = { download: true, clipboard: true }
+    if (remote !== undefined) {
+      // Headedness is the remote's, so the clipboard is never read back there.
+      if (browserName === 'chromium') {
+        this.operationCapture = new OperationCapture({
+          headless: false,
+          downloads: remote.protocol === 'playwright',
+        })
+        await this.operationCapture.attach(this.context)
+        this.operationCaptureSupport = {
+          download: remote.protocol === 'playwright',
+          clipboard: false,
+          reason: remoteCaptureReason(remote),
+        }
+      } else {
+        this.operationCaptureSupport = { download: false, clipboard: false, reason: browserName }
+      }
+      this.place = {
+        place: 'remote',
+        name: remote.name,
+        protocol: remote.protocol,
+        origin: remoteOriginText(remote.url),
+        browserVersion: this.browser.version(),
+        headless: 'decided by the remote',
+        unsupported: remoteUnsupported(remote, browserName),
+      }
+      await this.startHeartbeat(remote, this.browser, this.context)
     } else {
-      this.operationCaptureSupport = { download: false, clipboard: false, reason: browserName }
+      if (browserName === 'chromium') {
+        // A headed or undetermined launch never reads the clipboard.
+        this.operationCapture = new OperationCapture({ headless: isHeadlessLaunch({ headless }, process.env) })
+        await this.operationCapture.attach(this.context)
+        this.operationCaptureSupport = { download: true, clipboard: true }
+      } else {
+        this.operationCaptureSupport = { download: false, clipboard: false, reason: browserName }
+      }
+      this.place = { place: 'here' }
     }
+  }
+
+  // Keeps the service from closing an idle session; it touches neither the page nor the app.
+  private async startHeartbeat(
+    remote: RemoteBrowserConfig,
+    browser: Browser,
+    context: BrowserContext,
+  ): Promise<void> {
+    let beat: () => Promise<unknown> = () => context.cookies()
+    if (remote.protocol === 'cdp') {
+      try {
+        const session = await browser.newBrowserCDPSession()
+        beat = () => session.send('Browser.getVersion')
+      } catch {
+        // A service that refuses a browser-level session still answers the context's cookies.
+      }
+    }
+    const heartbeat = createRemoteHeartbeat({
+      ...(this.options.heartbeatIntervalMs !== undefined
+        ? { intervalMs: this.options.heartbeatIntervalMs }
+        : {}),
+      beat,
+    })
+    this.heartbeat = heartbeat
+    browser.on('disconnected', () => heartbeat.stop())
+    if (browser.isConnected() && !this.intentionalClose) heartbeat.start()
+  }
+
+  // Disconnects only: close() on a connected browser never stops the remote service. A leased
+  // session goes back to its plugin after this close; the plugin host registers the lease's own
+  // release too, so on a signal that release can run while the browser is still closing.
+  private registerRelease(browser: Browser, releaseLease?: () => Promise<void>): void {
+    const sessions = this.options.sessions
+    if (sessions === undefined) return
+    this.unregisterRelease?.()
+    let released: Promise<void> | undefined
+    this.unregisterRelease = sessions.register(() => {
+      released ??= this.releaseRemote(browser).finally(() => releaseLease?.())
+      return released
+    })
+  }
+
+  private async releaseRemote(browser: Browser): Promise<void> {
+    if (this.browser === browser) {
+      this.intentionalClose = true
+      this.heartbeat?.stop()
+    }
+    await browser.close()
+  }
+
+  // Every page operation holds the heartbeat off, so a beat never overlaps it.
+  private async holdingHeartbeat<T>(work: () => Promise<T>): Promise<T> {
+    const heartbeat = this.heartbeat
+    if (heartbeat === undefined) return work()
+    await heartbeat.enter()
+    try {
+      return await work()
+    } finally {
+      heartbeat.leave()
+    }
+  }
+
+  // A plugin that stopped took its session with it, so the test ends as if its remote dropped.
+  private watchLease(lease: RemoteLease, browser: Browser, remote: RemoteBrowserConfig): void {
+    this.unwatchLease?.()
+    this.unwatchLease = lease.onEnded((ended) => {
+      if (this.browser !== browser || this.intentionalClose || this.leaseEnded !== undefined) return
+      this.disconnected = true
+      this.remoteDropped(remote, ended)
+      void browser.close().catch(() => undefined)
+    })
+  }
+
+  // Nothing reconnects: the test that held the session fails, naming the remote.
+  private remoteDropped(remote: RemoteBrowserConfig, ended?: RemoteLeaseEnded): void {
+    this.heartbeat?.stop()
+    this.disconnectKind = 'lost'
+    if (ended !== undefined) {
+      this.leaseEnded = ended
+      this.disconnectSettled = undefined
+      return
+    }
+    const settled: Promise<void> = classifyDisconnect(remote).then((kind) => {
+      if (this.disconnectSettled === settled) this.disconnectKind = kind
+    })
+    this.disconnectSettled = settled
+  }
+
+  // Where this test ran; undefined before setup and after cleanup.
+  get placeEvidence(): RemotePlaceEvidence | undefined {
+    const place = this.place
+    if (place?.place !== 'remote') return place
+    const plugin = this.lease?.plugin
+    if (this.heartbeat === undefined && this.disconnectKind === undefined && plugin === undefined) {
+      return place
+    }
+    const failureKind = this.leaseEnded?.kind ?? this.disconnectKind
+    return {
+      ...place,
+      ...(plugin !== undefined ? { plugin } : {}),
+      ...(plugin !== undefined && this.link !== undefined ? { link: this.link } : {}),
+      ...(this.heartbeat !== undefined ? { heartbeat: this.heartbeat.counts() } : {}),
+      ...(failureKind !== undefined ? { failureKind } : {}),
+    }
+  }
+
+  // The sentence a test whose remote session dropped fails with; undefined when none dropped.
+  get disconnectSummary(): string | undefined {
+    const remote = this.remote
+    const kind = this.disconnectKind
+    if (remote === undefined || kind === undefined) return undefined
+    return this.leaseEnded?.message ?? disconnectSentence(kind, remote)
+  }
+
+  // Resolves once a drop's kind is known, within the probe's bound; at once when nothing dropped.
+  settleDisconnect(): Promise<void> {
+    return this.disconnectSettled ?? Promise.resolve()
   }
 
   // Absence means no stream, not no preview: the runner's `liveStreamFor` wraps `screenshot()`.
@@ -240,7 +704,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     const capability: LiveStreamCapability = {
       kind: 'cdp-screencast',
       start: (onFrame: (frame: LiveFrame) => void): Promise<void> =>
-        this.onScreencastChain(async () => {
+        this.holdingHeartbeat(() => this.onScreencastChain(async () => {
           if (this.screencastOnFrame !== null) return
           const page = this.page
           const context = this.context
@@ -260,7 +724,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
             throw error
           }
           if (this.screencast === cdp) this.armKeepalive(cdp)
-        }),
+        })),
       ack: async (frameId: number): Promise<void> => {
         const cdp = this.screencast
         if (!cdp) return
@@ -277,11 +741,11 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         }
       },
       stop: (): Promise<void> =>
-        this.onScreencastChain(async () => {
+        this.holdingHeartbeat(() => this.onScreencastChain(async () => {
           this.screencastOnFrame = null
           await this.stopWithdrawnSnapshot()
           await this.detachScreencast()
-        }),
+        })),
     }
     this.screencastCapability = capability
     return capability
@@ -510,7 +974,63 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   }
 
   async cleanup(): Promise<void> {
+    this.unregisterRelease?.()
+    this.unregisterRelease = undefined
+    this.unwatchLease?.()
+    this.unwatchLease = undefined
     this.intentionalClose = true
+    this.heartbeat?.stop()
+    this.heartbeat = undefined
+    if (this.remote === undefined) {
+      await this.releaseSession()
+      if (this.browser) {
+        await this.browser.close()
+      }
+    } else {
+      // A silent remote never answers these steps, so they share one bound and the disconnect
+      // always follows; on a connected browser close() only disconnects.
+      const release = this.releaseSession()
+      await withinBound(release, REMOTE_CLEANUP_BOUND_MS)
+      const disconnect = this.browser?.close() ?? Promise.resolve()
+      await withinBound(Promise.all([disconnect, release]), REMOTE_CLEANUP_SETTLE_MS)
+    }
+    const releaseLease = this.releaseLease
+    this.lease = undefined
+    this.link = undefined
+    this.releaseLease = undefined
+    await releaseLease?.()
+    this.remote = undefined
+    this.remoteIsMac = undefined
+    this.place = undefined
+    this.ownsContext = true
+    this.borrowedPages = new Set()
+    this.browser = null
+    this.context = null
+    this.page = null
+    this.operationCapture = null
+    this.operationCaptureSupport = undefined
+    this.lastRefs = {}
+    this.pageLogBuffers.clear()
+    this.disconnected = false
+    this.disconnectKind = undefined
+    this.disconnectSettled = undefined
+    this.leaseEnded = undefined
+    this.intentionalClose = false
+    this.screencast = null
+    this.screencastOnFrame = null
+    this.clearKeepalive()
+    this.lastScreencastSize = null
+    this.screencastAckTokens.clear()
+    this.screencastChain = Promise.resolve()
+  }
+
+  // Everything before the browser goes: recording, screencast, capture, the context's routes,
+  // offline mode and dialog arm, and on a remote the pages and context agent-qa opened.
+  private async releaseSession(): Promise<void> {
+    const remote = this.remote
+    const context = this.context
+    const ownsContext = this.ownsContext
+    const borrowedPages = this.borrowedPages
     try { await this.recordingCapability?.stop() } catch { /* best-effort */ }
     this.recordingCapability = undefined
     this.recordingConfig = undefined
@@ -522,9 +1042,9 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     // Close the clipboard read-back probe context before the browser goes.
     try { await this.operationCapture?.dispose() } catch { /* best-effort */ }
     // Undo routes, offline mode and the dialog arm before closing, so the next test inherits none.
-    if (this.context) {
-      try { await this.context.unrouteAll({ behavior: 'ignoreErrors' }) } catch { /* best-effort */ }
-      try { await this.context.setOffline(false) } catch { /* best-effort */ }
+    if (context) {
+      try { await context.unrouteAll({ behavior: 'ignoreErrors' }) } catch { /* best-effort */ }
+      try { await context.setOffline(false) } catch { /* best-effort */ }
     }
     if (this.page && this.pendingDialogArm) {
       try { this.page.off('dialog', this.pendingDialogArm) } catch { /* best-effort */ }
@@ -533,24 +1053,17 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
     this.pendingDialogArm = null
     await disposeEpoch(this.epoch)
     this.epoch = undefined
-    if (this.browser) {
-      await this.browser.close()
+    // A remote browser is not ours: close only our pages and context; the caller disconnects.
+    if (remote !== undefined && context) {
+      if (ownsContext) {
+        try { await context.close() } catch { /* best-effort */ }
+      } else {
+        for (const page of context.pages()) {
+          if (borrowedPages.has(page)) continue
+          try { await page.close() } catch { /* best-effort */ }
+        }
+      }
     }
-    this.browser = null
-    this.context = null
-    this.page = null
-    this.operationCapture = null
-    this.operationCaptureSupport = undefined
-    this.lastRefs = {}
-    this.pageLogBuffers.clear()
-    this.disconnected = false
-    this.intentionalClose = false
-    this.screencast = null
-    this.screencastOnFrame = null
-    this.clearKeepalive()
-    this.lastScreencastSize = null
-    this.screencastAckTokens.clear()
-    this.screencastChain = Promise.resolve()
   }
 
   get isBrowserDisconnected(): boolean {
@@ -558,6 +1071,14 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   }
 
   async observe(): Promise<ScreenState> {
+    try {
+      return await this.holdingHeartbeat(() => this.observePage())
+    } catch (error) {
+      throw this.withoutEndpoint(error)
+    }
+  }
+
+  private async observePage(): Promise<ScreenState> {
     if (!this.page) {
       throw new Error('WebPlatformAdapter not initialized — call setup() first')
     }
@@ -605,6 +1126,36 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
   }
 
   async execute(action: ActionsFor<'web'>, options?: ExecuteOptions): Promise<ActionResult> {
+    try {
+      const result = await this.holdingHeartbeat(() => this.executeOnPage(action, options))
+      const remote = this.remote
+      if (remote === undefined || result.error === undefined) return result
+      return { ...result, error: scrubRemoteEndpoint(result.error, remote) }
+    } catch (error) {
+      throw this.withoutEndpoint(error)
+    }
+  }
+
+  // Error text from a remote-attached adapter names the remote by its label, never its endpoint.
+  private withoutEndpoint(error: unknown): unknown {
+    const remote = this.remote
+    if (remote === undefined) return error
+    if (typeof error === 'string') return scrubRemoteEndpoint(error, remote)
+    let current: unknown = error
+    for (let depth = 0; current instanceof Error && depth < 8; depth += 1) {
+      current.message = scrubRemoteEndpoint(current.message, remote)
+      if (typeof current.stack === 'string') {
+        current.stack = scrubRemoteEndpoint(current.stack, remote)
+      }
+      current = current.cause
+    }
+    return error
+  }
+
+  private async executeOnPage(
+    action: ActionsFor<'web'>,
+    options?: ExecuteOptions,
+  ): Promise<ActionResult> {
     if (!this.page) {
       throw new Error('WebPlatformAdapter not initialized — call setup() first')
     }
@@ -668,10 +1219,10 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
 
   async screenshot(): Promise<Buffer | undefined> {
     try {
-      if (this.page) {
-        return await this.page.screenshot({ scale: 'css', timeout: SCREENSHOT_TIMEOUT_MS })
-      }
-      return undefined
+      if (!this.page) return undefined
+      return await this.holdingHeartbeat(async () =>
+        this.page?.screenshot({ scale: 'css', timeout: SCREENSHOT_TIMEOUT_MS }),
+      )
     } catch {
       return undefined
     }
@@ -934,7 +1485,7 @@ export class WebPlatformAdapter implements PlatformAdapter<'web'> {
         // platform-normalized keys.
         const effectiveKeys = convertKeysForPlatform(action.keys, {
           enabled: action.convertPlatformKeys !== false,
-          isMac: isMacPlatform(),
+          isMac: this.remoteIsMac ?? isMacPlatform(),
         })
         for (const key of effectiveKeys) {
           if (action.mode === 'down') {

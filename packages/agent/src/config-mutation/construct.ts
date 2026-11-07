@@ -2,6 +2,8 @@
 
 import {
   CONFIG_SET_GITIGNORE,
+  SUBSCRIPTION_AUTH_ENTRY_NAME,
+  SUBSCRIPTION_AUTH_PACKAGE,
   UnrenderableConfigDiffError,
   base64Encode,
   isLegalConfigReference,
@@ -31,6 +33,7 @@ import { HOSTNAME_GATE_REFUSAL_DETAIL, parseHostnameToken } from './hostname-gat
 import type {
   ConfigFieldValue,
   ConfigFileBytes,
+  ConfigPathFacts,
   ConfigFieldWriteOutcome,
   ConfigFilePublishOutcome,
   ConfigFileSet,
@@ -44,8 +47,8 @@ import type {
 /** The registry map every target op addresses. */
 const TARGETS_PATH = 'registry.targets'
 
-/** The auth plugin declaration list `config.auth.set` appends a package to. */
-const AUTH_PLUGINS_PATH = 'plugins.auth'
+/** The plugins list `config.auth.set` appends the subscription entry to. */
+const PLUGINS_PATH = 'plugins'
 
 /** The hooks file's top-level sequence. Read in the HOOKS file, never in the config yaml. */
 const HOOKS_PATH = 'hooks'
@@ -256,7 +259,61 @@ export async function editConfigTarget(
   }, { kind: 'fields', changes }, set, deps)
 }
 
-// Writes only `plugins.auth`, the one place the config declares an auth plugin; `target` resolves.
+// The facts port answers shape only, so an entry's name and package are read back as the values
+// a set at their path would replace; the probe's bytes are discarded.
+async function heldPluginEntries(
+  deps: ConstructConfigChangeDeps,
+  bytes: Uint8Array | undefined,
+  count: number,
+): Promise<{ name: unknown; package: unknown }[]> {
+  const probe = async (path: string) =>
+    (
+      await deps.configFiles.setField({
+        ...(bytes === undefined ? {} : { bytes }),
+        path,
+        value: '',
+      })
+    ).previousValue
+  const entries: { name: unknown; package: unknown }[] = []
+  for (let at = 0; at < count; at++) {
+    entries.push({
+      name: await probe(`${PLUGINS_PATH}.${at}.name`),
+      package: await probe(`${PLUGINS_PATH}.${at}.package`),
+    })
+  }
+  return entries
+}
+
+// An entry is read by a set at its name and package, which only a map holds, so any other shape is
+// refused before it is read.
+async function pluginsShapeRefusal(
+  deps: ConstructConfigChangeDeps,
+  bytes: Uint8Array | undefined,
+  existing: Omit<ConfigPathFacts, 'path'>,
+): Promise<string | undefined> {
+  const asked = ', then run config.auth.set again.'
+  if (!existing.present) return undefined
+  if (existing.kind === 'map') {
+    return 'plugins holds the retired map of auth and providers lists: plugins is now a list of '
+      + 'entries, each with a name and a package. Rewrite it as a list in the config file' + asked
+  }
+  if (existing.kind !== 'sequence') {
+    return 'plugins is not a list. Make it a list of entries, each with a name and a package, in '
+      + 'the config file' + asked
+  }
+  const paths = Array.from({ length: existing.length ?? 0 }, (_, at) => `${PLUGINS_PATH}.${at}`)
+  if (paths.length === 0) return undefined
+  const entries = await deps.configFiles.inspect({
+    ...(bytes === undefined ? {} : { bytes }),
+    paths,
+  })
+  const odd = paths.findIndex((path) => factsFor(entries, path).kind !== 'map')
+  if (odd === -1) return undefined
+  return `plugins entry ${String(odd)} is not an entry with a name and a package. Fix it in the `
+    + 'config file' + asked
+}
+
+// Writes only the `plugins` list's subscription entry; `target` resolves.
 export async function setConfigAuth(
   input: ConfigAuthSetInput & { readonly action: string },
   deps: ConstructConfigChangeDeps,
@@ -275,10 +332,21 @@ export async function setConfigAuth(
   ])
   if (refusal !== undefined) return refusal
 
+  // A plugin package is code the run loads, so this door names only the one package it may declare.
+  if (input.pluginPackage !== undefined && input.pluginPackage !== SUBSCRIPTION_AUTH_PACKAGE) {
+    return {
+      outcome: 'refused',
+      reason: 'unsupported-reference',
+      detail:
+        `config.auth.set declares only ${SUBSCRIPTION_AUTH_PACKAGE}. Declare any other auth plugin `
+        + 'by editing plugins in the config file.',
+    }
+  }
+
   const entryPath = `${TARGETS_PATH}.${input.target}`
   const facts = await deps.configFiles.inspect({
     ...(target.bytes === undefined ? {} : { bytes: target.bytes }),
-    paths: [entryPath, TARGETS_PATH, AUTH_PLUGINS_PATH],
+    paths: [entryPath, TARGETS_PATH, PLUGINS_PATH],
   })
   if (!factsFor(facts, entryPath).present) {
     return {
@@ -309,22 +377,42 @@ export async function setConfigAuth(
   const changes: ConfigChange[] = []
 
   if (input.pluginPackage !== undefined) {
-    // APPENDED PAST THE END, AT A LENGTH THE DOCUMENT ITSELF REPORTED. Writing at a fixed index
-    // would overwrite a declaration that is already there; writing the whole sequence back would
-    // discard the ones this call did not mention.
-    const declaration: ConfigStructuredValue = { package: input.pluginPackage }
-    const existing = factsFor(facts, AUTH_PLUGINS_PATH)
+    const existing = factsFor(facts, PLUGINS_PATH)
+    const shapeRefusal = await pluginsShapeRefusal(deps, bytes, existing)
+    if (shapeRefusal !== undefined) {
+      return { outcome: 'refused', reason: 'unsupported-reference', detail: shapeRefusal }
+    }
     const at = existing.length ?? 0
-    const appended = await deps.configFiles.setField({
-      ...(bytes === undefined ? {} : { bytes }),
-      path: existing.present ? `${AUTH_PLUGINS_PATH}.${at}` : AUTH_PLUGINS_PATH,
-      value: existing.present ? declaration : [declaration],
-    })
-    bytes = appended.bytes
-    fieldEdits.push(...flattenScalarEdits(`${AUTH_PLUGINS_PATH}.${at}`, declaration, undefined))
-    // AN APPEND IN THE WRITE'S OWN TURN, so a declaration somebody added meanwhile is kept and this
-    // one lands after it rather than over it.
-    changes.push({ op: 'append', path: configSegments(AUTH_PLUGINS_PATH), value: declaration })
+    const held = await heldPluginEntries(deps, bytes, at)
+    const declared = held.some((entry) => entry.package === SUBSCRIPTION_AUTH_PACKAGE)
+    if (!declared && held.some((entry) => entry.name === SUBSCRIPTION_AUTH_ENTRY_NAME)) {
+      return {
+        outcome: 'refused',
+        reason: 'unsupported-reference',
+        detail:
+          'an entry named subscription already names another plugin; rename it or edit plugins in '
+          + 'the config file.',
+      }
+    }
+    if (!declared) {
+      // APPENDED PAST THE END, AT A LENGTH THE DOCUMENT ITSELF REPORTED. Writing at a fixed index
+      // would overwrite an entry that is already there; writing the whole sequence back would
+      // discard the ones this call did not mention.
+      const entry: ConfigStructuredValue = {
+        name: SUBSCRIPTION_AUTH_ENTRY_NAME,
+        package: SUBSCRIPTION_AUTH_PACKAGE,
+      }
+      const appended = await deps.configFiles.setField({
+        ...(bytes === undefined ? {} : { bytes }),
+        path: existing.present ? `${PLUGINS_PATH}.${at}` : PLUGINS_PATH,
+        value: existing.present ? entry : [entry],
+      })
+      bytes = appended.bytes
+      fieldEdits.push(...flattenScalarEdits(`${PLUGINS_PATH}.${at}`, entry, undefined))
+      // AN APPEND IN THE WRITE'S OWN TURN, so an entry somebody added meanwhile is kept and this
+      // one lands after it rather than over it.
+      changes.push({ op: 'append', path: configSegments(PLUGINS_PATH), value: entry })
+    }
   }
 
   if (bytes === undefined) throw new TypeError('the config file has no bytes to edit')
@@ -746,14 +834,14 @@ function fileWriteRefusal(
         + 'again and ask again.',
     }
   }
-  // The fields arm's `marker_written_back` answer, for a whole file.
-  if (outcome.reason === 'marker_written_back') {
+  // The fields arm's `marker_written_back` and `path_not_writable` answers, for a whole file.
+  if (outcome.reason === 'marker_written_back' || outcome.reason === 'path_not_writable') {
     return {
       outcome: 'refused',
       reason: 'write-refused',
       detail:
         `${file} refused this change as it now stands: `
-        + `${FIELD_WRITE_REFUSAL_WORDS.marker_written_back}, so nothing was written.`,
+        + `${FIELD_WRITE_REFUSAL_WORDS[outcome.reason]}, so nothing was written.`,
     }
   }
   const words = {
@@ -860,9 +948,9 @@ function configSegments(path: string): string[] {
 
 /** One path's facts out of the port's answer, by NAME — never by the index a caller assumed. */
 function factsFor(
-  facts: readonly { path: string; present: boolean; keys?: readonly string[]; length?: number }[],
+  facts: readonly ConfigPathFacts[],
   path: string,
-): { present: boolean; keys?: readonly string[]; length?: number } {
+): Omit<ConfigPathFacts, 'path'> {
   return facts.find((fact) => fact.path === path) ?? { present: false }
 }
 

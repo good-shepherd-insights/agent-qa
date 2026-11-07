@@ -87,7 +87,7 @@ export const ANALYTICS_AGENT_PRODUCTS = [
 ] as const
 
 export const ANALYTICS_TRIGGER_SOURCES = ['cli', 'chat', 'mcp', 'daemon', 'unknown'] as const
-export const ANALYTICS_RUNNERS = ['local', 'unknown'] as const
+export const ANALYTICS_RUNNERS = ['local', 'remote', 'unknown'] as const
 export const ANALYTICS_PLATFORMS = ['web', 'android', 'ios', 'unknown'] as const
 export const ANALYTICS_RUN_STATUSES = [
   'passed',
@@ -98,6 +98,31 @@ export const ANALYTICS_RUN_STATUSES = [
   'unknown',
 ] as const
 export const ANALYTICS_SUITE_EXECUTION_MODES = ['sequential', 'parallel', 'unknown'] as const
+
+// The first-party plugins by id; any other package, and every path, is third_party.
+export const ANALYTICS_REMOTE_PLUGINS = [
+  'kernel',
+  'browserstack',
+  'steel',
+  'hyperbrowser',
+  'third_party',
+] as const
+export type AnalyticsRemotePlugin = (typeof ANALYTICS_REMOTE_PLUGINS)[number]
+
+const FIRST_PARTY_REMOTE_PLUGINS: ReadonlyMap<string, AnalyticsRemotePlugin> = new Map([
+  ['@vostride/agent-qa-plugin-kernel', 'kernel'],
+  ['@vostride/agent-qa-plugin-browserstack', 'browserstack'],
+  ['@vostride/agent-qa-plugin-steel', 'steel'],
+  ['@vostride/agent-qa-plugin-hyperbrowser', 'hyperbrowser'],
+])
+
+export function analyticsRemotePluginId(declared: {
+  package?: string
+  path?: string
+}): AnalyticsRemotePlugin {
+  if (declared.package === undefined) return 'third_party'
+  return FIRST_PARTY_REMOTE_PLUGINS.get(declared.package) ?? 'third_party'
+}
 
 // CATEGORIES, never messages: the failure's text is the thing that would carry a credential.
 export const ANALYTICS_FAILURE_CATEGORIES = [
@@ -190,6 +215,7 @@ const RunCompletionShape = {
   total_tokens: NonNegativeInteger.optional(),
   is_flaky: z.boolean().optional(),
   memory_enabled: z.boolean().optional(),
+  remote_plugins: z.array(z.enum(ANALYTICS_REMOTE_PLUGINS)).optional(),
 } as const
 
 const TestRunCompleted = member('agent-qa.test_run.completed', {

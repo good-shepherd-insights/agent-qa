@@ -23,6 +23,7 @@ function createMockPointerAction() {
   chain.up = vi.fn().mockReturnValue(chain)
   chain.pause = vi.fn().mockReturnValue(chain)
   chain.perform = vi.fn().mockResolvedValue(undefined)
+  chain.toJSON = vi.fn().mockReturnValue({ type: 'pointer', actions: [] })
   return chain
 }
 
@@ -61,8 +62,9 @@ function createMockDriver() {
     getWindowSize: vi.fn().mockResolvedValue({ width: 1080, height: 1920 }),
     takeScreenshot: vi.fn().mockResolvedValue(SCREENSHOT_BASE64),
     deleteSession: vi.fn().mockResolvedValue(undefined),
+    releaseActions: vi.fn().mockResolvedValue(undefined),
+    performActions: vi.fn().mockResolvedValue(undefined),
     action: vi.fn().mockReturnValue(pointerAction),
-    actions: vi.fn().mockResolvedValue(undefined),
     keys: vi.fn().mockImplementation((k: unknown) => { calls.push(`keys:${JSON.stringify(k)}`); return Promise.resolve() }),
     pause: vi.fn().mockResolvedValue(undefined),
     activateApp: vi.fn().mockImplementation((id: string) => { calls.push(`activateApp:${id}`); return Promise.resolve() }),
@@ -338,7 +340,7 @@ describe('AndroidPlatformAdapter compound behaviors', () => {
       })
       await adapter.setup({
         platform: 'android',
-        device: { name: 'android-emu', platform: 'android', match: { automationName: 'UiAutomator2' } },
+        device: { name: 'android-emu', platform: 'android' },
         appPackage: 'app.linear',
       } as never)
       await adapter.observe()
@@ -409,7 +411,7 @@ describe('AndroidPlatformAdapter compound behaviors', () => {
       })
       await adapter.setup({
         platform: 'android',
-        device: { name: 'android-emu', platform: 'android', match: { automationName: 'UiAutomator2' } },
+        device: { name: 'android-emu', platform: 'android' },
         appPackage: 'app.linear',
       } as never)
       await adapter.observe()

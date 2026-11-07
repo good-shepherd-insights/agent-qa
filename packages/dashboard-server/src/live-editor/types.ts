@@ -4,8 +4,10 @@ import type {
 import type {
   ConsoleLogEntry,
   NetworkLogEntry,
+  RemoteBrowserConfig,
+  RemotePluginBrowserConfig,
+  RunSecretRedactor,
   StepAnnotation,
-  SecretRedactor,
   SecretStore,
 } from '@vostride/agent-qa-runner'
 import type { DashboardLLMConfig } from '../llm-model-mapping.js'
@@ -202,8 +204,17 @@ export interface LiveSessionConfig {
   llmConfig: LiveSessionLLMConfig
   authFetch?: typeof globalThis.fetch
   envVars?: Record<string, string>
+  // Without any secret a remote references: hooks, steps and the start url get this one.
   secretStore?: SecretStore
-  secretRedactor?: SecretRedactor
+  // Every declared secret; only the web adapter gets it, to connect to a remote.
+  connectionSecretStore?: SecretStore
+  // Every name any remote references; a step that uses one is refused.
+  connectionSecretNames?: ReadonlySet<string>
+  // workspace.secretsFile as the project names it, for the adapter's credential refusals.
+  secretsFile?: string
+  remote?: RemoteBrowserConfig | RemotePluginBrowserConfig
+  // A run redactor, so a plugin's answer mask values can join it.
+  secretRedactor?: RunSecretRedactor
   setupHooks?: string[]
   teardownHooks?: string[]
   resolvedHooks?: Map<string, HookDefinition>
@@ -214,21 +225,6 @@ export interface LiveSessionConfig {
   navigationTimeoutMs?: number
   useDeviceName?: string
   appState?: 'preserve' | 'reset'
-  bundleId?: string
-  appPackage?: string
-  appActivity?: string
-  device?: {
-    name: string
-    platformVersion?: string
-    appPath?: string
-    browserName?: string
-    appPackage?: string
-    appActivity?: string
-    bundleId?: string
-    udid?: string
-    avd?: string
-    appiumUrl?: string
-  }
 }
 
 // The close code for a session this process does not hold; the dashboard UI spells it too.

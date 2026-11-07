@@ -11,6 +11,8 @@ import {
 } from '@vostride/agent-qa-schema'
 import type { LLMAuthProviderPlugin, OAuthTokens } from '@vostride/agent-qa-core'
 
+import { isPromptCancel } from '../composition/cli-refusal.js'
+
 type ProviderMode =
   | 'openai-compatible'
   | 'anthropic-compatible'
@@ -117,10 +119,10 @@ function printMissingSubscriptionPluginGuidance(configName: string, provider: Su
   console.log(pc.dim(`Provider: ${provider}`))
   console.log(pc.dim('Add the subscription auth plugin to package.json and install with your package manager:'))
   console.log(pc.dim('  "devDependencies": { "@vostride/agent-qa-subscription-auth": "<agent-qa version>" }'))
-  console.log(pc.dim('Declare it in agent-qa.config.yaml under plugins.auth:'))
+  console.log(pc.dim('Declare it in agent-qa.config.yaml as a plugins entry:'))
   console.log(pc.dim('  plugins:'))
-  console.log(pc.dim('    auth:'))
-  console.log(pc.dim('      - package: @vostride/agent-qa-subscription-auth'))
+  console.log(pc.dim('    - name: subscription'))
+  console.log(pc.dim('      package: "@vostride/agent-qa-subscription-auth"'))
   console.log(pc.dim(`Then run: agent-qa auth login --config ${configName}`))
 }
 
@@ -204,6 +206,7 @@ async function runSubscriptionPluginLogin(configName: string, provider: Subscrip
     })
     console.log(pc.green(`Authenticated ${configName} with ${plugin.label}`))
   } catch (err: unknown) {
+    if (isPromptCancel(err)) throw err
     console.log(pc.red(err instanceof Error ? err.message : String(err)))
     process.exitCode = 1
   } finally {

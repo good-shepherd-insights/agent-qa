@@ -13,12 +13,17 @@ import { AGENT_QA_IOS_OWNERSHIP_CONTRACT } from '../../ios/src/ownership-contrac
 import { AGENT_QA_KNOWLEDGE_LOCAL_OWNERSHIP_CONTRACT } from '../../knowledge-local/src/ownership-contract.js'
 import { AGENT_QA_MCP_OWNERSHIP_CONTRACT } from '../../mcp/src/ownership-contract.js'
 import { AGENT_QA_MODEL_OWNERSHIP_CONTRACT } from '../../model/src/ownership-contract.js'
+import { AGENT_QA_PLUGIN_KIT_OWNERSHIP_CONTRACT } from '../../plugin-kit/src/ownership-contract.js'
 import { AGENT_QA_RUNNER_OWNERSHIP_CONTRACT } from '../../runner/src/ownership-contract.js'
 import { AGENT_QA_RUNNER_LOCAL_OWNERSHIP_CONTRACT } from '../../runner-local/src/ownership-contract.js'
 import { AGENT_QA_SAFETY_OWNERSHIP_CONTRACT } from '../../safety/src/ownership-contract.js'
 import { AGENT_QA_SAFETY_LOCAL_OWNERSHIP_CONTRACT } from '../../safety-local/src/ownership-contract.js'
 import { AGENT_QA_SCHEMA_OWNERSHIP_CONTRACT } from '../../schema/src/ownership-contract.js'
 import { AGENT_QA_WEB_OWNERSHIP_CONTRACT } from '../../web/src/ownership-contract.js'
+import { AGENT_QA_PLUGIN_KERNEL_OWNERSHIP_CONTRACT } from '../../../plugins/kernel/src/ownership-contract.js'
+import { AGENT_QA_PLUGIN_BROWSERSTACK_OWNERSHIP_CONTRACT } from '../../../plugins/browserstack/src/ownership-contract.js'
+import { AGENT_QA_PLUGIN_STEEL_OWNERSHIP_CONTRACT } from '../../../plugins/steel/src/ownership-contract.js'
+import { AGENT_QA_PLUGIN_HYPERBROWSER_OWNERSHIP_CONTRACT } from '../../../plugins/hyperbrowser/src/ownership-contract.js'
 import { PACKAGE_CLASS_RULES } from './contract-types.js'
 import type { OwnershipContract } from './contract-types.js'
 import { AGENT_QA_ARCH_OWNERSHIP_CONTRACT } from './ownership-contract.js'
@@ -48,6 +53,11 @@ export const ARCH_MANIFEST = {
     AGENT_QA_DASHBOARD_UI_OWNERSHIP_CONTRACT,
     AGENT_QA_EVAL_OWNERSHIP_CONTRACT,
     AGENT_QA_EVAL_LOCAL_OWNERSHIP_CONTRACT,
+    AGENT_QA_PLUGIN_KIT_OWNERSHIP_CONTRACT,
+    AGENT_QA_PLUGIN_KERNEL_OWNERSHIP_CONTRACT,
+    AGENT_QA_PLUGIN_BROWSERSTACK_OWNERSHIP_CONTRACT,
+    AGENT_QA_PLUGIN_STEEL_OWNERSHIP_CONTRACT,
+    AGENT_QA_PLUGIN_HYPERBROWSER_OWNERSHIP_CONTRACT,
   ],
   taxonomy: PACKAGE_CLASS_RULES,
 } as const satisfies {
