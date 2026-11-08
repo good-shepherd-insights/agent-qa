@@ -1,6 +1,6 @@
 // Fixtures are built on disk: the messages turn on what `findPackageJson` finds walking up.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -13,6 +13,7 @@ import {
   declarationKey,
   declarationLabel,
   importDeclaredPluginModule,
+  pluginsAddLine,
   resolveModuleSpecifier,
   resolvePackageImportFromBase,
 } from '../plugin-loader-util.js'
@@ -130,7 +131,7 @@ describe('an installed package that fails to load is not called missing', () => 
     expect(message, `the failure told them to install what they already have:\n${message}`)
       .not.toContain('is not installed')
     expect(message, `the failure told them to install what they already have:\n${message}`)
-      .not.toContain('npm install')
+      .not.toContain('plugins add')
     // ESM never emits the require-stack marker, so the check is on the absolute path itself.
     expect(
       occurrences(message, root),
@@ -177,7 +178,7 @@ describe('an installed package that fails to load is not called missing', () => 
     const message = (thrown as Error).message
     expect(message).toContain(GENUINELY_ABSENT_PACKAGE)
     expect(message).toContain('is declared in agent-qa.config.yaml but is not installed')
-    expect(message).toContain(`npm install ${GENUINELY_ABSENT_PACKAGE}`)
+    expect(message).toContain(`npx agent-qa plugins add ${GENUINELY_ABSENT_PACKAGE}`)
   })
 
   it('the stripping removes paths and leaves ordinary text alone', async () => {
@@ -225,7 +226,7 @@ describe('the install suggestion is a command only when the name is one', () => 
     const message = new PluginNotInstalledError({ name: 'acme', package: hostile }, 'auth').message
 
     expect(message, `a runnable command was composed from an unvalidated string:\n${message}`)
-      .not.toContain('npm install')
+      .not.toContain('plugins add')
     // THE REMEDY IS STILL THERE, stated rather than composed — a gate that swallowed the answer
     // would trade one bad message for another.
     expect(message, `the package was not named:\n${message}`).toContain(hostile)
@@ -234,20 +235,75 @@ describe('the install suggestion is a command only when the name is one', () => 
     expect(message).toContain('remove the plugins entry acme')
   })
 
-  it('an ordinary scoped name keeps the runnable example', () => {
+  it('an ordinary scoped name is told to add it with plugins add', () => {
     // An ordinary name keeps the runnable command; dropping it everywhere is the cheap wrong fix.
     const message = new PluginNotInstalledError(
       { name: 'subscription', package: '@vostride/agent-qa-subscription-auth' },
       'auth',
     ).message
 
-    expect(message).toContain('npm install @vostride/agent-qa-subscription-auth')
+    expect(message).toBe(
+      'Auth plugin package "@vostride/agent-qa-subscription-auth" is declared in '
+        + 'agent-qa.config.yaml but is not installed. Install it with npx agent-qa plugins add '
+        + '@vostride/agent-qa-subscription-auth, or remove the plugins entry subscription.',
+    )
+    expect(message).not.toContain('npm install')
+  })
+
+  it('the plugins add line names a config that is not the default one', () => {
+    const message = new PluginNotInstalledError(
+      { name: 'subscription', package: '@vostride/agent-qa-subscription-auth' },
+      'auth',
+      resolve('qa', 'agent-qa.config.yaml'),
+    ).message
+
+    expect(message).toContain(
+      'Install it with npx agent-qa --config qa/agent-qa.config.yaml plugins add '
+        + '@vostride/agent-qa-subscription-auth, or remove',
+    )
+  })
+
+  it('a default config reached through a symlinked folder needs no --config', () => {
+    const real = mkdtempSync(join(tmpdir(), 'agent-qa-plugins-add-line-'))
+    const link = `${real}-link`
+    symlinkSync(real, link)
+    try {
+      expect(pluginsAddLine('left-pad', join(link, 'agent-qa.config.yaml'), real)).toBe(
+        'npx agent-qa plugins add left-pad',
+      )
+    } finally {
+      rmSync(link, { force: true })
+      rmSync(real, { recursive: true, force: true })
+    }
+  })
+
+  it('a config far from the current folder is named by its absolute path, the shorter one', () => {
+    expect(pluginsAddLine('left-pad', '/srv/qa/agent-qa.config.yaml', '/a/b/c/d/e/f')).toBe(
+      'npx agent-qa --config /srv/qa/agent-qa.config.yaml plugins add left-pad',
+    )
+    expect(pluginsAddLine('left-pad', '/a/b/staging.yaml', '/a/b/c')).toBe(
+      'npx agent-qa --config ../staging.yaml plugins add left-pad',
+    )
+  })
+
+  it('a path declaration names its path and no install command', () => {
+    const message = new PluginNotInstalledError(
+      { name: 'local', path: 'plugins/local-auth.js' },
+      'auth',
+    ).message
+
+    expect(message).toBe(
+      'Auth plugin file "plugins/local-auth.js" is declared in agent-qa.config.yaml but could not '
+        + 'be loaded. Check that the path is correct and the file exists, or remove the plugins '
+        + 'entry local.',
+    )
+    expect(message).not.toContain('plugins add')
   })
 
   it('the gate accepts npm\'s grammar and refuses what is not in it', () => {
     const composes = (name: string): boolean =>
       new PluginNotInstalledError({ name: 'acme', package: name }, 'auth').message.includes(
-        'npm install',
+        'plugins add',
       )
 
     // Accepted: the shapes npm actually publishes.

@@ -6,7 +6,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { Client } from '@modelcontextprotocol/client'
-import { StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/client/stdio'
+import { getAgentQaVersion } from '@vostride/agent-qa-core'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { MCP_STDIO_STARTUP_MESSAGE } from '../commands/mcp.js'
@@ -57,8 +58,12 @@ function fixtureProject(legacyTokens = false): string {
   return root
 }
 
-/** Spawn the built binary over stdio in `cwd`, list its tools, and return them with captured stderr. */
-async function listOverStdio(cwd: string): Promise<{ names: string[]; stderr: () => string }> {
+/** Spawn the built binary in `cwd`, list its tools and call one, with captured stderr. */
+async function listOverStdio(cwd: string): Promise<{
+  names: string[]
+  call: { isError?: unknown; structuredContent?: unknown }
+  stderr: () => string
+}> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [CLI_ENTRY, 'mcp'],
@@ -73,7 +78,8 @@ async function listOverStdio(cwd: string): Promise<{ names: string[]; stderr: ()
   try {
     await client.connect(transport)
     const names = (await client.listTools()).tools.map((entry) => entry.name).sort()
-    return { names, stderr: () => captured }
+    const call = await client.callTool({ name: 'agent_qa_list_runs', arguments: {} })
+    return { names, call, stderr: () => captured }
   } finally {
     await client.close().catch(() => {})
     await transport.close().catch(() => {})
@@ -126,8 +132,30 @@ describe('agent-qa mcp over spawned stdio', () => {
     }
   }, 30_000)
 
-  // The legacy block is never read, and `agent-qa mcp`'s tolerant read serves despite it.
-  it('a legacy token block with an unset variable refuses nothing and changes no listing', async () => {
+  it('the server reports the agent-qa version it runs as', async () => {
+    expect(existsSync(CLI_ENTRY), `the built CLI entry is missing at ${CLI_ENTRY}`).toBe(true)
+    const cwd = fixtureProject()
+    const home = mkdtempSync(join(tmpdir(), 'agent-qa-stdio-home-'))
+    roots.push(home)
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI_ENTRY, 'mcp'],
+      cwd,
+      env: { ...getDefaultEnvironment(), HOME: home, USERPROFILE: home },
+      stderr: 'pipe',
+    })
+    const client = new Client({ name: 'agent-qa-stdio-legacy', version: '0.0.0' })
+    try {
+      await client.connect(transport)
+      expect(client.getServerVersion()?.version).toBe(getAgentQaVersion().trim())
+    } finally {
+      await client.close().catch(() => {})
+      await transport.close().catch(() => {})
+    }
+  }, 30_000)
+
+  const refused = 'a config the schema refuses lists the same tools, and a call answers config invalid'
+  it(refused, async () => {
     expect(existsSync(CLI_ENTRY), `the built CLI entry is missing at ${CLI_ENTRY}`).toBe(true)
     const plain = await listOverStdio(fixtureProject())
     const legacy = await listOverStdio(fixtureProject(true))
@@ -135,5 +163,10 @@ describe('agent-qa mcp over spawned stdio', () => {
     expect(legacy.names).toContain('agent_qa_change_config')
     expect(legacy.stderr()).not.toContain('AGENT_QA_NEVER_SET_TOKEN')
     expect(legacy.stderr()).not.toContain('Failed to start MCP server')
+    expect(legacy.call.isError).toBe(true)
+    // The 2025 codec wraps a result in `{ result }` when the tool's output schema is not an object.
+    const payload = (legacy.call.structuredContent as { result: Record<string, unknown> }).result
+    expect(payload.status).toBe('config_invalid')
+    expect(payload.run).toBe('npx agent-qa validate')
   }, 60_000)
 })

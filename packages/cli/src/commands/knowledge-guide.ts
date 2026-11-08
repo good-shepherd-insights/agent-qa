@@ -104,23 +104,34 @@ export function buildKnowledgeAgentGuide(): string {
     'Wrong knowledge is corrected by new feedback (a run mark) or by forgetting the record.',
     '',
     `The \`${KNOWLEDGE_SKILL_NAME}\` skill has the workflow, with the depth in its references/ folder;`,
-    '`npx agent-qa skills` prints where it is.',
+    '`npx agent-qa init` installs it in `.claude/skills` and `.agents/skills`.',
     `Connecting Claude Code or Codex: ${CODING_AGENTS_URL}`,
     '',
   ].join('\n')
 }
 
+export interface AgentInstructionSkill {
+  readonly name: string
+  readonly shortDescription: string
+}
+
 // The root pointer's block body, written between the managed markers or printed with them.
-export function buildAgentInstructionPointer(): readonly string[] {
+export function buildAgentInstructionPointer(
+  skills: readonly AgentInstructionSkill[],
+  version: string,
+): readonly string[] {
   return Object.freeze([
     '## agent-qa',
     'This project is tested with agent-qa. Read its data through',
-    'agent-qa\'s commands (CLI with --json, or the agent_qa_* MCP',
-    'tools), never through .agent-qa/ files, SQLite or index files.',
+    'agent-qa\'s commands (CLI with --json, or the agent_qa_* tools of',
+    'the agent-qa MCP server), never through .agent-qa/ files,',
+    'SQLite or index files.',
     '- Runs: `npx agent-qa runs list`, then `npx agent-qa runs overview <runId>`',
     '- Knowledge: read agent-qa-knowledge/AGENTS.md first',
-    `- Skills: \`npx agent-qa skills\` lists them; host setup: ${CODING_AGENTS_URL}`,
     '- Secrets: only the values in `workspace.secretsFile` are masked,',
     '  shown as `[secret:<name>]`; use temporary, limited test credentials',
+    `- Skills (agent-qa ${version}):`,
+    ...skills.map((skill) => `  - ${skill.name}: ${skill.shortDescription}`),
+    '- Skills or MCP server missing or stale: run `npx agent-qa init`',
   ])
 }

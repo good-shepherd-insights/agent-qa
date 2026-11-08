@@ -12,13 +12,18 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  rmdirSync,
   unlinkSync,
   writeFileSync,
   type Stats,
 } from 'node:fs'
-import { basename, dirname, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 // The managed block's shape lives with the scaffold content; this file does the writing.
-import { composeManagedBlock, type ManagedBlockContent } from './managed-block.js'
+import {
+  composeManagedBlock,
+  removeManagedBlock,
+  type ManagedBlockContent,
+} from './managed-block.js'
 import { InitRefusal, isInitRefusal } from './init-refusal.js'
 import { managedGitignoreContent } from './scaffold-content.js'
 
@@ -31,6 +36,8 @@ export interface InitPathPlan {
   force?: boolean
   preserveOnForce?: boolean
   mode?: number
+  // A forced replacement keeps the replaced file's permission bits instead of the default mode.
+  keepMode?: boolean
 }
 
 export interface InitFileResult {
@@ -292,7 +299,7 @@ function ensureSafeParentDirectories(file: string, planRoot?: string): void {
   }
 }
 
-interface InitPathInspection {
+export interface InitPathInspection {
   classification: 'missing' | 'regular'
   dev?: number
   ino?: number
@@ -491,6 +498,7 @@ function releaseTemporaryPin(pin: number | undefined): void {
 function writeDurableTemporary(
   plan: InitPathPlan,
   hooks: InitFilesystemHooks = {},
+  keptPermissions?: number,
 ): DurableTemporary {
   const path = resolve(plan.path)
   const temporary = resolve(
@@ -510,6 +518,9 @@ function writeDurableTemporary(
       invokeHook(hooks.afterTemporaryModeApply, temporary)
       const opened = confirmDescriptorMode(fd, path, requested)
       confirmed = { dev: opened.dev, ino: opened.ino }
+    } else if (keptPermissions !== undefined && MODE_ENFORCEMENT_SUPPORTED) {
+      // Applied before any content reaches the inode, so an owner-only file is never widened.
+      fchmodSync(fd, keptPermissions)
     }
     writeFileSync(fd, plan.content)
     fsyncSync(fd)
@@ -614,13 +625,14 @@ function publishExclusive(
 function replaceRegularAtomic(
   plan: InitPathPlan,
   hooks: InitFilesystemHooks = {},
+  keptPermissions?: number,
 ): InitFileResult {
   const path = resolve(plan.path)
   const parent = dirname(path)
   // The confirmed identity is consumed, not discarded: publication must prove it renamed
   // the inode whose mode was confirmed, exactly as the exclusive path does — and the pinned
   // descriptor is what makes that identity unforgeable against inode reuse.
-  const { temporary, confirmed, pin } = writeDurableTemporary(plan, hooks)
+  const { temporary, confirmed, pin } = writeDurableTemporary(plan, hooks, keptPermissions)
   const coverage = durableTemporaryCoverageProbe(path, temporary)
   try {
     const classification = classifyInitPath(path, plan.root)
@@ -924,12 +936,53 @@ export function writeScaffoldFileAtomic(
         return { path: normalizedPlan.path, outcome: 'preserved' }
       }
       ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
-      return replaceRegularAtomic(normalizedPlan, hooks)
+      return replaceRegularAtomic(
+        normalizedPlan,
+        hooks,
+        normalizedPlan.keepMode === true ? inspection.permissions : undefined,
+      )
     }
 
     ensureSafeParentDirectories(normalizedPlan.path, normalizedPlan.root)
     return publishExclusive(normalizedPlan, hooks)
   })
+}
+
+export function removeFileInsideRoot(plan: { path: string; root: string }): 'removed' | 'missing' {
+  const absolutePath = resolve(plan.path)
+  if (inspectInitPath(absolutePath, plan.root).classification === 'missing') return 'missing'
+  unlinkSync(absolutePath)
+  return 'removed'
+}
+
+function isStrictlyInside(path: string, folder: string): boolean {
+  const fromFolder = relative(folder, path)
+  return (
+    fromFolder !== ''
+    && fromFolder !== '..'
+    && !fromFolder.startsWith(`..${sep}`)
+    && !isAbsolute(fromFolder)
+  )
+}
+
+export function removeEmptyFoldersUpTo(path: string, stop: string): void {
+  const boundary = resolve(stop)
+  let folder = dirname(resolve(path))
+  while (isStrictlyInside(folder, boundary)) {
+    try {
+      rmdirSync(folder)
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) {
+        folder = dirname(folder)
+        continue
+      }
+      if (isErrno(error, 'ENOTEMPTY') || isErrno(error, 'EEXIST') || isErrno(error, 'ENOTDIR')) {
+        return
+      }
+      throw error
+    }
+    folder = dirname(folder)
+  }
 }
 
 export function writeConfigMarkerLast(
@@ -1014,7 +1067,7 @@ function acquireManagedBlockLock(path: string): HeldManagedBlockLock {
   }
 }
 
-interface ManagedBlockRead {
+export interface ManagedBlockRead {
   text: string
   size: number
   mtimeMs: number
@@ -1064,6 +1117,7 @@ function refuseIfChangedSinceRead(
   path: string,
   inspection: InitPathInspection,
   read: ManagedBlockRead,
+  rerun = 'rerun to apply the block',
 ): void {
   const now = lstatIfPresent(path)
   if (
@@ -1072,7 +1126,7 @@ function refuseIfChangedSinceRead(
     || readFileSync(path, 'utf8') !== read.text
   ) {
     throw new InitRefusal(
-      `Refusing to update ${path}: it changed while it was being updated; rerun to apply the block`,
+      `Refusing to update ${path}: it changed while it was being updated; ${rerun}`,
     )
   }
 }
@@ -1116,6 +1170,126 @@ export function upsertManagedBlock(
   } finally {
     releaseManagedBlockLock(lock)
   }
+}
+
+export interface ManagedBlockRemovalPlan {
+  existing: string
+  candidate: string
+}
+
+function planBlockRemoval(
+  path: string,
+  inspection: InitPathInspection,
+  content: ManagedBlockContent,
+): (ManagedBlockRemovalPlan & { read: ManagedBlockRead }) | undefined {
+  if (inspection.classification === 'missing') return undefined
+  const read = readManagedBlockTarget(path, inspection)
+  return { existing: read.text, candidate: removeManagedBlock(read.text, content), read }
+}
+
+// Checks without the lock or a write so a caller can refuse early; the remover rechecks it.
+export function preflightManagedBlockRemoval(
+  plan: ManagedBlockUpsertPlan,
+): ManagedBlockRemovalPlan | undefined {
+  const path = resolve(plan.path)
+  const inspection = inspectInitPath(path, resolve(plan.root ?? dirname(path)))
+  const lockPath = managedBlockLockPath(path)
+  if (lstatIfPresent(lockPath) !== undefined) throw new ManagedBlockLockRefusal(path, lockPath)
+  const planned = planBlockRemoval(path, inspection, plan.content)
+  return planned === undefined
+    ? undefined
+    : { existing: planned.existing, candidate: planned.candidate }
+}
+
+// Locked like the upsert. A file the strip leaves holding only whitespace is deleted.
+export function removeManagedBlockFromFile(
+  plan: ManagedBlockUpsertPlan,
+  hooks: InitFilesystemHooks = {},
+): 'stripped' | 'deleted' | 'unchanged' {
+  const path = resolve(plan.path)
+  const root = resolve(plan.root ?? dirname(path))
+  if (inspectInitPath(path, root).classification === 'missing') return 'unchanged'
+  const lock = acquireManagedBlockLock(path)
+  try {
+    const inspection = inspectInitPath(path, root)
+    const planned = planBlockRemoval(path, inspection, plan.content)
+    if (planned === undefined || planned.candidate === planned.existing) return 'unchanged'
+    const rerun = 'rerun to remove the block'
+    if (planned.candidate.trim() === '') {
+      refuseIfChangedSinceRead(path, inspection, planned.read, rerun)
+      unlinkSync(path)
+      return 'deleted'
+    }
+    writeScaffoldFileAtomic(
+      { path, root, content: planned.candidate, force: true },
+      {
+        ...hooks,
+        beforeAtomicReplacePublish: (target) => {
+          hooks.beforeAtomicReplacePublish?.(target)
+          refuseIfChangedSinceRead(target, inspection, planned.read, rerun)
+        },
+      },
+    )
+    return 'stripped'
+  } finally {
+    releaseManagedBlockLock(lock)
+  }
+}
+
+export interface HostFileRead {
+  text: string
+  inspection: InitPathInspection
+  read: ManagedBlockRead
+}
+
+// A coding agent's own file, read as the managed block reads AGENTS.md: one hard link, UTF-8.
+export function readHostFile(path: string, root: string): HostFileRead | undefined {
+  const absolutePath = resolve(path)
+  const inspection = inspectInitPath(absolutePath, root)
+  if (inspection.classification === 'missing') return undefined
+  const read = readManagedBlockTarget(absolutePath, inspection)
+  return { text: read.text, inspection, read }
+}
+
+export interface HostFileWritePlan {
+  path: string
+  root: string
+  content: string
+  read: HostFileRead | undefined
+  rerun: string
+}
+
+// The file keeps its mode, and one that changed since `read` is refused rather than overwritten.
+export function writeHostFile(plan: HostFileWritePlan, hooks: InitFilesystemHooks = {}): void {
+  const { path, root, content, read, rerun } = plan
+  if (read === undefined) {
+    writeScaffoldFileAtomic({ path, root, content }, hooks)
+    return
+  }
+  writeScaffoldFileAtomic(
+    { path, root, content, force: true, keepMode: true },
+    {
+      ...hooks,
+      beforeAtomicReplacePublish: (target) => {
+        hooks.beforeAtomicReplacePublish?.(target)
+        refuseIfChangedSinceRead(target, read.inspection, read.read, rerun)
+      },
+    },
+  )
+}
+
+export interface HostFileRemovalPlan {
+  path: string
+  root: string
+  read: HostFileRead
+  rerun: string
+}
+
+export function removeHostFile(plan: HostFileRemovalPlan): void {
+  const path = resolve(plan.path)
+  inspectInitPath(path, plan.root)
+  refuseIfChangedSinceRead(path, plan.read.inspection, plan.read.read, plan.rerun)
+  unlinkSync(path)
 }
 
 export function upsertManagedGitignoreBlock(

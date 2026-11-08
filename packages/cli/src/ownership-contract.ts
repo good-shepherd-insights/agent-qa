@@ -18,8 +18,10 @@ export const AGENT_QA_CLI_EXTERNAL_DEPENDENCIES = [
   '@modelcontextprotocol/server',
   'ai',
   'commander',
+  'jsonc-parser',
   'picocolors',
   'playwright-core',
+  'toml-eslint-parser',
   'yaml',
   'zod',
 ] as const

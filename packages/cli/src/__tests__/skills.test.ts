@@ -7,10 +7,19 @@ import { fileURLToPath } from 'node:url'
 import { Command } from 'commander'
 import { parse as parseYaml } from 'yaml'
 import { AGENT_QUESTION_MAP, KNOWLEDGE_SKILL_NAME } from '../commands/knowledge-guide.js'
-import { createSkillsCommand, listAgentQaSkills, resolveAgentQaSkillsDirectory } from '../commands/skills.js'
+import {
+  createSkillsCommand,
+  listAgentQaSkills,
+  resolveAgentQaSkillsDirectory,
+  runningAgentQaSkillSummaries,
+  skillSummary,
+} from '../commands/skills.js'
 
 const SOURCE_SKILLS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../skills')
-const SHIPPED_SKILLS = ['agent-qa-authoring', 'agent-qa-debug-fix', 'agent-qa-knowledge', 'agent-qa-result-triage']
+const SHIPPED_SKILLS = readdirSync(SOURCE_SKILLS_DIR, { withFileTypes: true })
+  .filter(entry => entry.isDirectory() && existsSync(path.join(SOURCE_SKILLS_DIR, entry.name, 'SKILL.md')))
+  .map(entry => entry.name)
+  .sort()
 
 function frontmatterOf(file: string): Record<string, unknown> {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(readFileSync(file, 'utf8'))
@@ -191,10 +200,71 @@ describe('skills directory listing', () => {
     expect(listAgentQaSkills(resolved.path).map(skill => skill.name)).toEqual(SHIPPED_SKILLS)
   })
 
-  it('lists all four source skills through the existing reader', () => {
+  it('lists every source skill folder through the existing reader', () => {
     const listed = listAgentQaSkills(SOURCE_SKILLS_DIR)
     expect(listed.map(skill => skill.name)).toEqual(SHIPPED_SKILLS)
     for (const skill of listed) expect(skill.description, skill.name).toMatch(/^Use /)
+  })
+})
+
+describe('skill summaries', () => {
+  const roots: string[] = []
+
+  afterEach(async () => {
+    await Promise.all(roots.map(root => rm(root, { recursive: true, force: true })))
+    roots.length = 0
+  })
+
+  it('takes the short description, else the first sentence of the description', () => {
+    expect(skillSummary([
+      '---',
+      'name: agent-qa-knowledge',
+      'description: Use when reading runs. Never through files.',
+      'metadata:',
+      '  short-description: Read agent-qa runs',
+      '---',
+      'body',
+    ].join('\r\n'))).toEqual({ name: 'agent-qa-knowledge', shortDescription: 'Read agent-qa runs' })
+    const folded = [
+      '---',
+      'name: agent-qa-plugin-acme',
+      'description: >',
+      '  Use for acme',
+      '  browsers. Then more.',
+      '---',
+      '',
+    ].join('\n')
+    expect(skillSummary(folded))
+      .toEqual({ name: 'agent-qa-plugin-acme', shortDescription: 'Use for acme browsers.' })
+    expect(skillSummary('---\nname: agent-qa-plugin-acme\ndescription: No full stop\n---\n'))
+      .toEqual({ name: 'agent-qa-plugin-acme', shortDescription: 'No full stop' })
+  })
+
+  it('refuses a SKILL.md whose frontmatter names no skill', () => {
+    expect(() => skillSummary('# no frontmatter\n')).toThrow('names no skill')
+    expect(() => skillSummary('---\ndescription: d\n---\n')).toThrow('names no skill')
+  })
+
+  it('summarizes the running package\'s skills in name order', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'agent-qa-skills-summary-'))
+    roots.push(root)
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'agent-qa' }))
+    for (const name of ['agent-qa-zeta', 'agent-qa-alpha']) {
+      await mkdir(path.join(root, 'skills', name), { recursive: true })
+      const frontmatter = [
+        `name: ${name}`,
+        `description: Use ${name}.`,
+        'metadata:',
+        `  short-description: ${name} short`,
+      ]
+      const skillFile = path.join(root, 'skills', name, 'SKILL.md')
+      await writeFile(skillFile, `---\n${frontmatter.join('\n')}\n---\n`)
+    }
+
+    expect(runningAgentQaSkillSummaries(path.join(root, 'dist'))).toEqual([
+      { name: 'agent-qa-alpha', shortDescription: 'agent-qa-alpha short' },
+      { name: 'agent-qa-zeta', shortDescription: 'agent-qa-zeta short' },
+    ])
   })
 })
 
@@ -213,17 +283,11 @@ describe('source skill metadata', () => {
     const reference = parseYaml(readFileSync(path.join(SOURCE_SKILLS_DIR, 'agent-qa-authoring', 'agents/openai.yaml'), 'utf8'))
     const metadata = parseYaml(readFileSync(path.join(SOURCE_SKILLS_DIR, name, 'agents/openai.yaml'), 'utf8')) as {
       interface: { default_prompt: string }
-      dependencies: { tools: Array<Record<string, string>> }
       policy: Record<string, unknown>
     }
     expect(yamlShape(metadata)).toEqual(yamlShape(reference))
     expect(metadata.interface.default_prompt).toContain(`$${name}`)
-    expect(metadata.dependencies.tools).toEqual([expect.objectContaining({
-      type: 'mcp',
-      value: 'agent-qa',
-      transport: 'streamable_http',
-      url: 'http://127.0.0.1:3471/mcp',
-    })])
+    expect(metadata).not.toHaveProperty('dependencies')
     expect(metadata.policy).toEqual({ allow_implicit_invocation: true })
   })
 })
@@ -374,25 +438,16 @@ describe('skill metadata', () => {
     ])
   }
 
-  it('each agents/openai.yaml points at the agent-qa server on port 3471, prompts with its own skill name and claims no schema or ID tool', () => {
+  it('each agents/openai.yaml prompts with its own skill name, declares no MCP dependency and claims no schema or ID tool', () => {
     const findings: string[] = []
-    let read = 0
     for (const tree of trees) {
       for (const name of SHIPPED_SKILLS) {
         const file = path.join(tree, name, 'agents', 'openai.yaml')
         const label = path.relative(path.dirname(SOURCE_SKILLS_DIR), file)
         const metadata = parseYaml(readFileSync(file, 'utf8')) as {
           interface?: { default_prompt?: string }
-          dependencies?: { tools?: Array<Record<string, unknown>> }
         }
-        read += 1
-        const tools = metadata.dependencies?.tools ?? []
-        const live = tools.length === 1
-          && tools[0]?.type === 'mcp'
-          && tools[0]?.value === 'agent-qa'
-          && tools[0]?.transport === 'streamable_http'
-          && tools[0]?.url === 'http://127.0.0.1:3471/mcp'
-        if (!live) findings.push(`${label}: the tool dependency is not the agent-qa server on 127.0.0.1:3471`)
+        if (Object.hasOwn(metadata, 'dependencies')) findings.push(`${label}: declares dependencies`)
         if (!(metadata.interface?.default_prompt ?? '').includes(`$${name}`)) {
           findings.push(`${label}: the default prompt does not name $${name}`)
         }
@@ -401,7 +456,6 @@ describe('skill metadata', () => {
         }
       }
     }
-    expect(read).toBe(SHIPPED_SKILLS.length * 2)
     expect(findings, 'a skill metadata file is stale').toEqual([])
   })
 })

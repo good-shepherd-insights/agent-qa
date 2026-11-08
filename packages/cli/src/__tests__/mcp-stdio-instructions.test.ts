@@ -1,7 +1,7 @@
 // The shipped `agent-qa mcp` binary's stdio instructions forbid every path init's guide forbids.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +16,8 @@ import {
   buildAgentInstructionPointer,
   buildKnowledgeAgentGuide,
 } from '../commands/knowledge-guide.js'
+import { installedAgentQaVersion } from '../commands/package-json-plan.js'
+import { runningAgentQaSkillSummaries } from '../commands/skills.js'
 
 const CLI_ENTRY = process.env['AGENT_QA_PARITY_CLI']
   ?? resolve(dirname(fileURLToPath(import.meta.url)), '../../dist/cli.js')
@@ -38,8 +40,16 @@ function tempDir(): string {
 
 function init(dir: string, ...extra: string[]): void {
   expect(existsSync(CLI_ENTRY), `the built CLI entry is missing at ${CLI_ENTRY}; run \`pnpm build\` first`).toBe(true)
-  const result = spawnSync(process.execPath, [CLI_ENTRY, 'init', '--dir', dir, '--platform', 'web', ...extra], {
-    cwd: dir, env: childEnv(), input: '', encoding: 'utf8', timeout: 120_000,
+  mkdirSync(join(dir, '.git'), { recursive: true })
+  const home = tempDir()
+  const pm = extra.includes('--pm') ? [] : ['--pm', 'none']
+  const args = ['init', '--platform', 'web', ...extra, ...pm]
+  const result = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
+    cwd: dir,
+    env: { ...childEnv(), HOME: home, USERPROFILE: home },
+    input: '',
+    encoding: 'utf8',
+    timeout: 120_000,
   })
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0)
 }
@@ -73,7 +83,9 @@ describe('the stdio server instructions match the init guide', () => {
       expect(guide, `the guide no longer names ${path}`).toContain(path)
       expect(AGENT_QA_MCP_INSTRUCTIONS, path).toContain(path)
     }
-    expect(buildAgentInstructionPointer().join('\n')).toContain('.agent-qa/')
+    const skills = runningAgentQaSkillSummaries()
+    const block = buildAgentInstructionPointer(skills, installedAgentQaVersion())
+    expect(block.join('\n')).toContain('.agent-qa/')
     expect(AGENT_QA_MCP_INSTRUCTIONS).toContain('.agent-qa/')
   })
 

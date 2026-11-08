@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, isAbsolute, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 export type PluginDeclarationLike = {
@@ -41,6 +41,39 @@ export const NPM_PACKAGE_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0
 
 export function isNpmPackageName(name: string): boolean {
   return name.length <= 214 && NPM_PACKAGE_NAME.test(name)
+}
+
+const DEFAULT_CONFIG_FILE = 'agent-qa.config.yaml'
+
+function sameFolder(left: string, right: string): boolean {
+  if (resolve(left) === resolve(right)) return true
+  try {
+    return realpathSync(left) === realpathSync(right)
+  } catch {
+    return false
+  }
+}
+
+function shellWord(word: string): string {
+  if (/^[\w@%+=:,./-]+$/u.test(word)) return word
+  return `'${word.replaceAll("'", `'\\''`)}'`
+}
+
+// Run from the current folder, the line names --config unless the config is agent-qa.config.yaml
+// there, so it edits the config the refusing command read. The path is the shorter of the relative
+// and the absolute one.
+export function pluginsAddLine(
+  packageName: string,
+  configPath?: string,
+  cwd: string = process.cwd(),
+): string {
+  const plain = `npx agent-qa plugins add ${packageName}`
+  if (configPath === undefined) return plain
+  const config = resolve(cwd, configPath)
+  if (basename(config) === DEFAULT_CONFIG_FILE && sameFolder(dirname(config), cwd)) return plain
+  const fromCwd = relative(cwd, config)
+  const shown = fromCwd.length <= config.length ? fromCwd : config
+  return `npx agent-qa --config ${shellWord(shown)} plugins add ${packageName}`
 }
 
 function joinsAsPackagePath(packageName: string): boolean {
@@ -142,14 +175,17 @@ export class PluginNotInstalledError extends Error {
   readonly pluginPackage: string | null
   readonly pluginPath: string | null
 
-  constructor(declaration: PluginDeclarationLike, kind: PluginDeclarationKind) {
+  constructor(
+    declaration: PluginDeclarationLike,
+    kind: PluginDeclarationKind,
+    configPath?: string,
+  ) {
     const label = kind === 'auth' ? 'Auth' : 'Provider'
     const packageName = packageDeclarationValue(declaration)
     const pluginPath = pathDeclarationValue(declaration)
     const removal = `remove the plugins entry ${declaration.name}.`
     const remedy = isNpmPackageName(packageName)
-      ? `Install it with your package manager (for example: npm install ${packageName}), or `
-        + removal
+      ? `Install it with ${pluginsAddLine(packageName, configPath)}, or ${removal}`
       : `Install it with your package manager, or ${removal}`
     // No `cause`: the wrapped error's require stack holds absolute paths `util.inspect` prints.
     super(
@@ -205,12 +241,13 @@ function resolutionFailureFor(
   baseDir: string,
   kind: PluginDeclarationKind,
   err: unknown,
+  configPath?: string,
 ): Error {
   const packageName = packageDeclarationValue(declaration)
   if (packageName && findPackageJson(packageName, baseDir) !== null) {
     return new PluginLoadFailedError(packageName, kind, messageOf(err, baseDir))
   }
-  return new PluginNotInstalledError(declaration, kind)
+  return new PluginNotInstalledError(declaration, kind, configPath)
 }
 
 /**
@@ -225,19 +262,22 @@ export async function importDeclaredPluginModule<T>(
   declaration: PluginDeclarationLike,
   baseDir: string,
   kind: PluginDeclarationKind,
+  configPath?: string,
 ): Promise<T> {
+  const failure = (err: unknown) =>
+    resolutionFailureFor(declaration, baseDir, kind, err, configPath)
   let specifier: string
   try {
     specifier = resolveModuleSpecifier(declaration, baseDir)
   } catch (err) {
-    if (isModuleResolutionFailure(err)) throw resolutionFailureFor(declaration, baseDir, kind, err)
+    if (isModuleResolutionFailure(err)) throw failure(err)
     throw err
   }
 
   try {
     return await import(specifier) as T
   } catch (err) {
-    if (isModuleResolutionFailure(err)) throw resolutionFailureFor(declaration, baseDir, kind, err)
+    if (isModuleResolutionFailure(err)) throw failure(err)
     throw err
   }
 }

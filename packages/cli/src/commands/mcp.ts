@@ -1,5 +1,6 @@
 // Host, then Origin, then the handler: a request failing either never reaches a server build.
 
+import { stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -11,7 +12,8 @@ import {
   validateOriginHeader,
 } from '@modelcontextprotocol/server'
 import { buildAgentQaMcpServer, createAgentQaMcpNodeHandler } from '@vostride/agent-qa-mcp'
-import type { LiveLinkSupplier } from '@vostride/agent-qa-mcp'
+import type { AgentQaMcpPosture, LiveLinkSupplier } from '@vostride/agent-qa-mcp'
+import { getAgentQaVersion } from '@vostride/agent-qa-core'
 import { reserveStdoutForData } from '@vostride/agent-qa-core/run-text-output'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 import { Command } from 'commander'
@@ -19,11 +21,17 @@ import pc from 'picocolors'
 import { dirname, resolve } from 'node:path'
 
 import { analyticsEvent, composeAnalyticsHost } from '../composition/analytics-host.js'
-import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
+import {
+  createDeclaredSecretMask,
+  createEmptyDeclaredSecretMask,
+  DeclaredSecretsUnavailableError,
+} from '../composition/declared-secrets.js'
 import type { DeclaredSecretMask } from '../composition/declared-secrets.js'
 import { composeCliLocalAgent, withRunDoor } from '../composition/local-agent-host.js'
 import { releaseRemoteSessions, REMOTE_RELEASE_BOUND_MS } from '../composition/remote-sessions.js'
 import { readAnalyticsPrivacyDeclaration, resolveConfig } from '../config.js'
+import { resolveMcpConfigPath } from './mcp-project.js'
+import { projectHost } from './project-host.js'
 
 /** The one line the stdio host prints, on stderr, once the server is listening. */
 export const MCP_STDIO_STARTUP_MESSAGE =
@@ -50,20 +58,73 @@ export function composeMcpMasking(input: { configPath: string }): DeclaredSecret
   return createDeclaredSecretMask(input.configPath)
 }
 
+const MCP_PROBLEM_MAX_LENGTH = 300
+
+// One line only: a validation error lists every issue, and only its first is answered.
+function firstProblemLine(err: unknown, configPath: string): string {
+  const message = err instanceof DeclaredSecretsUnavailableError
+    ? err.lines[0] ?? err.message
+    : err instanceof Error ? err.message : String(err)
+  const lines = message.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+  const first = lines[0] === 'Config validation failed:' ? lines[1] : lines[0]
+  const line = (first ?? 'the config could not be loaded')
+    .replace(/^Error: /u, '')
+    .replace(`${configPath}: `, '')
+  return line.slice(0, MCP_PROBLEM_MAX_LENGTH)
+}
+
+// Decided before anything reads the config, so a missing or broken one never reaches a server.
+export async function classifyMcpConfig(
+  configPath: string,
+): Promise<AgentQaMcpPosture | undefined> {
+  try {
+    await stat(configPath)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return { state: 'not-initialized', configPath }
+    }
+    throw err
+  }
+
+  const declared = createDeclaredSecretMask(configPath)
+  let failure: unknown
+  try {
+    await resolveConfig({ configPath, loadAuthPlugins: false })
+  } catch (err) {
+    failure = err
+  }
+  let mask: (text: string) => string = (text) => text
+  try {
+    const redactor = declared.redactor()
+    mask = (text) => redactor.redactString(text)
+  } catch (err) {
+    failure ??= err
+  }
+  if (failure === undefined) return undefined
+  return {
+    state: 'config-invalid',
+    configPath,
+    problem: mask(firstProblemLine(failure, configPath)),
+  }
+}
+
 // The one place deps are composed, so stdio and HTTP build identical servers.
 function mcpServerDeps(input: {
   registry: Parameters<typeof buildAgentQaMcpServer>[0]['registry']
   maskText: (text: string) => string
   // Threaded only through here, so stdio and HTTP results carry the same links.
   liveLink?: LiveLinkSupplier
+  posture?: AgentQaMcpPosture
 }) {
   return {
     registry: input.registry,
     caller: MCP_FUNCTION_CALLER,
     maskText: input.maskText,
+    version: getAgentQaVersion().trim(),
     // Absent stays ABSENT rather than becoming a present `undefined`: the house rule for an
     // optional member, and the two are the same posture to the builder either way.
     ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
+    ...(input.posture === undefined ? {} : { posture: input.posture }),
   }
 }
 
@@ -74,6 +135,7 @@ export function createMcpHttpRequestListener(input: {
   onRefusal?: (refusal: McpHttpRefusal) => void
   // Exported so the dashboard's co-hosted mount binds the same guard order with its own origin.
   liveLink?: LiveLinkSupplier
+  posture?: AgentQaMcpPosture
 }): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     // (1) DNS-rebinding guard. A browser page on any origin can resolve a name it controls to
@@ -101,6 +163,7 @@ export function createMcpHttpRequestListener(input: {
       registry: input.registry,
       maskText: input.maskText,
       ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
+      ...(input.posture === undefined ? {} : { posture: input.posture }),
     }))
     // A run this request starts records `mcp`, on whichever host serves it.
     withRunDoor('mcp', () => { void nodeHandler(req, res) })
@@ -170,6 +233,7 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
       `serve over stateless HTTP bound to ${MCP_HTTP_BIND_HOST} instead of stdio`,
     )
     .action(async (options: { http?: string | boolean }, command: Command) => {
+      let restoreFolder: string | undefined
       try {
         // A refused port composes nothing: no config read, mask, analytics or agent host.
         const port = options.http === undefined || options.http === false
@@ -177,15 +241,28 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
           : httpPort(options.http)
         const program = command.parent
         const globalOpts = program?.opts<{ config?: string }>() ?? {}
+        // Hosts start the server in their own folder, so the project is searched for upward.
+        const location = await resolveMcpConfigPath({
+          config: globalOpts.config ?? 'agent-qa.config.yaml',
+          env: process.env,
+          cwd: process.cwd(),
+          host: projectHost(),
+        })
+        const configPath = location.configPath
+        // Helpers below still read process.cwd(), so the server sees the project as if started there.
+        if (location.found) {
+          restoreFolder = process.cwd()
+          process.chdir(location.projectDir)
+        }
+        const posture = await classifyMcpConfig(configPath)
         // Tolerant and plugin-free; read only for analytics and the dashboard base.
         let config: Awaited<ReturnType<typeof resolveConfig>> | undefined
         try {
-          config = await resolveConfig({ configPath: globalOpts.config, loadAuthPlugins: false })
+          config = await resolveConfig({ configPath, loadAuthPlugins: false })
         } catch {
           config = undefined
         }
 
-        const configPath = resolve(globalOpts.config ?? 'agent-qa.config.yaml')
         const agentQaRoot = resolve(dirname(configPath), '.agent-qa')
 
         // Unmasked because the base becomes a followed link; absent means a named absence, no URL.
@@ -196,11 +273,13 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
         const liveLink = { dashboardBaseUrl: () => configuredDashboardBase }
 
         // See `composeMcpMasking` — the one masker both transports and the analytics port share.
-        const declared = composeMcpMasking({ configPath })
+        const declared = posture === undefined
+          ? composeMcpMasking({ configPath })
+          : createEmptyDeclaredSecretMask()
         const maskText = declared.mask
 
         // An invalid config's privacy flag is read raw, as in chat.
-        const analyticsConfig = config ?? await readAnalyticsPrivacyDeclaration(globalOpts.config)
+        const analyticsConfig = config ?? await readAnalyticsPrivacyDeclaration(configPath)
         const analytics = await (deps.composeAnalytics ?? composeAnalyticsHost)({
           surface: 'mcp',
           ...(analyticsConfig === undefined ? {} : { config: analyticsConfig }),
@@ -245,6 +324,7 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
             liveLink,
             onServing,
             stopped: stop.stopped,
+            ...(posture === undefined ? {} : { posture }),
           }
           if (port === undefined) {
             await serveOverStdio(serve)
@@ -268,6 +348,9 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
           err instanceof Error ? err.message : String(err),
         )
         process.exitCode = 1
+      } finally {
+        // An in-process caller gets its working folder back once serving ends.
+        if (restoreFolder !== undefined) process.chdir(restoreFolder)
       }
     })
 
@@ -291,20 +374,37 @@ async function serveOverStdio(input: {
   maskText: (text: string) => string
   // The base supplier, the same object the HTTP face is handed.
   liveLink?: LiveLinkSupplier
+  posture?: AgentQaMcpPosture
   /** Fired once the entry is live — see the lifecycle note at the call site. */
   onServing?: () => void
   stopped: Promise<void>
 }): Promise<void> {
   const releaseStdout = reserveStdoutForData()
   try {
-    const handle = serveStdio(() =>
-      buildAgentQaMcpServer(
-        mcpServerDeps({
-          registry: input.registry,
-          maskText: input.maskText,
-          ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
-        }),
-      ),
+    const handle = serveStdio(
+      () =>
+        buildAgentQaMcpServer(
+          mcpServerDeps({
+            registry: input.registry,
+            maskText: input.maskText,
+            ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
+            ...(input.posture === undefined ? {} : { posture: input.posture }),
+          }),
+        ),
+      {
+        // The SDK answers a failed request with a bare -32603, so the cause goes to stderr.
+        onerror: (error) => {
+          const message = (error.message.split('\n')[0] ?? '').trim()
+          let masked: string
+          try {
+            masked = input.maskText(message)
+          } catch {
+            // The mask itself can be what failed; an unmasked message is never written.
+            masked = error.name
+          }
+          process.stderr.write(`agent-qa MCP server error: ${masked}\n`)
+        },
+      },
     )
     // stderr, never stdout — see the file header. Written after the serving entry is live so the
     // line is a fact about a running server rather than an intention.
@@ -328,6 +428,7 @@ async function serveOverHttp(input: {
   maskText: (text: string) => string
   // The base supplier, the same object the stdio face is handed.
   liveLink?: LiveLinkSupplier
+  posture?: AgentQaMcpPosture
   /** Fired once the socket is bound — see the lifecycle note at the call site. */
   onServing?: () => void
   stopped: Promise<void>
@@ -337,6 +438,7 @@ async function serveOverHttp(input: {
       registry: input.registry,
       maskText: input.maskText,
       ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
+      ...(input.posture === undefined ? {} : { posture: input.posture }),
     }),
   )
   await new Promise<void>((listening, failed) => {

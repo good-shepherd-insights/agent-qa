@@ -22,7 +22,12 @@ function registry(): FunctionRegistry {
   return createFunctionRegistry({ deps: {} as unknown as FunctionDeps })
 }
 
-const deps = () => ({ registry: registry(), caller: CALLER, maskText: (text: string) => text })
+const deps = () => ({
+  registry: registry(),
+  caller: CALLER,
+  maskText: (text: string) => text,
+  version: '0.0.0-test',
+})
 
 const openClients: Client[] = []
 const openServers: NodeHttpServer[] = []
@@ -82,6 +87,12 @@ describe('the MCP server instructions', () => {
     expect(overview).toBeGreaterThan(list)
     expect(instructions).toContain('--json')
     expect(instructions).toContain('agent-qa-knowledge/AGENTS.md')
+  })
+
+  it('they name the installed skill folders and the command that writes them', () => {
+    for (const text of ['.claude/skills', '.agents/skills', 'npx agent-qa init']) {
+      expect(barrel.AGENT_QA_MCP_INSTRUCTIONS, text).toContain(text)
+    }
   })
 
   it('every tool they name is registered', async () => {
