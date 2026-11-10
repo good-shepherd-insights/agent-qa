@@ -43,7 +43,9 @@ function init(dir: string, ...extra: string[]): void {
   mkdirSync(join(dir, '.git'), { recursive: true })
   const home = tempDir()
   const pm = extra.includes('--pm') ? [] : ['--pm', 'none']
-  const args = ['init', '--platform', 'web', ...extra, ...pm]
+  // A model that needs no plugin, so init's validate passes without an install.
+  const llm = extra.includes('--llm') ? [] : ['--llm', 'gemini']
+  const args = ['init', '--platform', 'web', '--no-browsers', ...extra, ...llm, ...pm]
   const result = spawnSync(process.execPath, [CLI_ENTRY, ...args], {
     cwd: dir,
     env: { ...childEnv(), HOME: home, USERPROFILE: home },
@@ -99,7 +101,7 @@ describe('the stdio server instructions match the init guide', () => {
 
   it('init writes no CLAUDE.md', () => {
     const fresh = tempDir()
-    init(fresh, '--write-agent-instructions')
+    init(fresh)
     expect(existsSync(join(fresh, 'AGENTS.md')), 'the pointer was not written to AGENTS.md').toBe(true)
     expect(existsSync(join(fresh, 'CLAUDE.md'))).toBe(false)
     expect(existsSync(join(fresh, 'agent-qa-knowledge', 'CLAUDE.md'))).toBe(false)
@@ -107,7 +109,7 @@ describe('the stdio server instructions match the init guide', () => {
     const owned = tempDir()
     const before = Buffer.from('# Working agreements\n\nKeep this file as it is.\n', 'utf8')
     writeFileSync(join(owned, 'CLAUDE.md'), before)
-    init(owned, '--write-agent-instructions')
+    init(owned)
     expect(readFileSync(join(owned, 'CLAUDE.md')).equals(before)).toBe(true)
     expect(existsSync(join(owned, 'agent-qa-knowledge', 'CLAUDE.md'))).toBe(false)
   }, 240_000)

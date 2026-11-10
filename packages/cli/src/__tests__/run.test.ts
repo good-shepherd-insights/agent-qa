@@ -50,8 +50,6 @@ const {
   mockDashboardRunIngestInstance,
   mockCreateDashboardRunIngest,
   mockRunsDbHandle,
-  mockShouldPrintAgentQaUpdateNotice,
-  mockPrintAgentQaUpdateNoticeIfNeeded,
   mockLogScope,
 } = vi.hoisted(() => {
   const multiReporter = {
@@ -140,8 +138,6 @@ const {
     mockFsActionCache: vi.fn(function () { return { get: vi.fn(), set: vi.fn(), invalidate: vi.fn() } }),
     mockFsStorageStateStore: vi.fn(function () { return { save: vi.fn(), load: vi.fn() } }),
     mockResolveBranch: vi.fn(() => ({ currentBranch: 'main', defaultBranch: 'main' })),
-    mockShouldPrintAgentQaUpdateNotice: vi.fn(() => true),
-    mockPrintAgentQaUpdateNoticeIfNeeded: vi.fn().mockResolvedValue(undefined),
   }
 })
 
@@ -577,11 +573,6 @@ vi.mock('@vostride/agent-qa-dashboard', () => ({
   resolveDashboardDbPath: mockResolveDashboardDbPath,
 }))
 
-vi.mock('../version-notice.js', () => ({
-  shouldPrintAgentQaUpdateNotice: mockShouldPrintAgentQaUpdateNotice,
-  printAgentQaUpdateNoticeIfNeeded: mockPrintAgentQaUpdateNoticeIfNeeded,
-}))
-
 vi.mock('../config.js', () => ({
   resolveConfig: mockResolveConfig,
   loadConfigPlugins: vi.fn(async () => {}),
@@ -614,6 +605,7 @@ vi.mock('../commands/baseline-probe.js', () => ({
 }))
 
 import { createRunCommand } from '../commands/run.js'
+import { CI_VENDOR_VARS } from '../ci-env.js'
 import { composeRunOwnership } from '../composition/run-owner-probe.js'
 
 let defaultSecretsFilePath: string | undefined
@@ -761,10 +753,6 @@ beforeEach(() => {
     cookies: [],
     origins: [],
   })
-  mockShouldPrintAgentQaUpdateNotice.mockReset()
-  mockShouldPrintAgentQaUpdateNotice.mockReturnValue(true)
-  mockPrintAgentQaUpdateNoticeIfNeeded.mockReset()
-  mockPrintAgentQaUpdateNoticeIfNeeded.mockResolvedValue(undefined)
   mockFsActionCache.mockClear()
   mockFsStorageStateStore.mockClear()
   mockResolveBranch.mockClear()
@@ -806,6 +794,14 @@ async function runCommand(...args: string[]) {
 }
 
 async function runCommandWithGlobalArgs(globalArgs: string[], ...runArgs: string[]) {
+  return runCommandWithOptions({}, globalArgs, ...runArgs)
+}
+
+async function runCommandWithOptions(
+  commandOptions: Parameters<typeof createRunCommand>[0],
+  globalArgs: string[],
+  ...runArgs: string[]
+) {
   defaultConfigRoot = mkdtempSync(join(tmpdir(), 'agent-qa-run-test-'))
   tempDirs.push(defaultConfigRoot)
   const program = new Command()
@@ -818,9 +814,16 @@ async function runCommandWithGlobalArgs(globalArgs: string[], ...runArgs: string
   program.option('--verbose', 'shorthand for --log-level debug')
   program.option('--quiet', 'shorthand for --log-level silent')
   program.configureOutput({ writeErr: (message) => errorSpy(message.trimEnd()) })
-  const run = createRunCommand()
+  const run = createRunCommand(commandOptions)
   run.configureOutput({ writeErr: (message) => errorSpy(message.trimEnd()) })
   program.addCommand(run)
+  // The program's own hook, so a cell can see that run's notice is never shown a second time.
+  const programNotice = commandOptions?.updateNotice
+  if (programNotice !== undefined) {
+    program.hook('postAction', async () => {
+      await programNotice({ json: false })
+    })
+  }
 
   try {
     await program.parseAsync(['node', 'agent-qa', ...globalArgs, 'run', ...runArgs])
@@ -2181,6 +2184,194 @@ describe('run command — exit codes', () => {
 })
 
 
+describe('run command — a project with no model', () => {
+  const noModelLine =
+    "No model is set in agent-qa.config.yaml. Add one on the dashboard's model page " +
+    '(npx agent-qa dashboard), or run npx agent-qa init --llm <choice>.'
+
+  function configWithoutModel() {
+    const cfg = defaultConfig() as Record<string, any>
+    delete cfg.registry.llms
+    delete cfg.use.llm
+    return cfg
+  }
+
+  function printedErrors(): string[] {
+    return errorSpy.mock.calls
+      .map((call: unknown[]) => call.map(String).join(' ').replace(/\x1b\[[0-9;]*m/g, ''))
+      .filter((line: string) => line.trim() !== '')
+  }
+
+  it('refuses a direct run with one line naming the dashboard and init --llm, exit 2', async () => {
+    mockResolveConfig.mockResolvedValue(configWithoutModel())
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+
+    await runCommand('tests/**/*.yaml')
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    expect(printedErrors()).toEqual([noModelLine])
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+    expect(mockWebAdapterSetup).not.toHaveBeenCalled()
+    expect(mockCreateModel).not.toHaveBeenCalled()
+  })
+
+  it('refuses a suite run the same way before any suite member starts', async () => {
+    const { suitePath, configPath } = await createTempSuiteWorkspace()
+    mockResolveConfig.mockResolvedValue(configWithoutModel())
+    mockParseSuiteFile.mockResolvedValue(suiteDefinition('Smoke Suite', 'login.yaml'))
+    mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
+
+    await runCommandWithGlobalArgs(['--config', configPath], suitePath)
+
+    expect(exitSpy).toHaveBeenCalledWith(2)
+    expect(printedErrors()).toEqual([noModelLine])
+    expect(mockRunMemberTest).not.toHaveBeenCalled()
+    expect(mockWebAdapterSetup).not.toHaveBeenCalled()
+    expect(mockCreateModel).not.toHaveBeenCalled()
+  })
+})
+
+describe('run command — the update notice at the end of a run', () => {
+  type NoticeInput = { json: boolean; logLevel?: string }
+  type NoticeCall = { input: NoticeInput; exitsBefore: number }
+  const streams = [process.stdout, process.stderr] as const
+  let savedTTY: (PropertyDescriptor | undefined)[] = []
+  let savedCI: Record<string, string | undefined> = {}
+
+  function setTTY(stream: NodeJS.WriteStream, value: boolean): void {
+    Object.defineProperty(stream, 'isTTY', { value, configurable: true, writable: true })
+  }
+
+  beforeEach(() => {
+    savedTTY = streams.map((stream) => Object.getOwnPropertyDescriptor(stream, 'isTTY'))
+    for (const stream of streams) setTTY(stream, true)
+    savedCI = {}
+    for (const name of CI_VENDOR_VARS) {
+      savedCI[name] = process.env[name]
+      delete process.env[name]
+    }
+  })
+
+  afterEach(() => {
+    streams.forEach((stream, index) => {
+      const saved = savedTTY[index]
+      if (saved === undefined) delete (stream as { isTTY?: boolean }).isTTY
+      else Object.defineProperty(stream, 'isTTY', saved)
+    })
+    for (const name of CI_VENDOR_VARS) {
+      if (savedCI[name] === undefined) delete process.env[name]
+      else process.env[name] = savedCI[name]
+    }
+  })
+
+  // The mocked `process.exit` throws, so the action's catch exits a second time; the first exit
+  // is the run's own.
+  function recordingNotice(): {
+    calls: NoticeCall[]
+    notice: (input: NoticeInput) => Promise<void>
+  } {
+    const calls: NoticeCall[] = []
+    return {
+      calls,
+      notice: async (input) => {
+        calls.push({ input, exitsBefore: exitSpy.mock.calls.length })
+      },
+    }
+  }
+
+  function memberEnds(status: 'passed' | 'failed'): void {
+    mockGlob.mockResolvedValue(['tests/a.yaml'])
+    mockParseAllTests.mockResolvedValue({ tests: [makeTest()], errors: [] })
+    mockRunMemberTest.mockResolvedValue({
+      name: 'Test One',
+      filePath: 'tests/a.yaml',
+      status,
+      steps: [],
+      duration: 100,
+    })
+  }
+
+  it('a passing run at a terminal shows the notice once before it exits 0', async () => {
+    memberEnds('passed')
+    const recorder = recordingNotice()
+
+    await runCommandWithOptions({ updateNotice: recorder.notice }, [], 'tests/**/*.yaml')
+
+    expect(recorder.calls).toEqual([
+      { input: { json: false, logLevel: 'warn' }, exitsBefore: 0 },
+    ])
+    expect(exitSpy.mock.calls[0]).toEqual([0])
+  })
+
+  it('a run that ends with a failing test shows the notice and still exits 1', async () => {
+    memberEnds('failed')
+    const recorder = recordingNotice()
+
+    await runCommandWithOptions({ updateNotice: recorder.notice }, [], 'tests/**/*.yaml')
+
+    expect(recorder.calls).toHaveLength(1)
+    expect(exitSpy.mock.calls[0]).toEqual([1])
+  })
+
+  it('a suite run shows the notice once at its end', async () => {
+    const { suitePath, configPath } = await createTempSuiteWorkspace()
+    mockParseSuiteFile.mockResolvedValue(suiteDefinition('Smoke Suite', 'login.yaml'))
+    mockParseTestFile.mockReturnValue({ tests: [makeTest()], errors: [] })
+    const recorder = recordingNotice()
+
+    await runCommandWithOptions(
+      { updateNotice: recorder.notice },
+      ['--config', configPath],
+      suitePath,
+    )
+
+    expect(recorder.calls).toHaveLength(1)
+    expect(exitSpy.mock.calls[0]).toEqual([0])
+  })
+
+  it.each([
+    ['in CI', () => { process.env.CI = 'true' }, [] as string[]],
+    ['when stdout is not a terminal', () => { setTTY(process.stdout, false) }, [] as string[]],
+    ['when stderr is not a terminal', () => { setTTY(process.stderr, false) }, [] as string[]],
+    ['with --quiet', () => {}, ['--quiet']],
+  ])('shows no notice %s', async (_name, arrange, globalArgs) => {
+    arrange()
+    memberEnds('passed')
+    const recorder = recordingNotice()
+
+    await runCommandWithOptions({ updateNotice: recorder.notice }, globalArgs, 'tests/**/*.yaml')
+
+    expect(recorder.calls).toEqual([])
+    expect(exitSpy.mock.calls[0]).toEqual([0])
+  })
+
+  it('a notice that throws leaves the exit code alone', async () => {
+    memberEnds('failed')
+    const throwing = async (): Promise<void> => {
+      throw new Error('notice failed')
+    }
+
+    await runCommandWithOptions({ updateNotice: throwing }, [], 'tests/**/*.yaml')
+
+    expect(exitSpy.mock.calls[0]).toEqual([1])
+  })
+
+  it('a run refused before a test starts shows no notice', async () => {
+    const cfg = defaultConfig() as Record<string, any>
+    delete cfg.registry.llms
+    delete cfg.use.llm
+    mockResolveConfig.mockResolvedValue(cfg)
+    memberEnds('passed')
+    const recorder = recordingNotice()
+
+    await runCommandWithOptions({ updateNotice: recorder.notice }, [], 'tests/**/*.yaml')
+
+    expect(recorder.calls).toEqual([])
+    expect(exitSpy).toHaveBeenCalledWith(2)
+  })
+})
+
 describe('run command — framework error handling', () => {
   it('exits 2 on config resolution failure', async () => {
     mockResolveConfig.mockRejectedValue(new Error('Invalid config: missing fields'))
@@ -2218,45 +2409,6 @@ describe('run command — framework error handling', () => {
 })
 
 describe('run command — reporter integration', () => {
-  function setupPassingDirectRun(resultOverrides: Record<string, unknown> = {}) {
-    mockGlob.mockResolvedValue(['tests/a.yaml'])
-    mockParseAllTests.mockResolvedValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunMemberTest.mockResolvedValue({
-      name: 'Test One',
-      filePath: 'tests/a.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-      ...resultOverrides,
-    })
-  }
-
-  async function setupSuiteRun(resultOverrides: Record<string, unknown> = {}) {
-    const { suitePath, configPath } = await createTempSuiteWorkspace()
-    mockParseSuiteFile.mockResolvedValue({
-      name: 'Smoke Suite',
-      target: 'test-app',
-      tests: [{ test: 'tests/login.yaml', id: 'suite-test-1' }],
-    })
-    mockParseTestFile.mockReturnValue({
-      tests: [makeTest()],
-      errors: [],
-    })
-    mockRunMemberTest.mockResolvedValue({
-      runId: 'r_member',
-      name: 'Suite Member',
-      filePath: 'tests/login.yaml',
-      status: 'passed',
-      steps: [],
-      duration: 100,
-      ...resultOverrides,
-    })
-    return { suitePath, configPath }
-  }
-
   async function setupAllRun() {
     const { suitePath, testPath, configPath } = await createTempSuiteWorkspace()
     mockGlob.mockImplementation(async (pattern: string) => (
@@ -2289,11 +2441,6 @@ describe('run command — reporter integration', () => {
     return { configPath }
   }
 
-  function lastInvocationOrder(mock: { mock: { invocationCallOrder: number[] } }) {
-    const orders = mock.mock.invocationCallOrder
-    return orders[orders.length - 1] ?? 0
-  }
-
   it('adds the analytics reporter to actual direct test execution and flushes after completion', async () => {
     mockGlob.mockResolvedValue(['tests/a.yaml'])
     mockParseAllTests.mockResolvedValue({
@@ -2321,29 +2468,6 @@ describe('run command — reporter integration', () => {
     expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
-  it('prints the update notice once after direct reporter completion and analytics flush', async () => {
-    setupPassingDirectRun()
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
-    expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
-    expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: process.cwd(),
-      effectiveLogLevel: 'warn',
-      liveEvents: undefined,
-      reporterSelection: expect.objectContaining({
-        console: true,
-        stdoutLive: false,
-      }),
-    }))
-    const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    // The notice fires after member execution and the analytics subscriber flush.
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockAnalyticsRunSubscriberInstance.flush))
-    expect(exitSpy).toHaveBeenCalledWith(0)
-  })
-
   it('adds the analytics reporter to actual suite execution and flushes after completion', async () => {
     const { suitePath, configPath } = await createTempSuiteWorkspace()
     mockParseSuiteFile.mockResolvedValue({
@@ -2367,27 +2491,6 @@ describe('run command — reporter integration', () => {
     expect(mockAnalyticsRunSubscriberInstance.flush).toHaveBeenCalled()
   })
 
-  it.each([
-    ['passing', 'passed', 0],
-    ['failing', 'failed', 1],
-  ])('prints the update notice once after %s suite-only execution', async (_label, suiteStatus, exitCode) => {
-    const { suitePath, configPath } = await setupSuiteRun({ status: suiteStatus })
-
-    await runCommandWithGlobalArgs(['--config', configPath], suitePath)
-
-    expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
-    expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
-    expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
-      cwd: process.cwd(),
-      effectiveLogLevel: 'warn',
-      reporterSelection: expect.objectContaining({
-        console: true,
-        stdoutLive: false,
-      }),
-    }))
-    expect(exitSpy).toHaveBeenCalledWith(exitCode)
-  })
-
   it('composes analytics ONCE for a --all invocation — both subscribers hold the same port', async () => {
     // THE CLAIM IS OBJECT IDENTITY, not "both were configured the same way". `--all` drives the
     // suite path and then the direct path in one process; a rewire that composed at each attach
@@ -2400,83 +2503,6 @@ describe('run command — reporter integration', () => {
     const ports = mockCreateAnalyticsRunSubscriber.mock.calls.map((call) => call[0].port)
     expect(ports).toHaveLength(2)
     expect(ports[0]).toBe(ports[1])
-  })
-
-  it('prints the update notice once after --all suites and direct tests finish', async () => {
-    const { configPath } = await setupAllRun()
-
-    await runCommandWithGlobalArgs(['--config', configPath], '--all')
-
-    expect(mockRunMemberTest).toHaveBeenCalledTimes(2)
-    expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
-    expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
-    const noticeOrder = lastInvocationOrder(mockPrintAgentQaUpdateNoticeIfNeeded)
-    // The notice fires after all members finish executing.
-    expect(noticeOrder).toBeGreaterThan(lastInvocationOrder(mockRunMemberTest))
-    expect(exitSpy).toHaveBeenCalledWith(0)
-  })
-
-  it.each([
-    [
-      '--quiet',
-      ['--quiet'],
-      ['tests/**/*.yaml'],
-      undefined,
-      { effectiveLogLevel: 'silent', reporterSelection: expect.objectContaining({ console: true, stdoutLive: false }) },
-    ],
-    [
-      '--log-level silent',
-      ['--log-level', 'silent'],
-      ['tests/**/*.yaml'],
-      undefined,
-      { effectiveLogLevel: 'silent', reporterSelection: expect.objectContaining({ console: true, stdoutLive: false }) },
-    ],
-    [
-      '--reporter stdout-live',
-      [],
-      ['tests/**/*.yaml', '--reporter', 'stdout-live'],
-      undefined,
-      { effectiveLogLevel: 'warn', reporterSelection: expect.objectContaining({ console: false, stdoutLive: true }) },
-    ],
-    [
-      'AGENT_QA_LIVE_EVENTS=true',
-      [],
-      ['tests/**/*.yaml'],
-      'true',
-      { effectiveLogLevel: 'warn', liveEvents: 'true', reporterSelection: expect.objectContaining({ console: true, stdoutLive: true }) },
-    ],
-    [
-      '--reporter junit',
-      [],
-      ['tests/**/*.yaml', '--reporter', 'junit', '--junit-output', join(tmpdir(), 'agent-qa-run-notice-junit.xml')],
-      undefined,
-      { effectiveLogLevel: 'warn', reporterSelection: expect.objectContaining({ console: false, junit: true, stdoutLive: false }) },
-    ],
-  ])('does not print the update notice for %s', async (_label, globalArgs, runArgs, liveEvents, expectedContext) => {
-    setupPassingDirectRun()
-    mockShouldPrintAgentQaUpdateNotice.mockReturnValue(false)
-    if (liveEvents) process.env.AGENT_QA_LIVE_EVENTS = liveEvents
-
-    await runCommandWithGlobalArgs(globalArgs as string[], ...(runArgs as string[]))
-
-    expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledTimes(1)
-    expect(mockShouldPrintAgentQaUpdateNotice).toHaveBeenCalledWith(expect.objectContaining(expectedContext))
-    expect(mockPrintAgentQaUpdateNoticeIfNeeded).not.toHaveBeenCalled()
-    expect(exitSpy).toHaveBeenCalledWith(0)
-  })
-
-  it('preserves the computed exit status and console errors when the update notice rejects', async () => {
-    setupPassingDirectRun({ status: 'failed' })
-    mockPrintAgentQaUpdateNoticeIfNeeded.mockRejectedValueOnce(new Error('registry unavailable'))
-
-    await runCommand('tests/**/*.yaml')
-
-    expect(mockPrintAgentQaUpdateNoticeIfNeeded).toHaveBeenCalledTimes(1)
-    expect(exitSpy).toHaveBeenCalledWith(1)
-    const nonExitErrors = errorSpy.mock.calls
-      .map((call: string[]) => call.join(' '))
-      .filter((message: string) => !message.includes('Framework error: process.exit'))
-    expect(nonExitErrors).toEqual([])
   })
 
   it('does not create analytics reporter for dry run, list, or validation-only paths', async () => {

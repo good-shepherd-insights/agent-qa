@@ -9,7 +9,7 @@ import * as core from '@vostride/agent-qa-core'
 import { generateTestId } from '@vostride/agent-qa-ids'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
-import { INIT_BASE_URL_DEFAULTS } from '../../commands/init.js'
+import { INIT_BASE_URL_DEFAULTS } from '../../commands/init-model-choice.js'
 import { refuseWithoutRecordingTools } from './run-doors-fixture.js'
 import {
   POPULATED_RUN_ANCHORED_BUILDS,
@@ -320,6 +320,7 @@ describe('setup errors name their fix', () => {
     for (const leg of [scene.validate, scene.run]) {
       expect(leg?.output, seen()).toContain(`"${UNKNOWN_KEY}"`)
       expect(leg?.output, seen()).toContain(INVALID_CONFIG_FIX)
+      expect(leg?.output, seen()).toContain('then run `npx agent-qa validate`')
     }
   })
 

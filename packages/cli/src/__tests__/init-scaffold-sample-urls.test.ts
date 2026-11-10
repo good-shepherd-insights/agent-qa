@@ -1,4 +1,4 @@
-// Every URL init writes names only the playground host, except agent-qa's own recipe page.
+// Every URL init writes names only the playground host, except agent-qa's own documentation.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { Command } from 'commander'
 
@@ -44,12 +44,6 @@ vi.mock('../commands/install-browsers.js', () => ({
   runBrowserInstall: vi.fn(() => ({ ok: true, status: 0, stage: 'installer' })),
 }))
 
-vi.mock('@inquirer/select', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/input', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/checkbox', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/confirm', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/password', () => ({ default: vi.fn() }))
-
 vi.mock('@vostride/agent-qa-core', () => ({
   writeAuth: vi.fn(() => Promise.resolve()),
   resolveAppiumExecutable: vi.fn(() => ({ command: 'appium', source: 'path' })),
@@ -58,28 +52,39 @@ vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_RUNTIME_DIR: '.agent-qa',
   getAgentQaVersion: vi.fn(() => '0.1.1'),
+  getAuthPath: vi.fn(() => '/tmp/test-home/.agent-qa/auth.json'),
+  listSavedCredentials: vi.fn(async () => []),
 }))
 
 import { createInitCommand } from '../commands/init.js'
+import { defaultProjectIo } from '../commands/project-host.js'
+import { fakeRunner, runningAgentQa } from './project-fixtures.js'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { clearProviderRegistry } from '@vostride/agent-qa-model'
 
 const mockWriteFileSync = vi.mocked(writeFileSync)
 
-const PLATFORMS = ['web', 'android', 'ios', 'web+android', 'web+ios'] as const
-const WEB_PLATFORMS = new Set(['web', 'web+android', 'web+ios'])
+const PLATFORMS = ['web', 'android', 'ios', 'web,android', 'web,ios'] as const
+const WEB_PLATFORMS = new Set(['web', 'web,android', 'web,ios'])
 const PLAYGROUND_HOST = 'playground.vostride.dev'
-const AGENT_QA_RECIPE_URL = 'https://vostride.com/docs/agent-qa/coding-agents'
+const AGENT_QA_DOCS = 'https://vostride.com/docs/agent-qa/'
 const URL_PATTERN = /https?:\/\/[^\s"'<>)\]]+/g
 
-// No test starts a package manager: init declares the dependencies and runs no install.
+// No test starts a package manager or writes coding-agent files: init runs no install and
+// chooses no coding agent.
 function withoutInstall(args: readonly string[]): string[] {
-  return args.includes('--pm') || args.includes('--agent') ? [...args] : [...args, '--pm', 'none']
+  if (args.includes('--capabilities')) return [...args]
+  const pm = args.includes('--pm') ? [] : ['--pm', 'none']
+  const agents = args.includes('--agents') ? [] : ['--agents', 'none']
+  return [...args, ...pm, ...agents]
 }
 
 async function runInit(args: string[]): Promise<void> {
   const parent = new Command()
-  const init = createInitCommand({ cwd: '/tmp/hosts' })
+  const init = createInitCommand({
+    cwd: '/tmp/hosts',
+    host: { env: {}, run: fakeRunner(), ...runningAgentQa(defaultProjectIo) },
+  })
   parent.exitOverride()
   init.exitOverride()
   parent.addCommand(init)
@@ -100,6 +105,7 @@ describe('the URLs init writes', () => {
     clearProviderRegistry()
     vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     vi.clearAllMocks()
     vi.mocked(existsSync).mockReturnValue(false)
     vi.mocked(readFileSync).mockImplementation(path =>
@@ -118,7 +124,7 @@ describe('the URLs init writes', () => {
       expect(writes.length, `${platform}: init wrote no file`).toBeGreaterThan(0)
       const urls = writes.flatMap(write =>
         (write.content.match(URL_PATTERN) ?? [])
-          .filter(url => url !== AGENT_QA_RECIPE_URL)
+          .filter(url => !url.startsWith(AGENT_QA_DOCS))
           .map(url => ({ file: write.path, url })),
       )
       if (WEB_PLATFORMS.has(platform)) {

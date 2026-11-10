@@ -1,0 +1,510 @@
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+
+import { parseDocument, type YAMLSeq } from 'yaml'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { readAgentSetupManifest } from '../commands/agent-setup-manifest.js'
+import type { InitDocument } from '../commands/init-document.js'
+import { SETUP_MENU_QUESTION } from '../commands/init-rerun.js'
+import type { RunResult } from '../commands/project-host.js'
+import type { FakeInitUiEntry } from './fake-init-ui.js'
+import {
+  cleanupTempProjects,
+  fakeRunner,
+  writeInstalledPackage,
+  type FakeRunner,
+  type RunnerCall,
+} from './project-fixtures.js'
+import {
+  initializedProject,
+  initializedProjectWithAgent,
+  installAgentQaFixture,
+  rerun,
+  type InitializedProject,
+} from './rerun-fixtures.js'
+
+const { PROJECT_VERSION, running } = vi.hoisted(() => ({
+  PROJECT_VERSION: '0.3.0',
+  running: { version: '0.3.0' },
+}))
+
+vi.mock('@vostride/agent-qa-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@vostride/agent-qa-core')>()),
+  getAgentQaVersion: () => running.version,
+}))
+
+const NODE = '/fake/node'
+const SUBSCRIPTION = '@vostride/agent-qa-subscription-auth'
+const JIRA = '@vostride/agent-qa-plugin-jira'
+const OK: RunResult = { code: 0, signal: null, output: '' }
+
+afterEach(() => {
+  running.version = PROJECT_VERSION
+  cleanupTempProjects()
+})
+
+function isProbe(args: readonly string[]): boolean {
+  return args.length === 1 && args[0] === '--version'
+}
+
+// The install puts each named package in node_modules at the version package.json declares.
+function installing(...names: string[]): FakeRunner {
+  return fakeRunner(({ command, args, options }) => {
+    if (isProbe(args)) return { code: 0, signal: null, output: '11.0.0\n' }
+    if (command === NODE) return OK
+    const declared = JSON.parse(readFileSync(join(options.cwd, 'package.json'), 'utf8')) as {
+      devDependencies: Record<string, string>
+    }
+    for (const name of names) {
+      writeInstalledPackage(options.cwd, name, declared.devDependencies[name] ?? '0.0.0')
+    }
+    return OK
+  })
+}
+
+function installs(run: FakeRunner): RunnerCall[] {
+  return run.calls.filter((call) => !isProbe(call.args) && call.command !== NODE)
+}
+
+function menuOf(entries: readonly FakeInitUiEntry[]) {
+  const entry = entries.find(
+    (item) => item.kind === 'multiselect' && item.text === SETUP_MENU_QUESTION,
+  )
+  return entry?.kind === 'multiselect' ? entry : undefined
+}
+
+function depsLabel(entries: readonly FakeInitUiEntry[]): string | undefined {
+  return menuOf(entries)?.labels.find((label) => label.startsWith('deps '))
+}
+
+function packageJson(root: string): { devDependencies: Record<string, string> } {
+  return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+}
+
+function writeDevDependencies(root: string, devDependencies: Record<string, string>): void {
+  const text = `${JSON.stringify({ name: 'app', private: true, devDependencies }, null, 2)}\n`
+  writeFileSync(join(root, 'package.json'), text)
+}
+
+function undeclare(root: string, name: string): void {
+  const pkg = packageJson(root)
+  delete pkg.devDependencies[name]
+  writeFileSync(join(root, 'package.json'), `${JSON.stringify(pkg, null, 2)}\n`)
+}
+
+function uninstall(root: string, name: string): void {
+  rmSync(join(root, 'node_modules', ...name.split('/')), { recursive: true, force: true })
+}
+
+function addPlugin(root: string, name: string, pkg: string): void {
+  const path = join(root, 'agent-qa.config.yaml')
+  const doc = parseDocument(readFileSync(path, 'utf8'))
+  const plugins = doc.get('plugins') as YAMLSeq | undefined
+  if (plugins === undefined) doc.set('plugins', [{ name, package: pkg }])
+  else plugins.add(doc.createNode({ name, package: pkg }))
+  writeFileSync(path, doc.toString())
+}
+
+const asked = { hooks: { isTTY: true }, answers: { [SETUP_MENU_QUESTION]: [] } }
+
+async function subscriptionProjectWithoutPlugin(label: string): Promise<InitializedProject> {
+  const project = await initializedProject(label, { llm: 'codex' })
+  undeclare(project.root, SUBSCRIPTION)
+  return project
+}
+
+describe("the re-run's deps row adds a missing agent-qa package and installs it", () => {
+  it('labels a subscription plugin the package.json lacks as missing and pre-checks the row', async () => {
+    const project = await subscriptionProjectWithoutPlugin('deps-plugin-missing-menu')
+
+    const result = await rerun(project, [], asked)
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(depsLabel(result.entries)).toBe('deps       subscription plugin missing')
+    expect(menuOf(result.entries)?.initialValues).toContain('deps')
+  })
+
+  it("--yes declares the plugin at agent-qa's exact version and runs the plain install once", async () => {
+    const project = await subscriptionProjectWithoutPlugin('deps-plugin-missing-yes')
+    const run = installing(SUBSCRIPTION)
+
+    const result = await rerun(project, ['--yes', '--json'], { run })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(packageJson(project.root).devDependencies[SUBSCRIPTION]).toBe(PROJECT_VERSION)
+    expect(installs(run).map((call) => [call.command, ...call.args].join(' '))).toEqual([
+      'npm install',
+    ])
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.steps).toContainEqual({ name: 'deps', outcome: 'done' })
+  })
+
+  it('labels a declared agent-qa that is not installed and running the row installs it', async () => {
+    const project = await initializedProject('deps-agent-qa-not-installed')
+    uninstall(project.root, 'agent-qa')
+    const before = readFileSync(join(project.root, 'package.json'), 'utf8')
+    const run = installing('agent-qa')
+
+    const asking = await rerun(project, [], asked)
+    const result = await rerun(project, ['--yes'], { run })
+
+    expect(depsLabel(asking.entries)).toBe('deps       agent-qa not installed')
+    expect(menuOf(asking.entries)?.initialValues).toContain('deps')
+    expect(result.exit, result.stderr).toBe(0)
+    expect(installs(run)).toHaveLength(1)
+    expect(readFileSync(join(project.root, 'package.json'), 'utf8')).toBe(before)
+  })
+
+  it('adds a first-party plugins entry at the same exact version and leaves a third-party plugin as declared', async () => {
+    const project = await initializedProject('deps-first-party-plugin')
+    addPlugin(project.root, 'jira', JIRA)
+    addPlugin(project.root, 'acme', 'acme-agent-qa-plugin')
+    writeDevDependencies(project.root, {
+      'acme-agent-qa-plugin': '^1.0.0',
+      'agent-qa': PROJECT_VERSION,
+    })
+    const run = installing(JIRA)
+
+    const asking = await rerun(project, [], asked)
+    const result = await rerun(project, ['--yes'], { run })
+
+    expect(depsLabel(asking.entries)).toBe('deps       jira plugin missing')
+    expect(result.exit, result.stderr).toBe(0)
+    expect(packageJson(project.root).devDependencies).toEqual({
+      'acme-agent-qa-plugin': '^1.0.0',
+      [JIRA]: PROJECT_VERSION,
+      'agent-qa': PROJECT_VERSION,
+    })
+  })
+
+  it('never compares or rewrites agent-qa declared as a file: spec', async () => {
+    const project = await initializedProject('deps-file-spec')
+    writeDevDependencies(project.root, { 'agent-qa': 'file:../agent-qa' })
+    uninstall(project.root, 'agent-qa')
+    const before = readFileSync(join(project.root, 'package.json'), 'utf8')
+    const run = installing('agent-qa')
+
+    const asking = await rerun(project, [], asked)
+    const result = await rerun(project, ['--setup', 'deps', '--json'], { run })
+
+    expect(depsLabel(asking.entries)).toBe('deps       nothing missing')
+    expect(menuOf(asking.entries)?.initialValues).not.toContain('deps')
+    expect(result.exit, result.stderr).toBe(0)
+    expect(readFileSync(join(project.root, 'package.json'), 'utf8')).toBe(before)
+    expect(installs(run)).toEqual([])
+  })
+
+  it('says nothing is missing and leaves the row unchecked when everything is declared and installed', async () => {
+    const project = await initializedProject('deps-nothing-missing')
+    const run = installing('agent-qa')
+
+    const result = await rerun(project, ['--yes', '--json'], { run })
+
+    expect(result.exit, result.stderr).toBe(0)
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.setup?.find((row) => row.name === 'deps')).toEqual({
+      name: 'deps',
+      state: 'nothing missing',
+      prechecked: false,
+      selected: false,
+    })
+    expect(doc.steps).toContainEqual({ name: 'deps', outcome: 'skipped', reason: 'current' })
+    expect(installs(run)).toEqual([])
+  })
+})
+
+describe('the deps row under --pm none and after a failed install', () => {
+  it('--pm none writes package.json, skips the row with the install command and validate with install first', async () => {
+    const project = await subscriptionProjectWithoutPlugin('deps-pm-none-declares')
+    const run = installing(SUBSCRIPTION)
+
+    const result = await rerun(project, ['--yes', '--json', '--pm', 'none'], { run })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(packageJson(project.root).devDependencies[SUBSCRIPTION]).toBe(PROJECT_VERSION)
+    expect(installs(run)).toEqual([])
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.steps).toContainEqual({
+      name: 'deps',
+      outcome: 'skipped',
+      reason: '--pm none',
+      command: 'npm install',
+    })
+    expect(doc.steps).toContainEqual({
+      name: 'validate',
+      outcome: 'skipped',
+      reason: 'install first (--pm none)',
+      command: 'npx agent-qa validate',
+    })
+  })
+
+  it('--pm none with nothing to declare still validates', async () => {
+    const project = await initializedProject('deps-pm-none-nothing-declared')
+    uninstall(project.root, 'agent-qa')
+    const run = installing('agent-qa')
+
+    const result = await rerun(project, ['--yes', '--json', '--pm', 'none'], { run })
+
+    expect(result.exit, result.stderr).toBe(0)
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.steps).toContainEqual({
+      name: 'deps',
+      outcome: 'skipped',
+      reason: '--pm none',
+      command: 'npm install',
+    })
+    expect(doc.steps).toContainEqual({ name: 'validate', outcome: 'done' })
+  })
+
+  it('a failed install fails the row with the install command, runs the other rows and exits 3', async () => {
+    const project = await initializedProject('deps-install-fails')
+    uninstall(project.root, 'agent-qa')
+    writeFileSync(join(project.root, '.gitignore'), 'dist/\n')
+    const run = fakeRunner(({ command, args }) => {
+      if (isProbe(args)) return { code: 0, signal: null, output: '11.0.0\n' }
+      if (command === NODE) return OK
+      return { code: 1, signal: null, output: 'npm error network\n' }
+    })
+
+    const result = await rerun(project, ['--yes', '--json'], { run })
+
+    expect(result.exit, result.stderr).toBe(3)
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.steps).toContainEqual({
+      name: 'deps',
+      outcome: 'failed',
+      reason: expect.stringContaining('npm exited 1'),
+      command: 'npm install',
+    })
+    expect(doc.steps).toContainEqual({ name: 'gitignore', outcome: 'done' })
+    expect(doc.steps).toContainEqual({ name: 'validate', outcome: 'done' })
+  })
+})
+
+const GUIDE_0_3_TO_0_4 = 'https://vostride.com/docs/agent-qa/migrate/v0-3-to-v0-4'
+const GUIDE_LINE = 'agent-qa 0.4.0 can change your config. To upgrade, point your coding agent at'
+
+function answering(version: string) {
+  return { latestVersion: async () => ({ source: 'registry' as const, latestVersion: version }) }
+}
+
+function summaryLines(entries: readonly FakeInitUiEntry[]): string[] {
+  const entry = entries.find((item) => item.kind === 'summary')
+  return entry?.kind === 'summary' ? entry.lines : []
+}
+
+// A project set up and installed at 0.3.0, re-run by a newer agent-qa through npx.
+async function projectBehind(
+  label: string,
+  newer: string,
+  options: { llm?: string } = {},
+): Promise<InitializedProject> {
+  const project = await initializedProject(label, options)
+  running.version = newer
+  return project
+}
+
+describe('through a newer agent-qa the deps row moves the project to it', () => {
+  it('reads the patch move, pre-checked, and shows no upgrade row', async () => {
+    const project = await projectBehind('deps-move-patch-menu', '0.3.2')
+
+    const result = await rerun(project, [], {
+      hooks: { isTTY: true, ...answering('0.3.2') },
+      answers: { [SETUP_MENU_QUESTION]: [] },
+    })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(depsLabel(result.entries)).toBe('deps       agent-qa 0.3.0 → 0.3.2')
+    expect(menuOf(result.entries)?.initialValues).toContain('deps')
+    expect(menuOf(result.entries)?.labels.some((label) => label.startsWith('upgrade'))).toBe(false)
+  })
+
+  it('--yes pins agent-qa and every first-party package at the running version and installs once', async () => {
+    const project = await projectBehind('deps-move-patch-yes', '0.3.2', { llm: 'codex' })
+    const path = join(project.root, 'agent-qa.config.yaml')
+    const doc = parseDocument(readFileSync(path, 'utf8'))
+    doc.set('plugins', [{ name: 'jira', package: JIRA }])
+    writeFileSync(path, doc.toString())
+    writeDevDependencies(project.root, {
+      [JIRA]: PROJECT_VERSION,
+      [SUBSCRIPTION]: PROJECT_VERSION,
+      'agent-qa': PROJECT_VERSION,
+    })
+    writeInstalledPackage(project.root, JIRA, PROJECT_VERSION)
+    const run = installing('agent-qa', SUBSCRIPTION, JIRA)
+
+    const result = await rerun(project, ['--yes', '--json'], { run, hooks: answering('0.3.2') })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(packageJson(project.root).devDependencies).toEqual({
+      [JIRA]: '0.3.2',
+      [SUBSCRIPTION]: '0.3.2',
+      'agent-qa': '0.3.2',
+    })
+    expect(installs(run)).toHaveLength(1)
+    expect((JSON.parse(result.stdout) as InitDocument).upgrade).toEqual({
+      from: PROJECT_VERSION,
+      to: '0.3.2',
+      breaking: false,
+      links: ['https://github.com/vostride/agent-qa/releases/tag/v0.3.2'],
+      row: 'deps',
+    })
+  })
+
+  it('names the running copy beside the project version in the summary', async () => {
+    const project = await projectBehind('deps-move-summary-copy', '0.4.0')
+
+    const result = await rerun(project, ['--setup', 'none'])
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(summaryLines(result.entries).slice(0, 2)).toEqual([
+      `You're on agent-qa ${PROJECT_VERSION}.`,
+      `The rows run as agent-qa 0.4.0, not the project's ${PROJECT_VERSION}.`,
+    ])
+  })
+
+  it('with the upgrade row shown names no version move, only missing packages', async () => {
+    const project = await initializedProject('deps-with-upgrade-row')
+
+    const result = await rerun(project, ['--setup', 'none', '--json'], {
+      hooks: answering('0.3.2'),
+      plain: true,
+    })
+    const asking = await rerun(project, [], {
+      hooks: { isTTY: true, ...answering('0.3.2') },
+      answers: { [SETUP_MENU_QUESTION]: [] },
+    })
+
+    expect(depsLabel(asking.entries)).toBe('deps       nothing missing')
+    expect(result.exit, result.stderr).toBe(0)
+    expect((JSON.parse(result.stdout) as InitDocument).upgrade?.row).toBe('upgrade')
+  })
+})
+
+describe("a deps move refreshes the coding agents' share to the version it installed", () => {
+  it('--yes puts back the skills and the block at the new version, so the manifest names it', async () => {
+    const project = await initializedProjectWithAgent(
+      'deps-move-refreshes-agents',
+      'claude-code',
+      PROJECT_VERSION,
+    )
+    running.version = '0.3.2'
+    const run = fakeRunner(({ command, args, options }) => {
+      if (isProbe(args)) return { code: 0, signal: null, output: '11.0.0\n' }
+      if (command !== NODE) installAgentQaFixture(options.cwd, '0.3.2')
+      return OK
+    })
+
+    const result = await rerun(project, ['--yes', '--json'], { run })
+
+    expect(result.exit, result.stderr).toBe(0)
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.steps).toContainEqual({ name: 'deps', outcome: 'done' })
+    expect(doc.steps).toContainEqual({ name: 'skills', outcome: 'done' })
+    expect(doc.steps).toContainEqual({ name: 'agents-md', outcome: 'done' })
+    expect(doc.setup?.find((row) => row.name === 'skills')).toMatchObject({ selected: true })
+    expect(readAgentSetupManifest(project.root)?.version).toBe('0.3.2')
+  })
+
+  it('leaves the agent rows as the menu set them when the move is not installed', async () => {
+    const project = await initializedProjectWithAgent(
+      'deps-move-pm-none-agents',
+      'claude-code',
+      PROJECT_VERSION,
+    )
+    running.version = '0.3.2'
+
+    const result = await rerun(project, ['--yes', '--json', '--pm', 'none'])
+
+    expect(result.exit, result.stderr).toBe(0)
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.steps).toContainEqual({ name: 'skills', outcome: 'skipped', reason: 'current' })
+    expect(readAgentSetupManifest(project.root)?.version).toBe(PROJECT_VERSION)
+  })
+})
+
+describe('a deps move that can break the config is taken only when named', () => {
+  it('starts unchecked, says so in its state and puts the migration guide in the summary', async () => {
+    const project = await projectBehind('deps-move-breaking-menu', '0.4.0')
+
+    const result = await rerun(project, [], asked)
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(depsLabel(result.entries)).toBe(
+      'deps       agent-qa 0.3.0 → 0.4.0 can change your config',
+    )
+    expect(menuOf(result.entries)?.initialValues).not.toContain('deps')
+    const lines = summaryLines(result.entries)
+    expect(lines).toEqual(expect.arrayContaining([GUIDE_LINE, GUIDE_0_3_TO_0_4]))
+    expect(lines.filter((line) => line === GUIDE_LINE)).toHaveLength(1)
+  })
+
+  it('names a missing package beside the move and still starts unchecked', async () => {
+    const project = await projectBehind('deps-move-breaking-missing', '0.4.0', { llm: 'codex' })
+    undeclare(project.root, SUBSCRIPTION)
+
+    const result = await rerun(project, [], asked)
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(depsLabel(result.entries)).toBe(
+      'deps       subscription plugin missing; agent-qa 0.3.0 → 0.4.0 can change your config',
+    )
+    expect(menuOf(result.entries)?.initialValues).not.toContain('deps')
+  })
+
+  it('--yes leaves package.json as it was and records the move with row deps', async () => {
+    const project = await projectBehind('deps-move-breaking-yes', '0.4.0')
+    const before = readFileSync(join(project.root, 'package.json'), 'utf8')
+    const run = installing('agent-qa')
+
+    const result = await rerun(project, ['--yes', '--json'], { run, hooks: answering('0.4.0') })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(readFileSync(join(project.root, 'package.json'), 'utf8')).toBe(before)
+    expect(installs(run)).toEqual([])
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(doc.steps).toContainEqual({
+      name: 'deps',
+      outcome: 'skipped',
+      reason: 'not selected',
+      command: 'npx agent-qa init --setup deps',
+    })
+    expect(doc.upgrade).toEqual({
+      from: PROJECT_VERSION,
+      to: '0.4.0',
+      breaking: true,
+      links: [GUIDE_0_3_TO_0_4],
+      row: 'deps',
+    })
+  })
+
+  it('--setup all leaves the move out with its reason', async () => {
+    const project = await projectBehind('deps-move-breaking-all', '0.4.0')
+    const before = readFileSync(join(project.root, 'package.json'), 'utf8')
+    const run = installing('agent-qa')
+
+    const result = await rerun(project, ['--setup', 'all', '--json'], { run })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(readFileSync(join(project.root, 'package.json'), 'utf8')).toBe(before)
+    expect(installs(run)).toEqual([])
+    expect((JSON.parse(result.stdout) as InitDocument).steps).toContainEqual({
+      name: 'deps',
+      outcome: 'skipped',
+      reason: 'breaking: name it in --setup',
+      command: 'npx agent-qa init --setup deps',
+    })
+  })
+
+  it('--setup deps takes the move and installs it', async () => {
+    const project = await projectBehind('deps-move-breaking-named', '0.4.0')
+    const run = installing('agent-qa')
+
+    const result = await rerun(project, ['--setup', 'deps'], { run })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(packageJson(project.root).devDependencies['agent-qa']).toBe('0.4.0')
+    expect(installs(run)).toHaveLength(1)
+  })
+})

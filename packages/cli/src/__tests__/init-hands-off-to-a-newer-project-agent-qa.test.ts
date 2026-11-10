@@ -23,8 +23,9 @@ import {
 
 const VERSION = getAgentQaVersion().trim()
 const NODE = '/fake/node'
-const INIT_ARGS = ['--platform', 'web', '--llm', 'gemini']
+const INIT_ARGS = ['--platform', 'web', '--llm', 'gemini', '--no-browsers', '--agents', 'none']
 let log: MockInstance<typeof console.log>
+let errors: MockInstance<typeof process.stderr.write>
 
 const silentAnalytics: typeof composeAnalyticsHost = async () =>
   composeAnalyticsHost({
@@ -64,8 +65,14 @@ function installsCopy(version: string): Answer {
   }
 }
 
+// init's validate step runs through agent-qa after the install; these cells are about the
+// install and the hand-off.
+function managerAndHandOffCalls(run: FakeRunner): RunnerCall[] {
+  return run.calls.filter((call) => !call.args.includes('validate'))
+}
+
 function commands(run: FakeRunner): RunnerCall[] {
-  return run.calls.filter((call) => !isProbe(call.args))
+  return managerAndHandOffCalls(run).filter((call) => !isProbe(call.args))
 }
 
 function argv(call: RunnerCall): string {
@@ -76,12 +83,20 @@ function initArgv(args: readonly string[]): string[] {
   return ['init', ...args]
 }
 
+// The cells are about the hand-off and the install, so no Chromium or coding-agent step runs.
+function aboutTheInstall(args: readonly string[]): string[] {
+  const browsers = args.includes('--no-browsers') ? [] : ['--no-browsers']
+  const agents = args.includes('--agents') ? [] : ['--agents', 'none']
+  return [...args, ...browsers, ...agents]
+}
+
 async function init(
   cwd: string,
   home: string,
   run: FakeRunner,
-  args: readonly string[] = INIT_ARGS,
+  given: readonly string[] = INIT_ARGS,
 ): Promise<void> {
+  const args = aboutTheInstall(given)
   const parent = new Command()
   const command = createInitCommand({
     cwd,
@@ -116,10 +131,9 @@ function failureDeps() {
   }
 }
 
-function stdout(): string {
-  return stripVTControlCharacters(
-    log.mock.calls.map((call) => call.map(String).join(' ')).join('\n'),
-  )
+// init draws its human output on stderr.
+function stderr(): string {
+  return stripVTControlCharacters(errors.mock.calls.map((call) => String(call[0])).join(''))
 }
 
 function declare(root: string, spec: string): void {
@@ -141,6 +155,7 @@ function devDependencies(root: string): unknown {
 describe('init installs a declared newer agent-qa, then hands off to it', () => {
   beforeEach(() => {
     log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    errors = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
@@ -172,10 +187,34 @@ describe('init installs a declared newer agent-qa, then hands off to it', () => 
       stdio: 'inherit',
     })
     expect(handOff?.env.AGENT_QA_HANDED_OFF).toBe('1')
-    expect(stdout()).toContain(
+    expect(stderr()).toContain(
       `Handing over to the project's agent-qa 99.0.0 (node_modules/agent-qa), which is newer than this one (${VERSION}).`,
     )
     expect(configured(root)).toBe(false)
+  })
+
+  describe("the project agent-qa's own exit decides init's code after a Ctrl-C both heard", () => {
+    const heard = { signal: null, output: '', cancelled: true } as const
+    const exits: [string, RunResult, number | undefined][] = [
+      ['a clean exit after its dashboard stopped exits 0', { ...heard, code: 0 }, undefined],
+      ['an exit 3 after a failed step exits 3', { ...heard, code: 3 }, 3],
+      ['an exit 130 exits 130', { ...heard, code: 130 }, 130],
+      ['death by SIGINT exits 130', { ...heard, code: null, signal: 'SIGINT' }, 130],
+    ]
+
+    for (const [label, result, expected] of exits) {
+      it(label, async () => {
+        const { root, home } = tempProject('hand-off-ctrl-c')
+        writeCopy(root, '99.0.0')
+        const run = machine(installsCopy('99.0.0'), () => result)
+
+        const outcome = init(root, home, run)
+
+        if (expected === undefined) await expect(outcome).resolves.toBeUndefined()
+        else expect((await refusal(outcome)).exitCode).toBe(expected)
+        expect(commands(run).map((call) => call.stdio)).toEqual(['inherit'])
+      })
+    }
   })
 
   it('under --pm none a declared newer agent-qa is not installed and nothing takes over', async () => {
@@ -185,7 +224,7 @@ describe('init installs a declared newer agent-qa, then hands off to it', () => 
 
     await expect(init(root, home, run, [...INIT_ARGS, '--pm', 'none'])).resolves.toBeUndefined()
 
-    expect(run.calls).toEqual([])
+    expect(managerAndHandOffCalls(run)).toEqual([])
     expect(configured(root)).toBe(true)
   })
 
@@ -212,7 +251,7 @@ describe('init installs a declared newer agent-qa, then hands off to it', () => 
 
     await expect(init(root, home, run)).resolves.toBeUndefined()
 
-    expect(run.calls).toEqual([])
+    expect(managerAndHandOffCalls(run)).toEqual([])
     expect(configured(root)).toBe(true)
   })
 
@@ -225,13 +264,14 @@ describe('init installs a declared newer agent-qa, then hands off to it', () => 
 
     expect(reportCliFailure(error, failureDeps())).toBe(3)
     expect(commands(run).map(argv)).toEqual(['npm install', 'npm install'])
-    const lines = stdout().split('\n')
+    const lines = stderr().split('\n')
     expect(lines.filter((line) => line === '✗ Install failed: npm exited 1')).toHaveLength(2)
     expect(lines).toContain(
       `The project's agent-qa 99.0.0 is not installed, so this one (${VERSION}) sets up the folder.`,
     )
     expect(lines).toContain('  Run: npm install')
-    expect(stdout()).toContain('Next steps:')
+    expect(stderr()).toContain('\nNext steps\n')
+    expect(log).not.toHaveBeenCalled()
     expect(configured(root)).toBe(true)
   })
 
@@ -258,7 +298,7 @@ describe('init installs a declared newer agent-qa, then hands off to it', () => 
       init(root, home, run, ['--platform', 'web', '--llm', 'codex', '--pm', 'none']),
     ).resolves.toBeUndefined()
 
-    expect(run.calls).toEqual([])
+    expect(managerAndHandOffCalls(run)).toEqual([])
     expect(devDependencies(root)).toEqual({
       'agent-qa': '99.0.0',
       '@vostride/agent-qa-subscription-auth': '99.0.0',
@@ -280,7 +320,7 @@ describe('init installs a declared newer agent-qa, then hands off to it', () => 
     })
   })
 
-  it('a malformed package.json is refused before the already-initialized check', async () => {
+  it('a malformed package.json is refused before a re-run starts', async () => {
     const { root, home } = tempProject('hand-off-malformed')
     writeFileSync(join(root, 'agent-qa.config.yaml'), 'workspace: {}\n')
     writeFileSync(join(root, 'package.json'), '{ not json')
@@ -295,7 +335,7 @@ describe('init installs a declared newer agent-qa, then hands off to it', () => 
         'u',
       ),
     )
-    expect(stdout()).not.toContain('already initialized')
-    expect(run.calls).toEqual([])
+    expect(readFileSync(join(root, 'agent-qa.config.yaml'), 'utf-8')).toBe('workspace: {}\n')
+    expect(managerAndHandOffCalls(run)).toEqual([])
   })
 })

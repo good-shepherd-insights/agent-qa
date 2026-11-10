@@ -1,20 +1,16 @@
-// The generated knowledge guide and root pointer, through the real `init` against temp directories.
+// The generated knowledge guide and the AGENTS.md block's body, through the real `init` against
+// temp directories.
 import {
   existsSync,
-  linkSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
-  readlinkSync,
   rmSync,
-  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { stripVTControlCharacters } from 'node:util'
 
@@ -23,31 +19,26 @@ import { AGENT_QA_TOOL_PROJECTIONS } from '@vostride/agent-qa-mcp'
 import { Command } from 'commander'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 
-import { INIT_AGENT_INSTRUCTIONS_VERB } from '../capability-catalog/manifest.js'
 import { createInitCommand, type InitCommandHooks } from '../commands/init.js'
-import { managedBlockLockPath } from '../commands/init-filesystem.js'
 import {
   AGENT_QUESTION_MAP,
   KNOWLEDGE_SKILL_NAME,
-  WRITE_AGENT_INSTRUCTIONS_FLAG,
   buildAgentInstructionPointer,
   buildKnowledgeAgentGuide,
 } from '../commands/knowledge-guide.js'
 import { createKnowledgeCommand } from '../commands/knowledge.js'
-import {
-  AGENT_QA_INIT_MARKDOWN_BLOCK,
-  composeManagedBlock,
-  managedBlockMarkers,
-  renderManagedBlock,
-} from '../commands/managed-block.js'
+import { AGENT_QA_INIT_MARKDOWN_BLOCK, renderManagedBlock } from '../commands/managed-block.js'
 import { installedAgentQaVersion } from '../commands/package-json-plan.js'
 import { createRunsCommand } from '../commands/runs.js'
 import { createSkillsCommand, runningAgentQaSkillSummaries } from '../commands/skills.js'
+import { cleanupTempProjects, fakeRunner } from './project-fixtures.js'
+import { initializedProject, rerun } from './rerun-fixtures.js'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const GUIDE = join('agent-qa-knowledge', 'AGENTS.md')
 const roots: string[] = []
 let log: MockInstance<typeof console.log>
+let errors: MockInstance<typeof process.stderr.write>
 
 function tempProject(): string {
   const root = mkdtempSync(join(tmpdir(), 'agent-qa-guide-'))
@@ -58,7 +49,11 @@ function tempProject(): string {
 
 async function runInit(dir: string, extra: string[] = [], hooks: InitCommandHooks = {}): Promise<void> {
   const parent = new Command()
-  const init = createInitCommand({ cwd: dir, ...hooks })
+  // A temporary home, so init reads no real credential store.
+  const home = mkdtempSync(join(tmpdir(), 'agent-qa-guide-home-'))
+  roots.push(home)
+  const host = { homedir: home, env: {}, run: fakeRunner(), ...hooks.host }
+  const init = createInitCommand({ cwd: dir, ...hooks, host })
   parent.exitOverride()
   init.exitOverride()
   parent.addCommand(init)
@@ -66,8 +61,9 @@ async function runInit(dir: string, extra: string[] = [], hooks: InitCommandHook
   await parent.parseAsync(['node', 'test', 'init', '--platform', 'web', ...extra, ...pm])
 }
 
-function stdout(): string {
-  return stripVTControlCharacters(log.mock.calls.map((call) => call.map(String).join(' ')).join('\n'))
+// init draws its human output on stderr.
+function stderr(): string {
+  return stripVTControlCharacters(errors.mock.calls.map((call) => String(call[0])).join(''))
 }
 
 // The same skills and version init passes, so these match the block init prints and writes.
@@ -104,22 +100,25 @@ function liveCommandPath(cli: string): string {
 
 beforeEach(() => {
   log = vi.spyOn(console, 'log').mockImplementation(() => {})
+  errors = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
 })
 
 afterEach(() => {
   log.mockRestore()
+  errors.mockRestore()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  cleanupTempProjects()
 })
 
 describe('INIT-GUIDE-LIFECYCLE: init generates the thin knowledge guide', () => {
   it('fresh init writes the generated guide into the knowledge root', async () => {
     const dir = tempProject()
-    await runInit(dir)
+    const { outcomes, hooks } = outcomeRecorder()
+    await runInit(dir, [], hooks)
 
     expect(existsSync(join(dir, GUIDE))).toBe(true)
     expect(readFileSync(join(dir, GUIDE), 'utf8')).toBe(buildKnowledgeAgentGuide())
-    const created = stdout().match(/ {2}Created:\n([\s\S]*?)(?:\n {2}(?:Updated|Preserved|Next steps):|$)/)?.[1] ?? ''
-    expect(created).toContain(GUIDE)
+    expect(outcomes).toContain(`created ${join(dir, GUIDE)}`)
   })
 
   it('keeps the guide thin, generated and truthful about the layout', () => {
@@ -193,18 +192,15 @@ describe('INIT-GUIDE-LIFECYCLE: init generates the thin knowledge guide', () => 
     expect(readFileSync(join(dir, 'agent-qa-knowledge', 'README.md'), 'utf8')).toBe('my readme\n')
   })
 
-  it('keeps the already-initialized refusal unchanged and writes no guide', async () => {
-    const dir = tempProject()
-    await runInit(dir)
-    unlinkSync(join(dir, GUIDE))
-    log.mockClear()
+  it('a re-run puts a deleted knowledge guide back through the agents-md row and writes no AGENTS.md', async () => {
+    const project = await initializedProject('guide-rerun')
+    unlinkSync(join(project.root, GUIDE))
 
-    await runInit(dir)
+    const result = await rerun(project, ['--yes'])
 
-    expect(stdout()).toContain(`Project is already initialized at ${dir}. Use --force to rebuild it.`)
-    expect(existsSync(join(dir, GUIDE))).toBe(false)
-    expect(stdout()).not.toContain(pointerBlock())
-    expect(existsSync(join(dir, 'AGENTS.md'))).toBe(false)
+    expect(result.exit, result.stderr).toBe(0)
+    expect(readFileSync(join(project.root, GUIDE), 'utf8')).toBe(buildKnowledgeAgentGuide())
+    expect(existsSync(join(project.root, 'AGENTS.md'))).toBe(false)
   })
 
   it('passes the instruction-branding validator, which reds a known-bad generated document', async () => {
@@ -221,11 +217,8 @@ describe('INIT-GUIDE-LIFECYCLE: init generates the thin knowledge guide', () => 
   })
 })
 
-describe('INIT-POINTER-PRINT: init prints the root pointer and writes no root file by default', () => {
-  it('prints the pointer as a paste-ready managed block', async () => {
-    const dir = tempProject()
-    await runInit(dir)
-
+describe('the AGENTS.md block, and the root instruction files init leaves alone', () => {
+  it('the block names the reads, the knowledge guide, the skills and the version', () => {
     const body = pointerBody()
     const text = body.join('\n')
     for (const needle of [
@@ -242,38 +235,43 @@ describe('INIT-POINTER-PRINT: init prints the root pointer and writes no root fi
     }
     expect(body.at(-1)).toBe('- Skills or MCP server missing or stale: run `npx agent-qa init`')
     expect(text).not.toContain('npx agent-qa skills')
-    expect(stdout()).toContain(`\n${pointerBlock()}\n`)
   })
 
-  it('leaves existing root instruction files byte-identical and creates none', async () => {
+  it('with no coding agent chosen, leaves existing root instruction files byte-identical and creates none', async () => {
     const withFiles = tempProject()
     const agents = '# My agents\n\nkeep me\r\nno final newline'
     const claude = '# Claude\n<!-- agent-qa init:start -->\n'
     writeFileSync(join(withFiles, 'AGENTS.md'), agents)
     writeFileSync(join(withFiles, 'CLAUDE.md'), claude)
-    await runInit(withFiles)
+    await runInit(withFiles, ['--agents', 'none'])
     expect(readFileSync(join(withFiles, 'AGENTS.md'), 'utf8')).toBe(agents)
     expect(readFileSync(join(withFiles, 'CLAUDE.md'), 'utf8')).toBe(claude)
 
     const empty = tempProject()
-    await runInit(empty)
+    await runInit(empty, ['--agents', 'none'])
     expect(existsSync(join(empty, 'AGENTS.md'))).toBe(false)
     expect(existsSync(join(empty, 'CLAUDE.md'))).toBe(false)
   })
 
-  it('registers the opt-in flag as the init row of the capability manifest', () => {
-    expect(INIT_AGENT_INSTRUCTIONS_VERB).toEqual({ verb: 'init', flags: [WRITE_AGENT_INSTRUCTIONS_FLAG] })
-    expect(WRITE_AGENT_INSTRUCTIONS_FLAG).toBe('--write-agent-instructions')
+  it('with a coding agent chosen, AGENTS.md keeps its bytes and gains the block, and CLAUDE.md is left alone', async () => {
+    const withFiles = tempProject()
+    const agents = '# My agents\n\nkeep me\r\nno final newline'
+    const claude = '# Claude\n<!-- agent-qa init:start -->\n'
+    writeFileSync(join(withFiles, 'AGENTS.md'), agents)
+    writeFileSync(join(withFiles, 'CLAUDE.md'), claude)
+    await runInit(withFiles, ['--agents', 'claude-code'])
+    const written = readFileSync(join(withFiles, 'AGENTS.md'), 'utf8')
+    expect(written.startsWith(agents)).toBe(true)
+    expect(written).toContain(pointerBlock())
+    expect(readFileSync(join(withFiles, 'CLAUDE.md'), 'utf8')).toBe(claude)
+
+    const empty = tempProject()
+    await runInit(empty, ['--agents', 'claude-code'])
+    expect(readFileSync(join(empty, 'AGENTS.md'), 'utf8')).toContain(pointerBlock())
+    expect(existsSync(join(empty, 'CLAUDE.md'))).toBe(false)
+    expect(existsSync(join(empty, 'agent-qa-knowledge', 'CLAUDE.md'))).toBe(false)
   })
 })
-
-const FLAG = WRITE_AGENT_INSTRUCTIONS_FLAG
-const POINTER = {
-  descriptor: AGENT_QA_INIT_MARKDOWN_BLOCK,
-  body: pointerBody(),
-  target: 'AGENTS.md',
-}
-const MARKERS = managedBlockMarkers(AGENT_QA_INIT_MARKDOWN_BLOCK)
 
 function outcomeRecorder(): { outcomes: string[]; hooks: InitCommandHooks } {
   const outcomes: string[] = []
@@ -282,202 +280,6 @@ function outcomeRecorder(): { outcomes: string[]; hooks: InitCommandHooks } {
     hooks: { onComplete: (results) => outcomes.push(...results.map((result) => `${result.outcome} ${result.path}`)) },
   }
 }
-
-// Every entry under the project, with each file's inode and bytes and each link's target.
-function snapshot(root: string): Record<string, string> {
-  const entries: Record<string, string> = {}
-  const walk = (directory: string): void => {
-    for (const name of readdirSync(directory).sort()) {
-      const path = join(directory, name)
-      const stat = lstatSync(path)
-      const key = relative(root, path)
-      if (stat.isSymbolicLink()) entries[key] = `link ${readlinkSync(path)}`
-      else if (stat.isDirectory()) {
-        entries[key] = 'directory'
-        walk(path)
-      } else entries[key] = `file ${stat.ino} ${readFileSync(path).toString('base64')}`
-    }
-  }
-  walk(root)
-  return entries
-}
-
-describe('INIT-ROOT-OPT-IN: --write-agent-instructions writes the root AGENTS.md block only', () => {
-  it('creates the project-root AGENTS.md holding only the block when it is absent', async () => {
-    const dir = tempProject()
-    const { outcomes, hooks } = outcomeRecorder()
-    await runInit(dir, [FLAG], hooks)
-
-    expect(existsSync(join(dir, 'AGENTS.md'))).toBe(true)
-    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(`${pointerBlock()}\n`)
-    expect(outcomes).toContain(`created ${join(dir, 'AGENTS.md')}`)
-    expect(readdirSync(dir).filter((name) => /^(agents|claude)/i.test(name))).toEqual(['AGENTS.md'])
-    expect(stdout()).not.toContain(pointerBlock())
-  })
-
-  it('keeps every outside byte and CLAUDE.md exact across a fresh and a forced application', async () => {
-    const dir = tempProject()
-    const user = '\uFEFF# Team rules ✓\r\n\r\nUse pnpm. 日本語 👩\u200D👩\u200D👧\r\nno final newline'
-    const claude = `# Claude rules\n${MARKERS.start}\nnot agent-qa's\n${MARKERS.end}\n`
-    writeFileSync(join(dir, 'AGENTS.md'), user)
-    writeFileSync(join(dir, 'CLAUDE.md'), claude)
-
-    await runInit(dir, [FLAG])
-    const once = readFileSync(join(dir, 'AGENTS.md'), 'utf8')
-    expect(once).toBe(composeManagedBlock(user, POINTER))
-    expect(once.startsWith(user)).toBe(true)
-    expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe(claude)
-
-    const { outcomes, hooks } = outcomeRecorder()
-    await runInit(dir, ['--force', FLAG], hooks)
-    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(once)
-    expect(outcomes).toContain(`preserved ${join(dir, 'AGENTS.md')}`)
-    expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe(claude)
-
-    const prefix = '# Rules\r\nkeep ✓\r\n\r\n'
-    const suffix = '\r\n\r\n## After\r\ntail'
-    writeFileSync(join(dir, 'AGENTS.md'), `${prefix}${MARKERS.start}\r\nstale line\r\n${MARKERS.end}${suffix}`)
-    await runInit(dir, ['--force', FLAG])
-    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(`${prefix}${pointerBlock()}${suffix}`)
-    expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe(claude)
-  })
-
-  it('is a flag of the live init command, as its manifest row says', () => {
-    const longs = createInitCommand().options.map((option) => option.long)
-    for (const flag of INIT_AGENT_INSTRUCTIONS_VERB.flags) expect(longs, flag).toContain(flag)
-  })
-
-  it('leaves the already-initialized refusal unchanged and writes nothing at the root', async () => {
-    const dir = tempProject()
-    await runInit(dir)
-    const before = snapshot(dir)
-    log.mockClear()
-
-    await runInit(dir, [FLAG])
-
-    expect(stdout()).toContain(`Project is already initialized at ${dir}. Use --force to rebuild it.`)
-    expect(snapshot(dir)).toEqual(before)
-  })
-})
-
-describe('INIT-PREFLIGHT-NO-WRITES: an unsafe root AGENTS.md refuses before any scaffold write', () => {
-  const agents = (dir: string): string => join(dir, 'AGENTS.md')
-  const cases: { name: string; arrange: (dir: string) => void; error: RegExp }[] = [
-    {
-      name: 'duplicate blocks',
-      arrange: (dir) => writeFileSync(agents(dir), `${MARKERS.start}\na\n${MARKERS.end}\n${MARKERS.start}\nb\n${MARKERS.end}\n`),
-      error: /Refusing malformed AGENTS\.md/,
-    },
-    {
-      name: 'an end marker before its start',
-      arrange: (dir) => writeFileSync(agents(dir), `user\n${MARKERS.end}\n${MARKERS.start}\n`),
-      error: /Refusing malformed AGENTS\.md/,
-    },
-    {
-      name: 'an indented marker line',
-      arrange: (dir) => writeFileSync(agents(dir), `user\n  ${MARKERS.start}\n`),
-      error: /Refusing malformed AGENTS\.md/,
-    },
-    {
-      name: 'a symbolic link',
-      arrange: (dir) => {
-        const victim = join(tempProject(), 'victim.md')
-        writeFileSync(victim, 'victim bytes\n')
-        symlinkSync(victim, agents(dir))
-      },
-      error: /symbolic link/,
-    },
-    {
-      name: 'a hard-linked file',
-      arrange: (dir) => {
-        mkdirSync(join(dir, 'docs'))
-        writeFileSync(join(dir, 'docs', 'shared.md'), 'shared inode\n')
-        linkSync(join(dir, 'docs', 'shared.md'), agents(dir))
-      },
-      error: /hard links/,
-    },
-    { name: 'a directory', arrange: (dir) => mkdirSync(agents(dir)), error: /directory/ },
-    {
-      name: 'non-UTF-8 bytes',
-      arrange: (dir) => writeFileSync(agents(dir), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a])),
-      error: /UTF-8/,
-    },
-    {
-      name: 'a held writer lock',
-      arrange: (dir) => {
-        writeFileSync(agents(dir), 'user\n')
-        writeFileSync(managedBlockLockPath(agents(dir)), 'another writer\n')
-      },
-      error: /lock .* already exists/,
-    },
-  ]
-
-  it.each(cases)('refuses $name with the project untouched', async ({ arrange, error }) => {
-    const dir = tempProject()
-    arrange(dir)
-    const before = snapshot(dir)
-
-    await expect(runInit(dir, [FLAG])).rejects.toThrow(error)
-
-    expect(snapshot(dir)).toEqual(before)
-  })
-})
-
-describe('the root block publishes after the scaffold and before the config marker', () => {
-  it('writes the .gitignore block first, AGENTS.md next to last and the config marker last', async () => {
-    const dir = tempProject()
-    const order: string[] = []
-    await runInit(dir, [FLAG], { afterWrite: (result) => order.push(relative(dir, result.path)) })
-
-    expect(order[0]).toBe('.gitignore')
-    expect(order.at(-2)).toBe('AGENTS.md')
-    expect(order.at(-1)).toBe('agent-qa.config.yaml')
-    expect(order.indexOf(join('agent-qa-knowledge', '.gitignore'))).toBeLessThan(order.indexOf(GUIDE))
-  })
-
-  it('stops before the config marker when the root publication fails, and says the project is not initialized', async () => {
-    const dir = tempProject()
-    const lock = managedBlockLockPath(join(dir, 'AGENTS.md'))
-    let armed = false
-    const run = runInit(dir, [FLAG], {
-      afterWrite: (result) => {
-        if (armed || !result.path.endsWith(GUIDE)) return
-        armed = true
-        writeFileSync(lock, 'another writer\n')
-      },
-    })
-
-    await expect(run).rejects.toThrow(/agent-qa\.config\.yaml was not written, so this project is not initialized/)
-    await expect(run).rejects.toMatchObject({ name: 'CliRefusal', exitCode: 2 })
-    expect(armed).toBe(true)
-    expect(existsSync(join(dir, 'agent-qa.config.yaml'))).toBe(false)
-    expect(existsSync(join(dir, 'AGENTS.md'))).toBe(false)
-    expect(readFileSync(lock, 'utf8')).toBe('another writer\n')
-
-    rmSync(lock)
-    await runInit(dir, [FLAG])
-    expect(existsSync(join(dir, 'agent-qa.config.yaml'))).toBe(true)
-    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(`${pointerBlock()}\n`)
-  })
-
-  it('re-reads the root file under the lock, so preflight cannot authorize bytes that changed', async () => {
-    const dir = tempProject()
-    writeFileSync(join(dir, 'AGENTS.md'), 'user rules\n')
-    const malformed = `user rules\n${MARKERS.start}\nhalf a block\n`
-    let armed = false
-    const run = runInit(dir, [FLAG], {
-      afterWrite: () => {
-        if (armed) return
-        armed = true
-        writeFileSync(join(dir, 'AGENTS.md'), malformed)
-      },
-    })
-
-    await expect(run).rejects.toThrow(/Refusing malformed AGENTS\.md/)
-    expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe(malformed)
-    expect(existsSync(join(dir, 'agent-qa.config.yaml'))).toBe(false)
-  })
-})
 
 describe('INIT-GUIDE-EXCLUDED: the guide a fresh init writes never becomes knowledge or policy', () => {
   it('indexes and serves nothing from a freshly initialized knowledge root, until the bytes sit on a policy rung', async () => {
@@ -497,5 +299,28 @@ describe('INIT-GUIDE-EXCLUDED: the guide a fresh init writes never becomes knowl
 
     writeFileSync(join(knowledgeRoot, 'policies', 'global.md'), readFileSync(join(dir, GUIDE)))
     expect(served()).toContain(heading)
+  })
+
+  it('serves the policy file init writes as an empty policy, one comment the policy ladder strips', async () => {
+    const dir = tempProject()
+    await runInit(dir)
+    const knowledgeRoot = join(dir, 'agent-qa-knowledge')
+    const policy = readFileSync(join(knowledgeRoot, 'policies', 'global.md'), 'utf8')
+    expect(policy).toContain('Always dismiss the cookie banner')
+
+    const brief = openKnowledgeReader({ knowledgeRoot, product: 'example-web' })
+      .getRunBrief({ tier: 'product', key: 'example-web' }, 4_000)
+    expect(JSON.stringify(brief)).not.toContain('Always dismiss the cookie banner')
+
+    writeFileSync(
+      join(knowledgeRoot, 'policies', 'global.md'),
+      `${policy}Always close the newsletter popup first\n`,
+    )
+    const served = JSON.stringify(
+      openKnowledgeReader({ knowledgeRoot, product: 'example-web' })
+        .getRunBrief({ tier: 'product', key: 'example-web' }, 4_000),
+    )
+    expect(served).toContain('Always close the newsletter popup first')
+    expect(served).not.toContain('Always dismiss the cookie banner')
   })
 })

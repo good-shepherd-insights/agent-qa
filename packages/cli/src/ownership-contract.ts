@@ -10,13 +10,14 @@ export const AGENT_QA_CLI_FORBIDDEN_RESPONSIBILITIES = [
   'none - surface is a composition root with full host/storage access per spec section 4',
 ] as const
 export const AGENT_QA_CLI_EXTERNAL_DEPENDENCIES = [
-  '@inquirer/checkbox',
+  '@clack/core',
+  '@clack/prompts',
   '@inquirer/input',
   '@inquirer/password',
-  '@inquirer/select',
   // Lives here because serving stdio owns the process; the projection package stays host-free.
   '@modelcontextprotocol/server',
   'ai',
+  'chalk',
   'commander',
   'jsonc-parser',
   'picocolors',

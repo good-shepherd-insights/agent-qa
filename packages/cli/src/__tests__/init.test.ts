@@ -24,7 +24,6 @@ vi.mock('../commands/init-filesystem.js', async () => {
     '.agent-qa/',
     '.agent-qa/auth-states/',
     'node_modules/',
-    'agent-qa.local.yaml',
     '.env',
     '.env.secrets.local',
   ]
@@ -77,26 +76,6 @@ vi.mock('../commands/install-browsers.js', () => ({
   runBrowserInstall: vi.fn(() => ({ ok: true, status: 0, stage: 'installer' })),
 }))
 
-vi.mock('@inquirer/select', () => ({
-  default: vi.fn(),
-}))
-
-vi.mock('@inquirer/input', () => ({
-  default: vi.fn(),
-}))
-
-vi.mock('@inquirer/checkbox', () => ({
-  default: vi.fn(),
-}))
-
-vi.mock('@inquirer/confirm', () => ({
-  default: vi.fn(),
-}))
-
-vi.mock('@inquirer/password', () => ({
-  default: vi.fn(),
-}))
-
 vi.mock('@vostride/agent-qa-core', () => ({
   writeAuth: vi.fn(() => Promise.resolve()),
   resolveAppiumExecutable: vi.fn(() => ({ command: 'appium', source: 'path' })),
@@ -105,19 +84,20 @@ vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_RUNTIME_DIR: '.agent-qa',
   getAgentQaVersion: vi.fn(() => '0.1.1'),
+  getAuthPath: vi.fn(() => '/tmp/test-home/.agent-qa/auth.json'),
+  listSavedCredentials: vi.fn(async () => []),
+  loadLLMAuthPlugins: vi.fn(async () => []),
+  resolveLLMAuth: vi.fn(async () => ({ kind: 'missing', required: true, message: '' })),
   compareSemverVersions: vi.fn(() => undefined),
   semverRangeFloor: vi.fn(() => undefined),
+  validSemverVersion: vi.fn(() => undefined),
 }))
 
 // Suppress console output in tests
 vi.spyOn(console, 'log').mockImplementation(() => {})
 
-import {
-  createInitCommand,
-  buildDefaultConfig,
-  getProviderChoices,
-  defaultModelForProvider,
-} from '../commands/init.js'
+import { parseInitPlatformList, type InitPlatformInput } from '../commands/scaffold-content.js'
+import { createInitCommand, buildDefaultConfig } from '../commands/init.js'
 import {
   preflightInitPlan,
   upsertManagedGitignoreBlock,
@@ -128,16 +108,15 @@ import {
 import { formatInstallBrowsersRetryCommand, runBrowserInstall } from '../commands/install-browsers.js'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
-import select from '@inquirer/select'
-import input from '@inquirer/input'
-import checkbox from '@inquirer/checkbox'
-import confirm from '@inquirer/confirm'
-import password from '@inquirer/password'
 import { getAgentQaVersion, resolveAppiumExecutable, writeAuth } from '@vostride/agent-qa-core'
-import { clearProviderRegistry, registerProvider, type ProviderDescriptor } from '@vostride/agent-qa-model'
+import { clearProviderRegistry, getProvider } from '@vostride/agent-qa-model'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { reportCliFailure } from '../cli-error-handler.js'
 import { CliRefusal } from '../composition/cli-refusal.js'
+import type { InitUi } from '../init-ui/init-ui.js'
+import { createPlainUi } from '../init-ui/plain-ui.js'
+import { defaultProjectIo } from '../commands/project-host.js'
+import { fakeRunner, runningAgentQa } from './project-fixtures.js'
 
 const mockWriteFileSync = vi.mocked(writeFileSync)
 const mockExistsSync = vi.mocked(existsSync)
@@ -146,11 +125,25 @@ const mockExecSync = vi.mocked(execSync)
 const mockExecFileSync = vi.mocked(execFileSync)
 const mockRunBrowserInstall = vi.mocked(runBrowserInstall)
 const mockFormatInstallBrowsersRetryCommand = vi.mocked(formatInstallBrowsersRetryCommand)
-const mockSelect = vi.mocked(select)
-const mockInput = vi.mocked(input)
-const mockCheckbox = vi.mocked(checkbox)
-const mockConfirm = vi.mocked(confirm)
-const mockPassword = vi.mocked(password)
+// The questions are answered here; every other line draws as plain stderr lines.
+const mockPlatform = vi.fn<InitUi['multiselect']>(async (q) => [...q.initialValues])
+const mockModel = vi.fn<InitUi['select']>(async (q) => q.initialValue)
+
+function terminalUi(): InitUi {
+  const plain = createPlainUi()
+  return {
+    ...plain,
+    multiselect: ((q) =>
+      q.message === 'What platform will you test?'
+        ? mockPlatform(q)
+        : plain.multiselect(q)) as InitUi['multiselect'],
+    select: mockModel as InitUi['select'],
+  }
+}
+
+function defaultModelOf(provider: string): string | undefined {
+  return getProvider(provider)?.defaultModel
+}
 const mockWriteAuth = vi.mocked(writeAuth)
 const mockGetAgentQaVersion = vi.mocked(getAgentQaVersion)
 const mockResolveAppiumExecutable = vi.mocked(resolveAppiumExecutable)
@@ -161,9 +154,13 @@ const mockUpsertManagedGitignoreBlock = vi.mocked(upsertManagedGitignoreBlock)
 const mockVerifyEffectiveGitignore = vi.mocked(verifyEffectiveGitignore)
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
-// No test starts a package manager: init declares the dependencies and runs no install.
+// No test starts a package manager or writes coding-agent files: init declares the dependencies,
+// runs no install and chooses no coding agent.
 function withoutInstall(args: readonly string[]): string[] {
-  return args.includes('--pm') || args.includes('--agent') ? [...args] : [...args, '--pm', 'none']
+  if (args.includes('--capabilities')) return [...args]
+  const pm = args.includes('--pm') ? [] : ['--pm', 'none']
+  const agents = args.includes('--agents') ? [] : ['--agents', 'none']
+  return [...args, ...pm, ...agents, '--no-dashboard']
 }
 
 async function runInit(
@@ -171,7 +168,13 @@ async function runInit(
   hooks: Parameters<typeof createInitCommand>[0] = {},
 ): Promise<void> {
   const parent = new Command()
-  const init = createInitCommand({ cwd: '/tmp/test-project', host: { env: {} }, ...hooks })
+  const { host, ...rest } = hooks
+  const init = createInitCommand({
+    cwd: '/tmp/test-project',
+    ui: terminalUi(),
+    ...rest,
+    host: { env: {}, run: fakeRunner(), ...runningAgentQa(defaultProjectIo), ...host },
+  })
   parent.exitOverride()
   init.exitOverride()
   parent.addCommand(init)
@@ -181,21 +184,31 @@ async function runInit(
 async function runInitUnderRootConfig(args: string[]): Promise<void> {
   const parent = new Command().enablePositionalOptions()
   parent.option('--config <path>', 'config file path', 'agent-qa.config.yaml')
-  const init = createInitCommand({ cwd: '/tmp/test-project', isTTY: true })
+  const init = createInitCommand({
+    cwd: '/tmp/test-project',
+    isTTY: true,
+    ui: terminalUi(),
+    host: { env: {}, run: fakeRunner(), ...runningAgentQa(defaultProjectIo) },
+  })
   parent.exitOverride()
   parent.addCommand(init)
   await parent.parseAsync(['node', 'test', ...args])
 }
 
 function expectNothingAskedOrWritten(): void {
-  expect(mockCheckbox).not.toHaveBeenCalled()
-  expect(mockSelect).not.toHaveBeenCalled()
-  expect(mockInput).not.toHaveBeenCalled()
+  expect(mockPlatform).not.toHaveBeenCalled()
+  expect(mockModel).not.toHaveBeenCalled()
   expect(mockPreflightInitPlan).not.toHaveBeenCalled()
   expect(mockWriteScaffoldFileAtomic).not.toHaveBeenCalled()
   expect(mockWriteConfigMarkerLast).not.toHaveBeenCalled()
   expect(mockUpsertManagedGitignoreBlock).not.toHaveBeenCalled()
   expect(mockWriteFileSync).not.toHaveBeenCalled()
+}
+
+function platformFlag(value: string): InitPlatformInput {
+  const parsed = parseInitPlatformList(value)
+  if ('refusal' in parsed) throw new Error(parsed.refusal)
+  return parsed.platform
 }
 
 function findWriteCallEndingWith(pathSuffix: string) {
@@ -204,8 +217,11 @@ function findWriteCallEndingWith(pathSuffix: string) {
   )
 }
 
+// init draws its human output on stderr; stdout stays free for documents.
 function consoleOutput(): string {
-  return stripVTControlCharacters(vi.mocked(console.log).mock.calls.flat().map(String).join('\n'))
+  return stripVTControlCharacters(
+    vi.mocked(process.stderr.write).mock.calls.map((call) => String(call[0])).join(''),
+  )
 }
 
 function warnOutput(): string {
@@ -231,6 +247,7 @@ describe('init command', () => {
     clearProviderRegistry()
     vi.spyOn(console, 'log').mockImplementation(() => {})
     vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     vi.clearAllMocks()
     mockExistsSync.mockReturnValue(false)
     mockReadFileSync.mockImplementation((path) => String(path).endsWith('package.json') ? '{"version":"0.1.1"}' : '')
@@ -380,41 +397,6 @@ describe('init command', () => {
     })
   })
 
-  it('provider choices include only current LLM providers', () => {
-    const values = getProviderChoices().map(choice => choice.value)
-
-    expect(values).toEqual([
-      'openai-compatible',
-      'anthropic-compatible',
-      'openai-subscription',
-      'anthropic-subscription',
-      'gemini',
-    ])
-    expect(values).not.toContain('anthropic')
-    expect(values).not.toContain('openai')
-    expect(values).not.toContain('google')
-    expect(values).not.toContain('authMethod')
-    expect(values).not.toContain('ollama')
-    expect(values).not.toContain('lmstudio')
-    expect(values).not.toContain('custom')
-  })
-
-  it('includes newly registered provider descriptors in init choices at call time', () => {
-    const descriptor: ProviderDescriptor = {
-      id: 'sixth-provider',
-      label: 'Sixth',
-      adapter: (_transport, _modelId) => ({}) as ReturnType<ProviderDescriptor['adapter']>,
-      needsBaseURL: true,
-      authModes: ['api-key'],
-      defaultModel: 'sixth-default',
-    }
-
-    registerProvider(descriptor)
-
-    expect(getProviderChoices()).toContainEqual({ value: 'sixth-provider', name: 'Sixth' })
-    expect(defaultModelForProvider('sixth-provider')).toBe('sixth-default')
-  })
-
   it('builds openai-compatible config with user-supplied baseURL and no inline apiKey', () => {
     const config = buildDefaultConfig(
       'web',
@@ -496,11 +478,11 @@ describe('init command', () => {
     expect(config).not.toHaveProperty('plugins')
   })
 
-  it.each(['web', 'android', 'ios', 'web+android', 'web+ios'] as const)(
+  it.each(['web', 'android', 'ios', 'web,android', 'web,ios'] as const)(
     'builds %s config with a mobile app state only for mobile platforms',
     (platform) => {
       const config = buildDefaultConfig(
-        platform,
+        platformFlag(platform),
         'anthropic-subscription',
         'claude-sonnet-4-6',
       ) as any
@@ -520,7 +502,7 @@ describe('init command', () => {
       expect(config.plugins).toEqual([
         { name: 'subscription', package: '@vostride/agent-qa-subscription-auth' },
       ])
-      if (platform === 'web' || platform === 'web+android' || platform === 'web+ios') {
+      if (platform === 'web' || platform === 'web,android' || platform === 'web,ios') {
         expect(config.services.accessibility).toEqual({
           enabled: true,
           standard: 'wcag2aa',
@@ -532,11 +514,11 @@ describe('init command', () => {
         expect(config.services).not.toHaveProperty('accessibility')
         expect(config.registry.targets).not.toHaveProperty('komazon-cart-total-bug')
       }
-      if (platform === 'web+android') {
+      if (platform === 'web,android') {
         expect(config.registry.targets).toHaveProperty('komazon')
         expect(config.registry.targets).toHaveProperty('example-android')
       }
-      if (platform === 'web+ios') {
+      if (platform === 'web,ios') {
         expect(config.registry.targets).toHaveProperty('komazon')
         expect(config.registry.targets).toHaveProperty('example-ios')
       }
@@ -544,11 +526,14 @@ describe('init command', () => {
     },
   )
 
-  it('rejects an invalid Commander platform before preflight or filesystem writes', async () => {
+  it('refuses an unknown platform with exit 2 before preflight or filesystem writes', async () => {
     await expect(runInit([
       '--platform',
       'bogus',
-    ])).rejects.toMatchObject({ code: 'commander.invalidArgument' })
+    ])).rejects.toMatchObject({
+      exitCode: 2,
+      message: '--platform takes web, android and ios, separated by commas.',
+    })
 
     expect(mockPreflightInitPlan).not.toHaveBeenCalled()
     expect(mockWriteScaffoldFileAtomic).not.toHaveBeenCalled()
@@ -641,58 +626,51 @@ describe('init command', () => {
     },
   )
 
-  it('prompts model as free text and does not collect first-party API keys during interactive init', async () => {
-    mockCheckbox.mockResolvedValueOnce(['web'])
-    mockSelect.mockResolvedValueOnce('anthropic-compatible')
-    mockInput
-      .mockResolvedValueOnce('claude-remote')
-      .mockResolvedValueOnce('https://anthropic-proxy.example/messages')
+  it('asks the platform and then the model, and collects no API key during interactive init', async () => {
+    mockPlatform.mockResolvedValueOnce(['web'])
+    mockModel.mockResolvedValueOnce({ kind: 'new', choice: 'anthropic' })
 
     await runInit([], { isTTY: true })
 
-    expect(mockCheckbox).toHaveBeenCalledTimes(1)
-    expect(mockCheckbox).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    expect(mockPlatform).toHaveBeenCalledTimes(1)
+    expect(mockPlatform).toHaveBeenNthCalledWith(1, expect.objectContaining({
       message: 'What platform will you test?',
-      choices: [
-        { value: 'web', name: 'Web', description: 'Test web apps with Playwright', checked: true },
-        { value: 'mobile', name: 'Mobile', description: 'Test Android or iOS apps with Appium', checked: false },
+      options: [
+        { value: 'web', label: 'Web', hint: 'Playwright' },
+        { value: 'mobile', label: 'Mobile', hint: 'Appium: Android and iOS' },
       ],
+      initialValues: ['web'],
       required: true,
     }))
-    expect(mockSelect).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      message: 'Which model connection?',
-      default: 'claude-code',
+    expect(mockModel).toHaveBeenCalledTimes(1)
+    expect(mockModel).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      message: 'Which model should agent-qa use?',
+      initialValue: { kind: 'new', choice: 'claude-code' },
     }))
-    expect(mockInput).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      message: 'Model:',
-      default: defaultModelForProvider('anthropic-compatible'),
-    }))
-    expect(mockInput).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      message: 'Base URL:',
-      default: 'https://api.anthropic.com/v1',
-    }))
-    expect(mockConfirm).not.toHaveBeenCalled()
-    expect(mockPassword).not.toHaveBeenCalled()
+    const modelQuestion = mockModel.mock.calls[0]![0]
+    expect(modelQuestion.sections[0]?.heading).toBe('Connect a new model')
+    expect(modelQuestion.sections[0]?.options[0]?.value).toBe(modelQuestion.initialValue)
+    expect(modelQuestion).not.toHaveProperty('maxItems')
     expect(mockWriteAuth).not.toHaveBeenCalled()
 
     const configCall = mockWriteFileSync.mock.calls.find(
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
     )
+    expect(configCall?.[1]).toContain('name: anthropic')
     expect(configCall?.[1]).toContain('provider: anthropic-compatible')
-    expect(configCall?.[1]).toContain('model: claude-remote')
-    expect(configCall?.[1]).toContain('baseURL: https://anthropic-proxy.example/messages')
+    expect(configCall?.[1]).toContain(`model: ${defaultModelOf('anthropic-compatible')}`)
+    expect(configCall?.[1]).toContain('baseURL: https://api.anthropic.com/v1')
     expect(configCall?.[1]).not.toContain('apiKey')
   })
 
   it('scaffolds both mobile runtimes when Mobile is selected', async () => {
-    mockCheckbox.mockResolvedValueOnce(['web', 'mobile'])
+    mockPlatform.mockResolvedValueOnce(['web', 'mobile'])
 
     await runInit(['--llm', 'codex'], { isTTY: true })
 
-    expect(mockCheckbox).toHaveBeenCalledTimes(1)
-    const platformValidate = mockCheckbox.mock.calls[0]?.[0].validate
-    expect(platformValidate?.([])).toBe('Select at least one platform.')
-    expect(mockCheckbox).not.toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPlatform).toHaveBeenCalledTimes(1)
+    expect(mockPlatform.mock.calls[0]?.[0].required).toBe(true)
+    expect(mockPlatform).not.toHaveBeenCalledWith(expect.objectContaining({
       message: 'Which mobile platforms will you test?',
     }))
 
@@ -705,7 +683,7 @@ describe('init command', () => {
   })
 
   it('writes OpenAI subscription config during interactive init', async () => {
-    mockCheckbox.mockResolvedValueOnce(['web'])
+    mockPlatform.mockResolvedValueOnce(['web'])
 
     await runInit(['--llm', 'codex'], { isTTY: true })
 
@@ -718,28 +696,21 @@ describe('init command', () => {
     expect(configCall?.[1]).toContain('llm: codex')
     expect(configCall?.[1]).toContain('package: "@vostride/agent-qa-subscription-auth"')
     expect(configCall?.[1]).not.toContain('provider: anthropic-subscription')
-    expect(mockInput).not.toHaveBeenCalled()
+    expect(mockModel).not.toHaveBeenCalled()
     expect(mockWriteAuth).not.toHaveBeenCalled()
   })
 
-  it('keeps compatible Gemini init free of subscription auth plugin', async () => {
-    mockCheckbox.mockResolvedValueOnce(['web'])
-    mockSelect.mockResolvedValueOnce('gemini')
-    mockInput.mockResolvedValueOnce('gemini-3-flash-preview')
+  it('keeps a Gemini init free of the subscription auth plugin', async () => {
+    mockPlatform.mockResolvedValueOnce(['web'])
+    mockModel.mockResolvedValueOnce({ kind: 'new', choice: 'gemini' })
 
     await runInit([], { isTTY: true })
-
-    expect(mockInput).toHaveBeenCalledTimes(1)
-    expect(mockInput).toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Model:',
-      default: defaultModelForProvider('gemini'),
-    }))
 
     const configCall = mockWriteFileSync.mock.calls.find(
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
     )
     expect(configCall?.[1]).toContain('provider: gemini')
-    expect(configCall?.[1]).toContain('model: gemini-3-flash-preview')
+    expect(configCall?.[1]).toContain(`model: ${defaultModelOf('gemini')}`)
     expect(configCall?.[1]).not.toContain('plugins:')
     expect(configCall?.[1]).not.toContain('baseURL:')
     expect(configCall?.[1]).not.toContain('apiKey')
@@ -846,18 +817,6 @@ describe('init command', () => {
     expect(mockWriteFileSync.mock.calls.some((call) => (call[0] as string).endsWith('.env.secrets.local'))).toBe(true)
   })
 
-  it.each(['web', 'android', 'ios'] as const)(
-    'a %s init writes no agent-qa.local.yaml and prints no step to edit one',
-    async (platform) => {
-      await runInit(['--platform', platform])
-
-      expect(findWriteCallEndingWith('agent-qa.local.yaml')).toBeUndefined()
-      const plannedPaths = mockPreflightInitPlan.mock.calls[0]![0].map(plan => plan.path)
-      expect(plannedPaths).not.toContain('/tmp/test-project/agent-qa.local.yaml')
-      expect(consoleOutput()).not.toContain('Edit agent-qa.local.yaml')
-    },
-  )
-
   it('places a complete managed .gitignore block after existing entries', async () => {
     mockExistsSync.mockImplementation((p) => {
       if ((p as string).endsWith('.gitignore')) return true
@@ -876,7 +835,6 @@ describe('init command', () => {
     // Existing rules remain byte-preserved; the complete terminal block is authoritative.
     expect(content).toContain('.agent-qa/')
     expect(content).toContain('.agent-qa/auth-states/')
-    expect(content).toContain('agent-qa.local.yaml')
     expect(content).toContain('.env')
     expect(content).toContain('.env.secrets.local')
     // The original node_modules rule remains and is repeated in the managed block.
@@ -910,9 +868,6 @@ describe('init command', () => {
   })
 
   describe('an initialized project', () => {
-    const alreadyInitialized =
-      'Project is already initialized at /tmp/test-project. Use --force to rebuild it.'
-
     beforeEach(() => {
       process.exitCode = undefined
       vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -925,41 +880,13 @@ describe('init command', () => {
       process.exitCode = undefined
     })
 
-    it('an initialized project asks nothing and writes nothing without --force', async () => {
-      await runInit([], { isTTY: true })
-
-      expect(mockCheckbox).not.toHaveBeenCalled()
-      expect(mockSelect).not.toHaveBeenCalled()
-      expect(mockInput).not.toHaveBeenCalled()
-      expect(mockWriteConfigMarkerLast).not.toHaveBeenCalled()
-      expect(findWriteCallEndingWith('agent-qa.config.yaml')).toBeUndefined()
-      expect(consoleOutput()).toContain(alreadyInitialized)
-      expect(consoleOutput()).toContain('Preserved:\n    • agent-qa.config.yaml')
-      expect(process.exitCode).toBeUndefined()
-    })
-
-    it('a flag init would refuse is not checked on an initialized project', async () => {
-      await runInit([
-        '--llm',
-        'codex',
-        '--base-url',
-        'https://x.test/v1',
-      ])
-
-      expect(consoleOutput()).toContain(alreadyInitialized)
-      expect(vi.mocked(console.error)).not.toHaveBeenCalled()
-      expect(process.exitCode).toBeUndefined()
-    })
-
     it('with --force an initialized project is asked the questions and rebuilt', async () => {
-      mockCheckbox.mockResolvedValueOnce(['web'])
-      mockSelect.mockResolvedValueOnce('gemini')
-      mockInput.mockResolvedValueOnce('gemini-3-flash-preview')
+      mockPlatform.mockResolvedValueOnce(['web'])
+      mockModel.mockResolvedValueOnce({ kind: 'new', choice: 'gemini' })
 
       await runInit(['--force'], { isTTY: true })
 
-      expect(mockCheckbox).toHaveBeenCalledTimes(1)
-      expect(consoleOutput()).not.toContain(alreadyInitialized)
+      expect(mockPlatform).toHaveBeenCalledTimes(1)
       expect(findWriteCallEndingWith(join('/tmp/test-project', 'agent-qa.config.yaml')))
         .toBeDefined()
     })
@@ -969,7 +896,6 @@ describe('init command', () => {
 
       expect(findWriteCallEndingWith(join('/tmp/test-project/pkg', 'agent-qa.config.yaml')))
         .toBeDefined()
-      expect(consoleOutput()).not.toContain('already initialized')
     })
   })
 
@@ -1013,9 +939,8 @@ describe('init command', () => {
     })
 
     function expectNothingAskedOrWritten(): void {
-      expect(mockCheckbox).not.toHaveBeenCalled()
-      expect(mockSelect).not.toHaveBeenCalled()
-      expect(mockInput).not.toHaveBeenCalled()
+      expect(mockPlatform).not.toHaveBeenCalled()
+      expect(mockModel).not.toHaveBeenCalled()
       expect(mockPreflightInitPlan).not.toHaveBeenCalled()
       expect(mockWriteFileSync).not.toHaveBeenCalled()
     }
@@ -1058,19 +983,6 @@ describe('init command', () => {
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
     )
     expect(configCall).toBeDefined()
-  })
-
-  it('init --force does not rewrite a leftover agent-qa.local.yaml', async () => {
-    mockExistsSync.mockImplementation((p) => {
-      if ((p as string).endsWith('agent-qa.config.yaml')) return true
-      if ((p as string).endsWith('agent-qa.local.yaml')) return true
-      return false
-    })
-
-    await runInit(['--platform', 'web', '--force'])
-
-    expect(findWriteCallEndingWith('agent-qa.local.yaml')).toBeUndefined()
-    expect(findWriteCallEndingWith('agent-qa.config.yaml')).toBeDefined()
   })
 
   describe('credential-file scaffold policy', () => {
@@ -1155,9 +1067,6 @@ describe('init command', () => {
         expect(paths.indexOf(envPath)).toBeLessThan(paths.indexOf(secretsPath))
         expect(outcomes.find(outcome => outcome.path === envPath)?.outcome).toBe('preserved')
         expect(outcomes.find(outcome => outcome.path === secretsPath)?.outcome).toBe('preserved')
-
-        const output = consoleOutput()
-        expect(output).toContain('Preserved:\n    • .env\n    • .env.secrets.local')
       })
     }
 
@@ -1196,14 +1105,18 @@ describe('init command', () => {
     })
   })
 
-  it('does not auto-install browser support for web projects', async () => {
-    await runInit(['--platform', 'web'])
+  it('installs Chromium for a web project through the host runner, not the bundled installer', async () => {
+    const run = fakeRunner()
+    await runInit(['--platform', 'web'], { host: { run } })
 
+    expect(run.calls.map((call) => call.args)).toContainEqual([
+      '/running/agent-qa/dist/cli.js',
+      'install-browsers',
+      '--chromium',
+    ])
     expect(mockRunBrowserInstall).not.toHaveBeenCalled()
     expect(mockExecSync).not.toHaveBeenCalledWith('npx playwright install chromium', { stdio: 'inherit' })
-    const output = consoleOutput()
-    expect(output).toContain('agent-qa install-browsers --chromium')
-    expect(output).not.toContain('Installing agent-qa browser support')
+    expect(consoleOutput()).toContain('Chromium installed')
   })
 
   it('does not auto-install Appium or drivers for Android projects', async () => {
@@ -1226,23 +1139,23 @@ describe('init command', () => {
     expect(output).not.toContain('agent-qa install-mobile-drivers --android')
   })
 
-  it('prints both web and mobile setup guidance for mixed projects', async () => {
-    await runInit(['--platform', 'web+android'])
+  it('a mixed project with --no-browsers lists the Chromium, mobile driver and run commands', async () => {
+    await runInit(['--platform', 'web,android', '--no-browsers'])
 
     const output = consoleOutput()
-    expect(output).toContain('agent-qa install-browsers --chromium')
-    expect(output).toContain('agent-qa install-mobile-drivers --all')
-    expect(output).toContain('npx agent-qa validate')
+    expect(output).toContain('npx agent-qa install-browsers --chromium')
+    expect(output).toContain('npx agent-qa install-mobile-drivers --all')
+    expect(output).toContain('npx agent-qa run suites/examples.suite.yaml')
   })
 
   it('prints all-drivers setup guidance when both mobile platforms are selected interactively', async () => {
-    mockCheckbox.mockResolvedValueOnce(['mobile'])
+    mockPlatform.mockResolvedValueOnce(['mobile'])
 
     await runInit(['--llm', 'codex'], { isTTY: true })
 
     const output = consoleOutput()
     expect(output).toContain('agent-qa install-mobile-drivers --all')
-    expect(mockCheckbox).not.toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPlatform).not.toHaveBeenCalledWith(expect.objectContaining({
       message: 'Which mobile platforms will you test?',
     }))
   })
@@ -1301,7 +1214,8 @@ describe('init command', () => {
     }
 
     it('fresh init creates exactly AGENTS.md, README.md, .gitignore, and policies/global.md under the root', async () => {
-      await runInit(['--platform', 'web'])
+      const onComplete = vi.fn()
+      await runInit(['--platform', 'web'], { onComplete })
 
       expect(knowledgeWritePaths()).toEqual([
         `${KNOWLEDGE_ROOT}/.gitignore`,
@@ -1314,11 +1228,15 @@ describe('init command', () => {
       const readmeCall = findWriteCallEndingWith('agent-qa-knowledge/README.md')
       expect(readmeCall?.[1]).not.toContain('thumbnail')
 
-      const output = consoleOutput()
-      expect(output).toContain('agent-qa-knowledge/README.md')
-      expect(output).toContain('agent-qa-knowledge/.gitignore')
-      expect(output).toContain('agent-qa-knowledge/policies/global.md')
-      expect(output).toContain('agent-qa-knowledge/AGENTS.md')
+      const created = (onComplete.mock.calls[0]![0] as { path: string; outcome: string }[])
+        .filter((result) => result.outcome === 'created')
+        .map((result) => result.path)
+      expect(created).toEqual(expect.arrayContaining([
+        `${KNOWLEDGE_ROOT}/README.md`,
+        `${KNOWLEDGE_ROOT}/.gitignore`,
+        `${KNOWLEDGE_ROOT}/policies/global.md`,
+        `${KNOWLEDGE_ROOT}/AGENTS.md`,
+      ]))
     })
 
     it('scaffolded knowledge .gitignore carries the spec lines plus the init-tool rule', async () => {
@@ -1418,6 +1336,12 @@ describe('init command', () => {
       expect(activeLines).toEqual([])
       // The example rule is taught INSIDE the comment.
       expect(segments[0]).toContain('Always dismiss the cookie banner before asserting page content')
+      expect(segments[0].split('<!--')).toHaveLength(2)
+      const prose = segments[0].replace(/\s+/g, ' ')
+      expect(prose).toContain('serves every active line here to the planner verbatim on every run')
+      expect(prose).toContain('strips HTML comments before serving')
+      expect(prose).toContain('A long file draws a warning; it is never cut.')
+      expect(prose).toContain('Comments cannot nest')
     })
 
     it('re-init never overwrites hand-edited README.md or policies/global.md, even with --force', async () => {
@@ -1555,8 +1479,9 @@ skills/.staging/
       if (value.endsWith('.gitignore')) return '# existing project rules\n'
       return 'user-owned sentinel\n'
     })
+    const onComplete = vi.fn()
 
-    await runInit(['--platform', 'web'])
+    await runInit(['--platform', 'web'], { onComplete })
 
     const generatedResults = mockWriteScaffoldFileAtomic.mock.results
       .map(result => result.value)
@@ -1578,13 +1503,10 @@ skills/.staging/
       },
     })
 
-    const output = consoleOutput()
-    expect(output).toContain('Preserved:')
-    expect(output).toContain('tests/examples/komazon-checkout.yaml')
-    const createdSection = output.match(
-      /  Created:\n([\s\S]*?)(?:\n  (?:Updated|Preserved|Next steps):|$)/,
-    )?.[1] ?? ''
-    expect(createdSection).not.toContain('tests/examples/komazon-checkout.yaml')
+    const reported = onComplete.mock.calls[0]![0] as { path: string; outcome: string }[]
+    expect(reported.find(result => result.path.endsWith('tests/examples/komazon-checkout.yaml')))
+      .toMatchObject({ outcome: 'preserved' })
+    expect(consoleOutput()).toContain('✓ package.json kept\n')
   })
 
   it('performs zero writes when any full-plan preflight destination fails', async () => {
@@ -1622,7 +1544,18 @@ skills/.staging/
 
     const runRealInit = async (dir: string, hooks: Hooks = {}): Promise<void> => {
       const parent = new Command()
-      parent.addCommand(actualInit.createInitCommand({ cwd: dir, ...hooks }))
+      parent.addCommand(
+        actualInit.createInitCommand({
+          cwd: dir,
+          host: {
+            homedir: `${dir}-home`,
+            env: {},
+            run: fakeRunner(),
+            ...runningAgentQa(defaultProjectIo),
+          },
+          ...hooks,
+        }),
+      )
       await parent.parseAsync([
         'node',
         'test',
@@ -1630,6 +1563,8 @@ skills/.staging/
         '--platform',
         'web',
         '--pm',
+        'none',
+        '--agents',
         'none',
       ])
     }
@@ -1674,12 +1609,14 @@ skills/.staging/
         const repository = createRepository()
         repositories.push(repository)
         let writes = 0
+        vi.mocked(process.stderr.write).mockClear()
         await expect(runRealInit(repository, {
           afterWrite: () => {
             writes += 1
             if (writes === boundary) throw new Error(`injected boundary ${boundary}`)
           },
-        })).rejects.toThrow(`injected boundary ${boundary}`)
+        })).rejects.toMatchObject({ name: 'CliRefusal', exitCode: 3 })
+        expect(consoleOutput()).toContain(`✗ injected boundary ${boundary}\n`)
 
         expect(actualFs.existsSync(join(repository, 'agent-qa.config.yaml'))).toBe(false)
         const completedBytes = snapshotFiles(repository)
@@ -1731,17 +1668,23 @@ skills/.staging/
         cwd: projectDir,
         stdio: 'pipe',
       })
-      actualChildProcess.execFileSync(process.execPath, [
+      const init = actualChildProcess.spawnSync(process.execPath, [
         join(bundleDir, 'cli.js'),
         'init',
         '--platform',
         'web',
         '--pm',
         'none',
+        '--no-browsers',
+        '--agents',
+        'none',
       ], {
         cwd: projectDir,
-        stdio: 'pipe',
+        encoding: 'utf8',
       })
+      // --pm none installs nothing, so validate waits for the install and init exits 0.
+      expect(init.status, `${init.stdout}${init.stderr}`).toBe(0)
+      expect(init.stderr).toContain('validate: install first (--pm none)')
 
       const cliManifest = JSON.parse(
         actualFs.readFileSync(join(cliRoot, 'package.json'), 'utf8'),
@@ -1759,8 +1702,9 @@ skills/.staging/
     }
   }, 60_000)
 
-  // Each arm runs the real `init`: a fresh directory, the same one again, and the `--agent` read.
-  it('emits one init member per scaffold, and none for the --agent read', async () => {
+  // Each arm runs the real `init`: a fresh directory, the same one again, and the
+  // `--capabilities` read.
+  it('emits one init member per scaffold, and none for the --capabilities read', async () => {
     vi.resetModules()
     vi.doUnmock('node:fs')
     vi.doUnmock('node:child_process')
@@ -1791,7 +1735,20 @@ skills/.staging/
     actualFs.mkdirSync(join(dir, '.git'))
     const runRealInit = async (args: string[]): Promise<void> => {
       const parent = new Command()
-      parent.addCommand(actualInit.createInitCommand({ cwd: dir, composeAnalytics }))
+      parent.addCommand(
+        actualInit.createInitCommand({
+          cwd: dir,
+          composeAnalytics,
+          chromium: () => ({ found: true, path: '/fake/chromium' }),
+          latestVersion: async () => ({ source: 'none' }),
+          host: {
+            homedir: `${dir}-home`,
+            env: {},
+            run: fakeRunner(),
+            ...runningAgentQa(defaultProjectIo),
+          },
+        }),
+      )
       await parent.parseAsync(['node', 'test', 'init', ...withoutInstall(args)])
     }
 
@@ -1806,26 +1763,25 @@ skills/.staging/
       })
       expect(first[0]?.properties.created_file_count).toBeGreaterThan(0)
 
-      // The same directory again. `init` answers "already initialized, use --force" and returns —
-      // and that IS an init outcome, so it reports one: `unchanged`, nothing created. A member that
-      // only fired on the write path would count first-time scaffolds and silently drop every
-      // re-run, which is the shape of a usage number that flatters itself.
+      // The same directory again: the re-run validates the project and writes nothing, and reports
+      // its own mode with an unchanged outcome and nothing created.
       sent.length = 0
-      await runRealInit(['--platform', 'web'])
+      await runRealInit([])
       const second = sent.filter((event) => event.name === 'agent-qa.init.completed')
       expect(second).toHaveLength(1)
       expect(second[0]?.properties).toMatchObject({
+        init_mode: 'rerun',
         outcome: 'unchanged',
         created_file_count: 0,
       })
 
-      // `--agent` is a read. It returns before the scaffold exists, so there is no init to report —
-      // and counting one would make every manifest read a coding agent performs look like a project
-      // being initialised.
+      // `--capabilities` is a read. It returns before the scaffold exists, so there is no init to
+      // report — and counting one would make every manifest read a coding agent performs look like a
+      // project being initialised.
       sent.length = 0
       const log = vi.spyOn(console, 'log').mockImplementation(() => {})
       try {
-        await runRealInit(['--agent'])
+        await runRealInit(['--capabilities'])
       } finally {
         log.mockRestore()
       }
@@ -1852,8 +1808,20 @@ skills/.staging/
     actualFs.mkdirSync(join(dir, '.git'))
     try {
       const parent = new Command()
-      parent.addCommand(actualInit.createInitCommand({ cwd: dir }))
-      await parent.parseAsync(['node', 'test', 'init', '--platform', 'web', '--pm', 'none'])
+      parent.addCommand(
+        actualInit.createInitCommand({
+          cwd: dir,
+          host: {
+            homedir: `${dir}-home`,
+            env: {},
+            run: fakeRunner(),
+            ...runningAgentQa(defaultProjectIo),
+          },
+        }),
+      )
+      await parent.parseAsync(
+        ['node', 'test', 'init', '--platform', 'web', '--pm', 'none', '--agents', 'none'],
+      )
 
       const readme = actualFs.readFileSync(join(dir, 'agent-qa-knowledge', 'README.md'), 'utf8')
       const guide = actualFs.readFileSync(join(dir, 'agent-qa-knowledge', 'AGENTS.md'), 'utf8')

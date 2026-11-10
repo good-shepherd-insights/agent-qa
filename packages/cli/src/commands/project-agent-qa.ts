@@ -1,4 +1,4 @@
-import { dirname, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import pc from 'picocolors'
 import { compareSemverVersions, isPathInsideDir } from '@vostride/agent-qa-core'
 import { CliRefusal, PromptCancelled } from '../composition/cli-refusal.js'
@@ -8,6 +8,8 @@ import type { ProjectHost, ProjectIo } from './project-host.js'
 import { nearestInstalledPackage, type ProjectRange } from './project-range.js'
 
 export const HANDED_OFF_ENV = 'AGENT_QA_HANDED_OFF'
+// The version an upgrade moved from, set for the copy it hands the run to.
+export const UPGRADED_FROM_ENV = 'AGENT_QA_UPGRADED_FROM'
 
 const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u
 
@@ -34,6 +36,11 @@ function parsed(text: string | undefined): JsonObject | undefined {
   }
 }
 
+function binOf(pkg: JsonObject): string | undefined {
+  const binPath = typeof pkg.bin === 'string' ? pkg.bin : asObject(pkg.bin)?.['agent-qa']
+  return typeof binPath === 'string' && binPath !== '' ? binPath : undefined
+}
+
 // A copy counts only when it is named agent-qa, has an exact version and its bin stays inside it.
 export async function findProjectAgentQa(
   range: ProjectRange,
@@ -46,8 +53,8 @@ export async function findProjectAgentQa(
   if (pkg?.name !== 'agent-qa') return undefined
   const version = pkg.version
   if (typeof version !== 'string' || !EXACT_SEMVER.test(version)) return undefined
-  const binPath = typeof pkg.bin === 'string' ? pkg.bin : asObject(pkg.bin)?.['agent-qa']
-  if (typeof binPath !== 'string' || binPath === '') return undefined
+  const binPath = binOf(pkg)
+  if (binPath === undefined) return undefined
   const dir = dirname(manifest)
   const realDir = await io.realpath(dir)
   const bin = await io.realpath(resolve(dir, binPath))
@@ -59,17 +66,23 @@ export async function runAsProjectAgentQa(
   copy: ProjectAgentQa,
   host: ProjectHost,
   line: string,
+  print: (line: string) => void = (text) => console.log(text),
+  onHandOff?: () => void,
+  options?: { args?: readonly string[]; env?: Record<string, string> },
 ): Promise<void> {
-  console.log(line)
-  const result = await host.run(host.execPath, [copy.bin, ...host.argv], {
+  print(line)
+  const result = await host.run(host.execPath, [copy.bin, ...(options?.args ?? host.argv)], {
     cwd: host.cwd,
-    env: { ...host.env, [HANDED_OFF_ENV]: '1' },
+    env: { ...host.env, ...options?.env, [HANDED_OFF_ENV]: '1' },
     stdio: 'inherit',
   })
-  if (wasCancelled(result)) throw new CliRefusal([], 130)
   if (result.missing === true) {
     throw new CliRefusal([pc.red(`${host.execPath} was not found to run ${copy.bin}.`)], 1)
   }
+  // The child ran, so what it printed and how it exited stand for this run: a Ctrl-C this process
+  // also heard counts only when it ended the child.
+  onHandOff?.()
+  if (result.signal === 'SIGINT' || result.code === 130) throw new CliRefusal([], 130)
   if (result.code === 0) return
   throw new CliRefusal([], result.code ?? 1)
 }
@@ -104,8 +117,11 @@ export async function handOffToProjectAgentQa(input: {
   runningVersion: string
   pm: string | undefined
   install: () => Promise<boolean>
+  print?: (line: string) => void
+  onHandOff?: () => void
 }): Promise<boolean> {
   const { host, range, packageJson, runningVersion } = input
+  const print = input.print ?? ((line: string) => console.log(line))
   if ((host.env[HANDED_OFF_ENV] ?? '') !== '') return false
   const fromDir = packageJson.text === undefined ? range.start : dirname(packageJson.path)
   const newerCopy = async (): Promise<ProjectAgentQa | undefined> => {
@@ -118,7 +134,7 @@ export async function handOffToProjectAgentQa(input: {
     const declared = declaredAgentQaVersion(packageJson.text)
     if (declared === undefined || !isNewer(declared, runningVersion)) return false
     if (!(await input.install())) {
-      console.log(
+      print(
         `The project's agent-qa ${declared} is not installed, so this one (${runningVersion}) ` +
           'sets up the folder.',
       )
@@ -127,13 +143,19 @@ export async function handOffToProjectAgentQa(input: {
     copy = await newerCopy()
     if (copy === undefined) return false
   }
-  await runAsProjectAgentQa(copy, host, handOffLine(copy, range, runningVersion))
+  await runAsProjectAgentQa(
+    copy,
+    host,
+    handOffLine(copy, range, runningVersion),
+    print,
+    input.onHandOff,
+  )
   return true
 }
 
 export interface StepRun {
   via: 'in-process' | 'project' | 'running'
-  ranBy: string
+  version: string
   code: number
   output: string
 }
@@ -152,13 +174,12 @@ export async function runAgentQaStep(
   const { host, range, fromDir, runningVersion } = ctx
   const copy = await findProjectAgentQa(range, fromDir, host.io)
   if (copy === undefined) {
-    const ranBy = `this agent-qa ${runningVersion}; the project has none installed`
-    return { via: 'running', ranBy, ...(await ctx.inProcess(args)) }
+    return { via: 'running', version: runningVersion, ...(await ctx.inProcess(args)) }
   }
   if (copy.realDir === (await host.io.realpath(host.runningPackageDir))) {
     return {
       via: 'in-process',
-      ranBy: `this agent-qa ${runningVersion}`,
+      version: runningVersion,
       ...(await ctx.inProcess(args)),
     }
   }
@@ -172,8 +193,37 @@ export async function runAgentQaStep(
     result.missing === true ? `${host.execPath} was not found to run ${copy.bin}.\n` : result.output
   return {
     via: 'project',
-    ranBy: `the project's agent-qa ${copy.version}`,
+    version: copy.version,
     code: result.code ?? 1,
     output,
   }
+}
+
+// Read from the running package's package.json, the way a project copy's bin is read.
+export function runningAgentQaBin(host: ProjectHost): { bin: string } | { refusal: string } {
+  const manifest = join(host.runningPackageDir, 'package.json')
+  const pkg = parsed(host.io.readText(manifest))
+  const binPath = pkg === undefined ? undefined : binOf(pkg)
+  if (binPath === undefined) return { refusal: `This agent-qa's bin is not named in ${manifest}.` }
+  return { bin: resolve(host.runningPackageDir, binPath) }
+}
+
+// The running agent-qa's own bin as a captured child, so a step never prints past the rail.
+export async function runRunningAgentQa(
+  args: readonly string[],
+  host: ProjectHost,
+): Promise<{ code: number; output: string }> {
+  const running = runningAgentQaBin(host)
+  if ('refusal' in running) return { code: 1, output: `${running.refusal}\n` }
+  const { bin } = running
+  const result = await host.run(host.execPath, [bin, ...args], {
+    cwd: host.cwd,
+    env: { ...host.env, [HANDED_OFF_ENV]: '1' },
+    stdio: 'capture',
+  })
+  if (wasCancelled(result)) throw new PromptCancelled()
+  if (result.missing === true) {
+    return { code: 1, output: `${host.execPath} was not found to run ${bin}.\n` }
+  }
+  return { code: result.code ?? 1, output: result.output }
 }

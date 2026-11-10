@@ -35,10 +35,7 @@ import {
   typedVerbs,
 } from '../../capability-catalog/chat-discovery.js'
 import { loadCapabilityCatalog } from '../../capability-catalog/loader.js'
-import {
-  DEDICATED_READ_VERBS,
-  INIT_AGENT_INSTRUCTIONS_VERB,
-} from '../../capability-catalog/manifest.js'
+import { DEDICATED_READ_VERBS } from '../../capability-catalog/manifest.js'
 import { buildKnowledgeReadme } from '../../commands/init.js'
 import {
   AGENT_QUESTION_MAP,
@@ -272,7 +269,7 @@ describe('no second list of what chat understands', () => {
       'the sweep no longer recognises a planted directive listing',
     ).toBeGreaterThanOrEqual(2)
     // …and it must NOT fire on these two path shapes, which an innocent file holds.
-    const paths = "import { X } from '../model-defaults.js'\nconst u = 'https://iana.org/help/x'"
+    const paths = "import { X } from '../model-profile.js'\nconst u = 'https://iana.org/help/x'"
     expect(
       forms.filter((form) => namesDirectiveForm(paths, form)),
       'the sweep reads path segments as directive forms again',
@@ -755,12 +752,6 @@ function manifestFindings(program: Command = createAgentQaProgram()): readonly s
     const longs = sorted(live.options.flatMap((option) => (option.long === undefined ? [] : [option.long])))
     if (JSON.stringify(longs) !== JSON.stringify(sorted(entry.flags))) {
       findings.push(`manifest verb "${entry.verb}" lists ${sorted(entry.flags).join(' ')}, the live command has ${longs.join(' ')}`)
-    }
-  }
-  const init = find(INIT_AGENT_INSTRUCTIONS_VERB.verb)
-  for (const flag of INIT_AGENT_INSTRUCTIONS_VERB.flags) {
-    if (init?.options.some((option) => option.long === flag) !== true) {
-      findings.push(`manifest init flag ${flag} is not an option of the live init command`)
     }
   }
 
@@ -1434,7 +1425,7 @@ describe('agent guidance never offers init --force', () => {
     })
     expect(initForceFindings([{
       name: 'planted',
-      body: ['Run `npx agent-qa init` once.', '', '```sh', 'npx agent-qa init --agent', '```'].join('\n'),
+      body: ['Run `npx agent-qa init` once.', '', '```sh', 'npx agent-qa init --capabilities', '```'].join('\n'),
     }])).toEqual({ scanned: 5, findings: [] })
     expect(initForceFindings([])).toEqual({ scanned: 0, findings: [] })
   })

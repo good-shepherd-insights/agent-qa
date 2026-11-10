@@ -12,7 +12,12 @@ import { printRunText } from '@vostride/agent-qa-core/run-text-output'
 import type { AgentQaConfig, AndroidHere, AuthStateMetadata, BrowserEngine, DevicePlace, DeviceTarget, IOSHere, MemberLogScope, NormalizedAuthStateUse, ResolvedAuthStateForRun, ResolvedAuthStatePaths, ResolvedMobileDevice, ResolvedMobileRunConfig, RemoteConnectionFields, ResolvedWorkspacePaths, RunAttributes, RunAttributeRunner, RunAttributeTrigger, SelectWebPlaceResult, WebPlace, WorkspaceFileKind, WorkspaceFileRecord } from '@vostride/agent-qa-core'
 import { createModel, createTokenAccounting, resolveCapabilities, resolveVisionConfig, resolveVisionGate, visionFromConfig } from '@vostride/agent-qa-model'
 import { resolveTarget, type ResolvedTarget } from '../targets.js'
-import { resolveLLMModels, resolveModelAuth, toModelProfileAndAuth } from '../llm-utils.js'
+import {
+  NoModelConfiguredError,
+  resolveLLMModels,
+  resolveModelAuth,
+  toModelProfileAndAuth,
+} from '../llm-utils.js'
 import { formatInstallBrowsersRetryCommand, type BrowserInstallSelection } from './install-browsers.js'
 import type { ParsedTestBinding, TestDefinition, ParseError, SuiteDefinition, SuiteResult, RunSuiteConfig } from '@vostride/agent-qa-core'
 import {
@@ -114,7 +119,8 @@ import { createShutdownController } from './shutdown-controller.js'
 import { rememberPluginRemoteRefusals, webRefusalMemory } from './plugin-remote-refusals.js'
 import { buildDirectRunMembers } from './direct-run-members.js'
 import { resolveRecordingSetting, resolveRecordingStagingDir } from './recording-setting.js'
-import { printAgentQaUpdateNoticeIfNeeded, shouldPrintAgentQaUpdateNotice, type AgentQaUpdateNoticeContext } from '../version-notice.js'
+import { resolveIsCI } from '../ci-env.js'
+import { showUpdateNoticeBeforeExit, type UpdateNotice } from '../update-notice-gate.js'
 
 const RUNTIME_ARTIFACTS_DIR = DEFAULT_AGENT_QA_ARTIFACTS_DIR || '.agent-qa/artifacts'
 const RUNTIME_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
@@ -241,19 +247,6 @@ function cancelGraceMs(): number {
   return Number(process.env.AGENT_QA_CANCEL_GRACE_MS ?? 3000)
 }
 
-// Mirrors safety-local's CI marker set inline, so the CLI takes no dependency just to read env.
-const CI_VENDOR_VARS = [
-  'CI', 'GITHUB_ACTIONS', 'GITLAB_CI', 'CIRCLECI', 'TRAVIS', 'APPVEYOR', 'BUILDKITE',
-  'DRONE', 'JENKINS_URL', 'HUDSON_URL', 'BITBUCKET_BUILD_NUMBER', 'TEAMCITY_VERSION',
-] as const
-
-function resolveIsCI(env: NodeJS.ProcessEnv = process.env): boolean {
-  return CI_VENDOR_VARS.some((name) => {
-    const value = env[name]
-    return value !== undefined && value !== '' && value.toLowerCase() !== 'false' && value !== '0'
-  })
-}
-
 async function buildActionCacheContext(params: {
   cacheDir: string
   disableCache: boolean
@@ -375,7 +368,7 @@ async function deviceWhere(
   return { name, platform, here: finder.found.description }
 }
 
-function placeText(place: DevicePlaceView): string {
+export function placeText(place: DevicePlaceView): string {
   if ('here' in place) return `here: ${place.here}`
   if ('remote' in place) {
     const { name, plugin, protocol, url } = place.remote
@@ -1338,15 +1331,6 @@ export function closeOwnRowAtForcedExit(record: RunRecord): void {
   }
 }
 
-async function maybePrintPostRunUpdateNotice(context: AgentQaUpdateNoticeContext): Promise<void> {
-  try {
-    if (!shouldPrintAgentQaUpdateNotice(context)) return
-    await printAgentQaUpdateNoticeIfNeeded(context)
-  } catch {
-    // Update notices are best-effort and must not affect run outcomes.
-  }
-}
-
 // Lines rather than writes, so a door with no terminal can carry the report elsewhere.
 function formatParseErrorLines(errors: ParseError[]): string[] {
   const lines: string[] = []
@@ -1489,6 +1473,20 @@ function buildHooksArtifact(hooks?: Map<string, HookDefinition>): Array<{ id: st
     runtime: (hook as any).runtime,
     sourcePath: (hook as any).path ?? (hook as any).sourcePath,
   }))
+}
+
+// A project whose model is set up later is refused with exit 2, before any test starts.
+function resolveRunModels(
+  config: Parameters<typeof resolveLLMModels>[0],
+): ReturnType<typeof resolveLLMModels> {
+  try {
+    return resolveLLMModels(config)
+  } catch (err) {
+    if (err instanceof NoModelConfiguredError) {
+      throw new CliRunInputError([pc.red(err.message)], 2, { cause: err })
+    }
+    throw err
+  }
 }
 
 function secretsRefusal(err: DeclaredSecretsUnavailableError): CliRunInputError {
@@ -3004,6 +3002,8 @@ export async function produceSuiteRunMembers(
     throw new Error('This suite run has no secrets redactor; its records cannot be masked, so it was not started.')
   }
   const suiteRunMask: MaskFn = (text) => suiteRunSecretRedactor.redactString(text)
+  // Up front, so a project with no model is refused before any suite is prepared.
+  resolveRunModels(config)
   const hooksContext = input.hooksContext
   const analytics = input.analytics
   const parsedSuiteDefinitions = input.preflight.definitions
@@ -3404,7 +3404,7 @@ export async function produceSuiteRunMembers(
     }
 
     // Resolve LLM models
-    const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveLLMModels(config)
+    const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveRunModels(config)
     const resolvedAuth = await resolveModelAuth(configName, plannerCfg, configFilePath)
     const { profile: plannerProfile, auth: plannerAuth } = toModelProfileAndAuth(plannerCfg, resolvedAuth)
     const { profile: verifierProfile, auth: verifierAuth } = toModelProfileAndAuth(verifierCfg, resolvedAuth)
@@ -4272,6 +4272,8 @@ export async function produceDirectRunMembers(
   const memberSnapshots = createRunArtifactSnapshotChannel()
   const directRunProduct = input.product
   const singleRunMask: MaskFn = (text) => runtimeSecrets.secretRedactor.redactString(text)
+  // Up front, so a project with no model is refused before any member starts.
+  resolveRunModels(config)
 
   const directRemotes = selectDirectRemotes(config, configDir, filtered, opts.browser)
   const directDevicePlaces = placeDirectDevices(config, configDir, filtered, opts.device)
@@ -4502,7 +4504,7 @@ export async function produceDirectRunMembers(
     })
 
     const mergedForLLM = { registry: (config as any).registry, use: (testMergedConfig as any).use ?? (config as any).use }
-    const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveLLMModels(mergedForLLM)
+    const { planner: plannerCfg, verifier: verifierCfg, configName } = resolveRunModels(mergedForLLM)
 
     // Per-test timeouts from merged config
     const testTimeouts = {
@@ -5039,7 +5041,10 @@ export async function produceDirectRunMembers(
 }
 
 export function createRunCommand(
-  options: { readonly listDevicesHere?: DevicesHereLister } = {},
+  options: {
+    readonly listDevicesHere?: DevicesHereLister
+    readonly updateNotice?: UpdateNotice
+  } = {},
 ): Command {
   const cmd = new Command('run')
     .description('Run test files')
@@ -5162,6 +5167,14 @@ export function createRunCommand(
           userRunAttributes,
         } = inputs
         _crashSecretRedactor = runtimeSecrets.secretRedactor
+        // A run that reached its result shows the update notice; refusals, errors and cancels
+        // (exit 2 and 130) end without it.
+        const exitAtNormalEnd = async (code: number): Promise<never> => {
+          if (code === 0 || code === 1) {
+            await showUpdateNoticeBeforeExit(options.updateNotice, effectiveLogLevel)
+          }
+          process.exit(code)
+        }
         let discoveredTestFiles: string[] = [...inputs.discovered.tests]
         const discoveredSuiteFiles: string[] = [...inputs.discovered.suites]
 
@@ -5180,17 +5193,8 @@ export function createRunCommand(
         // Handle suite execution (early return)
         if (discoveredSuiteFiles.length > 0 && discoveredTestFiles.length === 0) {
           const { exitCode } = await executeSuites(discoveredSuiteFiles, opts, config, globalOpts, configContent, effectiveLogLevel, { envFileVars, inlineVars, cliVars, rawEnvFileContent, resolvedEnvFilePath, userRunAttributes, ...runtimeSecrets }, resolvedHooks && sandboxOptions ? { resolvedHooks, sandboxOptions } : undefined, analytics, inputs.loadPlugins, runRefusalMemory, runDevicesHere)
-          const suiteReporterSelection = resolveReporterSelection(opts).selection
-          if (suiteReporterSelection) {
-            await maybePrintPostRunUpdateNotice({
-              reporterSelection: suiteReporterSelection,
-              effectiveLogLevel,
-              liveEvents: process.env.AGENT_QA_LIVE_EVENTS,
-              cwd: process.cwd(),
-            })
-          }
           await drainAnalytics() // The suite-only path's terminal exit.
-          process.exit(exitCode)
+          await exitAtNormalEnd(exitCode)
         }
 
         // Handle --all: run suites first, then fall through to test execution
@@ -5209,7 +5213,7 @@ export function createRunCommand(
           if (files.length > 0) {
             printRunText(files.map((file) => `  ${file}`).join('\n'), (text) => console.log(text))
           }
-          process.exit(0)
+          await exitAtNormalEnd(0)
         }
 
         const { parseAllTestBindings, formatParseError } = await import('@vostride/agent-qa-core')
@@ -5348,7 +5352,7 @@ export function createRunCommand(
             }
             printRunText(lines.join('\n'), (text) => console.log(text))
           }
-          process.exit(0)
+          await exitAtNormalEnd(0)
         }
 
         // ---- Compose the one RunSession per invocation ---------------------------------------------
@@ -5541,14 +5545,8 @@ export function createRunCommand(
 
         // `singleExit` was fixed from the verdict plus any --all suite failure before curation.
         const exitCode = singleExit
-        await maybePrintPostRunUpdateNotice({
-          reporterSelection,
-          effectiveLogLevel,
-          liveEvents: process.env.AGENT_QA_LIVE_EVENTS,
-          cwd: process.cwd(),
-        })
         await drainAnalytics() // The verdict path's terminal exit.
-        process.exit(exitCode)
+        await exitAtNormalEnd(exitCode)
       } catch (err) {
         await startedRemoteReleases()
         // Input refusals become output and an exit code only here, at the door with a terminal.

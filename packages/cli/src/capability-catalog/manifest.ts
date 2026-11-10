@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 
 import type { AgentManifest, AgentManifestPosture } from '@vostride/agent-qa-schema'
 
-import { WRITE_AGENT_INSTRUCTIONS_FLAG } from '../commands/knowledge-guide.js'
 import { resolveConfig } from '../config.js'
 import { loadCapabilityCatalog } from './loader.js'
 
@@ -45,10 +44,6 @@ export const DEDICATED_READ_VERBS: readonly DedicatedReadVerb[] = Object.freeze(
   { verb: 'knowledge brief-why', flags: ['--step', '--test', '--record', '--json'], opIds: ['knowledge.brief.why'] },
 ].map((entry) => Object.freeze({ ...entry, flags: Object.freeze(entry.flags), opIds: Object.freeze(entry.opIds) })))
 
-/** `init`'s opt-in that writes the root pointer block into AGENTS.md. */
-export const INIT_AGENT_INSTRUCTIONS_VERB: { readonly verb: 'init', readonly flags: readonly string[] } =
-  Object.freeze({ verb: 'init', flags: Object.freeze([WRITE_AGENT_INSTRUCTIONS_FLAG]) })
-
 /** What `buildAgentManifest` needs from the outside: a config path, or nothing. */
 export interface AgentManifestInput {
   /** Where this workspace's configuration lives. Defaults to the conventional file under `cwd`. */
@@ -58,9 +53,9 @@ export interface AgentManifestInput {
 /**
  * The whole manifest: the committed catalog, the projected map, and this workspace's posture.
  *
- * TOLERANT OF A MISSING OR BROKEN CONFIGURATION, AND SAYS WHICH OF THE TWO. `init --agent` is the
- * command an agent runs in a directory that is not a project yet — that is what `init` is for — so
- * neither state is an error here. They are told apart by whether the FILE EXISTS, which is a fact
+ * TOLERANT OF A MISSING OR BROKEN CONFIGURATION, AND SAYS WHICH OF THE TWO. `init --capabilities`
+ * is the command an agent runs in a directory that is not a project yet — that is what `init` is
+ * for — so neither state is an error here. They are told apart by whether the FILE EXISTS, which is a fact
  * about the filesystem rather than a fact read out of an exception message: `absent` means run
  * `init`, `unresolved` means fix the file, and reporting either as `resolved` would say "this
  * workspace is fine" about a workspace nobody could read.

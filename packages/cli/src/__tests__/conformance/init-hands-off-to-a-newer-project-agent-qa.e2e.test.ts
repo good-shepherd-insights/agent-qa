@@ -18,11 +18,23 @@ import {
 } from './spawned-chat.js'
 
 const CELL_BUDGET_MS = 60_000
-const INIT_ARGS = ['init', '--platform', 'web', '--llm', 'gemini', '--pm', 'none']
+const INIT_ARGS = [
+  'init',
+  '--platform',
+  'web',
+  '--llm',
+  'gemini',
+  '--pm',
+  'none',
+  '--no-browsers',
+  '--agents',
+  'none',
+]
 const RUNNING_VERSION = getAgentQaVersion().trim()
 const FAKE_EXIT = 7
+// A copy that does not take over still runs init's validate step, which it passes.
 const FAKE_CLI = `process.stdout.write(JSON.stringify({ argv: process.argv.slice(2), handedOff: process.env.AGENT_QA_HANDED_OFF ?? null }) + '\\n')
-process.exit(${FAKE_EXIT})
+process.exit(process.argv[2] === 'validate' ? 0 : ${FAKE_EXIT})
 `
 
 afterEach(() => {
@@ -97,7 +109,7 @@ describe('init hands off to a newer project agent-qa', () => {
       expect(outcome.stdout.split('\n'), outcome.text).toContain(
         JSON.stringify({ argv: INIT_ARGS, handedOff: '1' }),
       )
-      expect(outcome.stdout.split('\n'), outcome.text).toContain(
+      expect(outcome.stderr.split('\n'), outcome.text).toContain(
         `Handing over to the project's agent-qa 99.0.0 (node_modules/agent-qa), which is newer than this one (${RUNNING_VERSION}).`,
       )
       expect(readdirSync(root).sort()).toEqual(['.git', 'node_modules'])
@@ -190,13 +202,13 @@ describe('init hands off to a newer project agent-qa', () => {
   )
 
   it(
-    'init --agent never hands off',
+    'init --capabilities never hands off',
     async () => {
       expectFresh()
       const root = projectFolder('agent')
       plantCopy(root, { version: '99.0.0' })
 
-      const outcome = await agentQa(root, ['init', '--agent'])
+      const outcome = await agentQa(root, ['init', '--capabilities'])
 
       expect(outcome.code, outcome.text).toBe(0)
       expect(fakeRan(outcome), outcome.text).toBe(false)

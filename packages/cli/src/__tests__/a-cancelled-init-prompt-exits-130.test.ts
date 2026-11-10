@@ -1,59 +1,93 @@
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readdirSync } from 'node:fs'
 
 import { Command } from 'commander'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-
-vi.mock('@inquirer/checkbox', () => ({ default: vi.fn() }))
-
-import checkbox from '@inquirer/checkbox'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { runCli, type CliFailureDeps } from '../cli-error-handler.js'
 import { createInitCommand } from '../commands/init.js'
+import { KEY, answeringTerminal, clackStreams, type ClackStreams } from './clack-keys.js'
+import { cleanupTempProjects, fakeRunner, tempProject } from './project-fixtures.js'
 
-const mockCheckbox = vi.mocked(checkbox)
+const PLATFORM_QUESTION = 'What platform will you test?'
+const MODEL_QUESTION = 'Which model should agent-qa use?'
 
-let dir: string | undefined
+function failureDeps() {
+  const deps = {
+    print: vi.fn<(text: string) => void>(),
+    printFixed: vi.fn<(line: string) => void>(),
+    mask: (text: string) => text,
+    setExitCode: vi.fn<(code: number) => void>(),
+    flush: vi.fn(async () => {}),
+    exit: vi.fn<(code: number) => void>(),
+    env: {},
+  } satisfies CliFailureDeps
+  return deps
+}
 
-afterEach(() => {
-  if (dir !== undefined) rmSync(dir, { recursive: true, force: true })
-  dir = undefined
-})
-
-describe('a cancelled init prompt', () => {
-  it('Ctrl-C at the platform prompt prints Cancelled., exits 130 and writes nothing', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'agent-qa-init-cancel-'))
-    mockCheckbox.mockRejectedValue(
-      Object.assign(new Error('User force closed the prompt with SIGINT'), {
-        name: 'ExitPromptError',
+async function cancelAtQuestion(
+  question: string,
+  flags: readonly string[],
+  stop: (streams: ClackStreams) => Promise<void>,
+): Promise<{ root: string; deps: ReturnType<typeof failureDeps>; streams: ClackStreams }> {
+  const { root, home } = tempProject('init-cancel')
+  const streams = clackStreams()
+  const program = new Command('agent-qa')
+    .option('--config <path>', 'config file path', 'agent-qa.config.yaml')
+    .addCommand(
+      createInitCommand({
+        cwd: root,
+        host: { homedir: home, env: {}, run: fakeRunner() },
+        isTTY: true,
+        terminal: answeringTerminal().port,
+        rail: { input: streams.input, output: streams.output },
       }),
     )
-    const program = new Command('agent-qa')
-      .option('--config <path>', 'config file path', 'agent-qa.config.yaml')
-      .addCommand(createInitCommand({ cwd: dir, isTTY: true }))
-    const print = vi.fn<(text: string) => void>()
-    const printFixed = vi.fn<(line: string) => void>()
-    const setExitCode = vi.fn<(code: number) => void>()
-    const flush = vi.fn(async () => {})
-    const exit = vi.fn<(code: number) => void>()
-    const deps: CliFailureDeps = {
-      print,
-      printFixed,
-      mask: (text) => text,
-      setExitCode,
-      flush,
-      exit,
-      env: {},
-    }
+  const deps = failureDeps()
 
-    await runCli(program, ['node', 'agent-qa', 'init'], deps)
+  const done = runCli(program, ['node', 'agent-qa', 'init', ...flags, '--pm', 'none'], deps)
+  await streams.waitFor(question)
+  await stop(streams)
+  await done
 
-    expect(mockCheckbox).toHaveBeenCalledTimes(1)
-    expect(printFixed.mock.calls).toEqual([['Cancelled.']])
-    expect(print).not.toHaveBeenCalled()
-    expect(setExitCode).toHaveBeenCalledWith(130)
-    expect(exit).toHaveBeenCalledWith(130)
-    expect(readdirSync(dir)).toEqual([])
-  })
+  return { root, deps, streams }
+}
+
+beforeEach(() => {
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  cleanupTempProjects()
+})
+
+const STOPS = [
+  { name: 'Ctrl-C', stop: (streams: ClackStreams) => streams.press(KEY.ctrlC) },
+  { name: 'Esc', stop: (streams: ClackStreams) => streams.press(KEY.escape) },
+  {
+    name: 'a closed input',
+    stop: async (streams: ClackStreams) => {
+      streams.input.end()
+    },
+  },
+]
+
+const QUESTIONS = [
+  { where: 'the platform question', question: PLATFORM_QUESTION, flags: [] },
+  { where: 'the model question', question: MODEL_QUESTION, flags: ['--platform', 'web'] },
+]
+
+describe('a cancelled init prompt', () => {
+  it.each(QUESTIONS.flatMap((question) => STOPS.map((stop) => ({ ...question, ...stop }))))(
+    '$name at $where prints Cancelled., exits 130 and writes nothing',
+    async ({ question, flags, stop }) => {
+      const { root, deps } = await cancelAtQuestion(question, flags, stop)
+
+      expect(deps.printFixed.mock.calls).toEqual([['Cancelled.']])
+      expect(deps.print).not.toHaveBeenCalled()
+      expect(deps.setExitCode).toHaveBeenCalledWith(130)
+      expect(deps.exit).toHaveBeenCalledWith(130)
+      expect(readdirSync(root)).toEqual(['.git'])
+    },
+  )
 })

@@ -39,13 +39,8 @@ const knowledgeProbeStubs = vi.hoisted(() => ({
   readEmbedderWorkerRegistration: vi.fn(() => ({ kind: 'absent' as const })),
 }))
 
-// The Embedder fix reads daemon liveness from the registration, as `daemon stop` does.
-const daemonRegistrationStubs = vi.hoisted(() => ({
-  readDaemonRegistration: vi.fn(() => ({ kind: 'absent' as const })),
-  processIsAlive: vi.fn(() => false),
-}))
-
-vi.mock('../daemon/registration.js', () => daemonRegistrationStubs)
+// doctor asks `hooks.daemon` for the daemon; the real module needs the agent-local mocked below.
+vi.mock('../daemon/registration.js', () => ({}))
 
 vi.mock('@vostride/agent-qa-agent-local', async () => {
   const knowledge = await vi.importActual<typeof import('@vostride/agent-qa-knowledge-local')>(
@@ -72,7 +67,7 @@ vi.mock('@vostride/agent-qa-core', async () => {
             error: { issues: [{ path: ['workspace', 'secretsFile'], message: 'Invalid input: expected string' }] },
           }
         }
-        return { success: true }
+        return { success: true, data: config }
       }),
     },
     getCredential: vi.fn(() => null),
@@ -156,7 +151,15 @@ vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
 })
 
 import pc from 'picocolors'
-import { checkSubscriptionAuth, createDoctorCommand, type CheckStatus } from '../commands/doctor.js'
+import {
+  CONFIG_UNCHECKED_FIX,
+  DISCOVERY_UNCHECKED_FIX,
+  VALIDATE_WARNINGS_FIX,
+  checkSubscriptionAuth,
+  createDoctorCommand,
+  type CheckStatus,
+  type DoctorCommandHooks,
+} from '../commands/doctor.js'
 import {
   DEFAULT_TERMINAL_WIDTH,
   IDENTITY_DECORATION,
@@ -168,14 +171,17 @@ import {
   resolveTerminalWidth,
   type CheckRow,
 } from '../commands/doctor-row.js'
+import { EMBEDDER_FLOOR_FIX, EMBEDDER_NONE_FIX } from '../commands/doctor-knowledge-checks.js'
 import { execFileSync, execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { DEFAULT_EMBEDDING_PROFILE } from '@vostride/agent-qa-schema'
 import * as core from '@vostride/agent-qa-core'
 import { clearProviderRegistry, createModel, registerProvider } from '@vostride/agent-qa-model'
-import { generateText } from 'ai'
+import { APICallError, generateText, RetryError } from 'ai'
 import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
+import type { ChromiumAnswer, ChromiumResolver } from '../commands/browser-resolver.js'
+import { resolveLLMModels } from '../llm-utils.js'
 
 const mockExecSync = vi.mocked(execSync)
 const mockExecFileSync = vi.mocked(execFileSync)
@@ -190,14 +196,54 @@ const mockResolveLLMAuth = vi.mocked((core as any).resolveLLMAuth) as any
 const mockResolveAppiumExecutable = vi.mocked(core.resolveAppiumExecutable)
 const mockGenerateText = vi.mocked(generateText)
 
-async function runDoctor(parentConfig?: string): Promise<void> {
+const GEMINI_QUOTA_429 = new APICallError({
+  message:
+    'You exceeded your current quota. Quota exceeded for metric: generate_content_free_tier_requests, limit: 5, model: gemini-2.5-pro',
+  url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
+  requestBodyValues: {},
+  statusCode: 429,
+})
+
+const CHROMIUM_FOUND: ChromiumAnswer = { found: true, path: '/browsers/chromium-1/chrome' }
+let chromiumAnswer: ChromiumAnswer = CHROMIUM_FOUND
+const chromium = vi.fn<ChromiumResolver>(() => chromiumAnswer)
+const daemon = vi.fn<NonNullable<DoctorCommandHooks['daemon']>>(
+  () => Promise.resolve({ kind: 'absent' }),
+)
+// No phone, emulator or simulator here.
+const listDevicesHere = vi.fn<NonNullable<DoctorCommandHooks['listDevicesHere']>>(
+  async (platform) => (platform === 'android' ? { attached: [], avds: [] } : { simulators: [] }),
+)
+
+afterEach(() => {
+  chromiumAnswer = CHROMIUM_FOUND
+})
+
+const latestVersion: NonNullable<DoctorCommandHooks['latestVersion']> = async () => ({
+  source: 'none',
+})
+
+// node:fs is mocked here, so the setup rows read a project with no package.json and nothing installed.
+const NO_PROJECT_HOST: NonNullable<DoctorCommandHooks['host']> = {
+  homedir: '/home/doctor',
+  env: {},
+  io: {
+    exists: () => false,
+    readText: () => undefined,
+    realpath: async (path) => path,
+  },
+}
+
+const NO_PROJECT_AUTH_PATH = '/home/doctor/.agent-qa/auth.json'
+
+async function runDoctor(parentConfig?: string, ...args: string[]): Promise<void> {
   consoleLogs.length = 0
   process.exitCode = 0
 
   const parent = new Command()
   if (parentConfig) parent.setOptionValue('config', parentConfig)
-  parent.addCommand(createDoctorCommand())
-  await parent.parseAsync(['node', 'test', 'doctor'])
+  parent.addCommand(createDoctorCommand({ chromium, daemon, latestVersion, listDevicesHere, host: NO_PROJECT_HOST }))
+  await parent.parseAsync(['node', 'test', 'doctor', ...args])
 }
 
 function getOutput(): string {
@@ -228,7 +274,7 @@ const CONTINUATION_PATTERN = /^ {6}\S/
 const MEASURED_INDEX_PATH = 'agent-qa-knowledge/memory/index/knowledge.db'
 const MEASURED_FAIL_MESSAGE = `index at ${MEASURED_INDEX_PATH} could not be opened: corrupt`
 const MEASURED_FIX_INSTRUCTIONS =
-  'Rebuild the index with `agent-qa knowledge rebuild-index`, or remove the corrupt file at '
+  'Rebuild the index with `npx agent-qa knowledge rebuild-index`, or remove the corrupt file at '
   + `${MEASURED_INDEX_PATH} and re-run.`
 
 // The one-line row template (`padDots` to 60 columns), written out so the bytes are visible.
@@ -273,6 +319,26 @@ function rowFor(name: string): string {
     if (!CONTINUATION_PATTERN.test(line)) break
     parts.push(line.trim())
   }
+  return parts.join(' ')
+}
+
+// Every file a healthy host needs is present, and no retired v1 memory folder is left behind.
+function presentExceptLegacyMemory(): void {
+  mockExistsSync.mockImplementation(path => !String(path).endsWith('agent-qa-memory'))
+}
+
+// The fix printed beneath a row, joined across its hanging lines; empty when none prints.
+function fixUnder(name: string): string {
+  const lines = consoleLogs.map(stripAnsi)
+  const start = lines.findIndex(line => line.startsWith(`    ${name}  `))
+  if (start < 0) return ''
+  let index = start + 1
+  while (!FIX_LINE_PATTERN.test(lines[index] ?? '') && CONTINUATION_PATTERN.test(lines[index] ?? '')) {
+    index += 1
+  }
+  if (!FIX_LINE_PATTERN.test(lines[index] ?? '')) return ''
+  const parts = [(lines[index] ?? '').replace(FIX_LINE_PATTERN, '')]
+  for (index += 1; /^ {11}\S/.test(lines[index] ?? ''); index += 1) parts.push((lines[index] ?? '').trim())
   return parts.join(' ')
 }
 
@@ -350,6 +416,7 @@ describe('doctor command', () => {
     const output = getOutput()
     expect(output).toContain('not found')
     expect(output).toContain('WARN')
+    expect(fixUnder('Config file')).toContain('`npx agent-qa init`')
   })
 
   it('warns with the resolved path when legacy v1 memory data exists', async () => {
@@ -376,13 +443,10 @@ describe('doctor command', () => {
     expect(mockExistsSync).toHaveBeenCalledWith(legacyMemoryDir)
   })
 
-  it('uses the current Claude fallback model when config is missing', async () => {
+  it('looks up no model credential when config is missing', async () => {
     await runDoctor()
 
-    expect(mockResolveLLMAuth).toHaveBeenCalledWith('default', expect.objectContaining({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-5-5',
-    }), undefined, 'agent-qa.config.yaml')
+    expect(mockResolveLLMAuth).not.toHaveBeenCalled()
   })
 
   it('uses the parent global config path when loading config', async () => {
@@ -455,7 +519,8 @@ use:
 
     const output = getOutput()
     expect(output).toContain('Missing required workspace config key: workspace.secretsFile')
-    expect(output).toContain('Set workspace.secretsFile')
+    expect(fixUnder('Secrets file')).toContain('Set the workspace key the message names')
+    expect(fixUnder('Secrets file')).toContain('`npx agent-qa init --setup scaffold`')
   })
 
   it('LLM credential checks resolve by config name without env-var fallback output', async () => {
@@ -485,7 +550,7 @@ use:
       provider: 'anthropic-compatible',
       model: 'claude-remote',
       baseURL: 'https://remote.example/messages',
-    }), undefined, 'agent-qa.config.yaml')
+    }), NO_PROJECT_AUTH_PATH, 'agent-qa.config.yaml')
     expect(output).not.toContain('ANTHROPIC_API_KEY')
     expect(output).not.toContain('OPENAI_API_KEY')
     expect(output).not.toContain('GOOGLE_GENERATIVE_AI_KEY')
@@ -585,7 +650,7 @@ use:
     expect(mockResolveLLMAuth).toHaveBeenCalledWith('planner', expect.objectContaining({
       provider: 'anthropic-compatible',
       providerHeaders: { 'x-workspace': 'agent-qa' },
-    }), undefined, 'agent-qa.config.yaml')
+    }), NO_PROJECT_AUTH_PATH, 'agent-qa.config.yaml')
     expect(mockCreateModel).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'anthropic-compatible',
@@ -685,7 +750,7 @@ use:
     expect(mockResolveLLMAuth).toHaveBeenCalledWith('sixth', expect.objectContaining({
       provider: 'sixth-subscription',
       model: 'hosted-sixth',
-    }), undefined, 'agent-qa.config.yaml')
+    }), NO_PROJECT_AUTH_PATH, 'agent-qa.config.yaml')
   })
 
   it('classifies a registered sixth provider as requiring baseURL through registry metadata', async () => {
@@ -732,30 +797,43 @@ use:
     expect(mockCreateModel).not.toHaveBeenCalled()
   })
 
-  it('Playwright check passes when installed', async () => {
-    mockExecSync.mockImplementation((cmd) => {
-      if ((cmd as string).includes('playwright --version')) return Buffer.from('1.50.0')
-      return Buffer.from('')
-    })
-
+  it('Playwright passes with Chromium found when the resolver finds it', async () => {
     await runDoctor()
-    const output = getOutput()
-    expect(output).toContain('installed')
+
+    expect(rowFor('Playwright')).toMatch(/ Chromium found {2}PASS$/)
+    expect(fixUnder('Playwright')).toBe('')
   })
 
-  it('Playwright check fails when not installed', async () => {
-    mockExecSync.mockImplementation((cmd) => {
-      if ((cmd as string).includes('playwright')) throw new Error('not found')
-      return Buffer.from('')
-    })
+  it('Playwright fails with the install-browsers fix when the resolver finds no Chromium', async () => {
+    chromiumAnswer = { found: false, reason: 'no file at /browsers/chromium-1/chrome' }
 
     await runDoctor()
-    const output = getOutput()
-    // Should show Playwright not installed
-    expect(output).toContain('Playwright')
-    expect(output).toContain('agent-qa install-browsers --chromium')
-    expect(output).not.toContain('agent-qa init')
-    expect(output).not.toContain('npx playwright install')
+
+    expect(rowFor('Playwright')).toMatch(/ no Chromium for agent-qa's Playwright {2}FAIL$/)
+    expect(fixUnder('Playwright')).toBe('Run `npx agent-qa install-browsers --chromium`')
+  })
+
+  it('Playwright skips a project with no web target without asking the resolver', async () => {
+    mockReadFile.mockResolvedValue(`
+registry:
+  targets:
+    my-app:
+      platform: android
+` as never)
+
+    await runDoctor()
+
+    expect(rowFor('Playwright')).toMatch(/ not configured {2}SKIP$/)
+    expect(chromium).not.toHaveBeenCalled()
+  })
+
+  it('doctor asks the resolver and runs no npx playwright command', async () => {
+    await runDoctor()
+
+    expect(chromium).toHaveBeenCalledTimes(1)
+    expect(mockExecSync.mock.calls.map(([command]) => String(command))).not.toContainEqual(
+      expect.stringContaining('playwright'),
+    )
   })
 
   it('Appium checks skipped when platform is web-only', async () => {
@@ -786,11 +864,6 @@ targets:
         url: http://localhost
 `
     mockReadFile.mockResolvedValue(mobileConfig as never)
-    mockExecSync.mockImplementation((cmd) => {
-      const cmdStr = cmd as string
-      if (cmdStr.includes('playwright')) throw new Error('not found')
-      return Buffer.from('')
-    })
     mockExecFileSync.mockImplementation((cmd, args) => {
       if (cmd === 'appium' && Array.isArray(args) && args.join(' ') === '--version') return Buffer.from('2.0.0')
       if (cmd === 'appium' && Array.isArray(args) && args.join(' ') === 'driver list --installed') return Buffer.from('uiautomator2')
@@ -860,11 +933,6 @@ use:
 `
     mockReadFile.mockResolvedValue(mobileConfig as never)
     mockExistsSync.mockReturnValue(true)
-    mockExecSync.mockImplementation((cmd) => {
-      const cmdStr = cmd as string
-      if (cmdStr.includes('playwright')) return Buffer.from('1.50.0')
-      return Buffer.from('')
-    })
     mockExecFileSync.mockImplementation((cmd, args) => {
       if (cmd === 'appium' && Array.isArray(args) && args.join(' ') === '--version') return Buffer.from('2.0.0')
       if (cmd === 'appium' && Array.isArray(args) && args.join(' ') === 'driver list --installed') return Buffer.from('')
@@ -875,7 +943,7 @@ use:
 
     const output = getOutput()
     expect(output).toContain('no drivers installed')
-    expect(output).toContain('agent-qa install-mobile-drivers --all')
+    expect(output).toContain('`npx agent-qa install-mobile-drivers --all`')
     expect(output).not.toContain('appium driver install uiautomator2')
   })
 
@@ -903,7 +971,7 @@ targets:
 
     const output = getOutput()
     expect(output).toContain('Install Appium locally with `npm install -D appium`')
-    expect(output).toContain('agent-qa install-mobile-drivers --all')
+    expect(output).toContain('`npx agent-qa install-mobile-drivers --all`')
   })
 
   it('Android SDK check validates ANDROID_HOME', async () => {
@@ -951,6 +1019,51 @@ targets:
     await runDoctor()
     const output = getOutput()
     expect(output).toContain('requires macOS')
+  })
+
+  describe('the Xcode row', () => {
+    const iosConfig = `
+registry:
+  llms:
+    - name: default
+      provider: openai-compatible
+      model: model-name
+      baseURL: https://remote.example/api/v1
+use:
+  llm: default
+targets:
+  my-app:
+    platform: ios
+`
+
+    it('lists the simulators with a 10 s bound', async () => {
+      mockReadFile.mockResolvedValue(iosConfig as never)
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      mockExecSync.mockReturnValue(Buffer.from('== Devices =='))
+
+      await runDoctor()
+
+      expect(mockExecSync).toHaveBeenCalledWith(
+        'xcrun simctl list',
+        expect.objectContaining({ timeout: 10_000 }),
+      )
+      expect(rowFor('Xcode')).toMatch(/simctl available {2}PASS$/)
+    })
+
+    it('fails with how long it waited when the simulator listing does not answer in time', async () => {
+      mockReadFile.mockResolvedValue(iosConfig as never)
+      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+      mockExecSync.mockImplementation((command) => {
+        if (command === 'xcrun simctl list') {
+          throw Object.assign(new Error('spawnSync /bin/sh ETIMEDOUT'), { code: 'ETIMEDOUT' })
+        }
+        return Buffer.from('')
+      })
+
+      await runDoctor()
+
+      expect(rowFor('Xcode')).toMatch(/xcrun simctl did not answer within 10 s {2}FAIL$/)
+    })
   })
 
   describe('mobile tool rows and remote devices', () => {
@@ -1076,7 +1189,7 @@ use:
 
   it('Overall result: all pass → exit 0', async () => {
     Object.defineProperty(process, 'version', { value: 'v24.10.0', writable: true })
-    mockExistsSync.mockReturnValue(true)
+    presentExceptLegacyMemory()
     mockExecSync.mockReturnValue(Buffer.from('ok'))
     mockResolveLLMAuth.mockResolvedValue({
       kind: 'unauthenticated',
@@ -1113,13 +1226,22 @@ use:
     expect(output).toContain('All checks passed')
   })
 
-  it('Overall result: any fail → exit 1', async () => {
+  it('exits 3 when a row fails', async () => {
     Object.defineProperty(process, 'version', { value: 'v18.0.0', writable: true })
 
     await runDoctor()
-    expect(process.exitCode).toBe(1)
+    expect(process.exitCode).toBe(3)
     const output = getOutput()
-    expect(output).toContain('Some checks failed')
+    expect(output).toContain('Some checks failed. See fix instructions above.')
+  })
+
+  it('exits 3 from doctor --json when a row fails', async () => {
+    Object.defineProperty(process, 'version', { value: 'v18.0.0', writable: true })
+
+    await runDoctor(undefined, '--json')
+    const document = JSON.parse(getOutput())
+    expect(document.ok).toBe(false)
+    expect(process.exitCode).toBe(3)
   })
 
   it('Fix instructions printed for each failure', async () => {
@@ -1130,9 +1252,9 @@ use:
     expect(output).toContain('Install Node.js 24 or newer')
   })
 
-  async function runHealthyHost(): Promise<void> {
+  async function runHealthyHost(...args: string[]): Promise<void> {
     Object.defineProperty(process, 'version', { value: 'v24.10.0', writable: true })
-    mockExistsSync.mockReturnValue(true)
+    presentExceptLegacyMemory()
     mockExecSync.mockReturnValue(Buffer.from('ok'))
     mockResolveLLMAuth.mockResolvedValue({
       kind: 'unauthenticated',
@@ -1160,8 +1282,129 @@ use:
         llm: 'default',
       },
     }) as never)
-    await runDoctor()
+    await runDoctor(undefined, ...args)
   }
+
+  it('a project with validation errors fails the Validate row with npx agent-qa validate as its fix', async () => {
+    vi.mocked(core.validateProject).mockResolvedValueOnce(
+      { errorCount: 2, warningCount: 0, fileCount: 5, results: [] } as never,
+    )
+
+    await runHealthyHost()
+
+    expect(rowFor('Validate')).toContain('FAIL')
+    expect(fixUnder('Validate')).toContain('`npx agent-qa validate`')
+  })
+
+  it('a config doctor could not check warns with the command that shows why, not the key fix', async () => {
+    vi.mocked(core.AgentQaConfigSchema.safeParse).mockImplementationOnce(() => {
+      throw new Error('schema module failed to load')
+    })
+
+    await runHealthyHost()
+
+    expect(rowFor('Config validation')).toContain('could not validate config')
+    expect(rowFor('Config validation')).toContain('WARN')
+    expect(fixUnder('Config validation')).not.toContain('key named above')
+    expect(fixUnder('Config validation')).toBe(CONFIG_UNCHECKED_FIX)
+  })
+
+  it('a rate-limited model connection warns to wait and test again, not to check the credential', async () => {
+    mockGenerateText.mockRejectedValueOnce(new Error('429 Too Many Requests: rate limit reached'))
+
+    await runHealthyHost()
+
+    expect(rowFor('LLM connection')).toContain('rate limited — try again later')
+    expect(rowFor('LLM connection')).toContain('WARN')
+    expect(fixUnder('LLM connection')).not.toContain('Check the saved credential')
+    expect(fixUnder('LLM connection')).toContain(
+      'Wait, then run `npx agent-qa auth test --config default`',
+    )
+  })
+
+  it('a 429 whose provider message names the model warns to wait, not that the model is missing', async () => {
+    mockGenerateText.mockRejectedValueOnce(GEMINI_QUOTA_429)
+
+    await runHealthyHost()
+
+    expect(rowFor('LLM connection')).toContain('rate limited — try again later')
+    expect(rowFor('LLM connection')).toContain('WARN')
+    expect(rowFor('LLM connection')).not.toContain('Model not found')
+    expect(fixUnder('LLM connection')).toContain(
+      'Wait, then run `npx agent-qa auth test --config default`',
+    )
+  })
+
+  it('a 429 wrapped in a retry error warns to wait, not that the model is missing', async () => {
+    mockGenerateText.mockRejectedValueOnce(
+      new RetryError({
+        message: `Failed after 3 attempts. Last error: ${GEMINI_QUOTA_429.message}`,
+        reason: 'maxRetriesExceeded',
+        errors: [GEMINI_QUOTA_429, GEMINI_QUOTA_429, GEMINI_QUOTA_429],
+      }),
+    )
+
+    await runHealthyHost()
+
+    expect(rowFor('LLM connection')).toContain('rate limited — try again later')
+    expect(rowFor('LLM connection')).toContain('WARN')
+    expect(fixUnder('LLM connection')).toContain(
+      'Wait, then run `npx agent-qa auth test --config default`',
+    )
+  })
+
+  it('a model error that is not a 429 still fails as model not found', async () => {
+    mockGenerateText.mockRejectedValueOnce(
+      new APICallError({
+        message: 'models/gemini-9 is not found for API version v1beta',
+        url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-9:generateContent',
+        requestBodyValues: {},
+        statusCode: 404,
+      }),
+    )
+
+    await runHealthyHost()
+
+    expect(rowFor('LLM connection')).toContain('Model not found. Check the model name.')
+    expect(rowFor('LLM connection')).toContain('FAIL')
+    expect(fixUnder('LLM connection')).not.toContain('rate-limiting')
+  })
+
+  it('the connection probe does not retry into its own timeout', async () => {
+    await runHealthyHost()
+
+    expect(mockGenerateText).toHaveBeenCalledWith(expect.objectContaining({ maxRetries: 0 }))
+  })
+
+  it('validation warnings print the command that lists them, not a fix for errors', async () => {
+    vi.mocked(core.validateProject).mockResolvedValueOnce(
+      { errorCount: 0, warningCount: 2, fileCount: 5, results: [] } as never,
+    )
+
+    await runHealthyHost()
+
+    expect(rowFor('Validate')).toContain('2 warning(s)')
+    expect(rowFor('Validate')).toContain('WARN')
+    expect(fixUnder('Validate')).not.toContain('fix reported errors')
+    expect(fixUnder('Validate')).toBe(VALIDATE_WARNINGS_FIX)
+  })
+
+  it('a test scan that throws warns with the command that shows why, not the patterns fix', async () => {
+    const discover = vi.mocked(core.discoverWorkspaceFiles)
+    const scan = discover.getMockImplementation()!
+    // Web placement scans first and swallows the error, so every scan in this run throws.
+    discover.mockRejectedValue(new Error('EACCES: permission denied'))
+    try {
+      await runHealthyHost()
+    } finally {
+      discover.mockImplementation(scan)
+    }
+
+    expect(rowFor('Test discovery')).toContain('could not scan for test files')
+    expect(rowFor('Test discovery')).toContain('WARN')
+    expect(fixUnder('Test discovery')).not.toContain('testMatch')
+    expect(fixUnder('Test discovery')).toBe(DISCOVERY_UNCHECKED_FIX)
+  })
 
   it('prints three rows between Legacy v1 memory data and Config validation, store then embedder then rung', async () => {
     await runHealthyHost()
@@ -1195,7 +1438,6 @@ use:
     // about them. "Degraded by design still exits 0" is the WARN cell below, on a healthy host.
     expect(getOutput()).not.toContain('Fix: Rebuild the index')
     expect(getOutput()).not.toContain('Fix: v2 does not download the embedding model')
-    expect(getOutput()).not.toContain('Fix: The daemon starts its embedder worker')
   })
 
   it('passes the retrieval rows on a healthy host', async () => {
@@ -1231,10 +1473,79 @@ use:
     expect(rowFor('Knowledge store')).toContain('scanning bundles')
     expect(rowFor('Embedder')).toContain('static floor — native ONNX runtime unavailable')
     expect(rowFor('Retrieval rung')).toContain('bundle-scan — knowledge index not built yet')
-    expect(process.exitCode).not.toBe(1)
+    expect(process.exitCode).toBe(0)
+    expect(getOutput()).toContain('No check failed. The warnings above say what to fix.')
+    expect(getOutput()).not.toContain('All checks passed')
   })
 
-  it('fails the store row and exits 1 when the index file is present and will not open', async () => {
+  function degradeKnowledgeByDesign(): void {
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
+      source: 'scan',
+      reason: 'absent',
+      detail: 'derived index file is absent',
+      filePresent: false,
+    })
+  }
+
+  it('prints the fix under a WARN row and none under a PASS or SKIP row', async () => {
+    degradeKnowledgeByDesign()
+
+    await runHealthyHost()
+
+    expect(rowFor('Knowledge store')).toContain('WARN')
+    expect(fixUnder('Knowledge store')).not.toBe('')
+    expect(rowFor('Node.js')).toContain('PASS')
+    expect(fixUnder('Node.js')).toBe('')
+    expect(rowFor('Subscription Auth')).toContain('SKIP')
+    expect(fixUnder('Subscription Auth')).toBe('')
+  })
+
+  it('prints the same fix under a WARN row as doctor --json gives it', async () => {
+    degradeKnowledgeByDesign()
+    await runHealthyHost()
+    const printed = fixUnder('Knowledge store')
+
+    await runHealthyHost('--json')
+    const document = JSON.parse(getOutput())
+    const row = document.rows.find((entry: { name: string }) => entry.name === 'Knowledge store')
+
+    expect(row.status).toBe('warn')
+    expect(printed).toBe(row.fix.replace(/\s+/gu, ' ').trim())
+  })
+
+  it('exits 0 from doctor --json with warnings and no failure', async () => {
+    degradeKnowledgeByDesign()
+
+    await runHealthyHost('--json')
+    const document = JSON.parse(getOutput())
+
+    expect(document.ok).toBe(true)
+    expect(document.rows.some((entry: { status: string }) => entry.status === 'warn')).toBe(true)
+    expect(process.exitCode).toBe(0)
+  })
+
+  it('prints the plugins add command under the Subscription Auth warning', async () => {
+    mockReadFile.mockResolvedValue(
+      'registry:\n  llms:\n    - name: claude-code\n      provider: anthropic-subscription\n'
+        + '      model: claude-sonnet-4-6\nuse:\n  llm: claude-code\n' as never,
+    )
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'missing',
+      credentialKey: 'claude-code',
+      provider: 'anthropic-subscription',
+      required: true,
+      message: 'Provider "anthropic-subscription" needs the subscription-auth plugin.',
+    })
+
+    await runDoctor()
+
+    expect(rowFor('Subscription Auth'), getOutput()).toContain('WARN')
+    expect(fixUnder('Subscription Auth'), getOutput()).toContain(
+      'npx agent-qa plugins add @vostride/agent-qa-subscription-auth',
+    )
+  })
+
+  it('fails the store row and exits 3 when the index file is present and will not open', async () => {
     knowledgeProbeStubs.classifyIndexFace.mockReturnValue({
       source: 'scan',
       reason: 'corrupt',
@@ -1246,22 +1557,19 @@ use:
 
     expect(rowFor('Knowledge store')).toContain('could not be opened: corrupt')
     expect(rowFor('Knowledge store')).toContain('FAIL')
-    expect(getOutput()).toContain('Fix: Rebuild the index with `agent-qa knowledge rebuild-index`')
+    expect(getOutput()).toContain('Fix: Rebuild the index with `npx agent-qa knowledge rebuild-index`')
     expect(rowFor('Retrieval rung')).not.toContain('FAIL')
-    expect(process.exitCode).toBe(1)
+    expect(process.exitCode).toBe(3)
   })
 
   it('names the worker profile failure by its cause when a live daemon lease published no worker registration', async () => {
     knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'parsed', lease: {} } as never)
     knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
-    daemonRegistrationStubs.readDaemonRegistration.mockReturnValueOnce({
-      kind: 'parsed',
-      registration: { pid: 4242 },
-    } as never)
-    daemonRegistrationStubs.processIsAlive.mockReturnValueOnce(true)
+    daemon.mockResolvedValueOnce({ kind: 'live', registration: { pid: 4242, startedAtMs: 1_000 } } as never)
     mockReadFileSync.mockImplementation((target) => (
       String(target).endsWith('daemon-events.jsonl')
         ? `${JSON.stringify({
+          ts: new Date(2_000).toISOString(),
           kind: 'embedder-worker-exit',
           reason: 'crash',
           stderr: 'Error: Embedder worker could not resolve profile: deferred\n    at /home/u/worker.js',
@@ -1278,6 +1586,62 @@ use:
     expect(getOutput()).not.toContain('/home/u/worker.js')
     expect(getOutput()).toContain('Fix: v2 does not download the embedding model')
     expect(getOutput()).not.toContain('agent-qa.config.yaml (the daemon')
+  })
+
+  it('an idle daemon whose embedder worker has not started passes the Embedder row and doctor exits 0', async () => {
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'parsed', lease: {} } as never)
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    daemon.mockResolvedValueOnce({ kind: 'live', registration: { pid: 4242, startedAtMs: 1_000 } } as never)
+
+    await runHealthyHost()
+
+    expect(rowFor('Embedder')).toContain('PASS')
+    expect(rowFor('Embedder')).toContain('when a run needs it')
+    expect(rowFor('Embedder')).not.toContain('FAIL')
+    expect(process.exitCode).toBe(0)
+  })
+
+  it("prints the Embedder WARN's own fix in the table and in doctor --json for a fresh project with no daemon", async () => {
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue({
+      kind: 'deferred',
+      reason: 'cold-artifact',
+    })
+
+    await runHealthyHost()
+
+    expect(rowFor('Embedder')).toContain('none — embedding model not downloaded')
+    expect(rowFor('Embedder')).toContain('WARN')
+    expect(fixUnder('Embedder')).not.toContain('exited with an error')
+    expect(fixUnder('Embedder')).toBe(EMBEDDER_NONE_FIX)
+
+    await runHealthyHost('--json')
+    const document = JSON.parse(getOutput())
+    const row = document.rows.find((entry: { name: string }) => entry.name === 'Embedder')
+
+    expect(row.status).toBe('warn')
+    expect(row.fix).toBe(EMBEDDER_NONE_FIX)
+  })
+
+  it("beside an idle daemon the Embedder WARN prints the static floor's fix, never the crash fix", async () => {
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'parsed', lease: {} } as never)
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    daemon.mockResolvedValueOnce({ kind: 'live', registration: { pid: 4242, startedAtMs: 1_000 } } as never)
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue({
+      kind: 'ready',
+      rung: 'floor',
+      profile: DEFAULT_EMBEDDING_PROFILE,
+      embedder: {},
+    } as never)
+
+    await runHealthyHost()
+
+    expect(rowFor('Embedder')).toContain('static floor — native ONNX runtime unavailable')
+    expect(rowFor('Embedder')).toContain('when a run needs it')
+    expect(rowFor('Embedder')).toContain('WARN')
+    const fix = fixUnder('Embedder')
+    expect(fix).not.toContain('exited with an error')
+    expect(fix).not.toContain('daemon stop')
+    expect(fix).toBe(EMBEDDER_FLOOR_FIX)
   })
 
   // The command measured against the width it resolved.
@@ -1550,7 +1914,7 @@ describe('the Config validation row', () => {
       registry: REGISTRY,
       use: { llm: 'default' },
     })
-    expect(v1Fix).toContain('agent-qa init --force')
+    expect(v1Fix).toContain('`npx agent-qa init --force`')
     expect(v1Fix).toContain('agent-qa-memory/')
     expect(v1Fix).not.toContain('re-run `agent-qa init`')
 
@@ -1627,16 +1991,47 @@ describe('the LLM auth rows', () => {
     return parts.join(' ')
   }
 
-  it('the LLM rows name auth login, never the dashboard', async () => {
-    const apiFix = await credentialFix('gemini-fast', 'gemini', 'gemini-3-flash-preview')
-    expect(apiFix).toContain('agent-qa auth set --config gemini-fast --type api-key')
-    expect(apiFix).toContain('agent-qa auth login --config')
-    expect(apiFix).not.toContain('from `agent-qa dashboard`')
+  it('a subscription that is not signed in is told to sign in with its configured name', async () => {
+    const fix = await credentialFix('claude-code', 'anthropic-subscription', 'claude-sonnet-4-6')
 
-    const subscriptionFix = await credentialFix('claude-code', 'anthropic-subscription', 'claude-sonnet-4-6')
-    expect(subscriptionFix).toContain('agent-qa auth login --config claude-code')
-    expect(subscriptionFix).not.toContain('from `agent-qa dashboard`')
-    expect(getOutput()).not.toContain('from `agent-qa dashboard`')
+    expect(fix).toBe('Sign in with `npx agent-qa auth login --config claude-code`.')
+  })
+
+  it('an API-key provider without a key is sent to the model page or auth set, never auth login', async () => {
+    const fix = await credentialFix('gemini', 'gemini', 'gemini-3-flash-preview')
+
+    expect(fix).toContain('npx agent-qa dashboard --open /config/models')
+    expect(fix).toContain('`npx agent-qa auth set --config gemini --type api-key`')
+    expect(fix).not.toContain('auth login')
+  })
+
+  it('the connection fix names the configured entry', async () => {
+    await credentialFix('gemini', 'gemini', 'gemini-3-flash-preview')
+
+    expect(rowFor('LLM connection'), getOutput()).toContain('FAIL')
+    expect(fixUnder('LLM connection')).toContain('`npx agent-qa auth test --config gemini`')
+  })
+
+  it('no fix carries a literal <name> once a model is configured', async () => {
+    mockReadFile.mockResolvedValue(
+      'registry:\n  llms:\n    - name: gemini\n      provider: gemini\n      model: gemini-3-flash-preview\n' as never,
+    )
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'missing',
+      credentialKey: 'gemini',
+      provider: 'gemini',
+      required: true,
+      message: 'No credential saved.',
+    })
+
+    await runDoctor(undefined, '--json')
+    const rows = JSON.parse(getOutput()).rows as { name: string; fix?: string }[]
+
+    const modelFixes = rows.filter(row => row.name.startsWith('LLM ') && row.fix !== undefined)
+    expect(modelFixes.map(row => row.name)).toEqual(['LLM credential', 'LLM connection'])
+    for (const row of rows) expect(row.fix ?? '', row.name).not.toContain('<name>')
+    const subscription = checkSubscriptionAuth({ registry: { llms: [{ name: 'gemini', provider: 'gemini' }] } })
+    expect(subscription.fixInstructions).not.toContain('<name>')
   })
 
   it('the Subscription Auth fix adds the plugin with plugins add, then signs in', async () => {
@@ -1657,7 +2052,7 @@ describe('the LLM auth rows', () => {
     expect((await row.check()).status).toBe('warn')
     expect(row.fixInstructions).toBe(
       'Run `npx agent-qa plugins add @vostride/agent-qa-subscription-auth`, then run '
-        + '`agent-qa auth login --config claude-code`',
+        + '`npx agent-qa auth login --config claude-code`',
     )
     expect(row.fixInstructions).not.toContain('npm install')
   })
@@ -1675,7 +2070,7 @@ describe('the LLM auth rows', () => {
 
     expect(row.fixInstructions).toBe(
       'Run `npx agent-qa --config staging.yaml plugins add @vostride/agent-qa-subscription-auth`, '
-        + 'then run `agent-qa auth login --config claude-code`',
+        + 'then run `npx agent-qa auth login --config claude-code`',
     )
   })
 
@@ -1736,12 +2131,144 @@ describe('the LLM auth rows', () => {
       expect(connectionRow, getOutput()).toContain('FAIL')
       expect(connectionRow, getOutput()).toContain(expected.message)
       expect(mockGenerateText).not.toHaveBeenCalled()
-      expect(process.exitCode).toBe(1)
+      expect(process.exitCode).toBe(3)
     } finally {
       mockResolveLLMAuth.mockImplementation(defaultResolve)
       mockReadFile.mockRejectedValue({ code: 'ENOENT' })
       await rm(tempDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('the Model row', () => {
+  type DocumentRow = { name: string; status: string; message: string; fix?: string }
+
+  const twoModels = {
+    registry: {
+      llms: [
+        { name: 'first', provider: 'openai-compatible', model: 'deepseek-chat', baseURL: 'https://one.example/v1' },
+        { name: 'second', provider: 'gemini', model: 'gemini-3-flash-preview' },
+      ],
+    },
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockExistsSync.mockReturnValue(false)
+    mockLoadLLMAuthPlugins.mockResolvedValue([])
+    mockLoadProviderPluginsForRawConfig.mockResolvedValue()
+    mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
+    mockReadFileSync.mockReturnValue('')
+    knowledgeProbeStubs.classifyIndexFace.mockReturnValue({ source: 'index' })
+    knowledgeProbeStubs.resolveEmbedderCapability.mockResolvedValue(NATIVE_READY)
+    knowledgeProbeStubs.readWriterLease.mockReturnValue({ kind: 'absent' })
+    knowledgeProbeStubs.readEmbedderWorkerRegistration.mockReturnValue({ kind: 'absent' })
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'unauthenticated',
+      credentialKey: 'planner',
+      provider: 'openai-compatible',
+      optional: true,
+      message: 'Testing without a saved credential.',
+    })
+  })
+
+  afterEach(() => {
+    mockReadFile.mockRejectedValue({ code: 'ENOENT' })
+    process.exitCode = 0
+  })
+
+  async function doctorRows(config: Record<string, unknown>): Promise<DocumentRow[]> {
+    const { stringify } = await import('yaml')
+    mockReadFile.mockResolvedValue(stringify(config) as never)
+    await runDoctor(undefined, '--json')
+    return JSON.parse(getOutput()).rows as DocumentRow[]
+  }
+
+  function row(rows: readonly DocumentRow[], name: string): DocumentRow | undefined {
+    return rows.find(entry => entry.name === name)
+  }
+
+  it('fails a config with no model, names the dashboard and init --llm, and exits 3', async () => {
+    const rows = await doctorRows({ use: {} })
+
+    const model = row(rows, 'Model')
+    expect(model?.status).toBe('fail')
+    expect(model?.message).toBe('no model configured')
+    expect(model?.fix).toContain('npx agent-qa dashboard --open /config/models')
+    expect(model?.fix).toContain('npx agent-qa init --llm <choice>')
+    expect(process.exitCode).toBe(3)
+  })
+
+  it('skips the credential, Subscription Auth and connection rows when no model is configured', async () => {
+    const rows = await doctorRows({ registry: { llms: [] } })
+
+    for (const name of ['LLM credential', 'Subscription Auth', 'LLM connection']) {
+      expect(row(rows, name), name).toMatchObject({ status: 'skip', message: 'no model configured' })
+    }
+    expect(mockResolveLLMAuth).not.toHaveBeenCalled()
+    expect(JSON.stringify(rows)).not.toContain('anthropic-subscription')
+  })
+
+  it('reads a malformed model list and target as validate would leave them, without crashing', async () => {
+    const rows = await doctorRows({ registry: { llms: {}, targets: { web: null } }, use: 'x' })
+
+    expect(row(rows, 'Model')).toMatchObject({ status: 'fail', message: 'no model configured' })
+    expect(row(rows, 'Playwright')).toMatchObject({ status: 'pass' })
+  })
+
+  it('skips a model list item that is not a named mapping', async () => {
+    const rows = await doctorRows({
+      registry: { llms: [null, 'gemini', { name: 'second', provider: 'gemini', model: 'm' }] },
+    })
+
+    expect(row(rows, 'Model')).toMatchObject({ status: 'pass', message: 'second: gemini m' })
+  })
+
+  it('checks the entry use.llm names, the one run resolves', async () => {
+    const config = { ...twoModels, use: { llm: 'second' } }
+    const rows = await doctorRows(config)
+
+    expect(resolveLLMModels(config).configName).toBe('second')
+    expect(row(rows, 'Model')).toMatchObject({
+      status: 'pass',
+      message: 'second: gemini gemini-3-flash-preview',
+    })
+    expect(mockResolveLLMAuth).toHaveBeenCalledWith(
+      'second', expect.objectContaining({ provider: 'gemini' }), NO_PROJECT_AUTH_PATH, 'agent-qa.config.yaml',
+    )
+    expect(mockResolveLLMAuth).not.toHaveBeenCalledWith('first', expect.anything(), expect.anything(), expect.anything())
+  })
+
+  it('checks the first entry when use.llm is not set, the one run resolves', async () => {
+    const rows = await doctorRows(twoModels)
+
+    expect(resolveLLMModels(twoModels).configName).toBe('first')
+    expect(row(rows, 'Model')).toMatchObject({
+      status: 'pass',
+      message: 'first: openai-compatible deepseek-chat',
+    })
+    expect(mockResolveLLMAuth).toHaveBeenCalledWith(
+      'first', expect.objectContaining({ model: 'deepseek-chat' }), NO_PROJECT_AUTH_PATH, 'agent-qa.config.yaml',
+    )
+    expect(mockResolveLLMAuth).not.toHaveBeenCalledWith('second', expect.anything(), expect.anything(), expect.anything())
+  })
+
+  it('keeps the credential FAIL for a configured subscription that is not signed in', async () => {
+    mockResolveLLMAuth.mockResolvedValue({
+      kind: 'missing',
+      credentialKey: 'claude-code',
+      provider: 'anthropic-subscription',
+      required: true,
+      message: 'Sign in to use claude-code.',
+    })
+    const rows = await doctorRows({
+      registry: { llms: [{ name: 'claude-code', provider: 'anthropic-subscription', model: 'claude-sonnet-5-5' }] },
+      use: { llm: 'claude-code' },
+    })
+
+    expect(row(rows, 'Model')?.status).toBe('pass')
+    expect(row(rows, 'LLM credential')).toMatchObject({ status: 'fail', message: 'Sign in to use claude-code.' })
+    expect(process.exitCode).toBe(3)
   })
 })
 
@@ -1950,8 +2477,8 @@ describe('doctor row renderer', () => {
     for (const line of row.continuations) expect(line.startsWith('      ')).toBe(true)
   })
 
-  it('wraps the measured 156-column Fix line with a hanging indent, keeping its six-space prefix', () => {
-    expect(`      Fix: ${MEASURED_FIX_INSTRUCTIONS}`).toHaveLength(156)
+  it('wraps the measured 160-column Fix line with a hanging indent, keeping its six-space prefix', () => {
+    expect(`      Fix: ${MEASURED_FIX_INSTRUCTIONS}`).toHaveLength(160)
 
     const lines = formatFixLines(MEASURED_FIX_INSTRUCTIONS, 80)
 

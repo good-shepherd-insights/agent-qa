@@ -16,6 +16,12 @@ export function surfaceLedgerKey(entry: Pick<SurfaceLedgerEntry, 'file' | 'speci
 
 export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
   {
+    file: 'packages/cli/src/commands/agent-qa-upgrade.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "init's version moves name their breaking steps with core's semver helpers; joins the config mutation class with init",
+  },
+  {
     file: 'packages/cli/src/commands/auth-state.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
@@ -40,10 +46,22 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'probe builds a run session in-process; relocates with the run-session composition root',
   },
   {
+    file: 'packages/cli/src/commands/browser-resolver.ts',
+    specifier: '@vostride/agent-qa-web',
+    clearedBy: '395',
+    reason: "browser installation and doctor's Chromium check resolve the web package's playwright-core on the host; joins the environment action class",
+  },
+  {
     file: 'packages/cli/src/commands/cache.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
     reason: 'model/response cache administration over host paths; joins the config and environment action class',
+  },
+  {
+    file: 'packages/cli/src/commands/config-model-edit.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "init's re-run checks its model edit of the config with core's config schema before writing; joins the config mutation class with init",
   },
   {
     file: 'packages/cli/src/commands/dashboard.ts',
@@ -82,10 +100,22 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'direct run member assembly; relocates with the run-session composition root',
   },
   {
+    file: 'packages/cli/src/commands/doctor-device-checks.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "doctor's device rows read the config's device profiles as agent-qa devices does; joins the environment action class",
+  },
+  {
     file: 'packages/cli/src/commands/doctor-plugin-checks.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
     reason: "doctor's plugin rows resolve plugins entries and run each plugin's account check through core's plugin host pool directly; joins the environment action class",
+  },
+  {
+    file: 'packages/cli/src/commands/doctor-setup-checks.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "doctor's newer-version row checks the registry's answer with core's semver helper before it reaches a message or a link; joins the environment action class",
   },
   {
     file: 'packages/cli/src/commands/doctor.ts',
@@ -118,16 +148,34 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'project scaffolding writes config and model defaults; joins the config mutation class',
   },
   {
-    file: 'packages/cli/src/commands/install-browsers.ts',
-    specifier: '@vostride/agent-qa-web',
+    file: 'packages/cli/src/commands/init-model-choice.ts',
+    specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
-    reason: 'browser driver installation is host mutation; joins the environment action class',
+    reason: 'project scaffolding writes config and model defaults; joins the config mutation class',
+  },
+  {
+    file: 'packages/cli/src/commands/init-model-choice.ts',
+    specifier: '@vostride/agent-qa-model',
+    clearedBy: '395',
+    reason: 'project scaffolding writes config and model defaults; joins the config mutation class',
+  },
+  {
+    file: 'packages/cli/src/commands/init-rerun.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "init's re-run reads the auth store's path from core to report the model's status; joins the config mutation class with init",
   },
   {
     file: 'packages/cli/src/commands/install-mobile-drivers.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
     reason: 'mobile driver installation is host mutation; joins the environment action class',
+  },
+  {
+    file: 'packages/cli/src/commands/latest-version-ask.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "init and doctor ask for the latest agent-qa with core's registry ask under the CLI's deadline; joins the config mutation class with init",
   },
   {
     file: 'packages/cli/src/commands/mcp.ts',
@@ -238,6 +286,12 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'the run command wires runner, safety, and every platform driver by hand; relocates with the run-session composition root',
   },
   {
+    file: 'packages/cli/src/commands/setup-rows.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "the re-run's setup rows resolve the config's workspace files with core's resolver; joins the config mutation class with init",
+  },
+  {
     file: 'packages/cli/src/commands/skill-install.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
@@ -248,6 +302,12 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
     reason: 'config and suite validation reads resolved config directly; joins the config action class',
+  },
+  {
+    file: 'packages/cli/src/commands/web-placement.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "doctor and the browsers row read where every web test runs from the workspace's test and suite files; joins the environment action class",
   },
   {
     // The one host loader for `workspace.secretsFile`, shared with `agent-qa run`.
@@ -431,5 +491,11 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     specifier: '@vostride/agent-qa-core',
     clearedBy: '386',
     reason: 'version notice reads host state directly; relocates with the composition root',
+  },
+  {
+    file: 'packages/cli/src/version-refresh.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '386',
+    reason: 'the detached registry refresh writes the version-check cache directly; relocates with the version notice',
   },
 ]

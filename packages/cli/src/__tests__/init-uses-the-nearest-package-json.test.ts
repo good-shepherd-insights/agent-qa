@@ -20,10 +20,11 @@ import { createInitCommand } from '../commands/init.js'
 import { defaultProjectIo } from '../commands/project-host.js'
 import { projectRange } from '../commands/project-range.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
+import { fakeRunner } from './project-fixtures.js'
 
 const WEB_GEMINI = ['--platform', 'web', '--llm', 'gemini', '--pm', 'none']
 const roots: string[] = []
-let log: MockInstance<typeof console.log>
+let errors: MockInstance<typeof process.stderr.write>
 
 function tempFolder(prefix: string): string {
   const folder = mkdtempSync(join(tmpdir(), prefix))
@@ -65,7 +66,8 @@ async function init(cwd: string, homedir: string = tempFolder('agent-qa-nearest-
   const parent = new Command()
   const command = createInitCommand({
     cwd,
-    host: { homedir },
+    // No XDG folder, CI marker or provider key of the person running the tests reaches init.
+    host: { homedir, env: { HOME: homedir }, run: fakeRunner() },
     isTTY: false,
     composeAnalytics: silentAnalytics,
   })
@@ -75,13 +77,15 @@ async function init(cwd: string, homedir: string = tempFolder('agent-qa-nearest-
   await parent.parseAsync(['node', 'test', 'init', ...WEB_GEMINI])
 }
 
-function stdout(): string {
-  return stripVTControlCharacters(log.mock.calls.map((call) => call.map(String).join(' ')).join('\n'))
+// init draws its human output on stderr.
+function stderr(): string {
+  return stripVTControlCharacters(errors.mock.calls.map((call) => String(call[0])).join(''))
 }
 
 describe('init uses the nearest package.json', () => {
   beforeEach(() => {
-    log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    errors = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
@@ -103,7 +107,7 @@ describe('init uses the nearest package.json', () => {
       devDependencies: { 'agent-qa': getAgentQaVersion() },
     })
     expect(existsSync(join(start, 'package.json'))).toBe(false)
-    expect(stdout()).toMatch(/Updated:\n\s+• \.\.\/\.\.\/package\.json/u)
+    expect(stderr()).toContain('✓ ../../package.json updated\n')
   })
 
   it("in a workspace member folder with no package.json the entry lands in the workspace root's package.json", async () => {

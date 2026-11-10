@@ -1,6 +1,6 @@
 // init sets up the folder it runs in, and refuses --dir and --config in either position.
 
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -85,16 +85,58 @@ async function expectRefused(args: readonly string[], line: string): Promise<voi
 
 describe('the folder init runs in', () => {
   it(
-    'init in a folder with a config is already initialized and writes nothing',
+    'init in a folder with a config re-runs setup and keeps the config',
     async () => {
       expectFresh()
       const root = projectFolder('existing')
-      plantConfig(root)
-      const before = listing(root)
-      const outcome = await agentQa(root, ['init', ...WEB_GEMINI, '--pm', 'none'])
+      const fresh = await agentQa(root, [
+        'init',
+        '--yes',
+        ...WEB_GEMINI,
+        '--pm',
+        'none',
+        '--no-browsers',
+        '--agents',
+        'none',
+      ])
+      expect(fresh.code, fresh.text).toBe(0)
+      const config = join(root, 'agent-qa.config.yaml')
+      const bytes = readFileSync(config)
+      const outcome = await agentQa(root, ['init', '--yes', '--pm', 'none', '--no-browsers'])
       expect(outcome.code, outcome.text).toBe(0)
-      expect(outcome.text).toContain('Project is already initialized at')
-      expect(listing(root)).toEqual(before)
+      expect(outcome.text).not.toMatch(/already initialized|Use --force to rebuild/u)
+      expect(readFileSync(config)).toEqual(bytes)
+    },
+    CELL_BUDGET_MS,
+  )
+
+  it(
+    'a built re-run in a fresh home records a latest answer that did not come from the registry',
+    async () => {
+      expectFresh()
+      const root = projectFolder('latest')
+      const fresh = await agentQa(root, [
+        'init',
+        '--yes',
+        ...WEB_GEMINI,
+        '--pm',
+        'none',
+        '--no-browsers',
+        '--agents',
+        'none',
+      ])
+      expect(fresh.code, fresh.text).toBe(0)
+      const outcome = await agentQa(root, [
+        'init',
+        '--json',
+        '--yes',
+        '--pm',
+        'none',
+        '--no-browsers',
+      ])
+      expect(outcome.code, outcome.text).toBe(0)
+      const doc = JSON.parse(outcome.stdout) as { latest?: { source: string } }
+      expect(['cache', 'none'], outcome.text).toContain(doc.latest?.source)
     },
     CELL_BUDGET_MS,
   )
@@ -124,12 +166,12 @@ describe('the folder init runs in', () => {
   )
 
   it(
-    'init --agent reads the config in the folder it runs in',
+    'init --capabilities reads the config in the folder it runs in',
     async () => {
       expectFresh()
       const root = projectFolder('agent')
       plantConfig(root)
-      const outcome = await agentQa(root, ['init', '--agent'])
+      const outcome = await agentQa(root, ['init', '--capabilities'])
       expect(outcome.code, outcome.text).toBe(0)
       const manifest = JSON.parse(outcome.stdout) as { posture: { configuration: unknown } }
       expect(manifest.posture.configuration).not.toBe('absent')
@@ -138,11 +180,11 @@ describe('the folder init runs in', () => {
   )
 
   it(
-    'a refused init --agent under GitHub Actions prints its block on stderr and nothing on stdout',
+    'a refused init --capabilities under GitHub Actions prints its block on stderr and nothing on stdout',
     async () => {
       expectFresh()
       const root = projectFolder('agent-refused')
-      const outcome = await agentQa(root, ['init', '--agent', '--dir', 'e2e'], {
+      const outcome = await agentQa(root, ['init', '--capabilities', '--dir', 'e2e'], {
         GITHUB_ACTIONS: 'true',
       })
       expect(outcome.code, outcome.text).toBe(2)

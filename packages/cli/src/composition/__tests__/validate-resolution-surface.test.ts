@@ -82,14 +82,17 @@ function runShippedCli(...args: string[]): { status: number | null; combined: st
  * cells below validate.
  */
 function scaffoldWithShippedInit(): string {
-  const args = ['init', '--platform', 'web', '--pm', 'none']
+  const args = ['init', '--platform', 'web', '--pm', 'none', '--no-browsers', '--agents', 'none']
   const run = spawnSync(process.execPath, [CLI_DIST, ...args], {
     cwd: root,
     encoding: 'utf8',
     env: { ...process.env, HOME: home, USERPROFILE: home, NO_COLOR: '1', FORCE_COLOR: '0' },
   })
   const combined = `${run.stdout ?? ''}${run.stderr ?? ''}`
-  expect(run.status, `the product's own init must succeed:\n${combined}`).toBe(0)
+  // --pm none installs nothing, so validate waits for the install and init exits 0.
+  expect(run.status, `the product's own init writes the scaffold:\n${combined}`).toBe(0)
+  expect(combined).toContain('validate: install first (--pm none)')
+  expect(combined.match(/^✗ /gmu) ?? [], combined).toHaveLength(0)
   const configText = readFileSync(join(root, CONFIG_FILE), 'utf-8')
   // THE PRECONDITION OF THE WHOLE DEFECT, ASSERTED RATHER THAN ASSUMED: the default non-interactive
   // scaffold DECLARES the optional subscription-auth plugin. If a later change stops it declaring

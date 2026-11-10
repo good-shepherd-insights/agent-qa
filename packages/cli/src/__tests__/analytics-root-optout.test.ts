@@ -15,6 +15,7 @@ import type { DaemonCommandDeps } from '../commands/daemon.js'
 import { createInitCommand } from '../commands/init.js'
 import { MCP_HTTP_BIND_HOST, createMcpCommand } from '../commands/mcp.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
+import { fakeRunner } from './project-fixtures.js'
 import type {
   CliAnalyticsHost,
   ComposeAnalyticsHostInput,
@@ -289,7 +290,7 @@ describe('the chat composition root honours analytics.privacy', () => {
 
 const INIT_ROOT = 'packages/cli/src/commands/init.ts'
 
-/** Drive the SHIPPED init command, non-interactively (no prompts on the `--platform` arm). */
+/** Drive the SHIPPED init command, non-interactively; a directory with a config re-runs it. */
 async function runInit(
   dir: string,
   extraHooks: Parameters<typeof createInitCommand>[0] = {},
@@ -299,16 +300,30 @@ async function runInit(
   const previousExitCode = process.exitCode
   process.exitCode = undefined
   mkdirSync(join(dir, '.git'), { recursive: true })
+  // A temporary home, so init reads no real credential store.
+  const home = mkdtempSync(join(tmpdir(), 'agent-qa-root-optout-home-'))
   try {
     const parent = new Command().option('--config <path>', 'config file path')
-    parent.addCommand(createInitCommand({ cwd: dir, ...extraHooks }))
+    const host = { homedir: home, env: {}, run: fakeRunner(), ...extraHooks.host }
+    parent.addCommand(
+      createInitCommand({
+        cwd: dir,
+        chromium: () => ({ found: true, path: '/fake/chromium' }),
+        latestVersion: async () => ({ source: 'none' }),
+        ...extraHooks,
+        host,
+      }),
+    )
     parent.exitOverride()
-    await parent.parseAsync(['node', 'agent-qa', 'init', '--platform', 'web', '--pm', 'none'])
+    // A re-run refuses --platform, so only a directory with no config is given it.
+    const platform = existsSync(join(dir, 'agent-qa.config.yaml')) ? [] : ['--platform', 'web']
+    await parent.parseAsync(['node', 'agent-qa', 'init', ...platform, '--pm', 'none'])
     return { exitCode: process.exitCode }
   } finally {
     process.exitCode = previousExitCode
     log.mockRestore()
     error.mockRestore()
+    rmSync(home, { recursive: true, force: true })
   }
 }
 

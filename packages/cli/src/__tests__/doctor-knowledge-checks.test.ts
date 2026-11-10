@@ -10,12 +10,28 @@ import {
 } from '@vostride/agent-qa-schema'
 
 import {
+  EMBEDDER_CRASH_FIX,
+  EMBEDDER_FLOOR_FIX,
+  EMBEDDER_NONE_FIX,
+  EMBEDDER_NO_DAEMON_FIX,
+  EMBEDDER_NO_DAEMON_TEXT,
+  EMBEDDER_PROFILE_FIX,
   EMBEDDER_WORKER_NOT_REGISTERED_TEXT,
   NO_KNOWLEDGE_ROOT_MESSAGE,
   RUNG_CAUSE_LABELS,
+  STORE_NOT_BUILT_FIX,
   createKnowledgeChecks,
   type KnowledgeCheckProbes,
 } from '../commands/doctor-knowledge-checks.js'
+import { rowFix } from '../commands/doctor-row.js'
+import {
+  DAEMON_REGISTRATION_SCHEMA_VERSION,
+  inspectDaemonHandshake,
+  type DaemonHandshakeDeps,
+  type DaemonRegistration,
+  type InspectDaemonRegistrationOutcome,
+} from '../daemon/registration.js'
+import { DAEMON_IDENTITY_SCHEMA_VERSION } from '../daemon/server.js'
 
 const STATIC_PROFILE: EmbeddingProfile = { ...DEFAULT_EMBEDDING_PROFILE, backend: 'static' }
 
@@ -29,6 +45,37 @@ function deferred(reason: string) {
 }
 
 const LEXICAL_ONLY = { kind: 'lexical-only' } as never
+
+const REGISTRATION: DaemonRegistration = {
+  schemaVersion: DAEMON_REGISTRATION_SCHEMA_VERSION,
+  instanceId: '5b0c2f7e-8a41-4f3b-9d2e-6c1a7b3e9f04',
+  pid: 4242,
+  socketPath: '/sockets/agent-qa-daemon.sock',
+  startedAtMs: 1_000,
+}
+
+const SINCE_START = new Date(REGISTRATION.startedAtMs + 1).toISOString()
+const BEFORE_START = new Date(REGISTRATION.startedAtMs - 1).toISOString()
+const NOT_STARTED = '; the daemon starts its embedder worker when a run needs it'
+
+function daemonOutcome(live: boolean): InspectDaemonRegistrationOutcome {
+  return { kind: live ? 'live' : 'stale', registration: REGISTRATION }
+}
+
+// Each Embedder WARN outcome, the words its message opens with, and the fix printed under it.
+const EMBEDDER_WARNS = [
+  { outcome: ready('floor'), opens: 'static floor — ', fix: EMBEDDER_FLOOR_FIX },
+  { outcome: deferred('cold-artifact'), opens: 'none — ', fix: EMBEDDER_NONE_FIX },
+  { outcome: deferred('load-failure'), opens: 'none — ', fix: EMBEDDER_NONE_FIX },
+  { outcome: deferred('worker-unavailable'), opens: 'none — ', fix: EMBEDDER_NONE_FIX },
+  { outcome: LEXICAL_ONLY, opens: 'none — ', fix: EMBEDDER_NONE_FIX },
+]
+
+function expectWarnFix(fix: string | undefined, expected: string, label: string): void {
+  expect(fix, label).not.toContain('exited with an error')
+  expect(fix, label).not.toContain('daemon stop')
+  expect(fix, label).toBe(expected)
+}
 
 interface Project {
   config: Record<string, unknown>
@@ -65,6 +112,7 @@ function baseProbes(overrides: Partial<KnowledgeCheckProbes> = {}): KnowledgeChe
     readWriterLease: () => ({ kind: 'absent' }),
     readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
     readDaemonEventLedger: () => ({ events: [] }),
+    inspectDaemon: () => Promise.resolve({ kind: 'absent' }),
     ...overrides,
   }
 }
@@ -145,6 +193,7 @@ describe('createKnowledgeChecks', () => {
     expect(store).toEqual({
       status: 'warn',
       message: `no index at ${relativeRoot} — scanning bundles (${RUNG_CAUSE_LABELS['index-not-built']})`,
+      fix: STORE_NOT_BUILT_FIX,
     })
     expect(rung).toEqual({
       status: 'warn',
@@ -152,6 +201,23 @@ describe('createKnowledgeChecks', () => {
     })
     expect(embedder.status).toBe('pass')
     expect(resolveEmbedderCapability).toHaveBeenCalledTimes(1)
+  })
+
+  it('an index that is not built yet warns with the fix that builds it, never the corrupt-file advice', async () => {
+    const { checks, store } = await runChecks(makeProject(), baseProbes({
+      classifyIndexFace: () => ({
+        source: 'scan',
+        reason: 'absent',
+        detail: 'derived index file is absent',
+        filePresent: false,
+      }),
+    }))
+    const fix = rowFix({ check: checks[0]!, result: store })
+    expect(store.status).toBe('warn')
+    expect(store.message.startsWith('no index at '), store.message).toBe(true)
+    expect(fix).not.toContain('corrupt')
+    expect(fix).toBe(STORE_NOT_BUILT_FIX)
+    expect(fix).toContain('`npx agent-qa knowledge rebuild-index`')
   })
 
   it.each(['corrupt', 'locked', 'schema-version'] as const)(
@@ -170,7 +236,8 @@ describe('createKnowledgeChecks', () => {
       expect(store.status).toBe('fail')
       expect(store.message).toBe(`index at ${indexPath} could not be opened: ${reason}`)
       expect(store.message).not.toContain('SQLITE_NOTADB')
-      expect(checks[0].fixInstructions).toContain('agent-qa knowledge rebuild-index')
+      expect(checks[0].fixInstructions).toContain('`npx agent-qa knowledge rebuild-index`')
+      expect(rowFix({ check: checks[0], result: store })).toContain('remove the corrupt file at')
       expect(rung.status).toBe('warn')
     },
   )
@@ -183,6 +250,7 @@ describe('createKnowledgeChecks', () => {
     expect(embedder).toEqual({
       status: 'warn',
       message: `static floor — ${RUNG_CAUSE_LABELS['native-runtime-unavailable']}`,
+      fix: EMBEDDER_FLOOR_FIX,
     })
     expect(rung).toEqual({
       status: 'warn',
@@ -204,6 +272,7 @@ describe('createKnowledgeChecks', () => {
     expect(embedder).toEqual({
       status: 'warn',
       message: `static floor — ${RUNG_CAUSE_LABELS['profile-static-configured']}`,
+      fix: EMBEDDER_FLOOR_FIX,
     })
     expect(rung).toEqual({
       status: 'warn',
@@ -220,7 +289,11 @@ describe('createKnowledgeChecks', () => {
     const { embedder, rung } = await runChecks(project, baseProbes({
       resolveEmbedderCapability: () => Promise.resolve(deferred(reason)),
     }))
-    expect(embedder).toEqual({ status: 'warn', message: `none — ${RUNG_CAUSE_LABELS[expected]}` })
+    expect(embedder).toEqual({
+      status: 'warn',
+      message: `none — ${RUNG_CAUSE_LABELS[expected]}`,
+      fix: EMBEDDER_NONE_FIX,
+    })
     expect(rung).toEqual({ status: 'warn', message: `lexical-only — ${RUNG_CAUSE_LABELS[expected]}` })
   })
 
@@ -232,6 +305,7 @@ describe('createKnowledgeChecks', () => {
     expect(embedder).toEqual({
       status: 'warn',
       message: `none — ${RUNG_CAUSE_LABELS['floor-disabled']}`,
+      fix: EMBEDDER_NONE_FIX,
     })
     expect(rung).toEqual({
       status: 'warn',
@@ -249,16 +323,32 @@ describe('createKnowledgeChecks', () => {
     expect(embedder.message).not.toContain('probe exploded')
   })
 
+  it("with no daemon, a static floor Embedder WARN prints the static floor's fix and a none WARN prints the none fix", async () => {
+    for (const { outcome, opens, fix } of EMBEDDER_WARNS) {
+      const { checks, embedder } = await runChecks(makeProject(), baseProbes({
+        resolveEmbedderCapability: () => Promise.resolve(outcome),
+      }))
+      expect(embedder.status, opens).toBe('warn')
+      expect(embedder.message.startsWith(opens), embedder.message).toBe(true)
+      expectWarnFix(rowFix({ check: checks[1]!, result: embedder }), fix, embedder.message)
+    }
+
+    const native = await runChecks(makeProject(), baseProbes())
+    expect(native.embedder.status).toBe('pass')
+    expect(rowFix({ check: native.checks[1]!, result: native.embedder })).toBeUndefined()
+  })
+
   it('fails the embedder row with the worker-not-registered wording when a live daemon lease has no worker registration', async () => {
     const project = makeProject()
     const { checks, embedder, rung } = await runChecks(project, baseProbes({
       readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
       readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
-      daemonLive: () => true,
+      inspectDaemon: () => Promise.resolve(daemonOutcome(true)),
       readDaemonEventLedger: () => ({
         events: [
-          { kind: 'embedder-worker-start' },
+          { ts: SINCE_START, kind: 'embedder-worker-start' },
           {
+            ts: SINCE_START,
             kind: 'embedder-worker-exit',
             reason: 'crash',
             stderr: 'Error: Embedder worker could not resolve profile: deferred\n    at /home/u/.agent-qa/worker.js',
@@ -266,51 +356,47 @@ describe('createKnowledgeChecks', () => {
         ],
       }),
     }))
-    expect(embedder).toEqual({ status: 'fail', message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT })
+    expect(embedder).toEqual({
+      status: 'fail',
+      message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT,
+      fix: EMBEDDER_PROFILE_FIX,
+    })
     expect(embedder.message).not.toContain('/home/u/.agent-qa/worker.js')
-    expect(checks[1].fixInstructions).toContain('v2 does not download the embedding model')
+    expect(rowFix({ check: checks[1]!, result: embedder })).toContain(
+      'v2 does not download the embedding model',
+    )
     expect(rung.status).not.toBe('fail')
   })
 
-  it('fails the embedder row with the ledger reason word when the exit was not a profile failure', async () => {
+  it('fails the embedder row with the no-daemon text when a writer lease is held and no daemon is live', async () => {
     const project = makeProject()
-    const { embedder } = await runChecks(project, baseProbes({
-      readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
-      readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
-      readDaemonEventLedger: () => ({
-        events: [{ kind: 'embedder-worker-exit', reason: 'terminated', stderr: 'SIGKILL' }],
-      }),
-    }))
-    expect(embedder).toEqual({
-      status: 'fail',
-      message: 'embedder worker failed to start: terminated',
-    })
-  })
-
-  it('fails with `no registration published` when a live lease has no exit row at all', async () => {
-    const project = makeProject()
-    const { embedder } = await runChecks(project, baseProbes({
+    const { checks, embedder } = await runChecks(project, baseProbes({
       readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
       readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
       readDaemonEventLedger: () => ({ events: [] }),
     }))
     expect(embedder).toEqual({
       status: 'fail',
-      message: 'embedder worker failed to start: no registration published',
+      message: EMBEDDER_NO_DAEMON_TEXT,
+      fix: EMBEDDER_NO_DAEMON_FIX,
     })
+    expect(rowFix({ check: checks[1]!, result: embedder })).toBe(EMBEDDER_NO_DAEMON_FIX)
   })
 
   it('does not consult the daemon half at all when no writer lease is live', async () => {
     const project = makeProject()
     const readEmbedderWorkerRegistration = vi.fn(() => ({ kind: 'absent' as const }))
     const readDaemonEventLedger = vi.fn(() => ({ events: [] }))
+    const inspectDaemon = vi.fn(() => Promise.resolve(daemonOutcome(true)))
     const { embedder } = await runChecks(project, baseProbes({
       readWriterLease: () => ({ kind: 'absent' }),
       readEmbedderWorkerRegistration,
       readDaemonEventLedger,
+      inspectDaemon,
     }))
     expect(readEmbedderWorkerRegistration).not.toHaveBeenCalled()
     expect(readDaemonEventLedger).not.toHaveBeenCalled()
+    expect(inspectDaemon).not.toHaveBeenCalled()
     expect(embedder.status).toBe('pass')
   })
 
@@ -319,7 +405,10 @@ describe('createKnowledgeChecks', () => {
     const { embedder } = await runChecks(project, baseProbes({
       readWriterLease: () => ({ kind: 'parsed', lease: {} as never }),
       readEmbedderWorkerRegistration: () => ({ kind: 'parsed', registration: {} as never }),
-      readDaemonEventLedger: () => ({ events: [] }),
+      inspectDaemon: () => Promise.resolve(daemonOutcome(true)),
+      readDaemonEventLedger: () => ({
+        events: [{ ts: SINCE_START, kind: 'embedder-worker-exit', reason: 'crash', stderr: '' }],
+      }),
     }))
     expect(embedder).toEqual({
       status: 'pass',
@@ -424,7 +513,7 @@ describe('createKnowledgeChecks', () => {
   })
 })
 
-describe('the Embedder row fix text', () => {
+describe('the Embedder row beside a daemon', () => {
   const liveLease = { readWriterLease: () => ({ kind: 'parsed', lease: {} as never }) as const }
   const profileExit = {
     kind: 'embedder-worker-exit',
@@ -432,104 +521,268 @@ describe('the Embedder row fix text', () => {
     stderr: 'Error: Embedder worker could not resolve profile: deferred\n    at /home/u/.agent-qa/worker.js',
   }
 
-  async function daemonState(events: Record<string, unknown>[], live = true) {
+  async function daemonState(
+    events: Record<string, unknown>[],
+    live = true,
+    overrides: Partial<KnowledgeCheckProbes> = {},
+  ) {
     const { checks, embedder } = await runChecks(makeProject(), baseProbes({
       ...liveLease,
       readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
-      daemonLive: () => live,
-      readDaemonEventLedger: () => ({ events: events as never }),
+      inspectDaemon: () => Promise.resolve(daemonOutcome(live)),
+      readDaemonEventLedger: () => ({
+        events: events.map(event => ({ ts: SINCE_START, ...event })) as never,
+      }),
+      ...overrides,
     }))
-    return { embedder, fix: checks[1]!.fixInstructions }
+    return { embedder, fix: rowFix({ check: checks[1]!, result: embedder }) }
   }
 
-  it('a daemon worker that could not resolve its profile says v2 downloads no embedding model and daemon stop clears the row', async () => {
-    const { embedder, fix } = await daemonState([{ kind: 'embedder-worker-start' }, profileExit])
-    expect(embedder).toEqual({ status: 'fail', message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT })
-    expect(fix).toContain('v2 does not download the embedding model')
-    expect(fix).toContain('npx agent-qa daemon stop')
-    expect(fix).toBe('v2 does not download the embedding model, and knowledge search works without it. Stop the daemon with `npx agent-qa daemon stop` to clear this row.')
-    expect(fix).not.toContain('/home/u/.agent-qa/worker.js')
+  it('an idle daemon with no worker registration and no worker exit reports the in-process result and says the worker starts when a run needs it', async () => {
+    const native = await daemonState([])
+    expect(native.embedder).toEqual({
+      status: 'pass',
+      message: `native (${DEFAULT_EMBEDDING_PROFILE.model_id})${NOT_STARTED}`,
+    })
+
+    const floor = await daemonState([], true, {
+      resolveEmbedderCapability: () => Promise.resolve(ready('floor')),
+    })
+    expect(floor.embedder).toEqual({
+      status: 'warn',
+      message: `static floor — ${RUNG_CAUSE_LABELS['native-runtime-unavailable']}${NOT_STARTED}`,
+      fix: EMBEDDER_FLOOR_FIX,
+    })
+
+    const none = await daemonState([], true, {
+      resolveEmbedderCapability: () => Promise.resolve(LEXICAL_ONLY),
+    })
+    expect(none.embedder).toEqual({
+      status: 'warn',
+      message: `none — ${RUNG_CAUSE_LABELS['floor-disabled']}${NOT_STARTED}`,
+      fix: EMBEDDER_NONE_FIX,
+    })
   })
 
-  it('an idle daemon with no worker registration says the worker starts when a run needs it and daemon stop clears the row', async () => {
-    const worker = 'The daemon starts its embedder worker when a run needs it, so an idle daemon shows this row. Stop the daemon with `npx agent-qa daemon stop` to clear it.'
-    for (const [events, reason] of [
-      [[], 'no registration published'],
-      [[{ kind: 'embedder-worker-exit', reason: 'terminated', stderr: 'SIGKILL' }], 'terminated'],
-    ] as const) {
-      const { embedder, fix } = await daemonState([...events])
-      expect(embedder).toEqual({ status: 'fail', message: `embedder worker failed to start: ${reason}` })
-      expect(fix).toContain('starts its embedder worker when a run needs it')
-      expect(fix).toContain('npx agent-qa daemon stop')
-      expect(fix).toBe(worker)
+  it('beside an idle daemon, the static floor and none Embedder WARNs print the fix for their rung, never the crash fix or daemon stop', async () => {
+    const idleStates: Record<string, unknown>[][] = [
+      [],
+      [{ kind: 'embedder-worker-start' }, { kind: 'embedder-worker-exit', reason: 'idle', stderr: '' }],
+    ]
+    for (const events of idleStates) {
+      for (const { outcome, opens, fix } of EMBEDDER_WARNS) {
+        const state = await daemonState(events, true, {
+          resolveEmbedderCapability: () => Promise.resolve(outcome),
+        })
+        expect(state.embedder.status, opens).toBe('warn')
+        expect(state.embedder.message.startsWith(opens), state.embedder.message).toBe(true)
+        expect(state.embedder.message.endsWith(NOT_STARTED), state.embedder.message).toBe(true)
+        expectWarnFix(state.fix, fix, state.embedder.message)
+      }
+
+      const native = await daemonState(events)
+      expect(native.embedder).toEqual({
+        status: 'pass',
+        message: `native (${DEFAULT_EMBEDDING_PROFILE.model_id})${NOT_STARTED}`,
+      })
+      expect(native.fix).toBeUndefined()
     }
   })
 
-  it('both daemon states keep the fail status and name no config key', async () => {
-    const states = [await daemonState([profileExit]), await daemonState([])]
+  it('idle, daemon-stop and replace exits since the daemon started read as not started', async () => {
+    for (const reason of ['idle', 'daemon-stop', 'replace']) {
+      const { embedder } = await daemonState([
+        { kind: 'embedder-worker-start' },
+        { kind: 'embedder-worker-exit', reason, stderr: '' },
+      ])
+      expect(embedder, reason).toEqual({
+        status: 'pass',
+        message: `native (${DEFAULT_EMBEDDING_PROFILE.model_id})${NOT_STARTED}`,
+      })
+    }
+  })
+
+  it('a crash or start-error exit since the daemon started fails with the crash fix', async () => {
+    for (const reason of ['crash', 'start-error']) {
+      const { embedder, fix } = await daemonState([
+        { kind: 'embedder-worker-start' },
+        { kind: 'embedder-worker-exit', reason, stderr: 'Error: worker exited with code 1' },
+      ])
+      expect(embedder, reason).toEqual({
+        status: 'fail',
+        message: `embedder worker failed to start: ${reason}`,
+        fix: EMBEDDER_CRASH_FIX,
+      })
+      expect(fix, reason).toBe(EMBEDDER_CRASH_FIX)
+      expect(fix, reason).toContain('exited with an error')
+      expect(fix, reason).toContain('npx agent-qa daemon stop')
+    }
+  })
+
+  it('a worker that could not resolve its profile since the daemon started fails with the not-registered text and the profile fix', async () => {
+    const { embedder, fix } = await daemonState([{ kind: 'embedder-worker-start' }, profileExit])
+    expect(embedder).toEqual({
+      status: 'fail',
+      message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT,
+      fix: EMBEDDER_PROFILE_FIX,
+    })
+    expect(fix).toBe(EMBEDDER_PROFILE_FIX)
+    expect(fix).toContain('v2 does not download the embedding model')
+    expect(fix).not.toContain('/home/u/.agent-qa/worker.js')
+  })
+
+  it('a crash or profile exit recorded before the daemon started is ignored, so the worker reads as not started', async () => {
+    for (const exit of [
+      { kind: 'embedder-worker-exit', reason: 'crash', stderr: 'Error: worker exited with code 1' },
+      profileExit,
+    ]) {
+      const { embedder } = await daemonState([{ ...exit, ts: BEFORE_START }])
+      expect(embedder, exit.stderr).toEqual({
+        status: 'pass',
+        message: `native (${DEFAULT_EMBEDDING_PROFILE.model_id})${NOT_STARTED}`,
+      })
+    }
+  })
+
+  it('only the last exit since the daemon started counts', async () => {
+    const { embedder } = await daemonState([
+      { kind: 'embedder-worker-exit', reason: 'crash', stderr: '' },
+      { kind: 'embedder-worker-exit', reason: 'idle', stderr: '' },
+    ])
+    expect(embedder.status).toBe('pass')
+    const crashed = await daemonState([
+      { kind: 'embedder-worker-exit', reason: 'idle', stderr: '' },
+      { kind: 'embedder-worker-exit', reason: 'crash', stderr: '' },
+    ])
+    expect(crashed.embedder.status).toBe('fail')
+  })
+
+  it('the failing daemon states name no config key', async () => {
+    const states = [
+      await daemonState([profileExit]),
+      await daemonState([{ kind: 'embedder-worker-exit', reason: 'crash', stderr: '' }]),
+      await daemonState([], false),
+    ]
     for (const { embedder, fix } of states) {
       expect(embedder.status).toBe('fail')
       expect(fix).not.toContain('agent-qa.config.yaml')
       expect(fix).not.toContain('profile in')
       expect(fix).not.toContain('embedder.')
     }
-    expect(states[0]!.fix).not.toBe(states[1]!.fix)
-
-    const pass = await runChecks(makeProject(), baseProbes())
-    const warn = await runChecks(makeProject(), baseProbes({
-      resolveEmbedderCapability: () => Promise.resolve(ready('floor')),
-    }))
-    const project = makeProject()
-    const skip = await runChecks({ ...project, config: null as never }, baseProbes())
-    expect([pass.embedder.status, warn.embedder.status, skip.embedder.status]).toEqual(['pass', 'warn', 'skip'])
+    expect(new Set(states.map(state => state.fix)).size).toBe(3)
   })
 
-  it('a worker that exited with crash or start-error says it exited with an error, not that the daemon is idle', async () => {
-    const worker = 'The daemon starts its embedder worker when a run needs it, so an idle daemon shows this row. Stop the daemon with `npx agent-qa daemon stop` to clear it.'
-    for (const reason of ['crash', 'start-error']) {
-      const { embedder, fix } = await daemonState([
-        { kind: 'embedder-worker-start' },
-        { kind: 'embedder-worker-exit', reason, stderr: 'Error: worker exited with code 1' },
-      ])
-      expect(embedder).toEqual({ status: 'fail', message: `embedder worker failed to start: ${reason}` })
-      expect(fix, reason).not.toBe(worker)
-      expect(fix, reason).toContain('exited with an error')
-      expect(fix, reason).toContain('npx agent-qa daemon stop')
-      expect(fix, reason).not.toContain('idle daemon')
-    }
-  })
-
-  it('idle, daemon-stop and replace exits and no recorded exit keep the idle worker text', async () => {
-    const worker = 'The daemon starts its embedder worker when a run needs it, so an idle daemon shows this row. Stop the daemon with `npx agent-qa daemon stop` to clear it.'
-    for (const reason of ['idle', 'daemon-stop', 'replace']) {
-      const { embedder, fix } = await daemonState([{ kind: 'embedder-worker-exit', reason, stderr: '' }])
-      expect(embedder).toEqual({ status: 'fail', message: `embedder worker failed to start: ${reason}` })
-      expect(fix, reason).toBe(worker)
-    }
-    const { embedder, fix } = await daemonState([])
-    expect(embedder).toEqual({ status: 'fail', message: 'embedder worker failed to start: no registration published' })
-    expect(fix).toBe(worker)
-  })
-
-  it('with no live daemon the fix says daemon stop cannot clear the row and names the daemon start that takes the lease over', async () => {
-    const states = [
-      { events: [profileExit], message: EMBEDDER_WORKER_NOT_REGISTERED_TEXT },
-      {
-        events: [{ kind: 'embedder-worker-exit', reason: 'crash', stderr: 'Error: worker exited with code 1' }],
-        message: 'embedder worker failed to start: crash',
-      },
-      { events: [], message: 'embedder worker failed to start: no registration published' },
-    ]
-    const fixes = new Set<string>()
-    for (const { events, message } of states) {
+  it('with no live daemon the row fails, the fix says daemon stop cannot clear it, and names the daemon start that takes the lease over', async () => {
+    const fixes = new Set<string | undefined>()
+    for (const events of [
+      [profileExit],
+      [{ kind: 'embedder-worker-exit', reason: 'crash', stderr: 'Error: worker exited with code 1' }],
+      [{ kind: 'embedder-worker-exit', reason: 'idle', stderr: '' }],
+      [],
+    ]) {
       const { embedder, fix } = await daemonState(events, false)
-      expect(embedder).toEqual({ status: 'fail', message })
-      expect(fix, message).toContain('No agent-qa daemon is running')
-      expect(fix, message).toContain('cannot clear')
-      expect(fix, message).toContain('`npx agent-qa daemon`')
-      expect(fix, message).not.toContain('/home/u/.agent-qa/worker.js')
+      expect(embedder).toEqual({
+        status: 'fail',
+        message: EMBEDDER_NO_DAEMON_TEXT,
+        fix: EMBEDDER_NO_DAEMON_FIX,
+      })
+      expect(fix).toBe(EMBEDDER_NO_DAEMON_FIX)
+      expect(fix).toContain('No agent-qa daemon is running')
+      expect(fix).toContain('cannot clear')
+      expect(fix).toContain('`npx agent-qa daemon`')
+      expect(fix).not.toContain('/home/u/.agent-qa/worker.js')
       fixes.add(fix)
     }
     expect(fixes.size).toBe(1)
+  })
+})
+
+describe('daemon liveness by the handshake', () => {
+  const liveLease = { readWriterLease: () => ({ kind: 'parsed', lease: {} as never }) as const }
+
+  function handshake(overrides: Partial<DaemonHandshakeDeps> = {}): DaemonHandshakeDeps {
+    return {
+      readRegistration: () => ({ kind: 'parsed', registration: REGISTRATION }),
+      processIsAlive: () => true,
+      readIdentity: (registration) => Promise.resolve({
+        schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION,
+        instanceId: registration.instanceId,
+        pid: registration.pid,
+      }),
+      ...overrides,
+    }
+  }
+
+  async function embedderRow(deps: DaemonHandshakeDeps) {
+    const { checks, embedder } = await runChecks(makeProject(), baseProbes({
+      ...liveLease,
+      readEmbedderWorkerRegistration: () => ({ kind: 'absent' }),
+      inspectDaemon: (agentQaRoot) => inspectDaemonHandshake(deps, agentQaRoot),
+      readDaemonEventLedger: () => ({
+        events: [{
+          ts: new Date(REGISTRATION.startedAtMs + 1).toISOString(),
+          kind: 'embedder-worker-exit',
+          reason: 'crash',
+          stderr: 'Error: worker exited with code 1',
+        }],
+      }),
+    }))
+    return { embedder, fix: rowFix({ check: checks[1]!, result: embedder }) }
+  }
+
+  it('a live pid whose identity request fails is stale, and the Embedder row gets the no-daemon fix', async () => {
+    const deps = handshake({ readIdentity: () => Promise.reject(new Error('connect ECONNREFUSED')) })
+    expect(await inspectDaemonHandshake(deps, '/project/.agent-qa')).toEqual({
+      kind: 'stale',
+      registration: REGISTRATION,
+    })
+    const { embedder, fix } = await embedderRow(deps)
+    expect(embedder.status).toBe('fail')
+    expect(fix).toBe(EMBEDDER_NO_DAEMON_FIX)
+    expect(fix).not.toContain('Stop the daemon with')
+  })
+
+  it('a live pid whose identity answers another instanceId or pid is stale, and the Embedder row gets the no-daemon fix', async () => {
+    for (const identity of [
+      { instanceId: '0f9e8d7c-6b5a-4c3d-8e2f-1a0b9c8d7e6f', pid: REGISTRATION.pid },
+      { instanceId: REGISTRATION.instanceId, pid: 4343 },
+    ]) {
+      const deps = handshake({
+        readIdentity: () => Promise.resolve({ schemaVersion: DAEMON_IDENTITY_SCHEMA_VERSION, ...identity }),
+      })
+      expect(await inspectDaemonHandshake(deps, '/project/.agent-qa'), JSON.stringify(identity)).toEqual({
+        kind: 'stale',
+        registration: REGISTRATION,
+      })
+      const { fix } = await embedderRow(deps)
+      expect(fix, JSON.stringify(identity)).toBe(EMBEDDER_NO_DAEMON_FIX)
+    }
+  })
+
+  it('a live pid whose identity matches is live, and the Embedder row sends a person to daemon stop', async () => {
+    const deps = handshake()
+    expect(await inspectDaemonHandshake(deps, '/project/.agent-qa')).toEqual({
+      kind: 'live',
+      registration: REGISTRATION,
+    })
+    const { fix } = await embedderRow(deps)
+    expect(fix).toContain('Stop the daemon with `npx agent-qa daemon stop`')
+  })
+
+  it('a dead pid is stale without asking for the identity', async () => {
+    const readIdentity = vi.fn<DaemonHandshakeDeps['readIdentity']>()
+    const deps = handshake({ processIsAlive: () => false, readIdentity })
+    expect(await inspectDaemonHandshake(deps, '/project/.agent-qa')).toEqual({
+      kind: 'stale',
+      registration: REGISTRATION,
+    })
+    expect(readIdentity).not.toHaveBeenCalled()
+  })
+
+  it('an absent or malformed registration answers as read', async () => {
+    for (const kind of ['absent', 'malformed'] as const) {
+      const deps = handshake({ readRegistration: () => ({ kind }) })
+      expect(await inspectDaemonHandshake(deps, '/project/.agent-qa')).toEqual({ kind })
+    }
   })
 })

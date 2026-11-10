@@ -1,296 +1,383 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
+import { createAgentQaProgram } from '../program.js'
+import { VERSION } from '../index.js'
 import {
-  inferAgentQaDevDependencyUpdateCommand,
-  printAgentQaUpdateNoticeIfNeeded,
-  shouldPrintAgentQaUpdateNotice,
-  type AgentQaUpdateNoticeContext,
+  UPDATE_NOTICE_SHOWN_FILE,
+  runUpdateNotice,
+  updateNoticeApplies,
+  type UpdateNoticeGate,
 } from '../version-notice.js'
+import {
+  CLI_ENTRY,
+  REBUILD_INSTRUCTION,
+  buildFreshness,
+  cleanupTempRoots,
+  spawnCollecting,
+  trackTempRoot,
+} from './conformance/spawned-chat.js'
 
-const { mockGetAgentQaUpdateStatus } = vi.hoisted(() => ({
-  mockGetAgentQaUpdateStatus: vi.fn(),
-}))
-
-vi.mock('@vostride/agent-qa-core', () => ({
-  getAgentQaUpdateStatus: mockGetAgentQaUpdateStatus,
-}))
+const HOUR_MS = 60 * 60 * 1000
+const NOW = Date.parse('2026-05-24T10:00:00.000Z')
+const CURRENT = '0.3.4'
 
 const createdDirs: string[] = []
 
-const baseContext: AgentQaUpdateNoticeContext = {
-  reporterSelection: { console: true, stdoutLive: false },
-  effectiveLogLevel: 'info',
-}
-
-beforeEach(() => {
-  mockGetAgentQaUpdateStatus.mockReset()
-  mockGetAgentQaUpdateStatus.mockResolvedValue({
-    installedVersion: '0.1.18',
-    latestVersion: '0.1.19',
-    updateAvailable: true,
-  })
-})
-
 afterEach(() => {
-  for (const dir of createdDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true })
-  }
+  for (const dir of createdDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+  cleanupTempRoots()
 })
 
-function makeTempProject(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'agent-qa-version-notice-'))
-  createdDirs.push(dir)
-  return dir
-}
-
-function writePackageJson(dir: string, value: unknown): void {
-  const content = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-  writeFileSync(join(dir, 'package.json'), content, 'utf-8')
-}
-
-function writeLockfile(dir: string, name: string): void {
-  writeFileSync(join(dir, name), '', 'utf-8')
-}
-
-function makeDevDependencyProject(options: {
-  packageManager?: string
-  lockfiles?: string[]
-} = {}): string {
-  const dir = makeTempProject()
-  writePackageJson(dir, {
-    ...(options.packageManager ? { packageManager: options.packageManager } : {}),
-    devDependencies: { 'agent-qa': '0.1.18' },
-  })
-  for (const lockfile of options.lockfiles ?? []) {
-    writeLockfile(dir, lockfile)
+function tempHome(cache?: Record<string, string>): string {
+  const home = mkdtempSync(join(tmpdir(), 'agent-qa-notice-home-'))
+  createdDirs.push(home)
+  if (cache) {
+    mkdirSync(join(home, '.agent-qa'), { recursive: true })
+    writeFileSync(cachePath(home), JSON.stringify(cache, null, 2), 'utf-8')
   }
-  return dir
+  return home
 }
 
-function collectNotice(context: Partial<AgentQaUpdateNoticeContext> = {}) {
-  const lines: string[] = []
+function cachePath(home: string): string {
+  return join(home, '.agent-qa', 'version-check.json')
+}
+
+function shownPath(home: string): string {
+  return join(home, '.agent-qa', UPDATE_NOTICE_SHOWN_FILE)
+}
+
+function isoHoursAgo(hours: number): string {
+  return new Date(NOW - hours * HOUR_MS).toISOString()
+}
+
+function freshCache(latestVersion = '9.9.9'): Record<string, string> {
+  return { latestVersion, checkedAt: isoHoursAgo(1), lastAttemptedAt: isoHoursAgo(1) }
+}
+
+function staleCache(): Record<string, string> {
+  return { latestVersion: '9.9.9', checkedAt: isoHoursAgo(25), lastAttemptedAt: isoHoursAgo(25) }
+}
+
+// Records each refresh child the notice would start, and starts none.
+function recordingSpawn(): { spawnRefresh: (homeDir: string) => void; calls: string[] } {
+  const calls: string[] = []
   return {
-    lines,
-    context: {
-      ...baseContext,
-      ...context,
-      reporterSelection: {
-        ...baseContext.reporterSelection,
-        ...context.reporterSelection,
-      },
-      log: (line?: string) => {
-        lines.push(line ?? '')
-      },
-    } satisfies AgentQaUpdateNoticeContext,
+    calls,
+    spawnRefresh: (homeDir) => {
+      calls.push(homeDir)
+    },
   }
 }
 
-function joined(lines: string[]): string {
-  return lines.join('\n')
+const OPEN_GATE: UpdateNoticeGate = {
+  env: {},
+  stdoutIsTTY: true,
+  stderrIsTTY: true,
+  json: false,
+  logLevel: undefined,
 }
 
-function plainJoined(lines: string[]): string {
-  return joined(lines).replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, '')
+const CLOSED_GATES: Array<[string, Partial<UpdateNoticeGate>]> = [
+  ['CI=true', { env: { CI: 'true' } }],
+  ['GITHUB_ACTIONS=true', { env: { GITHUB_ACTIONS: 'true' } }],
+  ['stdout not a terminal', { stdoutIsTTY: false }],
+  ['stderr not a terminal', { stderrIsTTY: false }],
+  ['--json', { json: true }],
+  ['a silent log level', { logLevel: 'silent' }],
+]
+
+async function notice(
+  home: string,
+  options: {
+    now?: number
+    gate?: Partial<UpdateNoticeGate>
+  } = {},
+): Promise<{ text: string; calls: string[] }> {
+  const written: string[] = []
+  const recorder = recordingSpawn()
+  await runUpdateNotice({
+    ...OPEN_GATE,
+    ...options.gate,
+    homeDir: home,
+    now: options.now ?? NOW,
+    currentVersion: CURRENT,
+    write: (text) => {
+      written.push(text)
+    },
+    spawnRefresh: recorder.spawnRefresh,
+  })
+  return { text: written.join(''), calls: recorder.calls }
 }
 
-describe('shouldPrintAgentQaUpdateNotice', () => {
-  it('returns true for human-readable console output', () => {
-    expect(shouldPrintAgentQaUpdateNotice(baseContext)).toBe(true)
+describe('the update notice', () => {
+  it('names both versions, npx agent-qa@latest init and the releases link', async () => {
+    const home = tempHome(freshCache())
+
+    const { text, calls } = await notice(home)
+
+    expect(text).toBe(
+      'agent-qa 9.9.9 is out; you have 0.3.4. Update this project: npx agent-qa@latest init\n' +
+        'Releases: https://github.com/vostride/agent-qa/releases\n',
+    )
+    expect(JSON.parse(readFileSync(shownPath(home), 'utf-8'))).toEqual({ shownAt: NOW })
+    expect(calls).toEqual([])
+  })
+
+  it('shows at most once a day', async () => {
+    const home = tempHome(freshCache())
+
+    expect((await notice(home)).text).toContain('9.9.9')
+    expect((await notice(home, { now: NOW + HOUR_MS })).text).toBe('')
+    expect((await notice(home, { now: NOW + 25 * HOUR_MS })).text).toContain('9.9.9')
   })
 
   it.each([
-    ['silent log level', { effectiveLogLevel: 'silent' }],
-    ['live events enabled', { liveEvents: 'true' }],
-    ['console reporter disabled', { reporterSelection: { console: false } }],
-    ['stdout-live reporter enabled', { reporterSelection: { stdoutLive: true } }],
-  ])('returns false for %s', (_name, override) => {
-    const overrideContext = override as Partial<AgentQaUpdateNoticeContext>
-    const context = {
-      ...baseContext,
-      ...overrideContext,
-      reporterSelection: {
-        ...baseContext.reporterSelection,
-        ...(overrideContext.reporterSelection ?? {}),
-      },
-    } satisfies AgentQaUpdateNoticeContext
+    ['no cache file', undefined],
+    ['a cached version equal to the running one', freshCache(CURRENT)],
+    ['a cached version older than the running one', freshCache('0.3.3')],
+  ])('prints nothing for %s', async (_name, cache) => {
+    const home = tempHome(cache)
 
-    expect(shouldPrintAgentQaUpdateNotice(context)).toBe(false)
+    expect((await notice(home)).text).toBe('')
+    expect(existsSync(shownPath(home))).toBe(false)
+  })
+
+  it('never prints an unpinned install', async () => {
+    const { text } = await notice(tempHome(freshCache()))
+
+    expect(text).toContain('npx agent-qa@latest init')
+    expect(text).not.toMatch(/add -D|install agent-qa@latest|@latest -D/u)
   })
 })
 
-describe('inferAgentQaDevDependencyUpdateCommand', () => {
-  it('infers pnpm from packageManager or a sole pnpm lockfile', () => {
-    expect(
-      inferAgentQaDevDependencyUpdateCommand(
-        makeDevDependencyProject({ packageManager: 'pnpm@10.6.1' }),
-      ),
-    ).toBe('pnpm add -D agent-qa@latest')
-
-    expect(
-      inferAgentQaDevDependencyUpdateCommand(
-        makeDevDependencyProject({ lockfiles: ['pnpm-lock.yaml'] }),
-      ),
-    ).toBe('pnpm add -D agent-qa@latest')
+describe('the shared gate for the notice and the registry refresh', () => {
+  it('opens only with terminals on both streams, outside CI, without --json and not silent', () => {
+    expect(updateNoticeApplies(OPEN_GATE)).toBe(true)
+    for (const [, gate] of CLOSED_GATES) {
+      expect(updateNoticeApplies({ ...OPEN_GATE, ...gate })).toBe(false)
+    }
   })
 
-  it.each([
-    ['npm@10.9.0', 'npm install --save-dev agent-qa@latest'],
-    ['yarn@4.10.3', 'yarn add --dev agent-qa@latest'],
-    ['bun@1.3.4', 'bun add --dev agent-qa@latest'],
-  ])('infers %s from packageManager', (packageManager, command) => {
-    expect(
-      inferAgentQaDevDependencyUpdateCommand(makeDevDependencyProject({ packageManager })),
-    ).toBe(command)
+  it.each(CLOSED_GATES)(
+    'with %s prints nothing, starts no refresh and leaves version-check.json byte for byte',
+    async (_name, gate) => {
+      const home = tempHome(staleCache())
+      const before = readFileSync(cachePath(home))
+
+      const { text, calls } = await notice(home, { gate })
+
+      expect(text).toBe('')
+      expect(calls).toEqual([])
+      expect(existsSync(shownPath(home))).toBe(false)
+      expect(readFileSync(cachePath(home)).equals(before)).toBe(true)
+    },
+  )
+
+  it('with the gate open over a stale cache starts one refresh child for this home', async () => {
+    const home = tempHome(staleCache())
+
+    const { text, calls } = await notice(home)
+
+    expect(text).toContain('npx agent-qa@latest init')
+    expect(calls).toEqual([home])
   })
 
-  it.each([
-    ['package-lock.json', 'npm install --save-dev agent-qa@latest'],
-    ['npm-shrinkwrap.json', 'npm install --save-dev agent-qa@latest'],
-    ['yarn.lock', 'yarn add --dev agent-qa@latest'],
-    ['bun.lock', 'bun add --dev agent-qa@latest'],
-    ['bun.lockb', 'bun add --dev agent-qa@latest'],
-  ])('infers %s as the only lockfile', (lockfile, command) => {
-    expect(
-      inferAgentQaDevDependencyUpdateCommand(makeDevDependencyProject({ lockfiles: [lockfile] })),
-    ).toBe(command)
-  })
+  it('leaves the daily attempt to the refresh child, so a command that ends at once burns none', async () => {
+    const home = tempHome(staleCache())
 
-  it('returns undefined for uncertain or unsafe package layouts', () => {
-    const dependenciesOnly = makeTempProject()
-    writePackageJson(dependenciesOnly, { dependencies: { 'agent-qa': '0.1.18' }, packageManager: 'pnpm@10.6.1' })
+    await notice(home)
 
-    const noPackageJson = makeTempProject()
-    const malformedPackageJson = makeTempProject()
-    writePackageJson(malformedPackageJson, '{ not json')
-
-    const noPackageManagerOrLock = makeTempProject()
-    writePackageJson(noPackageManagerOrLock, { devDependencies: { 'agent-qa': '0.1.18' } })
-
-    const unknownPackageManager = makeDevDependencyProject({ packageManager: 'deno@2.2.0' })
-    const multipleLockfiles = makeDevDependencyProject({
-      lockfiles: ['pnpm-lock.yaml', 'package-lock.json'],
+    expect(JSON.parse(readFileSync(cachePath(home), 'utf-8'))).toEqual({
+      ...staleCache(),
+      refreshStartedAt: new Date(NOW).toISOString(),
     })
+  })
 
-    for (const dir of [
-      dependenciesOnly,
-      noPackageJson,
-      malformedPackageJson,
-      noPackageManagerOrLock,
-      unknownPackageManager,
-      multipleLockfiles,
-    ]) {
-      expect(existsSync(dir)).toBe(true)
-      expect(inferAgentQaDevDependencyUpdateCommand(dir)).toBeUndefined()
-    }
+  it('starts no second refresh child while the first may still be running', async () => {
+    const home = tempHome(staleCache())
+
+    const first = await notice(home)
+    const second = await notice(home, { now: NOW + 60_000 })
+
+    expect(first.calls).toEqual([home])
+    expect(second.calls).toEqual([])
+  })
+
+  it('over a fresh cache starts no refresh child', async () => {
+    const { calls } = await notice(tempHome(freshCache()))
+
+    expect(calls).toEqual([])
+  })
+
+  it('a refresh spawn that throws leaves the notice printed and the command untouched', async () => {
+    const home = tempHome(staleCache())
+    const written: string[] = []
+
+    await expect(
+      runUpdateNotice({
+        ...OPEN_GATE,
+        homeDir: home,
+        now: NOW,
+        currentVersion: CURRENT,
+        write: (text) => {
+          written.push(text)
+        },
+        spawnRefresh: () => {
+          throw new Error('spawn EAGAIN')
+        },
+      }),
+    ).resolves.toBeUndefined()
+    expect(written.join('')).toContain('npx agent-qa@latest init')
   })
 })
 
-describe('printAgentQaUpdateNoticeIfNeeded', () => {
-  it('prints current/latest versions, releases link, and inferred dev-dependency command', async () => {
-    const cwd = makeDevDependencyProject({ packageManager: 'pnpm@10.6.1' })
-    const { context, lines } = collectNotice({ cwd })
+describe('the program runs the notice after every command', () => {
+  type NoticeInput = { json: boolean; logLevel?: string }
 
-    await printAgentQaUpdateNoticeIfNeeded(context)
-
-    expect(mockGetAgentQaUpdateStatus).toHaveBeenCalledTimes(1)
-    expect(lines[0]).toBe('')
-    const output = plainJoined(lines)
-    expect(output).toContain('Update available: agent-qa v0.1.19')
-    expect(output).toContain('Current version: v0.1.18')
-    expect(output).toContain('Releases: https://github.com/vostride/agent-qa/releases')
-    expect(output).toContain('Update: pnpm add -D agent-qa@latest')
-  })
-
-  it.each([
-    ['missing package.json', () => makeTempProject()],
-    ['malformed package.json', () => {
-      const dir = makeTempProject()
-      writePackageJson(dir, '{ bad json')
-      return dir
-    }],
-    ['no dev dependency', () => {
-      const dir = makeTempProject()
-      writePackageJson(dir, { packageManager: 'pnpm@10.6.1' })
-      return dir
-    }],
-    ['dependencies only', () => {
-      const dir = makeTempProject()
-      writePackageJson(dir, { packageManager: 'pnpm@10.6.1', dependencies: { 'agent-qa': '0.1.18' } })
-      return dir
-    }],
-    ['unknown package manager', () => makeDevDependencyProject({ packageManager: 'deno@2.2.0' })],
-    ['multiple lockfiles', () => makeDevDependencyProject({ lockfiles: ['pnpm-lock.yaml', 'yarn.lock'] })],
-  ])('prints releases-only notice when command inference is uncertain for %s', async (_name, setup) => {
-    const { context, lines } = collectNotice({ cwd: setup() })
-
-    await printAgentQaUpdateNoticeIfNeeded(context)
-
-    const output = plainJoined(lines)
-    expect(output).toContain('Update available: agent-qa v0.1.19')
-    expect(output).toContain('Current version: v0.1.18')
-    expect(output).toContain('Releases: https://github.com/vostride/agent-qa/releases')
-    expect(output).not.toContain('Update:')
-  })
-
-  it.each([
-    ['no update', async () => {
-      mockGetAgentQaUpdateStatus.mockResolvedValueOnce({
-        installedVersion: '0.1.18',
-        latestVersion: '0.1.18',
-        updateAvailable: false,
-      })
-      return baseContext
-    }],
-    ['missing latest version', async () => {
-      mockGetAgentQaUpdateStatus.mockResolvedValueOnce({
-        installedVersion: '0.1.18',
-        updateAvailable: true,
-      })
-      return baseContext
-    }],
-    ['output gate false', async () => ({
-      ...baseContext,
-      reporterSelection: { console: true, stdoutLive: true },
-    })],
-    ['update helper rejects', async () => {
-      mockGetAgentQaUpdateStatus.mockRejectedValueOnce(new Error('registry unavailable'))
-      return baseContext
-    }],
-  ])('does not log a notice when %s', async (_name, setup) => {
-    const { context, lines } = collectNotice(await setup())
-
-    await printAgentQaUpdateNoticeIfNeeded(context)
-
-    expect(lines).toEqual([])
-  })
-
-  it('does not log forbidden install, package, branding, or local-data copy', async () => {
-    const cwd = makeDevDependencyProject({ packageManager: 'pnpm@10.6.1' })
-    const { context, lines } = collectNotice({ cwd })
-
-    await printAgentQaUpdateNoticeIfNeeded(context)
-
-    const output = plainJoined(lines)
-    const forbidden = [
-      'npmjs.com',
-      'npm install -g',
-      'pnpm add -g',
-      'yarn global',
-      'bun install -g',
-      'AgentQA',
-      'local config',
-      'logs',
-      'test content',
-      'memory',
-      'credentials',
-      'workspace path',
-    ]
-    for (const term of forbidden) {
-      expect(output).not.toContain(term)
+  async function parseWith(
+    args: string[],
+    updateNotice: (input: NoticeInput) => Promise<void>,
+    exitCode?: number,
+  ): Promise<typeof process.exitCode> {
+    const prior = process.exitCode
+    try {
+      const program = createAgentQaProgram({ updateNotice }).exitOverride()
+      program
+        .command('notice-probe')
+        .option('--json')
+        .action(() => {
+          if (exitCode !== undefined) process.exitCode = exitCode
+        })
+      await program.parseAsync(['node', 'agent-qa', ...args])
+      return process.exitCode
+    } finally {
+      process.exitCode = prior
     }
+  }
+
+  function recordingNotice(): {
+    inputs: NoticeInput[]
+    notice: (input: NoticeInput) => Promise<void>
+  } {
+    const inputs: NoticeInput[] = []
+    return {
+      inputs,
+      notice: async (input) => {
+        inputs.push(input)
+      },
+    }
+  }
+
+  it('runs after the action and keeps the exit code the action set', async () => {
+    const recorder = recordingNotice()
+
+    expect(await parseWith(['notice-probe'], recorder.notice, 3)).toBe(3)
+    expect(recorder.inputs).toEqual([{ json: false, logLevel: undefined }])
   })
+
+  it('passes --json, --quiet and --log-level through', async () => {
+    const recorder = recordingNotice()
+
+    await parseWith(['notice-probe', '--json'], recorder.notice)
+    await parseWith(['--quiet', 'notice-probe'], recorder.notice)
+    await parseWith(['--log-level', 'warn', 'notice-probe'], recorder.notice)
+
+    expect(recorder.inputs).toEqual([
+      { json: true, logLevel: undefined },
+      { json: false, logLevel: 'silent' },
+      { json: false, logLevel: 'warn' },
+    ])
+  })
+
+  it('swallows a notice that throws and leaves the exit code alone', async () => {
+    const throwing = async (): Promise<void> => {
+      throw new Error('notice failed')
+    }
+
+    expect(await parseWith(['notice-probe'], throwing, 3)).toBe(3)
+  })
+})
+
+describe('the built CLI over pipes', () => {
+  const CELL_BUDGET_MS = 60_000
+  const NOTICE_TEXT = /is out; you have|npx agent-qa@latest init|Releases:/u
+
+  function expectFresh(): void {
+    const freshness = buildFreshness()
+    expect(
+      { missing: freshness.missing, stale: freshness.stale },
+      `these cells drive the built CLI: ${REBUILD_INSTRUCTION}`,
+    ).toEqual({ missing: [], stale: [] })
+  }
+
+  // A home whose cache names a newer version and is a day and an hour old on every clock.
+  function staleHome(): string {
+    const home = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-notice-built-home-')))
+    const dayAndHourAgo = new Date(Date.now() - 25 * HOUR_MS).toISOString()
+    mkdirSync(join(home, '.agent-qa'), { recursive: true })
+    writeFileSync(
+      cachePath(home),
+      JSON.stringify(
+        { latestVersion: '9.9.9', checkedAt: dayAndHourAgo, lastAttemptedAt: dayAndHourAgo },
+        null,
+        2,
+      ),
+      'utf-8',
+    )
+    return home
+  }
+
+  // The child inherits no CI variable: spawnCollecting starts from PATH, HOME, TMPDIR and NODE_ENV.
+  async function built(args: readonly string[], home: string) {
+    const root = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-notice-built-')))
+    return await spawnCollecting(root, [CLI_ENTRY, ...args], {
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      XDG_CACHE_HOME: join(home, '.cache'),
+      XDG_DATA_HOME: join(home, '.local', 'share'),
+      XDG_STATE_HOME: join(home, '.local', 'state'),
+    })
+  }
+
+  it(
+    'a command over pipes prints no notice, makes no registry request and exits promptly',
+    async () => {
+      expectFresh()
+      const home = staleHome()
+      const before = readFileSync(cachePath(home))
+
+      const started = Date.now()
+      const outcome = await built(['skills'], home)
+      const elapsed = Date.now() - started
+
+      expect(outcome.code, outcome.stderr).toBe(0)
+      expect(outcome.stdout).not.toMatch(NOTICE_TEXT)
+      expect(outcome.stderr).not.toMatch(NOTICE_TEXT)
+      // A refresh is claimed in this file before its child starts, so an unchanged file means none.
+      expect(readFileSync(cachePath(home)).equals(before)).toBe(true)
+      expect(existsSync(shownPath(home))).toBe(false)
+      expect(elapsed).toBeLessThan(3_000)
+    },
+    CELL_BUDGET_MS,
+  )
+
+  it(
+    '--version prints only the version on stdout',
+    async () => {
+      expectFresh()
+      const home = staleHome()
+
+      const outcome = await built(['--version'], home)
+
+      expect(outcome.code).toBe(0)
+      expect(outcome.stdout).toBe(`${VERSION}\n`)
+      expect(outcome.stderr).not.toMatch(NOTICE_TEXT)
+    },
+    CELL_BUDGET_MS,
+  )
 })

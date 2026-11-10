@@ -13,7 +13,7 @@ vi.mock('../config.js', async (importOriginal) => ({
   loadConfigFile: vi.fn(),
 }))
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,9 +24,16 @@ import { createModel } from '@vostride/agent-qa-model'
 import { SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import { loadConfigFile } from '../config.js'
 import {
+  buildHooksFile,
+  buildScaffoldConfig,
+  renderScaffoldConfigYaml,
+} from '../commands/scaffold-content.js'
+import {
+  activeModelEntry,
   applyResolvedAuthToModelConfig,
   buildAnalysisTokenBudget,
   buildJobModelCapability,
+  NoModelConfiguredError,
   resolveCliChatCapabilities,
   resolveCliJobModel,
   resolveLLMModels,
@@ -34,6 +41,14 @@ import {
   resolveModelAuth,
   resolveNamedConfig,
 } from '../llm-utils.js'
+import {
+  CLI_ENTRY,
+  REBUILD_INSTRUCTION,
+  buildFreshness,
+  cleanupTempRoots,
+  spawnCollecting,
+  trackTempRoot,
+} from './conformance/spawned-chat.js'
 
 import type { JobModelCapabilityDeps } from '../llm-utils.js'
 import type { ModelCapabilities } from '@vostride/agent-qa-schema'
@@ -230,36 +245,49 @@ describe('resolveCredentials', () => {
 })
 
 describe('resolveLLMModels', () => {
-  it('uses the current Claude fallback when config has no selected LLM', () => {
-    const resolved = resolveLLMModels({})
+  const noModelMessage =
+    "No model is set in agent-qa.config.yaml. Add one on the dashboard's model page " +
+    '(npx agent-qa dashboard), or run npx agent-qa init --llm <choice>.'
 
-    expect(resolved.configName).toBe('')
-    expect(resolved.planner).toEqual({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-5-5',
-    })
-    expect(resolved.verifier).toEqual({
-      provider: 'anthropic-subscription',
-      model: 'claude-sonnet-5-5',
-    })
+  it('refuses a config with no registry.llms, naming the dashboard and init --llm', () => {
+    expect(() => resolveLLMModels({})).toThrow(NoModelConfiguredError)
+    expect(() => resolveLLMModels({})).toThrow(noModelMessage)
   })
 
-  it('uses the current Claude fallback when the selected LLM is missing', () => {
+  it('refuses a config whose registry.llms is empty', () => {
+    expect(() => resolveLLMModels({ registry: { llms: [] }, use: {} })).toThrow(
+      NoModelConfiguredError,
+    )
+  })
+
+  it('takes the first entry when use.llm is not set', () => {
     const resolved = resolveLLMModels({
       registry: {
-        llms: [{
-          name: 'configured',
-          provider: 'openai-compatible',
-          model: 'deepseek-chat',
-          baseURL: 'https://remote.example/api/v1',
-        }],
+        llms: [
+          { name: 'first', provider: 'gemini', model: 'gemini-3-flash-preview' },
+          { name: 'second', provider: 'openai-compatible', model: 'deepseek-chat' },
+        ],
       },
-      use: { llm: 'missing' },
     })
 
-    expect(resolved.configName).toBe('')
-    expect(resolved.planner.model).toBe('claude-sonnet-5-5')
-    expect(resolved.verifier.model).toBe('claude-sonnet-5-5')
+    expect(resolved.configName).toBe('first')
+    expect(resolved.planner).toEqual({ provider: 'gemini', model: 'gemini-3-flash-preview' })
+    expect(resolved.verifier).toEqual(resolved.planner)
+  })
+
+  it('takes the entry use.llm names among several', () => {
+    const resolved = resolveLLMModels({
+      registry: {
+        llms: [
+          { name: 'first', provider: 'gemini', model: 'gemini-3-flash-preview' },
+          { name: 'second', provider: 'openai-compatible', model: 'deepseek-chat' },
+        ],
+      },
+      use: { llm: 'second' },
+    })
+
+    expect(resolved.configName).toBe('second')
+    expect(resolved.planner).toEqual({ provider: 'openai-compatible', model: 'deepseek-chat' })
   })
 
   it('preserves explicit named model configs', () => {
@@ -282,6 +310,26 @@ describe('resolveLLMModels', () => {
       baseURL: 'https://remote.example/api/v1',
     })
     expect(resolved.verifier).toEqual(resolved.planner)
+  })
+})
+
+describe('activeModelEntry', () => {
+  const first = { name: 'first', provider: 'gemini', model: 'gemini-pro' }
+  const second = { name: 'second', provider: 'openai-compatible', model: 'deepseek-chat' }
+
+  it('returns the entry use.llm names', () => {
+    expect(activeModelEntry({ registry: { llms: [first, second] }, use: { llm: 'second' } })).toBe(
+      second,
+    )
+  })
+
+  it('returns the first entry when use.llm names none', () => {
+    expect(activeModelEntry({ registry: { llms: [first, second] } })).toBe(first)
+  })
+
+  it('returns nothing when registry.llms has no entry', () => {
+    expect(activeModelEntry({})).toBeUndefined()
+    expect(activeModelEntry({ registry: { llms: [] }, use: { llm: 'first' } })).toBeUndefined()
   })
 })
 
@@ -565,4 +613,43 @@ describe('model egress masking', () => {
     expect(sentUserText()).toContain('Type [secret:SHORT] into the code field.')
     expect(sentUserText()).not.toContain('q^7')
   })
+})
+
+describe('a config whose model is set up later', () => {
+  afterAll(() => {
+    cleanupTempRoots()
+  })
+
+  it('passes the built validate with exit 0', async () => {
+    const freshness = buildFreshness()
+    expect(
+      { missing: freshness.missing, stale: freshness.stale },
+      `this cell drives the built CLI: ${REBUILD_INSTRUCTION}`,
+    ).toEqual({ missing: [], stale: [] })
+
+    const root = trackTempRoot(mkdtempSync(join(tmpdir(), 'agent-qa-no-model-validate-')))
+    mkdirSync(join(root, '.agent-qa'), { recursive: true })
+    const config = buildScaffoldConfig('web', {
+      llmEntries: [],
+      usesSubscriptionAuth: false,
+      cacheDir: '.agent-qa/cache',
+      authStatesDir: '.agent-qa/auth-states',
+    })
+    expect(config).not.toHaveProperty('registry.llms')
+    writeFileSync(join(root, 'agent-qa.config.yaml'), renderScaffoldConfigYaml(config), 'utf8')
+    writeFileSync(join(root, 'hooks.yaml'), buildHooksFile('web'), 'utf8')
+    writeFileSync(join(root, '.env'), '', 'utf8')
+    writeFileSync(join(root, '.env.secrets.local'), '', 'utf8')
+
+    const outcome = await spawnCollecting(root, [CLI_ENTRY, 'validate'], {
+      HOME: root,
+      USERPROFILE: root,
+      XDG_CONFIG_HOME: join(root, '.config'),
+      XDG_DATA_HOME: join(root, '.local', 'share'),
+      XDG_CACHE_HOME: join(root, '.cache'),
+      XDG_STATE_HOME: join(root, '.local', 'state'),
+    })
+
+    expect(outcome.code, `${outcome.stdout}\n${outcome.stderr}`).toBe(0)
+  }, 60_000)
 })

@@ -1,18 +1,26 @@
 import { Command } from 'commander'
 import { execFileSync, execSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import pc from 'picocolors'
-import { parse as parseYaml } from 'yaml'
 import { loadConfigFile } from '../config.js'
+import type { InspectDaemonRegistrationOutcome } from '../daemon/registration.js'
+import type { DevicesHereLister } from './run.js'
 import { HARD_CUT_STEPS, INVALID_CONFIG_FIX, isHardCutIssue } from '../hard-cut.js'
-import { loadAuthPluginsForRawConfig, toModelProfileAndAuth, type LLMModelAdapter } from '../llm-utils.js'
-import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
+import {
+  activeModelEntry,
+  loadAuthPluginsForRawConfig,
+  toModelProfileAndAuth,
+  type LLMModelAdapter,
+} from '../llm-utils.js'
 import { NODE_FLOOR_INSTALL_LINE, NODE_FLOOR_MAJOR, nodeFloorRefusal } from '../node-floor.js'
 import { loadProviderPluginsForRawConfig } from '../provider-plugins.js'
 import {
   discoverWorkspaceFiles,
   formatAppiumInstallGuidance,
+  getAgentQaVersion,
+  getAuthPath,
+  isPathInsideDir,
   pluginsAddLine,
   resolveAppiumExecutable,
   resolveWorkspacePaths,
@@ -21,18 +29,32 @@ import {
   type ResolvedWorkspacePaths,
 } from '@vostride/agent-qa-core'
 import { guardJsonText, isGitHubActions, printRunText } from '@vostride/agent-qa-core/run-text-output'
-import { isLoopbackHost } from '@vostride/agent-qa-schema'
 import { createModel, getProvider } from '@vostride/agent-qa-model'
+import { findChromiumByDefault, type ChromiumResolver } from './browser-resolver.js'
+import { createDeviceChecks } from './doctor-device-checks.js'
 import { createKnowledgeChecks } from './doctor-knowledge-checks.js'
 import { createPluginChecks } from './doctor-plugin-checks.js'
 import { doorLogLevel, pluginDebugLog } from '../composition/plugin-host.js'
 import { createRemoteChecks, listedRemotes } from './doctor-remote-checks.js'
 import {
+  createNewerVersionCheck,
+  createSetupChecks,
+  projectAgentQa,
+} from './doctor-setup-checks.js'
+import { askLatestVersionByDefault, type LatestVersionAsk } from './latest-version-ask.js'
+import { findProjectAgentQa } from './project-agent-qa.js'
+import { projectHost, type ProjectHost } from './project-host.js'
+import { projectRange } from './project-range.js'
+import { getTargetPlatforms, hasWebTarget, resolveWebPlacement, type WebPlacement } from './web-placement.js'
+import {
   composeRow,
+  doctorDocument,
+  doctorExitCode,
   formatCheckRow,
   formatFixLines,
   formatStatus,
   resolveTerminalWidth,
+  rowFix,
 } from './doctor-row.js'
 
 // Exported so `doctor-knowledge-checks.ts` builds rows without restating the row contract.
@@ -41,6 +63,7 @@ export type CheckStatus = 'pass' | 'warn' | 'fail' | 'skip'
 export interface CheckResult {
   status: CheckStatus
   message: string
+  fix?: string
 }
 
 export interface DoctorCheck {
@@ -73,14 +96,14 @@ function resolveDoctorWorkspace(
   }
 }
 
-type ResolvedDoctorAuth =
+export type ResolvedDoctorAuth =
   | { kind: 'api-key'; apiKey: string }
   | { kind: 'bearer-token'; token: string }
   | { kind: 'auth-fetch'; fetch: typeof globalThis.fetch; modelAdapter: LLMModelAdapter }
   | { kind: 'unauthenticated'; message: string }
   | { kind: 'missing'; message: string }
 
-interface ActiveLLMConfig {
+export interface ActiveLLMConfig {
   name: string
   provider: string
   model: string
@@ -88,26 +111,32 @@ interface ActiveLLMConfig {
   providerHeaders?: Record<string, string>
 }
 
-function getActiveLLMConfig(config: Record<string, unknown> | null): ActiveLLMConfig {
-  const registry = config?.registry as { llms?: ActiveLLMConfig[] } | undefined
-  const use = config?.use as { llm?: string } | undefined
-  const llms = registry?.llms ?? []
-  const selected = llms.find(llm => llm.name === use?.llm) ?? llms[0]
+const NO_MODEL: CheckResult = { status: 'skip', message: 'no model configured' }
+const MODEL_FIX =
+  "Set a model on the dashboard's model page, `npx agent-qa dashboard --open /config/models`, or with `npx agent-qa init --llm <choice>`."
+export const CONFIG_UNCHECKED_FIX =
+  'Run `npx agent-qa validate` to see the error that stopped the check.'
+export const VALIDATE_WARNINGS_FIX = 'Run `npx agent-qa validate` to see each warning.'
+export const DISCOVERY_UNCHECKED_FIX =
+  'Run `npx agent-qa validate` to see the error that stopped the scan.'
 
-  if (selected) {
-    return selected
-  }
-
-  return {
-    name: 'default',
-    provider: 'anthropic-subscription',
-    model: DEFAULT_ANTHROPIC_MODEL,
-  }
+// Read from the raw config, before validate: an entry that is not a named mapping is left to it.
+function activeLLM(config: Record<string, unknown> | null): ActiveLLMConfig | undefined {
+  if (!config) return undefined
+  const listed = isRecord(config.registry) ? config.registry.llms : undefined
+  const llms = Array.isArray(listed)
+    ? listed.filter(
+        (entry): entry is ActiveLLMConfig => isRecord(entry) && typeof entry.name === 'string',
+      )
+    : []
+  const llm = isRecord(config.use) ? config.use.llm : undefined
+  return activeModelEntry({ registry: { llms }, use: typeof llm === 'string' ? { llm } : {} })
 }
 
 async function resolveActiveLLMAuth(
   llm: ActiveLLMConfig,
   configPath?: string,
+  authPath?: string,
 ): Promise<ResolvedDoctorAuth> {
   const { resolveLLMAuth } = await import('@vostride/agent-qa-core') as unknown as {
     resolveLLMAuth: (
@@ -127,7 +156,7 @@ async function resolveActiveLLMAuth(
     model: llm.model,
     ...(llm.baseURL ? { baseURL: llm.baseURL } : {}),
     ...(llm.providerHeaders ? { providerHeaders: llm.providerHeaders } : {}),
-  }, undefined, configPath) as ResolvedDoctorAuth
+  }, authPath, configPath) as ResolvedDoctorAuth
 }
 
 function checkNodeVersion(): DoctorCheck {
@@ -150,7 +179,7 @@ function checkNodeVersion(): DoctorCheck {
 function checkConfigFile(configPath: string): DoctorCheck {
   return {
     name: 'Config file',
-    fixInstructions: 'Run `agent-qa init` to create a config file',
+    fixInstructions: 'Run `npx agent-qa init` to create a config file',
     check: async () => {
       if (existsSync(configPath)) {
         return { status: 'pass', message: 'agent-qa.config.yaml found' }
@@ -208,17 +237,31 @@ function checkConfigValidation(
         ).join('; ')
         return { status: 'fail', message: errors }
       } catch {
-        return { status: 'warn', message: 'could not validate config' }
+        return { status: 'warn', message: 'could not validate config', fix: CONFIG_UNCHECKED_FIX }
       }
     },
   }
   return row
 }
 
+// A workspace key the config lacks is set by hand before scaffold can write its file.
+const WORKSPACE_KEY_FIX =
+  'Set the workspace key the message names in agent-qa.config.yaml (workspace.secretsFile, workspace.hooksFile or workspace.envFile), then run `npx agent-qa init --setup scaffold` to write the missing file.'
+
+// init writes no file outside the project, so a missing one there is created by hand.
+function outsideProject(path: string, configPath: string): boolean {
+  return !isPathInsideDir(path, dirname(resolve(configPath)))
+}
+
+function createFix(paths: readonly string[]): string {
+  return `Create ${paths.join(' and ')}; init writes no file outside the project. It may be empty, but it must exist.`
+}
+
 function checkSecretsFile(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
   return {
     name: 'Secrets file',
-    fixInstructions: 'Set workspace.secretsFile in agent-qa.config.yaml and create the file. It may be empty, but it must exist.',
+    fixInstructions:
+      'Run `npx agent-qa init --setup scaffold` to write the missing file at workspace.secretsFile. It may be empty, but it must exist.',
     check: async () => {
       if (!config) {
         return { status: 'skip', message: 'no config' }
@@ -226,11 +269,16 @@ function checkSecretsFile(config: Record<string, unknown> | null, configPath: st
 
       const resolved = resolveDoctorWorkspace(config, configPath)
       if (!resolved.ok) {
-        return { status: 'fail', message: resolved.error }
+        return { status: 'fail', message: resolved.error, fix: WORKSPACE_KEY_FIX }
       }
 
-      if (!existsSync(resolved.workspace.secretsFile.absolutePath)) {
-        return { status: 'fail', message: `not found: ${resolved.workspace.secretsFile.absolutePath}` }
+      const { absolutePath } = resolved.workspace.secretsFile
+      if (!existsSync(absolutePath)) {
+        return {
+          status: 'fail',
+          message: `not found: ${absolutePath}`,
+          ...(outsideProject(absolutePath, configPath) ? { fix: createFix([absolutePath]) } : {}),
+        }
       }
 
       return { status: 'pass', message: `${resolved.workspace.secretsFile.workspaceRelativePath} found` }
@@ -238,10 +286,13 @@ function checkSecretsFile(config: Record<string, unknown> | null, configPath: st
   }
 }
 
+const WORKSPACE_FILES_FIX =
+  'Run `npx agent-qa init --setup scaffold` to write the missing file at workspace.hooksFile or workspace.envFile.'
+
 function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
   return {
     name: 'Workspace files',
-    fixInstructions: 'Create the files configured by workspace.hooksFile and workspace.envFile.',
+    fixInstructions: WORKSPACE_FILES_FIX,
     check: async () => {
       if (!config) {
         return { status: 'skip', message: 'no config' }
@@ -249,7 +300,7 @@ function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, conf
 
       const resolved = resolveDoctorWorkspace(config, configPath)
       if (!resolved.ok) {
-        return { status: 'fail', message: resolved.error }
+        return { status: 'fail', message: resolved.error, fix: WORKSPACE_KEY_FIX }
       }
 
       const missing = [
@@ -259,9 +310,14 @@ function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, conf
       const missingFiles = missing.filter(([, file]) => !existsSync(file.absolutePath))
 
       if (missingFiles.length > 0) {
+        const outside = missingFiles
+          .map(([, file]) => file.absolutePath)
+          .filter((path) => outsideProject(path, configPath))
+        const scaffolded = outside.length < missingFiles.length ? [WORKSPACE_FILES_FIX] : []
         return {
           status: 'fail',
           message: missingFiles.map(([key, file]) => `${key} -> ${file.absolutePath}`).join('; '),
+          ...(outside.length === 0 ? {} : { fix: [createFix(outside), ...scaffolded].join(' ') }),
         }
       }
 
@@ -270,14 +326,18 @@ function checkWorkspaceSupportFiles(config: Record<string, unknown> | null, conf
   }
 }
 
-function checkDocker(): DoctorCheck {
+async function dockerAvailableByDefault(): Promise<boolean> {
+  const { checkDockerAvailable } = await import('@vostride/agent-qa-runner-local')
+  return await checkDockerAvailable()
+}
+
+function checkDocker(docker: () => Promise<boolean>): DoctorCheck {
   return {
     name: 'Docker',
     fixInstructions: 'Install Docker Desktop from https://docker.com/ and ensure the daemon is running',
     check: async () => {
       try {
-        const { checkDockerAvailable } = await import('@vostride/agent-qa-runner-local')
-        const available = await checkDockerAvailable()
+        const available = await docker()
         if (available) {
           return { status: 'pass', message: 'Docker daemon running' }
         }
@@ -289,22 +349,40 @@ function checkDocker(): DoctorCheck {
   }
 }
 
-function configuredLLMName(config: Record<string, unknown> | null): string {
-  const registry = config?.registry as { llms?: ActiveLLMConfig[] } | undefined
-  const use = config?.use as { llm?: string } | undefined
-  const llms = registry?.llms ?? []
-  return (llms.find(llm => llm.name === use?.llm) ?? llms[0])?.name ?? '<name>'
+function checkModel(config: Record<string, unknown> | null): DoctorCheck {
+  return {
+    name: 'Model',
+    fixInstructions: MODEL_FIX,
+    check: async () => {
+      const llm = activeLLM(config)
+      if (!llm) return { status: 'fail', message: 'no model configured' }
+      return { status: 'pass', message: `${llm.name}: ${llm.provider} ${llm.model}` }
+    },
+  }
 }
 
-function checkLLMApiKey(config: Record<string, unknown> | null, configPath?: string): DoctorCheck {
-  const name = configuredLLMName(config)
+function credentialFix(llm: ActiveLLMConfig | undefined): string {
+  if (!llm) return MODEL_FIX
+  if (getProvider(llm.provider)?.subscription === true) {
+    return `Sign in with \`npx agent-qa auth login --config ${llm.name}\`.`
+  }
+  return "Save the key on the dashboard's model page, `npx agent-qa dashboard --open /config/models`, or with "
+    + `\`npx agent-qa auth set --config ${llm.name} --type api-key\`.`
+}
+
+function checkLLMApiKey(
+  config: Record<string, unknown> | null,
+  configPath?: string,
+  authPath?: string,
+): DoctorCheck {
+  const llm = activeLLM(config)
   return {
     name: 'LLM credential',
-    fixInstructions: `Run \`agent-qa auth set --config ${name} --type api-key\` (it asks for the key), or for a subscription run \`agent-qa auth login --config ${name}\``,
+    fixInstructions: credentialFix(llm),
     check: async () => {
-      const llm = getActiveLLMConfig(config)
+      if (!llm) return NO_MODEL
       try {
-        const auth = await resolveActiveLLMAuth(llm, configPath)
+        const auth = await resolveActiveLLMAuth(llm, configPath, authPath)
         switch (auth.kind) {
           case 'api-key':
             return { status: 'pass', message: 'Saved API key' }
@@ -327,20 +405,23 @@ function checkLLMApiKey(config: Record<string, unknown> | null, configPath?: str
 export function checkSubscriptionAuth(
   config: Record<string, unknown> | null,
   configPath?: string,
+  authPath?: string,
 ): DoctorCheck {
-  const name = configuredLLMName(config)
+  const llm = activeLLM(config)
   const add = pluginsAddLine(SUBSCRIPTION_AUTH_PACKAGE, configPath)
   return {
     name: 'Subscription Auth',
-    fixInstructions: `Run \`${add}\`, then run \`agent-qa auth login --config ${name}\``,
+    fixInstructions: llm
+      ? `Run \`${add}\`, then run \`npx agent-qa auth login --config ${llm.name}\``
+      : MODEL_FIX,
     check: async () => {
-      const llm = getActiveLLMConfig(config)
+      if (!llm) return NO_MODEL
       if (getProvider(llm.provider)?.subscription !== true) {
         return { status: 'skip', message: `subscription not used for ${llm.provider}` }
       }
 
       try {
-        const auth = await resolveActiveLLMAuth(llm, configPath)
+        const auth = await resolveActiveLLMAuth(llm, configPath, authPath)
         if (auth.kind === 'auth-fetch') {
           return { status: 'pass', message: 'OAuth connected' }
         }
@@ -355,16 +436,51 @@ export function checkSubscriptionAuth(
   }
 }
 
-function checkLLMConnection(config: Record<string, unknown> | null, configPath?: string): DoctorCheck {
+const probeModelConnection: DoctorConnectionProbe = async (llm, auth) => {
+  const { generateText } = await import('ai')
+  const { profile, auth: modelAuth } = toModelProfileAndAuth(llm, auth as any)
+  // Fixed probe text, nothing to mask.
+  const testModel = createModel(profile, modelAuth, (text) => text)
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10000)
+  try {
+    await generateText({
+      model: testModel,
+      prompt: 'Say "ok"',
+      abortSignal: controller.signal,
+      // A retried 429 waits out retry-after past the 10 s abort and reads as a network error.
+      maxRetries: 0,
+    })
+  } finally {
+    clearTimeout(timeout)
+  }
+  if (auth.kind === 'unauthenticated') {
+    return { status: 'pass', message: auth.message }
+  }
+  return { status: 'pass', message: 'connected' }
+}
+
+function httpStatusOf(err: unknown): number | undefined {
+  const last = (err as { lastError?: unknown } | null | undefined)?.lastError ?? err
+  const status = (last as { statusCode?: unknown } | null | undefined)?.statusCode
+  return typeof status === 'number' ? status : undefined
+}
+
+function checkLLMConnection(
+  config: Record<string, unknown> | null,
+  configPath: string | undefined,
+  connection: DoctorConnectionProbe,
+  authPath?: string,
+): DoctorCheck {
+  const llm = activeLLM(config)
   return {
     name: 'LLM connection',
-    fixInstructions: 'Check the saved credential, model name, and exact base URL. Run `agent-qa auth test --config <name>` for details.',
+    fixInstructions: llm
+      ? `Check the saved credential, model name, and exact base URL. Run \`npx agent-qa auth test --config ${llm.name}\` for details.`
+      : MODEL_FIX,
     check: async () => {
-      if (!config) {
-        return { status: 'skip', message: 'no config' }
-      }
+      if (!llm) return NO_MODEL
 
-      const llm = getActiveLLMConfig(config)
       const provider = llm.provider
       const baseURL = llm.baseURL
 
@@ -373,40 +489,26 @@ function checkLLMConnection(config: Record<string, unknown> | null, configPath?:
       }
 
       try {
-        const auth = await resolveActiveLLMAuth(llm, configPath)
+        const auth = await resolveActiveLLMAuth(llm, configPath, authPath)
         if (auth.kind === 'missing') {
           return { status: 'fail', message: auth.message }
         }
-        const { generateText } = await import('ai')
-        const { profile, auth: modelAuth } = toModelProfileAndAuth(llm, auth as any)
-        // Fixed probe text, nothing to mask.
-        const testModel = createModel(profile, modelAuth, (text) => text)
-        const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 10000)
-        try {
-          await generateText({
-            model: testModel,
-            prompt: 'Say "ok"',
-            abortSignal: controller.signal,
-          })
-        } finally {
-          clearTimeout(timeout)
-        }
-        if (auth.kind === 'unauthenticated') {
-          return { status: 'pass', message: auth.message }
-        }
-        return { status: 'pass', message: 'connected' }
+        return await connection(llm, auth)
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        const rateLimited = {
+          status: 'warn',
+          message: 'rate limited — try again later',
+          fix: `The provider is rate-limiting requests for this model. Wait, then run \`npx agent-qa auth test --config ${llm.name}\`.`,
+        } as const
+        if (httpStatusOf(err) === 429) return rateLimited
         if (/auth|unauthorized|401|invalid.*key/i.test(msg)) {
           return { status: 'fail', message: 'Authentication failed. Check the saved credential for this config.' }
         }
         if (/model|not found|404/i.test(msg)) {
           return { status: 'fail', message: 'Model not found. Check the model name.' }
         }
-        if (/rate.?limit|429/i.test(msg)) {
-          return { status: 'warn', message: 'rate limited — try again later' }
-        }
+        if (/rate.?limit|429/i.test(msg)) return rateLimited
         if (/ECONNREFUSED|ENOTFOUND|timeout|abort/i.test(msg)) {
           return { status: 'fail', message: 'Network error. Check the exact base URL and try again.' }
         }
@@ -416,24 +518,41 @@ function checkLLMConnection(config: Record<string, unknown> | null, configPath?:
   }
 }
 
-function checkPlaywright(config: Record<string, unknown> | null, placement: WebPlacement): DoctorCheck {
+async function installedAgentQaDir(
+  configPath: string,
+  host: ProjectHost,
+): Promise<string | undefined> {
+  try {
+    const range = await projectRange(dirname(resolve(configPath)), host)
+    return (await findProjectAgentQa(range, range.start, host.io))?.realDir
+  } catch {
+    return undefined
+  }
+}
+
+function checkPlaywright(
+  config: Record<string, unknown> | null,
+  configPath: string,
+  placement: WebPlacement,
+  chromium: ChromiumResolver,
+  host: ProjectHost,
+): DoctorCheck {
   return {
     name: 'Playwright',
-    fixInstructions: 'Run `agent-qa install-browsers --chromium`',
+    fixInstructions: 'Run `npx agent-qa install-browsers --chromium`',
     check: async () => {
       if (placement.everyWebTestRemote) {
         return { status: 'skip', message: 'every web test runs on a remote' }
       }
-      if (!isWebPlatform(config)) {
+      if (!hasWebTarget(config)) {
         return { status: 'skip', message: 'not configured' }
       }
 
-      try {
-        execSync('npx playwright --version', { stdio: 'pipe' })
-        return { status: 'pass', message: 'installed' }
-      } catch {
-        return { status: 'fail', message: 'not installed' }
-      }
+      const projectAgentQaDir = await installedAgentQaDir(configPath, host)
+      const answer = chromium(projectAgentQaDir === undefined ? {} : { projectAgentQaDir })
+      return answer.found
+        ? { status: 'pass', message: 'Chromium found' }
+        : { status: 'fail', message: "no Chromium for agent-qa's Playwright" }
     },
   }
 }
@@ -443,7 +562,7 @@ function appiumResolverCwd(configPath: string): string {
 }
 
 function mobileDriverInstallCommand(): string {
-  return 'agent-qa install-mobile-drivers --all'
+  return 'npx agent-qa install-mobile-drivers --all'
 }
 
 function checkAppium(
@@ -550,9 +669,12 @@ function checkXcode(config: Record<string, unknown> | null, skips: DeviceToolSki
       }
 
       try {
-        execSync('xcrun simctl list', { stdio: 'pipe' })
+        execSync('xcrun simctl list', { stdio: 'pipe', timeout: 10_000 })
         return { status: 'pass', message: 'simctl available' }
-      } catch {
+      } catch (error) {
+        if ((error as { code?: unknown }).code === 'ETIMEDOUT') {
+          return { status: 'fail', message: 'xcrun simctl did not answer within 10 s' }
+        }
         return { status: 'fail', message: 'simctl not available' }
       }
     },
@@ -562,7 +684,7 @@ function checkXcode(config: Record<string, unknown> | null, skips: DeviceToolSki
 function checkValidation(config: Record<string, unknown> | null, configPath: string): DoctorCheck {
   return {
     name: 'Validate',
-    fixInstructions: 'Run `agent-qa validate` for full details, then fix reported errors',
+    fixInstructions: 'Run `npx agent-qa validate` for full details, then fix reported errors',
     check: async () => {
       if (!config) {
         return { status: 'skip', message: 'no config' }
@@ -581,7 +703,11 @@ function checkValidation(config: Record<string, unknown> | null, configPath: str
           return { status: 'pass', message: `${result.fileCount} files valid` }
         }
         if (result.errorCount === 0) {
-          return { status: 'warn', message: `${result.warningCount} warning(s)` }
+          return {
+            status: 'warn',
+            message: `${result.warningCount} warning(s)`,
+            fix: VALIDATE_WARNINGS_FIX,
+          }
         }
         return { status: 'fail', message: `${result.errorCount} error(s), ${result.warningCount} warning(s)` }
       } catch {
@@ -620,102 +746,18 @@ function checkTestDiscovery(config: Record<string, unknown> | null, configPath: 
         }
         return { status: 'pass', message: total }
       } catch {
-        return { status: 'warn', message: 'could not scan for test files' }
+        return {
+          status: 'warn',
+          message: 'could not scan for test files',
+          fix: DISCOVERY_UNCHECKED_FIX,
+        }
       }
     },
   }
 }
 
-// Helpers to detect platform from config
-function getTargets(config: Record<string, unknown> | null): Record<string, Record<string, unknown>> {
-  const registry = config?.registry as { targets?: Record<string, Record<string, unknown>> } | undefined
-  return registry?.targets
-    ?? (config?.targets as Record<string, Record<string, unknown>> | undefined)
-    ?? {}
-}
-
-function getTargetPlatforms(config: Record<string, unknown> | null): string[] {
-  return Object.values(getTargets(config)).map((t) => (t.platform as string) ?? 'web')
-}
-
-interface WebPlacement {
-  everyWebTestRemote: boolean
-  loopbackTargetsByRemote: ReadonlyMap<string, readonly string[]>
-}
-
-const LOCAL_PICK = 'local'
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function rawRemotePick(value: unknown): string | undefined {
-  const use = isRecord(value) ? value.use : undefined
-  const browser = isRecord(use) ? use.browser : undefined
-  const remote = isRecord(browser) ? browser.remote : undefined
-  return typeof remote === 'string' ? remote : undefined
-}
-
-// The host is read by pattern so a url with a templated port still counts.
-const URL_HOST = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/?#]*@)?(\[[^\]]*\]|[^:/?#]+)/i
-
-function loopbackWebTargets(config: Record<string, unknown> | null): Set<string> {
-  const names = new Set<string>()
-  for (const [name, target] of Object.entries(getTargets(config))) {
-    if (((target.platform as string | undefined) ?? 'web') !== 'web') continue
-    const host = typeof target.url === 'string' ? URL_HOST.exec(target.url)?.[1] : undefined
-    if (host !== undefined && isLoopbackHost(host)) names.add(name)
-  }
-  return names
-}
-
-async function readPlacedFiles(
-  workspace: ResolvedWorkspacePaths | undefined,
-): Promise<{ pick?: string; target?: string }[]> {
-  if (!workspace) return []
-  try {
-    const records = (await Promise.all([
-      discoverWorkspaceFiles({ workspace, kind: 'test' }),
-      discoverWorkspaceFiles({ workspace, kind: 'suite' }),
-    ])).flat()
-    return records.flatMap((record) => {
-      try {
-        const parsed: unknown = parseYaml(readFileSync(record.absolutePath, 'utf-8'))
-        const target = isRecord(parsed) && typeof parsed.target === 'string' ? parsed.target : undefined
-        return [{ pick: rawRemotePick(parsed), target }]
-      } catch {
-        return []
-      }
-    })
-  } catch {
-    return []
-  }
-}
-
-async function resolveWebPlacement(
-  config: Record<string, unknown> | null,
-  workspace: ResolvedWorkspacePaths | undefined,
-): Promise<WebPlacement> {
-  if (!config) return { everyWebTestRemote: false, loopbackTargetsByRemote: new Map() }
-  const configPick = rawRemotePick(config)
-  const files = await readPlacedFiles(workspace)
-  const loopbackTargets = loopbackWebTargets(config)
-  const loopbackTargetsByRemote = new Map<string, string[]>()
-  for (const file of files) {
-    if (file.target === undefined || !loopbackTargets.has(file.target)) continue
-    const remote = file.pick ?? configPick
-    if (remote === undefined || remote === LOCAL_PICK) continue
-    const targets = loopbackTargetsByRemote.get(remote) ?? []
-    if (!targets.includes(file.target)) targets.push(file.target)
-    loopbackTargetsByRemote.set(remote, targets)
-  }
-  return {
-    everyWebTestRemote:
-      configPick !== undefined
-      && configPick !== LOCAL_PICK
-      && !files.some((file) => file.pick === LOCAL_PICK),
-    loopbackTargetsByRemote,
-  }
 }
 
 function unknownRemoteSentence(name: string, config: Record<string, unknown> | null): string | undefined {
@@ -725,12 +767,6 @@ function unknownRemoteSentence(name: string, config: Record<string, unknown> | n
     ? 'registry.remotes lists no remotes.'
     : `registry.remotes lists: ${names.join(', ')}.`
   return `Unknown remote "${name}". ${listed}`
-}
-
-function isWebPlatform(config: Record<string, unknown> | null): boolean {
-  const platforms = getTargetPlatforms(config)
-  if (platforms.length === 0) return true // default
-  return platforms.some((p) => p === 'web')
 }
 
 function isMobilePlatform(config: Record<string, unknown> | null): boolean {
@@ -774,7 +810,26 @@ function getGlobalConfigPath(command: Command): string {
   return command.parent?.opts<{ config?: string }>().config ?? 'agent-qa.config.yaml'
 }
 
-export function createDoctorCommand(): Command {
+// Asks the model one short question with the resolved credential; throws when it cannot answer.
+export type DoctorConnectionProbe = (
+  llm: ActiveLLMConfig,
+  auth: ResolvedDoctorAuth,
+) => Promise<CheckResult>
+
+export interface DoctorCommandHooks {
+  chromium?: ChromiumResolver
+  connection?: DoctorConnectionProbe
+  daemon?: (agentQaRoot: string) => Promise<InspectDaemonRegistrationOutcome>
+  docker?: () => Promise<boolean>
+  host?: Partial<ProjectHost>
+  // The latest agent-qa; the default asks the npm registry under a short deadline.
+  latestVersion?: LatestVersionAsk
+  listDevicesHere?: DevicesHereLister
+  now?: () => Date
+}
+
+export function createDoctorCommand(hooks: DoctorCommandHooks = {}): Command {
+  const chromium = hooks.chromium ?? findChromiumByDefault
   const cmd = new Command('doctor')
     .description('Validate environment and dependencies')
     .option('--remote <name>', 'Show only this remote among the remote rows')
@@ -808,6 +863,10 @@ export function createDoctorCommand(): Command {
       const workspace = resolved?.ok ? resolved.workspace : undefined
       const placement = await resolveWebPlacement(config, workspace)
       const skips = deviceToolSkips(config)
+      const host = projectHost(hooks.host)
+      const authPath = getAuthPath({ env: host.env, homeDir: host.homedir })
+      const setup = { configPath, host: hooks.host ?? {}, runningVersion: getAgentQaVersion().trim() }
+      const { version: agentQaVersion, spec: agentQaSpec } = await projectAgentQa(setup)
       const doorFlags = this.parent?.opts<Parameters<typeof doorLogLevel>[0]>() ?? {}
       const debugLog = pluginDebugLog(doorLogLevel(doorFlags, config))
 
@@ -816,15 +875,21 @@ export function createDoctorCommand(): Command {
         checkConfigFile(configPath),
         checkLegacyV1MemoryData(configPath),
         // After the legacy v1 memory row and before config validation, concluding the store rows.
-        ...createKnowledgeChecks({ config, configPath }),
+        ...createKnowledgeChecks({
+          config,
+          configPath,
+          ...(hooks.daemon === undefined ? {} : { probes: { inspectDaemon: hooks.daemon } }),
+        }),
         checkConfigValidation(config, configPath),
+        ...createSetupChecks(setup),
         checkSecretsFile(config, configPath),
         checkWorkspaceSupportFiles(config, configPath),
-        checkDocker(),
-        checkLLMApiKey(config, configPath),
-        checkSubscriptionAuth(config, configPath),
-        checkLLMConnection(config, configPath),
-        checkPlaywright(config, placement),
+        checkDocker(hooks.docker ?? dockerAvailableByDefault),
+        checkModel(config),
+        checkLLMApiKey(config, configPath, authPath),
+        checkSubscriptionAuth(config, configPath, authPath),
+        checkLLMConnection(config, configPath, hooks.connection ?? probeModelConnection, authPath),
+        checkPlaywright(config, configPath, placement, chromium, host),
         ...createRemoteChecks({
           config,
           configPath,
@@ -838,35 +903,36 @@ export function createDoctorCommand(): Command {
           configPath,
           secretsFile: workspace?.secretsFile,
           only: options.remote,
+          agentQaVersion,
           ...(debugLog === undefined ? {} : { debugLog }),
         }),
         checkAppium(config, configPath, skips),
         checkAppiumDrivers(config, configPath, skips),
         checkAndroidSDK(config, skips),
         checkXcode(config, skips),
+        ...createDeviceChecks({
+          config,
+          ...(hooks.listDevicesHere === undefined ? {} : { listDevicesHere: hooks.listDevicesHere }),
+        }),
+        createNewerVersionCheck({
+          projectVersion: agentQaVersion,
+          ...(agentQaSpec === undefined ? {} : { agentQaSpec }),
+          latestVersion: hooks.latestVersion ?? askLatestVersionByDefault,
+          homeDir: host.homedir,
+          ...(hooks.now === undefined ? {} : { now: hooks.now }),
+        }),
         checkTestDiscovery(config, configPath),
         checkValidation(config, configPath),
       ]
 
-      let hasFailure = false
       const results: { check: DoctorCheck; result: CheckResult }[] = []
 
       if (options.json === true) {
         for (const check of checks) {
-          const result = await check.check()
-          results.push({ check, result })
-          if (result.status === 'fail') hasFailure = true
+          results.push({ check, result: await check.check() })
         }
-        const document = {
-          ok: !hasFailure,
-          checks: results.map(({ check, result }) => ({
-            name: check.name,
-            status: result.status,
-            message: result.message,
-          })),
-        }
-        console.log(guardJsonText(JSON.stringify(document, null, 2)))
-        if (hasFailure) process.exitCode = 1
+        console.log(guardJsonText(JSON.stringify(doctorDocument(results), null, 2)))
+        process.exitCode = doctorExitCode(results)
         return
       }
 
@@ -885,28 +951,31 @@ export function createDoctorCommand(): Command {
       }
 
       for (const check of checks) {
-        const result = await check.check()
-        results.push({ check, result })
+        const entry = { check, result: await check.check() }
+        results.push(entry)
 
-        const row = formatCheckRow(check.name, result.message, result.status, width)
+        const row = formatCheckRow(check.name, entry.result.message, entry.result.status, width)
         printLine(composeRow(row, { dots: pc.dim, status: formatStatus }))
         for (const line of row.continuations) printLine(line)
 
-        if (result.status === 'fail') {
-          for (const line of formatFixLines(check.fixInstructions, width)) printLine(pc.dim(line))
-          hasFailure = true
+        const fix = rowFix(entry)
+        if (fix !== undefined) {
+          for (const line of formatFixLines(fix, width)) printLine(pc.dim(line))
         }
       }
       if (table !== undefined) printRunText(table.join('\n'))
 
       console.log('')
-      if (hasFailure) {
+      const exitCode = doctorExitCode(results)
+      if (exitCode !== 0) {
         console.log(pc.red('  Some checks failed. See fix instructions above.'))
-        process.exitCode = 1
+      } else if (results.some(({ result }) => result.status === 'warn')) {
+        console.log(pc.yellow('  No check failed. The warnings above say what to fix.'))
       } else {
         console.log(pc.green('  All checks passed! Your environment is ready.'))
       }
       console.log('')
+      process.exitCode = exitCode
     })
 
   return cmd

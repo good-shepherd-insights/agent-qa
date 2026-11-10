@@ -9,13 +9,7 @@ import {
   type ManagedBlockContent,
 } from './managed-block.js'
 
-export const SUPPORTED_INIT_PLATFORMS = [
-  'web',
-  'android',
-  'ios',
-  'web+android',
-  'web+ios',
-] as const
+export const SUPPORTED_INIT_PLATFORMS = ['web', 'android', 'ios'] as const
 export type Platform = (typeof SUPPORTED_INIT_PLATFORMS)[number]
 export type PlatformCapability = 'web' | 'mobile'
 export type MobileRuntime = 'android' | 'ios'
@@ -58,15 +52,36 @@ export function normalizePlatformSelection(platform: InitPlatformInput): InitPla
       return { capabilities: ['mobile'], mobileRuntimes: ['android'] }
     case 'ios':
       return { capabilities: ['mobile'], mobileRuntimes: ['ios'] }
-    case 'web+android':
-      return { capabilities: ['web', 'mobile'], mobileRuntimes: ['android'] }
-    case 'web+ios':
-      return { capabilities: ['web', 'mobile'], mobileRuntimes: ['ios'] }
     default: {
       const exhaustivePlatform: never = selectedPlatform
       throw new Error(`Unsupported init platform "${String(exhaustivePlatform)}"`)
     }
   }
+}
+
+const PLATFORM_LIST_REFUSAL = '--platform takes web, android and ios, separated by commas.'
+const RETIRED_PLATFORM = /^web\+(android|ios)$/u
+
+// `--platform` names each platform, in any order: `web,android` is the web and Android scaffold.
+export function parseInitPlatformList(
+  value: string,
+): { platform: InitPlatformInput } | { refusal: string } {
+  const retired = RETIRED_PLATFORM.exec(value)
+  if (retired !== null) {
+    return { refusal: `--platform ${value} is now --platform web,${retired[1]}.` }
+  }
+  const names = value.split(',').map((name) => name.trim())
+  if (!names.every((name) => (SUPPORTED_INIT_PLATFORMS as readonly string[]).includes(name))) {
+    return { refusal: PLATFORM_LIST_REFUSAL }
+  }
+  const chosen = new Set(names as Platform[])
+  if (chosen.size === 1) return { platform: [...chosen][0]! }
+  const mobileRuntimes = (['android', 'ios'] as const).filter((name) => chosen.has(name))
+  const capabilities: PlatformCapability[] = [
+    ...(chosen.has('web') ? (['web'] as const) : []),
+    ...(mobileRuntimes.length > 0 ? (['mobile'] as const) : []),
+  ]
+  return { platform: { capabilities, mobileRuntimes } }
 }
 
 export function hasWeb(platform: InitPlatformInput): boolean {
@@ -136,7 +151,7 @@ export function buildScaffoldConfig(
       secretsFile: '.env.secrets.local',
     },
     services: {
-      dashboard: { port: 3100, artifactsDir: '.agent-qa/artifacts' },
+      dashboard: { port: 3470, artifactsDir: '.agent-qa/artifacts' },
       cache: { dir: facts.cacheDir },
       authState: { dir: facts.authStatesDir },
       vision: { screenshotSize: DEFAULT_SCREENSHOT_SIZE, effectiveResolution: DEFAULT_EFFECTIVE_RESOLUTION },
@@ -184,7 +199,8 @@ export function buildScaffoldConfig(
 }
 
 export function addYamlComments(yamlStr: string): string {
-  let result = '# agent-qa Configuration\n\n'
+  let result = '# The project settings agent-qa reads for every command run in this folder.\n'
+  result += '# Docs: https://vostride.com/docs/agent-qa/\n\n'
 
   const lines = yamlStr.split('\n')
   for (const line of lines) {
@@ -216,7 +232,7 @@ export function addYamlComments(yamlStr: string): string {
 
     if (line === '  secretsFile: .env.secrets.local') {
       result += '  # Its values are shown as [secret:<name>] and never restored; nothing else is masked.\n'
-      result += '# Optional: ignore archived or generated tests.\n'
+      result += '  # Optional: ignore archived or generated tests.\n'
       result += '  # testPathIgnore:\n'
       result += '  #   - tests/archive/**/*.yaml\n'
     } else if (line === '    artifactsDir: .agent-qa/artifacts') {
@@ -254,6 +270,27 @@ export function buildHooksFile(_platform: InitPlatformInput): string {
 }
 
 // The managed `.gitignore` block: the hash-comment variant of the shared writer.
+
+// The runtime and auth-states folders are core's defaults, spelled literally because this module
+// does not name core.
+export function buildGitignoreEntries(): string[] {
+  return [
+    '.agent-qa/',
+    '.agent-qa/auth-states/',
+    // Spelled literally because the init suite mocks init-filesystem.js; a test pins both equal.
+    'tests/.agent-qa-drafts/',
+    'node_modules/',
+    '.env',
+    '.env.secrets.local',
+    // The namespace `writeDurableTemporary` publishes through. The temporary is a sibling of
+    // its destination carrying that destination's content — for the secrets file, live
+    // credential bytes at 0600 — and it outlives any cleanup that cannot run. Spelled
+    // literally rather than imported because init-filesystem.js is mocked wholesale by the
+    // init suite; `DURABLE_TEMPORARY_GITIGNORE_RULE` is the other copy, and the two are
+    // pinned together by the runtime-versus-defaults agreement test.
+    '.*.agent-qa-init-*.tmp',
+  ]
+}
 
 export function managedGitignoreContent(entries: readonly string[]): ManagedBlockContent {
   return {

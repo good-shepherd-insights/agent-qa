@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router"
 import { Plus, TriangleAlert } from "lucide-react"
 
-import { AddModelRow, type AddFocusRequest, type AddModelLanding } from "@/components/config-manager/add-model-row"
+import {
+  AddModelRow,
+  linkReplacesDraft,
+  type AddFocusRequest,
+  type AddModelLanding,
+} from "@/components/config-manager/add-model-row"
 import {
   ModelRow,
   credentialKeyType,
@@ -62,7 +67,9 @@ function choiceParam(value: string | null): ConnectionChoice | undefined {
 }
 
 interface AddRowState {
+  key: number
   initialChoice?: ConnectionChoice
+  initialName?: string
   focus: AddFocusRequest | undefined
 }
 
@@ -70,10 +77,11 @@ export function ModelList(_props: ModelListProps) {
   const autosave = useConfigAutosaveContext()
   const [searchParams, setSearchParams] = useSearchParams()
   const addParam = searchParams.get("add")
+  const nameParam = searchParams.get("name")
   const configPath = autosave.load.kind === "ready" ? (autosave.load.answer.file?.path ?? "") : ""
   // A stored add draft (a reload mid-draft) re-opens the row; it takes focus only when asked.
   const [add, setAdd] = useState<AddRowState | undefined>(() =>
-    readAddModelDraft(configPath) === undefined ? undefined : { focus: undefined },
+    readAddModelDraft(configPath) === undefined ? undefined : { key: 0, focus: undefined },
   )
   const focusSeq = useRef(0)
   const [landing, setLanding] = useState<AddModelLanding | undefined>(undefined)
@@ -161,30 +169,40 @@ export function ModelList(_props: ModelListProps) {
     autosave.settle(DEFAULT_REF)
   }
 
-  /** Opens the one add row, or focuses it when it is already open. */
-  function openAdd(initialChoice: ConnectionChoice | undefined) {
+  /** Opens the one add row, or focuses it when it is already open; `replace` starts it afresh. */
+  function openAdd(initialChoice: ConnectionChoice | undefined, initialName?: string, replace = false) {
     focusSeq.current += 1
     const seq = focusSeq.current
     setAdd((current) =>
-      current === undefined
-        ? { ...(initialChoice === undefined ? {} : { initialChoice }), focus: { seq, target: initialChoice ? "field" : "choice" } }
+      current === undefined || replace
+        ? {
+            key: (current?.key ?? 0) + 1,
+            ...(initialChoice === undefined ? {} : { initialChoice }),
+            ...(initialName === undefined ? {} : { initialName }),
+            focus: { seq, target: initialChoice ? "field" : "choice" },
+          }
         : { ...current, focus: { seq, target: "choice" } },
     )
   }
 
   useEffect(() => {
-    if (addParam === null) return
-    openAdd(choiceParam(addParam))
+    if (addParam === null && nameParam === null) return
+    if (addParam !== null) {
+      const choice = choiceParam(addParam)
+      const name = nameParam === null || nameParam === "" ? undefined : nameParam
+      openAdd(choice, name, linkReplacesDraft(readAddModelDraft(configPath), choice, name))
+    }
     setSearchParams(
       (current) => {
         const next = new URLSearchParams(current)
         next.delete("add")
+        next.delete("name")
         return next
       },
       { replace: true },
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the link is applied once, then removed
-  }, [addParam])
+  }, [addParam, nameParam])
 
   function addModel() {
     openAdd(undefined)
@@ -266,10 +284,12 @@ export function ModelList(_props: ModelListProps) {
         >
           {add === undefined ? null : (
             <AddModelRow
+              key={add.key}
               configPath={configPath}
               providers={reads.providers}
               existingNames={models.map((model) => model.name)}
               {...(add.initialChoice === undefined ? {} : { initialChoice: add.initialChoice })}
+              {...(add.initialName === undefined ? {} : { initialName: add.initialName })}
               {...(add.focus === undefined ? {} : { focusRequest: add.focus })}
               onConnected={connected}
               onDiscard={discardAdd}

@@ -2,7 +2,6 @@ import { dirname, resolve as resolvePath } from 'node:path'
 import { createModel, createTokenAccounting, getProviderOptions, resolveCapabilities, resolveVisionGate } from '@vostride/agent-qa-model'
 import { generateText } from 'ai'
 import { createDeclaredSecretMask } from './composition/declared-secrets.js'
-import { DEFAULT_ANTHROPIC_MODEL } from './model-defaults.js'
 import { pluginRemotesOfRawConfig } from './plugin-remotes.js'
 import { loadProviderPluginsForRawConfig } from './provider-plugins.js'
 
@@ -130,6 +129,16 @@ export async function resolveNamedConfig(
   return { config: found, allConfigs: llms, defaultName: defaultLLM ?? '' }
 }
 
+export class NoModelConfiguredError extends Error {
+  constructor() {
+    super(
+      "No model is set in agent-qa.config.yaml. Add one on the dashboard's model page " +
+        '(npx agent-qa dashboard), or run npx agent-qa init --llm <choice>.',
+    )
+    this.name = 'NoModelConfiguredError'
+  }
+}
+
 export function resolveLLMModels(config: {
   registry?: { llms?: NamedLLMConfigLike[] }
   use?: { llm?: string }
@@ -138,16 +147,18 @@ export function resolveLLMModels(config: {
   verifier: LLMConfigLike
   configName: string
 } {
-  const defaults: LLMConfigLike = { provider: 'anthropic-subscription', model: DEFAULT_ANTHROPIC_MODEL }
-  if (!config.registry?.llms || !config.use?.llm) {
-    return { planner: defaults, verifier: defaults, configName: '' }
-  }
-  const found = config.registry.llms.find(c => c.name === config.use!.llm)
-  if (!found) {
-    return { planner: defaults, verifier: defaults, configName: '' }
-  }
+  const found = activeModelEntry(config)
+  if (!found) throw new NoModelConfiguredError()
   const { name, ...modelFields } = normalizeLLMConfig(found as NamedLLMConfigLike & Record<string, unknown>)
   return { planner: modelFields, verifier: modelFields, configName: name }
+}
+
+export function activeModelEntry<T extends { name: string }>(config: {
+  registry?: { llms?: readonly T[] }
+  use?: { llm?: string }
+}): T | undefined {
+  const llms = config.registry?.llms ?? []
+  return llms.find((entry) => entry.name === config.use?.llm) ?? llms[0]
 }
 
 export async function resolveModelAuth(

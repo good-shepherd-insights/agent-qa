@@ -1,32 +1,31 @@
 import { Command, Option } from 'commander'
 import { readFileSync } from 'node:fs'
 import { basename, dirname, join, relative, sep } from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 import pc from 'picocolors'
-import select from '@inquirer/select'
-import input from '@inquirer/input'
-import checkbox from '@inquirer/checkbox'
+import type { Readable, Writable } from 'node:stream'
 import {
   DEFAULT_AGENT_QA_AUTH_STATES_DIR,
   DEFAULT_AGENT_QA_CACHE_DIR,
-  DEFAULT_AGENT_QA_RUNTIME_DIR,
+  getAuthPath,
+  listSavedCredentials,
 } from '@vostride/agent-qa-core'
 import { guardJsonText, reserveStdoutForData } from '@vostride/agent-qa-core/run-text-output'
-import { getProvider, listProviders } from '@vostride/agent-qa-model'
+import { getProvider } from '@vostride/agent-qa-model'
 // The scaffold's content comes from the shared producer, so the two scaffolds cannot drift.
 import {
   SUBSCRIPTION_AUTH_PACKAGE,
-  SUPPORTED_INIT_PLATFORMS,
   buildHooksFile,
+  buildGitignoreEntries,
   buildScaffoldConfig,
   hasWeb,
   normalizePlatformSelection,
-  parseInitPlatform,
+  parseInitPlatformList,
   renderScaffoldConfigYaml,
   type InitLLMConfig,
   type InitPlatformInput,
   type MobileRuntime,
   type PlatformCapability,
-  type Platform,
 } from './scaffold-content.js'
 // Type-only here and the value loaded lazily: the analytics graph breaks `init.test.ts`'s fs mock.
 import type { composeAnalyticsHost as ComposeAnalyticsHost } from '../composition/analytics-host.js'
@@ -35,46 +34,102 @@ import {
   TARGET_GITIGNORE_PROBES,
   classifyInitPath,
   preflightInitPlan,
-  preflightManagedBlock,
-  upsertManagedBlock,
   upsertManagedGitignoreBlock,
   verifyEffectiveGitignore,
   writeConfigMarkerLast,
   writeScaffoldFileAtomic,
   type InitFileResult,
   type InitPathPlan,
-  type ManagedBlockUpsertPlan,
 } from './init-filesystem.js'
+import { buildKnowledgeAgentGuide } from './knowledge-guide.js'
+import { resolveIsCI } from '../ci-env.js'
+import { CliRefusal, PromptCancelled, isPromptCancel } from '../composition/cli-refusal.js'
+import { createClackUi, type ClackUi } from '../init-ui/clack-ui.js'
+import { initUiMode, type InitSection, type InitUi } from '../init-ui/init-ui.js'
+import { brandPalette, colorLevelFor } from '../init-ui/palette.js'
+import { createPlainUi } from '../init-ui/plain-ui.js'
 import {
-  WRITE_AGENT_INSTRUCTIONS_FLAG,
-  buildAgentInstructionPointer,
-  buildKnowledgeAgentGuide,
-} from './knowledge-guide.js'
+  classifyBackground,
+  probeTerminalBackground,
+  processTerminalPort,
+  type TerminalPort,
+} from '../init-ui/terminal-background.js'
+import { isInitRefusal } from './init-refusal.js'
 import {
-  AGENT_QA_INIT_MARKDOWN_BLOCK,
-  renderManagedBlock,
-  type ManagedBlockContent,
-} from './managed-block.js'
-import { CliRefusal } from '../composition/cli-refusal.js'
-import { InitRefusal, isInitRefusal } from './init-refusal.js'
-import { initFolderOptionRefusal, initFolderRefusal } from './init-project-folder.js'
+  defaultInitFolderIo,
+  initFolderOptionRefusal,
+  initFolderRefusal,
+} from './init-project-folder.js'
 import {
   installedAgentQaVersion,
   parsePackageJson,
   planPackageJson,
   projectDependencies,
   readProjectPackageJson,
+  sanitizedPackageName,
+  type PackageJsonPlan,
 } from './package-json-plan.js'
-import { installOutputMask, runInstallStep } from './package-install.js'
+import {
+  AGENT_SKILL_ROOTS,
+  installAgentSetup,
+  type AgentSetupFileResult,
+} from './agent-setup.js'
+import type { CodingAgent } from './agent-setup-manifest.js'
+import { INIT_AGENT_OPTIONS, detectCodingAgents, parseInitAgentsFlag } from './init-agents.js'
+import {
+  INIT_MODEL_CHOICES,
+  initModelSections,
+  modelEntryFor,
+  modelStatus,
+  preselectedModel,
+  resolveLlmFlag,
+  type InitModelPick,
+} from './init-model-choice.js'
+import { initNextSteps, nextStepLines } from './init-next-steps.js'
+import {
+  dashboardPage,
+  dashboardPortOf,
+  findFreePort,
+  initDashboardStep,
+  probeDashboardPort,
+  type DashboardPort,
+} from './init-dashboard.js'
+import {
+  INTERRUPTED,
+  NOT_RUN,
+  createInitStepRunner,
+  freshInitPlan,
+  type InitStepName,
+  type InitStepRecord,
+  type InitStepResult,
+  type InitStepRunner,
+} from './init-steps.js'
+import { runInitRerun } from './init-rerun.js'
+import { configuredPackages } from './setup-rows.js'
+import { askLatestVersionByDefault, type LatestVersionAsk } from './latest-version-ask.js'
+import { findChromiumByDefault, type ChromiumResolver } from './browser-resolver.js'
+import {
+  createInitDocumentRecorder,
+  refusedInitDocument,
+  writeInitDocument,
+  type InitDocument,
+} from './init-document.js'
+import {
+  installOutputMask,
+  runInstallStep,
+  shownOutput,
+  type InstallStepResult,
+} from './package-install.js'
 import { detectPackageManager } from './package-manager.js'
 import {
   agentQaAfterInstall,
   declaredAgentQaVersion,
   handOffToProjectAgentQa,
+  runAgentQaStep,
+  runRunningAgentQa,
 } from './project-agent-qa.js'
-import { projectHost, type ProjectHost, type ProjectIo } from './project-host.js'
-import { nearestInstalledPackage, projectRange, type ProjectRange } from './project-range.js'
-import { runningAgentQaSkillSummaries } from './skills.js'
+import { projectHost, type ProjectHost } from './project-host.js'
+import { nearestInstalledPackage, projectRange } from './project-range.js'
 
 // Re-exported because this module is their public door.
 export { SUPPORTED_INIT_PLATFORMS, parseInitPlatform } from './scaffold-content.js'
@@ -84,9 +139,6 @@ const INIT_CACHE_DIR = DEFAULT_AGENT_QA_CACHE_DIR || '.agent-qa/cache'
 const INIT_AUTH_STATES_DIR = DEFAULT_AGENT_QA_AUTH_STATES_DIR || '.agent-qa/auth-states'
 
 const DEFAULT_CONFIG_FILE_NAME = 'agent-qa.config.yaml'
-// Kept here rather than moved: it feeds `buildGitignoreEntries`, the deliberate literal
-// copy this file keeps pinned against `init-filesystem.ts`'s own — see scaffold-content.ts.
-const INIT_RUNTIME_DIR = DEFAULT_AGENT_QA_RUNTIME_DIR || '.agent-qa'
 
 function isSubscriptionProvider(provider: string): boolean {
   return getProvider(provider)?.subscription === true
@@ -129,55 +181,6 @@ export function buildDefaultConfig(
     authStatesDir: INIT_AUTH_STATES_DIR,
   })
 }
-export const INIT_LLM_CHOICES = [
-  'claude-code',
-  'codex',
-  'openai-compatible',
-  'anthropic-compatible',
-  'gemini',
-] as const
-export type InitLLMChoice = (typeof INIT_LLM_CHOICES)[number]
-
-const INIT_LLM_ENTRIES: Record<InitLLMChoice, { name: string; provider: string }> = {
-  'claude-code': { name: 'claude-code', provider: 'anthropic-subscription' },
-  codex: { name: 'codex', provider: 'openai-subscription' },
-  'openai-compatible': { name: 'default', provider: 'openai-compatible' },
-  'anthropic-compatible': { name: 'default', provider: 'anthropic-compatible' },
-  gemini: { name: 'default', provider: 'gemini' },
-}
-
-const INIT_LLM_NAMES: Record<InitLLMChoice, string> = {
-  'claude-code': 'Claude Code (Anthropic subscription)',
-  codex: 'Codex (OpenAI subscription)',
-  'openai-compatible': 'OpenAI-compatible API',
-  'anthropic-compatible': 'Anthropic-compatible API',
-  gemini: 'Gemini API',
-}
-
-// The defaults @ai-sdk/openai and @ai-sdk/anthropic use with no baseURL.
-export const INIT_BASE_URL_DEFAULTS: Readonly<Record<string, string>> = {
-  'openai-compatible': 'https://api.openai.com/v1',
-  'anthropic-compatible': 'https://api.anthropic.com/v1',
-}
-
-const BASE_URL_FORM_REFUSAL = '--base-url must be an absolute http or https URL'
-
-function baseUrlFormRefusal(value: string): string | undefined {
-  const url = URL.canParse(value) ? new URL(value) : undefined
-  return url?.protocol === 'http:' || url?.protocol === 'https:' ? undefined : BASE_URL_FORM_REFUSAL
-}
-
-function baseUrlRefusal(provider: string, value: string): string | undefined {
-  if (getProvider(provider)?.needsBaseURL !== true) {
-    return '--base-url applies only to --llm openai-compatible or anthropic-compatible'
-  }
-  return baseUrlFormRefusal(value)
-}
-
-export function getProviderChoices(): Array<{ value: string; name: string }> {
-  return listProviders().map(provider => ({ value: provider.id, name: provider.label }))
-}
-
 const KOMAZON_CHECKOUT_TEST_ID = 't_packer-staff-asha-lak-spill-usher-pele-allen-bid-done'
 const KOMAZON_CART_TOTAL_BUG_TEST_ID = 't_reduce-eva-elding-reset-lai-iban-rum-hin-parent-chang'
 const EXAMPLES_SUITE_ID = 's_dice-ego-veer-warp-ionic-trying-tur-cal-stride-battle'
@@ -244,9 +247,9 @@ function buildExampleHooksFile(): string {
 function buildShippingAddressScript(): string {
   return `// Runs before the test with no network and writes SHIPPING_ADDRESS for {{env:SHIPPING_ADDRESS}}.
 import { writeFile } from 'node:fs/promises'
-import { randomBytes } from 'node:crypto'
+import { randomInt } from 'node:crypto'
 
-const address = \`\${100 + (randomBytes(1)[0] % 900)} Cedar Lane\`
+const address = \`\${randomInt(100, 1000)} Cedar Lane\`
 await writeFile('/tmp/agent-qa.env', \`SHIPPING_ADDRESS="\${address}"\\n\`, 'utf-8')
 `
 }
@@ -268,10 +271,6 @@ steps:
 `
 }
 
-export function defaultModelForProvider(provider: string): string {
-  return getProvider(provider)?.defaultModel ?? 'model-name'
-}
-
 const DEFAULT_HOOKS_FILE = 'hooks.yaml'
 const DEFAULT_ENV_FILE = '.env'
 const DEFAULT_SECRETS_FILE = '.env.secrets.local'
@@ -284,32 +283,6 @@ function buildSecretsFile(platform: InitPlatformInput): string {
   return "# The Komazon playground's public demo password (printed on its sign-in page); "
     + 'the examples type it as {{secret:KOMAZON_PASSWORD}}.\n'
     + `${EXAMPLE_SECRET_LINE}\n`
-}
-const DEFAULT_LOCAL_CONFIG_FILE = 'agent-qa.local.yaml'
-
-function directoryGitignoreEntry(value: string): string {
-  return value.endsWith('/') ? value : `${value}/`
-}
-
-function buildGitignoreEntries(): string[] {
-  return [
-    directoryGitignoreEntry(INIT_RUNTIME_DIR),
-    directoryGitignoreEntry(INIT_AUTH_STATES_DIR),
-    // Spelled literally because the init suite mocks init-filesystem.js; a test pins both equal.
-    'tests/.agent-qa-drafts/',
-    'node_modules/',
-    // init no longer writes this file; the rule keeps one an older init wrote out of git.
-    DEFAULT_LOCAL_CONFIG_FILE,
-    DEFAULT_ENV_FILE,
-    DEFAULT_SECRETS_FILE,
-    // The namespace `writeDurableTemporary` publishes through. The temporary is a sibling of
-    // its destination carrying that destination's content — for the secrets file, live
-    // credential bytes at 0600 — and it outlives any cleanup that cannot run. Spelled
-    // literally rather than imported because init-filesystem.js is mocked wholesale by the
-    // init suite; `DURABLE_TEMPORARY_GITIGNORE_RULE` is the other copy, and the two are
-    // pinned together by the runtime-versus-defaults agreement test.
-    '.*.agent-qa-init-*.tmp',
-  ]
 }
 
 const KNOWLEDGE_ROOT_DIR = 'agent-qa-knowledge'
@@ -360,12 +333,13 @@ Always dismiss the cookie banner before asserting page content
 Scoping: this file is the global scope. Add sibling files named <product>.md
 next to it for product-scoped rules.
 
-Sovereignty: policies are human-asserted and win every conflict. Once policy
-serving lands, every active line here is served to the agent verbatim on every
-run — never summarized, never budgeted out — so keep rules few and deliberate.
+Sovereignty: policies are human-asserted and win every conflict. agent-qa serves
+every active line here to the planner verbatim on every run, never summarized,
+so keep rules few and deliberate. A long file draws a warning; it is never cut.
 
-HTML comments are stripped at serve time: a comment-only file like this one is
-an empty policy. Add rules below this comment block to activate them.
+agent-qa strips HTML comments before serving, so a comment-only file like this
+one is an empty policy. Comments cannot nest: close one before opening another.
+Add rules below this comment block to activate them.
 -->
 `
 }
@@ -470,8 +444,6 @@ function warnForMissingKnowledgeGitignoreRules(path: string): void {
   }
 }
 
-type InitNextStep = { command: string; description: string }
-
 function configuredLlms(config: Record<string, unknown>): InitLLMConfig[] {
   const registry = config.registry as Record<string, unknown> | undefined
   return (registry?.llms ?? []) as InitLLMConfig[]
@@ -479,111 +451,6 @@ function configuredLlms(config: Record<string, unknown>): InitLLMConfig[] {
 
 function usesSubscriptionModel(config: Record<string, unknown>): boolean {
   return configuredLlms(config).some(llm => isSubscriptionProvider(String(llm.provider)))
-}
-
-interface InitPackageFolder {
-  range: ProjectRange
-  dir: string
-  io: ProjectIo
-}
-
-function connectionSteps(
-  config: Record<string, unknown>,
-  { range, dir, io }: InitPackageFolder,
-): InitNextStep[] {
-  const llms = configuredLlms(config)
-  const steps: InitNextStep[] = []
-  if (
-    usesSubscriptionModel(config)
-    && nearestInstalledPackage(range, dir, SUBSCRIPTION_AUTH_PACKAGE, io) === undefined
-  ) {
-    steps.push({
-      command: `npx agent-qa plugins add ${SUBSCRIPTION_AUTH_PACKAGE}`,
-      description: 'Install the subscription sign-in plugin',
-    })
-  }
-  for (const llm of llms) {
-    const name = String(llm.name)
-    const provider = String(llm.provider)
-    if (isSubscriptionProvider(provider)) {
-      steps.push({
-        command: `npx agent-qa auth login --config ${name}`,
-        description: 'Sign in with your subscription',
-      })
-      continue
-    }
-    steps.push({
-      command: `npx agent-qa auth set --config ${name} --type api-key`,
-      description: 'Save your API key at a hidden prompt',
-    })
-    if (getProvider(provider)?.authModes.includes('bearer-token')) {
-      steps.push({
-        command: `npx agent-qa auth set --config ${name} --type bearer-token`,
-        description: 'Or save a bearer token at a hidden prompt',
-      })
-    }
-  }
-  return steps
-}
-
-// The same commands, in the same order, as the published quickstart.
-function initNextSteps(
-  platform: InitPlatformInput,
-  config: Record<string, unknown>,
-  packageFolder: InitPackageFolder,
-): InitNextStep[] {
-  const steps: InitNextStep[] = []
-  if (hasWeb(platform)) {
-    steps.push({
-      command: 'npx agent-qa install-browsers --chromium',
-      description: 'Install the browser the examples run in',
-    })
-  }
-  if (normalizePlatformSelection(platform).mobileRuntimes.length > 0) {
-    steps.push({
-      command: 'npx agent-qa install-mobile-drivers --all',
-      description: 'Install mobile driver support',
-    })
-  }
-  steps.push(...connectionSteps(config, packageFolder))
-  steps.push({ command: 'npx agent-qa validate', description: 'Check the config and the tests' })
-  if (hasWeb(platform)) {
-    steps.push({
-      command: `npx agent-qa run ${EXAMPLES_SUITE_PATH}`,
-      description: "Run the examples: one passes, one fails on the playground's deliberate bug (exit 1)",
-    })
-  }
-  steps.push({
-    command: GETTING_STARTED_URL,
-    description: 'The rest of the route: the hook sample, the dashboard and what the run taught agent-qa',
-  })
-  return steps
-}
-
-const ROOT_AGENT_INSTRUCTIONS_FILE = 'AGENTS.md'
-
-function agentInstructionPointerContent(): ManagedBlockContent {
-  return {
-    descriptor: AGENT_QA_INIT_MARKDOWN_BLOCK,
-    body: buildAgentInstructionPointer(runningAgentQaSkillSummaries(), installedAgentQaVersion()),
-    target: ROOT_AGENT_INSTRUCTIONS_FILE,
-  }
-}
-
-function agentInstructionPointerBlock(): string {
-  return renderManagedBlock(agentInstructionPointerContent())
-}
-
-// The config marker records completion, so a failed root block reports the scaffold incomplete.
-function incompleteScaffoldError(error: unknown, configName: string): Error {
-  const reason = error instanceof Error ? error.message : String(error)
-  const message =
-    `${reason}\nThe other scaffold files were written, but ${configName} was not written, `
-    + 'so this project is not initialized. Fix the cause above and rerun agent-qa init; '
-    + 'files it already wrote are kept.'
-  return isInitRefusal(error)
-    ? new InitRefusal(message, { cause: error })
-    : new Error(message, { cause: error })
 }
 
 // A refusal exits 2 with its message alone; a bug or a prompt cancel passes through unchanged.
@@ -595,22 +462,86 @@ function asInitRefusal(error: unknown): unknown {
   return error
 }
 
-// Printed flush left: an indented marker line is not a marker, and the writer would refuse it.
-function printAgentInstructionPointer(): void {
-  console.log('')
-  console.log(`  Coding agents: add this block to ${ROOT_AGENT_INSTRUCTIONS_FILE} at the project root:`)
-  console.log('')
-  console.log(agentInstructionPointerBlock())
-}
-
 export interface InitCommandHooks {
   afterWrite?: (result: InitFileResult, boundary: number) => void
   onComplete?: (outcomes: readonly InitFileResult[]) => void
   // A seam so a suite observes the one event without touching a home directory.
   composeAnalytics?: typeof ComposeAnalyticsHost
+  // Sets both stdinIsTTY and stdoutIsTTY.
   isTTY?: boolean
+  stdinIsTTY?: boolean
+  stdoutIsTTY?: boolean
+  terminal?: TerminalPort
+  rail?: InitRail
   cwd?: string
   host?: Partial<ProjectHost>
+  ui?: InitUi
+  // Probes the dashboard's port; the default binds it on loopback and lets it go.
+  dashboardPort?: DashboardPort
+  chromium?: ChromiumResolver
+  // The re-run's latest agent-qa; the default asks the npm registry under a short deadline.
+  latestVersion?: LatestVersionAsk
+}
+
+// The streams the Clack rail reads and draws on: stdin and stderr in production.
+export interface InitRail {
+  input: Readable
+  output: Writable & { isTTY?: boolean; columns?: number }
+}
+
+const PLATFORM_CHOICES = [
+  { value: 'web', label: 'Web', hint: 'Playwright' },
+  { value: 'mobile', label: 'Mobile', hint: 'Appium: Android and iOS' },
+] as const satisfies readonly { value: PlatformCapability; label: string; hint: string }[]
+
+// A drawn question finds its initial option by identity, so the pre-selected pick is matched to it.
+function optionFor(
+  sections: readonly InitSection<InitModelPick>[],
+  pick: InitModelPick,
+): InitModelPick {
+  const options = sections.flatMap((section) => section.options)
+  const same = options.find(({ value }) =>
+    value.kind === 'new'
+      ? pick.kind === 'new' && value.choice === pick.choice
+      : pick.kind === 'saved' && value.name === pick.name,
+  )
+  return (same ?? options[0]!).value
+}
+
+const CHROMIUM_COMMAND = 'npx agent-qa install-browsers --chromium'
+const CHROMIUM_ATTEMPTS = 2
+const SKILLS_COMMAND = 'npx agent-qa init'
+const VALIDATE_COMMAND = 'npx agent-qa validate'
+
+// validate prints the file's path first, so its first error line, without the position, says why.
+function validateReason(lines: readonly string[]): string | undefined {
+  const error = lines.find((line) => /\berror\b/iu.test(line))
+  const line = (error ?? lines[0])?.trim()
+  return line?.replace(/^\d+:\d+\s+error\s+/u, '').replace(/\s+/gu, ' ')
+}
+
+function agentNames(agents: readonly CodingAgent[]): string {
+  return agents
+    .map((agent) => INIT_AGENT_OPTIONS.find((option) => option.value === agent)?.label ?? agent)
+    .join(' and ')
+}
+
+// The skill folders the chosen agents hold now, counted once across agents.
+function skillCount(
+  files: readonly AgentSetupFileResult[],
+  agents: readonly CodingAgent[],
+): number {
+  const folders = new Set<string>()
+  for (const file of files) {
+    if (file.outcome === 'removed' || file.outcome === 'kept') continue
+    for (const agent of agents) {
+      const root = `${AGENT_SKILL_ROOTS[agent]}/`
+      if (!file.path.startsWith(root)) continue
+      const folder = file.path.slice(root.length).split('/')[0]
+      if (folder !== undefined && folder !== '') folders.add(folder)
+    }
+  }
+  return folders.size
 }
 
 function scaffoldFilePlan(
@@ -702,123 +633,173 @@ function buildScaffoldFilePlans(
   return plans
 }
 
-function isOutside(relativePath: string): boolean {
-  return relativePath === '..' || relativePath.startsWith(`..${sep}`)
+// Drawn without the rail's gutter, so the line pastes as it is.
+function showExampleSecretLine(ui: InitUi): void {
+  ui.line(`Add this line to ${DEFAULT_SECRETS_FILE} so the examples can sign in:`)
+  ui.copyable(EXAMPLE_SECRET_LINE)
 }
 
-// A file above the folder, such as the project's package.json, is found by its real path.
-function displayInitPath(dir: string, realDir: string, path: string): string {
-  const fromDir = relative(dir, path)
-  const localPath = isOutside(fromDir) && realDir !== dir ? relative(realDir, path) : fromDir
-  return localPath.length > 0 ? localPath : path
+function holdsExamplePassword(text: string | undefined): boolean {
+  return text !== undefined && /^\s*KOMAZON_PASSWORD\s*=/mu.test(text)
 }
 
-function printOutcomeSummary(
-  dir: string,
-  outcomes: readonly InitFileResult[],
-  realDir = dir,
-): void {
-  const groups = [
-    ['created', 'Created'],
-    ['updated', 'Updated'],
-    ['preserved', 'Preserved'],
-  ] as const
+// A package.json above the folder is named by its path from the folder, which is real once it
+// leaves the folder.
+function packageJsonText(result: InitFileResult, dir: string, realDir: string): string {
+  const fromDir = relative(dir, result.path)
+  const outside = fromDir === '..' || fromDir.startsWith(`..${sep}`)
+  const shown = outside && realDir !== dir ? relative(realDir, result.path) : fromDir
+  const name = shown || 'package.json'
+  const folderName = basename(realDir)
+  if (result.outcome === 'created') return `${name} created (${sanitizedPackageName(folderName)})`
+  return result.outcome === 'updated' ? `${name} updated` : `${name} kept`
+}
 
-  for (const [outcome, label] of groups) {
-    const matching = outcomes.filter(result => result.outcome === outcome)
-    if (matching.length === 0) continue
-    console.log(`  ${label}:`)
-    for (const result of matching) {
-      console.log(`    ${pc.dim('•')} ${displayInitPath(dir, realDir, result.path)}`)
-    }
+function scaffoldText(platform: InitPlatformInput, files: number): string {
+  const what = hasWeb(platform) ? 'config, 3 example tests and a suite' : 'config'
+  return `Scaffold: ${what} (${files} files)`
+}
+
+// runInstallStep's own lines, closed as one step: the failure keeps the shown output under it.
+function installStepResult(step: InstallStepResult, printed: readonly string[]): InitStepResult {
+  const lines = printed.flatMap((text) => text.split('\n'))
+  if (step.outcome === 'failed') {
+    const start = lines.findIndex((line) => line.startsWith('✗ '))
+    const end = lines.lastIndexOf(`  Run: ${step.command}`)
+    const shown = start === -1 ? [] : lines.slice(start, end === -1 ? undefined : end)
+    const reason = shown.join('\n').replace(/^✗ /u, '')
+    return { outcome: 'failed', reason: reason || 'Install failed', command: step.command }
   }
-}
-
-// Printed flush left so the line can be pasted as is.
-function printExampleSecretLine(): void {
-  console.log('')
-  console.log(`  Add this line to ${DEFAULT_SECRETS_FILE} so the examples can sign in:`)
-  console.log(EXAMPLE_SECRET_LINE)
-}
-
-function printNextSteps(
-  platform: InitPlatformInput,
-  config: Record<string, unknown>,
-  packageFolder: InitPackageFolder,
-): void {
-  console.log('')
-  console.log('  Next steps:')
-  for (const [index, step] of initNextSteps(platform, config, packageFolder).entries()) {
-    console.log(`    ${index + 1}. ${pc.cyan(step.command)}  ${step.description}`)
+  const text = (lines.at(-1) ?? '').replace(/^✓ /u, '')
+  if (step.outcome === 'declared') {
+    return { outcome: 'skipped', text, reason: '--pm none', command: step.command }
   }
+  if (step.outcome === 'skipped') return { outcome: 'skipped', text, reason: 'already installed' }
+  return { outcome: 'done', text }
 }
+
+// Commander stops at a bad option value before it reads the options after it, so --json is looked
+// for in the arguments as given, up to a `--`.
+function asksForJson(cmd: Command): boolean {
+  let root = cmd
+  while (root.parent !== null) root = root.parent
+  const raw = (root as unknown as { rawArgs?: unknown }).rawArgs
+  const given = Array.isArray(raw) ? raw.map(String) : []
+  const args = given.slice(given.indexOf(cmd.name()) + 1)
+  const end = args.indexOf('--')
+  return (end === -1 ? args : args.slice(0, end)).includes('--json')
+}
+
+const SETUP_ON_FRESH_LINE =
+  '--setup picks what a re-run of init sets up, and this folder is not set up yet. '
+  + 'Run npx agent-qa init without --setup.'
+const SETUP_WITH_FORCE_LINE =
+  '--setup picks what a re-run of init sets up, and --force rebuilds everything. '
+  + 'Use one of them.'
 
 export function createInitCommand(hooks: InitCommandHooks = {}): Command {
+  let documentWritten = false
+  const writeDocument = (doc: InitDocument): void => {
+    if (documentWritten) return
+    documentWritten = true
+    writeInitDocument(doc)
+  }
   const cmd = new Command('init')
     .description('Initialize a new agent-qa project')
     .addOption(new Option('--dir <path>').hideHelp())
     .addOption(new Option('--config <path>').hideHelp())
     .addOption(
-      new Option('--platform <type>', 'platform to configure')
-        .choices([...SUPPORTED_INIT_PLATFORMS]),
+      new Option('--platform <list>', 'platforms to test: web, android and ios, separated by commas'),
     )
-    .addOption(
-      new Option('--llm <provider>', 'model connection (default: claude-code)')
-        .choices([...INIT_LLM_CHOICES]),
+    .option(
+      '--llm <choice>',
+      `model: ${INIT_MODEL_CHOICES.join(', ')} or the name of a saved credential `
+        + '(default: a saved sign-in, else claude-code)',
     )
     .option('--model <id>', "model id (default: the provider's default model)")
     .option(
       '--base-url <url>',
-      'endpoint for openai-compatible or anthropic-compatible (default: the provider API)',
+      'endpoint for anthropic, openai, openai-compatible or anthropic-compatible',
     )
+    .option(
+      '--agents <list>',
+      'coding agents to set up: claude-code, codex, all or none (default: the ones detected)',
+    )
+    .option('--no-browsers', 'do not download Chromium for web targets')
+    .option('--no-dashboard', 'do not start the dashboard at the end')
     .option('--force', 'overwrite existing files')
+    .option(
+      '--setup <list>',
+      'on an initialized project, the rows to set up: names separated by commas, all or none '
+        + '(all leaves out a version move that can break the config)',
+    )
     .addOption(
       new Option(
         '--pm <name>',
         'package manager to install with (default: detected from the project)',
       ).choices(['npm', 'pnpm', 'yarn', 'bun', 'none']),
     )
+    .option('--yes', 'ask nothing and take every default')
+    .option('--json', 'print one JSON document on stdout and the steps on stderr; asks nothing')
     .option(
-      WRITE_AGENT_INSTRUCTIONS_FLAG,
-      'also write the agent-qa pointer block into AGENTS.md at the project root',
-    )
-    .option(
-      '--agent',
+      '--capabilities',
       'print the JSON capability manifest (catalog and local posture) and exit; writes nothing',
     )
+    // Declared so commander does not answer it with a suggestion of --agents.
+    .addOption(new Option('--agent').hideHelp())
     .action(async (opts, command: Command) => {
-      // Taken first and released only after the document: a failure's block must go to stderr.
-      const releaseStdout = opts.agent === true ? reserveStdoutForData() : undefined
-      const optionRefusal = initFolderOptionRefusal(command, opts)
-      if (optionRefusal !== undefined) throw new CliRefusal([pc.red(optionRefusal)], 2)
+      const json = opts.json === true && opts.capabilities !== true
+      // Taken first and released only after a run that ended well: a failure's block must go to
+      // stderr.
+      const releaseStdout = opts.capabilities === true || json ? reserveStdoutForData() : undefined
       const projectDir = hooks.cwd ?? process.cwd()
       const configPath = join(projectDir, DEFAULT_CONFIG_FILE_NAME)
-      // `--agent` is a read that returns before any prompt or file, so no branch below can write.
-      if (opts.agent === true) {
-        // IMPORTED HERE AND NOT AT THE TOP, deliberately. The manifest reads the local
-        // composition's posture, so its module graph reaches the agent host, and `init`'s
-        // ordinary job is to write a scaffold into a directory where no host could compose yet.
-        // A top-level import would make every `init` run (and every test of one) evaluate a
-        // composition root that only this branch has any use for. It also breaks
-        // `init.test.ts`, whose partial `node:fs` mock the durable-store module underneath that
-        // graph needs more of.
-        const { buildAgentManifest } = await import('../capability-catalog/manifest.js')
-        // The posture is read from agent-qa.config.yaml in the folder init runs in.
-        const manifest = await buildAgentManifest({ configPath })
-        // STDOUT AND NOTHING ELSE ON IT. The whole of this command's output under `--agent` is
-        // one JSON document, so it pipes into a parser without a filter in between.
-        console.log(guardJsonText(JSON.stringify(manifest, null, 2)))
-        releaseStdout?.()
-        // `--agent` writes nothing, so it emits no init event.
-        return
-      }
-
+      const host = projectHost({ cwd: projectDir, ...hooks.host })
+      let ui: InitUi = hooks.ui ?? createPlainUi()
+      let clackUi: ClackUi | undefined
+      const recorder = createInitDocumentRecorder({ dir: projectDir })
+      let steps: () => readonly InitStepRecord[] = () => []
+      let stepRunner: InitStepRunner | undefined
+      let delegated = false
+      let threw = false
       try {
+        if (opts.agent === true) {
+          throw new CliRefusal(
+            [pc.red('--agent is now --capabilities: run npx agent-qa init --capabilities.')],
+            2,
+          )
+        }
+        const optionRefusal = initFolderOptionRefusal(command, opts)
+        if (optionRefusal !== undefined) throw new CliRefusal([pc.red(optionRefusal)], 2)
+        // `--capabilities` is a read that returns before any prompt or file, so no branch below
+        // can write.
+        if (opts.capabilities === true) {
+          // IMPORTED HERE AND NOT AT THE TOP, deliberately. The manifest reads the local
+          // composition's posture, so its module graph reaches the agent host, and `init`'s
+          // ordinary job is to write a scaffold into a directory where no host could compose yet.
+          // A top-level import would make every `init` run (and every test of one) evaluate a
+          // composition root that only this branch has any use for. It also breaks
+          // `init.test.ts`, whose partial `node:fs` mock the durable-store module underneath that
+          // graph needs more of.
+          const { buildAgentManifest } = await import('../capability-catalog/manifest.js')
+          // The posture is read from agent-qa.config.yaml in the folder init runs in.
+          const manifest = await buildAgentManifest({ configPath })
+          // STDOUT AND NOTHING ELSE ON IT. The whole of this command's output under
+          // `--capabilities` is one JSON document, so it pipes into a parser without a filter in
+          // between.
+          console.log(guardJsonText(JSON.stringify(manifest, null, 2)))
+          // `--capabilities` writes nothing, so it emits no init event.
+          return
+        }
+
         const dir = projectDir
-        const folderRefusal = await initFolderRefusal(dir)
+        const folderRefusal = await initFolderRefusal(dir, {
+          ...defaultInitFolderIo,
+          homedir: () => host.homedir,
+        })
         if (folderRefusal !== undefined) throw new CliRefusal([pc.red(folderRefusal)], 2)
-        const host = projectHost({ cwd: dir, ...hooks.host })
         const range = await projectRange(dir, host)
+        recorder.realDir(range.start)
         const packageJson = readProjectPackageJson(range, host.io)
         if (packageJson.text !== undefined) parsePackageJson(packageJson.path, packageJson.text)
         const runningVersion = installedAgentQaVersion()
@@ -830,6 +811,27 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
             ...(opts.pm === undefined || opts.pm === 'none' ? {} : { flag: opts.pm }),
           })
         const maskInstallOutput = installOutputMask(configPath, host.io)
+        const installPlan = async (plan: PackageJsonPlan): Promise<InitStepResult> => {
+          const printed: string[] = []
+          // A guarded block of the manager's output goes to stderr, never to stdout.
+          const releaseInstallStdout = reserveStdoutForData()
+          try {
+            const detected = manager()
+            recorder.packageManager(opts.pm === 'none' ? 'none' : detected.name)
+            const step = await runInstallStep({
+              host,
+              range,
+              packageJson: plan,
+              manager: detected,
+              mode: opts.pm === 'none' ? 'none' : 'run',
+              mask: maskInstallOutput,
+              print: (text) => printed.push(text),
+            })
+            return installStepResult(step, printed)
+          } finally {
+            releaseInstallStdout()
+          }
+        }
         const handedOff = await handOffToProjectAgentQa({
           host,
           range,
@@ -850,19 +852,41 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
               manager: manager(),
               mode: 'run',
               mask: maskInstallOutput,
+              print: (line) => ui.line(line),
             })
             return step.outcome === 'installed' || step.outcome === 'skipped'
+          },
+          print: (line) => ui.line(line),
+          onHandOff: () => {
+            delegated = true
           },
         })
         if (handedOff) return
         const initStartedAt = Date.now()
         const force = opts.force ?? false
 
-        const tty = hooks.isTTY ?? process.stdin.isTTY === true
+        const mode = initUiMode({
+          stdinIsTTY: hooks.stdinIsTTY ?? hooks.isTTY ?? process.stdin.isTTY === true,
+          stdoutIsTTY: hooks.stdoutIsTTY ?? hooks.isTTY ?? process.stdout.isTTY === true,
+          ci: resolveIsCI(host.env),
+          yes: opts.yes === true,
+          json,
+        })
+        // Without a question drawn, every answer takes its flag or its default.
+        const ask = mode === 'interactive'
+        const dashboardStep = initDashboardStep({
+          interactive: mode === 'interactive',
+          noDashboard: opts.dashboard === false,
+          host,
+          range,
+          runningVersion,
+          ports: hooks.dashboardPort ?? { probe: probeDashboardPort, findFree: findFreePort },
+        })
         let asked = false
 
         // Derives the outcome from file outcomes; a scaffold that throws reaches neither call site.
         const emitInitCompleted = async (
+          initMode: 'interactive' | 'scaffold' | 'rerun',
           results: readonly { readonly outcome: InitFileResult['outcome'] }[],
         ): Promise<void> => {
           const { analyticsEvent, composeAnalyticsHost } = await import(
@@ -889,7 +913,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
             const createdCount = results.filter((result) => result.outcome === 'created').length
             const updatedCount = results.filter((result) => result.outcome === 'updated').length
             analytics.port.capture(analyticsEvent(analytics, 'agent-qa.init.completed', {
-              init_mode: asked ? 'interactive' : 'scaffold',
+              init_mode: initMode,
               outcome: createdCount > 0 ? 'created' : updatedCount > 0 ? 'updated' : 'unchanged',
               created_file_count: createdCount,
               duration_ms: Date.now() - initStartedAt,
@@ -899,92 +923,238 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           }
         }
 
+        // Later steps run through the project's agent-qa, or this one as a captured child.
+        const stepContext = {
+          host,
+          range,
+          // The range holds real paths, so the folder is found by its real path too.
+          fromDir: range.start,
+          runningVersion,
+          inProcess: (args: readonly string[]) => runRunningAgentQa(args, host),
+        }
+
+        const validate = async (): Promise<InitStepResult> => {
+          const run = await runAgentQaStep(['validate'], stepContext)
+          recorder.agentQa({ version: run.version, via: run.via })
+          if (run.code === 0) {
+            return { outcome: 'done', text: 'validate: the config and tests are valid' }
+          }
+          const shown = await shownOutput(
+            stripVTControlCharacters(run.output),
+            maskInstallOutput,
+            Number.MAX_SAFE_INTEGER,
+          )
+          return {
+            outcome: 'failed',
+            reason: validateReason(shown) ?? `validate exited ${run.code}`,
+            command: VALIDATE_COMMAND,
+          }
+        }
+
+        const installChromium = async (): Promise<InitStepResult> => {
+          let output = ''
+          for (let attempt = 0; attempt < CHROMIUM_ATTEMPTS; attempt += 1) {
+            const run = await runAgentQaStep(['install-browsers', '--chromium'], stepContext)
+            if (run.code === 0) return { outcome: 'done', text: 'Chromium installed' }
+            output = run.output
+          }
+          const [last] = await shownOutput(output, maskInstallOutput, 1)
+          return {
+            outcome: 'failed',
+            reason: `Chromium download failed twice${last === undefined ? '' : `: ${last}`}`,
+            command: CHROMIUM_COMMAND,
+          }
+        }
+
+        const openUi = async (): Promise<InitUi> => {
+          if (mode !== 'plain' && hooks.ui === undefined) {
+            const rail = hooks.rail ?? { input: process.stdin, output: process.stderr }
+            const rgb = await probeTerminalBackground(
+              hooks.terminal ?? processTerminalPort(process.stdin, process.stdout, host.env),
+            )
+            // The level follows agent-qa's colour rule over the environment and stream init is
+            // given.
+            const palette = brandPalette({
+              background: classifyBackground(rgb, host.env),
+              ...(rgb === undefined ? {} : { rgb }),
+              level: colorLevelFor(host.env, rail.output),
+            })
+            clackUi = createClackUi({
+              input: rail.input,
+              output: rail.output,
+              palette,
+              columns: rail.output.columns ?? 0,
+            })
+            ui = clackUi
+          }
+          return ui
+        }
+
+        const maskStepText = async (text: string): Promise<string> =>
+          (await shownOutput(text, maskInstallOutput, Number.MAX_SAFE_INTEGER)).join('\n')
+
         const configClassification = classifyInitPath(configPath, dir)
+        if (opts.setup !== undefined && force) {
+          throw new CliRefusal([pc.red(SETUP_WITH_FORCE_LINE)], 2)
+        }
+        if (opts.setup !== undefined && configClassification !== 'regular') {
+          throw new CliRefusal([pc.red(SETUP_ON_FRESH_LINE)], 2)
+        }
         if (configClassification === 'regular' && !force) {
-          const completed = [{ path: configPath, outcome: 'preserved' }] as const
-          console.log(pc.yellow(`Project is already initialized at ${dir}. Use --force to rebuild it.`))
-          printOutcomeSummary(dir, completed)
-          hooks.onComplete?.(completed)
-          await emitInitCompleted(completed)
+          await runInitRerun({
+            dir,
+            configPath,
+            host,
+            range,
+            packageJson,
+            runningVersion,
+            opts,
+            mode,
+            openUi,
+            recorder,
+            validate,
+            validateStep: { title: 'Validating the config and tests', command: VALIDATE_COMMAND },
+            mask: maskStepText,
+            outro: GETTING_STARTED_URL,
+            ...(hooks.onComplete === undefined ? {} : { onComplete: hooks.onComplete }),
+            emitInitCompleted,
+            onRunner: (runner) => {
+              stepRunner = runner
+              steps = () => runner.records()
+            },
+            chromium: hooks.chromium ?? findChromiumByDefault,
+            installChromium,
+            scaffoldPlans: (platform) => buildScaffoldFilePlans(dir, platform, false),
+            latestVersion: hooks.latestVersion ?? askLatestVersionByDefault,
+            upgrade: {
+              packages: (configText) =>
+                configuredPackages(configText ?? host.io.readText(configPath)),
+              plan: (version) =>
+                planPackageJson({
+                  ...packageJson,
+                  folderName: basename(range.start),
+                  dependencies: projectDependencies({
+                    version,
+                    ...configuredPackages(host.io.readText(configPath)),
+                  }),
+                }),
+              install: installPlan,
+            },
+            onHandOff: () => {
+              delegated = true
+            },
+            dashboard: dashboardStep,
+          })
           return
         }
 
-        const refuseBaseUrl = (provider: string): boolean => {
-          const refusal = opts.baseUrl === undefined ? undefined : baseUrlRefusal(provider, opts.baseUrl)
-          if (refusal) {
-            console.error(pc.red(refusal))
-            process.exitCode = 2
-          }
-          return refusal !== undefined
+        const saved = await listSavedCredentials(
+          getAuthPath({ env: host.env, homeDir: host.homedir }),
+        )
+        const modelFlags = { model: opts.model, baseUrl: opts.baseUrl, saved }
+        const askModel = ask && opts.llm === undefined
+        let modelPick: InitModelPick | undefined = askModel
+          ? undefined
+          : opts.llm === undefined
+            ? preselectedModel(saved)
+            : resolveLlmFlag(opts.llm, saved)
+        // Resolved before anything is drawn, so a refused flag writes nothing.
+        let modelSetup = modelPick === undefined ? undefined : modelEntryFor(modelPick, modelFlags)
+        const flaggedAgents =
+          opts.agents === undefined ? undefined : parseInitAgentsFlag(opts.agents)
+        const flaggedPlatform =
+          opts.platform === undefined ? undefined : parseInitPlatformList(opts.platform)
+        if (flaggedPlatform !== undefined && 'refusal' in flaggedPlatform) {
+          throw new CliRefusal([pc.red(flaggedPlatform.refusal)], 2)
         }
-        const askLlm = tty && opts.llm === undefined
-        const flaggedLlm = (opts.llm ?? 'claude-code') as InitLLMChoice
-        if (!askLlm && refuseBaseUrl(INIT_LLM_ENTRIES[flaggedLlm].provider)) return
+
+        // Every scaffold plans the knowledge .gitignore, so a folder that cannot take it is
+        // refused before any question.
+        const knowledgeGitignorePath = join(dir, KNOWLEDGE_ROOT_DIR, '.gitignore')
+        const knowledgeGitignoreWasPresent =
+          classifyInitPath(knowledgeGitignorePath, dir) === 'regular'
+        if (knowledgeGitignoreWasPresent) {
+          warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
+          verifyEffectiveGitignore({
+            cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+            label: 'existing agent-qa-knowledge/.gitignore',
+            probes: KNOWLEDGE_GITIGNORE_PROBES,
+            written: 'nothing',
+          })
+        }
+
+        await openUi()
+        if (mode !== 'plain') ui.banner()
+        ui.intro()
 
         let platform: InitPlatformInput
-        if (tty && opts.platform === undefined) {
+        if (ask && flaggedPlatform === undefined) {
           asked = true
-          const capabilities = await checkbox<PlatformCapability>({
+          const capabilities = await ui.multiselect<PlatformCapability>({
             message: 'What platform will you test?',
-            choices: [
-              { value: 'web', name: 'Web', description: 'Test web apps with Playwright', checked: true },
-              { value: 'mobile', name: 'Mobile', description: 'Test Android or iOS apps with Appium', checked: false },
-            ],
+            options: PLATFORM_CHOICES,
+            initialValues: ['web'],
             required: true,
-            validate: (value) => value.length > 0 || 'Select at least one platform.',
-          }) as PlatformCapability[]
+          })
 
           const mobileRuntimes: MobileRuntime[] = capabilities.includes('mobile') ? ['android', 'ios'] : []
 
           platform = { capabilities, mobileRuntimes }
         } else {
-          platform = (opts.platform ?? 'web') as Platform
+          platform = flaggedPlatform?.platform ?? 'web'
         }
 
-        let llm: InitLLMChoice = opts.llm ?? 'claude-code'
-        if (askLlm) {
+        if (modelPick === undefined) {
           asked = true
-          llm = await select<InitLLMChoice>({
-            message: 'Which model connection?',
-            choices: INIT_LLM_CHOICES.map(value => ({ value, name: INIT_LLM_NAMES[value] })),
-            default: 'claude-code',
+          const sections = initModelSections(saved)
+          modelPick = await ui.select<InitModelPick>({
+            message: 'Which model should agent-qa use?',
+            sections,
+            initialValue: optionFor(sections, preselectedModel(saved)),
           })
         }
-        const { name: llmName, provider } = INIT_LLM_ENTRIES[llm]
-        if (askLlm && refuseBaseUrl(provider)) return
+        modelSetup ??= modelEntryFor(modelPick, modelFlags)
 
-        let model: string = opts.model ?? defaultModelForProvider(provider)
-        if (tty && opts.model === undefined && !isSubscriptionProvider(provider)) {
-          asked = true
-          model = (await input({
-            message: 'Model:',
-            default: model,
-            validate: (value) => value.trim().length > 0 || 'Enter a model id.',
-          })).trim()
+        let agents = flaggedAgents
+        if (agents === undefined) {
+          agents = await detectCodingAgents({
+            projectDir: dir,
+            homeDir: host.homedir,
+            env: host.env,
+            io: host.io,
+          })
+          if (ask) {
+            asked = true
+            agents = await ui.multiselect<CodingAgent>({
+              message: 'Which coding agents should agent-qa set up?',
+              options: INIT_AGENT_OPTIONS,
+              initialValues: agents,
+              required: false,
+            })
+          }
         }
+        recorder.agents(agents)
 
-        const needsBaseURL = getProvider(provider)?.needsBaseURL === true
-        let baseURL: string | undefined = needsBaseURL
-          ? opts.baseUrl ?? INIT_BASE_URL_DEFAULTS[provider]
-          : undefined
-        if (tty && opts.baseUrl === undefined && needsBaseURL) {
-          asked = true
-          baseURL = (await input({
-            message: 'Base URL:',
-            default: baseURL,
-            validate: (value) => baseUrlFormRefusal(value.trim()) ?? true,
-          })).trim()
-        }
-
-        const config = buildDefaultConfig(platform, [{ name: llmName, provider, model, baseURL }])
+        const config = buildDefaultConfig(
+          platform,
+          modelSetup.entry === undefined ? [] : [modelSetup.entry],
+        )
+        const agentQaVersion = agentQaAfterInstall(packageJson.text, runningVersion)
+        const dependencies = projectDependencies({
+          version: agentQaVersion,
+          usesSubscription: usesSubscriptionModel(config),
+          plugins: (config.plugins ?? []) as readonly { package?: unknown }[],
+        })
+        recorder.agentQa({ version: runningVersion, via: 'running' })
+        recorder.plugins(
+          dependencies
+            .filter((dependency) => dependency.name !== 'agent-qa')
+            .map((dependency) => ({ package: dependency.name, version: dependency.version })),
+        )
         const packageJsonPlan = planPackageJson({
           ...packageJson,
           folderName: basename(range.start),
-          dependencies: projectDependencies({
-            version: agentQaAfterInstall(packageJson.text, runningVersion),
-            usesSubscription: usesSubscriptionModel(config),
-            plugins: (config.plugins ?? []) as readonly { package?: unknown }[],
-          }),
+          dependencies,
         })
         const packageJsonFilePlan: InitPathPlan = {
           root: packageJsonPlan.root,
@@ -1005,134 +1175,282 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           content: renderScaffoldConfigYaml(config),
           force,
         }
-        const agentInstructionsPlan: ManagedBlockUpsertPlan | null = opts.writeAgentInstructions === true
-          ? {
-            root: dir,
-            path: join(dir, ROOT_AGENT_INSTRUCTIONS_FILE),
-            content: agentInstructionPointerContent(),
-          }
-          : null
-        const completePlan = [
-          ...filePlans,
-          packageJsonFilePlan,
-          targetGitignorePlan,
-          ...(agentInstructionsPlan ? [{ root: dir, path: agentInstructionsPlan.path, content: '' }] : []),
-          configPlan,
-        ]
-        const preflight = preflightInitPlan(completePlan)
-        if (agentInstructionsPlan) preflightManagedBlock(agentInstructionsPlan)
-
-        const knowledgeGitignorePath = join(dir, KNOWLEDGE_ROOT_DIR, '.gitignore')
-        const knowledgeGitignoreWasPresent = preflight.some(
-          result => result.path === knowledgeGitignorePath
-            && result.classification === 'regular',
-        )
-        if (knowledgeGitignoreWasPresent) {
-          // The refusal prints its message only, never a stack trace.
-          try {
-            warnForMissingKnowledgeGitignoreRules(knowledgeGitignorePath)
-            verifyEffectiveGitignore({
-              cwd: join(dir, KNOWLEDGE_ROOT_DIR),
-              label: 'existing agent-qa-knowledge/.gitignore',
-              probes: KNOWLEDGE_GITIGNORE_PROBES,
-              // Nothing has been written yet at this point in the run.
-              written: 'nothing',
-            })
-          } catch (error) {
-            if (!isInitRefusal(error)) throw error
-            console.error(pc.red(error.message))
-            process.exitCode = 2
-            return
-          }
-        }
+        const completePlan = [...filePlans, packageJsonFilePlan, targetGitignorePlan, configPlan]
+        preflightInitPlan(completePlan)
 
         const outcomes: InitFileResult[] = []
         let boundary = 0
-        const recordOutcome = (result: InitFileResult): void => {
+        const recordOutcome = (step: InitStepName, result: InitFileResult): InitFileResult => {
           outcomes.push(result)
-          if (result.outcome === 'preserved') return
+          recorder.file(step, result)
+          if (result.outcome === 'preserved') return result
           boundary += 1
           hooks.afterWrite?.(result, boundary)
+          return result
         }
 
-        // Written first, so no later scaffold temporary exists before its ignore rule does.
-        recordOutcome(upsertManagedGitignoreBlock(
-          targetGitignorePath,
-          buildGitignoreEntries(),
-        ))
-        verifyEffectiveGitignore({
-          cwd: dir,
-          label: 'target .gitignore',
-          probes: TARGET_GITIGNORE_PROBES,
-          // The managed block is on disk by now — the refusal must not say otherwise.
-          written: 'managed-gitignore',
-        })
-
-        recordOutcome(writeScaffoldFileAtomic(packageJsonFilePlan, {}))
-
-        for (const plan of filePlans) {
-          recordOutcome(writeScaffoldFileAtomic(plan, {}))
-        }
-
-        if (!knowledgeGitignoreWasPresent) {
+        const writePackageJson = async (): Promise<InitStepResult> => {
+          // Written first, so no later scaffold temporary exists before its ignore rule does.
+          recordOutcome(
+            'package-json',
+            upsertManagedGitignoreBlock(targetGitignorePath, buildGitignoreEntries()),
+          )
           verifyEffectiveGitignore({
-            cwd: join(dir, KNOWLEDGE_ROOT_DIR),
-            label: 'agent-qa-knowledge/.gitignore',
-            probes: KNOWLEDGE_GITIGNORE_PROBES,
-            // This one runs AFTER the scaffold loop: the whole scaffold is published.
-            written: 'managed-gitignore-and-scaffold',
+            cwd: dir,
+            label: 'target .gitignore',
+            probes: TARGET_GITIGNORE_PROBES,
+            // The managed block is on disk by now — the refusal must not say otherwise.
+            written: 'managed-gitignore',
           })
+          const written = recordOutcome(
+            'package-json',
+            writeScaffoldFileAtomic(packageJsonFilePlan, {}),
+          )
+          return { outcome: 'done', text: packageJsonText(written, dir, range.start) }
         }
 
-        if (agentInstructionsPlan) {
+        const writeScaffold = async (): Promise<InitStepResult> => {
+          const before = outcomes.length
+          for (const plan of filePlans) {
+            recordOutcome('scaffold', writeScaffoldFileAtomic(plan, {}))
+          }
+
+          if (!knowledgeGitignoreWasPresent) {
+            verifyEffectiveGitignore({
+              cwd: join(dir, KNOWLEDGE_ROOT_DIR),
+              label: 'agent-qa-knowledge/.gitignore',
+              probes: KNOWLEDGE_GITIGNORE_PROBES,
+              // This one runs AFTER the scaffold loop: the whole scaffold is published.
+              written: 'managed-gitignore-and-scaffold',
+            })
+          }
+
+          recordOutcome('scaffold', writeConfigMarkerLast(configPlan, {}))
+          hooks.onComplete?.([...outcomes])
+          return { outcome: 'done', text: scaffoldText(platform, outcomes.length - before) }
+        }
+
+        const install = (): Promise<InitStepResult> => installPlan(packageJsonPlan)
+
+        const setUpAgents = async (): Promise<InitStepResult> => {
+          let setup: Awaited<ReturnType<typeof installAgentSetup>>
           try {
-            recordOutcome(upsertManagedBlock(agentInstructionsPlan))
+            setup = await installAgentSetup({ projectDir: dir, agents, host })
           } catch (error) {
-            throw incompleteScaffoldError(error, DEFAULT_CONFIG_FILE_NAME)
+            if (!isInitRefusal(error)) throw error
+            return { outcome: 'failed', reason: error.message, command: SKILLS_COMMAND }
+          }
+          for (const file of setup.files) {
+            recorder.file('skills', { path: join(dir, file.path), outcome: file.outcome })
+          }
+          const failed = Object.values(setup.parts).find((part) => part?.outcome === 'failed')
+          if (failed !== undefined) {
+            return {
+              outcome: 'failed',
+              reason: failed.reason ?? 'The coding agent setup failed',
+              command: SKILLS_COMMAND,
+            }
+          }
+          const from =
+            setup.source === 'running'
+              ? ` (from this agent-qa ${setup.version}; the project has none installed)`
+              : ''
+          return {
+            outcome: 'done',
+            text:
+              `${agentNames(agents)}: ${skillCount(setup.files, agents)} skills, MCP entries, ` +
+              `AGENTS.md block${from}`,
           }
         }
 
-        recordOutcome(writeConfigMarkerLast(configPlan, {}))
-        hooks.onComplete?.([...outcomes])
+        const authPath = getAuthPath({ env: host.env, homeDir: host.homedir })
+        const subscriptionPluginInstalled = (): boolean => {
+          const installRecord = runner.records().find((record) => record.name === 'install')
+          const installed =
+            installRecord?.outcome === 'done' ||
+            (installRecord?.outcome === 'skipped' && installRecord.reason === 'already installed')
+          return (
+            installed &&
+            nearestInstalledPackage(
+              range,
+              dirname(packageJsonPlan.path),
+              SUBSCRIPTION_AUTH_PACKAGE,
+              host.io,
+            ) !== undefined
+          )
+        }
 
-        // AFTER the config marker — the scaffold's last write — so the event describes a
-        // project that exists rather than one being attempted.
-        await emitInitCompleted(outcomes)
+        const runner = createInitStepRunner({
+          ui,
+          plan: freshInitPlan(),
+          mask: maskStepText,
+        })
+        stepRunner = runner
+        steps = () => runner.records()
+        const packageJsonStep = await runner.run(
+          'package-json',
+          { title: 'Writing package.json' },
+          writePackageJson,
+        )
+        // The config marker records a complete scaffold and the install reads what package.json
+        // declares, so neither runs over a package.json that was not written.
+        if (packageJsonStep.outcome === 'failed') {
+          const reason = 'package.json was not written'
+          runner.skip('scaffold', `Scaffold: skipped (${reason})`, reason)
+          runner.skip('install', `Install: skipped (${reason})`, reason)
+          runner.skip('chromium', `Chromium: skipped (${reason})`, reason)
+          runner.skip('skills', `Coding agents: skipped (${reason})`, reason)
+          runner.skip('validate', `validate: skipped (${reason})`, reason)
+        } else {
+          const scaffold = await runner.run(
+            'scaffold',
+            { title: 'Writing the scaffold' },
+            writeScaffold,
+          )
+          // AFTER the config marker — the scaffold's last write — so the event describes a
+          // project that exists rather than one being attempted.
+          if (scaffold.outcome === 'done') {
+            await emitInitCompleted(asked ? 'interactive' : 'scaffold', outcomes)
+          }
+          await runner.run('install', { title: 'Installing dependencies' }, install)
+          if (opts.browsers === false) {
+            runner.skip(
+              'chromium',
+              'Chromium: skipped (--no-browsers)',
+              '--no-browsers',
+              CHROMIUM_COMMAND,
+            )
+          } else if (!hasWeb(platform)) {
+            runner.skip('chromium', 'Chromium: no web target', 'no web target')
+          } else {
+            await runner.run(
+              'chromium',
+              { title: 'Installing Chromium', command: CHROMIUM_COMMAND },
+              installChromium,
+            )
+          }
+          if (agents.length === 0) {
+            runner.skip('skills', 'Coding agents: none chosen', 'none chosen')
+          } else {
+            await runner.run(
+              'skills',
+              { title: 'Setting up the coding agents', command: SKILLS_COMMAND },
+              setUpAgents,
+            )
+          }
+          // Nothing is installed yet, so validate would only report the uninstalled plugins.
+          if (opts.pm === 'none') {
+            runner.skip(
+              'validate',
+              'validate: install first (--pm none)',
+              'install first (--pm none)',
+              VALIDATE_COMMAND,
+            )
+          } else {
+            await runner.run(
+              'validate',
+              { title: 'Validating the config and tests', command: VALIDATE_COMMAND },
+              validate,
+            )
+          }
+        }
+        const pluginInstalled = subscriptionPluginInstalled()
+        const status = await modelStatus({
+          ...modelSetup,
+          configPath,
+          projectDir: dir,
+          authPath,
+          pluginInstalled,
+        })
+        // A Ctrl-C that landed outside a step is read here.
+        if (runner.interrupted()) throw new PromptCancelled()
 
-        const installStep = await runInstallStep({
-          host,
-          range,
-          packageJson: packageJsonPlan,
-          manager: manager(),
-          mode: opts.pm === 'none' ? 'none' : 'run',
-          mask: maskInstallOutput,
+        const port = dashboardPortOf(config)
+        const scaffolded = runner
+          .records()
+          .some((record) => record.name === 'scaffold' && record.outcome === 'done')
+        const dashboard = await dashboardStep.decide(runner, {
+          port,
+          ...(scaffolded ? {} : { skip: 'no config was written' }),
+        })
+        recorder.model({
+          ...(modelSetup.entry === undefined
+            ? {}
+            : { name: modelSetup.entry.name, provider: modelSetup.entry.provider }),
+          ...status,
         })
 
-        console.log('')
-        console.log(pc.green(pc.bold('✓ agent-qa project initialized!')))
-        console.log('')
-        printOutcomeSummary(dir, outcomes, range.start)
         const secretsPath = join(dir, DEFAULT_SECRETS_FILE)
         const secretsPreserved = outcomes.some(
           result => result.path === secretsPath && result.outcome === 'preserved',
         )
-        if (hasWeb(platform) && secretsPreserved) printExampleSecretLine()
-        printNextSteps(platform, config, {
-          range,
-          dir: dirname(packageJsonPlan.path),
-          io: host.io,
+        if (
+          hasWeb(platform)
+          && secretsPreserved
+          && !holdsExamplePassword(host.io.readText(secretsPath))
+        ) {
+          showExampleSecretLine(ui)
+        }
+        const records = runner.records()
+        const skillsDone = records.some(
+          (record) => record.name === 'skills' && record.outcome === 'done',
+        )
+        const next = initNextSteps({
+          steps: records,
+          ...(modelSetup.entry === undefined
+            ? {}
+            : {
+                model: {
+                  name: modelSetup.entry.name,
+                  provider: modelSetup.entry.provider,
+                  status: status.status,
+                  subscription: isSubscriptionProvider(modelSetup.entry.provider),
+                  pluginInstalled,
+                },
+              }),
+          web: hasWeb(platform),
+          mobile: normalizePlatformSelection(platform).mobileRuntimes.length > 0,
+          agents: skillsDone ? agents : [],
+          dashboard,
         })
-        if (!agentInstructionsPlan) printAgentInstructionPointer()
-        console.log('')
-        if (installStep.outcome === 'failed') throw new CliRefusal([], 3)
+        recorder.nextSteps(next.steps)
+        ui.note('Next steps', nextStepLines(next.steps))
+        for (const hint of next.hints) ui.line(hint)
+        if (runner.interrupted()) throw new PromptCancelled()
+        if (dashboard === 'starting') {
+          await dashboardStep.start(runner, ui, {
+            port,
+            page: dashboardPage({ model: status.status, dashboard: modelSetup.dashboard }),
+          })
+        }
+        ui.outro(GETTING_STARTED_URL)
+        if (runner.failed()) throw new CliRefusal([], 3)
       } catch (error) {
-        throw asInitRefusal(error)
+        threw = true
+        const interrupted =
+          isPromptCancel(error) || (error instanceof CliRefusal && error.exitCode === 130)
+        stepRunner?.skipRemaining(interrupted ? INTERRUPTED : NOT_RUN)
+        const refusal = asInitRefusal(error)
+        recorder.fail(refusal)
+        throw refusal
+      } finally {
+        stepRunner?.dispose()
+        // A project agent-qa that took over printed the run's document itself.
+        if (json && !delegated) {
+          writeDocument(await recorder.document(steps(), installOutputMask(configPath, host.io)))
+        }
+        clackUi?.dispose()
+        if (!threw) releaseStdout?.()
       }
     })
 
   // Commander has printed its own line; a usage error exits 2, and help returns so commander exits 0.
   cmd.exitOverride((error) => {
-    if (error.exitCode !== 0) throw new CliRefusal([], 2, { cause: error })
+    if (error.exitCode === 0) return
+    if (cmd.opts().json === true || asksForJson(cmd)) {
+      writeDocument(refusedInitDocument(error.message))
+    }
+    throw new CliRefusal([], 2, { cause: error })
   })
 
   return cmd

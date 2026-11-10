@@ -58,12 +58,6 @@ vi.mock('../commands/install-browsers.js', () => ({
   runBrowserInstall: vi.fn(() => ({ ok: true, status: 0, stage: 'installer' })),
 }))
 
-vi.mock('@inquirer/select', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/input', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/checkbox', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/confirm', () => ({ default: vi.fn() }))
-vi.mock('@inquirer/password', () => ({ default: vi.fn() }))
-
 vi.mock('@vostride/agent-qa-core', () => ({
   writeAuth: vi.fn(() => Promise.resolve()),
   resolveAppiumExecutable: vi.fn(() => ({ command: 'appium', source: 'path' })),
@@ -72,6 +66,8 @@ vi.mock('@vostride/agent-qa-core', () => ({
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_RUNTIME_DIR: '.agent-qa',
   getAgentQaVersion: vi.fn(() => '0.1.1'),
+  getAuthPath: vi.fn(() => '/tmp/test-home/.agent-qa/auth.json'),
+  listSavedCredentials: vi.fn(async () => []),
 }))
 
 import { createInitCommand } from '../commands/init.js'
@@ -82,6 +78,8 @@ import { clearProviderRegistry } from '@vostride/agent-qa-model'
 import { isCanonicalHookId, isCanonicalSuiteId, isCanonicalTestId } from '@vostride/agent-qa-ids'
 import { SecretStore, parseEnvFile } from '@vostride/agent-qa-runner'
 import { hermeticEnv } from './conformance/spawned-chat.js'
+import { defaultProjectIo } from '../commands/project-host.js'
+import { fakeRunner, runningAgentQa } from './project-fixtures.js'
 
 const realFs = await vi.importActual<typeof import('node:fs')>('node:fs')
 const realChildProcess = await vi.importActual<typeof import('node:child_process')>(
@@ -111,14 +109,21 @@ const KOMAZON_TARGETS = {
 }
 type Write = { path: string; content: string }
 
-// No test starts a package manager: init declares the dependencies and runs no install.
+// No test starts a package manager or writes coding-agent files: init runs no install and
+// chooses no coding agent.
 function withoutInstall(args: readonly string[]): string[] {
-  return args.includes('--pm') || args.includes('--agent') ? [...args] : [...args, '--pm', 'none']
+  if (args.includes('--capabilities')) return [...args]
+  const pm = args.includes('--pm') ? [] : ['--pm', 'none']
+  const agents = args.includes('--agents') ? [] : ['--agents', 'none']
+  return [...args, ...pm, ...agents]
 }
 
 async function runInit(args: string[]): Promise<void> {
   const parent = new Command()
-  const init = createInitCommand({ cwd: DIR, host: { env: {} } })
+  const init = createInitCommand({
+    cwd: DIR,
+    host: { env: {}, run: fakeRunner(), ...runningAgentQa(defaultProjectIo) },
+  })
   parent.exitOverride()
   init.exitOverride()
   parent.addCommand(init)
@@ -127,7 +132,7 @@ async function runInit(args: string[]): Promise<void> {
 
 async function initWrites(platform = 'web'): Promise<Write[]> {
   mockWriteFileSync.mockClear()
-  vi.mocked(console.log).mockClear()
+  vi.mocked(process.stderr.write).mockClear()
   await runInit(['--platform', platform])
   return mockWriteFileSync.mock.calls.map(call => ({
     path: String(call[0]).slice(DIR.length + 1),
@@ -146,8 +151,11 @@ function written(writes: Write[], path: string): { raw: string; doc: any } {
   return { raw, doc: parseYaml(raw) }
 }
 
+// init draws its human output on stderr.
 function consoleOutput(): string {
-  return stripVTControlCharacters(vi.mocked(console.log).mock.calls.flat().map(String).join('\n'))
+  return stripVTControlCharacters(
+    vi.mocked(process.stderr.write).mock.calls.map((call) => String(call[0])).join(''),
+  )
 }
 
 async function loadCoreYamlValidators() {
@@ -175,6 +183,7 @@ function setUpInitMocks(): void {
   clearProviderRegistry()
   vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.spyOn(console, 'warn').mockImplementation(() => {})
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
   vi.clearAllMocks()
   vi.mocked(existsSync).mockReturnValue(false)
   vi.mocked(readFileSync).mockImplementation(path =>
@@ -269,8 +278,8 @@ describe('the init examples', () => {
       web: KOMAZON_TARGETS,
       android: { 'example-android': { platform: 'android' } },
       ios: { 'example-ios': { platform: 'ios' } },
-      'web+android': { ...KOMAZON_TARGETS, 'example-android': { platform: 'android' } },
-      'web+ios': { ...KOMAZON_TARGETS, 'example-ios': { platform: 'ios' } },
+      'web,android': { ...KOMAZON_TARGETS, 'example-android': { platform: 'android' } },
+      'web,ios': { ...KOMAZON_TARGETS, 'example-ios': { platform: 'ios' } },
     }
     for (const [platform, targets] of Object.entries(expected)) {
       const config = written(await initWrites(platform), 'agent-qa.config.yaml').doc
@@ -282,8 +291,8 @@ describe('the init examples', () => {
     const writes = await initWrites()
     const paths = writes.map(write => write.path)
     const output = consoleOutput()
-    const nextSteps = output.slice(output.indexOf('Next steps:'))
-    expect(output).toContain('Next steps:')
+    const nextSteps = output.slice(output.indexOf('Next steps\n'))
+    expect(output).toContain('Next steps\n')
     const named = nextSteps.match(/\b(?:tests|suites|scripts)\/[\w./-]+/g) ?? []
     expect(named.length, 'the next steps name no example file').toBeGreaterThan(0)
     for (const path of named) {
@@ -411,25 +420,33 @@ describe('the init examples', () => {
     expect(suite.tests.map((member: { id: string }) => member.id)).not.toContain(doc['test-id'])
   })
 
-  it('the hook script writes a shipping address the runtime env decoder reads', async () => {
+  it('the hook script writes a shipping address numbered 100 to 999 that the runtime env decoder reads', async () => {
     if (process.platform === 'win32') throw new Error('POSIX run lifecycle required; never skip')
     const script = writtenText(await initWrites(), HOOK_SCRIPT)
     expect(script).toContain(HOOK_ENV_FILE)
+    expect(script).toContain("import { randomInt } from 'node:crypto'")
+    expect(script).toContain('randomInt(100, 1000)')
 
     const root = realFs.mkdtempSync(join(tmpdir(), 'hook-'))
     tempRoots.push(root)
     const output = join(root, 'agent-qa.env')
     const scriptPath = join(root, 'make-shipping-address.mjs')
     realFs.writeFileSync(scriptPath, script.replaceAll(HOOK_ENV_FILE, output))
-    const run = realChildProcess.spawnSync(process.execPath, [scriptPath], {
-      cwd: root,
-      env: hermeticEnv(root),
-      encoding: 'utf8',
-    })
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const run = realChildProcess.spawnSync(process.execPath, [scriptPath], {
+        cwd: root,
+        env: hermeticEnv(root),
+        encoding: 'utf8',
+      })
 
-    expect(run.status, run.stderr).toBe(0)
-    const vars = parseEnvFile(realFs.readFileSync(output, 'utf8'))
-    expect(vars.SHIPPING_ADDRESS).toMatch(/^\d{3} Cedar Lane$/)
+      expect(run.status, run.stderr).toBe(0)
+      const vars = parseEnvFile(realFs.readFileSync(output, 'utf8'))
+      const match = /^(\d+) Cedar Lane$/.exec(vars.SHIPPING_ADDRESS ?? '')
+      expect(match, vars.SHIPPING_ADDRESS).not.toBeNull()
+      const number = Number(match![1])
+      expect(number).toBeGreaterThanOrEqual(100)
+      expect(number).toBeLessThanOrEqual(999)
+    }
   })
 })
 

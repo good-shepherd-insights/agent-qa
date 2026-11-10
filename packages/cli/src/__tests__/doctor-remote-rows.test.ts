@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -56,8 +56,13 @@ vi.mock('ai', async (importOriginal) => ({
   generateText: vi.fn(() => Promise.resolve({ text: 'ok' })),
 }))
 
+import type { ChromiumResolver } from '../commands/browser-resolver.js'
 import { createDoctorCommand } from '../commands/doctor.js'
-import { createRemoteChecks } from '../commands/doctor-remote-checks.js'
+import {
+  REMOTE_FIX,
+  REMOTE_LOOPBACK_FIX,
+  createRemoteChecks,
+} from '../commands/doctor-remote-checks.js'
 
 const { startFakeAppiumServer } = (await import(
   new URL('../../../android/src/__tests__/fixtures/fake-appium-server.js', import.meta.url).href
@@ -127,6 +132,11 @@ interface ProjectFiles {
   suites?: Record<string, Record<string, unknown>>
 }
 
+const chromiumResolver = vi.fn<ChromiumResolver>(() => ({
+  found: true,
+  path: '/browsers/chromium-1/chrome',
+}))
+
 let pinned: PinnedTmpdir
 let printed: string[]
 let consoleSpies: { mockRestore(): void }[] = []
@@ -186,7 +196,14 @@ async function runDoctor(configPath: string, ...args: string[]): Promise<string>
   process.exitCode = 0
   const program = new Command()
   program.option('--config <path>', 'config file path', 'agent-qa.config.yaml')
-  program.addCommand(createDoctorCommand())
+  program.addCommand(
+    createDoctorCommand({
+      chromium: chromiumResolver,
+      latestVersion: async () => ({ source: 'none' }),
+      listDevicesHere: async (platform) =>
+        platform === 'android' ? { attached: [], avds: [] } : { simulators: [] },
+    }),
+  )
   await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'doctor', ...args])
   return printed.join('\n')
 }
@@ -197,6 +214,19 @@ function row(output: string, name: string): { status: string; message: string } 
   if (line === undefined) return undefined
   const match = /^ {4}.+? {2}\.+ {2}(.*) {2}(PASS|WARN|FAIL|SKIP)$/.exec(line)
   return match ? { message: match[1] as string, status: match[2] as string } : undefined
+}
+
+// The fix on the line under a row, joined with its hanging-indent lines.
+function fixUnder(output: string, name: string): string | undefined {
+  const lines = output.split('\n')
+  const start = lines.findIndex((text) => text.startsWith(`    ${name}  `))
+  const first = start < 0 ? null : /^ {6}Fix: (.*)$/.exec(lines[start + 1] ?? '')
+  if (!first) return undefined
+  const parts = [first[1] as string]
+  for (let index = start + 2; /^ {11}\S/.test(lines[index] ?? ''); index += 1) {
+    parts.push((lines[index] as string).trim())
+  }
+  return parts.join(' ')
 }
 
 describe("doctor's remote rows", () => {
@@ -212,6 +242,7 @@ describe("doctor's remote rows", () => {
   beforeEach(() => {
     printed = []
     vi.mocked(execSync).mockClear()
+    chromiumResolver.mockClear()
     Object.defineProperty(process.stdout, 'columns', {
       value: 1000,
       configurable: true,
@@ -519,6 +550,7 @@ describe("doctor's remote rows", () => {
       status: 'SKIP',
       message: 'every web test runs on a remote',
     })
+    expect(chromiumResolver).not.toHaveBeenCalled()
     expect(vi.mocked(execSync).mock.calls.map(([command]) => String(command))).not.toContainEqual(
       expect.stringContaining('playwright'),
     )
@@ -545,8 +577,37 @@ describe("doctor's remote rows", () => {
 
     const output = await runDoctor(configPath)
 
-    expect(row(output, 'Playwright')).toEqual({ status: 'PASS', message: 'installed' })
-    expect(vi.mocked(execSync)).toHaveBeenCalledWith('npx playwright --version', { stdio: 'pipe' })
+    expect(row(output, 'Playwright')).toEqual({ status: 'PASS', message: 'Chromium found' })
+    expect(chromiumResolver).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(execSync).mock.calls.map(([command]) => String(command))).not.toContainEqual(
+      expect.stringContaining('playwright'),
+    )
+  })
+
+  it("asks the browser resolver with the real folder of the project's installed agent-qa", async () => {
+    const configPath = await writeProject({ config: baseConfig() })
+    const dir = join(configPath, '..')
+    await mkdir(join(dir, '.git'))
+    const agentQaDir = join(dir, 'node_modules', 'agent-qa')
+    await mkdir(agentQaDir, { recursive: true })
+    await writeFile(
+      join(agentQaDir, 'package.json'),
+      JSON.stringify({ name: 'agent-qa', version: '1.2.3', bin: { 'agent-qa': 'cli.js' } }),
+    )
+    await writeFile(join(agentQaDir, 'cli.js'), '')
+
+    await runDoctor(configPath)
+
+    expect(chromiumResolver).toHaveBeenCalledWith({ projectAgentQaDir: realpathSync(agentQaDir) })
+  })
+
+  it('asks the browser resolver with no folder when the project installs no agent-qa', async () => {
+    const configPath = await writeProject({ config: baseConfig() })
+    await mkdir(join(configPath, '..', '.git'))
+
+    await runDoctor(configPath)
+
+    expect(chromiumResolver).toHaveBeenCalledWith({})
   })
 
   it("warns on a remote's row when a target on this machine's loopback is placed on it", async () => {
@@ -572,6 +633,73 @@ describe("doctor's remote rows", () => {
         'which the remote reaches only through a tunnel you run.',
     })
     expect(row(output, 'Remote spare')?.status).toBe('PASS')
+    expect(process.exitCode).toBe(0)
+  })
+
+  it('a remote whose only warning is a loopback target prints how to reach the target', async () => {
+    const probe = await startProbeServer()
+    servers.push(probe)
+    const configPath = await writeProject({
+      config: baseConfig({
+        remotes: [{ name: 'grid', protocol: 'playwright', url: `ws://${probe.origin}/grid` }],
+        remote: 'grid',
+        targetUrl: 'http://127.0.0.1:4173/app',
+      }),
+    })
+
+    const output = await runDoctor(configPath)
+
+    expect(row(output, 'Remote grid')?.status).toBe('WARN')
+    expect(row(output, 'Remote grid')?.message).toContain("on this machine's loopback")
+    expect(fixUnder(output, 'Remote grid')).toContain('tunnel')
+    expect(fixUnder(output, 'Remote grid')).toBe(REMOTE_LOOPBACK_FIX)
+    expect(process.exitCode).toBe(0)
+  })
+
+  it('a loopback target beside an undeclared secret prints the config-and-secrets fix, then how to reach the target', async () => {
+    const probe = await startProbeServer()
+    servers.push(probe)
+    const configPath = await writeProject({
+      config: baseConfig({
+        remotes: [
+          {
+            name: 'grid',
+            protocol: 'playwright',
+            url: `ws://${probe.origin}/`,
+            headers: { Authorization: 'Bearer {{secret:MISSING_TOKEN}}' },
+          },
+        ],
+        remote: 'grid',
+        targetUrl: 'http://127.0.0.1:4173/app',
+      }),
+    })
+
+    const output = await runDoctor(configPath)
+
+    expect(row(output, 'Remote grid')?.status).toBe('WARN')
+    expect(row(output, 'Remote grid')?.message).toContain('MISSING_TOKEN not declared')
+    expect(row(output, 'Remote grid')?.message).toContain("on this machine's loopback")
+    expect(fixUnder(output, 'Remote grid')).toContain('tunnel')
+    expect(fixUnder(output, 'Remote grid')).toBe(`${REMOTE_FIX} ${REMOTE_LOOPBACK_FIX}`)
+    expect(process.exitCode).toBe(0)
+  })
+
+  it('a remote that does not answer keeps the fix that names its config and secrets', async () => {
+    const port = await closedLoopbackPort()
+    const configPath = await writeProject({
+      config: baseConfig({
+        remotes: [
+          { name: 'cloud', protocol: 'cdp', url: `wss://127.0.0.1:${String(port)}/chromium` },
+        ],
+      }),
+    })
+
+    const output = await runDoctor(configPath)
+
+    expect(row(output, 'Remote cloud')?.status).toBe('WARN')
+    expect(row(output, 'Remote cloud')?.message).toContain('did not answer')
+    expect(fixUnder(output, 'Remote cloud')).not.toContain('tunnel')
+    expect(fixUnder(output, 'Remote cloud')).toBe(REMOTE_FIX)
     expect(process.exitCode).toBe(0)
   })
 

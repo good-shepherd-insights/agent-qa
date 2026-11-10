@@ -32,7 +32,7 @@ import type {
   RunServicePorts,
   RunServiceStartInput,
 } from '@vostride/agent-qa-dashboard'
-import { resolveVisionConfig } from '@vostride/agent-qa-model'
+import { getProvider, resolveVisionConfig } from '@vostride/agent-qa-model'
 import type {
   ExecutionContext,
   FunctionCaller,
@@ -71,16 +71,23 @@ import {
   createConfigReader,
   withRunDoor,
 } from '../composition/local-agent-host.js'
+import { CliRefusal } from '../composition/cli-refusal.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import { doorLogLevel, pluginDebugLog } from '../composition/plugin-host.js'
 import { composeRunOwnership } from '../composition/run-owner-probe.js'
 import type { ComposeCliLocalAgentInput } from '../composition/local-agent-host.js'
 import {
+  NoModelConfiguredError,
   applyResolvedAuthToModelConfig,
   resolveModelAuth,
   type LLMConfigLike,
 } from '../llm-utils.js'
-import { DEFAULT_ANTHROPIC_MODEL } from '../model-defaults.js'
+import {
+  openUrlWithoutShell,
+  systemBrowserOpener,
+  type BrowserOpener,
+  type BrowserOpenerChild,
+} from './open-url.js'
 import { processRemoteSessions, releaseRemoteSessions, REMOTE_RELEASE_BOUND_MS } from './run.js'
 
 // The dot-path the entity card's `url` is read from, spelled as the producer reads it.
@@ -540,12 +547,21 @@ export function composeRunServicePorts(input: RunServiceCompositionInput): RunSe
       ? {}
       : { patterns: [...start.patterns] }
     // The shipped dispatcher, so validation, refusals and receipts apply; this records `api`.
-    const result = await withRunDoor('api', () => invokeFunction(
-      host.registry as FunctionRegistry,
-      RUNS_START_FUNCTION_ID,
-      request,
-      RUN_SERVICE_FUNCTION_CALLER,
-    ))
+    let result: unknown
+    try {
+      result = await withRunDoor('api', () => invokeFunction(
+        host.registry as FunctionRegistry,
+        RUNS_START_FUNCTION_ID,
+        request,
+        RUN_SERVICE_FUNCTION_CALLER,
+      ))
+    } catch (error) {
+      // The door refuses by error name, so the model refusal leaves as itself, not as run's exit.
+      if (error instanceof CliRefusal && error.cause instanceof NoModelConfiguredError) {
+        throw error.cause
+      }
+      throw error
+    }
     // PARSED, NOT CAST. The ack law says every field comes off the durable record; this is the
     // read side of it, and it is what makes the router's typed 202 a fact rather than a hope.
     return RunStartAcknowledgementSchema.parse(result)
@@ -663,8 +679,37 @@ export async function mountCoHostedMcp(input: {
 type DashboardCommandOptions = {
   port?: string
   db?: string
-  open?: boolean
+  open?: true | string
 }
+
+// The URL-encoded form a page path may take: none of these characters means anything to a shell.
+const DASHBOARD_OPEN_PATH = /^\/[A-Za-z0-9\-._~/?&=]*$/u
+
+export function dashboardOpenPath(open: true | string): string {
+  if (open === true) return ''
+  if (!DASHBOARD_OPEN_PATH.test(open)) {
+    throw new CliRefusal(
+      [
+        pc.red(
+          `--open takes a dashboard page in URL-encoded form, starting with / and holding only ` +
+            `letters, digits and - . _ ~ / ? & =, such as /config/models; got ${JSON.stringify(open)}.`,
+        ),
+      ],
+      2,
+    )
+  }
+  return open
+}
+
+export function dashboardOpenUrl(port: number, open: true | string): string {
+  return `http://localhost:${String(port)}${dashboardOpenPath(open)}`
+}
+
+export type DashboardOpenerChild = BrowserOpenerChild
+export type DashboardOpener = BrowserOpener
+export const openDashboardUrl = openUrlWithoutShell
+
+const systemDashboardOpener: DashboardOpener = systemBrowserOpener
 
 type ServiceCommandLabels = {
   error: string
@@ -675,6 +720,7 @@ async function startDashboardBackedServices(
   opts: DashboardCommandOptions,
   command: Command,
   labels: ServiceCommandLabels,
+  opener: DashboardOpener = systemDashboardOpener,
 ): Promise<void> {
   try {
     const program = command.parent!
@@ -707,9 +753,10 @@ async function startDashboardBackedServices(
     const useLlm = (config as any).use?.llm
     const defaultCfg = registryLlms.find((c: any) => c.name === useLlm) ?? {}
     const configName = defaultCfg.name ?? useLlm ?? ''
+    const provider = defaultCfg.provider ?? 'anthropic-subscription'
     const llmConfig: LLMConfigLike = {
-      provider: defaultCfg.provider ?? 'anthropic-subscription',
-      model: defaultCfg.model ?? DEFAULT_ANTHROPIC_MODEL,
+      provider,
+      model: defaultCfg.model ?? getProvider(provider)?.defaultModel ?? '',
       baseURL: defaultCfg.baseURL,
       providerHeaders: defaultCfg.providerHeaders,
       vision: defaultCfg.vision,
@@ -883,10 +930,8 @@ async function startDashboardBackedServices(
       }
     }
 
-    if (opts.open) {
-      const { exec } = await import('node:child_process')
-      const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
-      exec(`${openCmd} http://localhost:${listeningPort}`)
+    if (opts.open !== undefined) {
+      openDashboardUrl(dashboardOpenUrl(listeningPort, opts.open), opener)
     }
 
     let shuttingDown = false
@@ -935,17 +980,21 @@ export async function openProjectRunDetailReader(dbPath: string) {
   return { reader: createDashboardRunDetailReader(db), close: () => db.close() }
 }
 
-export function createDashboardCommand(): Command {
+export function createDashboardCommand(opener: DashboardOpener = systemDashboardOpener): Command {
   const cmd = new Command('dashboard')
     .description('Start the dashboard web server')
     .option('--port <number>', 'server port (default: 3470)')
     .option('--db <path>', 'database file path')
-    .option('--open', 'open browser after start')
+    .option('--open [path]', 'open the browser after start, at a page such as /config/models')
     .action(async (opts: DashboardCommandOptions, command: Command) => {
-      await startDashboardBackedServices(opts, command, {
-        error: 'Dashboard',
-        shutdown: 'dashboard',
-      })
+      // Refused before the server starts, so a bad page never leaves a dashboard running.
+      if (opts.open !== undefined) dashboardOpenPath(opts.open)
+      await startDashboardBackedServices(
+        opts,
+        command,
+        { error: 'Dashboard', shutdown: 'dashboard' },
+        opener,
+      )
     })
 
   return cmd

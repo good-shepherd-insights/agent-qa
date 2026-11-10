@@ -32,9 +32,14 @@ import {
   createValidateCommand,
 } from './commands/index.js'
 import { createRunsCommand } from './commands/runs.js'
+import type { UpdateNotice } from './update-notice-gate.js'
+
+export type { UpdateNotice }
 
 /** The whole `agent-qa` command tree, unparsed; `cli.ts` parses it and tests read it. */
-export function createAgentQaProgram(): Command {
+export function createAgentQaProgram({
+  updateNotice,
+}: { updateNotice?: UpdateNotice } = {}): Command {
   const program = new Command()
   program.enablePositionalOptions()
 
@@ -57,7 +62,27 @@ export function createAgentQaProgram(): Command {
     installSdkWarningLogger()
   })
 
-  program.addCommand(createRunCommand())
+  // Only the CLI entry hands in a notice, so a program built elsewhere reads no home and starts
+  // no request. A command that ends through process.exit never reaches this hook.
+  program.hook('postAction', async (_program, action) => {
+    if (!updateNotice) return
+    try {
+      const opts = action.optsWithGlobals<{ json?: unknown; quiet?: unknown; logLevel?: unknown }>()
+      await updateNotice({
+        json: opts.json === true,
+        logLevel:
+          opts.quiet === true
+            ? 'silent'
+            : typeof opts.logLevel === 'string'
+              ? opts.logLevel
+              : undefined,
+      })
+    } catch {
+      // The notice never changes a command's outcome.
+    }
+  })
+
+  program.addCommand(createRunCommand({ updateNotice }))
   program.addCommand(createRunsCommand())
   program.addCommand(createInitCommand())
   program.addCommand(createInstallBrowsersCommand())

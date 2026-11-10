@@ -10,8 +10,22 @@ export default defineConfig({
     // keep it.
     hookTimeout: 120_000,
     include: ['src/**/__tests__/**/*.test.ts'],
-    env: { GITHUB_ACTIONS: '' },
+    // A spawned init that forgets --no-browsers fails fast on a refused loopback download host.
+    // Playwright reads a browser's own host variable before the shared one, so each is set.
+    env: {
+      GITHUB_ACTIONS: '',
+      PLAYWRIGHT_DOWNLOAD_HOST: 'http://127.0.0.1:0',
+      PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: 'http://127.0.0.1:0',
+      PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST: 'http://127.0.0.1:0',
+      PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST: 'http://127.0.0.1:0',
+      // A spawned agent-qa's requests are refused at once on loopback.
+      NODE_USE_ENV_PROXY: '1',
+      HTTPS_PROXY: 'http://127.0.0.1:0',
+      HTTP_PROXY: 'http://127.0.0.1:0',
+      NO_PROXY: '127.0.0.1,localhost,::1',
+    },
     globalSetup: ['./src/__tests__/package-folders-unchanged.ts'],
+    setupFiles: ['./src/__tests__/test-side-effect-guard.ts'],
     globals: true,
     typecheck: {
       enabled: true,
