@@ -1,9 +1,11 @@
 // The CLI's one binding of `composeAnalytics`. Every host calls it once per invocation at its
-// composition root. It adds the standard properties and the identity gate (an identity is resolved
-// only when the transport `composeAnalytics` chose will send) and never decides the opt-out itself.
-// It holds no module-level state.
+// composition root. It adds the standard properties and the identity gate (a host reads the
+// identity only when the transport `composeAnalytics` chose will send) and never decides the
+// opt-out itself. The identity is shared with the error reporter: a host reuses the resolution the
+// reporter started, and resolves its own when there is none, or, outside CI, when it gave none. It
+// holds no module-level state.
 
-import { composeAnalytics, resolveAnalyticsIdentity } from '@vostride/agent-qa-analytics'
+import { composeAnalytics } from '@vostride/agent-qa-analytics'
 import type {
   AgentQaAnalyticsEvent,
   AgentQaAnalyticsPort,
@@ -15,8 +17,13 @@ import type {
   AnalyticsTransport,
   AnalyticsTransportKind,
   PosthogTransportFactory,
+  resolveAnalyticsIdentity,
 } from '@vostride/agent-qa-analytics'
 import { createRequire } from 'node:module'
+
+import { heldProcessAnalyticsIdentity, resolveCliAnalyticsIdentity } from './analytics-identity.js'
+
+export { ANALYTICS_IDENTITY_TIMEOUT_MS } from './analytics-identity.js'
 
 /**
  * Which process is emitting, taken from the subscriber's own standard-properties type rather than
@@ -28,21 +35,27 @@ export type CliAnalyticsSurface = NonNullable<AnalyticsRunStandardProperties['su
 // Read from this package's manifest: the firewall bars core, and the barrel drags in the host.
 const require = createRequire(import.meta.url)
 
+// The built bundle sits one folder below the manifest and this source file two, so the first
+// manifest named agent-qa on the way up is this package's.
 function readCliPackageVersion(): string {
-  try {
-    const manifest = require('../../package.json') as { version?: unknown }
-    if (typeof manifest.version === 'string' && manifest.version.trim()) {
-      return manifest.version.trim()
+  for (const candidate of ['../package.json', '../../package.json']) {
+    try {
+      const manifest = require(candidate) as { name?: unknown; version?: unknown }
+      if (
+        manifest.name === 'agent-qa' &&
+        typeof manifest.version === 'string' &&
+        manifest.version.trim()
+      ) {
+        return manifest.version.trim()
+      }
+    } catch {
+      // Same posture as core's reader: a missing manifest must never fail a command.
     }
-  } catch {
-    // Same posture as core's reader: a missing manifest must never fail a command.
   }
   return '0.0.0'
 }
 
 export const CLI_ANALYTICS_AGENT_QA_VERSION = readCliPackageVersion()
-
-export const ANALYTICS_IDENTITY_TIMEOUT_MS = 1_000
 
 export interface ComposeAnalyticsHostInput {
   /** Which process is emitting. A host names itself; nothing infers it. */
@@ -65,7 +78,10 @@ export interface ComposeAnalyticsHostInput {
    */
   projectKey?: string
   posthogTransportFactory?: PosthogTransportFactory
-  /** Cell seam: replaces the identity resolution so a suite never touches a real home directory. */
+  /**
+   * Cell seam: replaces the host's own resolution, used when the error reporter started none or,
+   * outside CI, when its gave none, so a suite never touches a real home directory.
+   */
   resolveIdentity?: typeof resolveAnalyticsIdentity
 }
 
@@ -94,8 +110,8 @@ export interface CliAnalyticsHost {
 /**
  * Compose this host's analytics. Called ONCE per invocation, at the composition root.
  *
- * Async because the identity store is on disk. The await happens on the opted-in arm only — see the
- * identity gate in the header — so an opted-out invocation pays no I/O and leaves no trace.
+ * Async because the identity store is on disk. The host awaits it on the opted-in arm only — see
+ * the identity gate in the header — so an opted-out host reads nothing itself.
  */
 export async function composeAnalyticsHost(
   input: ComposeAnalyticsHostInput,
@@ -125,25 +141,27 @@ export async function composeAnalyticsHost(
   }
 
   // The gate is "is there a transport", not "did they opt out": a blank-key checkout composes no
-  // transport while reporting `optedOut: false`, and must not mint an identity either.
+  // transport while reporting `optedOut: false`, and reads no identity either. Past the gate the
+  // identity is the one the error reporter's resolution gave, or this host's own when the reporter
+  // started none. When the reporter's gave none, the host resolves its own outside CI, which reads
+  // the same file; in CI that would mint a second id, so it resolves nothing.
   if (composed.transportKind === 'posthog') {
-    const resolve = input.resolveIdentity ?? resolveAnalyticsIdentity
-    try {
-      // CI is the run detector's answer, reached through agent-local (the firewall).
-      const { resolveRunExecutionContext } = await import('@vostride/agent-qa-agent-local')
-      const ci = resolveRunExecutionContext() === 'ci'
-      const resolved = await withTimeout(
-        resolve({ env: { ...(input.env ?? process.env) }, ci }),
-        ANALYTICS_IDENTITY_TIMEOUT_MS,
-      )
+    const held = heldProcessAnalyticsIdentity()
+    const resolved =
+      (held === undefined ? undefined : await held) ??
+      (await resolveCliAnalyticsIdentity({
+        ...(input.env === undefined ? {} : { env: input.env }),
+        ...(input.resolveIdentity === undefined ? {} : { resolve: input.resolveIdentity }),
+        skipInCi: held !== undefined,
+      }))
+    // With none, telemetry stays off for this invocation; nothing falls back to a shared id.
+    if (resolved !== undefined) {
       identity = {
         distinctId: resolved.distinctId,
         ...(resolved.isInternal === true ? { isInternal: true } : {}),
       }
       properties.runtime_context = resolved.runtimeContext
       if (resolved.agentProduct !== undefined) properties.agent_product = resolved.agentProduct
-    } catch {
-      // Telemetry stays off for this invocation; nothing falls back to a shared id.
     }
   }
 
@@ -159,17 +177,6 @@ export async function composeAnalyticsHost(
     flush: () => composed.port.flush(),
     shutdown: () => composed.port.shutdown(),
   }
-}
-
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  return Promise.race([
-    work,
-    new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('analytics identity timed out')), ms)
-      timer.unref?.()
-    }),
-  ]).finally(() => clearTimeout(timer))
 }
 
 /**

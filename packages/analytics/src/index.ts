@@ -12,7 +12,7 @@ export type {
   ComposedAnalytics,
 } from './compose.js'
 
-export { createAnalyticsPort } from './port.js'
+export { createAnalyticsPort, DEFAULT_ANALYTICS_SHUTDOWN_TIMEOUT_MS } from './port.js'
 export type {
   AnalyticsCapturePayload,
   AnalyticsEventEnvelope,
@@ -105,6 +105,9 @@ export type {
   PosthogTransportFactory,
   PosthogTransportOptions,
 } from './transports.js'
+
+// Read by the CLI's error reporter; blank in a source checkout.
+export { AGENT_QA_SENTRY_DSN } from './sentry-project.js'
 
 // The port as a HOST should hold it: parameterised by the closed union, so `capture` refuses an
 // event that is not a member at the call site, before any parse. `AnalyticsPort` on its own is the

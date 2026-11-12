@@ -79,9 +79,10 @@ vi.mock('@vostride/agent-qa-model', async (importOriginal) => ({
   createModel: vi.fn().mockReturnValue({ modelId: 'test-model' }),
 }))
 
-import { resolveLivePlace } from '../live-session.js'
+import { LiveSession, resolveLivePlace } from '../live-session.js'
 import { SessionManager } from '../session-manager.js'
 import type { SessionManagerDeps } from '../session-manager.js'
+import type { LiveSessionConfig } from '../types.js'
 
 const ANSWER = { protocol: 'playwright', url: 'ws://127.0.0.1:9/playwright' }
 const REMOTE_NAME = 'lab-chrome'
@@ -213,6 +214,73 @@ async function expectPluginGone(project: PluginProject): Promise<void> {
   })
 }
 
+type SessionMask = (text: string) => string
+
+interface RecordingMaskBinder {
+  readonly bindSessionMask: NonNullable<SessionManagerDeps['bindSessionMask']>
+  // Each mask handed over, in the order the sessions opened.
+  readonly masks: SessionMask[]
+  // How often each binding's end was called, at its mask's index.
+  readonly ends: number[]
+}
+
+function recordingMaskBinder(onEnd: () => void = () => {}): RecordingMaskBinder {
+  const masks: SessionMask[] = []
+  const ends: number[] = []
+  return {
+    masks,
+    ends,
+    bindSessionMask: (mask) => {
+      const index = masks.push(mask) - 1
+      ends.push(0)
+      return () => {
+        ends[index] = (ends[index] ?? 0) + 1
+        onEnd()
+      }
+    },
+  }
+}
+
+interface ThrowingMaskBinder {
+  readonly bindSessionMask: NonNullable<SessionManagerDeps['bindSessionMask']>
+  readonly calls: { binds: number; ends: number }
+}
+
+// A host that cannot take a session's mask, or cannot let it go, by mode.
+function throwingMaskBinder(mode: 'bind' | 'end'): ThrowingMaskBinder {
+  const calls = { binds: 0, ends: 0 }
+  return {
+    calls,
+    bindSessionMask: () => {
+      calls.binds += 1
+      if (mode === 'bind') throw new Error('the host could not take the mask')
+      return () => {
+        calls.ends += 1
+        throw new Error('the host could not let the mask go')
+      }
+    },
+  }
+}
+
+// Shaped like the answer-mask cell's: the token rides in the connection URL and is listed in mask.
+function tokenAnswer(token: string): { protocol: string; url: string; mask: string[] } {
+  return {
+    protocol: 'playwright',
+    url: `ws://127.0.0.1:9/playwright?token=${encodeURIComponent(token)}`,
+    mask: [token],
+  }
+}
+
+function expectAnswerHidden(mask: SessionMask, token: string): void {
+  const masked = mask(`the remote at ${tokenAnswer(token).url} stopped answering`)
+  expect(masked).toBe(
+    'the remote at ws://127.0.0.1:9/playwright?token=[secret:PLUGIN_LAB] stopped answering',
+  )
+  for (const value of [token, encodeURIComponent(token)]) {
+    expect(masked.includes(value), 'the mask let a form of the token through').toBe(false)
+  }
+}
+
 describe('a live-editor session on a plugin remote', () => {
   it('leases once, and its end releases the lease and shuts the plugin down', async () => {
     const project = pluginProject()
@@ -301,6 +369,200 @@ describe("a live-editor session and its plugin's answer mask", () => {
     for (const value of [token, encodeURIComponent(token)]) {
       expect(shown.includes(value), 'the session showed a mask value').toBe(false)
     }
+  }, 60_000)
+})
+
+describe("a live-editor session's mask and its host", () => {
+  const TOKEN = 'tok/live 9f3a'
+
+  it('hands its host one mask that hides what the plugin answered, once it is open', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const binder = recordingMaskBinder()
+
+    await openSession({ ...project.deps, bindSessionMask: binder.bindSessionMask })
+
+    expect(binder.masks).toHaveLength(1)
+    expect(binder.ends).toEqual([0])
+    expectAnswerHidden(binder.masks[0]!, TOKEN)
+  }, 60_000)
+
+  it('ends that binding once when it ends, and the mask it handed over still hides the answer', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const pluginAtEnd: string[][] = []
+    const binder = recordingMaskBinder(() => pluginAtEnd.push(methodsOf(project)))
+    const { manager, sessionId } = await openSession({
+      ...project.deps,
+      bindSessionMask: binder.bindSessionMask,
+    })
+
+    expect(await manager.terminateSession(sessionId)).toBe(true)
+
+    expect(binder.ends).toEqual([1])
+    // Bound through the whole cleanup: the plugin had released its session and shut down.
+    expect(pluginAtEnd).toEqual([['initialize', 'acquire', 'release', 'shutdown']])
+    expectAnswerHidden(binder.masks[0]!, TOKEN)
+    await expectPluginGone(project)
+  }, 60_000)
+
+  it('opens and ends as before when its host takes no mask', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const { manager, sessionId } = await openSession(project.deps)
+    expect(methodsOf(project)).toEqual(['initialize', 'acquire'])
+
+    expect(await manager.terminateSession(sessionId)).toBe(true)
+
+    await expectPluginGone(project)
+    expect(methodsOf(project)).toEqual(['initialize', 'acquire', 'release', 'shutdown'])
+  }, 60_000)
+
+  it('ends its binding once when its inactivity bound passes with no command', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const binder = recordingMaskBinder()
+    const { manager, sessionId } = await openSession({
+      ...project.deps,
+      remoteInactivityMs: 300,
+      bindSessionMask: binder.bindSessionMask,
+    })
+    const session = manager.getSession(sessionId)!
+
+    await vi.waitFor(() => expect(session.status).toBe('terminated'), {
+      timeout: EXIT_BUDGET_MS,
+      interval: 25,
+    })
+    await session.cleanup()
+
+    expect(manager.getSession(sessionId)).toBeUndefined()
+    expect(binder.ends).toEqual([1])
+    await expectPluginGone(project)
+  }, 60_000)
+
+  it('ends its binding once when it cannot open on the leased session', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const binder = recordingMaskBinder()
+    adapters.connectFails = true
+
+    await expect(
+      openSession({ ...project.deps, bindSessionMask: binder.bindSessionMask }),
+    ).rejects.toThrow(`Remote ${REMOTE_NAME} did not answer.`)
+
+    expect(binder.masks).toHaveLength(1)
+    expect(binder.ends).toEqual([1])
+    await expectPluginGone(project)
+  }, 60_000)
+
+  it('ends its binding once when the dashboard ends every session', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const binder = recordingMaskBinder()
+    const { manager } = await openSession({
+      ...project.deps,
+      bindSessionMask: binder.bindSessionMask,
+    })
+
+    await manager.cleanupAll()
+
+    expect(binder.ends).toEqual([1])
+    await expectPluginGone(project)
+  }, 60_000)
+
+  it('hands nothing to its host when it is refused for having no redactor', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const binder = recordingMaskBinder()
+
+    await expect(
+      openSession({ ...project.deps, bindSessionMask: binder.bindSessionMask }, null),
+    ).rejects.toThrow('A plugin remote needs the session redactor')
+
+    expect(binder.masks).toEqual([])
+    expect(binder.ends).toEqual([])
+    expect(methodsOf(project)).toEqual([])
+  }, 60_000)
+
+  // Two projects, so each session's plugin answers a token of its own; the binder is the host's,
+  // shared by every session as the dashboard's is.
+  it('hands over a mask of its own beside another open session, and ending it ends only its own binding', async () => {
+    const [ALPHA, BETA] = ['tok/alpha 1a', 'tok/beta 2b']
+    const alpha = pluginProject(tokenAnswer(ALPHA))
+    const beta = pluginProject(tokenAnswer(BETA))
+    const binder = recordingMaskBinder()
+    const first = await openSession({ ...alpha.deps, bindSessionMask: binder.bindSessionMask })
+    await openSession({ ...beta.deps, bindSessionMask: binder.bindSessionMask })
+    const [alphaMask, betaMask] = binder.masks
+
+    expect(await first.manager.terminateSession(first.sessionId)).toBe(true)
+
+    expect(binder.ends).toEqual([1, 0])
+    expectAnswerHidden(alphaMask!, ALPHA)
+    expectAnswerHidden(betaMask!, BETA)
+    expect(alphaMask!(tokenAnswer(BETA).url), "the other session's answer").toBe(
+      tokenAnswer(BETA).url,
+    )
+    expect(betaMask!(tokenAnswer(ALPHA).url), "the other session's answer").toBe(
+      tokenAnswer(ALPHA).url,
+    )
+    await expectPluginGone(alpha)
+    expect(methodsOf(beta)).toEqual(['initialize', 'acquire'])
+  }, 60_000)
+
+  it('hands its mask over once however often it is initialized', async () => {
+    const binder = recordingMaskBinder()
+    const session = new LiveSession('initialized-twice', {
+      bindSessionMask: binder.bindSessionMask,
+    })
+    const config: LiveSessionConfig = {
+      secretRedactor: new RunSecretRedactor(new SecretStore([])),
+      platform: 'web',
+      llmConfig: {
+        provider: 'anthropic-compatible',
+        model: 'test-model',
+        baseURL: 'http://127.0.0.1:1/',
+      },
+      headless: true,
+    }
+
+    await session.initialize(config)
+    await session.initialize(config)
+    await session.cleanup()
+
+    expect(binder.masks).toHaveLength(1)
+    expect(binder.ends).toEqual([1])
+  })
+
+  it('opens, ends and shuts its plugin down when its host cannot take the mask', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const host = throwingMaskBinder('bind')
+    const { manager, sessionId } = await openSession({
+      ...project.deps,
+      bindSessionMask: host.bindSessionMask,
+    })
+    expect(methodsOf(project)).toEqual(['initialize', 'acquire'])
+
+    expect(await manager.terminateSession(sessionId)).toBe(true)
+
+    expect(host.calls).toEqual({ binds: 1, ends: 0 })
+    await expectPluginGone(project)
+    expect(methodsOf(project)).toEqual(['initialize', 'acquire', 'release', 'shutdown'])
+  }, 60_000)
+
+  it('ends, lets its socket go and shuts its plugin down when its host cannot let the mask go', async () => {
+    const project = pluginProject(tokenAnswer(TOKEN))
+    const host = throwingMaskBinder('end')
+    const { manager, sessionId } = await openSession({
+      ...project.deps,
+      bindSessionMask: host.bindSessionMask,
+    })
+    const session = manager.getSession(sessionId)!
+    const delivered: unknown[] = []
+    session.attachMessageSink((message) => delivered.push(message))
+
+    expect(await manager.terminateSession(sessionId)).toBe(true)
+
+    expect(host.calls).toEqual({ binds: 1, ends: 1 })
+    expect(manager.getSession(sessionId)).toBeUndefined()
+    expect(session.status).toBe('terminated')
+    session.deliver({ type: 'step-cancelled' })
+    expect(delivered, 'a message reached the socket of an ended session').toEqual([])
+    await expectPluginGone(project)
+    expect(methodsOf(project)).toEqual(['initialize', 'acquire', 'release', 'shutdown'])
   }, 60_000)
 })
 

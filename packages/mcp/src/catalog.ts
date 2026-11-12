@@ -1,8 +1,16 @@
 // Handlers only validate and call `invokeFunction`; every caller sees one catalogue (SEP-2567).
 
 import { McpServer } from '@modelcontextprotocol/server'
-import type { CallToolResult } from '@modelcontextprotocol/server'
-import { invokeFunction, RUNS_ARTIFACT_FUNCTION_ID } from '@vostride/agent-qa-agent'
+import type {
+  CallToolResult,
+  StandardSchemaV1,
+  StandardSchemaWithJSON,
+} from '@modelcontextprotocol/server'
+import {
+  FunctionInputError,
+  invokeFunction,
+  RUNS_ARTIFACT_FUNCTION_ID,
+} from '@vostride/agent-qa-agent'
 import type { FunctionRegistry } from '@vostride/agent-qa-agent'
 import type { FunctionCaller } from '@vostride/agent-qa-schema'
 
@@ -31,6 +39,14 @@ export type AgentQaMcpPosture =
   | { readonly state: 'not-initialized'; readonly configPath: string }
   | { readonly state: 'config-invalid'; readonly configPath: string; readonly problem: string }
 
+/** One tool call as it settled; `error` is the thrown value, absent when nothing was thrown. */
+export interface McpToolSettled {
+  readonly tool: string
+  readonly durationMs: number
+  readonly outcome: 'success' | 'error'
+  readonly error?: unknown
+}
+
 /** What a host must supply to build a server for one caller. */
 export interface AgentQaMcpServerDeps {
   // Built by the host, never by this package.
@@ -45,6 +61,8 @@ export interface AgentQaMcpServerDeps {
   readonly liveLink?: LiveLinkSupplier
   // Present when there is no project to serve; no call then reaches the registry.
   readonly posture?: AgentQaMcpPosture
+  // The host observes every tool call here; this package never learns where the observation goes.
+  readonly onToolSettled?: (settled: McpToolSettled) => void
 }
 
 /** The host-bound `(registry, caller)` closure over `invokeFunction`. */
@@ -135,7 +153,7 @@ async function runProjection(
  * The concrete run this carrier's result is ABOUT, read from the source the projection declares.
  *
  * DEFENSIVE ON BOTH ARMS, and neither arm is hypothetical. `runIdFrom: 'input'` reads the args the
- * SDK already validated against the advertised input schema; `runIdFrom: 'output'` reads the op's
+ * handler already checked against the advertised input schema; `runIdFrom: 'output'` reads the op's
  * own result, which is a `RunStartAcknowledgement` today and could be a fold's arm tomorrow. Either
  * can answer with something that is not a string — and the honest treatment of that is the same as
  * the honest treatment of a missing dashboard: the LINE becomes the named absence and there is no
@@ -176,37 +194,112 @@ function decorateCarrierResult(input: {
   }
 }
 
+// A returned result is an error when it says so, since masking or a decoration can refuse.
+function settleToolCall(
+  onToolSettled: ((settled: McpToolSettled) => void) | undefined,
+  tool: string,
+  startedAt: number,
+  arm: { readonly result: CallToolResult } | { readonly error: unknown },
+): void {
+  if (onToolSettled === undefined) return
+  try {
+    const durationMs = Math.max(0, Math.round(performance.now() - startedAt))
+    onToolSettled(
+      'error' in arm
+        ? { tool, durationMs, outcome: 'error', error: arm.error }
+        : { tool, durationMs, outcome: arm.result.isError === true ? 'error' : 'success' },
+    )
+  } catch {
+    // An observer that throws must not fail a tool call that has already answered.
+  }
+}
+
+// The SDK answers a call its own check refuses without calling the handler, so the handler checks
+// the arguments and the listing stays the contract's.
+function listedInputSchema(schema: StandardSchemaWithJSON): StandardSchemaWithJSON {
+  const standard = schema['~standard']
+  return {
+    '~standard': {
+      version: standard.version,
+      vendor: standard.vendor,
+      validate: (value) => ({ value }),
+      jsonSchema: standard.jsonSchema,
+    },
+  }
+}
+
+const REFUSED_ARGUMENTS = "the arguments do not match the tool's input schema"
+const REFUSED_RESULT = 'answered a result that does not match the output schema it advertises, so '
+  + 'the result was withheld'
+
+// The sentence the SDK composes for a refused call, so a client reads what it read before.
+function refusedArgumentsText(tool: string, issues: readonly StandardSchemaV1.Issue[]): string {
+  const rendered = issues.map((issue) => {
+    const path = (issue.path ?? []).map((segment) =>
+      String(typeof segment === 'object' ? segment.key : segment),
+    )
+    return path.length === 0 ? issue.message : `${path.join('.')}: ${issue.message}`
+  })
+  return `Input validation error: Invalid arguments for tool ${tool}: ${rendered.join(', ')}`
+}
+
 /**
  * The one generic tool handler.
  *
- * Input validation happened twice before the invoke — once by the SDK against the tool's input
- * contract, once inside `invokeFunction` against the op's own — and both parses are kept, because
- * they are the same check made by two independent parties.
+ * Input validation happens twice before the invoke — once here against the tool's input contract,
+ * once inside `invokeFunction` against the op's own — and both parses are kept, because they are
+ * the same check made by two independent parties. A refusal settles with the tool's name and a
+ * fixed sentence, never with what the caller typed.
  */
 function createProjectionHandler(
   projection: ToolProjection,
+  inputSchema: StandardSchemaWithJSON,
+  outputSchema: StandardSchemaWithJSON | undefined,
   invoke: BoundInvoke,
   maskText: (text: string) => string,
   liveLink?: LiveLinkSupplier,
+  onToolSettled?: (settled: McpToolSettled) => void,
 ) {
   return async (args: unknown): Promise<CallToolResult> => {
+    const startedAt = performance.now()
     try {
-      const { opId, output } = await runProjection(projection, args, invoke)
+      const checked = await inputSchema['~standard'].validate(args)
+      if (checked.issues !== undefined) {
+        const refusal = maskedToolError(
+          refusedArgumentsText(projection.name, checked.issues),
+          maskText,
+        )
+        settleToolCall(onToolSettled, projection.name, startedAt, {
+          error: new FunctionInputError(projection.name, REFUSED_ARGUMENTS),
+        })
+        return refusal
+      }
+      const { opId, output } = await runProjection(projection, checked.value, invoke)
       // Both channels come from one masked serialization, so `structuredContent` holds no secret.
       const masked = maskedToolResult(output, maskText)
       // The image block is decided after masking, so no bytes sit beside a withheld result.
       const result = opId === RUNS_ARTIFACT_FUNCTION_ID
         ? decorateRunEvidenceImage({ result: masked, output, maskText })
         : masked
-      return decorateCarrierResult({
+      const decorated = decorateCarrierResult({
         result,
         projection,
-        args,
+        args: checked.value,
         output,
         maskText,
         ...(liveLink === undefined ? {} : { liveLink }),
       })
+      // Checked before the settle, so a result the SDK's own check refuses never settles success.
+      if (outputSchema !== undefined && decorated.isError !== true) {
+        const content = decorated.structuredContent
+        const refused = content === undefined
+          || (await outputSchema['~standard'].validate(content)).issues !== undefined
+        if (refused) throw new McpProjectionError(projection.name, REFUSED_RESULT)
+      }
+      settleToolCall(onToolSettled, projection.name, startedAt, { result: decorated })
+      return decorated
     } catch (err) {
+      settleToolCall(onToolSettled, projection.name, startedAt, { error: err })
       // A refusal is a readable tool error, masked because an error string can carry a credential.
       return maskedToolError(err, maskText)
     }
@@ -216,8 +309,13 @@ function createProjectionHandler(
 // The posture is read once, at startup, so a fixed config is served only after a restart.
 const RESTART = 'restart this MCP server (reconnect it in your coding agent)'
 
-// `isError` skips the SDK's output-schema check, so the same result fits every tool.
-function createPostureHandler(posture: AgentQaMcpPosture) {
+// `isError` skips the output check, which the projection handler makes before the SDK does, so the
+// same result fits every tool.
+function createPostureHandler(
+  projection: ToolProjection,
+  posture: AgentQaMcpPosture,
+  onToolSettled?: (settled: McpToolSettled) => void,
+) {
   const { text, structuredContent } = posture.state === 'not-initialized'
     ? {
         text: `agent-qa is not set up here: there is no agent-qa config at ${posture.configPath} `
@@ -242,15 +340,21 @@ function createPostureHandler(posture: AgentQaMcpPosture) {
           then: RESTART,
         },
       }
-  return async (): Promise<CallToolResult> => ({
-    isError: true,
-    content: [{ type: 'text', text }],
-    structuredContent,
-  })
+  return async (): Promise<CallToolResult> => {
+    const startedAt = performance.now()
+    const result: CallToolResult = {
+      isError: true,
+      content: [{ type: 'text', text }],
+      structuredContent,
+    }
+    settleToolCall(onToolSettled, projection.name, startedAt, { result })
+    return result
+  }
 }
 
 // The listing comes from `registry.list(deps.caller)`, so it describes this composition.
 export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
+  // No `maxToolInputElements` is set: the SDK answers a call over that limit itself.
   const server = new McpServer(
     { name: 'agent-qa', version: deps.version },
     {
@@ -319,10 +423,18 @@ export function buildAgentQaMcpServer(deps: AgentQaMcpServerDeps): McpServer {
 
     server.registerTool(
       projection.name,
-      config,
+      { ...config, inputSchema: listedInputSchema(config.inputSchema) },
       deps.posture === undefined
-        ? createProjectionHandler(projection, invoke, deps.maskText, deps.liveLink)
-        : createPostureHandler(deps.posture),
+        ? createProjectionHandler(
+            projection,
+            config.inputSchema,
+            config.outputSchema,
+            invoke,
+            deps.maskText,
+            deps.liveLink,
+            deps.onToolSettled,
+          )
+        : createPostureHandler(projection, deps.posture, deps.onToolSettled),
     )
   }
 

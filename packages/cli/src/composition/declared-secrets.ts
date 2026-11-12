@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { parse as parseYaml } from 'yaml'
-import { resolveWorkspacePaths } from '@vostride/agent-qa-core'
+import { getAuthPath, resolveWorkspacePaths } from '@vostride/agent-qa-core'
 import type { AgentQaConfig } from '@vostride/agent-qa-core'
 import { basicAuthMaskEntries, SecretRedactor, SecretStore } from '@vostride/agent-qa-runner'
 import type { MaskFn } from '@vostride/agent-qa-schema'
@@ -144,6 +144,78 @@ export function createDeclaredSecretMask(configPath: string): DeclaredSecretMask
   }
 
   return { mask: (text) => redactor().redactString(text), redactor }
+}
+
+function isMissingFile(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'ENOENT'
+}
+
+// A token endpoint's error body can quote a saved token, and none of them is a declared secret.
+// A missing store holds none; one that cannot be read or parsed throws.
+export function readSavedCredentialValues(authPath: string): string[] {
+  let text: string
+  try {
+    text = readFileSync(authPath, 'utf8')
+  } catch (error) {
+    if (isMissingFile(error)) return []
+    throw error
+  }
+  const store: unknown = JSON.parse(text)
+  if (typeof store !== 'object' || store === null || Array.isArray(store)) return []
+  return Object.values(store).flatMap(credentialValues)
+}
+
+// The store is read again whenever it changed, and every value read since the mask was made stays
+// masked: a token saved or refreshed later is masked, and so is the one it replaced. It throws while
+// the store cannot be read.
+export function createSavedCredentialMask(authPath: string = getAuthPath()): () => MaskFn {
+  const seen = new Set<string>()
+  let readAt: string | undefined
+  let mask: MaskFn = (text) => text
+  return () => {
+    const at = storeKey(authPath)
+    if (at === readAt) return mask
+    const before = seen.size
+    for (const value of readSavedCredentialValues(authPath)) seen.add(value)
+    readAt = at
+    if (seen.size !== before) mask = maskSavedCredentials([...seen])
+    return mask
+  }
+}
+
+function storeKey(path: string): string {
+  try {
+    return statKey(path)
+  } catch (error) {
+    if (isMissingFile(error)) return 'missing'
+    throw error
+  }
+}
+
+function credentialValues(entry: unknown): string[] {
+  const credential = (entry ?? {}) as {
+    type?: unknown
+    tokens?: { access?: unknown; refresh?: unknown } | null
+    key?: unknown
+    token?: unknown
+  }
+  const values =
+    credential.type === 'oauth'
+      ? [credential.tokens?.access, credential.tokens?.refresh]
+      : credential.type === 'api'
+        ? [credential.key]
+        : credential.type === 'bearer'
+          ? [credential.token]
+          : []
+  return values.filter((value): value is string => typeof value === 'string' && value !== '')
+}
+
+export function maskSavedCredentials(values: readonly string[]): MaskFn {
+  const redactor = new SecretRedactor(
+    SecretStore.empty(),
+    values.map((value) => ['SAVED_CREDENTIAL', value] as const),
+  )
+  return (text) => redactor.redactString(text)
 }
 
 // With no loadable project there are no declared secrets to read.

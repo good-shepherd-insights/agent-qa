@@ -1,23 +1,59 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stripVTControlCharacters } from 'node:util'
 
 import { reserveStdoutForData, type RunTextEnv } from '@vostride/agent-qa-core/run-text-output'
 import { Command } from 'commander'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { defaultCliFailureDeps, runCli, type CliFailureDeps } from '../cli-error-handler.js'
+import {
+  createGlobalFailureHandler,
+  defaultCliFailureDeps,
+  installGlobalFailureHandlers,
+  runCli,
+  type CliFailureDeps,
+  type GlobalFailureDeps,
+} from '../cli-error-handler.js'
+import { runAsProjectAgentQa } from '../commands/project-agent-qa.js'
+import type { ProjectHost, RunResult } from '../commands/project-host.js'
 import { CliRefusal, PromptCancelled } from '../composition/cli-refusal.js'
+import {
+  closeErrorReporting,
+  settleReporting,
+  startErrorReporting,
+} from '../composition/error-reporting.js'
+import {
+  canaryError,
+  canaryLine,
+  canaryProject,
+  expectNoCanary,
+  expectUsefulReport,
+  removeCanaryProjects,
+  startCanaryReporting,
+} from './error-report-canaries.js'
+import type { CanaryProject } from './error-report-canaries.js'
+import {
+  projectWithPrivacy,
+  recordingReportTransport,
+  removeReportProjects,
+  serializedEnvelopes,
+} from './error-report-recorder.js'
+import type { RecordedEnvelope, RecordingReportTransport } from './error-report-recorder.js'
 
 const PAIR = /^::stop-commands::([0-9a-f]{32})\n[\s\S]*\n::\1::\n$/u
 const FRAME = /^\s+at /m
 const SECRET = 'Hunter-42-zz'
+const INVENTED_DSN = 'http://key@127.0.0.1:9/1'
 
 const folders: string[] = []
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllEnvs()
   vi.restoreAllMocks()
+  await closeErrorReporting()
+  removeReportProjects()
+  removeCanaryProjects()
   for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true })
 })
 
@@ -25,14 +61,16 @@ interface Recorded {
   readonly events: string[]
   readonly printed: string[]
   readonly fixed: string[]
-  readonly deps: CliFailureDeps
+  readonly captured: unknown[]
+  readonly deps: GlobalFailureDeps
 }
 
 function recorded(env: RunTextEnv = {}): Recorded {
   const events: string[] = []
   const printed: string[] = []
   const fixed: string[] = []
-  const deps: CliFailureDeps = {
+  const captured: unknown[] = []
+  const deps: GlobalFailureDeps = {
     print: (text) => {
       printed.push(text)
     },
@@ -43,6 +81,16 @@ function recorded(env: RunTextEnv = {}): Recorded {
     setExitCode: (code) => {
       events.push(`code ${code}`)
     },
+    holdExitCode: (code) => {
+      events.push(`hold ${code}`)
+    },
+    capture: (error) => {
+      events.push('capture')
+      captured.push(error)
+    },
+    settle: async () => {
+      events.push('settle')
+    },
     flush: async () => {
       events.push('flush')
     },
@@ -51,7 +99,7 @@ function recorded(env: RunTextEnv = {}): Recorded {
     },
     env,
   }
-  return { events, printed, fixed, deps }
+  return { events, printed, fixed, captured, deps }
 }
 
 function programThrowing(thrown: () => unknown): Command {
@@ -117,7 +165,7 @@ describe('the CLI failure handler', () => {
     )
     expect(withLines.printed).toEqual(['\u001B[31mNo tests matched.\u001B[39m\nAdd one.'])
     expect(withLines.printed.join('\n')).not.toMatch(FRAME)
-    expect(withLines.events).toEqual(['code 2', 'flush', 'exit 2'])
+    expect(withLines.events).toEqual(['code 2', 'capture', 'settle', 'flush', 'exit 2'])
 
     const silent = recorded()
     await drive(
@@ -125,14 +173,14 @@ describe('the CLI failure handler', () => {
       silent.deps,
     )
     expect(silent.printed).toEqual([])
-    expect(silent.events).toEqual(['code 2', 'flush', 'exit 2'])
+    expect(silent.events).toEqual(['code 2', 'capture', 'settle', 'flush', 'exit 2'])
 
     const zero = recorded()
     await drive(
       programThrowing(() => new CliRefusal(['Refused.'], 0)),
       zero.deps,
     )
-    expect(zero.events).toEqual(['code 1', 'flush', 'exit 1'])
+    expect(zero.events).toEqual(['code 1', 'capture', 'settle', 'flush', 'exit 1'])
   })
 
   it('a bug prints Unexpected error with its stack frames and exits 1, and a thrown value prints as text', async () => {
@@ -146,7 +194,7 @@ describe('the CLI failure handler', () => {
     expect(first).toBe("Unexpected error: Cannot read properties of undefined (reading 'x')")
     expect(rest.length).toBeGreaterThan(0)
     for (const line of rest) expect(line).toMatch(FRAME)
-    expect(bug.events).toEqual(['code 1', 'flush', 'exit 1'])
+    expect(bug.events).toEqual(['code 1', 'capture', 'settle', 'flush', 'exit 1'])
 
     const text = recorded()
     await drive(
@@ -154,10 +202,10 @@ describe('the CLI failure handler', () => {
       text.deps,
     )
     expect(text.printed).toEqual(['Unexpected error: plain words'])
-    expect(text.events).toEqual(['code 1', 'flush', 'exit 1'])
+    expect(text.events).toEqual(['code 1', 'capture', 'settle', 'flush', 'exit 1'])
   })
 
-  it('a cancelled prompt prints Cancelled. and exits 130', async () => {
+  it('a cancelled prompt prints Cancelled., is not captured, and exits 130', async () => {
     for (const cancel of [
       () =>
         Object.assign(new Error('User force closed the prompt with SIGINT'), {
@@ -169,27 +217,83 @@ describe('the CLI failure handler', () => {
       await drive(programThrowing(cancel), outcome.deps)
       expect(outcome.fixed).toEqual(['Cancelled.'])
       expect(outcome.printed).toEqual([])
-      expect(outcome.events).toEqual(['code 130', 'flush', 'exit 130'])
+      expect(outcome.events).toEqual(['code 130', 'settle', 'flush', 'exit 130'])
+      expect(outcome.captured).toEqual([])
     }
   })
 
-  it('the exit code is set before the flush and the exit follows it, and a command that resolves reaches none of them', async () => {
-    const failing = recorded()
+  it('a refusal that exits 130 prints its lines and is not captured', async () => {
+    const outcome = recorded()
     await drive(
-      programThrowing(() => new CliRefusal(['Refused.'], 3)),
-      failing.deps,
+      programThrowing(() => new CliRefusal(['Stopped by a signal.'], 130)),
+      outcome.deps,
     )
-    expect(failing.events).toEqual(['code 3', 'flush', 'exit 3'])
+    expect(outcome.printed).toEqual(['Stopped by a signal.'])
+    expect(outcome.events).toEqual(['code 130', 'settle', 'flush', 'exit 130'])
+    expect(outcome.captured).toEqual([])
+  })
 
+  it('the exit code is set first, then the thrown error itself is captured and settled, and the exit follows the flush', async () => {
+    for (const [thrown, code] of [
+      [new CliRefusal(['Refused.'], 3), 3],
+      [new TypeError('a bug'), 1],
+    ] as const) {
+      const failing = recorded()
+      await drive(
+        programThrowing(() => thrown),
+        failing.deps,
+      )
+      expect(failing.events).toEqual([`code ${code}`, 'capture', 'settle', 'flush', `exit ${code}`])
+      expect(failing.captured).toHaveLength(1)
+      expect(failing.captured[0]).toBe(thrown)
+    }
+  })
+
+  it("a handed-off agent-qa's own exit code passes through uncaptured, while one that could not start is captured", async () => {
+    const handingOff = (result: RunResult) => {
+      const host = {
+        cwd: tmpdir(),
+        env: {},
+        argv: ['node', 'agent-qa', 'init'],
+        execPath: 'node',
+        run: async () => result,
+      } as unknown as ProjectHost
+      const copy = { dir: tmpdir(), realDir: tmpdir(), version: '9.9.9', bin: 'agent-qa.js' }
+      const program = new Command('agent-qa').exitOverride()
+      program.command('init').action(async () => {
+        await runAsProjectAgentQa(copy, host, 'Handing over.', () => {})
+      })
+      return program
+    }
+    const exited = recorded()
+    const missing = recorded()
+
+    await drive(handingOff({ code: 3, signal: null, output: '' }), exited.deps, ['init'])
+    await drive(
+      handingOff({ code: null, signal: null, output: '', missing: true }),
+      missing.deps,
+      ['init'],
+    )
+
+    expect(exited.events).toEqual(['code 3', 'settle', 'flush', 'exit 3'])
+    expect(exited.printed).toEqual([])
+    expect(missing.events).toEqual(['code 1', 'capture', 'settle', 'flush', 'exit 1'])
+    expect(missing.printed.map(stripVTControlCharacters)).toEqual([
+      'node was not found to run agent-qa.js.',
+    ])
+  })
+
+  it('a command that resolves settles once and is neither flushed nor exited', async () => {
     const passing = recorded()
     await drive(
       programThrowing(() => new Error('unused')),
       passing.deps,
       ['fine'],
     )
-    expect(passing.events).toEqual([])
+    expect(passing.events).toEqual(['settle'])
     expect(passing.printed).toEqual([])
     expect(passing.fixed).toEqual([])
+    expect(passing.captured).toEqual([])
   })
 
   it('under GitHub Actions a block gets one stop-commands pair on stdout, on stderr when stdout is reserved, and prints unchanged without it', async () => {
@@ -265,5 +369,357 @@ describe('the CLI failure handler', () => {
       'boom',
     ])
     expect(outcome.printed).toEqual([`Login failed for ${SECRET}.`])
+  })
+})
+
+function failureListeners() {
+  return {
+    uncaughtException: process.listeners('uncaughtException'),
+    unhandledRejection: process.listeners('unhandledRejection'),
+  }
+}
+
+function addedTo<T>(before: readonly T[], after: readonly T[]): T[] {
+  return after.filter((listener) => !before.includes(listener))
+}
+
+// No cell emits either event on the worker's own process: each calls the handler, or a listener
+// the installer added, with recorded deps.
+describe("agent-qa's own global failure handlers", () => {
+  it('print an error as one masked Unexpected error block with its stack frames, then hold 1, capture, settle, flush and exit 1', async () => {
+    const configPath = projectWithSecret()
+    const program = programThrowing(() => new Error('unused'))
+    await program.parseAsync(['node', 'agent-qa', '--config', configPath, 'fine'])
+    const outcome = recorded()
+    const { mask: _unused, ...recorders } = outcome.deps
+    const error = new Error(`Login failed for ${SECRET}.`)
+
+    await createGlobalFailureHandler({ ...defaultCliFailureDeps(program), ...recorders })(error)
+
+    expect(outcome.printed).toHaveLength(1)
+    const [first, ...frames] = outcome.printed[0]!.split('\n')
+    expect(first).toBe('Unexpected error: Login failed for [secret:ACCOUNT_PASSWORD].')
+    expect(frames.length).toBeGreaterThan(0)
+    for (const line of frames) expect(line).toMatch(FRAME)
+    expect(outcome.printed[0]).not.toContain(SECRET)
+    expect(outcome.events).toEqual(['hold 1', 'capture', 'settle', 'flush', 'exit 1'])
+    expect(outcome.captured).toHaveLength(1)
+    expect(outcome.captured[0]).toBe(error)
+  })
+
+  it('print a rejection reason that is not an Error as text and take the same path', async () => {
+    const outcome = recorded()
+
+    await createGlobalFailureHandler(outcome.deps)('plain words')
+
+    expect(outcome.printed).toEqual(['Unexpected error: plain words'])
+    expect(outcome.events).toEqual(['hold 1', 'capture', 'settle', 'flush', 'exit 1'])
+    expect(outcome.captured).toEqual(['plain words'])
+  })
+
+  it('hold exit 1 for every later exit before anything is awaited, once the first error arrives', () => {
+    const outcome = recorded()
+    const handle = createGlobalFailureHandler({
+      ...outcome.deps,
+      settle: async () => {
+        outcome.events.push('settle')
+        await new Promise<void>(() => {})
+      },
+    })
+
+    void handle(new Error('the first error'))
+
+    expect(outcome.events).toEqual(['hold 1', 'capture', 'settle'])
+    expect(outcome.printed).toHaveLength(1)
+  })
+
+  it('by default hold the code with an exit listener, so a later exit with another code still exits 1', () => {
+    const before = process.listeners('exit')
+    const deps = defaultCliFailureDeps(programThrowing(() => new Error('unused')))
+
+    deps.holdExitCode(1)
+    const added = addedTo(before, process.listeners('exit'))
+    try {
+      expect(added).toHaveLength(1)
+      expect(process.exitCode).toBe(1)
+      // What process.exit(0) or a command's own exitCode leaves before the exit listeners run.
+      process.exitCode = 0
+      added[0]?.(0)
+      expect(process.exitCode).toBe(1)
+    } finally {
+      for (const listener of added) process.off('exit', listener)
+      process.exitCode = undefined
+    }
+  })
+
+  it('print a prompt cancel and exit 1 without capturing it', async () => {
+    for (const cancel of [
+      Object.assign(new Error('User force closed the prompt with SIGINT'), {
+        name: 'ExitPromptError',
+      }),
+      new PromptCancelled(),
+    ]) {
+      const outcome = recorded()
+
+      await createGlobalFailureHandler(outcome.deps)(cancel)
+
+      expect(outcome.printed).toHaveLength(1)
+      expect(outcome.printed[0]?.split('\n')[0]).toBe(`Unexpected error: ${cancel.message}`)
+      expect(outcome.events).toEqual(['hold 1', 'settle', 'flush', 'exit 1'])
+      expect(outcome.captured).toEqual([])
+    }
+  })
+
+  it('exit 1 at once, settling nothing, for a second error while the first is still settling', async () => {
+    const outcome = recorded()
+    let finishSettling = () => {}
+    const settling = new Promise<void>((resolve) => {
+      finishSettling = resolve
+    })
+    const handle = createGlobalFailureHandler({
+      ...outcome.deps,
+      settle: async () => {
+        outcome.events.push('settle')
+        await settling
+      },
+    })
+
+    const first = handle(new Error('the first error'))
+    await handle(new Error('the second error'))
+    const atSecond = [...outcome.events]
+    finishSettling()
+    await first
+
+    expect(atSecond).toEqual(['hold 1', 'capture', 'settle', 'exit 1'])
+    expect(outcome.events).toEqual(['hold 1', 'capture', 'settle', 'exit 1', 'flush', 'exit 1'])
+    expect(outcome.printed).toHaveLength(1)
+    expect(outcome.captured).toHaveLength(1)
+  })
+
+  it('still exit 1 when a step throws, and never reject', async () => {
+    const outcome = recorded()
+    const handle = createGlobalFailureHandler({
+      ...outcome.deps,
+      settle: async () => {
+        outcome.events.push('settle')
+        throw new Error('the settle failed')
+      },
+    })
+
+    await expect(handle(new Error('a bug'))).resolves.toBeUndefined()
+
+    expect(outcome.events).toEqual(['hold 1', 'capture', 'settle', 'exit 1'])
+  })
+
+  it('are installed as one listener for each event, both running the one handler, and removed together', async () => {
+    const before = failureListeners()
+    const outcome = recorded()
+
+    const uninstall = installGlobalFailureHandlers(outcome.deps)
+    const during = failureListeners()
+    uninstall()
+    const after = failureListeners()
+
+    const onRejection = addedTo(before.unhandledRejection, during.unhandledRejection)
+    const onException = addedTo(before.uncaughtException, during.uncaughtException)
+    expect(onRejection).toHaveLength(1)
+    expect(onException).toHaveLength(1)
+    expect(after).toEqual(before)
+
+    onRejection[0]?.('a rejection nobody handled', Promise.resolve())
+    await vi.waitFor(() => expect(outcome.events).toContain('exit 1'))
+    onException[0]?.(new Error('an error nobody caught'), 'uncaughtException')
+
+    expect(outcome.printed).toEqual(['Unexpected error: a rejection nobody handled'])
+    expect(outcome.events).toEqual(['hold 1', 'capture', 'settle', 'flush', 'exit 1', 'exit 1'])
+  })
+})
+
+interface ReportedEvent {
+  readonly exception?: {
+    readonly values?: ReadonlyArray<{
+      readonly value?: string
+      readonly stacktrace?: { readonly frames?: readonly unknown[] }
+    }>
+  }
+}
+
+// Read back from the JSON text, as an envelope leaves the process. The thrown error is the last
+// exception value, after any cause.
+function reportedErrors(
+  envelopes: readonly RecordedEnvelope[],
+): Array<{ readonly message: string; readonly frames: number }> {
+  const parsed = JSON.parse(serializedEnvelopes(envelopes)) as Array<
+    [unknown, Array<[{ readonly type?: string }, ReportedEvent]>]
+  >
+  return parsed
+    .flatMap(([, items]) => items)
+    .filter(([header]) => header.type === 'event')
+    .map(([, event]) => event.exception?.values?.at(-1))
+    .map((thrown) => ({
+      message: thrown?.value ?? '',
+      frames: thrown?.stacktrace?.frames?.length ?? 0,
+    }))
+}
+
+describe('reporting from the CLI failure handler', () => {
+  // No cell reads the auth store in the real home folder.
+  beforeEach(() => {
+    const dataHome = mkdtempSync(join(tmpdir(), 'agent-qa-cli-error-handler-'))
+    folders.push(dataHome)
+    vi.stubEnv('XDG_DATA_HOME', dataHome)
+  })
+
+  // The handler's own capture and settle, with only the printer and the process effects recorded.
+  async function runFailing(
+    thrown: () => unknown,
+    options: { readonly recorder: RecordingReportTransport; readonly reporting: boolean },
+  ) {
+    const { configPath } = projectWithPrivacy()
+    if (options.reporting) {
+      await startErrorReporting({
+        configPath,
+        dsn: INVENTED_DSN,
+        transport: options.recorder.transport,
+      })
+    }
+    const program = programThrowing(thrown)
+    const outcome = recorded()
+    const { print, setExitCode, flush, exit } = outcome.deps
+    const before = options.recorder.envelopes.length
+    await drive(program, { ...defaultCliFailureDeps(program), print, setExitCode, flush, exit }, [
+      '--config',
+      configPath,
+      'boom',
+    ])
+    await closeErrorReporting()
+    return { ...outcome, envelopes: options.recorder.envelopes.slice(before) }
+  }
+
+  it('sends a refusal thrown by a command with its message and stack when a reporter is started, and exits 2 with and without one', async () => {
+    const recorder = recordingReportTransport()
+
+    const off = await runFailing(() => new CliRefusal(['nope'], 2), { recorder, reporting: false })
+    const on = await runFailing(() => new CliRefusal(['nope'], 2), { recorder, reporting: true })
+
+    const reported = reportedErrors(on.envelopes)
+    expect(reported.map((error) => error.message)).toEqual(['nope'])
+    expect(reported[0]?.frames ?? 0).toBeGreaterThan(0)
+    expect(off.envelopes).toEqual([])
+    for (const arm of [off, on]) {
+      expect(arm.events).toEqual(['code 2', 'flush', 'exit 2'])
+      expect(arm.printed).toEqual(['nope'])
+      expect(arm.fixed).toEqual([])
+    }
+  })
+
+  it('prints the same lines for a refusal and for a bug with a reporter started as with none, and writes nothing else', async () => {
+    const recorder = recordingReportTransport()
+    const refusal = new CliRefusal(['nope'], 2)
+    const bug = new Error('a bug')
+    const linesByArm: string[][] = []
+    const output = captured()
+    try {
+      for (const reporting of [false, true]) {
+        const lines: string[] = []
+        for (const thrown of [refusal, bug]) {
+          const outcome = await runFailing(() => thrown, { recorder, reporting })
+          lines.push(...outcome.printed, ...outcome.fixed)
+        }
+        linesByArm.push(lines)
+      }
+    } finally {
+      vi.restoreAllMocks()
+    }
+
+    expect(reportedErrors(recorder.envelopes).map((error) => error.message)).toEqual([
+      'nope',
+      'a bug',
+    ])
+    const [off, on] = linesByArm
+    expect(on).toEqual(off)
+    const [refused, failed] = off ?? []
+    expect(refused).toBe('nope')
+    const [first, ...frames] = (failed ?? '').split('\n')
+    expect(first).toBe('Unexpected error: a bug')
+    expect(frames.length).toBeGreaterThan(0)
+    for (const line of frames) expect(line).toMatch(FRAME)
+    expect(output.stdout).toEqual([])
+    expect(output.stderr).toEqual([])
+  })
+})
+
+interface CanaryHandler {
+  readonly name: string
+  readonly reach: (project: CanaryProject, error: Error) => Promise<void>
+}
+
+// Each handler captures and settles for real; only its printer and the process effects are
+// recorded.
+const CANARY_HANDLERS: readonly CanaryHandler[] = [
+  {
+    name: 'the parseAsync handler',
+    reach: async (project, error) => {
+      const program = programThrowing(() => error)
+      const { print, setExitCode, flush, exit } = recorded().deps
+      const deps = { ...defaultCliFailureDeps(program), print, setExitCode, flush, exit }
+      await drive(program, deps, ['--config', project.configPath, 'boom'])
+    },
+  },
+  {
+    name: 'a global handler',
+    reach: async (project, error) => {
+      const program = programThrowing(() => new Error('unused'))
+      await program.parseAsync(['node', 'agent-qa', '--config', project.configPath, 'fine'])
+      const { print, setExitCode, flush, exit } = recorded().deps
+      const deps = { ...defaultCliFailureDeps(program), print, setExitCode, flush, exit }
+      await createGlobalFailureHandler(deps)(error)
+    },
+  },
+]
+
+describe('what a report from the CLI failure handlers leaves out and keeps', () => {
+  beforeEach(() => {
+    const dataHome = mkdtempSync(join(tmpdir(), 'agent-qa-cli-error-handler-'))
+    folders.push(dataHome)
+    vi.stubEnv('XDG_DATA_HOME', dataHome)
+  })
+
+  // The reporter decides from the canary project, its home and its environment, and a line
+  // quoting the canaries is printed just before the canary error reaches the handler.
+  async function reportFrom(handler: CanaryHandler): Promise<readonly RecordedEnvelope[]> {
+    const project = canaryProject()
+    const recorder = recordingReportTransport()
+    await startCanaryReporting(project, recorder, 'boom')
+    console.error(canaryLine(project))
+    await handler.reach(project, canaryError(project))
+    await closeErrorReporting()
+    return recorder.envelopes
+  }
+
+  it.each(CANARY_HANDLERS)(
+    '$name sends no secret, Basic value, env value, hostname or home folder name',
+    async (handler) => {
+      expectNoCanary(await reportFrom(handler))
+    },
+  )
+
+  it.each(CANARY_HANDLERS)(
+    '$name still sends the message, both stacks, the line printed before and the command',
+    async (handler) => {
+      expectUsefulReport(await reportFrom(handler), 'boom')
+    },
+  )
+
+  it('fails a canary check over a recorder that holds no error report', async () => {
+    const recorder = recordingReportTransport()
+    await startCanaryReporting(canaryProject(), recorder, 'boom')
+    await settleReporting()
+    await closeErrorReporting()
+
+    expect(recorder.envelopes.length, 'the command span was sent').toBeGreaterThan(0)
+    for (const envelopes of [[], recorder.envelopes]) {
+      expect(() => expectNoCanary(envelopes)).toThrow('no error report reached the recorder')
+    }
   })
 })

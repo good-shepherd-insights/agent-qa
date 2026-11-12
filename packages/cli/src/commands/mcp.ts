@@ -27,7 +27,10 @@ import {
   DeclaredSecretsUnavailableError,
 } from '../composition/declared-secrets.js'
 import type { DeclaredSecretMask } from '../composition/declared-secrets.js'
+import { errorReporter, settleReporting } from '../composition/error-reporting.js'
 import { composeCliLocalAgent, withRunDoor } from '../composition/local-agent-host.js'
+import { createToolSettledObserver } from '../composition/mcp-tool-observer.js'
+import type { ToolSettledAnalytics } from '../composition/mcp-tool-observer.js'
 import { releaseRemoteSessions, REMOTE_RELEASE_BOUND_MS } from '../composition/remote-sessions.js'
 import { readAnalyticsPrivacyDeclaration, resolveConfig } from '../config.js'
 import { resolveMcpConfigPath } from './mcp-project.js'
@@ -115,6 +118,8 @@ function mcpServerDeps(input: {
   // Threaded only through here, so stdio and HTTP results carry the same links.
   liveLink?: LiveLinkSupplier
   posture?: AgentQaMcpPosture
+  // Absent on the dashboard's mount, which composes none, so its tool calls report and trace only.
+  analytics?: ToolSettledAnalytics
 }) {
   return {
     registry: input.registry,
@@ -125,6 +130,9 @@ function mcpServerDeps(input: {
     // optional member, and the two are the same posture to the builder either way.
     ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
     ...(input.posture === undefined ? {} : { posture: input.posture }),
+    onToolSettled: createToolSettledObserver(
+      input.analytics === undefined ? {} : { analytics: input.analytics },
+    ),
   }
 }
 
@@ -136,6 +144,7 @@ export function createMcpHttpRequestListener(input: {
   // Exported so the dashboard's co-hosted mount binds the same guard order with its own origin.
   liveLink?: LiveLinkSupplier
   posture?: AgentQaMcpPosture
+  analytics?: ToolSettledAnalytics
 }): (req: IncomingMessage, res: ServerResponse) => void {
   return (req, res) => {
     // (1) DNS-rebinding guard. A browser page on any origin can resolve a name it controls to
@@ -164,6 +173,7 @@ export function createMcpHttpRequestListener(input: {
       maskText: input.maskText,
       ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
       ...(input.posture === undefined ? {} : { posture: input.posture }),
+      ...(input.analytics === undefined ? {} : { analytics: input.analytics }),
     }))
     // A run this request starts records `mcp`, on whichever host serves it.
     withRunDoor('mcp', () => { void nodeHandler(req, res) })
@@ -324,6 +334,7 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
             liveLink,
             onServing,
             stopped: stop.stopped,
+            analytics: { host: analytics, mcpTransport },
             ...(posture === undefined ? {} : { posture }),
           }
           if (port === undefined) {
@@ -336,10 +347,11 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
           if (serving) emitLifecycle('stopped')
           await host.close().catch(() => {})
           // Drains the port this command composed and releases its timers, so the process can exit.
-          await analytics.shutdown()
+          await settleReporting({ analytics })
         }
         if (stop.signalled()) {
           await stop.released()
+          await settleReporting()
           ;(deps.exit ?? process.exit)(0)
         }
       } catch (err) {
@@ -347,6 +359,7 @@ export function createMcpCommand(deps: McpCommandDeps = {}): Command {
           pc.red('Failed to start MCP server:'),
           err instanceof Error ? err.message : String(err),
         )
+        errorReporter()?.capture(err)
         process.exitCode = 1
       } finally {
         // An in-process caller gets its working folder back once serving ends.
@@ -375,6 +388,7 @@ async function serveOverStdio(input: {
   // The base supplier, the same object the HTTP face is handed.
   liveLink?: LiveLinkSupplier
   posture?: AgentQaMcpPosture
+  analytics?: ToolSettledAnalytics
   /** Fired once the entry is live — see the lifecycle note at the call site. */
   onServing?: () => void
   stopped: Promise<void>
@@ -389,6 +403,7 @@ async function serveOverStdio(input: {
             maskText: input.maskText,
             ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
             ...(input.posture === undefined ? {} : { posture: input.posture }),
+            ...(input.analytics === undefined ? {} : { analytics: input.analytics }),
           }),
         ),
       {
@@ -429,6 +444,7 @@ async function serveOverHttp(input: {
   // The base supplier, the same object the stdio face is handed.
   liveLink?: LiveLinkSupplier
   posture?: AgentQaMcpPosture
+  analytics?: ToolSettledAnalytics
   /** Fired once the socket is bound — see the lifecycle note at the call site. */
   onServing?: () => void
   stopped: Promise<void>
@@ -439,6 +455,7 @@ async function serveOverHttp(input: {
       maskText: input.maskText,
       ...(input.liveLink === undefined ? {} : { liveLink: input.liveLink }),
       ...(input.posture === undefined ? {} : { posture: input.posture }),
+      ...(input.analytics === undefined ? {} : { analytics: input.analytics }),
     }),
   )
   await new Promise<void>((listening, failed) => {

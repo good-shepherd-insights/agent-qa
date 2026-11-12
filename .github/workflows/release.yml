@@ -46,6 +46,8 @@ jobs:
     needs: ci
     if: ${{ !cancelled() && inputs.subscription_auth_target_version == '' && inputs.github_release_target_version == '' && (needs.ci.result == 'success' || (inputs.npm_target_version != '' && needs.ci.result == 'skipped')) }}
     runs-on: ubuntu-latest
+    # A real release takes minutes here; the limit only ends a hang.
+    timeout-minutes: 60
     outputs:
       version: ${{ steps.version.outputs.version || steps.resume.outputs.version }}
       subscription_auth_on_npm: ${{ steps.resume.outputs.subscription_auth_on_npm }}
@@ -94,6 +96,7 @@ jobs:
         if: ${{ inputs.npm_target_version == '' }}
         env:
           POSTHOG_PROJECT_KEY: ${{ secrets.POSTHOG_PROJECT_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
         run: pnpm exec node scripts/release/verify.mjs --bump "${{ inputs.bump }}" --stage preflight
 
       - name: Write release version
@@ -101,14 +104,21 @@ jobs:
         if: ${{ inputs.npm_target_version == '' }}
         run: pnpm exec node scripts/release/version.mjs --bump "${{ inputs.bump }}" --write
 
-      - name: Write PostHog project key
+      - name: Write PostHog project key and Sentry DSN
         env:
           POSTHOG_PROJECT_KEY: ${{ secrets.POSTHOG_PROJECT_KEY }}
-        run: pnpm exec node scripts/release/posthog.mjs --write
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          pnpm exec node scripts/release/posthog.mjs --write
+          pnpm exec node scripts/release/sentry.mjs --write
 
       # The key file is gitignored, so turbo does not hash it and would restore a keyless cached dist.
       - name: Build
         run: pnpm exec turbo build --force
+
+      # Before staging, so the published files and the uploaded maps carry the same debug IDs.
+      - name: Inject debug IDs
+        run: pnpm exec node scripts/release/sentry.mjs --inject
 
       - name: Validate skills
         run: pnpm run validate:skills
@@ -127,6 +137,7 @@ jobs:
       - name: Release postbuild verification
         env:
           POSTHOG_PROJECT_KEY: ${{ secrets.POSTHOG_PROJECT_KEY }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
           RELEASE_VERSION: ${{ steps.version.outputs.version || steps.resume.outputs.version }}
         run: pnpm exec node scripts/release/verify.mjs --bump "${{ inputs.bump }}" --stage postbuild --target-version "$RELEASE_VERSION" --staged-dir .release/staged-packages
 
@@ -145,6 +156,18 @@ jobs:
 
       - name: Publish packages
         run: pnpm exec node scripts/release/publish.mjs --staged-dir .release/staged-packages
+
+      # Runs last, so a failed release uploads nothing. A failed or hung upload never blocks a
+      # release: the script stops sentry-cli at its own deadline, and the step limit backs it up.
+      - name: Upload source maps
+        continue-on-error: true
+        timeout-minutes: 12
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version || steps.resume.outputs.version }}
+        run: pnpm exec node scripts/release/sentry.mjs --upload --release "agent-qa@$RELEASE_VERSION"
 
   subscription-auth:
     name: Publish subscription auth

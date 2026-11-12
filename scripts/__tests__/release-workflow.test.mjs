@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { loadWorkflow } from '../check-ci-matrix.mjs'
+import { sentryCliDeadlineMs } from '../release/sentry.mjs'
 
 const rootDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -20,6 +21,30 @@ function assertBefore(text, before, after) {
   assert.notEqual(afterIndex, -1, `Expected workflow to contain ${after}`)
   assert.ok(beforeIndex < afterIndex, `Expected ${before} before ${after}`)
 }
+
+// Every place a parsed workflow names the pattern: its own env, a job's fields or a step's.
+function placesNaming(workflow, pattern) {
+  const names = (value) => pattern.test(JSON.stringify(value ?? null))
+  const places = names(workflow.env) ? ['env'] : []
+  for (const [id, job] of Object.entries(workflow.jobs)) {
+    for (const [field, value] of Object.entries(job)) {
+      if (field !== 'steps' && names(value)) places.push(`${id}: ${field}`)
+    }
+    for (const step of job.steps ?? []) {
+      for (const [field, value] of Object.entries(step)) {
+        if (names(value)) places.push(`${id}: ${step.name}: ${field}`)
+      }
+    }
+  }
+  return places
+}
+
+const posthogWrite = 'pnpm exec node scripts/release/posthog.mjs --write'
+const sentryWrite = 'pnpm exec node scripts/release/sentry.mjs --write'
+const sentryInject = 'pnpm exec node scripts/release/sentry.mjs --inject'
+const sentryUpload =
+  'pnpm exec node scripts/release/sentry.mjs --upload --release "agent-qa@$RELEASE_VERSION"'
+const releaseVersion = '${{ steps.version.outputs.version || steps.resume.outputs.version }}'
 
 const truthy = (value) => ![false, null, undefined, '', 0].includes(value) && !Number.isNaN(value)
 const folded = (value) => (typeof value === 'string' ? value.toLowerCase() : value)
@@ -194,7 +219,7 @@ test('release workflow uses trusted publishing prerequisites without npm tokens'
   assert.doesNotMatch(workflow, /docker\/build-push-action|DOCKERHUB_TOKEN/)
 })
 
-test('release workflow gates build, staging, commit, tag, push, and publish in order', () => {
+test('release workflow gates the key writes, build, debug IDs, staging, commit, tag, push, publish and source-map upload in order', () => {
   const workflow = readWorkflow()
   const orderedCommands = [
     'uses: ./.github/workflows/ci.yml',
@@ -207,8 +232,10 @@ test('release workflow gates build, staging, commit, tag, push, and publish in o
     'pnpm audit --prod --audit-level high',
     'pnpm exec node scripts/release/verify.mjs --bump "${{ inputs.bump }}" --stage preflight',
     'pnpm exec node scripts/release/version.mjs --bump "${{ inputs.bump }}" --write',
-    'pnpm exec node scripts/release/posthog.mjs --write',
+    posthogWrite,
+    sentryWrite,
     'pnpm exec turbo build --force',
+    sentryInject,
     'pnpm run validate:skills',
     'pnpm run validate:agents',
     'pnpm run validate:publish',
@@ -217,6 +244,7 @@ test('release workflow gates build, staging, commit, tag, push, and publish in o
     'pnpm exec node scripts/release/git.mjs --commit-tag',
     'git -c credential.helper= -c \'credential.helper=!f() { echo username=x-access-token; echo "password=$RELEASE_PUSH_TOKEN"; }; f\' push --atomic https://github.com/${{ github.repository }}.git HEAD:refs/heads/${{ github.ref_name }} "refs/tags/v$RELEASE_VERSION"',
     'pnpm exec node scripts/release/publish.mjs --staged-dir .release/staged-packages',
+    sentryUpload,
   ]
 
   for (const command of orderedCommands) assert.match(workflow, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
@@ -225,15 +253,24 @@ test('release workflow gates build, staging, commit, tag, push, and publish in o
   }
 })
 
-test('release workflow writes the PostHog key after CI passed and before a forced build, and validates staged packages before publish', () => {
+test('release workflow writes the PostHog key and the Sentry DSN in one step after CI passed and before a forced build, and validates staged packages before publish', () => {
   const workflow = readWorkflow()
   const npm = loadWorkflow('release.yml').jobs.npm
+  const keyWrite = npm.steps.find((step) =>
+    [posthogWrite, sentryWrite].every((write) => String(step.run ?? '').includes(write)),
+  )
 
-  assert.match(workflow, /POSTHOG_PROJECT_KEY:\s*\$\{\{ secrets\.POSTHOG_PROJECT_KEY \}\}/)
+  assert.ok(keyWrite, 'one step writes both the PostHog key and the Sentry DSN')
+  assert.deepEqual(keyWrite.run.trim().split('\n'), [posthogWrite, sentryWrite])
+  assert.deepEqual(keyWrite.env, {
+    POSTHOG_PROJECT_KEY: '${{ secrets.POSTHOG_PROJECT_KEY }}',
+    SENTRY_DSN: '${{ secrets.SENTRY_DSN }}',
+  })
+  assert.equal(keyWrite.if, undefined, 'the key write runs in a resume too')
   assert.ok([npm.needs].flat().includes('ci'))
   assert.match(npm.if, /needs\.ci\.result == 'success'/)
-  assert.ok(npm.steps.some((step) => step.run === 'pnpm exec node scripts/release/posthog.mjs --write'))
-  assertBefore(workflow, 'pnpm exec node scripts/release/posthog.mjs --write', 'pnpm exec turbo build --force')
+  assertBefore(workflow, posthogWrite, 'pnpm exec turbo build --force')
+  assertBefore(workflow, sentryWrite, 'pnpm exec turbo build --force')
   assertBefore(
     workflow,
     'pnpm exec node scripts/release/stage-packages.mjs --target-version "$RELEASE_VERSION" --out .release/staged-packages',
@@ -244,6 +281,99 @@ test('release workflow writes the PostHog key after CI passed and before a force
     'pnpm exec node scripts/release/verify.mjs --bump "${{ inputs.bump }}" --stage postbuild --target-version "$RELEASE_VERSION" --staged-dir .release/staged-packages',
     'pnpm exec node scripts/release/publish.mjs --staged-dir .release/staged-packages',
   )
+})
+
+test('the Sentry DSN secret reaches only the preflight, the key write and the postbuild verification, each through its own env', () => {
+  const release = loadWorkflow('release.yml')
+  const holders = [
+    'Release preflight',
+    'Write PostHog project key and Sentry DSN',
+    'Release postbuild verification',
+  ]
+
+  assert.deepEqual(
+    placesNaming(release, /\bsecrets\.SENTRY_DSN\b/),
+    holders.map((name) => `npm: ${name}: env`),
+  )
+  for (const name of holders) {
+    const step = release.jobs.npm.steps.find((candidate) => candidate.name === name)
+    assert.equal(step.env.SENTRY_DSN, '${{ secrets.SENTRY_DSN }}', name)
+  }
+})
+
+test('only the source-map upload step receives the Sentry upload token, organisation and project', () => {
+  const release = loadWorkflow('release.yml')
+  const upload = release.jobs.npm.steps.find((step) => step.name === 'Upload source maps')
+
+  assert.deepEqual(placesNaming(release, /\bsecrets\.SENTRY_AUTH_TOKEN\b/), [
+    'npm: Upload source maps: env',
+  ])
+  assert.deepEqual(placesNaming(release, /\bvars\.SENTRY_(?:ORG|PROJECT)\b/), [
+    'npm: Upload source maps: env',
+  ])
+  // sentry-cli gets only the environment the script builds, which keeps .env loading off itself.
+  assert.deepEqual(upload.env, {
+    SENTRY_AUTH_TOKEN: '${{ secrets.SENTRY_AUTH_TOKEN }}',
+    SENTRY_ORG: '${{ vars.SENTRY_ORG }}',
+    SENTRY_PROJECT: '${{ vars.SENTRY_PROJECT }}',
+    RELEASE_VERSION: releaseVersion,
+  })
+})
+
+test('debug IDs are injected with no credential, in a resume too, and a failed inject fails the release', () => {
+  const steps = loadWorkflow('release.yml').jobs.npm.steps
+  const inject = steps.find((step) => step.run === sentryInject)
+
+  assert.ok(inject, 'the npm job injects debug IDs')
+  assert.equal(inject.env, undefined)
+  assert.equal(inject.if, undefined)
+  assert.equal(inject['continue-on-error'], undefined)
+})
+
+test('the source-map upload is the last npm step, names the release agent-qa@<version> and never fails the release', () => {
+  const upload = loadWorkflow('release.yml').jobs.npm.steps.at(-1)
+
+  assert.equal(upload.name, 'Upload source maps')
+  assert.equal(upload['continue-on-error'], true)
+  assert.equal(upload.run, sentryUpload)
+})
+
+test('a hung source-map upload stops at the script deadline, or at the step limit just after it, well inside the npm job limit', () => {
+  const npm = loadWorkflow('release.yml').jobs.npm
+  const upload = npm.steps.find((step) => step.name === 'Upload source maps')
+  const stepLimitMs = upload['timeout-minutes'] * 60_000
+
+  assert.equal(upload['continue-on-error'], true)
+  assert.ok(stepLimitMs > sentryCliDeadlineMs, 'the script stops sentry-cli before the step limit')
+  assert.ok(stepLimitMs <= sentryCliDeadlineMs + 5 * 60_000, 'the step limit is only a backstop')
+  // A job limit that fired during the upload would fail the job and hold Docker and the GitHub
+  // release, so it leaves the steps before the upload half an hour.
+  assert.ok(npm['timeout-minutes'] >= upload['timeout-minutes'] + 30, `${npm['timeout-minutes']}`)
+})
+
+// The built cli starts through its dist entry or as the agent-qa command. A release name such as
+// "agent-qa@1.2.3" and a package filter such as `--filter agent-qa` start neither.
+const startsAgentQa =
+  /\bdist\/cli\.c?js\b|\.bin\/agent-qa\b|(?:(?:^|[;&|(`])[ \t]*|\b(?:exec|npx|dlx|bunx|pnpm|yarn|bun)[ \t]+)agent-qa(?=$|[\s;&|)`@])/m
+
+test('no npm step after the Sentry DSN write runs the built cli or the agent-qa command, so a release reports nothing of its own', () => {
+  const steps = loadWorkflow('release.yml').jobs.npm.steps
+  const dsnWrite = steps.findIndex((step) => String(step.run ?? '').includes(sentryWrite))
+
+  for (const run of [
+    'node packages/cli/dist/cli.js doctor',
+    'pnpm exec agent-qa run',
+    'npx agent-qa@latest init',
+  ]) {
+    assert.match(run, startsAgentQa, run)
+  }
+  for (const run of [sentryUpload, 'pnpm --filter agent-qa run copy:skills']) {
+    assert.doesNotMatch(run, startsAgentQa, run)
+  }
+  assert.notEqual(dsnWrite, -1, 'the npm job writes the Sentry DSN')
+  for (const step of steps.slice(dsnWrite + 1)) {
+    assert.doesNotMatch(String(step.run ?? ''), startsAgentQa, step.name)
+  }
 })
 
 test('release workflow publishes Docker from the release tag after npm publish', () => {
@@ -423,6 +553,23 @@ test('a release calls CI with read-only contents and no secrets, and publishes n
   assert.match(release.jobs.npm.if, /needs\.ci\.result == 'success'/)
 })
 
+const sentryCredential = /\bsecrets\.SENTRY_(?:DSN|AUTH_TOKEN)\b/
+const runsSentryRelease = /scripts\/release\/sentry\.mjs|\bsentry-cli\b/
+
+test('the release ci job stays keyless: it passes ci.yml no secret, and ci.yml names no Sentry credential and runs no Sentry release script', () => {
+  const release = loadWorkflow('release.yml')
+  const ci = loadWorkflow('ci.yml')
+  const steps = Object.values(ci.jobs).flatMap((job) => job.steps ?? [])
+
+  assert.equal(release.jobs.ci.uses, './.github/workflows/ci.yml')
+  assert.equal(release.jobs.ci.secrets, undefined, 'neither secrets: inherit nor a secrets map')
+  assert.deepEqual(placesNaming(ci, sentryCredential), [])
+  assert.ok(steps.some((step) => step.run), 'ci.yml has steps that run commands')
+  for (const step of steps) {
+    assert.doesNotMatch(String(step.run ?? ''), runsSentryRelease, step.name)
+  }
+})
+
 test('no release job runs a test, a typecheck or a browser install, and none downloads a build artifact', () => {
   const release = loadWorkflow('release.yml')
   const forbidden = /\b(pnpm|turbo)\b[^\n]*\b(test|typecheck)\b|playwright(-core)? install|apt-get install/
@@ -581,4 +728,26 @@ test('docker release workflow moves latest for all six images once the builds an
   )
   assert.match(latest, /image: \$\{\{ fromJson\(needs\.preflight\.outputs\.images\) \}\}/)
   assert.match(latest, /docker buildx imagetools create -t "\$\{\{ matrix\.image\.image \}\}:latest" "\$\{\{ matrix\.image\.image \}\}:\$\{\{ needs\.preflight\.outputs\.version \}\}"/)
+})
+
+test('docker-release.yml stays keyless: no job or step names the Sentry DSN or upload token, and no build argument holds a secret', () => {
+  const docker = loadWorkflow('docker-release.yml')
+  const buildArgs = Object.values(docker.jobs)
+    .flatMap((job) => job.steps ?? [])
+    .filter((step) => step.with && 'build-args' in step.with)
+    .map((step) => String(step.with['build-args']))
+
+  assert.deepEqual(placesNaming(docker, sentryCredential), [])
+  assert.ok(buildArgs.length > 0, 'docker-release.yml passes build arguments')
+  for (const value of buildArgs) assert.doesNotMatch(value, /\bsecrets\./)
+})
+
+test('docker-release.yml stays keyless: no step runs the Sentry release script or sentry-cli', () => {
+  const { jobs } = loadWorkflow('docker-release.yml')
+  const steps = Object.values(jobs).flatMap((job) => job.steps ?? [])
+
+  assert.ok(steps.some((step) => step.run), 'docker-release.yml has steps that run commands')
+  for (const step of steps) {
+    assert.doesNotMatch(String(step.run ?? ''), runsSentryRelease, step.name)
+  }
 })
