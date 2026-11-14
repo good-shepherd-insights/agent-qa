@@ -53,6 +53,7 @@ vi.mock('../commands/init-filesystem.js', async () => {
       path: plan.path,
       classification: fs.existsSync(plan.path) ? 'regular' : 'missing',
     }))),
+    moveFolderInsideRoot: vi.fn(),
     writeScaffoldFileAtomic: vi.fn(writePlan),
     writeConfigMarkerLast: vi.fn(writePlan),
     upsertManagedGitignoreBlock: vi.fn((path: string) => {
@@ -78,8 +79,6 @@ vi.mock('../commands/install-browsers.js', () => ({
 
 vi.mock('@vostride/agent-qa-core', () => ({
   writeAuth: vi.fn(() => Promise.resolve()),
-  resolveAppiumExecutable: vi.fn(() => ({ command: 'appium', source: 'path' })),
-  formatAppiumInstallGuidance: vi.fn(() => 'Install Appium locally with `npm install -D appium` or globally with `npm install -g appium`.'),
   DEFAULT_AGENT_QA_AUTH_STATES_DIR: '.agent-qa/auth-states',
   DEFAULT_AGENT_QA_CACHE_DIR: '.agent-qa/cache',
   DEFAULT_AGENT_QA_RUNTIME_DIR: '.agent-qa',
@@ -108,7 +107,7 @@ import {
 import { formatInstallBrowsersRetryCommand, runBrowserInstall } from '../commands/install-browsers.js'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { execFileSync, execSync } from 'node:child_process'
-import { getAgentQaVersion, resolveAppiumExecutable, writeAuth } from '@vostride/agent-qa-core'
+import { getAgentQaVersion, writeAuth } from '@vostride/agent-qa-core'
 import { clearProviderRegistry, getProvider } from '@vostride/agent-qa-model'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { reportCliFailure } from '../cli-error-handler.js'
@@ -116,7 +115,7 @@ import { CliRefusal } from '../composition/cli-refusal.js'
 import type { InitUi } from '../init-ui/init-ui.js'
 import { createPlainUi } from '../init-ui/plain-ui.js'
 import { defaultProjectIo } from '../commands/project-host.js'
-import { fakeRunner, runningAgentQa } from './project-fixtures.js'
+import { fakeRunner, mobileInitFakes, runningAgentQa } from './project-fixtures.js'
 
 const mockWriteFileSync = vi.mocked(writeFileSync)
 const mockExistsSync = vi.mocked(existsSync)
@@ -146,7 +145,6 @@ function defaultModelOf(provider: string): string | undefined {
 }
 const mockWriteAuth = vi.mocked(writeAuth)
 const mockGetAgentQaVersion = vi.mocked(getAgentQaVersion)
-const mockResolveAppiumExecutable = vi.mocked(resolveAppiumExecutable)
 const mockPreflightInitPlan = vi.mocked(preflightInitPlan)
 const mockWriteScaffoldFileAtomic = vi.mocked(writeScaffoldFileAtomic)
 const mockWriteConfigMarkerLast = vi.mocked(writeConfigMarkerLast)
@@ -172,6 +170,7 @@ async function runInit(
   const init = createInitCommand({
     cwd: '/tmp/test-project',
     ui: terminalUi(),
+    ...mobileInitFakes().hooks,
     ...rest,
     host: { env: {}, run: fakeRunner(), ...runningAgentQa(defaultProjectIo), ...host },
   })
@@ -188,6 +187,7 @@ async function runInitUnderRootConfig(args: string[]): Promise<void> {
     cwd: '/tmp/test-project',
     isTTY: true,
     ui: terminalUi(),
+    ...mobileInitFakes().hooks,
     host: { env: {}, run: fakeRunner(), ...runningAgentQa(defaultProjectIo) },
   })
   parent.exitOverride()
@@ -254,7 +254,6 @@ describe('init command', () => {
     mockGetAgentQaVersion.mockReturnValue('0.1.1')
     mockRunBrowserInstall.mockReturnValue({ ok: true, status: 0, stage: 'installer' })
     mockFormatInstallBrowsersRetryCommand.mockReturnValue('agent-qa install-browsers --chromium')
-    mockResolveAppiumExecutable.mockReturnValue({ command: 'appium', source: 'path' })
   })
 
   afterEach(() => {
@@ -337,14 +336,13 @@ describe('init command', () => {
     expect(content).not.toContain('  # memory:')
     expect(content).toContain('# Named resource definitions')
     expect(content).toContain(
-      '  # Optional: devices, described by what people call them. agent-qa finds them on this machine.\n  # devices:\n  #   pixel:\n  #     platform: android\n  #     model: Pixel 8\n',
+      '  # Optional: devices, described by what people call them. agent-qa finds them on this machine.\n  # devices:\n  #   android-emulator-pixel-8-15:\n  #     platform: android\n  #     model: Pixel 8\n  #     os: "15"\n',
     )
-    expect(content).not.toContain('android-emu')
     expect(content).toContain('    # my-mobile:')
     expect(content).toContain('    #   appPackage: com.example.app')
     expect(content).toContain('    #   appActivity: .MainActivity')
-    expect(content).toContain('    #     path: apps/example.apk')
-    expect(content).toContain('    #   device: pixel')
+    expect(content).toContain('    #     path: app-bundles/example.apk')
+    expect(content).toContain('    #   device: android-emulator-pixel-8-15')
     expect(content).not.toContain('  # logCapture:')
     expect(content).not.toContain('  #   console: true')
     expect(content).not.toContain('  #   network: true')
@@ -516,11 +514,11 @@ describe('init command', () => {
       }
       if (platform === 'web,android') {
         expect(config.registry.targets).toHaveProperty('komazon')
-        expect(config.registry.targets).toHaveProperty('example-android')
+        expect(config.registry.targets).toHaveProperty('playground-android')
       }
       if (platform === 'web,ios') {
         expect(config.registry.targets).toHaveProperty('komazon')
-        expect(config.registry.targets).toHaveProperty('example-ios')
+        expect(config.registry.targets).toHaveProperty('playground-ios')
       }
       expect(config).not.toHaveProperty('analytics')
     },
@@ -678,8 +676,8 @@ describe('init command', () => {
       (call) => (call[0] as string).endsWith('agent-qa.config.yaml'),
     )
     expect(configCall?.[1]).toContain('komazon:')
-    expect(configCall?.[1]).toContain('example-android:')
-    expect(configCall?.[1]).toContain('example-ios:')
+    expect(configCall?.[1]).toContain('playground-android:')
+    expect(configCall?.[1]).toContain('playground-ios:')
   })
 
   it('writes OpenAI subscription config during interactive init', async () => {
@@ -726,8 +724,11 @@ describe('init command', () => {
     const { parseTestFile, SuiteDefinitionSchema, HooksFileSchema } = await loadCoreYamlValidators()
 
     for (const [suffix, target] of [
-      ['tests/examples/komazon-checkout.yaml', 'komazon'],
+      ['tests/examples/komazon-cart-total.yaml', 'komazon'],
       ['tests/examples/komazon-cart-total-bug.yaml', 'komazon-cart-total-bug'],
+      ['tests/examples/komazon-checkout.yaml', 'komazon'],
+      ['tests/examples/komazon-search.yaml', 'komazon'],
+      ['tests/examples/komazon-bag.yaml', 'komazon'],
       ['tests/examples/komazon-shipping-hook.yaml', 'komazon'],
     ]) {
       const call = findWriteCallEndingWith(suffix)
@@ -745,8 +746,9 @@ describe('init command', () => {
       throw new Error(JSON.stringify(parsedSuite.error.issues, null, 2))
     }
     expect(parsedSuite.data.tests.map((test: { test: string }) => test.test)).toEqual([
+      'tests/examples/komazon-bag.yaml',
+      'tests/examples/komazon-search.yaml',
       'tests/examples/komazon-checkout.yaml',
-      'tests/examples/komazon-cart-total-bug.yaml',
     ])
 
     const hooksCall = findWriteCallEndingWith('hooks.yaml')
@@ -774,7 +776,7 @@ describe('init command', () => {
 
     const hooksCall = findWriteCallEndingWith('hooks.yaml')
     expect(hooksCall?.[1]).toBe('hooks: []\n')
-    expect(consoleOutput()).not.toContain('tests/examples/')
+    expect(consoleOutput()).not.toContain('tests/examples/komazon-')
     expect(consoleOutput()).not.toContain('suites/examples.suite.yaml')
   })
 
@@ -1121,45 +1123,12 @@ describe('init command', () => {
     expect(consoleOutput()).toContain('Chromium installed')
   })
 
-  it('does not auto-install Appium or drivers for Android projects', async () => {
-    await runInit(['--platform', 'android'])
-
-    expect(mockExecSync).not.toHaveBeenCalled()
-    expect(mockExecFileSync).not.toHaveBeenCalled()
-    expect(mockResolveAppiumExecutable).not.toHaveBeenCalled()
-    const output = consoleOutput()
-    expect(output).toContain('agent-qa install-mobile-drivers --all')
-    expect(output).not.toContain('Installing Appium')
-  })
-
-  it('prints all-driver mobile setup guidance for iOS projects', async () => {
-    await runInit(['--platform', 'ios'])
-
-    const output = consoleOutput()
-    expect(output).toContain('agent-qa install-mobile-drivers --all')
-    expect(output).not.toContain('agent-qa install-mobile-drivers --ios')
-    expect(output).not.toContain('agent-qa install-mobile-drivers --android')
-  })
-
-  it('a mixed project with --no-browsers lists the Chromium, mobile driver and run commands', async () => {
+  it('a mixed project with --no-browsers lists the Chromium and run commands', async () => {
     await runInit(['--platform', 'web,android', '--no-browsers'])
 
     const output = consoleOutput()
     expect(output).toContain('npx agent-qa install-browsers --chromium')
-    expect(output).toContain('npx agent-qa install-mobile-drivers --all')
     expect(output).toContain('npx agent-qa run suites/examples.suite.yaml')
-  })
-
-  it('prints all-drivers setup guidance when both mobile platforms are selected interactively', async () => {
-    mockPlatform.mockResolvedValueOnce(['mobile'])
-
-    await runInit(['--llm', 'codex'], { isTTY: true })
-
-    const output = consoleOutput()
-    expect(output).toContain('agent-qa install-mobile-drivers --all')
-    expect(mockPlatform).not.toHaveBeenCalledWith(expect.objectContaining({
-      message: 'Which mobile platforms will you test?',
-    }))
   })
 
   it('routes nested test files through the safe filesystem writer', async () => {
@@ -1428,8 +1397,11 @@ skills/.staging/
       '/tmp/test-project/package.json',
       '/tmp/test-project/scripts/examples/make-shipping-address.mjs',
       '/tmp/test-project/suites/examples.suite.yaml',
+      '/tmp/test-project/tests/examples/komazon-bag.yaml',
       '/tmp/test-project/tests/examples/komazon-cart-total-bug.yaml',
+      '/tmp/test-project/tests/examples/komazon-cart-total.yaml',
       '/tmp/test-project/tests/examples/komazon-checkout.yaml',
+      '/tmp/test-project/tests/examples/komazon-search.yaml',
       '/tmp/test-project/tests/examples/komazon-shipping-hook.yaml',
     ]))
 

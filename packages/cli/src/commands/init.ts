@@ -14,18 +14,20 @@ import { guardJsonText, reserveStdoutForData } from '@vostride/agent-qa-core/run
 import { getProvider } from '@vostride/agent-qa-model'
 // The scaffold's content comes from the shared producer, so the two scaffolds cannot drift.
 import {
+  PLAYGROUND_TARGETS,
   SUBSCRIPTION_AUTH_PACKAGE,
   buildHooksFile,
   buildGitignoreEntries,
   buildScaffoldConfig,
   hasWeb,
-  normalizePlatformSelection,
+  mobileRuntimesOf,
   parseInitPlatformList,
   renderScaffoldConfigYaml,
   type InitLLMConfig,
   type InitPlatformInput,
   type MobileRuntime,
   type PlatformCapability,
+  type ScaffoldDevices,
 } from './scaffold-content.js'
 // Type-only here and the value loaded lazily: the analytics graph breaks `init.test.ts`'s fs mock.
 import type { composeAnalyticsHost as ComposeAnalyticsHost } from '../composition/analytics-host.js'
@@ -33,7 +35,9 @@ import {
   KNOWLEDGE_GITIGNORE_PROBES,
   TARGET_GITIGNORE_PROBES,
   classifyInitPath,
+  moveFolderInsideRoot,
   preflightInitPlan,
+  removeFolderInsideRoot,
   upsertManagedGitignoreBlock,
   verifyEffectiveGitignore,
   writeConfigMarkerLast,
@@ -85,7 +89,7 @@ import {
   resolveLlmFlag,
   type InitModelPick,
 } from './init-model-choice.js'
-import { initNextSteps, nextStepLines } from './init-next-steps.js'
+import { EXAMPLE_PATHS, initNextSteps, nextStepLines } from './init-next-steps.js'
 import {
   dashboardPage,
   dashboardPortOf,
@@ -105,9 +109,14 @@ import {
   type InitStepRunner,
 } from './init-steps.js'
 import { runInitRerun } from './init-rerun.js'
+import { findInitDevices } from './init-devices.js'
 import { configuredPackages } from './setup-rows.js'
 import { askLatestVersionByDefault, type LatestVersionAsk } from './latest-version-ask.js'
 import { findChromiumByDefault, type ChromiumResolver } from './browser-resolver.js'
+import { downloadPlaygroundApps, type PlaygroundAppSource } from './playground-app.js'
+import { fetchPlaygroundAppByDefault } from './playground-app-fetch.js'
+import { PLAYGROUND_APP_PATHS, PLAYGROUND_APP_PIN } from './playground-app-pin.js'
+import type { DevicesHereLister } from './run.js'
 import {
   createInitDocumentRecorder,
   refusedInitDocument,
@@ -169,6 +178,7 @@ export function buildDefaultConfig(
   providerOrLLMs: string | InitLLMConfig[],
   model?: string,
   baseURL?: string,
+  devices?: ScaffoldDevices,
 ): Record<string, unknown> {
   const llmConfigs = Array.isArray(providerOrLLMs)
     ? providerOrLLMs
@@ -179,21 +189,54 @@ export function buildDefaultConfig(
     usesSubscriptionAuth: llmConfigs.some(config => isSubscriptionProvider(config.provider)),
     cacheDir: INIT_CACHE_DIR,
     authStatesDir: INIT_AUTH_STATES_DIR,
+    ...(devices === undefined ? {} : { devices }),
   })
 }
 const KOMAZON_CHECKOUT_TEST_ID = 't_packer-staff-asha-lak-spill-usher-pele-allen-bid-done'
+const KOMAZON_CART_TOTAL_TEST_ID = 't_coop-cling-upo-prest-nid-ghan-was-went-ife-imine'
 const KOMAZON_CART_TOTAL_BUG_TEST_ID = 't_reduce-eva-elding-reset-lai-iban-rum-hin-parent-chang'
+const KOMAZON_SEARCH_TEST_ID = 't_jump-tier-lop-urger-car-ido-fell-abele-basket-stress'
+const KOMAZON_BAG_TEST_ID = 't_and-pond-adder-only-client-mico-vier-placer-buds-disk'
 const EXAMPLES_SUITE_ID = 's_dice-ego-veer-warp-ionic-trying-tur-cal-stride-battle'
 const KOMAZON_CHECKOUT_PATH = 'tests/examples/komazon-checkout.yaml'
-const KOMAZON_CART_TOTAL_BUG_PATH = 'tests/examples/komazon-cart-total-bug.yaml'
-const EXAMPLES_SUITE_PATH = 'suites/examples.suite.yaml'
+const KOMAZON_CART_TOTAL_PATH = EXAMPLE_PATHS.starter
+const KOMAZON_CART_TOTAL_BUG_PATH = EXAMPLE_PATHS.bug
+const KOMAZON_SEARCH_PATH = 'tests/examples/komazon-search.yaml'
+const KOMAZON_BAG_PATH = 'tests/examples/komazon-bag.yaml'
+const EXAMPLES_SUITE_PATH = EXAMPLE_PATHS.suite
 const GETTING_STARTED_URL = 'https://vostride.com/docs/agent-qa/quickstart'
 const KOMAZON_SHIPPING_HOOK_TEST_ID = 't_ayin-dual-chunk-lou-tablet-ticket-brace-lak-kite-abu'
 const SHIPPING_ADDRESS_HOOK_ID = 'h_phi-arts-vis-band-aira-streng-twig-roi-mino-fold'
 const KOMAZON_SHIPPING_HOOK_PATH = 'tests/examples/komazon-shipping-hook.yaml'
 const SHIPPING_ADDRESS_SCRIPT_PATH = 'scripts/examples/make-shipping-address.mjs'
+const STARTER_STEPS = `  - Add Everyday Ceramic Mug to the bag, open the bag and increase its quantity to two.
+  - Verify the order total is $53.00.`
+const ANDROID_OPEN_KOMAZON_TEST_ID = 't_mano-ric-arum-public-onto-ching-odel-pathy-rap-often'
+const ANDROID_CART_TOTAL_TEST_ID = 't_fine-chlor-avid-gaz-rare-pink-axed-sey-happy-gid'
+const ANDROID_CART_TOTAL_BUG_TEST_ID = 't_sam-hain-router-expand-och-elope-slider-ming-rear-story'
+const IOS_OPEN_KOMAZON_TEST_ID = 't_avid-bred-ast-plass-jet-share-wei-foil-around-coin'
+const IOS_CART_TOTAL_TEST_ID = 't_trim-cone-cara-gear-own-keen-verst-olson-volume-rose'
+const IOS_CART_TOTAL_BUG_TEST_ID = 't_agra-rah-exit-ward-jan-nous-math-cat-grab-gross'
+const ANDROID_OPEN_KOMAZON_PATH = EXAMPLE_PATHS.androidStarter
+const ANDROID_CART_TOTAL_PATH = 'tests/examples/playground-android-cart-total.yaml'
+const ANDROID_CART_TOTAL_BUG_PATH = 'tests/examples/playground-android-cart-total-bug.yaml'
+const IOS_OPEN_KOMAZON_PATH = EXAMPLE_PATHS.iosStarter
+const IOS_CART_TOTAL_PATH = 'tests/examples/playground-ios-cart-total.yaml'
+const IOS_CART_TOTAL_BUG_PATH = 'tests/examples/playground-ios-cart-total-bug.yaml'
+const PLAYGROUND_OPEN_KOMAZON_STEPS = `  - Open Komazon from the home screen.
+  - Verify the "Search products" field is shown.`
+const PLAYGROUND_CART_TOTAL_STEPS = `  - Open Komazon from the home screen.
+  - Open the details of Everyday Ceramic Mug and verify its price is $24.00.
+  - Add it to the bag and open the Cart tab.
+  - Increase the mug quantity to two.
+  - Verify the order summary shows subtotal $48.00, shipping $5.00 and total $53.00.`
+const PLAYGROUND_CART_TOTAL_BUG_STEPS = `  - Open Komazon from the home screen.
+  - Open Test controls in the app header, turn on "Quantity ignored in totals" and close the controls. Verify the deliberate bug banner names "Quantity ignored in totals".
+  - Add Everyday Ceramic Mug to the bag, open the Cart tab and increase its quantity to two.
+  - Verify the order total is $53.00.`
 
-// Every run starts a fresh session, so the journey asks for no reset.
+// The journey asks for no reset: run alone it starts a fresh session, and in the suite the bag
+// test leaves the bag empty before it.
 function buildKomazonCheckoutTest(): string {
   return `test-id: ${KOMAZON_CHECKOUT_TEST_ID}
 name: Komazon checkout journey
@@ -208,27 +251,62 @@ steps:
 `
 }
 
-// A suite replaces a member's target, so the bug URL is a step.
-function buildKomazonCartTotalBugTest(): string {
-  return `test-id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
-name: Komazon cart total (fails on the deliberate cart-total bug)
-target: komazon-cart-total-bug
+function buildKomazonCartTotalTest(): string {
+  return `test-id: ${KOMAZON_CART_TOTAL_TEST_ID}
+name: Komazon cart total
+target: komazon
 steps:
-  - Navigate to https://playground.vostride.dev/shop/?bug=cart-total
-  - Add Everyday Ceramic Mug to the bag, open the shopping bag, and increase that product's quantity to two.
-  - Verify the bag contains exactly two Everyday Ceramic Mugs and the order total is $53.00.
+${STARTER_STEPS}
 `
 }
 
+function buildKomazonCartTotalBugTest(): string {
+  return `test-id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
+name: "[Bug] Komazon cart total is wrong for two mugs"
+target: komazon-cart-total-bug
+steps:
+${STARTER_STEPS}
+`
+}
+
+// A suite's members share one browser session, so a later member opens the Shop page itself.
+function buildKomazonSearchTest(): string {
+  return `test-id: ${KOMAZON_SEARCH_TEST_ID}
+name: Komazon search and clear filters
+target: komazon
+steps:
+  - On the Shop page, search products for impossiblexyz.
+  - Verify the heading "No products found" is shown.
+  - Click Clear filters in the No products found message.
+  - Verify "Everyday Ceramic Mug" is listed.
+`
+}
+
+function buildKomazonBagTest(): string {
+  return `test-id: ${KOMAZON_BAG_TEST_ID}
+name: Komazon bag and free shipping
+target: komazon
+steps:
+  - On the Shop page, add Arc Table Lamp and Linen Hardcover Notebook to the bag, then open the bag.
+  - Verify shipping is Free and the order total is $107.00.
+  - Remove Arc Table Lamp and Linen Hardcover Notebook from the bag.
+  - Verify the heading "Your bag is empty" is shown.
+`
+}
+
+// The shop keeps the journey's Express delivery for later members, so the journey runs last,
+// after the bag test has emptied the bag.
 function buildExamplesSuite(): string {
   return `suite-id: ${EXAMPLES_SUITE_ID}
 name: Komazon examples
 target: komazon
 tests:
+  - test: ${KOMAZON_BAG_PATH}
+    id: ${KOMAZON_BAG_TEST_ID}
+  - test: ${KOMAZON_SEARCH_PATH}
+    id: ${KOMAZON_SEARCH_TEST_ID}
   - test: ${KOMAZON_CHECKOUT_PATH}
     id: ${KOMAZON_CHECKOUT_TEST_ID}
-  - test: ${KOMAZON_CART_TOTAL_BUG_PATH}
-    id: ${KOMAZON_CART_TOTAL_BUG_TEST_ID}
 `
 }
 
@@ -257,7 +335,7 @@ await writeFile('/tmp/agent-qa.env', \`SHIPPING_ADDRESS="\${address}"\\n\`, 'utf
 // Every run starts a fresh session, so the sample asks for no reset.
 function buildKomazonShippingHookTest(): string {
   return `test-id: ${KOMAZON_SHIPPING_HOOK_TEST_ID}
-name: Komazon checkout with a shipping address from a hook
+name: "[Hook] Komazon checkout with a shipping address from a hook"
 target: komazon
 setup:
   - ${SHIPPING_ADDRESS_HOOK_ID}
@@ -269,6 +347,76 @@ steps:
   - Type {{env:SHIPPING_ADDRESS}} into the Street address field, enter city Portland and postal code 97205, then continue to delivery.
   - Select Express delivery and continue with Review order. Verify the review shows {{env:SHIPPING_ADDRESS}} as the street address.
 `
+}
+
+// The app keeps its cart and its bug switches until it restarts, so each example resets it.
+function buildPlaygroundExampleTest(
+  id: string,
+  name: string,
+  target: string,
+  steps: string,
+): string {
+  // YAML reads a leading bracket as the start of a list.
+  const shownName = name.startsWith('[') ? `"${name}"` : name
+  return `test-id: ${id}
+name: ${shownName}
+target: ${target}
+use:
+  mobile:
+    appState: reset
+steps:
+${steps}
+`
+}
+
+interface PlaygroundExample {
+  path: string
+  id: string
+  name: string
+  steps: string
+}
+
+const PLAYGROUND_EXAMPLES: Record<MobileRuntime, readonly PlaygroundExample[]> = {
+  android: [
+    {
+      path: ANDROID_OPEN_KOMAZON_PATH,
+      id: ANDROID_OPEN_KOMAZON_TEST_ID,
+      name: 'Playground opens Komazon on Android',
+      steps: PLAYGROUND_OPEN_KOMAZON_STEPS,
+    },
+    {
+      path: ANDROID_CART_TOTAL_PATH,
+      id: ANDROID_CART_TOTAL_TEST_ID,
+      name: 'Playground Komazon cart total on Android',
+      steps: PLAYGROUND_CART_TOTAL_STEPS,
+    },
+    {
+      path: ANDROID_CART_TOTAL_BUG_PATH,
+      id: ANDROID_CART_TOTAL_BUG_TEST_ID,
+      name: '[Bug] Komazon cart total is wrong for two mugs on Android',
+      steps: PLAYGROUND_CART_TOTAL_BUG_STEPS,
+    },
+  ],
+  ios: [
+    {
+      path: IOS_OPEN_KOMAZON_PATH,
+      id: IOS_OPEN_KOMAZON_TEST_ID,
+      name: 'Playground opens Komazon on iOS',
+      steps: PLAYGROUND_OPEN_KOMAZON_STEPS,
+    },
+    {
+      path: IOS_CART_TOTAL_PATH,
+      id: IOS_CART_TOTAL_TEST_ID,
+      name: 'Playground Komazon cart total on iOS',
+      steps: PLAYGROUND_CART_TOTAL_STEPS,
+    },
+    {
+      path: IOS_CART_TOTAL_BUG_PATH,
+      id: IOS_CART_TOTAL_BUG_TEST_ID,
+      name: '[Bug] Komazon cart total is wrong for two mugs on iOS',
+      steps: PLAYGROUND_CART_TOTAL_BUG_STEPS,
+    },
+  ],
 }
 
 const DEFAULT_HOOKS_FILE = 'hooks.yaml'
@@ -481,7 +629,15 @@ export interface InitCommandHooks {
   chromium?: ChromiumResolver
   // The re-run's latest agent-qa; the default asks the npm registry under a short deadline.
   latestVersion?: LatestVersionAsk
+  // The default lists this machine's phones, emulators and simulators.
+  listDevicesHere?: DevicesHereLister
+  // The default downloads the pinned Playground release from GitHub.
+  playgroundApp?: PlaygroundAppSource
 }
+
+// The run module is large, so init loads it only to list a chosen mobile runtime's devices.
+const listDevicesHereByDefault: DevicesHereLister = async (platform) =>
+  await (await import('./run.js')).listDevicesHereByDefault(platform)
 
 // The streams the Clack rail reads and draws on: stdin and stderr in production.
 export interface InitRail {
@@ -623,14 +779,32 @@ function buildScaffoldFilePlans(
   if (!hasWeb(platform)) return plans
 
   plans.push(
-    scaffoldFilePlan(dir, KOMAZON_CHECKOUT_PATH, buildKomazonCheckoutTest(), force),
+    scaffoldFilePlan(dir, KOMAZON_CART_TOTAL_PATH, buildKomazonCartTotalTest(), force),
     scaffoldFilePlan(dir, KOMAZON_CART_TOTAL_BUG_PATH, buildKomazonCartTotalBugTest(), force),
+    scaffoldFilePlan(dir, KOMAZON_CHECKOUT_PATH, buildKomazonCheckoutTest(), force),
+    scaffoldFilePlan(dir, KOMAZON_SEARCH_PATH, buildKomazonSearchTest(), force),
+    scaffoldFilePlan(dir, KOMAZON_BAG_PATH, buildKomazonBagTest(), force),
     scaffoldFilePlan(dir, EXAMPLES_SUITE_PATH, buildExamplesSuite(), force),
     scaffoldFilePlan(dir, SHIPPING_ADDRESS_SCRIPT_PATH, buildShippingAddressScript(), force),
     scaffoldFilePlan(dir, KOMAZON_SHIPPING_HOOK_PATH, buildKomazonShippingHookTest(), force),
   )
 
   return plans
+}
+
+// Kept out of buildScaffoldFilePlans: the re-run's scaffold row writes every missing file that
+// function lists, and a project an older init made has no Playground target.
+function buildMobileExampleFilePlans(
+  dir: string,
+  platform: InitPlatformInput,
+  force: boolean,
+): InitPathPlan[] {
+  return mobileRuntimesOf(platform).flatMap((runtime) =>
+    PLAYGROUND_EXAMPLES[runtime].map(({ path, id, name, steps }) => {
+      const content = buildPlaygroundExampleTest(id, name, PLAYGROUND_TARGETS[runtime], steps)
+      return scaffoldFilePlan(dir, path, content, force)
+    }),
+  )
 }
 
 // Drawn without the rail's gutter, so the line pastes as it is.
@@ -655,8 +829,12 @@ function packageJsonText(result: InitFileResult, dir: string, realDir: string): 
   return result.outcome === 'updated' ? `${name} updated` : `${name} kept`
 }
 
-function scaffoldText(platform: InitPlatformInput, files: number): string {
-  const what = hasWeb(platform) ? 'config, 3 example tests and a suite' : 'config'
+function scaffoldText(platform: InitPlatformInput, files: number, playgroundTests: number): string {
+  const parts = ['config']
+  if (hasWeb(platform)) parts.push('2 starter tests', 'a suite of 3', 'a hook test')
+  if (playgroundTests > 0) parts.push(`${playgroundTests} Playground app tests`)
+  const what =
+    parts.length === 1 ? 'config' : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`
   return `Scaffold: ${what} (${files} files)`
 }
 
@@ -1136,9 +1314,18 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         }
         recorder.agents(agents)
 
+        const playgroundPin = hooks.playgroundApp?.pin ?? PLAYGROUND_APP_PIN
+        const { devices, lines: deviceLines } = await findInitDevices(
+          mobileRuntimesOf(platform),
+          hooks.listDevicesHere ?? listDevicesHereByDefault,
+          playgroundPin,
+        )
         const config = buildDefaultConfig(
           platform,
           modelSetup.entry === undefined ? [] : [modelSetup.entry],
+          undefined,
+          undefined,
+          devices,
         )
         const agentQaVersion = agentQaAfterInstall(packageJson.text, runningVersion)
         const dependencies = projectDependencies({
@@ -1163,7 +1350,8 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           content: packageJsonPlan.content,
           force: packageJsonPlan.existed && packageJsonPlan.changed,
         }
-        const filePlans = buildScaffoldFilePlans(dir, platform, force)
+        const mobileExamplePlans = buildMobileExampleFilePlans(dir, platform, force)
+        const filePlans = [...buildScaffoldFilePlans(dir, platform, force), ...mobileExamplePlans]
         const targetGitignorePath = join(dir, '.gitignore')
         const targetGitignorePlan: InitPathPlan = {
           root: dir,
@@ -1176,7 +1364,24 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           content: renderScaffoldConfigYaml(config),
           force,
         }
-        const completePlan = [...filePlans, packageJsonFilePlan, targetGitignorePlan, configPlan]
+        // Playground.app is a folder, so a file inside it stands for it in the preflight.
+        const playgroundAppPreflight: Record<MobileRuntime, string> = {
+          android: join(dir, PLAYGROUND_APP_PATHS.android),
+          ios: join(dir, PLAYGROUND_APP_PATHS.ios, 'Info.plist'),
+        }
+        const playgroundRuntimes = mobileRuntimesOf(platform)
+        const playgroundAppPlans: InitPathPlan[] = playgroundRuntimes.map((runtime) => ({
+          root: dir,
+          path: playgroundAppPreflight[runtime],
+          content: '',
+        }))
+        const completePlan = [
+          ...filePlans,
+          packageJsonFilePlan,
+          targetGitignorePlan,
+          configPlan,
+          ...playgroundAppPlans,
+        ]
         preflightInitPlan(completePlan)
 
         const outcomes: InitFileResult[] = []
@@ -1228,10 +1433,52 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
 
           recordOutcome('scaffold', writeConfigMarkerLast(configPlan, {}))
           hooks.onComplete?.([...outcomes])
-          return { outcome: 'done', text: scaffoldText(platform, outcomes.length - before) }
+          return {
+            outcome: 'done',
+            text: scaffoldText(platform, outcomes.length - before, mobileExamplePlans.length),
+          }
         }
 
         const install = (): Promise<InitStepResult> => installPlan(packageJsonPlan)
+
+        const mobile = playgroundRuntimes.length > 0
+        const playgroundMegabytes = Math.round(
+          playgroundRuntimes.reduce((sum, runtime) => sum + playgroundPin[runtime].bytes, 0) /
+            1_000_000,
+        )
+        let arrivedApps: MobileRuntime[] = []
+        const downloadPlaygroundApp = async (): Promise<InitStepResult> => {
+          // The runner only notes a Ctrl-C and waits for the step, so the step aborts its request.
+          const controller = new AbortController()
+          const interrupt = (): void => {
+            controller.abort()
+          }
+          process.on('SIGINT', interrupt)
+          try {
+            const { arrived, failures } = await downloadPlaygroundApps({
+              dir,
+              runtimes: playgroundRuntimes,
+              pin: playgroundPin,
+              fetch: hooks.playgroundApp?.fetch ?? fetchPlaygroundAppByDefault,
+              exists: (path) => host.io.exists(path),
+              removeFolder: (path) => removeFolderInsideRoot({ path, root: dir }),
+              moveFolder: (from, to) => moveFolderInsideRoot({ from, to, root: dir }),
+              force,
+              signal: controller.signal,
+              record: (result) => recordOutcome('playground-app', result),
+            })
+            arrivedApps = arrived
+            if (failures.length > 0) {
+              const reason = failures.map((failure) => failure.reason).join('\n')
+              // The runner masks only a thrown step's message, and this step returns its failure.
+              return { outcome: 'failed', reason: await maskStepText(reason) }
+            }
+            const paths = arrived.map((runtime) => PLAYGROUND_APP_PATHS[runtime])
+            return { outcome: 'done', text: `Playground app: ${paths.join(' and ')}` }
+          } finally {
+            process.off('SIGINT', interrupt)
+          }
+        }
 
         const setUpAgents = async (): Promise<InitStepResult> => {
           let setup: Awaited<ReturnType<typeof installAgentSetup>>
@@ -1283,7 +1530,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
 
         const runner = createInitStepRunner({
           ui,
-          plan: freshInitPlan(),
+          plan: freshInitPlan({ mobile }),
           mask: maskStepText,
         })
         stepRunner = runner
@@ -1300,6 +1547,7 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
           runner.skip('scaffold', `Scaffold: skipped (${reason})`, reason)
           runner.skip('install', `Install: skipped (${reason})`, reason)
           runner.skip('chromium', `Chromium: skipped (${reason})`, reason)
+          if (mobile) runner.skip('playground-app', `Playground app: skipped (${reason})`, reason)
           runner.skip('skills', `Coding agents: skipped (${reason})`, reason)
           runner.skip('validate', `validate: skipped (${reason})`, reason)
         } else {
@@ -1308,9 +1556,11 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
             { title: 'Writing the scaffold' },
             writeScaffold,
           )
-          // AFTER the config marker — the scaffold's last write — so the event describes a
-          // project that exists rather than one being attempted.
           if (scaffold.outcome === 'done') {
+            // Drawn only once the config that holds the devices is written.
+            for (const line of deviceLines) ui.line(line)
+            // AFTER the config marker — the scaffold's last write — so the event describes a
+            // project that exists rather than one being attempted.
             await emitInitCompleted(asked ? 'interactive' : 'scaffold', outcomes)
           }
           await runner.run('install', { title: 'Installing dependencies' }, install)
@@ -1328,6 +1578,13 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
               'chromium',
               { title: 'Installing Chromium', command: CHROMIUM_COMMAND },
               installChromium,
+            )
+          }
+          if (mobile) {
+            await runner.run(
+              'playground-app',
+              { title: `Downloading the Playground app (${playgroundMegabytes} MB)` },
+              downloadPlaygroundApp,
             )
           }
           if (agents.length === 0) {
@@ -1392,9 +1649,16 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
         ) {
           showExampleSecretLine(ui)
         }
+        const suitePath = join(dir, EXAMPLES_SUITE_PATH)
+        const suiteKept = outcomes.some(
+          result => result.path === suitePath && result.outcome === 'preserved',
+        )
         const records = runner.records()
         const skillsDone = records.some(
           (record) => record.name === 'skills' && record.outcome === 'done',
+        )
+        const mobileStarters = playgroundRuntimes.filter(
+          (runtime) => devices[runtime] !== undefined && arrivedApps.includes(runtime),
         )
         const next = initNextSteps({
           steps: records,
@@ -1410,7 +1674,8 @@ export function createInitCommand(hooks: InitCommandHooks = {}): Command {
                 },
               }),
           web: hasWeb(platform),
-          mobile: normalizePlatformSelection(platform).mobileRuntimes.length > 0,
+          ...(suiteKept ? { examples: { starter: true, suite: true, bug: true } } : {}),
+          ...(mobileStarters.length > 0 ? { mobileStarters } : {}),
           agents: skillsDone ? agents : [],
           dashboard,
         })

@@ -19,6 +19,7 @@ COPY packages/agent/package.json packages/agent/
 COPY packages/agent-local/package.json packages/agent-local/
 COPY packages/analytics/package.json packages/analytics/
 COPY packages/android/package.json packages/android/
+COPY packages/appium-runtime/package.json packages/appium-runtime/
 COPY packages/arch/package.json packages/arch/
 COPY packages/cli/package.json packages/cli/
 COPY packages/core/package.json packages/core/
@@ -94,10 +95,6 @@ RUN echo "no" | avdmanager create avd \
     -n "${AGENT_QA_ANDROID_AVD}" \
     -k "${AGENT_QA_ANDROID_SYSTEM_IMAGE}" \
     --device "pixel_6"
-
-# the newest UiAutomator2 driver needs Appium 4, which has no stable release yet
-RUN npm install -g appium@3.9.0 \
-    && appium driver install --source npm appium-uiautomator2-driver@8.7.3
 
 WORKDIR /agent-qa
 

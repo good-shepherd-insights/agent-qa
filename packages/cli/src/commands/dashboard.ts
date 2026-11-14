@@ -75,6 +75,7 @@ import { CliRefusal } from '../composition/cli-refusal.js'
 import { createDeclaredSecretMask } from '../composition/declared-secrets.js'
 import { errorReporter, settleReporting } from '../composition/error-reporting.js'
 import { doorLogLevel, pluginDebugLog } from '../composition/plugin-host.js'
+import { stopProcessAppiumWithin } from '../composition/process-appium.js'
 import { composeRunOwnership } from '../composition/run-owner-probe.js'
 import type { ComposeCliLocalAgentInput } from '../composition/local-agent-host.js'
 import {
@@ -107,33 +108,46 @@ export const DASHBOARD_FUNCTION_CALLER: FunctionCaller = Object.freeze({
 export const SHUTDOWN_WAIT_MARGIN_MS = 500
 
 export interface DashboardShutdownDeps {
-  close(): void
+  close(): void | Promise<void>
   closeMcp(): void
   dispose(): void
   cleanupSessions(boundMs: number): Promise<void>
   releaseRemoteSessions(boundMs: number): Promise<void>
+  stopAppium(boundMs: number): Promise<void> | undefined
   exit(code: number): void | Promise<void>
 }
 
-/** Waits for live-editor cleanup and remote releases, within the bound, then closes and exits 0. */
+/**
+ * Waits for live-editor cleanup and remote releases, then for the server's close and the
+ * process's Appium to stop, each within the bound, then closes the MCP listener and exits 0.
+ */
 export async function shutdownDashboard(deps: DashboardShutdownDeps): Promise<void> {
-  const waits = Promise.all([
-    settled(() => deps.cleanupSessions(REMOTE_RELEASE_BOUND_MS)),
-    settled(() => deps.releaseRemoteSessions(REMOTE_RELEASE_BOUND_MS)),
+  await within(
+    Promise.all([
+      settled(() => deps.cleanupSessions(REMOTE_RELEASE_BOUND_MS)),
+      settled(() => deps.releaseRemoteSessions(REMOTE_RELEASE_BOUND_MS)),
+    ]),
+    REMOTE_RELEASE_BOUND_MS + SHUTDOWN_WAIT_MARGIN_MS,
+  )
+  await Promise.all([
+    within(settled(() => deps.close()), REMOTE_RELEASE_BOUND_MS),
+    deps.stopAppium(REMOTE_RELEASE_BOUND_MS),
   ])
+  deps.closeMcp()
+  deps.dispose()
+  await deps.exit(0)
+}
+
+async function within(wait: Promise<unknown>, boundMs: number): Promise<void> {
   let limit: ReturnType<typeof setTimeout> | undefined
   await Promise.race([
-    waits,
+    wait,
     new Promise<void>((passed) => {
-      limit = setTimeout(passed, REMOTE_RELEASE_BOUND_MS + SHUTDOWN_WAIT_MARGIN_MS)
+      limit = setTimeout(passed, boundMs)
       limit.unref()
     }),
   ])
   clearTimeout(limit)
-  deps.close()
-  deps.closeMcp()
-  deps.dispose()
-  await deps.exit(0)
 }
 
 // A direct exit skips the settle runCli makes, so the dashboard settles before each of its own.
@@ -152,7 +166,7 @@ export function bindLiveSessionMask(mask: (text: string) => string): () => void 
   return errorReporter()?.bindMask(mask) ?? (() => {})
 }
 
-async function settled(wait: () => Promise<void>): Promise<void> {
+async function settled(wait: () => void | Promise<void>): Promise<void> {
   try {
     await wait()
   } catch {
@@ -972,6 +986,8 @@ async function startDashboardBackedServices(
         },
         cleanupSessions,
         releaseRemoteSessions,
+        // The process's Appium, used by runs from the API door or the co-hosted MCP, not the queue.
+        stopAppium: stopProcessAppiumWithin,
         // Explicit, because a silent remote's socket and its close timer keep the loop alive.
         exit: (code) => exitAfterSettling(code),
       })

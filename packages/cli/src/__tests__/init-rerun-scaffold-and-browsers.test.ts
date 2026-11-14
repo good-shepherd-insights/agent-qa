@@ -1,26 +1,36 @@
 // A re-run's browsers and scaffold rows: what pre-checks them, what running them does, and when
-// they are hidden.
+// they are hidden. A re-run writes no Playground example, requests no Playground app and lists no
+// device; init --force is a fresh init, so it requests the app again and replaces the one there.
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 
-import { getAgentQaVersion } from '@vostride/agent-qa-core'
-import { parseDocument } from 'yaml'
+import { getAgentQaVersion, type AndroidHere } from '@vostride/agent-qa-core'
+import { isNode, parseDocument } from 'yaml'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ChromiumResolver } from '../commands/browser-resolver.js'
 import type { InitDocument } from '../commands/init-document.js'
+import { EXAMPLE_PATHS } from '../commands/init-next-steps.js'
 import { SETUP_MENU_QUESTION } from '../commands/init-rerun.js'
+import { PLAYGROUND_APP_PATHS, playgroundAppUrl } from '../commands/playground-app-pin.js'
 import type { FakeInitUiEntry } from './fake-init-ui.js'
-import { cleanupTempProjects, fakeRunner } from './project-fixtures.js'
+import {
+  cleanupTempProjects,
+  fakePlaygroundApp,
+  fakeRunner,
+  mobileInitFakes,
+} from './project-fixtures.js'
 import {
   installAgentQaFixture,
   initializedProject,
@@ -484,5 +494,225 @@ describe("a re-run's scaffold row", () => {
     expect(result.exit, result.stderr).toBe(0)
     expect(labelOf(result.entries, 'scaffold')).toBe('scaffold   nothing missing')
     expect(menuOf(result.entries)?.initialValues ?? 'no menu').not.toContain('scaffold')
+  })
+})
+
+// The shape of a mobile project an older init made: a bare target, no examples and no app.
+function asAnOlderInitMadeIt(project: InitializedProject): void {
+  editConfig(project.root, (doc) => {
+    doc.deleteIn(['registry', 'targets', 'playground-android'])
+    doc.setIn(['registry', 'targets', 'example-android'], { platform: 'android' })
+  })
+  rmSync(join(project.root, 'tests', 'examples'), { recursive: true })
+  rmSync(join(project.root, 'app-bundles'), { recursive: true, force: true })
+}
+
+describe('a re-run and the Playground examples', () => {
+  it.each(['scaffold', 'all'])(
+    '--setup %s leaves a deleted Playground example deleted and the other examples as they were',
+    async (rows) => {
+      const project = await initializedProject(`rerun-playground-deleted-${rows}`, {
+        platform: 'android',
+      })
+      const examples = join(project.root, 'tests', 'examples')
+      unlinkSync(join(project.root, EXAMPLE_PATHS.androidStarter))
+      const before = snapshot(examples)
+
+      const result = await rerun(project, ['--setup', rows, '--json'], { plain: true })
+
+      expect(result.exit, result.stderr).toBe(0)
+      expect(existsSync(join(project.root, EXAMPLE_PATHS.androidStarter))).toBe(false)
+      expect(snapshot(examples)).toEqual(before)
+      const doc = JSON.parse(result.stdout) as InitDocument
+      expect(setupRow(doc, 'scaffold')).toMatchObject({
+        state: 'nothing missing',
+        prechecked: false,
+      })
+      expect(doc.files.filter((file) => file.step === 'scaffold')).toEqual([])
+    },
+  )
+
+  it.each(['scaffold', 'all'])(
+    '--setup %s writes no examples folder into a mobile project an older init made',
+    async (rows) => {
+      const project = await initializedProject(`rerun-playground-older-${rows}`, {
+        platform: 'android',
+      })
+      asAnOlderInitMadeIt(project)
+
+      const result = await rerun(project, ['--setup', rows, '--json'], { plain: true })
+
+      expect(result.exit, result.stderr).toBe(0)
+      expect(existsSync(join(project.root, 'tests', 'examples'))).toBe(false)
+      const doc = JSON.parse(result.stdout) as InitDocument
+      expect(setupRow(doc, 'scaffold')).toMatchObject({
+        state: 'nothing missing',
+        prechecked: false,
+      })
+      expect(doc.files.filter((file) => file.step === 'scaffold')).toEqual([])
+    },
+  )
+})
+
+const PIXEL: AndroidHere = {
+  attached: [],
+  avds: [{ name: 'Pixel_10_Pro', profile: 'pixel_10_pro', displayName: 'Pixel 10 Pro', os: '17' }],
+}
+
+// The registry block's bytes as the config file holds them.
+function registryText(root: string): string {
+  const text = readFileSync(join(root, 'agent-qa.config.yaml'), 'utf8')
+  const registry = parseDocument(text).get('registry', true)
+  if (!isNode(registry) || !registry.range) return 'no registry block'
+  return text.slice(registry.range[0], registry.range[2])
+}
+
+// Every file under a folder, by its path inside it, with its bytes.
+function filesUnder(folder: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(snapshot(folder)).map(([path, bytes]) => [relative(folder, path), bytes]),
+  )
+}
+
+// A forced init of an Android and iOS project, with nothing installed and no coding agent.
+const FORCED_MOBILE_INIT = [
+  '--force',
+  '--yes',
+  '--pm',
+  'none',
+  '--no-browsers',
+  '--agents',
+  'none',
+  '--llm',
+  'gemini',
+  '--platform',
+  'android,ios',
+  '--json',
+]
+
+// A fresh Android and iOS project, then a framework of an older build put inside Playground.app,
+// the APK's bytes changed by hand, and the APK an older pin left under its own file name.
+async function projectWithAnOlderApp(
+  label: string,
+): Promise<{ project: InitializedProject; old: string; olderPin: string }> {
+  const project = await initializedProject(label, { platform: 'android,ios' })
+  const old = join(project.root, PLAYGROUND_APP_PATHS.ios, 'Frameworks', 'old.framework', 'old')
+  mkdirSync(dirname(old), { recursive: true })
+  writeFileSync(old, 'a framework the new build does not have\n')
+  writeFileSync(join(project.root, PLAYGROUND_APP_PATHS.android), 'an older APK\n')
+  const olderPin = join(project.root, 'app-bundles', 'playground-android-26.10.01-0a1b2c3.apk')
+  writeFileSync(olderPin, 'the APK of an older pin\n')
+  return { project, old, olderPin }
+}
+
+describe('the Playground app and the devices on a project that already has a config', () => {
+  it('a re-run with --setup all requests no app, has no playground-app step and leaves the app as it was', async () => {
+    const project = await initializedProject('rerun-playground-app', { platform: 'android' })
+    const app = join(project.root, 'app-bundles')
+    const before = snapshot(app)
+    const fakes = mobileInitFakes()
+
+    const result = await rerun(project, ['--setup', 'all', '--json'], {
+      plain: true,
+      hooks: fakes.hooks,
+    })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(fakes.requests).toEqual([])
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(stepOf(doc, 'playground-app')).toBe('no playground-app step')
+    expect(Object.keys(before)).toContain(join(project.root, PLAYGROUND_APP_PATHS.android))
+    expect(snapshot(app)).toEqual(before)
+  })
+
+  it('a re-run with --setup all requests no app and leaves a deleted app-bundles deleted', async () => {
+    const project = await initializedProject('rerun-playground-app-deleted', { platform: 'android' })
+    rmSync(join(project.root, 'app-bundles'), { recursive: true })
+    const fakes = mobileInitFakes()
+
+    const result = await rerun(project, ['--setup', 'all', '--json'], {
+      plain: true,
+      hooks: fakes.hooks,
+    })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(fakes.requests).toEqual([])
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(stepOf(doc, 'playground-app')).toBe('no playground-app step')
+    expect(existsSync(join(project.root, 'app-bundles'))).toBe(false)
+  })
+
+  it('a re-run with --setup all lists no device and leaves the registry block byte for byte as it was', async () => {
+    const project = await initializedProject('rerun-playground-device', {
+      platform: 'android',
+      hooks: mobileInitFakes({ android: PIXEL }).hooks,
+    })
+    const before = registryText(project.root)
+    const fakes = mobileInitFakes()
+
+    const result = await rerun(project, ['--setup', 'all', '--json'], {
+      plain: true,
+      hooks: fakes.hooks,
+    })
+
+    expect(result.exit, result.stderr).toBe(0)
+    expect(fakes.listed).toEqual([])
+    expect(before).toContain('model: Pixel 10 Pro')
+    expect(registryText(project.root)).toBe(before)
+  })
+
+  it("init --force requests both apps again, replaces the APK and Playground.app as a whole, and leaves an older pin's APK alone", async () => {
+    const { project, old, olderPin } = await projectWithAnOlderApp('force-playground-app')
+    const fresh = await initializedProject('force-playground-app-fresh', {
+      platform: 'android,ios',
+    })
+    const fakes = mobileInitFakes()
+
+    const result = await rerun(project, FORCED_MOBILE_INIT, { plain: true, hooks: fakes.hooks })
+
+    expect(result.exit, result.stderr).toBe(0)
+    const pin = fakes.hooks.playgroundApp.pin
+    expect(fakes.requests.map((request) => request.url)).toEqual([
+      playgroundAppUrl(pin, 'android'),
+      playgroundAppUrl(pin, 'ios'),
+    ])
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(stepOf(doc, 'playground-app')).toEqual({ name: 'playground-app', outcome: 'done' })
+    expect(existsSync(old)).toBe(false)
+    expect(readFileSync(join(project.root, PLAYGROUND_APP_PATHS.android))).toEqual(
+      Buffer.from(fakePlaygroundApp().bytes.android),
+    )
+    const freshApp = filesUnder(join(fresh.root, PLAYGROUND_APP_PATHS.ios))
+    expect(freshApp).not.toEqual({})
+    expect(filesUnder(join(project.root, PLAYGROUND_APP_PATHS.ios))).toEqual(freshApp)
+    expect(readFileSync(olderPin, 'utf8')).toBe('the APK of an older pin\n')
+    expect(doc.files.filter((file) => file.step === 'playground-app')).toEqual([
+      { path: PLAYGROUND_APP_PATHS.android, outcome: 'updated', step: 'playground-app' },
+      { path: PLAYGROUND_APP_PATHS.ios, outcome: 'updated', step: 'playground-app' },
+    ])
+  })
+
+  it('init --force whose download fails exits 3 and leaves every file in app-bundles as it was', async () => {
+    const { project, old, olderPin } = await projectWithAnOlderApp('force-playground-app-failed')
+    const app = join(project.root, 'app-bundles')
+    const before = snapshot(app)
+    const unreachable = new Error('the network is unreachable')
+    const fakes = mobileInitFakes({}, { android: unreachable, ios: unreachable })
+
+    const result = await rerun(project, FORCED_MOBILE_INIT, { plain: true, hooks: fakes.hooks })
+
+    expect(result.exit, result.stderr).toBe(3)
+    const pin = fakes.hooks.playgroundApp.pin
+    expect(fakes.requests.map((request) => request.url)).toEqual([
+      playgroundAppUrl(pin, 'android'),
+      playgroundAppUrl(pin, 'ios'),
+    ])
+    const doc = JSON.parse(result.stdout) as InitDocument
+    expect(stepOf(doc, 'playground-app')).toMatchObject({
+      name: 'playground-app',
+      outcome: 'failed',
+    })
+    expect(Object.keys(before)).toEqual(expect.arrayContaining([old, olderPin]))
+    expect(snapshot(app)).toEqual(before)
   })
 })

@@ -15,6 +15,7 @@ import { fakeInitUi, type FakeInitUi } from './fake-init-ui.js'
 import {
   cleanupTempProjects,
   fakeRunner,
+  mobileInitFakes,
   skillFolderFiles,
   tempProject,
   writeInstalledPackage,
@@ -23,6 +24,9 @@ import {
 
 const PLAN: readonly InitStepName[] = ['package-json', 'scaffold', 'install']
 const CHROMIUM_COMMAND = 'npx agent-qa install-browsers --chromium'
+const WEB_SCAFFOLD_LINE =
+  /^✓ Scaffold: config, 2 starter tests, a suite of 3 and a hook test \((\d+) files\)$/mu
+const MOBILE_SCAFFOLD_LINE = /^Scaffold: config and 3 Playground app tests \((\d+) files\)$/u
 
 const silentAnalytics: typeof composeAnalyticsHost = async () =>
   composeAnalyticsHost({
@@ -51,6 +55,7 @@ async function init(
     host: { homedir: home, env: {}, run: options.run ?? fakeRunner() },
     isTTY: options.isTTY ?? false,
     composeAnalytics: silentAnalytics,
+    ...mobileInitFakes().hooks,
     ...(options.ui === undefined ? {} : { ui: options.ui }),
   })
   parent.exitOverride()
@@ -89,9 +94,7 @@ describe('a fresh init draws one line per step', () => {
     const lines = written(stderr).split('\n')
     const name = sanitizedPackageName(basename(root))
     const packageJson = lines.indexOf(`✓ package.json created (${name})`)
-    const scaffold = lines.findIndex((line) =>
-      /^✓ Scaffold: config, 3 example tests and a suite \(\d+ files\)$/u.test(line),
-    )
+    const scaffold = lines.findIndex((line) => WEB_SCAFFOLD_LINE.test(line))
     const install = lines.findIndex((line) => line.startsWith('– Declared agent-qa '))
     const chromium = lines.indexOf('✓ Chromium installed')
     expect(packageJson).toBe(0)
@@ -103,26 +106,41 @@ describe('a fresh init draws one line per step', () => {
     expect(log).not.toHaveBeenCalled()
   })
 
-  it('the scaffold line counts the files the scaffold wrote', async () => {
+  it('the scaffold line counts the scaffold files, and each of them is in the folder', async () => {
     const { root, home } = tempProject('steps-count')
-    const ui = fakeInitUi()
 
-    await init(root, home, { ui })
+    await init(root, home, {
+      args: ['--json', '--platform', 'web', '--llm', 'gemini', '--pm', 'none'],
+    })
 
-    const scaffold = ui.entries.find(
-      (entry) => entry.kind === 'done' && entry.text.startsWith('Scaffold:'),
+    const line = WEB_SCAFFOLD_LINE.exec(written(stderr))
+    const document = JSON.parse(written(stdout)) as { files: { step: string; path: string }[] }
+    const scaffolded = document.files.filter((file) => file.step === 'scaffold')
+    expect(line, 'init prints the scaffold line').not.toBeNull()
+    expect(Number(line?.[1])).toBe(scaffolded.length)
+    expect(scaffolded.map((file) => file.path)).toEqual(
+      expect.arrayContaining([
+        'tests/examples/komazon-cart-total.yaml',
+        'suites/examples.suite.yaml',
+        'agent-qa.config.yaml',
+      ]),
     )
-    expect(scaffold?.text).toBe('Scaffold: config, 3 example tests and a suite (13 files)')
+    for (const file of scaffolded) {
+      expect(existsSync(join(root, file.path)), `${file.path} is in the folder`).toBe(true)
+    }
   })
 
-  it('a mobile scaffold names only the config', async () => {
+  it('a mobile scaffold line names the config and the Playground app tests', async () => {
     const { root, home } = tempProject('steps-mobile')
     const ui = fakeInitUi()
 
     const args = ['--platform', 'android', '--llm', 'gemini', '--pm', 'none']
     await init(root, home, { ui, args })
 
-    expect(ui.entries).toContainEqual({ kind: 'done', text: 'Scaffold: config (8 files)' })
+    expect(ui.entries).toContainEqual({
+      kind: 'done',
+      text: expect.stringMatching(MOBILE_SCAFFOLD_LINE),
+    })
   })
 
   it('draws its titled steps through the seam and lists no files', async () => {
@@ -180,7 +198,9 @@ describe('a fresh init draws one line per step', () => {
     expect(error).toMatchObject({ exitCode: 3 })
     expect(ui.entries.filter((entry) => entry.kind === 'done').map((entry) => entry.text)).toEqual([
       `package.json created (${sanitizedPackageName(basename(root))})`,
-      'Scaffold: config, 3 example tests and a suite (13 files)',
+      expect.stringMatching(
+        /^Scaffold: config, 2 starter tests, a suite of 3 and a hook test \(\d+ files\)$/u,
+      ),
       expect.stringMatching(/^Claude Code and Codex: \d+ skills, MCP entries, AGENTS\.md block/u),
     ])
     expect(ui.entries).toContainEqual({
@@ -204,6 +224,7 @@ describe('a fresh init draws one line per step', () => {
       host: { homedir: home, env: {}, run },
       isTTY: false,
       composeAnalytics: silentAnalytics,
+      ...mobileInitFakes().hooks,
       ui,
       afterWrite: (result) => {
         if (result.path.endsWith('package.json')) throw new Error('EACCES: permission denied')
@@ -240,6 +261,7 @@ describe('a fresh init draws one line per step', () => {
       host: { homedir: home, env: {}, run },
       isTTY: true,
       composeAnalytics: silentAnalytics,
+      ...mobileInitFakes().hooks,
       ui,
       dashboardPort: {
         probe: async () => {

@@ -16,7 +16,12 @@ import { INIT_MODEL_CHOICES } from '../commands/init-model-choice.js'
 import { composeAnalyticsHost } from '../composition/analytics-host.js'
 import { KEY, answeringTerminal, clackStreams, type ClackStreams } from './clack-keys.js'
 import { fakeInitUi, type FakeInitUi } from './fake-init-ui.js'
-import { cleanupTempProjects, fakeRunner, tempProject } from './project-fixtures.js'
+import {
+  cleanupTempProjects,
+  fakeRunner,
+  mobileInitFakes,
+  tempProject,
+} from './project-fixtures.js'
 
 const SUBSCRIPTION_AUTH_PACKAGE = '@vostride/agent-qa-subscription-auth'
 const MODEL_QUESTION = 'Which model should agent-qa use?'
@@ -63,6 +68,7 @@ function initCommand(root: string, home: string, extra: Parameters<typeof create
     cwd: root,
     host: { homedir: home, env: {}, run: fakeRunner() },
     composeAnalytics: silentAnalytics,
+    ...mobileInitFakes().hooks,
     ...extra,
   })
   parent.exitOverride()
@@ -508,7 +514,14 @@ describe('subscription model defaults', () => {
 })
 
 const GETTING_STARTED = 'https://vostride.com/docs/agent-qa/quickstart'
-const RUN_EXAMPLES = 'npx agent-qa run suites/examples.suite.yaml'
+const EXAMPLE_LINES = [
+  'Start with the two-step test, which passes:',
+  'npx agent-qa run tests/examples/komazon-cart-total.yaml',
+  'Then run the suite of three Komazon tests, which passes:',
+  'npx agent-qa run suites/examples.suite.yaml',
+  "Run the test that fails on the playground's deliberate bug (exit 1):",
+  'npx agent-qa run tests/examples/komazon-cart-total-bug.yaml',
+]
 
 function nextStepNotes(ui: FakeInitUi): string[][] {
   return ui.entries.flatMap((entry) =>
@@ -517,7 +530,7 @@ function nextStepNotes(ui: FakeInitUi): string[][] {
 }
 
 describe('init next steps', () => {
-  it('a Codex subscription under --pm none lists the install, validate, the auth login line, the run and the dashboard in one box', async () => {
+  it('a Codex subscription under --pm none lists the install, validate, the auth login line, the examples and the dashboard in one box', async () => {
     const { ui } = await init(['--platform', 'web', '--llm', 'codex'])
 
     expect(nextStepNotes(ui)).toEqual([
@@ -525,7 +538,7 @@ describe('init next steps', () => {
         'npm install',
         'npx agent-qa validate',
         'npx agent-qa auth login --config codex',
-        RUN_EXAMPLES,
+        ...EXAMPLE_LINES,
         'npx agent-qa dashboard',
       ],
     ])

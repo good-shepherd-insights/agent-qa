@@ -68,6 +68,7 @@ import {
   REMOTE_RELEASE_BOUND_MS,
   startedRemoteReleases,
 } from '../composition/remote-sessions.js'
+import { ensureProcessAppium, stopProcessAppium } from '../composition/process-appium.js'
 import {
   DeclaredSecretsUnavailableError,
   readDeclaredSecrets,
@@ -278,19 +279,6 @@ async function buildStorageStateStore(configDir: string): Promise<import('@vostr
   return new FsStorageStateStore({ root: resolve(configDir, '.agent-qa') })
 }
 
-let _appiumManager: InstanceType<typeof import('@vostride/agent-qa-dashboard').AppiumManager> | null = null
-
-async function acquireAppium(logLevel: string): Promise<string | undefined> {
-  const { AppiumManager } = await import('@vostride/agent-qa-dashboard')
-  if (!_appiumManager) {
-    _appiumManager = new AppiumManager({
-      logLevel: logLevel === 'debug' ? 'debug' : 'normal',
-    })
-  }
-  await _appiumManager.acquire()
-  return _appiumManager.getUrl()
-}
-
 export type DevicesHereLister = (platform: 'android' | 'ios') => Promise<AndroidHere | IOSHere>
 
 export const listDevicesHereByDefault: DevicesHereLister = async (platform) => {
@@ -418,7 +406,7 @@ export interface PrepareMobileDeviceInput {
   readonly envUrl: string | undefined
   // The host's Appium, such as the dashboard's lease, bound to this run.
   readonly hostAppium?: AppiumProvider
-  readonly startAppium: () => Promise<string | undefined>
+  readonly startAppium: () => Promise<string>
   readonly listDevicesHere: DevicesHereLister
 }
 
@@ -460,8 +448,7 @@ export async function prepareMobileDevice(
   if (input.hostAppium !== undefined) {
     return { here, appiumUrl: await acquireHostAppium(input.hostAppium, resolved), managed: false }
   }
-  const started = await input.startAppium()
-  return { here, ...(started === undefined ? {} : { appiumUrl: started }), managed: true }
+  return { here, appiumUrl: await input.startAppium(), managed: true }
 }
 
 // The host's Appium failing to start fails this member, never the queue.
@@ -486,9 +473,9 @@ async function acquireHostAppium(
 async function startAppiumOrThrow(
   logLevel: string,
   setup: { platform: 'android' | 'ios'; targetName: string; deviceName: string | undefined },
-): Promise<string | undefined> {
+): Promise<string> {
   try {
-    return await acquireAppium(logLevel)
+    return await ensureProcessAppium(logLevel)
   } catch (err) {
     throw new MobileSetupError({
       category: 'appium-startup',
@@ -500,10 +487,6 @@ async function startAppiumOrThrow(
 }
 
 export type { AppiumProvider }
-
-function releaseAppium(): void {
-  _appiumManager?.release()
-}
 
 export { processRemoteSessions, releaseRemoteSessions, REMOTE_RELEASE_BOUND_MS }
 
@@ -2757,7 +2740,7 @@ async function executeSuites(
   }
 
   await startedRemoteReleases()
-  releaseAppium()
+  await stopProcessAppium()
   if (remoteRefusal === undefined) return { exitCode, remoteRefused: false }
   printRunText(
     pc.red(redactSecretValue(remoteRefusal.message, variableContext?.secretRedactor)),
@@ -5572,7 +5555,7 @@ export function createRunCommand(
         }
 
         await startedRemoteReleases()
-        releaseAppium()
+        await stopProcessAppium()
 
         record.close()
 
@@ -5582,6 +5565,7 @@ export function createRunCommand(
         await exitAtNormalEnd(exitCode)
       } catch (err) {
         await startedRemoteReleases()
+        await stopProcessAppium()
         // Input refusals become output and an exit code only here, at the door with a terminal.
         if (err instanceof CliRunInputError) {
           if (err.lines.length > 0) {

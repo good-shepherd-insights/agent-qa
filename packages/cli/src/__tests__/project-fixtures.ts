@@ -1,13 +1,29 @@
+import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { crc32, deflateRawSync } from 'node:zlib'
 
+import type { AndroidHere, IOSHere } from '@vostride/agent-qa-core'
+
+import type {
+  PlaygroundAppFetch,
+  PlaygroundAppRequest,
+  PlaygroundAppSource,
+} from '../commands/playground-app.js'
+import {
+  PLAYGROUND_APP_PIN,
+  playgroundAppUrl,
+  type PlaygroundAppFile,
+  type PlaygroundAppPin,
+} from '../commands/playground-app-pin.js'
 import type {
   CommandRunner,
   ProjectIo,
   RunOptions,
   RunResult,
 } from '../commands/project-host.js'
+import type { DevicesHereLister } from '../commands/run.js'
 
 const roots: string[] = []
 
@@ -56,6 +72,175 @@ export function fakeRunner(
     return await script({ command, args, options })
   }
   return Object.assign(run, { calls })
+}
+
+export interface FakePlaygroundApp {
+  source: PlaygroundAppSource & { pin: PlaygroundAppPin }
+  requests: PlaygroundAppRequest[]
+  bytes: { android: Uint8Array; ios: Uint8Array }
+}
+
+function pinnedTo(file: PlaygroundAppFile, bytes: Uint8Array): PlaygroundAppFile {
+  return {
+    ...file,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    bytes: bytes.byteLength,
+  }
+}
+
+export interface ZipFixtureEntry {
+  name: string
+  bytes: Uint8Array
+  // Written into the upper 16 bits of the external attributes, as a Unix zip does.
+  mode?: number
+  deflate?: boolean
+  flags?: number
+  method?: number
+  size?: number
+}
+
+export interface ZipFixtureArchive {
+  count?: number
+  offset?: number
+}
+
+export function buildZip(
+  entries: readonly ZipFixtureEntry[],
+  archive: ZipFixtureArchive = {},
+): Uint8Array {
+  const records: Buffer[] = []
+  const directory: Buffer[] = []
+  let offset = 0
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, 'utf8')
+    const data = entry.deflate ? deflateRawSync(entry.bytes) : Buffer.from(entry.bytes)
+    const flags = entry.flags ?? 0
+    const method = entry.method ?? (entry.deflate ? 8 : 0)
+    const size = entry.size ?? entry.bytes.byteLength
+    const crc = crc32(entry.bytes)
+    const mode = entry.mode ?? (entry.name.endsWith('/') ? 0o40755 : 0o100644)
+
+    const local = Buffer.alloc(30)
+    local.writeUInt32LE(0x04034b50, 0)
+    local.writeUInt16LE(20, 4)
+    local.writeUInt16LE(flags, 6)
+    local.writeUInt16LE(method, 8)
+    local.writeUInt32LE(crc, 14)
+    local.writeUInt32LE(data.byteLength, 18)
+    local.writeUInt32LE(size, 22)
+    local.writeUInt16LE(name.byteLength, 26)
+    records.push(local, name, data)
+
+    const central = Buffer.alloc(46)
+    central.writeUInt32LE(0x02014b50, 0)
+    central.writeUInt16LE(0x0314, 4)
+    central.writeUInt16LE(20, 6)
+    central.writeUInt16LE(flags, 8)
+    central.writeUInt16LE(method, 10)
+    central.writeUInt32LE(crc, 16)
+    central.writeUInt32LE(data.byteLength, 20)
+    central.writeUInt32LE(size, 24)
+    central.writeUInt16LE(name.byteLength, 28)
+    central.writeUInt32LE((mode << 16) >>> 0, 38)
+    central.writeUInt32LE(offset, 42)
+    directory.push(central, name)
+
+    offset += local.byteLength + name.byteLength + data.byteLength
+  }
+  const listing = Buffer.concat(directory)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054b50, 0)
+  end.writeUInt16LE(archive.count ?? entries.length, 8)
+  end.writeUInt16LE(archive.count ?? entries.length, 10)
+  end.writeUInt32LE(listing.byteLength, 12)
+  end.writeUInt32LE(archive.offset ?? offset, 16)
+  return new Uint8Array(Buffer.concat([...records, listing, end]))
+}
+
+// The small simulator build the fake answers with: folders, a stored file, a deflated file and
+// an executable, all under Playground.app/ as in the real archive.
+export function fakePlaygroundIosEntries(): ZipFixtureEntry[] {
+  const text = (value: string) => new TextEncoder().encode(value)
+  return [
+    { name: 'Playground.app/', bytes: new Uint8Array(), mode: 0o40755 },
+    {
+      name: 'Playground.app/Info.plist',
+      bytes: text('a stand-in for the Info.plist\n'),
+      mode: 0o100644,
+    },
+    {
+      name: 'Playground.app/main.jsbundle',
+      bytes: text('a stand-in for the JavaScript bundle\n'.repeat(8)),
+      mode: 0o100644,
+      deflate: true,
+    },
+    { name: 'Playground.app/Frameworks/', bytes: new Uint8Array(), mode: 0o40755 },
+    {
+      name: 'Playground.app/Frameworks/hermesvm.framework/',
+      bytes: new Uint8Array(),
+      mode: 0o40755,
+    },
+    {
+      name: 'Playground.app/Frameworks/hermesvm.framework/hermesvm',
+      bytes: text('a stand-in for an executable\n'),
+      mode: 0o100755,
+    },
+  ]
+}
+
+// A few bytes stand in for the APK and a small zip for the simulator build, and the pin is the
+// real one with their sha256 and size.
+export function fakePlaygroundApp(
+  answers: { android?: Uint8Array | Error; ios?: Uint8Array | Error } = {},
+): FakePlaygroundApp {
+  const bytes = {
+    android: new TextEncoder().encode('a stand-in for the Playground APK\n'),
+    ios: buildZip(fakePlaygroundIosEntries()),
+  }
+  const pin: PlaygroundAppPin = {
+    ...PLAYGROUND_APP_PIN,
+    android: pinnedTo(PLAYGROUND_APP_PIN.android, bytes.android),
+    ios: pinnedTo(PLAYGROUND_APP_PIN.ios, bytes.ios),
+  }
+  const requests: PlaygroundAppRequest[] = []
+  const fetch: PlaygroundAppFetch = async (request) => {
+    requests.push(request)
+    const runtime = (['android', 'ios'] as const).find(
+      (name) => request.url === playgroundAppUrl(pin, name),
+    )
+    if (runtime === undefined) throw new Error(`no Playground file is at ${request.url}`)
+    const answer = answers[runtime] ?? bytes[runtime]
+    if (answer instanceof Error) throw answer
+    return answer
+  }
+  return { source: { fetch, pin }, requests, bytes }
+}
+
+export interface MobileInitFakes {
+  hooks: { listDevicesHere: DevicesHereLister; playgroundApp: FakePlaygroundApp['source'] }
+  // The platforms the lister was asked for, in order.
+  listed: string[]
+  requests: PlaygroundAppRequest[]
+}
+
+// The lister finds nothing unless it is handed a listing: with no candidate, pickDeviceHere never
+// calls core's findDeviceHere, which the suites that mock core down to a few exports leave out.
+export function mobileInitFakes(
+  devices: { android?: AndroidHere; ios?: IOSHere } = {},
+  answers: { android?: Uint8Array | Error; ios?: Uint8Array | Error } = {},
+): MobileInitFakes {
+  const listed: string[] = []
+  const listDevicesHere: DevicesHereLister = async (platform) => {
+    listed.push(platform)
+    if (platform === 'android') return devices.android ?? { attached: [], avds: [] }
+    return devices.ios ?? { simulators: [] }
+  }
+  const playground = fakePlaygroundApp(answers)
+  return {
+    hooks: { listDevicesHere, playgroundApp: playground.source },
+    listed,
+    requests: playground.requests,
+  }
 }
 
 // A running agent-qa whose package.json names its bin, readable where node:fs is mocked.

@@ -148,6 +148,12 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     reason: 'project scaffolding writes config and model defaults; joins the config mutation class',
   },
   {
+    file: 'packages/cli/src/commands/init-devices.ts',
+    specifier: '@vostride/agent-qa-core',
+    clearedBy: '395',
+    reason: "init picks one device per mobile runtime and checks the entry it writes with core's finder, the one a run uses; joins the config mutation class with init",
+  },
+  {
     file: 'packages/cli/src/commands/init-model-choice.ts',
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
@@ -164,12 +170,6 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     specifier: '@vostride/agent-qa-core',
     clearedBy: '395',
     reason: "init's re-run reads the auth store's path from core to report the model's status; joins the config mutation class with init",
-  },
-  {
-    file: 'packages/cli/src/commands/install-mobile-drivers.ts',
-    specifier: '@vostride/agent-qa-core',
-    clearedBy: '395',
-    reason: 'mobile driver installation is host mutation; joins the environment action class',
   },
   {
     file: 'packages/cli/src/commands/latest-version-ask.ts',
@@ -346,6 +346,12 @@ export const SURFACE_FIREWALL_LEDGER: readonly SurfaceLedgerEntry[] = [
     specifier: '@vostride/agent-qa-runner',
     clearedBy: '395',
     reason: "the run's plugin host types its declared secrets and session registry with the runner's ports; joins the typed config action class",
+  },
+  {
+    file: 'packages/cli/src/composition/process-appium.ts',
+    specifier: '@vostride/agent-qa-dashboard',
+    clearedBy: 'M5',
+    reason: "the module holds the process's Appium manager, the dashboard package's class, shared by the run, daemon, MCP and dashboard hosts; rewired when the dashboards enter the firewall in M5",
   },
   {
     // Moved out of run.ts so the daemon and MCP hosts release sessions without loading the run.

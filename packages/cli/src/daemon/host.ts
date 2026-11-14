@@ -49,6 +49,7 @@ import { analyticsEvent } from '../composition/analytics-host.js'
 import type { CliAnalyticsHost } from '../composition/analytics-host.js'
 import { createShutdownController } from '../commands/shutdown-controller.js'
 import { releaseRemoteSessions, REMOTE_RELEASE_BOUND_MS } from '../composition/remote-sessions.js'
+import { stopProcessAppiumWithin } from '../composition/process-appium.js'
 import {
   completedRunDir,
   completedRunHandoffPath,
@@ -173,6 +174,7 @@ export type DaemonShutdownStage =
   | 'jobDispatcher.stop'
   | 'localAgent.close'
   | 'remoteSessions.release'
+  | 'appium.stop'
   | 'releaseLease'
 
 export interface DaemonHostOperations {
@@ -189,6 +191,7 @@ export interface DaemonHostOperations {
   hardExit(code: number): void
   /** Disconnects every remote session the daemon's runs hold, each within `boundMs`. */
   releaseRemoteSessions(boundMs: number): Promise<void>
+  stopAppium(boundMs: number): Promise<void> | undefined
   /** Focused failure-injection seam around each awaited shutdown stage. */
   runShutdownStage(
     stage: DaemonShutdownStage,
@@ -350,6 +353,7 @@ function defaultOperations(): DaemonHostOperations {
     offSignal: (signal, listener) => process.off(signal, listener),
     hardExit: (code) => process.exit(code),
     releaseRemoteSessions,
+    stopAppium: stopProcessAppiumWithin,
     runShutdownStage: async (_stage, action) => {
       await action()
     },
@@ -1702,6 +1706,10 @@ export async function runDaemonHost(input: DaemonHostOptions): Promise<number> {
         recovery = undefined
         runSyncCleanup('recovery.close', () => activeRecovery?.close())
         await runStage('remoteSessions.release', () => releasingRemotes)
+        // Only once the local agent has closed, so no run of this daemon still uses the server.
+        await runStage('appium.stop', async () => {
+          await operations.stopAppium(REMOTE_RELEASE_BOUND_MS)
+        })
 
         if (releaseAuthority) {
           await runStage('releaseLease', () => {

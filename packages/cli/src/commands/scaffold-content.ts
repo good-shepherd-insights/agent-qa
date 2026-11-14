@@ -8,6 +8,11 @@ import {
   composeManagedBlock,
   type ManagedBlockContent,
 } from './managed-block.js'
+import {
+  PLAYGROUND_ANDROID_ACTIVITY,
+  PLAYGROUND_APP_ID,
+  PLAYGROUND_APP_PATHS,
+} from './playground-app-pin.js'
 
 export const SUPPORTED_INIT_PLATFORMS = ['web', 'android', 'ios'] as const
 export type Platform = (typeof SUPPORTED_INIT_PLATFORMS)[number]
@@ -36,7 +41,7 @@ export function parseInitPlatform(value: string): Platform {
   throw new Error(`Unsupported init platform "${value}"`)
 }
 
-export function normalizePlatformSelection(platform: InitPlatformInput): InitPlatformSelection {
+function normalizePlatformSelection(platform: InitPlatformInput): InitPlatformSelection {
   if (typeof platform !== 'string') {
     return {
       capabilities: [...new Set(platform.capabilities)],
@@ -88,14 +93,38 @@ export function hasWeb(platform: InitPlatformInput): boolean {
   return normalizePlatformSelection(platform).capabilities.includes('web')
 }
 
-export function hasMobile(platform: InitPlatformInput): boolean {
+function hasMobile(platform: InitPlatformInput): boolean {
   return normalizePlatformSelection(platform).capabilities.includes('mobile')
 }
+
+// Android before iOS, whatever order the selection holds.
+export function mobileRuntimesOf(platform: InitPlatformInput): MobileRuntime[] {
+  const { mobileRuntimes } = normalizePlatformSelection(platform)
+  return (['android', 'ios'] as const).filter((runtime) => mobileRuntimes.includes(runtime))
+}
+
+export const PLAYGROUND_TARGETS = {
+  android: 'playground-android',
+  ios: 'playground-ios',
+} as const
+
+export interface ScaffoldDevice {
+  // The key under registry.devices.
+  readonly name: string
+  readonly profile: {
+    readonly platform: MobileRuntime
+    readonly model: string
+    readonly os?: string
+    readonly id?: string
+  }
+}
+export type ScaffoldDevices = Partial<Record<MobileRuntime, ScaffoldDevice>>
 
 // `targets` is an override: init passes example targets, the scaffold one derived target.
 export function buildTargets(
   platform: InitPlatformInput,
   override?: Record<string, unknown>,
+  devices?: ScaffoldDevices,
 ): Record<string, unknown> {
   if (override !== undefined) return override
   const selection = normalizePlatformSelection(platform)
@@ -109,13 +138,45 @@ export function buildTargets(
     }
   }
   if (selection.mobileRuntimes.includes('android')) {
-    targets['example-android'] = { platform: 'android' }
+    targets[PLAYGROUND_TARGETS.android] = {
+      platform: 'android',
+      appPackage: PLAYGROUND_APP_ID,
+      appActivity: PLAYGROUND_ANDROID_ACTIVITY,
+      ...(devices?.android === undefined ? {} : { device: devices.android.name }),
+      app: { path: PLAYGROUND_APP_PATHS.android },
+    }
   }
   if (selection.mobileRuntimes.includes('ios')) {
-    targets['example-ios'] = { platform: 'ios' }
+    targets[PLAYGROUND_TARGETS.ios] = {
+      platform: 'ios',
+      bundleId: PLAYGROUND_APP_ID,
+      ...(devices?.ios === undefined ? {} : { device: devices.ios.name }),
+      app: { path: PLAYGROUND_APP_PATHS.ios },
+    }
   }
 
   return targets
+}
+
+function buildDevices(
+  platform: InitPlatformInput,
+  devices: ScaffoldDevices | undefined,
+): Record<string, unknown> {
+  const { mobileRuntimes } = normalizePlatformSelection(platform)
+  const written: Record<string, unknown> = {}
+  for (const runtime of ['android', 'ios'] as const) {
+    const device = devices?.[runtime]
+    if (device === undefined || !mobileRuntimes.includes(runtime)) continue
+    // Copied key by key, so a profile reads platform, model, os, id and carries nothing else.
+    const { profile } = device
+    written[device.name] = {
+      platform: profile.platform,
+      model: profile.model,
+      ...(profile.os === undefined ? {} : { os: profile.os }),
+      ...(profile.id === undefined ? {} : { id: profile.id }),
+    }
+  }
+  return written
 }
 
 // `llmEntries` arrives resolved, because provider needs are facts about this machine.
@@ -131,17 +192,22 @@ export interface ScaffoldConfigFacts {
   /**
    * `registry.targets`, when the caller has its own.
    *
-   * `init` scaffolds the two Komazon example targets so a fresh project has something to run;
-   * `config.project.scaffold` derives exactly ONE from the utterance's domain and must not carry
-   * init's example targets into a repository nobody asked to have them in.
+   * `init` scaffolds its example targets, Komazon on the web and the Playground app on mobile, so
+   * a fresh project has something to run; `config.project.scaffold` derives exactly ONE from the
+   * utterance's domain and must not carry init's example targets into a repository nobody asked
+   * to have them in.
    */
   readonly targets?: Record<string, unknown>
+  // The device init found for each mobile runtime. A runtime with none gets its target with no
+  // `device`.
+  readonly devices?: ScaffoldDevices
 }
 
 export function buildScaffoldConfig(
   platform: InitPlatformInput,
   facts: ScaffoldConfigFacts,
 ): Record<string, unknown> {
+  const devices = buildDevices(platform, facts.devices)
   const config: Record<string, unknown> = {
     workspace: {
       testMatch: ['tests/**/*.yaml'],
@@ -169,9 +235,10 @@ export function buildScaffoldConfig(
       logging: { level: 'warn' },
     },
     registry: {
+      ...(Object.keys(devices).length === 0 ? {} : { devices }),
       // The model half is written only when there is a model; with none, neither key is written.
       ...(facts.llmEntries.length === 0 ? {} : { llms: [...facts.llmEntries] }),
-      targets: buildTargets(platform, facts.targets),
+      targets: buildTargets(platform, facts.targets, facts.devices),
     },
     ...(facts.usesSubscriptionAuth
       ? {
@@ -238,12 +305,13 @@ export function addYamlComments(yamlStr: string): string {
     } else if (line === '    artifactsDir: .agent-qa/artifacts') {
       result += '    # Optional: persist dashboard state to a custom SQLite path.\n'
       result += '    # dbPath: .agent-qa/dashboard.sqlite\n'
-    } else if (line === 'registry:') {
+    } else if (line === 'registry:' && !yamlStr.includes('\n  devices:\n')) {
       result += '  # Optional: devices, described by what people call them. agent-qa finds them on this machine.\n'
       result += '  # devices:\n'
-      result += '  #   pixel:\n'
+      result += '  #   android-emulator-pixel-8-15:\n'
       result += '  #     platform: android\n'
       result += '  #     model: Pixel 8\n'
+      result += '  #     os: "15"\n'
     } else if (line === '  targets:') {
       result += '    # Optional: add more web or mobile targets here.\n'
       result += '    # my-mobile:\n'
@@ -251,8 +319,9 @@ export function addYamlComments(yamlStr: string): string {
       result += '    #   appPackage: com.example.app\n'
       result += '    #   appActivity: .MainActivity\n'
       result += '    #   app:\n'
-      result += '    #     path: apps/example.apk\n'
-      result += '    #   device: pixel # its tests run here unless a suite or test sets use.device\n'
+      result += '    #     path: app-bundles/example.apk\n'
+      result +=
+        '    #   device: android-emulator-pixel-8-15 # its tests run here unless a suite or test sets use.device\n'
     }
   }
 

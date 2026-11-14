@@ -12,6 +12,7 @@ import {
   openSync,
   readFileSync,
   renameSync,
+  rmSync,
   rmdirSync,
   unlinkSync,
   writeFileSync,
@@ -947,6 +948,42 @@ export function removeFileInsideRoot(plan: { path: string; root: string }): 'rem
   if (inspectInitPath(absolutePath, plan.root).classification === 'missing') return 'missing'
   unlinkSync(absolutePath)
   return 'removed'
+}
+
+export function removeFolderInsideRoot(plan: {
+  path: string
+  root: string
+}): 'removed' | 'missing' {
+  const absolutePath = resolve(plan.path)
+  assertSafeParentComponents(absolutePath, plan.root)
+  const stat = lstatIfPresent(absolutePath)
+  if (stat === undefined) return 'missing'
+  if (!stat.isDirectory()) {
+    // pathKind names a regular file a non-regular file.
+    const kind = stat.isFile() ? 'file' : pathKind(stat)
+    throw new InitRefusal(`Refusing to remove ${absolutePath}: it is a ${kind}, not a folder`)
+  }
+  rmSync(absolutePath, { recursive: true })
+  return 'removed'
+}
+
+// One rename, so the folder is whole at one path or the other.
+export function moveFolderInsideRoot(plan: { from: string; to: string; root: string }): void {
+  const from = resolve(plan.from)
+  const to = resolve(plan.to)
+  assertSafeParentComponents(from, plan.root)
+  assertSafeParentComponents(to, plan.root)
+  const stat = lstatSync(from)
+  if (!stat.isDirectory()) {
+    // pathKind names a regular file a non-regular file.
+    const kind = stat.isFile() ? 'file' : pathKind(stat)
+    throw new InitRefusal(`Refusing to move ${from}: it is a ${kind}, not a folder`)
+  }
+  // A rename replaces an empty folder at its destination.
+  if (lstatIfPresent(to) !== undefined) {
+    throw new InitRefusal(`Refusing to move ${from} to ${to}: that path is taken`)
+  }
+  renameSync(from, to)
 }
 
 function isStrictlyInside(path: string, folder: string): boolean {
