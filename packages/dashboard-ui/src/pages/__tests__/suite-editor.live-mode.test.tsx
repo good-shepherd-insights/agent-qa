@@ -96,6 +96,7 @@ function resetLiveEditorState() {
     sessionGone: false,
     deviceLogs: [],
     platform: 'web',
+    authState: null,
     ariaTree: null,
     requestAriaTree: vi.fn(),
     isRunningAll: false,
@@ -245,7 +246,14 @@ vi.mock('@/lib/live-session-config', async () => {
   const actual = await vi.importActual<typeof import('@/lib/live-session-config')>('@/lib/live-session-config')
   return {
     ...actual,
-    buildLiveSessionConfig: () => ({ platform: 'web', targetName: 'demo-target', url: 'https://example.com' }),
+    // The page's own draft, read against one fixed web target.
+    buildLiveSessionConfig: (opts: Parameters<typeof actual.buildLiveSessionConfig>[0]) =>
+      actual.buildLiveSessionConfig({
+        ...opts,
+        targetName: 'demo-target',
+        targets: { 'demo-target': { platform: 'web', url: 'https://example.com' } },
+        globalUse: null,
+      }),
   }
 })
 
@@ -453,7 +461,7 @@ describe('SuiteEditorPage live mode orchestration', () => {
     expect(updateSuiteFileMock).not.toHaveBeenCalled()
   })
 
-  it('suppresses invalid suite auth-state prefill and returns safe save failures', async () => {
+  it('sends the suite draft auth state to the create door as written and returns safe save failures', async () => {
     fetchSuiteFileMock.mockResolvedValue({
       path: 'suites/live.suite.yaml',
       content: `name: Live Suite\nsuite-id: s_live\ntarget: demo-target\nuse:\n  authState: ../suite-admin.json\ntests:\n  - test: tests/web/login.yaml\n    id: t_login\n`,
@@ -463,14 +471,27 @@ describe('SuiteEditorPage live mode orchestration', () => {
 
     await click(getButtonByText(rootElement, 'Connect Live Session'))
 
+    expect(createLiveEditorSessionMock.mock.calls[0]?.[0]).toMatchObject({ authState: '../suite-admin.json' })
     const authStateCapture = liveSessionPaneProps?.authStateCapture as {
       initialName: string | null
       onSave: (input: { name: string; replace: boolean }) => Promise<void>
     }
-    expect(authStateCapture.initialName).toBeNull()
     await expect(authStateCapture.onSave({ name: 'suite-admin', replace: false }))
       .rejects.toThrow('Could not save auth state "suite-admin" for target "demo-target".')
-    expect(JSON.stringify(liveSessionPaneProps)).not.toContain('../suite-admin.json')
+    expect(JSON.stringify(liveSessionPaneProps)).not.toContain('secret-cookie')
     expect(updateSuiteFileMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['started signed out', { name: 'buyer', capturedAt: null }, { name: 'buyer', targetName: 'demo-target' }],
+    ['mounted its state', { name: 'buyer', capturedAt: '2026-11-14T10:00:00.000Z' }, null],
+    ['names no auth state', null, null],
+  ])('passes the pane the signed-out notice only for a session that %s', async (_label, authState, expected) => {
+    liveEditorState.authState = authState
+    const rootElement = await render(<SuiteEditorPage />)
+
+    await click(getButtonByText(rootElement, 'Connect Live Session'))
+
+    expect(liveSessionPaneProps?.signedOutAuthState).toEqual(expected)
   })
 })

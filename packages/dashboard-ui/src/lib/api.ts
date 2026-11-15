@@ -42,7 +42,7 @@ export interface RunRow {
   errorLog: string | null
   testId: string | null
   suiteId: string | null
-  platform: string
+  platform: string | null
   testFileContent: string | null
   modelName: string | null
   llmProvider: string | null
@@ -1393,6 +1393,8 @@ export async function createLiveEditorSession(
     setupHooks?: string[]
     teardownHooks?: string[]
     entity?: { type: 'suite' | 'test'; id: string }
+    // The draft's `use.authState` as written; the server parses and resolves it.
+    authState?: unknown
   },
   signal?: AbortSignal,
 ): Promise<{ sessionId: string; sessionNumber: number | null }> {

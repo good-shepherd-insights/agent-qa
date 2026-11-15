@@ -5,12 +5,12 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { HealthDot } from '@/components/live-preview/health-dot'
 import { PreviewChrome } from '@/components/live-preview/preview-chrome'
 import { fetchEditorLiveUrl, fetchLiveUrl } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import {
   LIVE_PREVIEW_ACTION_LABELS,
   LIVE_PREVIEW_HOST_QUERY,
   NO_STREAM_RETRY_MS,
   RENEW_RETRY_MS,
-  SNAPSHOT_PREVIEW_LABEL,
   createInitialLivePreview,
   deriveLivePreview,
   parseEmbedReport,
@@ -342,14 +342,9 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
   )
 
   // The dot never makes a row; with a dot or iframe up, words lead the chrome, else they centre.
-  const statusShown = (dot !== null || framed) && (view.words !== undefined || view.snapshot || action !== null)
+  const statusShown = (dot !== null || framed) && (view.words !== undefined || action !== null)
   const status = statusShown ? (
     <div data-preview-corner className="flex min-w-0 flex-wrap items-center gap-2">
-      {view.snapshot && (
-        <span data-snapshot-label className="text-xs text-muted-foreground">
-          {SNAPSHOT_PREVIEW_LABEL}
-        </span>
-      )}
       {view.words !== undefined && (
         <span data-preview-words className="text-xs text-foreground">
           {view.words}
@@ -369,10 +364,8 @@ export function LivePreview({ subject, chrome }: LivePreviewProps) {
       {/* One preview that follows the running member; the host decides the handle. */}
       <PreviewChrome status={status}>{chrome}</PreviewChrome>
 
-      {/* `pt-8` keeps the picture clear of the dot's corner even in a short preview area. */}
-      <div
-        className={`relative flex min-h-0 flex-1 items-center justify-center [container-type:size]${dot !== null ? ' pt-8' : ''}`}
-      >
+      {/* `py-8` keeps the picture clear of the dot's corner and leaves the same gap below it. */}
+      <div className={cn('relative flex min-h-0 flex-1 items-center justify-center [container-type:size]', dot !== null && 'py-8')}>
         {dot !== null && (
           <div data-preview-dot-corner className="absolute right-1 top-1 z-10">
             {dot}

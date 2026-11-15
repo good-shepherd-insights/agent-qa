@@ -192,6 +192,9 @@ export interface MemberTargetFacts {
   readonly probeUrls: readonly (string | undefined)[]
   /** The first member whose target resolved — the invocation's product when nothing else names it. */
   readonly firstResolvedProduct?: string
+  // The run's own target and platform: present only when every member shares one.
+  readonly targetName?: string
+  readonly platform?: ResolvedTarget['platform']
 }
 
 export function resolveMemberTargetFacts(
@@ -200,10 +203,14 @@ export function resolveMemberTargetFacts(
 ): MemberTargetFacts {
   const probeUrls: (string | undefined)[] = []
   let firstResolvedProduct: string | undefined
+  const names = new Set<string | undefined>()
+  const platforms = new Set<ResolvedTarget['platform'] | undefined>()
 
   for (const { target: targetName, remote } of members) {
+    names.add(targetName)
     if (targetName === undefined) {
       probeUrls.push(undefined)
+      platforms.add(undefined)
       continue
     }
     try {
@@ -212,16 +219,31 @@ export function resolveMemberTargetFacts(
       const probeUrl = resolved.platform === 'web' && resolved.url ? resolved.url : undefined
       probeUrls.push(remote ? undefined : probeUrl)
       firstResolvedProduct ??= resolved.product
+      platforms.add(resolved.platform)
     } catch {
       // Best-effort resolution: the member closure still surfaces the real target error as the
       // framework error it is.
       probeUrls.push(undefined)
+      platforms.add(undefined)
     }
   }
 
+  const [sharedName] = names.size === 1 ? names : []
+  const [sharedPlatform] = platforms.size === 1 ? platforms : []
   return {
     probeUrls,
     ...(firstResolvedProduct === undefined ? {} : { firstResolvedProduct }),
+    ...(sharedName === undefined ? {} : { targetName: sharedName }),
+    ...(sharedPlatform === undefined ? {} : { platform: sharedPlatform }),
+  }
+}
+
+function runTargetSeed(
+  facts: MemberTargetFacts,
+): { targetName?: string; platform?: ResolvedTarget['platform'] } {
+  return {
+    ...(facts.targetName === undefined ? {} : { targetName: facts.targetName }),
+    ...(facts.platform === undefined ? {} : { platform: facts.platform }),
   }
 }
 
@@ -1060,6 +1082,8 @@ export interface RunRecordAttach {
   readonly mask: MaskFn
   readonly members: readonly RunIdentityMember[]
   readonly attributes?: RunAttributes
+  readonly targetName?: string
+  readonly platform?: ResolvedTarget['platform']
   readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
   readonly snapshots?: { readonly config?: unknown; readonly source?: unknown }
   readonly gateRun?: boolean
@@ -1221,6 +1245,8 @@ export function createRunRecord(input: {
           ...(member.suiteName === undefined ? {} : { suiteName: attach.mask(member.suiteName) }),
         })),
         ...(attributes === undefined ? {} : { attributes }),
+        ...(attach.targetName === undefined ? {} : { targetName: attach.mask(attach.targetName) }),
+        ...(attach.platform === undefined ? {} : { platform: attach.platform }),
         onRunCreated: (created) => { ownRow = created },
       })
       const unsubscribe = attach.onMemberSnapshot?.((snapshot) => { ingest.stageSnapshots(snapshot) })
@@ -2434,37 +2460,16 @@ function formatAuthStateCaptureFailure(paths: ResolvedAuthStatePaths): string {
   return `Could not save auth state "${paths.stateName}" for target "${paths.targetName}".`
 }
 
-function getStorageStateContext(adapter: PlatformAdapter): { storageState: (options?: { indexedDB?: boolean }) => Promise<unknown> } | null {
-  const maybeGetPage = (adapter as { getPage?: () => unknown }).getPage
-  if (typeof maybeGetPage !== 'function') return null
-
-  const page = maybeGetPage.call(adapter)
-  if (!page || typeof page !== 'object') return null
-
-  const maybeContext = (page as { context?: () => unknown }).context
-  if (typeof maybeContext !== 'function') return null
-
-  const context = maybeContext.call(page)
-  if (!context || typeof context !== 'object') return null
-
-  const storageState = (context as { storageState?: (options?: { indexedDB?: boolean }) => Promise<unknown> }).storageState
-  if (typeof storageState !== 'function') return null
-
-  return {
-    storageState: storageState.bind(context),
-  }
-}
-
 async function captureAuthStateForRun(input: {
   adapter: PlatformAdapter
   paths: ResolvedAuthStatePaths
 }): Promise<ResolvedAuthStateForRun> {
-  const context = getStorageStateContext(input.adapter)
-  if (!context) {
+  const capturing = input.adapter as { captureAuthState?: () => Promise<unknown> }
+  if (typeof capturing.captureAuthState !== 'function') {
     throw new Error('Web auth-state capture requires a Playwright browser context.')
   }
 
-  const payload = await context.storageState({ indexedDB: true })
+  const payload = await capturing.captureAuthState()
   const capturedAt = new Date().toISOString()
   const metadata: AuthStateMetadata = {
     version: AUTH_STATE_SCHEMA_VERSION,
@@ -4101,6 +4106,7 @@ export async function produceSuiteRunMembers(
           variableContext?.userRunAttributes ?? {},
           runnerForPlaces(suiteRunPlaces),
         ),
+        ...runTargetSeed(suiteTargetFacts),
       }
     })(),
     remotePlugins: runRemotePlugins(config, suiteRunPlaces),
@@ -4216,6 +4222,8 @@ export interface ProducedCliRunMembers {
     readonly configSnapshot?: unknown
     readonly sourceSnapshot?: unknown
     readonly attributes?: RunAttributes
+    readonly targetName?: string
+    readonly platform?: ResolvedTarget['platform']
   }
   // Each member's and suite's source and config, masked; latecomers get a replay.
   readonly onMemberSnapshot?: (listener: RunArtifactSnapshotListener) => () => void
@@ -5035,7 +5043,7 @@ export async function produceDirectRunMembers(
       : { remoteProgress: directPluginHost.remoteProgress }),
     getCurationModelDeps: () => singleCurationModelDeps,
     onMemberSnapshot: memberSnapshots.subscribe,
-    subscriberSeed: { attributes: directRunAttributes },
+    subscriberSeed: { attributes: directRunAttributes, ...runTargetSeed(directTargetFacts) },
     remotePlugins: runRemotePlugins(config, directPlaces),
     platforms: runPlatforms(config, directPlaces),
     loadPlugins: input.inputs.loadPlugins,

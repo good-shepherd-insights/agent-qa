@@ -3,6 +3,7 @@ import { dirname, posix, resolve as resolvePath } from 'node:path'
 import { format } from 'node:util'
 import {
   AUTH_STATE_SCHEMA_VERSION,
+  AuthStateUseSchema,
   MobileSetupError,
   PlannerConfigSchema,
   PluginsSchema,
@@ -14,10 +15,12 @@ import {
   connectionSecretMisuse,
   createPluginHostPool,
   getAgentQaVersion,
+  normalizeAuthStateUse,
   pluginHostVersions,
   pluginSecretResolver,
   printRunText,
   readAuthStateMetadata,
+  resolveAuthStateForRun,
   resolveAuthStatePaths,
   selectSuitePlace,
   selectWebPlace,
@@ -94,6 +97,7 @@ import type {
   LiveStepResultPayload,
   LiveSubActionData,
   LiveHookPayload,
+  LiveSessionAuthState,
   LiveTestExecutionPayload,
   LiveTestResultPayload,
   LiveTestStepPayload,
@@ -251,6 +255,73 @@ export async function resolveLiveNavigationTimeoutMs(
     navigation = parsed.data
   }
   return navigation
+}
+
+export class LiveAuthStateRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LiveAuthStateRefusedError'
+  }
+}
+
+// A schema error's own message is a JSON list of its issues; the first issue says it.
+function coreReason(err: unknown): string {
+  const issues = (err as { issues?: Array<{ message?: unknown }> } | null)?.issues
+  if (Array.isArray(issues) && typeof issues[0]?.message === 'string') return issues[0].message
+  return err instanceof Error ? err.message : String(err)
+}
+
+/**
+ * The auth state a live session loads, by the run's rules: core parses the draft's
+ * `use.authState`, names its file and reads it. A name with no readable state starts the
+ * session signed out instead of refusing it, so a person can sign in and capture it there.
+ */
+export async function resolveLiveAuthState(
+  configManager: ConfigManager | undefined,
+  configPath: string | undefined,
+  input: { platform: string; targetName: string | undefined; authState: unknown },
+): Promise<LiveSessionAuthState | undefined> {
+  if (input.authState === undefined) return undefined
+  const parsed = AuthStateUseSchema.safeParse(input.authState)
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]?.message ?? 'invalid value'
+    throw new LiveAuthStateRefusedError(
+      `The draft sets use.authState to ${shownLimitValue(input.authState)}: ${issue}. The CLI refuses this file too.`,
+    )
+  }
+  const use = normalizeAuthStateUse({ authState: parsed.data })
+  if (use === undefined) return undefined
+  // A run resolves the state's paths when it loads or captures it, and so refuses a mobile target.
+  if (use.load === false && use.capture === false) {
+    return input.platform === 'web' ? { name: use.name, load: false } : undefined
+  }
+  if (configManager === undefined || configPath === undefined) {
+    throw new LiveAuthStateRefusedError(
+      `Auth state "${use.name}" cannot be loaded because workspace config is unavailable.`,
+    )
+  }
+  const config = await readConfigValues(configManager)
+  const resolveInput = {
+    configDir: dirname(resolvePath(configPath)),
+    authStateDir: getConfiguredAuthStateDir(config),
+    targetName: input.targetName ?? '',
+    stateName: use.name,
+    target: { platform: input.platform as 'web' | 'android' | 'ios' },
+  }
+  try {
+    resolveAuthStatePaths(resolveInput)
+  } catch (err) {
+    if (input.platform !== 'web') throw new LiveAuthStateRefusedError(coreReason(err))
+    throw new LiveAuthStateRefusedError(
+      `Auth state "${use.name}" for target "${resolveInput.targetName}" cannot be loaded: ${coreReason(err)}`,
+    )
+  }
+  if (!use.load) return { name: use.name, load: false }
+  try {
+    return { name: use.name, load: true, resolved: await resolveAuthStateForRun(resolveInput) }
+  } catch {
+    return { name: use.name, load: true }
+  }
 }
 
 function stringEntries(value: unknown): Record<string, string> | undefined {
@@ -485,14 +556,6 @@ export interface LiveStepExecutionResult extends StepResult {
   subActionsData?: LiveSubActionData[]
 }
 
-interface WebStorageStateContext {
-  storageState(options?: { indexedDB?: boolean }): Promise<unknown>
-}
-
-interface WebStorageStatePage {
-  context(): WebStorageStateContext
-}
-
 // Shared with ws-handler.ts toStepResultPayload. Kept in-module so that
 // executeTestCommand can assemble its stepResults array without a
 // cross-module import that would create a circular dependency.
@@ -541,22 +604,6 @@ function coerceRunJSResult(value: unknown): string {
     return String(value)
   }
   return JSON.stringify(value)
-}
-
-function getWebStorageStateContext(adapter: PlatformAdapter | null): WebStorageStateContext | null {
-  if (!adapter || !('getPage' in adapter)) return null
-  const page = (adapter as { getPage?: () => unknown }).getPage?.()
-  if (!page || typeof page !== 'object') return null
-
-  const contextFactory = (page as Partial<WebStorageStatePage>).context
-  if (typeof contextFactory !== 'function') return null
-
-  const context = contextFactory.call(page)
-  if (!context || typeof context !== 'object') return null
-
-  const storageState = (context as Partial<WebStorageStateContext>).storageState
-  if (typeof storageState !== 'function') return null
-  return context as WebStorageStateContext
 }
 
 function getConfiguredAuthStateDir(config: Record<string, unknown>): string | undefined {
@@ -657,6 +704,8 @@ export class LiveSession {
   private currentStep: string | null = null
   private platform: 'web' | 'android' | 'ios' = 'web'
   private targetName: string | null = null
+  // A web session's named auth state; `resolved` and its path never leave this object.
+  private authState: LiveSessionAuthState | null = null
   private currentUrl: string | null = null
   private executing = false
   private idleTimer: ReturnType<typeof setTimeout> | null = null
@@ -894,6 +943,7 @@ export class LiveSession {
         env: this.getHookEnvVars(),
         secretStore: this.secretStore,
         secretRedactor: this.secretRedactor,
+        ...(this.authState?.resolved === undefined ? {} : { authState: this.authState.resolved }),
       })
       const hookResult = result.results.get(hookDef.name)
       const completed = this.emitHookComplete(started, {
@@ -1133,6 +1183,7 @@ export class LiveSession {
     this.plannerLimitsForTest = config.plannerLimitsForTest
     this.readyForInteraction = false
     this.terminalError = null
+    this.authState = config.platform === 'web' && config.authState !== undefined ? config.authState : null
 
     const setupResult = await this.runLifecycleHooks('setup', this.setupHooks)
     if (!setupResult.allPassed) {
@@ -1174,6 +1225,7 @@ export class LiveSession {
         ...(config.navigationTimeoutMs === undefined
           ? {}
           : { timeouts: { navigation: config.navigationTimeoutMs } }),
+        ...(this.authState?.resolved === undefined ? {} : { authState: this.authState.resolved }),
       })
       this.adapter = adapter
 
@@ -1254,6 +1306,7 @@ export class LiveSession {
             env: this.getHookEnvVars(),
             secretEnv: resolveSecretEnv(this.secretStore),
             secretRedactor: this.secretRedactor,
+            ...(this.authState?.resolved === undefined ? {} : { authState: this.authState.resolved }),
           })
           executionLogs.push({
             id: randomUUID(),
@@ -1586,6 +1639,8 @@ export class LiveSession {
       steps: string[]
       setup: string[]
       teardown: string[]
+      // The member file's own `use.authState` name.
+      authStateName?: string
     },
     onPhase?: (event: StepPhaseEvent) => void,
   ): Promise<LiveTestResultPayload> {
@@ -1616,6 +1671,27 @@ export class LiveSession {
     }
 
     try {
+      // The session owns the shared browser context; a member can only repeat its auth state.
+      const sessionAuthStateName = this.authState?.name
+      if (
+        sessionAuthStateName !== undefined &&
+        testDraft.authStateName !== undefined &&
+        testDraft.authStateName !== sessionAuthStateName
+      ) {
+        const message = `Suite auth state "${sessionAuthStateName}" conflicts with child test auth state "${testDraft.authStateName}". Use one primary auth state per suite.`
+        const line = `[live-session] executeTestCommand: ${message}`
+        const detail = { testName: testDraft.testName }
+        printRunText(format(line, detail), () => console.warn(line, detail))
+        return this.redact({
+          status: 'failed',
+          duration: performance.now() - start,
+          error: message,
+          setupHookExecutions: [],
+          stepResults: [],
+          teardownHookExecutions: [],
+        })
+      }
+
       // A test runs at its own effective limits, resolved once before its first step.
       let testLimits: PlannerLimits
       try {
@@ -1813,8 +1889,8 @@ export class LiveSession {
       throw new Error('Cannot save auth state because workspace config is unavailable.')
     }
 
-    const context = getWebStorageStateContext(this.adapter)
-    if (!context) {
+    const capturing = this.adapter as { captureAuthState?: () => Promise<unknown> }
+    if (typeof capturing.captureAuthState !== 'function') {
       throw new Error('Cannot save auth state because the active browser context is unavailable.')
     }
 
@@ -1838,7 +1914,7 @@ export class LiveSession {
       throw new Error(`Auth state "${paths.stateName}" for target "${paths.targetName}" already exists. Use replace=true to replace it.`)
     }
 
-    const payload = await context.storageState({ indexedDB: true })
+    const payload = await capturing.captureAuthState()
     const metadata: AuthStateMetadata = {
       version: AUTH_STATE_SCHEMA_VERSION,
       kind: 'web',
@@ -1851,6 +1927,22 @@ export class LiveSession {
       await writeAuthStateFiles(paths, { payload, metadata })
     } catch {
       throw new Error(`Could not save auth state "${paths.stateName}" for target "${paths.targetName}".`)
+    }
+
+    // As in a run, a state captured under the session's own name is the one its later hooks get.
+    if (this.authState !== null && this.authState.name === paths.stateName) {
+      this.authState = {
+        ...this.authState,
+        resolved: {
+          version: metadata.version,
+          kind: metadata.kind,
+          targetName: metadata.target,
+          stateName: metadata.name,
+          capturedAt: metadata.capturedAt,
+          storageStatePath: paths.payloadPath,
+        },
+      }
+      this.dispatch({ type: 'session-state', state: this.getState() })
     }
 
     return metadata
@@ -1930,7 +2022,14 @@ export class LiveSession {
       createdAt: this.createdAt,
       interactive: this.readyForInteraction,
       terminalError: this.terminalError,
+      authState: this.reportedAuthState(),
     }
+  }
+
+  private reportedAuthState(): SessionState['authState'] {
+    const authState = this.authState
+    if (authState === null || (!authState.load && authState.resolved === undefined)) return null
+    return { name: authState.name, capturedAt: authState.resolved?.capturedAt ?? null }
   }
 
   async getAriaTree(): Promise<string | null> {
