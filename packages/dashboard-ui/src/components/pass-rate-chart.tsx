@@ -5,14 +5,9 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart"
+import { formatDateTime, formatPercent } from "@/lib/format"
 import { cn } from "@/lib/utils"
-
-const chartConfig = {
-  passRate: {
-    label: "Pass Rate",
-    color: "var(--chart-1)",
-  },
-} satisfies ChartConfig
+import { useTranslation } from "@/i18n"
 
 interface PassRateChartProps {
   data: { date: string; passRate: number }[]
@@ -20,11 +15,18 @@ interface PassRateChartProps {
 }
 
 function formatDate(value: string) {
-  const d = new Date(value)
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+  return formatDateTime(new Date(value), { month: "short", day: "numeric" })
 }
 
 export function PassRateChart({ data, className }: PassRateChartProps) {
+  const { t } = useTranslation()
+  const chartConfig = {
+    passRate: {
+      label: t("insights.chart.passRate"),
+      color: "var(--chart-1)",
+    },
+  } satisfies ChartConfig
+
   return (
     <ChartContainer config={chartConfig} className={cn("h-[300px] w-full aspect-auto", className)}>
       <LineChart data={data} accessibilityLayer>
@@ -38,7 +40,7 @@ export function PassRateChart({ data, className }: PassRateChartProps) {
         />
         <YAxis
           domain={[0, 100]}
-          unit="%"
+          tickFormatter={(value: number) => formatPercent(value)}
           tickLine={false}
           axisLine={false}
           width={48}

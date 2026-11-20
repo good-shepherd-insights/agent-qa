@@ -330,7 +330,10 @@ describe("run detail owns the chip client, and hands the navbar its projection",
         status: "pending",
         state: "pending",
         word: STAGE_INDICATOR_WORDS.curation.pending,
-        card: { outcome: `Curation queued — ${PENDING_POSTURE_TEXT.handedOff}` },
+        card: {
+          outcome: `Curation queued — ${PENDING_POSTURE_TEXT.handedOff}`,
+          clause: PENDING_POSTURE_TEXT.handedOff,
+        },
       },
     })
   })
@@ -378,7 +381,7 @@ describe("run detail owns the chip client, and hands the navbar its projection",
     })
     expect(lastNavbarView()).toMatchObject({
       kind: "chips",
-      analysis: { state: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+      analysis: { state: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT() } },
     })
   })
 

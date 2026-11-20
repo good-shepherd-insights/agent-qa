@@ -110,37 +110,32 @@ function unescapeStringBody(body: string): string {
   return out
 }
 
-// Read from the shipped source: an import drags in a renderer, and a hardcoded label goes stale.
-function publishedConstant(relativePath: string, name: string): string {
+// The English text of one catalog key, in either quote style, on the key's line or the next.
+function publishedText(area: string, key: string): string {
+  const relativePath = join('i18n', 'locales', 'en', `${area}.ts`)
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
+  const quotedKey = key.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
   const entry = new RegExp(
-    `export const ${name}(?::\\s*string)?\\s*=\\s*(['"])((?:\\\\.|[^\\\\])*?)\\1`,
+    `(['"])${quotedKey}\\1:[ \\t]*(?:\\n[ \\t]*)?(['"])((?:\\\\.|[^\\\\])*?)\\2`,
     'u',
   ).exec(source)
   if (entry === null) {
-    throw new Error(
-      `${name} is no longer a single- or double-quoted top-level constant in ${relativePath}`,
-    )
+    throw new Error(`${key} is not a quoted entry of ${relativePath}`)
   }
-  return unescapeStringBody(entry[2] as string)
+  return unescapeStringBody(entry[3] as string)
 }
 
-/** The provenance chip's first half when the model authored the verdict. */
-const LLM_VERDICT_LABEL = publishedConstant('lib/analysis-view.ts', 'LLM_VERDICT_LABEL')
+/** The provenance chip when the model authored the verdict, before its confidence goes in. */
+const LLM_VERDICT_SENTENCE = publishedText('runDetail', 'runDetail.analysis.llmVerdictConfidence')
 
 /** The word BOTH `evidence-incomplete` variants wear. */
-const EVIDENCE_INCOMPLETE_LABEL = publishedConstant('lib/run-detail-view.ts', 'EVIDENCE_INCOMPLETE_LABEL')
+const EVIDENCE_INCOMPLETE_LABEL = publishedText('runDetail', 'runDetail.evidence.incomplete')
 
-/**
- * The provenance line the block must read, composed from the SAME formula the product uses.
- *
- * `provenanceLabel` is a function, not a constant, so it cannot be read the way a label can. The
- * formula is therefore restated here — `${LLM_VERDICT_LABEL} · ${confidence.toFixed(2)}` — over the
- * label read by constant and the confidence the stub scripts, which is what keeps a copy change in
- * `analysis-view.ts` from being invisible to this cell while still not hardcoding the sentence.
- */
+// The provenance line the block must read: the catalog's sentence, filled with the confidence the
+// stub scripts, formatted to two decimals as `provenanceLabel` formats it.
 function expectedProvenance(confidence: number): string {
-  return `${LLM_VERDICT_LABEL} · ${confidence.toFixed(2)}`
+  expect(LLM_VERDICT_SENTENCE).toContain('{{confidence}}')
+  return LLM_VERDICT_SENTENCE.replace('{{confidence}}', confidence.toFixed(2))
 }
 
 // The plural agrees with the total: the noun is the set the member cited, not what vanished.
@@ -686,7 +681,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     }
 
     try {
-      browser = await chromium.launch({ headless: true })
+      browser = await chromium.launch({ headless: true, args: ['--lang=en-US'] })
     } catch (error) {
       recorded.failure =
         `${BROWSER_INSTALL_INSTRUCTION} underlying error: `
@@ -1014,7 +1009,7 @@ describe('the shipped dashboard paints a RED run\'s authored verdict, its eviden
     expect(
       page.provenances,
       'the provenance line is not the LLM-verdict reading. It is composed here from the label read '
-      + 'out of `lib/analysis-view.ts` and `confidence.toFixed(2)` — the product\'s own formula — so '
+      + 'out of the English catalog and `confidence.toFixed(2)` — the product\'s own formula — so '
       + 'a red is either a copy change, a producer that is not `analyze-run`, or a confidence the '
       + `stub did not script.${context()}`,
     ).toEqual([expectedProvenance(AUTHORED_CONFIDENCE)])

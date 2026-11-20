@@ -13,16 +13,16 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 describe('copy that describes the no-review model', () => {
   it('a proposed record says it is recorded and not applied, and nothing says review', () => {
-    for (const sentence of [BUCKET_MEANINGS.proposed, PROPOSED_NOTE, OPEN_QUESTION_NOTE]) {
+    for (const sentence of [BUCKET_MEANINGS.proposed, PROPOSED_NOTE(), OPEN_QUESTION_NOTE()]) {
       expect(sentence, sentence).not.toMatch(/review/i)
     }
     expect(BUCKET_MEANINGS.proposed).toMatch(/not applied/)
-    expect(PROPOSED_NOTE).toMatch(/not applied/)
-    expect(OPEN_QUESTION_NOTE).toMatch(/recorded/)
+    expect(PROPOSED_NOTE()).toMatch(/not applied/)
+    expect(OPEN_QUESTION_NOTE()).toMatch(/recorded/)
   })
 
   it('the no-class choice has one name', () => {
-    expect(TARGET_ENVIRONMENT_PLACEHOLDER).toBe(TARGET_ENVIRONMENT_CHOICE_LABELS.undeclared)
+    expect(TARGET_ENVIRONMENT_PLACEHOLDER()).toBe(TARGET_ENVIRONMENT_CHOICE_LABELS.undeclared)
   })
 
   it('a historical drafted mark reads as an older mark', () => {

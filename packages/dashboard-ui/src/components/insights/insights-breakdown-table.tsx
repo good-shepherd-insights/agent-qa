@@ -3,6 +3,7 @@ import {
   InsightsLineGrid,
   InsightsLineNotice,
 } from "@/components/insights/insights-line-grid"
+import { formatPercent, formatUnit, formatUnitList } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
 import {
@@ -13,19 +14,22 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { useTranslation } from "@/i18n"
 
-const BREAKDOWN_COPY: Record<InsightsBreakdownDimension, { title: string; label: string }> = {
-  test: { title: "Test Breakdown", label: "Test" },
-  suite: { title: "Suite Breakdown", label: "Suite" },
-  platform: { title: "Platform Breakdown", label: "Platform" },
-}
+const BREAKDOWN_COPY = {
+  test: { label: "insights.breakdown.test", empty: "insights.breakdown.empty.test" },
+  suite: { label: "insights.breakdown.suite", empty: "insights.breakdown.empty.suite" },
+  platform: { label: "insights.breakdown.platform", empty: "insights.breakdown.empty.platform" },
+} as const satisfies Record<InsightsBreakdownDimension, { label: string; empty: string }>
 
 function formatDuration(ms: number) {
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
+  if (ms < 1000) return formatUnit(Math.round(ms), "millisecond")
+  if (ms < 60_000) {
+    return formatUnit(Number((ms / 1000).toFixed(1)), "second", { minimumFractionDigits: 1 })
+  }
   const mins = Math.floor(ms / 60_000)
   const secs = Math.round((ms % 60_000) / 1000)
-  return `${mins}m ${secs}s`
+  return formatUnitList([formatUnit(mins, "minute"), formatUnit(secs, "second")])
 }
 
 function toPercent(value: number) {
@@ -34,7 +38,7 @@ function toPercent(value: number) {
 }
 
 function formatPassRate(value: number | null) {
-  return value === null ? "\u2014" : `${toPercent(value)}%`
+  return value === null ? "\u2014" : formatPercent(toPercent(value))
 }
 
 function renderCells(dimension: InsightsBreakdownDimension, row: InsightsBreakdownRow) {
@@ -55,7 +59,7 @@ function renderCells(dimension: InsightsBreakdownDimension, row: InsightsBreakdo
       <TableCell className="px-4 py-2 font-medium">{row.label}</TableCell>
       <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{row.runs}</TableCell>
       <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{formatPassRate(row.passRate)}</TableCell>
-      <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{toPercent(row.flakeRate)}%</TableCell>
+      <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{formatPercent(toPercent(row.flakeRate))}</TableCell>
       <TableCell className="px-4 py-2 text-right font-mono tabular-nums">{formatDuration(row.avgDuration)}</TableCell>
     </>
   )
@@ -70,6 +74,7 @@ export function InsightsBreakdownTable({
   rows: InsightsBreakdownRow[]
   isRefreshing?: boolean
 }) {
+  const { t } = useTranslation()
   const copy = BREAKDOWN_COPY[dimension]
 
   if (rows.length === 0) {
@@ -77,8 +82,8 @@ export function InsightsBreakdownTable({
       <InsightsLineGrid>
         <InsightsLineNotice
           className="px-4 py-6"
-          title={`No ${dimension} data in this window`}
-          description="Try another breakdown or widen the time window."
+          title={t(copy.empty)}
+          description={t("insights.breakdown.empty.description")}
         />
       </InsightsLineGrid>
     )
@@ -93,19 +98,21 @@ export function InsightsBreakdownTable({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="px-4">{copy.label}</TableHead>
-              <TableHead className="px-4 text-right">Runs</TableHead>
+              <TableHead className="px-4">{t(copy.label)}</TableHead>
+              <TableHead className="px-4 text-right">{t("insights.breakdown.column.runs")}</TableHead>
               {dimension === "platform" ? (
                 <>
-                  <TableHead className="px-4 text-right">Passed</TableHead>
-                  <TableHead className="px-4 text-right">Failed</TableHead>
-                  <TableHead className="px-4 text-right">Pass Rate</TableHead>
+                  <TableHead className="px-4 text-right">{t("insights.breakdown.column.passed")}</TableHead>
+                  <TableHead className="px-4 text-right">{t("insights.breakdown.column.failed")}</TableHead>
+                  <TableHead className="px-4 text-right">{t("insights.breakdown.column.passRate")}</TableHead>
                 </>
               ) : (
                 <>
-                  <TableHead className="px-4 text-right">Pass Rate</TableHead>
-                  <TableHead className="px-4 text-right">Flake Rate</TableHead>
-                  <TableHead className="px-4 text-right">Avg Duration</TableHead>
+                  <TableHead className="px-4 text-right">{t("insights.breakdown.column.passRate")}</TableHead>
+                  <TableHead className="px-4 text-right">{t("insights.breakdown.column.flakeRate")}</TableHead>
+                  <TableHead className="px-4 text-right">
+                    {t("insights.breakdown.column.avgDuration")}
+                  </TableHead>
                 </>
               )}
             </TableRow>

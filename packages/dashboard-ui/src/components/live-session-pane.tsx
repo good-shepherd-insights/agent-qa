@@ -32,8 +32,12 @@ import {
 } from "@/components/ui/resizable"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import type { TFunction } from "i18next"
 import type { ConnectionState, EditorStep, EditorTest, LiveHookExecution, PendingNavigationState } from "@/hooks/use-live-editor"
+import { useTranslation } from "@/i18n"
 import { fromEditorStep, type DisplayStep } from "@/lib/display-step"
+import { formatUnit } from "@/lib/format"
+import { statusNameText } from "@/lib/live-step-row"
 import type { Selection } from "@/lib/selection"
 import { cn } from "@/lib/utils"
 
@@ -107,21 +111,24 @@ function PaneNotice({ children, action }: { children: ReactNode; action?: ReactN
   )
 }
 
-function draftBadgeMeta(draftState: LiveSessionPaneProps["draftState"]): { label: string; className: string } {
+function draftBadgeMeta(
+  t: TFunction,
+  draftState: LiveSessionPaneProps["draftState"],
+): { label: string; className: string } {
   switch (draftState) {
     case "invalid":
       return {
-        label: "Draft invalid",
+        label: t("live.pane.draft.invalid"),
         className: "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
       }
     case "saved":
       return {
-        label: "Saved draft",
+        label: t("live.pane.draft.saved"),
         className: "border-border/70 bg-background text-muted-foreground",
       }
     default:
       return {
-        label: "Using unsaved draft",
+        label: t("live.pane.draft.unsaved"),
         className: "border-primary/25 bg-primary/10 text-primary",
       }
   }
@@ -150,12 +157,18 @@ function normalizeAddressInput(value: string, currentUrl: string | null): string
   return trimmed
 }
 
+function formatLiveDuration(ms: number): string {
+  if (ms < 1000) return formatUnit(ms, "millisecond")
+  return formatUnit(Number((ms / 1000).toFixed(1)), "second", { minimumFractionDigits: 1 })
+}
+
 function HookStatusBadge({ hook }: { hook: LiveHookExecution }) {
+  const { t } = useTranslation()
   if (hook.status === "passed") {
     return (
       <Badge className="border-emerald-500/20 bg-emerald-500/15 text-emerald-500">
         <CheckCircle2 className="size-3" />
-        Passed
+        {t("status.passed")}
       </Badge>
     )
   }
@@ -164,7 +177,7 @@ function HookStatusBadge({ hook }: { hook: LiveHookExecution }) {
     return (
       <Badge variant="destructive">
         <AlertTriangle className="size-3" />
-        Failed
+        {t("status.failed")}
       </Badge>
     )
   }
@@ -173,19 +186,20 @@ function HookStatusBadge({ hook }: { hook: LiveHookExecution }) {
     return (
       <Badge className="border-primary/20 bg-primary/15 text-primary">
         <Loader2 className="size-3 animate-spin" />
-        Running
+        {t("status.running")}
       </Badge>
     )
   }
 
-  return <Badge variant="outline">Pending</Badge>
+  return <Badge variant="outline">{t("status.pending")}</Badge>
 }
 
 function HookVariables({ hook }: { hook: LiveHookExecution }) {
+  const { t } = useTranslation()
   if (!hook.variables || Object.keys(hook.variables).length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        This hook did not emit any variables
+        {t("live.pane.hook.noVariables")}
       </div>
     )
   }
@@ -203,6 +217,7 @@ function HookVariables({ hook }: { hook: LiveHookExecution }) {
 }
 
 function HookDetailPanel({ hook }: { hook: LiveHookExecution }) {
+  const { t } = useTranslation()
   return (
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -218,7 +233,7 @@ function HookDetailPanel({ hook }: { hook: LiveHookExecution }) {
         </Badge>
         <HookStatusBadge hook={hook} />
         {hook.duration != null && (
-          <span className="text-xs text-muted-foreground">{hook.duration < 1000 ? `${hook.duration}ms` : `${(hook.duration / 1000).toFixed(1)}s`}</span>
+          <span className="text-xs text-muted-foreground">{formatLiveDuration(hook.duration)}</span>
         )}
       </div>
 
@@ -244,7 +259,7 @@ function HookDetailPanel({ hook }: { hook: LiveHookExecution }) {
 
       {hook.variables && Object.keys(hook.variables).length > 0 && (
         <div className="space-y-1">
-          <div className="text-xs font-medium text-muted-foreground">Emitted Variables</div>
+          <div className="text-xs font-medium text-muted-foreground">{t("live.pane.hook.emittedVariables")}</div>
           <HookVariables hook={hook} />
         </div>
       )}
@@ -252,8 +267,8 @@ function HookDetailPanel({ hook }: { hook: LiveHookExecution }) {
       {!hook.stdout && !hook.stderr && (!hook.variables || Object.keys(hook.variables).length === 0) && !hook.error && (
         <EmptyState
           icon={Webhook}
-          title="No hook output yet"
-          description="Connect a live session, run a teardown hook, or end the current session to capture hook output."
+          title={t("live.pane.hook.noOutputTitle")}
+          description={t("live.pane.hook.noOutputDescription")}
         />
       )}
     </div>
@@ -318,7 +333,12 @@ function SelectedTestSummary({
   selectedStep: DisplayStep | null
   subAction: NonNullable<DisplayStep["liveSubActions"]>[number] | null
 }) {
+  const { t } = useTranslation()
   const displaySteps = test.liveSteps.map((stepDetail) => fromEditorStep(stepDetail, stepDetail.stepIndex))
+  const hookList = (hooks: LiveHookExecution[]) =>
+    hooks
+      .map((hook) => t("live.pane.hook.withStatus", { name: hook.name, status: statusNameText(hook.status) }))
+      .join(", ")
 
   return (
     <div className="space-y-4 p-4">
@@ -328,11 +348,11 @@ function SelectedTestSummary({
           <div className="text-xs text-muted-foreground">{test.path}</div>
         </div>
         <Badge variant="outline" className={cn("text-[10px] uppercase tracking-wide", statusTone(test.status))}>
-          {test.status}
+          {statusNameText(test.status)}
         </Badge>
         {typeof test.duration === "number" && (
           <span className="text-xs text-muted-foreground">
-            {test.duration < 1000 ? `${test.duration}ms` : `${(test.duration / 1000).toFixed(1)}s`}
+            {formatLiveDuration(test.duration)}
           </span>
         )}
       </div>
@@ -345,19 +365,19 @@ function SelectedTestSummary({
 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-md border bg-background/80 px-3 py-2">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Setup Hooks</div>
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("live.pane.test.setupHooks")}</div>
           <div className="mt-2 text-sm">
             {test.perTestSetupHooks.length > 0
-              ? test.perTestSetupHooks.map((hook) => `${hook.name} (${hook.status})`).join(", ")
-              : "No per-test setup hooks"}
+              ? hookList(test.perTestSetupHooks)
+              : t("live.pane.test.noSetupHooks")}
           </div>
         </div>
         <div className="rounded-md border bg-background/80 px-3 py-2">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Teardown Hooks</div>
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{t("live.pane.test.teardownHooks")}</div>
           <div className="mt-2 text-sm">
             {test.perTestTeardownHooks.length > 0
-              ? test.perTestTeardownHooks.map((hook) => `${hook.name} (${hook.status})`).join(", ")
-              : "No per-test teardown hooks"}
+              ? hookList(test.perTestTeardownHooks)
+              : t("live.pane.test.noTeardownHooks")}
           </div>
         </div>
       </div>
@@ -365,7 +385,7 @@ function SelectedTestSummary({
       {displaySteps.length > 0 ? (
         <div className="space-y-2">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Steps
+            {t("live.pane.test.steps")}
           </div>
           <div className="space-y-3">
             {displaySteps.map((step) => {
@@ -380,16 +400,18 @@ function SelectedTestSummary({
                   )}
                 >
                   <div className="flex min-w-0 flex-wrap items-center gap-2 border-b px-3 py-2">
-                    <span className="shrink-0 text-sm font-medium">Step #{step.stepOrder + 1}</span>
+                    <span className="shrink-0 text-sm font-medium">
+                      {t("live.pane.test.stepNumber", { number: step.stepOrder + 1 })}
+                    </span>
                     <Badge variant="outline" className={cn("text-[10px] uppercase tracking-wide", stepStatusTone(step.status))}>
-                      {step.status}
+                      {statusNameText(step.status)}
                     </Badge>
                     <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                       {step.name}
                     </span>
                     {step.duration > 0 && (
                       <span className="text-xs text-muted-foreground">
-                        {step.duration < 1000 ? `${step.duration}ms` : `${(step.duration / 1000).toFixed(1)}s`}
+                        {formatLiveDuration(step.duration)}
                       </span>
                     )}
                   </div>
@@ -417,7 +439,7 @@ function SelectedTestSummary({
         </div>
       ) : (
         <div className="rounded-md border border-dashed px-4 py-6 text-sm text-muted-foreground">
-          This test has not produced any live step detail yet. Run it from the queue to inspect reasoning, console, network, and hook output.
+          {t("live.pane.test.noStepDetail")}
         </div>
       )}
     </div>
@@ -469,6 +491,7 @@ export function LiveSessionPane({
   authStateCapture = null,
   signedOutAuthState = null,
 }: LiveSessionPaneProps) {
+  const { t } = useTranslation()
   const [copied, setCopied] = useState(false)
   const [addressValue, setAddressValue] = useState("")
   const [isEditingAddress, setIsEditingAddress] = useState(false)
@@ -570,11 +593,11 @@ export function LiveSessionPane({
 
   const selectedSuiteExecutionLogs = selectedSuiteEditorStep?.executionLogs ?? []
   const selectedExecutionLogs = selectedLegacyEditorStep?.executionLogs ?? []
-  const draftMeta = draftBadgeMeta(draftState)
+  const draftMeta = draftBadgeMeta(t, draftState)
 
   const browserLabel = platform === "web"
-    ? (currentUrl || targetLabel || "Configured start URL")
-    : (targetLabel || (platform === "android" ? "Android device" : "iOS device"))
+    ? (currentUrl || targetLabel || t("live.pane.address.startUrl"))
+    : (targetLabel || t(platform === "android" ? "live.pane.address.androidDevice" : "live.pane.address.iosDevice"))
   const showAuthStateCapture = Boolean(
     platform === "web"
     && authStateCapture
@@ -616,7 +639,7 @@ export function LiveSessionPane({
           size="icon-sm"
           onClick={onBack}
           disabled={effectiveState === "executing" || effectiveState === "idle"}
-          aria-label="Go back"
+          aria-label={t("live.pane.address.back")}
         >
           <ChevronLeft className="size-3.5" />
         </Button>
@@ -625,7 +648,7 @@ export function LiveSessionPane({
           size="icon-sm"
           onClick={onForward}
           disabled={effectiveState === "executing" || effectiveState === "idle"}
-          aria-label="Go forward"
+          aria-label={t("live.pane.address.forward")}
         >
           <ChevronRight className="size-3.5" />
         </Button>
@@ -634,7 +657,7 @@ export function LiveSessionPane({
           size="icon-sm"
           onClick={onRefresh}
           disabled={effectiveState === "executing" || effectiveState === "idle"}
-          aria-label="Refresh page"
+          aria-label={t("live.pane.address.refresh")}
         >
           <RefreshCw className="size-3.5" />
         </Button>
@@ -686,8 +709,8 @@ export function LiveSessionPane({
           size="icon-sm"
           onClick={handleCopyUrl}
           disabled={!browserLabel}
-          aria-label={copied ? "URL copied" : "Copy URL"}
-          title={copied ? "URL copied" : "Copy URL"}
+          aria-label={copied ? t("live.pane.address.copied") : t("live.pane.address.copy")}
+          title={copied ? t("live.pane.address.copied") : t("live.pane.address.copy")}
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </Button>
@@ -708,7 +731,7 @@ export function LiveSessionPane({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-1">
             <span className="text-sm font-medium">
-              {targetName || "Live Session"}
+              {targetName || t("live.pane.fallbackTitle")}
             </span>
             {errorMessage && !terminalState && (
               <div className="min-w-0 max-w-2xl text-xs text-destructive [overflow-wrap:anywhere]">
@@ -735,7 +758,7 @@ export function LiveSessionPane({
                     ) : (
                       <Square className="size-3.5" />
                     )}
-                    {isStoppingRunAll ? "Stopping..." : (stopAllLabel ?? "Stop All Steps")}
+                    {isStoppingRunAll ? t("live.pane.stopping") : (stopAllLabel ?? t("live.pane.stopAll"))}
                   </Button>
                 ) : (
                   <Button
@@ -745,14 +768,14 @@ export function LiveSessionPane({
                     disabled={!canRunAll}
                   >
                     <PlayCircle className="size-3.5" />
-                    {runAllLabel ?? "Run All Steps"}
+                    {runAllLabel ?? t("live.pane.runAll")}
                   </Button>
                 )
               )}
               {showEndSessionAction && (
                 <Button variant="destructive" size="sm" onClick={onEndSession}>
                   <Square className="size-3.5" />
-                  End Live Session
+                  {t("live.pane.endSession")}
                 </Button>
               )}
             </div>
@@ -763,16 +786,19 @@ export function LiveSessionPane({
           <PaneNotice
             action={onRestartSession && (
               <Button type="button" size="sm" className="shrink-0" onClick={onRestartSession}>
-                Restart Live Session
+                {t("live.pane.restartSession")}
               </Button>
             )}
           >
-            Hook order or names changed after this live session started. Continue using the current disposable session, or restart to apply the latest setup and teardown hooks.
+            {t("live.pane.hooksStale")}
           </PaneNotice>
         )}
         {signedOutAuthState && !terminalState && (
           <PaneNotice>
-            Auth state "{signedOutAuthState.name}" for target "{signedOutAuthState.targetName}" was not found or could not be read, so this session started signed out. Sign in here, then use Save auth state to capture it.
+            {t("live.pane.signedOut", {
+              name: signedOutAuthState.name,
+              target: signedOutAuthState.targetName,
+            })}
           </PaneNotice>
         )}
 
@@ -797,12 +823,12 @@ export function LiveSessionPane({
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   {onCloseLiveMode && (
                     <Button variant="outline" size="sm" onClick={onCloseLiveMode}>
-                      Close Live Mode
+                      {t("live.pane.closeLiveMode")}
                     </Button>
                   )}
                   {onStartFreshSession && (
                     <Button size="sm" onClick={onStartFreshSession}>
-                      Start Fresh Session
+                      {t("live.pane.startFreshSession")}
                     </Button>
                   )}
                 </div>
@@ -815,12 +841,8 @@ export function LiveSessionPane({
                   <Terminal className="size-6 text-muted-foreground" />
                 </div>
                 <div className="space-y-2">
-                  <h3 className="text-base font-semibold">Live mode is target-scoped</h3>
-                  <p className="text-sm text-muted-foreground">
-                    This workspace runs the current builder draft against the selected
-                    target. Sessions are disposable and draft changes only persist when
-                    you save the test.
-                  </p>
+                  <h3 className="text-base font-semibold">{t("live.pane.idleTitle")}</h3>
+                  <p className="text-sm text-muted-foreground">{t("live.pane.idleDescription")}</p>
                 </div>
               </div>
             </div>
@@ -837,7 +859,7 @@ export function LiveSessionPane({
           ) : (
             <div className="flex h-full items-center justify-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="size-5 animate-spin" />
-              Connecting to browser...
+              {t("live.pane.connecting")}
             </div>
           )}
         </ResizablePanel>
@@ -852,19 +874,19 @@ export function LiveSessionPane({
           >
             <TabsList variant="line" className="h-9 justify-start rounded-none border-b px-3">
               <TabsTrigger value="reasoning" className="rounded-none text-xs">
-                Reasoning
+                {t("live.pane.tab.reasoning")}
               </TabsTrigger>
               <TabsTrigger value="env" className="rounded-none text-xs">
-                Env
+                {t("live.pane.tab.env")}
               </TabsTrigger>
               <TabsTrigger value="network" className="rounded-none text-xs">
-                Network
+                {t("live.pane.tab.network")}
               </TabsTrigger>
               <TabsTrigger value="console" className="rounded-none text-xs">
-                Console
+                {t("live.pane.tab.console")}
               </TabsTrigger>
               <TabsTrigger value="aria" className="rounded-none text-xs">
-                ARIA Tree
+                {t("live.pane.tab.aria")}
               </TabsTrigger>
             </TabsList>
 
@@ -884,8 +906,8 @@ export function LiveSessionPane({
                   ) : (
                     <EmptyState
                       icon={FileSearch}
-                      title="Select a test to inspect it"
-                      description="Choose a test in the live queue to see its reasoning, logs, hooks, and network activity."
+                      title={t("live.pane.selectTest")}
+                      description={t("live.pane.reasoning.selectTestDescription")}
                     />
                   )
                 ) : selectedLegacyHook ? (
@@ -895,14 +917,14 @@ export function LiveSessionPane({
                 ) : showSelectionEmptyState ? (
                   <EmptyState
                     icon={FileSearch}
-                    title="Selection is no longer available"
-                    description="Pick another step in the builder to inspect its reasoning."
+                    title={t("live.pane.reasoning.selectionGone")}
+                    description={t("live.pane.reasoning.selectionGoneDescription")}
                   />
                 ) : (
                   <EmptyState
                     icon={FileSearch}
-                    title="No reasoning yet"
-                    description="Run a step from the builder or use Run All Steps to populate the live reasoning trace."
+                    title={t("live.pane.reasoning.empty")}
+                    description={t("live.pane.reasoning.emptyDescription")}
                   />
                 )}
               </ScrollArea>
@@ -924,11 +946,11 @@ export function LiveSessionPane({
                   </ScrollArea>
                 ) : selectedTest ? (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Select a test-owned hook or run a step to inspect variables and runJS output
+                    {t("live.pane.env.selectTestHook")}
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Select a test to inspect it
+                    {t("live.pane.selectTest")}
                   </div>
                 )
               ) : selectedLegacyHook ? (
@@ -941,7 +963,7 @@ export function LiveSessionPane({
                 </ScrollArea>
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  Select a step to inspect variables and runJS output
+                  {t("live.pane.env.selectStep")}
                 </div>
               )}
             </TabsContent>
@@ -950,7 +972,7 @@ export function LiveSessionPane({
               {suiteMode ? (
                 selectedSuiteHook || selectedTestHook ? (
                   <div className="flex h-full items-center justify-center px-6 text-sm text-muted-foreground">
-                    Hooks do not capture browser network activity. Select a test step to inspect requests.
+                    {t("live.pane.network.hookInTest")}
                   </div>
                 ) : selectedSuiteEditorStep ? (
                   <ScrollArea className="h-full">
@@ -958,16 +980,16 @@ export function LiveSessionPane({
                   </ScrollArea>
                 ) : selectedTest ? (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Run this test to inspect its network activity
+                    {t("live.pane.network.runTest")}
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Select a test to inspect it
+                    {t("live.pane.selectTest")}
                   </div>
                 )
               ) : selectedLegacyHook ? (
                 <div className="flex h-full items-center justify-center px-6 text-sm text-muted-foreground">
-                  Hooks do not capture browser network activity. Select a step to inspect requests.
+                  {t("live.pane.network.hook")}
                 </div>
               ) : selectedLegacyStep ? (
                 <ScrollArea className="h-full">
@@ -975,7 +997,7 @@ export function LiveSessionPane({
                 </ScrollArea>
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  Select a step to inspect network activity
+                  {t("live.pane.network.selectStep")}
                 </div>
               )}
             </TabsContent>
@@ -1001,11 +1023,11 @@ export function LiveSessionPane({
                   </ScrollArea>
                 ) : selectedTest ? (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Run this test to inspect console output
+                    {t("live.pane.console.runTest")}
                   </div>
                 ) : (
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                    Select a test to inspect it
+                    {t("live.pane.selectTest")}
                   </div>
                 )
               ) : selectedLegacyHook ? (
@@ -1023,7 +1045,7 @@ export function LiveSessionPane({
                 </ScrollArea>
               ) : (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                  Select a step to inspect console output
+                  {t("live.pane.console.selectStep")}
                 </div>
               )}
             </TabsContent>

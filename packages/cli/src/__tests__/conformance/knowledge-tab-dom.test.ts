@@ -83,16 +83,6 @@ function knowledgeViewSource(): string {
   return readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', KNOWLEDGE_VIEW_REL), 'utf8')
 }
 
-/** A top-level single-quoted `export const` — `run-detail-dom.test.ts`'s `publishedConstant`. */
-function publishedConstant(name: string): string {
-  const entry = new RegExp(`export const ${name}(?::\\s*string)?\\s*=\\s*'([^']*)'`, 'u')
-    .exec(knowledgeViewSource())
-  if (entry === null) {
-    throw new Error(`${name} is no longer a single-quoted top-level constant in ${KNOWLEDGE_VIEW_REL}`)
-  }
-  return entry[1] as string
-}
-
 /**
  * An exported `Record` literal of single-quoted key/value pairs, as a map.
  *
@@ -168,13 +158,55 @@ function sourceKeyTable(name: string): Record<string, string> {
   return table
 }
 
-/** A single-quoted export of `post-processing-view.ts` — `post-processing-dom.test.ts`'s idiom. */
-function postProcessingConstant(name: string): string {
-  const relativePath = join('lib', 'post-processing-view.ts')
+/**
+ * One source-level string body as the runtime would see it.
+ *
+ * `run-detail-failure-dom.test.ts`'s helper, carried here for its reason: a constant whose text
+ * contains its own quote would otherwise come back carrying the backslash the source needed, and
+ * nothing on the page would ever match it.
+ */
+function unescapeStringBody(body: string): string {
+  const named: Record<string, string> = {
+    n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v', '0': '\0',
+  }
+  let out = ''
+  let index = 0
+  while (index < body.length) {
+    const char = body[index] as string
+    if (char !== '\\' || index + 1 >= body.length) {
+      out += char
+      index += 1
+      continue
+    }
+    const next = body[index + 1] as string
+    const braced = next === 'u' ? /^u\{([0-9a-fA-F]+)\}/u.exec(body.slice(index + 1)) : null
+    const quad = next === 'u' ? /^u([0-9a-fA-F]{4})/u.exec(body.slice(index + 1)) : null
+    const hex = next === 'x' ? /^x([0-9a-fA-F]{2})/u.exec(body.slice(index + 1)) : null
+    const escape = braced ?? quad ?? hex
+    if (escape !== null) {
+      out += String.fromCodePoint(Number.parseInt(escape[1] as string, 16))
+      index += 1 + escape[0].length
+      continue
+    }
+    out += named[next] ?? next
+    index += 2
+  }
+  return out
+}
+
+// The English text of one catalog key, in either quote style, on the key's line or the next.
+function publishedText(area: string, key: string): string {
+  const relativePath = join('i18n', 'locales', 'en', `${area}.ts`)
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
-  const match = new RegExp(`export const ${name}\\s*=\\s*'([^']+)'`, 'u').exec(source)
-  if (match === null) throw new Error(`${name} is no longer an exported single-quoted string in ${relativePath}`)
-  return match[1] as string
+  const quotedKey = key.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const entry = new RegExp(
+    `(['"])${quotedKey}\\1:[ \\t]*(?:\\n[ \\t]*)?(['"])((?:\\\\.|[^\\\\])*?)\\2`,
+    'u',
+  ).exec(source)
+  if (entry === null) {
+    throw new Error(`${key} is not a quoted entry of ${relativePath}`)
+  }
+  return unescapeStringBody(entry[3] as string)
 }
 
 /** Each recorded reason's retrieval class and each class's tone, read from source. */
@@ -185,13 +217,13 @@ for (const retrievalClass of Object.values(RETRIEVAL_CLASS_BY_REASON)) {
     throw new Error(`RETRIEVAL_CLASS_TONES in ${KNOWLEDGE_VIEW_REL} gives no tone for the class \`${retrievalClass}\``)
   }
 }
-const NO_BRIEF_LINES_TEXT = publishedConstant('NO_BRIEF_LINES_TEXT')
-const NO_BRIEF_SERVED_TEXT = publishedConstant('NO_BRIEF_SERVED_TEXT')
-const STEP_NO_BRIEF_TEXT = publishedConstant('STEP_NO_BRIEF_TEXT')
-const CHANGES_UNREADABLE_TEXT = publishedConstant('CHANGES_UNREADABLE_TEXT')
-const STORE_READ_INCOMPLETE_TEXT = publishedConstant('STORE_READ_INCOMPLETE_TEXT')
-// Read from source: a literal reds on a rewording and passes if the view drops the note.
-const CURATION_FAILED_PARTIAL_TEXT = publishedConstant('CURATION_FAILED_PARTIAL_TEXT')
+const NO_BRIEF_LINES_TEXT = publishedText('knowledge', 'knowledge.used.noBriefLines')
+const NO_BRIEF_SERVED_TEXT = publishedText('knowledge', 'knowledge.used.noBriefServed')
+const STEP_NO_BRIEF_TEXT = publishedText('knowledge', 'knowledge.used.stepNoBrief')
+const CHANGES_UNREADABLE_TEXT = publishedText('knowledge', 'knowledge.changes.unreadable')
+const STORE_READ_INCOMPLETE_TEXT = publishedText('knowledge', 'knowledge.changes.storeReadIncomplete')
+// Read from the catalog: a literal reds on a rewording and passes if the view drops the note.
+const CURATION_FAILED_PARTIAL_TEXT = publishedText('knowledge', 'knowledge.changes.curationFailedPartial')
 /** The five Learned kinds `learnedView` narrows to, READ FROM SOURCE and never retyped here. */
 const LEARNED_CHANGE_KINDS = publishedStringArray('LEARNED_CHANGE_KINDS')
 /** Each Learned kind's bucket word when a run has no snapshot, read from source. */
@@ -202,11 +234,12 @@ for (const kind of LEARNED_CHANGE_KINDS) {
   }
 }
 // What the effect section says when the run used no stored knowledge.
-const EFFECT_NOTHING_USED_TEXT = publishedConstant('EFFECT_NOTHING_USED_TEXT')
+const EFFECT_NOTHING_USED_TEXT = publishedText('knowledge', 'knowledge.effect.nothingUsed')
 /** What the changes section says when post-run processing changed nothing. */
-const NO_MEMORY_CHANGES_SENTENCE = publishedConstant('NO_MEMORY_CHANGES_SENTENCE')
-/** The breakdown line of an all-zero snapshot, read from the module that composes it. */
-const NO_MEMORY_CHANGES_TEXT = postProcessingConstant('NO_MEMORY_CHANGES_TEXT')
+const NO_MEMORY_CHANGES_SENTENCE = publishedText('knowledge', 'knowledge.changes.noMemoryChanges')
+/** The breakdown line of an all-zero snapshot, read from the English catalog. */
+const NO_MEMORY_CHANGES_TEXT =
+  publishedText('runDetail', 'runDetail.postProcessing.noMemoryChanges')
 
 /**
  * The retrieval class a recorded rung below memidex reads as, from the published class map.
@@ -1762,7 +1795,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     }
 
     try {
-      browser = await chromium.launch({ headless: true })
+      browser = await chromium.launch({ headless: true, args: ['--lang=en-US'] })
     } catch (error) {
       const why = `${BROWSER_INSTALL_INSTRUCTION} underlying error: `
         + `${error instanceof Error ? error.message : String(error)}`
@@ -2588,7 +2621,7 @@ describePosix('the shipped dashboard renders the Knowledge tab and the rung bann
     expect(
       served.failedWithChanges?.visit?.learnedChainNote,
       `the failed-with-changes world's page printed no \`[data-learned-chain-note]\` carrying `
-      + `\`CURATION_FAILED_PARTIAL_TEXT\` (read from \`knowledge-view.ts\`, never retyped here). `
+      + `\`CURATION_FAILED_PARTIAL_TEXT\` (read from the English catalog, never retyped here). `
       + `Rows without the note is a page that has silently dropped the chain's fate; the note `
       + `without rows is the sentence arm and a different world.${seenFWC}`,
     ).toBe(CURATION_FAILED_PARTIAL_TEXT)

@@ -7,19 +7,25 @@ import {
 } from '@vostride/agent-qa-schema'
 import { readFileSync } from 'node:fs'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
+import i18n from '@/i18n'
 import * as copy from '../config-copy'
 import { CONFIG_SECTION_IDS, CONFIG_TABS, EXPLICIT_ACTION_KINDS, MODEL_STATUSES } from '../config-tabs'
 
 function collectStrings(value: unknown, into: string[] = []): string[] {
   if (typeof value === 'string') into.push(value)
+  else if (typeof value === 'function' && value.length === 0) collectStrings(value(), into)
   else if (Array.isArray(value)) for (const item of value) collectStrings(item, into)
   else if (value !== null && typeof value === 'object') {
     for (const item of Object.values(value)) collectStrings(item, into)
   }
   return into
 }
+
+const unmarked = (inner: readonly string[]) => inner.join('')
+const REMOTES_NOTES = ['empty', 'pick', 'listed', 'pluginsListed'] as const
+const remotesNotes = () => REMOTES_NOTES.map((note) => copy.remotesNoteParts(note, unmarked).join(''))
 
 const deleteKinds = EXPLICIT_ACTION_KINDS.filter(
   (kind): kind is copy.DeleteActionKind => kind.startsWith('delete-'),
@@ -45,7 +51,11 @@ function functionOutputs(): string[] {
     copy.nameTakenError('gpt'),
     copy.nameCredentialConflictError('gpt', 'Gemini'),
     copy.signInFailedText('the page was closed'),
+    copy.signInFailedText(undefined),
     copy.connectedSavedText('gpt'),
+    copy.savedBecameDefaultText(copy.connectedSavedText('gpt')),
+    copy.targetAppSummary('apps/app.apk'),
+    copy.targetAppRefLabel('staging'),
     copy.applyActionName('knowledge folder'),
     copy.keepPathName('knowledge folder'),
     copy.replaceValueName('Authorization'),
@@ -54,13 +64,14 @@ function functionOutputs(): string[] {
     copy.attributeValueLabel('git.branch'),
     copy.removeAttributeName('git.branch'),
     copy.targetNameTakenError('staging'),
-    copy.remoteNotListedParts('grid').join(''),
+    ...remotesNotes(),
+    copy.remoteNotListedParts('grid', unmarked).join(''),
     copy.remoteChoiceParts('grid', 'playwright').join(''),
     copy.remoteChoiceParts('grid', undefined).join(''),
     copy.remoteUnlistedChoiceParts('gird').join(''),
     copy.remotePickNotListedParts('gird').join(''),
-    copy.remoteCredentialsLine('.env.secrets.local'),
-    copy.remoteCredentialsLine(undefined),
+    copy.remoteCredentialsParts('.env.secrets.local', unmarked).join(''),
+    copy.remoteCredentialsParts(undefined, unmarked).join(''),
     copy.deviceNameTakenError('pixel'),
   ]
 }
@@ -74,9 +85,10 @@ const REMOTE_KEY_PATHS = ['registry.remotes', 'use.browser.remote'] as const
 function remotesStrings(): string[] {
   return [
     ...collectStrings(copy.REMOTES_COPY),
-    copy.remoteNotListedParts('grid').join(''),
-    copy.remoteCredentialsLine('.env.secrets.local'),
-    copy.remoteCredentialsLine(undefined),
+    ...remotesNotes(),
+    copy.remoteNotListedParts('grid', unmarked).join(''),
+    copy.remoteCredentialsParts('.env.secrets.local', unmarked).join(''),
+    copy.remoteCredentialsParts(undefined, unmarked).join(''),
   ]
 }
 
@@ -117,14 +129,14 @@ describe('the Config strings of record', () => {
       'not-connected': 'Not connected',
       'sign-in-expired': 'Sign-in expired',
     })
-    expect(copy.RETRY_LABEL).toBe('Retry')
-    expect(copy.UNDO_LABEL).toBe('Undo')
-    expect(copy.APPLY_LABEL).toBe('Apply')
-    expect(copy.CONNECT_LABEL).toBe('Connect')
-    expect(copy.DEFAULT_BADGE).toBe('Default')
-    expect(copy.ADD_MODEL_LABEL).toBe('Add model')
-    expect(copy.CONNECT_FORM_LEGEND).toBe('How do you connect?')
-    expect(copy.SAVE_WITHOUT_TESTING_LABEL).toBe('Save without testing')
+    expect(copy.RETRY_LABEL()).toBe('Retry')
+    expect(copy.UNDO_LABEL()).toBe('Undo')
+    expect(copy.APPLY_LABEL()).toBe('Apply')
+    expect(copy.CONNECT_LABEL()).toBe('Connect')
+    expect(copy.DEFAULT_BADGE()).toBe('Default')
+    expect(copy.ADD_MODEL_LABEL()).toBe('Add model')
+    expect(copy.CONNECT_FORM_LEGEND()).toBe('How do you connect?')
+    expect(copy.SAVE_WITHOUT_TESTING_LABEL()).toBe('Save without testing')
     expect(Object.keys(copy.CONFIG_SECTION_LABELS)).toEqual([...CONFIG_SECTION_IDS])
   })
 
@@ -170,8 +182,8 @@ describe('the Config strings of record', () => {
 
   it('no button label is a bare generic word, and only four owner-locked words stand alone', () => {
     const labels = Object.entries(copy)
-      .filter(([name, value]) => name.endsWith('_LABEL') && typeof value === 'string')
-      .map(([, value]) => value as string)
+      .filter(([name, value]) => name.endsWith('_LABEL') && typeof value === 'function')
+      .map(([, value]) => (value as () => string)())
     expect(labels.length, 'the witness: the scan found the labels').toBeGreaterThan(20)
     for (const label of labels) {
       expect(GENERIC_BUTTON_WORDS, label).not.toContain(label)
@@ -204,7 +216,7 @@ describe('the Config strings of record', () => {
   })
 
   it('FIELD-CHANGED-COPY: a computed write the file keeps moving under says the page now shows the file', () => {
-    expect(copy.FIELD_CHANGED_TEXT).toBe("This changed in the file. The page now shows the file's value.")
+    expect(copy.FIELD_CHANGED_TEXT()).toBe("This changed in the file. The page now shows the file's value.")
   })
 
   it('the timing constants', () => {
@@ -240,7 +252,227 @@ describe('The Connect refusal sentences', () => {
       'Check the model and base URL: Invalid URL',
     )
     expect(copy.connectRefusalSentence('write_failed', [{ message: 'Ignored' }])).toBe(copy.CONNECT_REFUSAL_COPY.write_failed)
-    expect(copy.CONNECT_REFUSAL_COPY.name_invalid).toBe(copy.NAME_RULE_ERROR)
-    expect(copy.CONNECT_REFUSAL_COPY.credential_missing).toBe(copy.KEY_REQUIRED_ERROR)
+    expect(copy.CONNECT_REFUSAL_COPY.name_invalid).toBe(copy.NAME_RULE_ERROR())
+    expect(copy.CONNECT_REFUSAL_COPY.credential_missing).toBe(copy.KEY_REQUIRED_ERROR())
+  })
+})
+
+describe('The Config tables in another language', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+    i18n.removeResourceBundle('fr', 'translation')
+  })
+
+  it('reads a tab label in the current language from the same imported table', async () => {
+    const labels = copy.CONFIG_TAB_LABELS
+    expect(labels.models).toBe('Models')
+
+    i18n.addResourceBundle('fr', 'translation', { 'config.tabs.models': 'Modèles' })
+    await i18n.changeLanguage('fr')
+    expect(labels.models).toBe('Modèles')
+
+    await i18n.changeLanguage('en')
+    expect(labels.models).toBe('Models')
+  })
+
+  it('reads the remotes columns in the current language and keeps the sample and the dash', async () => {
+    const example = copy.REMOTES_COPY.example
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.remotes.columns.name': 'Nom',
+      'config.remotes.pluginColumns.source': 'Paquet ou chemin',
+    })
+    await i18n.changeLanguage('fr')
+
+    expect(copy.REMOTES_COPY.columns.name).toBe('Nom')
+    expect(copy.REMOTES_COPY.pluginColumns.source).toBe('Paquet ou chemin')
+    expect(copy.REMOTES_COPY.example).toBe(example)
+    expect(copy.REMOTES_COPY.missingValue).toBe('—')
+    expect(Object.keys(copy.TARGET_ENVIRONMENT_CHOICE_LABELS)).toEqual([
+      'undeclared',
+      'local',
+      'shared',
+      'production',
+    ])
+  })
+})
+
+describe('The Config lines that hold a value', () => {
+  it('the saved line of a model that became the default ends with the default sentence', () => {
+    expect(copy.savedBecameDefaultText('Connected. Saved as gpt.')).toBe(
+      "Connected. Saved as gpt. It's now the default model.",
+    )
+    expect(copy.savedBecameDefaultText(copy.SAVED_WITHOUT_TEST_TEXT())).toBe(
+      "Saved without a connection test. It's now the default model.",
+    )
+  })
+
+  it('a mobile target summary names its app file', () => {
+    expect(copy.targetAppSummary('apps/app.apk')).toBe('App: apps/app.apk')
+  })
+
+  it('the app reference of a target is named after the target', () => {
+    expect(copy.targetAppRefLabel('staging')).toBe('staging App reference')
+  })
+
+  it('the version line says the version is unavailable', () => {
+    expect(copy.VERSION_UNAVAILABLE_TEXT()).toBe('agent-qa version unavailable')
+  })
+})
+
+describe('The Config sentences in another language', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+    i18n.removeResourceBundle('fr', 'translation')
+  })
+
+  it('the saved line and the app summary put their value where the language writes it', async () => {
+    i18n.addResourceBundle('fr', 'translation', {
+      'configUi.savedBecameDefault': 'C’est maintenant le modèle par défaut. {{saved}}',
+      'configUi.targetAppSummary': '{{path}} (application)',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.savedBecameDefaultText('Enregistré.')).toBe(
+      'C’est maintenant le modèle par défaut. Enregistré.',
+    )
+    expect(copy.targetAppSummary('apps/app.apk')).toBe('apps/app.apk (application)')
+
+    await i18n.changeLanguage('en')
+    expect(copy.savedBecameDefaultText('Saved.')).toBe("Saved. It's now the default model.")
+    expect(copy.targetAppSummary('apps/app.apk')).toBe('App: apps/app.apk')
+  })
+
+  it('the app reference label puts the target name where the language writes it', async () => {
+    i18n.addResourceBundle('fr', 'translation', {
+      'configUi.targetAppRefLabel': 'Référence de l’app de {{name}}',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.targetAppRefLabel('staging')).toBe('Référence de l’app de staging')
+
+    await i18n.changeLanguage('en')
+    expect(copy.targetAppRefLabel('staging')).toBe('staging App reference')
+  })
+
+  it('a label reads its word in the current language each time it is called', async () => {
+    expect(copy.RETRY_LABEL()).toBe('Retry')
+
+    i18n.addResourceBundle('fr', 'translation', { 'configUi.retryLabel': 'Réessayer' })
+    await i18n.changeLanguage('fr')
+    expect(copy.RETRY_LABEL()).toBe('Réessayer')
+
+    await i18n.changeLanguage('en')
+    expect(copy.RETRY_LABEL()).toBe('Retry')
+  })
+
+  it('an undo line puts the name where the language writes it', async () => {
+    i18n.addResourceBundle('fr', 'translation', { 'config.undo.deleteModel': '{{name}} supprimé' })
+    await i18n.changeLanguage('fr')
+    expect(copy.undoLine('delete-model', 'gpt')).toBe('gpt supprimé')
+
+    await i18n.changeLanguage('en')
+    expect(copy.undoLine('delete-model', 'gpt')).toBe('Deleted gpt')
+  })
+
+  it('a failed sign-in keeps the server reason unchanged inside the language sentence', async () => {
+    expect(copy.signInFailedText('The sign-in was denied.')).toBe(
+      "Sign-in didn't finish: The sign-in was denied.",
+    )
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.signInFailed.reason': 'La connexion n’a pas abouti : {{reason}}',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.signInFailedText('The sign-in was denied.')).toBe(
+      'La connexion n’a pas abouti : The sign-in was denied.',
+    )
+  })
+
+  it('a failed sign-in with no reason reads its whole sentence when it is called', async () => {
+    expect(copy.signInFailedText(undefined)).toBe(
+      "Sign-in didn't finish: the sign-in could not be completed.",
+    )
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.signInFailed.noReason': 'La connexion n’a pas pu aboutir.',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.signInFailedText(undefined)).toBe('La connexion n’a pas pu aboutir.')
+  })
+
+  it('a refusal with an issue keeps the server issue unchanged inside the language sentence', async () => {
+    const issues = [{ message: 'Step timeout must be a duration' }]
+    expect(copy.connectRefusalSentence('validation_failed', issues)).toBe(
+      'The config file has a problem to fix first: Step timeout must be a duration',
+    )
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.connectRefusalIssue.validationFailed': 'Le fichier a un problème : {{issue}}',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.connectRefusalSentence('validation_failed', issues)).toBe(
+      'Le fichier a un problème : Step timeout must be a duration',
+    )
+    expect(copy.connectRefusalSentence('not_a_code')).toBe(
+      schemaProviderErrorSentence('network_error', ''),
+    )
+  })
+
+  it('a not-listed sentence returns its parts in the language order, with the name kept whole', async () => {
+    expect(copy.remoteNotListedParts('grid', unmarked)[0]).toBe('grid')
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.remoteNotListed': 'Absent de registry.remotes : {{name}}',
+      'config.remoteUnlistedChoice': '(absent) {{name}}',
+      'config.remotePickNotListed': 'Le remote {{name}} manque dans la config.',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.remoteNotListedParts('grid', unmarked).join('|')).toBe('Absent de registry.remotes : |grid')
+    expect(copy.remoteUnlistedChoiceParts('gird').join('|')).toBe('(absent) |gird')
+    expect(copy.remotePickNotListedParts('gird').join('|')).toBe(
+      'Le remote |gird| manque dans la config.',
+    )
+    expect(copy.remotePickNotListedParts('{{name}}').join('|')).toBe(
+      'Le remote |{{name}}| manque dans la config.',
+    )
+    expect(copy.remoteChoiceParts('grid', 'playwright').join('|')).toBe('grid| (playwright)')
+
+    await i18n.changeLanguage('en')
+    expect(copy.remoteNotListedParts('grid', unmarked)[0]).toBe('grid')
+    expect(copy.remoteUnlistedChoiceParts('gird').join('|')).toBe('gird| (not listed)')
+  })
+
+  it('a sentence returns its code spans where the language marks them and reads no value for marks', async () => {
+    const marked = (inner: readonly string[]) => `[${inner.join('')}]`
+    expect(copy.remotesNoteParts('pluginsListed', marked).join('')).toBe(
+      'Plugins are declared under [plugins] in [agent-qa.config.yaml]; their options stay in the file.',
+    )
+    expect(copy.remotesNoteParts('pick', marked).join('')).toBe(
+      'Pick one with [use.browser.remote: <name>] in [agent-qa.config.yaml], a suite or a test. Use [local] to run on this machine.',
+    )
+    expect(copy.remoteNotListedParts('grid', marked).join('')).toBe(
+      'grid is not listed under [registry.remotes], so web tests that use this default cannot run. List it, or change [use.browser.remote].',
+    )
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.remotes.pluginsListed': 'Les plugins sont déclarés sous <code>plugins</code>.',
+      'config.remoteCredentials.file': 'Dans {{file}} : <code>{{reference}}</code>',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.remotesNoteParts('pluginsListed', marked).join('')).toBe(
+      'Les plugins sont déclarés sous [plugins].',
+    )
+    expect(copy.remoteCredentialsParts('<code>plugins</code> {{reference}}', marked).join('|')).toBe(
+      'Dans |<code>plugins</code> {{reference}}| : |[{{secret:NAME}}]',
+    )
+  })
+
+  it('the credentials line names the secrets file, or says where to set one', async () => {
+    expect(copy.remoteCredentialsParts('.env.secrets.local', unmarked).join('')).toBe(
+      'Write credentials as {{secret:NAME}} references to names declared in .env.secrets.local.',
+    )
+    expect(copy.remoteCredentialsParts(undefined, unmarked).join('')).toBe(
+      'Write credentials as {{secret:NAME}} references to names declared in your secrets file (set workspace.secretsFile).',
+    )
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.remoteCredentials.file': 'Références {{reference}} déclarées dans {{file}}.',
+    })
+    await i18n.changeLanguage('fr')
+    expect(copy.remoteCredentialsParts('.env.secrets.local', unmarked).join('')).toBe(
+      'Références {{secret:NAME}} déclarées dans .env.secrets.local.',
+    )
   })
 })

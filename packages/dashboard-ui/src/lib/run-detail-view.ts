@@ -10,37 +10,35 @@ import type {
   RunTokenTotals,
 } from '@vostride/agent-qa-schema'
 
-import { formatTokens } from './format'
-import { DID_NOT_RUN_NOTE } from './run-stream-reducer'
+import { t } from '@/i18n'
+
+import { formatNumber, formatTokens } from './format'
 
 // ---------------------------------- copy ----------------------------------
 
-// The live reducer's constant, not a second spelling, so live and durable pages cannot disagree.
-export const DID_NOT_RUN_LABEL: string = DID_NOT_RUN_NOTE
+// The run page and the live step list draw this one catalog sentence, so they cannot disagree.
+export const DID_NOT_RUN_LABEL = () => t('runDetail.member.didNotRun')
 
 /** What the token line says when the run carries no measurement at all. */
-export const TOKENS_NOT_MEASURED_LABEL = 'tokens not measured'
+export const TOKENS_NOT_MEASURED_LABEL = () => t('runDetail.usage.tokensNotMeasured')
 
 /** The usage card's heading over a run that spoke to more than one model identity. */
-export const MODELS_HEADING = 'Models'
+export const MODELS_HEADING = () => t('runDetail.usage.modelsHeading')
 
 // The line is a focusable `span`, not a button, so its name says that focusing it opens details.
-export const TOKEN_USAGE_TRIGGER_LABEL = 'Token usage — details'
+export const TOKEN_USAGE_TRIGGER_LABEL = () => t('runDetail.usage.triggerLabel')
 
 // Missing bytes differ from masked values and failed reads, as each sends a reader somewhere else.
-export const EVIDENCE_INCOMPLETE_LABEL = 'evidence incomplete'
-
-// An alias, not a second string, so the two names cannot disagree.
-export const SCREENSHOT_UNAVAILABLE_LABEL: string = EVIDENCE_INCOMPLETE_LABEL
+export const EVIDENCE_INCOMPLETE_LABEL = () => t('runDetail.evidence.incomplete')
 
 // Distinct from an empty projection, so a server fault never looks like a quiet test.
-export const RUN_DETAIL_UNAVAILABLE_LABEL = 'Could not load this run\u2019s steps.'
+export const RUN_DETAIL_UNAVAILABLE_LABEL = () => t('runDetail.unavailable')
 
 /** The screen-context affordance when the post-state matched the pre-state. */
-export const SCREEN_STATE_UNCHANGED_LABEL = 'state unchanged'
+export const SCREEN_STATE_UNCHANGED_LABEL = () => t('runDetail.screenState.unchanged')
 
 /** The screen-context affordance when a distinct post-state is recorded. */
-export const SCREEN_STATE_CHANGED_LABEL = 'state changed'
+export const SCREEN_STATE_CHANGED_LABEL = () => t('runDetail.screenState.changed')
 
 // -------------------------------- grouping --------------------------------
 
@@ -132,12 +130,12 @@ export function memberNote(
   _member: RunDetailMember,
   group: Pick<RunDetailGroup, 'steps'>,
 ): string | undefined {
-  return group.steps.length === 0 ? DID_NOT_RUN_LABEL : undefined
+  return group.steps.length === 0 ? DID_NOT_RUN_LABEL() : undefined
 }
 
 // With no recorded name the member is named by its position, never by an invented title.
 export function memberDisplayName(member: Pick<RunDetailMember, 'testIndex' | 'name'>): string {
-  return member.name ?? `Test ${String(member.testIndex + 1)}`
+  return member.name ?? t('runDetail.member.fallbackName', { number: String(member.testIndex + 1) })
 }
 
 // `testIndex` is the handle, shown without `+ 1` so a copied number addresses the right member.
@@ -147,21 +145,21 @@ export function memberHandleLabel(testIndex: number): string {
 
 // `attempts` starts at 1, so re-runs are one less, and a first attempt says nothing.
 export function reranLabel(attempts: number): string | undefined {
-  return attempts > 1 ? `re-ran after failure ×${String(attempts - 1)}` : undefined
+  return attempts > 1 ? t('runDetail.member.reran', { times: String(attempts - 1) }) : undefined
 }
 
 // -------------------------- token line and usage --------------------------
-
-// One module-level formatter, because constructing `Intl.NumberFormat` is the expensive half.
-const fullTokens = new Intl.NumberFormat('en-US')
 
 // Absent sums read as not measured; a measured zero reads `0 in · 0 out`.
 export function tokenPairLine(tokens: RunTokenTotals): string {
   const { measuredSteps, promptTokens, completionTokens } = tokens
   if (measuredSteps === 0 || promptTokens === undefined || completionTokens === undefined) {
-    return TOKENS_NOT_MEASURED_LABEL
+    return TOKENS_NOT_MEASURED_LABEL()
   }
-  return `${formatTokens(promptTokens)} in · ${formatTokens(completionTokens)} out`
+  return t('runDetail.usage.tokenPair', {
+    prompt: formatTokens(promptTokens),
+    completion: formatTokens(completionTokens),
+  })
 }
 
 // States the total and the pair, because the header's pair is what a reader checks here.
@@ -173,9 +171,13 @@ export function usageTotalsLine(tokens: RunTokenTotals): string {
     promptTokens === undefined ||
     completionTokens === undefined
   ) {
-    return TOKENS_NOT_MEASURED_LABEL
+    return TOKENS_NOT_MEASURED_LABEL()
   }
-  return `${fullTokens.format(totalTokens)} total · ${fullTokens.format(promptTokens)} in · ${fullTokens.format(completionTokens)} out`
+  return t('runDetail.usage.totals', {
+    total: formatNumber(totalTokens),
+    prompt: formatNumber(promptTokens),
+    completion: formatNumber(completionTokens),
+  })
 }
 
 // A fully measured run renders nothing, so every card line is a reported fact.
@@ -184,22 +186,27 @@ export function usageCoverageLine(tokens: RunTokenTotals): string | undefined {
   // With nothing measured there is no total to undercount; the totals line has said so.
   if (unmeasuredSteps === 0 || measuredSteps === 0) return undefined
   const allSteps = measuredSteps + unmeasuredSteps
-  return `measured ${String(measuredSteps)} of ${String(allSteps)} steps — totals are an undercount`
+  return t('runDetail.usage.coverage', { measured: String(measuredSteps), count: allSteps })
 }
 
 // Only provider `cachedInputTokens`, over `cachedInputMeasuredTokens` if it covers fewer steps.
 export function cachedInputLine(tokens: RunTokenTotals): string | undefined {
   const { measuredSteps, cachedInputTokens, cachedMeasuredSteps, cachedInputMeasuredTokens } = tokens
   if (cachedInputTokens === undefined) return undefined
-  const cached = fullTokens.format(cachedInputTokens)
+  const cached = formatNumber(cachedInputTokens)
   if (
     cachedMeasuredSteps === undefined ||
     cachedMeasuredSteps >= measuredSteps ||
     cachedInputMeasuredTokens === undefined
   ) {
-    return `cached input ${cached} (provider-reported)`
+    return t('runDetail.usage.cachedInput', { cached })
   }
-  return `cached input ${cached} of ${fullTokens.format(cachedInputMeasuredTokens)} (provider-reported) over ${String(cachedMeasuredSteps)} of ${String(measuredSteps)} measured steps`
+  return t('runDetail.usage.cachedInputPartial', {
+    cached,
+    measuredTokens: formatNumber(cachedInputMeasuredTokens),
+    cachedSteps: String(cachedMeasuredSteps),
+    count: measuredSteps,
+  })
 }
 
 /** One line of the usage card's model section; the card renders every line as a plain text node. */
@@ -224,28 +231,31 @@ export function usageModelLines(models: RunModelSummary | undefined): readonly U
 
   if (declared?.length === 1 && (responding === undefined || responding.length <= 1)) {
     return [
-      { kind: 'model', text: `Model ${identityText(declared[0])}` },
+      { kind: 'model', text: t('runDetail.usage.model', { identity: identityText(declared[0]) }) },
       ...differing.map(
         (entry): UsageLine => ({
           kind: 'responded',
-          text: `responded as ${entry.modelId}`,
+          text: t('runDetail.usage.respondedAs', { model: entry.modelId }),
           }),
       ),
     ]
   }
 
   return [
-    { kind: 'heading', text: MODELS_HEADING },
+    { kind: 'heading', text: MODELS_HEADING() },
     ...(declared ?? []).map(
       (entry): UsageLine => ({
         kind: 'models',
-        text: `${identityText(entry)} × ${String(entry.stepCount)} steps`,
+        text: t('runDetail.usage.modelSteps', {
+          identity: identityText(entry),
+          count: entry.stepCount,
+        }),
       }),
     ),
     ...differing.map(
       (entry): UsageLine => ({
         kind: 'responded',
-        text: `responded as ${entry.modelId} × ${String(entry.stepCount)} steps`,
+        text: t('runDetail.usage.respondedSteps', { model: entry.modelId, count: entry.stepCount }),
       }),
     ),
   ]
@@ -264,8 +274,10 @@ export function screenStateChip(hash: string): string {
 // Reads the hash pair: a missing or identical post-state is a screen that did not change.
 export function screenStateChangeLabel(subAction: RunDetailSubAction): string {
   const after = subAction.screenStateHashAfter
-  if (after === undefined || after === subAction.screenStateHash) return SCREEN_STATE_UNCHANGED_LABEL
-  return SCREEN_STATE_CHANGED_LABEL
+  if (after === undefined || after === subAction.screenStateHash) {
+    return SCREEN_STATE_UNCHANGED_LABEL()
+  }
+  return SCREEN_STATE_CHANGED_LABEL()
 }
 
 // ------------------------------- page chrome ------------------------------

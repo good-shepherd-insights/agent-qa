@@ -55,13 +55,15 @@ export function ConfigTabBar({ tab, draftTabs, statusSlot }: ConfigTabBarProps) 
     measure()
     const box = scrollRef.current
     if (!box || typeof ResizeObserver === "undefined") return
-    // A widening status (an Undo line) narrows the strip; the active tab stays in view.
+    // A widening status (an Undo line) narrows the strip; the active tab stays in view. The tab
+    // list is watched too, because a language switch changes its width and not the strip's.
     const observer = new ResizeObserver(() => {
       const trigger = box.querySelector<HTMLElement>(`[data-config-tab="${activeTab.current}"]`)
       if (trigger) revealTrigger(box, trigger)
       measure()
     })
     observer.observe(box)
+    if (box.firstElementChild) observer.observe(box.firstElementChild)
     return () => observer.disconnect()
   }, [measure])
 
@@ -91,7 +93,7 @@ export function ConfigTabBar({ tab, draftTabs, statusSlot }: ConfigTabBarProps) 
         className="min-w-0 flex-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
       >
-        <TabsList variant="line" data-tour-id="tour-config-nav" aria-label={CONFIG_TABS_ARIA_LABEL}>
+        <TabsList variant="line" data-tour-id="tour-config-nav" aria-label={CONFIG_TABS_ARIA_LABEL()}>
           {CONFIG_TABS.map((id) => {
             const hasDraft = draftTabs?.has(id) ?? false
             return (
@@ -100,7 +102,7 @@ export function ConfigTabBar({ tab, draftTabs, statusSlot }: ConfigTabBarProps) 
                 {hasDraft ? (
                   <>
                     <span data-tab-draft aria-hidden className="size-2 rounded-full bg-amber-500" />
-                    <span className="sr-only">{TAB_DRAFT_SR_SUFFIX}</span>
+                    <span className="sr-only">{TAB_DRAFT_SR_SUFFIX()}</span>
                   </>
                 ) : null}
               </TabsTrigger>

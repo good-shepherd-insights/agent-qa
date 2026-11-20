@@ -8,6 +8,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import i18n from '@/i18n'
 import { ApiError } from '@/lib/api'
 import LiveRunPage from '@/pages/live-run'
 import { STEPS_EMPTY_TEXT } from '@/components/live-run/step-list'
@@ -500,7 +501,7 @@ describe('a pending row reads its real step text or is not drawn', () => {
     }
 
     expect({ beforeFirstStep, afterFirstStep, placeholders, neverStarted }).toEqual({
-      beforeFirstStep: { empty: STEPS_EMPTY_TEXT, rows: 0 },
+      beforeFirstStep: { empty: STEPS_EMPTY_TEXT(), rows: 0 },
       afterFirstStep: [['running', 'open the page']],
       placeholders: [],
       neverStarted: { note: DID_NOT_RUN_NOTE, rows: 0 },
@@ -670,6 +671,38 @@ describe("a running test's plugin progress", () => {
       'checkout · Remote bs-chrome: queued, 3 ahead',
       'login · Remote bs-chrome: uploading app 40%',
     ])
+  })
+
+  it('words a named line in the order the language writes it, and regroups nothing on a switch', async () => {
+    await mount()
+    await open()
+    await emit(runStarted(), testStarted(0, 'checkout', 1), testStarted(1, 'login', 1))
+    await emit(
+      remoteProgress({ message: 'queued, 3 ahead', testIndex: 0 }),
+      remoteProgress({ message: 'uploading app', testIndex: 1 }),
+    )
+
+    i18n.addResourceBundle('fr', 'translation', {
+      'live.run.remoteProgress': 'Distant {{remote}} : {{message}}',
+      'live.run.remoteProgressNamed': '{{line}} ({{tests}})',
+    })
+    try {
+      await act(async () => {
+        await i18n.changeLanguage('fr')
+      })
+      expect(
+        qa('[data-remote-progress]').map((node) => node.getAttribute('data-remote-progress')),
+      ).toEqual(['0', '1'])
+      expect(progressText()).toEqual([
+        'Distant bs-chrome : queued, 3 ahead (checkout)',
+        'Distant bs-chrome : uploading app (login)',
+      ])
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage('en')
+      })
+      i18n.removeResourceBundle('fr', 'translation')
+    }
   })
 
   it('announces the lines from one polite live region', async () => {
@@ -896,14 +929,14 @@ describe('a stream that carried no step is never a blank pane', () => {
     await open()
     await emit(runStarted(), testStarted(0, 'the member'))
 
-    expect(q('[data-steps-empty]')?.textContent).toBe(STEPS_EMPTY_TEXT)
-    expect(STEPS_EMPTY_TEXT).toBe('waiting for the first step')
+    expect(q('[data-steps-empty]')?.textContent).toBe(STEPS_EMPTY_TEXT())
+    expect(STEPS_EMPTY_TEXT()).toBe('waiting for the first step')
 
     await emit(testFinished(0, 'failed'))
 
     expect(q('[data-steps-empty]')).toBeNull()
     expect(q('[data-member-note]')?.textContent).toBe(DID_NOT_RUN_NOTE)
-    expect(stepsPane().textContent).not.toContain(STEPS_EMPTY_TEXT)
+    expect(stepsPane().textContent).not.toContain(STEPS_EMPTY_TEXT())
   })
 })
 
@@ -1032,7 +1065,7 @@ describe('the preview is one embed or an honest sentence', () => {
     }).toEqual({
       at0: 'waiting',
       after: 'no-stream',
-      text: NO_STREAM_TEXT,
+      text: NO_STREAM_TEXT(),
       reason: 'declared',
       label: null,
       memberNote: true,
@@ -1064,7 +1097,7 @@ describe('the preview is one embed or an honest sentence', () => {
 
     await emit(testStarted(1, 'the live member', 1))
 
-    expect(WAITING_GAVE_UP_TEXT).not.toBe(NO_STREAM_TEXT)
+    expect(WAITING_GAVE_UP_TEXT()).not.toBe(NO_STREAM_TEXT())
     expect({
       at0,
       afterCap,
@@ -1078,9 +1111,9 @@ describe('the preview is one embed or an honest sentence', () => {
     }).toEqual({
       at0: 'waiting',
       afterCap: 'no-stream',
-      textAfterCap: WAITING_GAVE_UP_TEXT,
+      textAfterCap: WAITING_GAVE_UP_TEXT(),
       reasonAfterCap: 'gave-up',
-      labelAfterCap: WAITING_GAVE_UP_LABEL,
+      labelAfterCap: WAITING_GAVE_UP_LABEL(),
       callsAfterCap: WAITING_ATTEMPT_LIMIT,
       afterSwitch: 'waiting',
       callsAfterSwitch: WAITING_ATTEMPT_LIMIT + 1,
@@ -1100,7 +1133,7 @@ describe('the preview is one embed or an honest sentence', () => {
     text: q('[data-preview-state] p')?.textContent,
     calls: fetchLiveUrlMock.mock.calls.length,
   })
-  const gaveUp = { state: 'no-stream', text: WAITING_GAVE_UP_TEXT, calls: WAITING_ATTEMPT_LIMIT }
+  const gaveUp = { state: 'no-stream', text: WAITING_GAVE_UP_TEXT(), calls: WAITING_ATTEMPT_LIMIT }
 
   it('(A) after the cap, a tab returning to view re-mints NOTHING — twice', async () => {
     fetchLiveUrlMock.mockImplementation(async () => noneAnswer())
@@ -1216,8 +1249,8 @@ describe('the preview is one embed or an honest sentence', () => {
     const afterAnswer = { ...settled(), iframes: qa('iframe').length }
 
     expect({ whileSlow, atNextTick, afterAnswer }).toEqual({
-      whileSlow: { state: 'waiting', text: PREVIEW_LOADING_TEXT, calls: 2 },
-      atNextTick: { state: 'waiting', text: PREVIEW_LOADING_TEXT, calls: 2 },
+      whileSlow: { state: 'waiting', text: PREVIEW_LOADING_TEXT(), calls: 2 },
+      atNextTick: { state: 'waiting', text: PREVIEW_LOADING_TEXT(), calls: 2 },
       afterAnswer: { state: 'loading', text: undefined, calls: 2, iframes: 1 },
     })
   })
@@ -1234,7 +1267,7 @@ describe('the preview is one embed or an honest sentence', () => {
     await emit(runStarted([0]), testStarted(0, 'the member', 1))
 
     expect(previewState()).toBe('waiting')
-    expect(q('[data-live-pane="preview"]')?.textContent).not.toContain(NO_STREAM_TEXT)
+    expect(q('[data-live-pane="preview"]')?.textContent).not.toContain(NO_STREAM_TEXT())
     expect(q('iframe')).toBeNull()
     expect(fetchLiveUrlMock).toHaveBeenCalledTimes(1)
 
@@ -1263,12 +1296,12 @@ describe('the preview is one embed or an honest sentence', () => {
     await advance(NO_STREAM_RETRY_MS)
 
     expect(previewState()).toBe('no-stream')
-    expect(q('[data-live-pane="preview"]')?.textContent).toContain(NO_STREAM_TEXT)
+    expect(q('[data-live-pane="preview"]')?.textContent).toContain(NO_STREAM_TEXT())
     expect(q('[data-preview-reason]')?.getAttribute('data-preview-reason')).toBe('declared')
-    expect(NO_STREAM_TEXT).toContain('step list')
-    expect(WAITING_GAVE_UP_TEXT).toContain('step list')
-    expect(NO_STREAM_TEXT).not.toMatch(DIRECTION_WORDS)
-    expect(WAITING_GAVE_UP_TEXT).not.toMatch(DIRECTION_WORDS)
+    expect(NO_STREAM_TEXT()).toContain('step list')
+    expect(WAITING_GAVE_UP_TEXT()).toContain('step list')
+    expect(NO_STREAM_TEXT()).not.toMatch(DIRECTION_WORDS)
+    expect(WAITING_GAVE_UP_TEXT()).not.toMatch(DIRECTION_WORDS)
     expect(q('iframe')).toBeNull()
 
     // The sentence is terminal: no retry fires from `no-stream`.

@@ -4,6 +4,8 @@ import { useNavigate, useParams, useSearchParams } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { FormSkeleton } from "@/components/page-skeleton"
+import { LanguageBlock } from "@/components/language-block"
+import { useTranslation } from "@/i18n"
 import { fetchAppMetadata } from "@/lib/api"
 import { usePageTitle } from "@/hooks/use-page-title"
 import {
@@ -28,6 +30,7 @@ import {
   CONFIG_SECTION_LABELS,
   LEGACY_LINK_NOT_FOUND_TEXT,
   RELOAD_CONFIG_LABEL,
+  VERSION_UNAVAILABLE_TEXT,
   configFileIssuesBody,
   configLoadFailedBody,
 } from "@/lib/config-copy"
@@ -111,7 +114,8 @@ function prefersReducedMotion(): boolean {
 }
 
 export default function ConfigPage() {
-  usePageTitle(CONFIG_PAGE_TITLE)
+  useTranslation()
+  usePageTitle(CONFIG_PAGE_TITLE())
   const navigate = useNavigate()
   const { tab: tabParam } = useParams()
   const [searchParams] = useSearchParams()
@@ -124,7 +128,7 @@ export default function ConfigPage() {
   const resolvedTab = resolveConfigTab(tabParam)
   const tab: ConfigTab = resolvedTab ?? "models"
   const sectionParam = searchParams.get("section")
-  const versionText = appVersion ? `agent-qa v${appVersion}` : "agent-qa version unavailable"
+  const versionText = appVersion ? `agent-qa v${appVersion}` : VERSION_UNAVAILABLE_TEXT()
 
   useEffect(() => {
     const legacy = resolveLegacyConfigLink(searchParams)
@@ -244,27 +248,29 @@ export default function ConfigPage() {
 
   return (
     <div data-config-page data-config-state={state.kind} className="max-w-4xl">
-      <h1 className="text-2xl font-semibold tracking-tight">{CONFIG_PAGE_TITLE}</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">{CONFIG_PAGE_TITLE()}</h1>
+
+      <LanguageBlock />
 
       {showLegacyNotice ? (
         <ConfigLineNotice data-config-invalid-notice className="mt-6">
-          {LEGACY_LINK_NOT_FOUND_TEXT}
+          {LEGACY_LINK_NOT_FOUND_TEXT()}
         </ConfigLineNotice>
       ) : null}
 
       {state.kind === "error" ? (
         <ConfigLineNotice data-config-load-error className="mt-6 space-y-2">
-          <p className="text-sm font-medium text-foreground">{CONFIG_LOAD_FAILED_TITLE}</p>
+          <p className="text-sm font-medium text-foreground">{CONFIG_LOAD_FAILED_TITLE()}</p>
           <p className="text-xs">{configLoadFailedBody(state.reason)}</p>
           <Button type="button" variant="outline" size="sm" onClick={autosave.reload}>
-            {RELOAD_CONFIG_LABEL}
+            {RELOAD_CONFIG_LABEL()}
           </Button>
         </ConfigLineNotice>
       ) : (
         <ConfigAutosaveProvider value={autosave}>
           {state.answer.fileIssues?.[0] ? (
             <ConfigLineNotice data-config-file-issues className="mt-6 space-y-2">
-              <p className="text-sm font-medium text-foreground">{CONFIG_FILE_ISSUES_TITLE}</p>
+              <p className="text-sm font-medium text-foreground">{CONFIG_FILE_ISSUES_TITLE()}</p>
               <p className="text-xs">{configFileIssuesBody(issueReason(state.answer.fileIssues[0].message))}</p>
             </ConfigLineNotice>
           ) : null}

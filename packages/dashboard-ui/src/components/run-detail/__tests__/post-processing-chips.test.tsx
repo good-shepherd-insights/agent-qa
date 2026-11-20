@@ -150,7 +150,7 @@ describe("a settled analysis indicator explains itself", () => {
         status: "complete",
         state: "complete",
         word: STAGE_INDICATOR_WORDS.analysis.complete,
-        card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT },
+        card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT(), clause: "no issues found" },
       },
       { status: "complete", state: "complete", word: STAGE_INDICATOR_WORDS.curation.complete },
     ))
@@ -169,7 +169,7 @@ describe("a settled analysis indicator explains itself", () => {
     const card = document.querySelector('[data-stage-card="analysis"]')
     expect(card).not.toBeNull()
     expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.outcome)?.textContent)
-      .toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
+      .toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT())
   })
 })
 
@@ -198,21 +198,21 @@ describe("a pending chip says who is going to move it", () => {
 describe("a terminal chip says what it committed", () => {
   it("renders curation's counts in its card, and never on the analysis card", async () => {
     const host = render(chipsView(
-      { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+      { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT() } },
       { status: "complete", card: { outcome: "Curation complete — 4 added · 2 deprecated" } },
     ))
     expect(lineOf(await cardOf(host, "curation"), "outcome"))
       .toBe("Curation complete — 4 added · 2 deprecated")
-    expect(lineOf(await cardOf(host, "analysis"), "outcome")).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT)
+    expect(lineOf(await cardOf(host, "analysis"), "outcome")).toBe(ANALYSIS_COMPLETE_NO_ISSUES_TEXT())
   })
 
   it("renders the counts-absent line in the SAME slot — a `complete` chip is never silent about counts", async () => {
     const host = render(chipsView(
       { status: "complete" },
-      { status: "complete", card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` } },
+      { status: "complete", card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT()}` } },
     ))
     expect(lineOf(await cardOf(host, "curation"), "outcome"))
-      .toBe(`Curation complete — ${COUNTS_NOT_RECORDED_TEXT}`)
+      .toBe(`Curation complete — ${COUNTS_NOT_RECORDED_TEXT()}`)
   })
 })
 
@@ -226,8 +226,8 @@ describe("`curated N facts, deprecated M` is gone from the header", () => {
       "Curation complete — 4 curated · 2 deprecated",
     ]) {
       const host = render(chipsView(
-        { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
-        { status: "complete", card: { outcome, note: BREAKDOWN_NOT_RECORDED_TEXT } },
+        { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT() } },
+        { status: "complete", card: { outcome, note: BREAKDOWN_NOT_RECORDED_TEXT() } },
       ))
       expect(host.textContent ?? "").not.toMatch(LEGACY)
       for (const stage of ["analysis", "curation"] as const) {
@@ -245,7 +245,10 @@ describe("`curated N facts, deprecated M` is gone from the header", () => {
 describe("the curation chip is a click-through into the Knowledge tab", () => {
   const SETTLED_CURATION = {
     status: "complete",
-    card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` },
+    card: {
+      outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT()}`,
+      clause: COUNTS_NOT_RECORDED_TEXT(),
+    },
   }
 
   function renderWithClick(onCurationClick: () => void): HTMLElement {
@@ -266,7 +269,7 @@ describe("the curation chip is a click-through into the Knowledge tab", () => {
     // A native tooltip beside a Radix one is two treatments of one concept.
     expect(root.getAttribute("title")).toBeNull()
     expect(root.getAttribute("aria-label")).toBe(
-      stageIndicatorAccessibleName("curation", "complete", SETTLED_CURATION.card.outcome, "knowledge"),
+      stageIndicatorAccessibleName("curation", "complete", SETTLED_CURATION.card.clause, "knowledge"),
     )
   })
 
@@ -274,7 +277,7 @@ describe("the curation chip is a click-through into the Knowledge tab", () => {
     const host = renderWithClick(vi.fn())
     const card = await cardOf(host, "curation")
 
-    expect(lineOf(card, "door")).toBe(OPEN_KNOWLEDGE_TAB_TEXT)
+    expect(lineOf(card, "door")).toBe(OPEN_KNOWLEDGE_TAB_TEXT())
     expect([...card.querySelectorAll("[data-stage-card-line]")].at(-1)?.getAttribute("data-stage-card-line"))
       .toBe("door")
     expect(card.querySelector("a, button")).toBeNull()
@@ -322,11 +325,17 @@ describe("the curation chip is a click-through into the Knowledge tab", () => {
 describe("the analysis indicator is the door to the verdict when the page gave it one", () => {
   const FAILED_ANALYSIS = {
     status: "failed",
-    card: { outcome: `Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}` },
+    card: {
+      outcome: `Analysis failed — ${FAILED_REASON_ABSENT_TEXT.handedOff}`,
+      clause: FAILED_REASON_ABSENT_TEXT.handedOff,
+    },
   }
   const SETTLED_CURATION = {
     status: "complete",
-    card: { outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT}` },
+    card: {
+      outcome: `Curation complete — ${COUNTS_NOT_RECORDED_TEXT()}`,
+      clause: COUNTS_NOT_RECORDED_TEXT(),
+    },
   }
 
   /**
@@ -361,7 +370,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     expect(root.tagName).toBe("BUTTON")
     expect(root.getAttribute("type")).toBe("button")
     expect(root.getAttribute("aria-label")).toBe(
-      stageIndicatorAccessibleName("analysis", "failed", FAILED_ANALYSIS.card.outcome, "verdict"),
+      stageIndicatorAccessibleName("analysis", "failed", FAILED_ANALYSIS.card.clause, "verdict"),
     )
     // Spelled out as well as composed, so a joiner change cannot hide behind self-consistency.
     expect(root.getAttribute("aria-label")!.endsWith(" — open verdict")).toBe(true)
@@ -371,7 +380,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     expect(root.getAttribute("data-stage-state")).toBe("failed")
 
     const card = await cardOf(host, "analysis")
-    expect(lineOf(card, "door")).toBe(OPEN_VERDICT_TEXT)
+    expect(lineOf(card, "door")).toBe(OPEN_VERDICT_TEXT())
     expect([...card.querySelectorAll("[data-stage-card-line]")].at(-1)?.getAttribute("data-stage-card-line"))
       .toBe("door")
     // Text only inside the card: the indicator the reader is on is the control.
@@ -392,7 +401,10 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     const host = mount(
       <PostProcessingChips
         view={chipsView(
-          { status: "complete", card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT } },
+          {
+            status: "complete",
+            card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT(), clause: "no issues found" },
+          },
           SETTLED_CURATION,
         )}
       />,
@@ -403,7 +415,7 @@ describe("the analysis indicator is the door to the verdict when the page gave i
     expect(root.getAttribute("tabindex")).toBe("0")
     expect(root.getAttribute("aria-label")).toBeNull()
     expect(root.querySelector(".sr-only")?.textContent).toBe(
-      stageIndicatorAccessibleName("analysis", "complete", ANALYSIS_COMPLETE_NO_ISSUES_TEXT),
+      stageIndicatorAccessibleName("analysis", "complete", "no issues found"),
     )
     expect(lineOf(await cardOf(host, "analysis"), "door")).toBeUndefined()
 
@@ -490,7 +502,7 @@ describe("a refusal is its own state, and it is not a chip", () => {
     const host = render({ kind: "unavailable", error: "job_store_schema_version", reason: "stamped by another build" })
     const state = host.querySelectorAll('[data-chips-state="unavailable"]')
     expect(state).toHaveLength(1)
-    expect(state[0]!.textContent).toContain(POST_PROCESSING_UNAVAILABLE_WORD)
+    expect(state[0]!.textContent).toContain(POST_PROCESSING_UNAVAILABLE_WORD())
     expect(state[0]!.getAttribute("data-stage-state")).toBe("unavailable")
     expect(state[0]!.getAttribute("tabindex")).toBe("0")
     expect(state[0]!.getAttribute("title")).toBeNull()
@@ -506,7 +518,7 @@ describe("a refusal is its own state, and it is not a chip", () => {
     await act(async () => { root.focus() })
     const card = document.querySelector('[data-stage-card="unavailable"]')
     expect(card).not.toBeNull()
-    expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.outcome)?.textContent).toBe(CHIPS_UNAVAILABLE_TEXT)
+    expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.outcome)?.textContent).toBe(CHIPS_UNAVAILABLE_TEXT())
     expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.error)?.textContent).toBe("job_store_schema_version")
     expect(card!.querySelector(STAGE_CARD_LINE_SELECTORS.reason)?.textContent).toBe("stamped by another build")
   })
@@ -517,7 +529,7 @@ describe("a refusal is its own state, and it is not a chip", () => {
     expect(loading).toHaveLength(1)
     // An ellipsis is nothing to a screen reader, so the wait is announced.
     expect(loading[0]!.getAttribute("role")).toBe("status")
-    expect(loading[0]!.querySelector(".sr-only")?.textContent).toBe(POST_PROCESSING_LOADING_LABEL)
+    expect(loading[0]!.querySelector(".sr-only")?.textContent).toBe(POST_PROCESSING_LOADING_LABEL())
     expect(host.querySelectorAll("[data-chip]")).toHaveLength(0)
   })
 })
@@ -595,7 +607,7 @@ describe("a card explains timing on its own line", () => {
     const host = render(chipsView(
       {
         status: "complete",
-        card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT, timing: "Queued 10:41:02 · finished in 5s" },
+        card: { outcome: ANALYSIS_COMPLETE_NO_ISSUES_TEXT(), timing: "Queued 10:41:02 · finished in 5s" },
       },
       {
         status: "complete",
@@ -624,7 +636,7 @@ describe("a card explains timing on its own line", () => {
             status: "failed",
             card: {
               outcome: "Curation failed — the bundle would not commit",
-              note: BREAKDOWN_NOT_RECORDED_TEXT,
+              note: BREAKDOWN_NOT_RECORDED_TEXT(),
               timing: "Queued 10:41:02 · started after 1s · 2 attempts",
               retry: "Will retry",
             },

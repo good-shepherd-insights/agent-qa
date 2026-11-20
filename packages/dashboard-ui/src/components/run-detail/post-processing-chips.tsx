@@ -158,7 +158,7 @@ function Chip({
           aria-label={
             stage === "curation"
               ? curationChipAccessibleName(chip)
-              : stageIndicatorAccessibleName(stage, chip.state, chip.card?.outcome, door)
+              : stageIndicatorAccessibleName(stage, chip.state, chip.card?.clause, door)
           }
           className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-pointer transition-colors hover:text-foreground`}
         >
@@ -179,7 +179,7 @@ function Chip({
       >
         {body}
         <span className="sr-only">
-          {stageIndicatorAccessibleName(stage, chip.state, chip.card?.outcome)}
+          {stageIndicatorAccessibleName(stage, chip.state, chip.card?.clause)}
         </span>
       </span>
     </WithCard>
@@ -206,7 +206,7 @@ export function PostProcessingChips({
         className="text-xs text-muted-foreground shrink-0"
       >
         …
-        <span className="sr-only">{POST_PROCESSING_LOADING_LABEL}</span>
+        <span className="sr-only">{POST_PROCESSING_LOADING_LABEL()}</span>
       </span>
     )
   }
@@ -217,7 +217,7 @@ export function PostProcessingChips({
       <WithCard
         stage="unavailable"
         lines={[
-          { kind: "outcome", text: CHIPS_UNAVAILABLE_TEXT },
+          { kind: "outcome", text: CHIPS_UNAVAILABLE_TEXT() },
           { kind: "error", text: view.error },
           ...(view.reason === undefined ? [] : [{ kind: "reason" as const, text: view.reason }]),
         ]}
@@ -229,7 +229,7 @@ export function PostProcessingChips({
           className={`${CHIP_ROOT_CLASS} ${FOCUS_RING} cursor-default ${wordClass}`}
         >
           <Glyph aria-hidden="true" className={`h-3.5 w-3.5 ${glyphClass}`} />
-          {POST_PROCESSING_UNAVAILABLE_WORD}
+          {POST_PROCESSING_UNAVAILABLE_WORD()}
         </span>
       </WithCard>
     )

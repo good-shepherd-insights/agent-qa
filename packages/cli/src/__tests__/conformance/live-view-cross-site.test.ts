@@ -46,6 +46,7 @@ interface Fixture {
 }
 
 let fixture: Fixture | undefined
+let spawned: SpawnedDashboard | undefined
 
 function held(): Fixture {
   if (fixture === undefined) throw new Error('the cross-site fixture never came up')
@@ -368,6 +369,7 @@ beforeAll(async () => {
 
   const project = runServiceFixtureProject('live-view-cross-site')
   const dashboard = await spawnDashboard(project.root, project.configPath)
+  spawned = dashboard
   expect(
     dashboard.ready,
     `the built \`agent-qa dashboard\` never reported that it was listening. ${childContext(dashboard)}`,
@@ -405,7 +407,6 @@ beforeAll(async () => {
 }, 180_000)
 
 afterAll(async () => {
-  const open = fixture
   fixture = undefined
   if (browser !== undefined) { await browser.close().catch(() => undefined); browser = undefined }
   if (attackerServer !== undefined) {
@@ -413,7 +414,7 @@ afterAll(async () => {
     attackerServer = undefined
     await new Promise<void>((closed) => listening.close(() => closed()))
   }
-  if (open !== undefined) await open.dashboard.stop()
+  await spawned?.stop()
   cleanupTempRoots()
 })
 
@@ -524,7 +525,7 @@ describe('the live-url mint door refuses a cross-site browser request', () => {
 
     if (browser === undefined) {
       try {
-        browser = await chromium.launch({ headless: true })
+        browser = await chromium.launch({ headless: true, args: ['--lang=en-US'] })
       } catch (error) {
         throw new Error(
           `${BROWSER_INSTALL_INSTRUCTION} underlying error: `
@@ -1189,7 +1190,7 @@ describe('the live-editor surface refuses a cross-site caller', () => {
 
     if (browser === undefined) {
       try {
-        browser = await chromium.launch({ headless: true })
+        browser = await chromium.launch({ headless: true, args: ['--lang=en-US'] })
       } catch (error) {
         throw new Error(
           `${BROWSER_INSTALL_INSTRUCTION} underlying error: `

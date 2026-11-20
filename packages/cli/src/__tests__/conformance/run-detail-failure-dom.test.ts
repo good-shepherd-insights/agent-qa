@@ -100,38 +100,38 @@ function unescapeStringBody(body: string): string {
   return out
 }
 
-// Either quote style, matched to the closing quote across escapes; a template literal is refused.
-function publishedConstant(relativePath: string, name: string): string {
+// The English text of one catalog key, in either quote style, on the key's line or the next.
+function publishedText(area: string, key: string): string {
+  const relativePath = join('i18n', 'locales', 'en', `${area}.ts`)
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
+  const quotedKey = key.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
   const entry = new RegExp(
-    `export const ${name}(?::\\s*string)?\\s*=\\s*(['"])((?:\\\\.|[^\\\\])*?)\\1`,
+    `(['"])${quotedKey}\\1:[ \\t]*(?:\\n[ \\t]*)?(['"])((?:\\\\.|[^\\\\])*?)\\2`,
     'u',
   ).exec(source)
   if (entry === null) {
-    throw new Error(
-      `${name} is no longer a single- or double-quoted top-level constant in ${relativePath}`,
-    )
+    throw new Error(`${key} is not a quoted entry of ${relativePath}`)
   }
-  return unescapeStringBody(entry[2] as string)
+  return unescapeStringBody(entry[3] as string)
 }
 
 // Outside the drive's `describe`, so the helper's cell needs no binary, browser or run.
-describe('publishedConstant reads a constant whatever quotes it carries', () => {
-  it('publishedConstant reads a DOUBLE-quoted constant with its apostrophe intact', () => {
-    const title = publishedConstant('lib/config-copy.ts', 'CONFIG_LOAD_FAILED_TITLE')
+describe('published text reads a catalog entry whatever quotes it carries', () => {
+  it('publishedText reads a DOUBLE-quoted catalog entry with its apostrophe intact', () => {
+    const title = publishedText('configUi', 'configUi.configLoadFailedTitle')
     expect(title).toBe("Couldn't load the config")
     // The body is the RUNTIME string, not the source text: no backslash survives the read.
     expect(title).not.toContain('\\')
   })
 
-  it('publishedConstant still reads a SINGLE-quoted constant, unchanged', () => {
-    expect(publishedConstant('lib/run-detail-view.ts', 'TOKEN_USAGE_TRIGGER_LABEL'))
-      .toBe('Token usage — details')
+  it('publishedText refuses a key the catalog does not hold', () => {
+    expect(() => publishedText('configUi', 'configUi.notAPublishedKey')).toThrow(
+      /configUi\.notAPublishedKey is not a quoted entry/u,
+    )
   })
 
-  it('publishedConstant refuses a name it cannot find rather than answering an empty string', () => {
-    expect(() => publishedConstant('lib/run-detail-view.ts', 'NOT_A_PUBLISHED_CONSTANT'))
-      .toThrow(/single- or double-quoted/u)
+  it('publishedText reads a SINGLE-quoted catalog entry with its dash intact', () => {
+    expect(publishedText('runDetail', 'runDetail.usage.triggerLabel')).toBe('Token usage — details')
   })
 })
 
@@ -590,7 +590,7 @@ describe('the shipped dashboard paints a FAILED run\'s summary as stored text', 
     }
 
     try {
-      browser = await chromium.launch({ headless: true })
+      browser = await chromium.launch({ headless: true, args: ['--lang=en-US'] })
     } catch (error) {
       recorded.failure =
         `${BROWSER_INSTALL_INSTRUCTION} underlying error: `

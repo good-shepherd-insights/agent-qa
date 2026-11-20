@@ -12,8 +12,10 @@ import { Button } from '@/components/ui/button'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { usePageTitle } from '@/hooks/use-page-title'
 import { getRunFaviconState, type RunFaviconState, useRunStatusFavicon } from '@/hooks/use-run-status-favicon'
+import { t, useTranslation } from '@/i18n'
 import { ApiError, cancelRun, classifyRunStreamClose, fetchRun, openRunStream } from '@/lib/api'
 import type { RunRow } from '@/lib/api'
+import { formatPercent } from '@/lib/format'
 import { rungBannerText } from '@/lib/knowledge-view'
 import { liveRunLayoutOf, liveRunPanelIds } from '@/lib/live-run-layout'
 import { watchedHandleOf } from '@/lib/live-run-watch'
@@ -35,45 +37,65 @@ const SOURCE_CLOSED = 2
 
 // The range is inclusive, because both ends are envelopes the viewer will not see.
 export function gapMarkerText(from: number, to: number): string {
-  return `${String(to - from + 1)} events missed (seq ${String(from)}–${String(to)}) — see run detail`
+  return t('live.run.gapMarker', { count: to - from + 1, from: String(from), to: String(to) })
 }
 
 // A running test's latest word from its plugin remote, such as its farm queue position.
 export function remoteProgressText(line: RemoteProgressLine): string {
-  const percent = line.percent === undefined ? '' : ` ${String(Math.round(line.percent))}%`
-  return `Remote ${line.remote}: ${line.message}${percent}`
+  if (line.percent === undefined) {
+    return t('live.run.remoteProgress', { remote: line.remote, message: line.message })
+  }
+  return t('live.run.remoteProgressPercent', {
+    remote: line.remote,
+    message: line.message,
+    percent: formatPercent(Math.round(line.percent)),
+  })
 }
 
 export interface RemoteProgressRow {
   key: string
-  text: string
+  line: RemoteProgressLine
+  testIndexes: number[]
+  named: boolean
 }
 
 // Each distinct line once, so a suite's shared session shows one; when the lines differ, each
-// names the tests it belongs to.
-export function remoteProgressRows(
-  progress: RunStreamState['progress'],
-  members: RunStreamState['members'],
-): RemoteProgressRow[] {
-  const byText = new Map<string, number[]>()
+// names the tests it belongs to. Lines are the same when they would read the same.
+export function remoteProgressRows(progress: RunStreamState['progress']): RemoteProgressRow[] {
+  const byFacts = new Map<string, { line: RemoteProgressLine; testIndexes: number[] }>()
   for (const [testIndex, line] of Object.entries(progress)) {
-    const text = remoteProgressText(line)
-    byText.set(text, [...(byText.get(text) ?? []), Number(testIndex)])
+    const percent = line.percent === undefined ? '' : String(Math.round(line.percent))
+    const facts = JSON.stringify([line.remote, line.message, percent])
+    const group = byFacts.get(facts)
+    if (group) group.testIndexes.push(Number(testIndex))
+    else byFacts.set(facts, { line, testIndexes: [Number(testIndex)] })
   }
-  const named = byText.size > 1
-  return [...byText].map(([text, testIndexes]) => {
-    const names = testIndexes.map(
-      (testIndex) => members[testIndex]?.name ?? `test ${String(testIndex + 1)}`,
-    )
-    return { key: testIndexes.join(','), text: named ? `${names.join(', ')} · ${text}` : text }
-  })
+  const named = byFacts.size > 1
+  return [...byFacts.values()].map(({ line, testIndexes }) => ({
+    key: testIndexes.join(','),
+    line,
+    testIndexes,
+    named,
+  }))
+}
+
+function remoteProgressRowText(
+  row: RemoteProgressRow,
+  members: RunStreamState['members'],
+): string {
+  const line = remoteProgressText(row.line)
+  if (!row.named) return line
+  const tests = row.testIndexes.map(
+    (testIndex) => members[testIndex]?.name ?? t('live.run.testFallback', { number: testIndex + 1 }),
+  )
+  return t('live.run.remoteProgressNamed', { tests: tests.join(', '), line })
 }
 
 /** What the terminal band says beside the verdict. */
-export const RUN_ENDED_TEXT = 'run ended'
+export const RUN_ENDED_TEXT = () => t('live.run.ended')
 
 // The word for a run this process cannot stream any further.
-export const RUN_OVER_TEXT = 'this run is over — view run detail'
+export const RUN_OVER_TEXT = () => t('live.run.over')
 
 /**
  * The not-yet probe for a run the door has never heard of, in attempts and in cadence.
@@ -86,7 +108,8 @@ const NOT_YET_ATTACH_RETRY_MS = 2_500
 const NOT_YET_ATTACH_LIMIT = 8
 
 export default function LiveRunPage() {
-  usePageTitle('Live Run')
+  const { t } = useTranslation()
+  usePageTitle(t('live.run.title'))
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
 
@@ -238,23 +261,25 @@ export default function LiveRunPage() {
     cancelRun(id)
       .then((result) => {
         // A stop request is not a cancel; the verdict sets the status.
-        if (typeof result.message !== 'string') toast.error('Failed to cancel run', toastOptions)
+        if (typeof result.message !== 'string') toast.error(t('live.run.cancelFailed'), toastOptions)
         else if (result.outcome === 'cancelled') toast.success(result.message, toastOptions)
         else toast.info(result.message, toastOptions)
       })
       .catch((error: unknown) => {
         // Only the 409 refusals are worded for a person.
         const refused = error instanceof ApiError && error.status === 409
-        toast.error(refused ? error.message : 'Failed to cancel run', toastOptions)
+        toast.error(refused ? error.message : t('live.run.cancelFailed'), toastOptions)
       })
       .finally(() => { setIsCancelling(false) })
-  }, [id, isCancelling])
+  }, [id, isCancelling, t])
 
   if (id === undefined) {
-    return <EmptyState icon={MonitorPlay} title="No run selected" description="Select a test run to watch live execution" />
+    return (
+      <EmptyState icon={MonitorPlay} title={t('live.run.noRun')} description={t('live.run.noRunDescription')} />
+    )
   }
 
-  const title = fallbackRun?.name ?? 'Live Run'
+  const title = fallbackRun?.name ?? t('live.run.title')
   const isOver = state.terminal || runOver
 
   // The band shows only when the run ended with no verdict; a verdict has already navigated.
@@ -262,7 +287,7 @@ export default function LiveRunPage() {
 
   // Named once so the strip's condition and the element inside it cannot come apart.
   const rung = state.retrievalRung
-  const progressRows = remoteProgressRows(state.progress, state.members)
+  const progressRows = remoteProgressRows(state.progress)
 
   // Gated on `rungBannerText`, the banner's own predicate, so container and child cannot disagree.
   const rungSentence = rungBannerText(rung === undefined ? undefined : {
@@ -325,11 +350,11 @@ export default function LiveRunPage() {
               className="h-7 px-2 text-xs text-muted-foreground hover:bg-red-500/10 hover:text-red-400"
             >
               <XCircle className="size-3.5" />
-              {isCancelling ? 'Cancelling...' : 'Cancel'}
+              {isCancelling ? t('live.run.cancelling') : t('live.run.cancel')}
             </Button>
           )}
           <Link data-run-detail-link to={routes.runDetail(id)} className="text-xs underline-offset-4 hover:underline">
-            view run detail
+            {t('live.run.viewRunDetail')}
           </Link>
         </div>
       </div>
@@ -341,18 +366,17 @@ export default function LiveRunPage() {
           {bandsTerminal && (
             <div data-terminal-state={verdictDescriptor.normalized} className="flex items-center gap-2">
               <Badge className={getStatusBadgeClassName(verdictDescriptor.tone)}>{verdictDescriptor.label}</Badge>
-              <span className="text-muted-foreground">{RUN_ENDED_TEXT}</span>
+              <span className="text-muted-foreground">{RUN_ENDED_TEXT()}</span>
             </div>
           )}
           {runOver && (
             <p data-run-over className="text-muted-foreground">
-              {RUN_OVER_TEXT}
+              {RUN_OVER_TEXT()}
             </p>
           )}
           {state.gap !== undefined && (
-            // ONE TEMPLATE STRING, not a run of JSX children. A marker split across text nodes is
-            // one reformat away from gaining or losing a space, and this sentence is a published
-            // contract two suites read back verbatim.
+            // One catalog sentence, not a run of JSX children: a marker split across text nodes is
+            // one reformat away from gaining or losing a space, and tests read it back verbatim.
             <p data-gap-marker className="text-amber-500">
               {gapMarkerText(state.gap.from, state.gap.to)}
             </p>
@@ -367,14 +391,14 @@ export default function LiveRunPage() {
             <div role="status" aria-live="polite" className="contents">
               {progressRows.map((row) => (
                 <p key={`progress:${row.key}`} data-remote-progress={row.key} className="text-muted-foreground">
-                  {row.text}
+                  {remoteProgressRowText(row, state.members)}
                 </p>
               ))}
             </div>
           )}
           {runMetaFailed && (
             <p data-run-meta-unavailable className="text-muted-foreground">
-              run details unavailable — the live stream is unaffected
+              {t('live.run.metaUnavailable')}
             </p>
           )}
           {state.notices.map((notice, index) => (

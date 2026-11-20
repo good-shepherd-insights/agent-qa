@@ -94,6 +94,7 @@ import {
   type ConfigSectionId,
   type ConfigTab,
 } from '@/lib/config-tabs'
+import i18n from '@/i18n'
 import { routes } from '@/lib/routes'
 import ConfigPage from '@/pages/config'
 
@@ -577,7 +578,7 @@ describe('ConfigPage autosave wiring', () => {
     const execution = tabTrigger('execution')!
     expect(execution.querySelector('[data-tab-draft]')).not.toBeNull()
     expect(execution.querySelector('[data-tab-draft]')?.getAttribute('aria-hidden')).not.toBeNull()
-    expect(execution.textContent).toBe(`${CONFIG_TAB_LABELS.execution}${TAB_DRAFT_SR_SUFFIX}`)
+    expect(execution.textContent).toBe(`${CONFIG_TAB_LABELS.execution}${TAB_DRAFT_SR_SUFFIX()}`)
     for (const tab of CONFIG_TABS.filter((id) => id !== 'execution')) {
       expect(tabTrigger(tab)?.querySelector('[data-tab-draft]'), tab).toBeNull()
       expect(tabTrigger(tab)?.textContent, tab).toBe(CONFIG_TAB_LABELS[tab])
@@ -593,7 +594,7 @@ describe('ConfigPage autosave wiring', () => {
     )
     await renderAt('/config/models')
 
-    const notSaved = container?.querySelector(`button[aria-label="${NOT_SAVED_ACTION_NAME}"]`) as HTMLButtonElement | null
+    const notSaved = container?.querySelector(`button[aria-label="${NOT_SAVED_ACTION_NAME()}"]`) as HTMLButtonElement | null
     expect(notSaved).not.toBeNull()
     await act(async () => {
       notSaved!.click()
@@ -629,7 +630,7 @@ describe('ConfigPage autosave wiring', () => {
     expect(tabTrigger('execution')?.querySelector('[data-tab-draft]')).not.toBeNull()
 
     await act(async () => {
-      findButton(RETRY_LABEL)!.click()
+      findButton(RETRY_LABEL())!.click()
     })
     await flushRender()
     expect(applyConfigChanges).toHaveBeenCalledTimes(2)
@@ -644,7 +645,7 @@ describe('ConfigPage autosave wiring', () => {
     await typeAndSettle('45s')
     expect(container?.querySelector('[data-save-status]')?.getAttribute('data-save-status')).toBe('failed')
 
-    const retry = findButton(RETRY_LABEL)!
+    const retry = findButton(RETRY_LABEL())!
     await act(async () => {
       retry.focus()
     })
@@ -670,13 +671,14 @@ describe('ConfigPage autosave wiring', () => {
     const strip = stops.filter((element) => element === tablist || tablist.contains(element))
     expect(strip, 'the tab strip is one stop').toHaveLength(1)
     expect(tabTrigger('execution')?.getAttribute('aria-selected')).toBe('true')
-    const retry = findButton(RETRY_LABEL)!
+    const retry = findButton(RETRY_LABEL())!
     const panel = container!.querySelector('[data-config-panel="execution"]')!
     const firstPanelStop = stops.findIndex((element) => panel === element || panel.contains(element))
 
-    expect(stops.indexOf(strip[0]!)).toBe(0)
-    expect(firstPanelStop).toBeGreaterThan(0)
-    expect(stops.slice(1, firstPanelStop)).toEqual([retry])
+    expect(stops[0]).toBe(container!.querySelector('[data-language-select]'))
+    expect(stops.indexOf(strip[0]!)).toBe(1)
+    expect(firstPanelStop).toBeGreaterThan(1)
+    expect(stops.slice(2, firstPanelStop)).toEqual([retry])
   })
 
   it('FILE-ISSUES-RECOVER-WITHOUT-RELOAD: a file failing validation shows one notice above the tabs, which clears when the file is fixed', async () => {
@@ -688,7 +690,7 @@ describe('ConfigPage autosave wiring', () => {
 
     const notices = view.querySelectorAll('[data-config-file-issues]')
     expect(notices).toHaveLength(1)
-    expect(notices[0]!.textContent).toContain(CONFIG_FILE_ISSUES_TITLE)
+    expect(notices[0]!.textContent).toContain(CONFIG_FILE_ISSUES_TITLE())
     expect(notices[0]!.textContent).toContain(configFileIssuesBody('Step timeout must be a duration such as 30s'))
     const tabbar = view.querySelector('[data-config-tabbar]')!
     expect(notices[0]!.compareDocumentPosition(tabbar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -740,12 +742,12 @@ describe('ConfigPage task tabs shell', () => {
     const error = view.querySelector('[data-config-load-error]')
     expect(view.querySelector('[data-config-page]')?.getAttribute('data-config-state')).toBe('error')
     expect(error).not.toBeNull()
-    expect(error?.textContent).toContain(CONFIG_LOAD_FAILED_TITLE)
+    expect(error?.textContent).toContain(CONFIG_LOAD_FAILED_TITLE())
     expect(error?.textContent).toContain(configLoadFailedBody('agent-qa.config.yaml is not valid YAML'))
     expect(view.querySelector('[role="tab"]')).toBeNull()
     expect(toast.error).not.toHaveBeenCalled()
 
-    const reload = findButton(RELOAD_CONFIG_LABEL)
+    const reload = findButton(RELOAD_CONFIG_LABEL())
     expect(reload).not.toBeNull()
     await act(async () => {
       reload!.click()
@@ -758,6 +760,33 @@ describe('ConfigPage task tabs shell', () => {
     expect(currentLocation().pathname).toBe('/config/models')
   })
 
+  it('places the language block after the heading and before the tab bar', async () => {
+    const view = await renderAt('/config/models')
+
+    const heading = view.querySelector('h1')
+    const languageBlock = view.querySelector('[data-language-block]')
+    const tabBar = view.querySelector('[data-config-tabbar]')
+    expect(heading).not.toBeNull()
+    expect(languageBlock).not.toBeNull()
+    expect(tabBar).not.toBeNull()
+    expect(heading!.compareDocumentPosition(languageBlock!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(languageBlock!.compareDocumentPosition(tabBar!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows the language block when the config failed to load', async () => {
+    vi.mocked(fetchConfig).mockRejectedValueOnce(new Error('agent-qa.config.yaml is not valid YAML.'))
+
+    const view = await renderAt('/config/models')
+
+    const heading = view.querySelector('h1')
+    const languageBlock = view.querySelector('[data-language-block]')
+    const loadError = view.querySelector('[data-config-load-error]')
+    expect(view.querySelector('[data-config-page]')?.getAttribute('data-config-state')).toBe('error')
+    expect(languageBlock).not.toBeNull()
+    expect(heading!.compareDocumentPosition(languageBlock!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(languageBlock!.compareDocumentPosition(loadError!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('TABS-FIVE-IN-ORDER: exactly five tabs in the order Models, Targets, Execution, Project, Advanced', async () => {
     const view = await renderAt('/config/models')
 
@@ -768,12 +797,12 @@ describe('ConfigPage task tabs shell', () => {
     )
     expect(triggers.map((trigger) => trigger.getAttribute('data-config-tab'))).toEqual([...CONFIG_TABS])
     expect(view.querySelectorAll('[role="tablist"]')).toHaveLength(1)
-    expect(view.querySelector('[role="tablist"]')?.getAttribute('aria-label')).toBe(CONFIG_TABS_ARIA_LABEL)
+    expect(view.querySelector('[role="tablist"]')?.getAttribute('aria-label')).toBe(CONFIG_TABS_ARIA_LABEL())
     expect(view.querySelector('[role="tablist"]')?.getAttribute('data-tour-id')).toBe('tour-config-nav')
     expect(view.querySelector('[data-config-tabs-scroll] [role="tablist"]')).not.toBeNull()
     expect(view.querySelector('[data-config-tabbar] > [data-config-status-slot]')).not.toBeNull()
     expect(view.querySelector('[data-config-tabs-scroll] [data-config-status-slot]')).toBeNull()
-    expect(view.querySelector('h1')?.textContent).toBe(CONFIG_PAGE_TITLE)
+    expect(view.querySelector('h1')?.textContent).toBe(CONFIG_PAGE_TITLE())
   })
 
   it('BARE-CONFIG-LANDS-ON-MODELS: bare /config is replaced by /config/models with the Models panel active', async () => {
@@ -830,7 +859,7 @@ describe('ConfigPage task tabs shell', () => {
 
     expect(currentLocation()).toEqual({ pathname: '/config/models', search: '' })
     const notice = view.querySelector('[data-config-invalid-notice]')
-    expect(notice?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT)
+    expect(notice?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT())
     expect(notice?.hasAttribute('data-config-line-notice')).toBe(true)
     expect(notice?.textContent).not.toContain('bucket')
     expect(notice?.textContent).not.toContain('unknown')
@@ -848,14 +877,14 @@ describe('ConfigPage task tabs shell', () => {
     let view = await renderAt('/config/storage')
 
     expect(currentLocation()).toEqual({ pathname: '/config/models', search: '' })
-    expect(view.querySelector('[data-config-invalid-notice]')?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT)
+    expect(view.querySelector('[data-config-invalid-notice]')?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT())
     expect(view.textContent).not.toContain('storage')
 
     cleanupAfterDialog()
     view = await renderAt('/config/models?section=browser')
 
     expect(currentLocation()).toEqual({ pathname: '/config/models', search: '' })
-    expect(view.querySelector('[data-config-invalid-notice]')?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT)
+    expect(view.querySelector('[data-config-invalid-notice]')?.textContent).toBe(LEGACY_LINK_NOT_FOUND_TEXT())
   })
 
   it('NO-RAIL: the desktop rail and its main column never render', async () => {
@@ -882,6 +911,8 @@ describe('ConfigPage task tabs shell', () => {
 
         const view = await renderAt('/config/models')
         const chrome = shellChrome(view)
+        // The language select chooses this browser's language and navigates nothing.
+        chrome.querySelector('[data-language-block]')?.remove()
 
         expect(view.querySelector('[data-config-mobile-selector]')).toBeNull()
         expect(chrome.querySelector('select, [role="combobox"], [role="listbox"]')).toBeNull()
@@ -1055,8 +1086,8 @@ describe('ConfigPage task tabs shell', () => {
     await typeTextAndBlur(hooksInput!, '')
     await typeTextAndBlur(envInput!, '   ')
 
-    expect(section('files')?.textContent).toContain(HOOKS_FILE_REQUIRED_ERROR)
-    expect(section('files')?.textContent).toContain(ENV_FILE_REQUIRED_ERROR)
+    expect(section('files')?.textContent).toContain(HOOKS_FILE_REQUIRED_ERROR())
+    expect(section('files')?.textContent).toContain(ENV_FILE_REQUIRED_ERROR())
     expect(hooksInput?.getAttribute('aria-invalid')).toBe('true')
     expect(envInput?.getAttribute('aria-invalid')).toBe('true')
     expect(applyConfigChanges).not.toHaveBeenCalled()
@@ -1074,8 +1105,8 @@ describe('ConfigPage task tabs shell', () => {
     await typeListAndBlur(suiteMatch!, '  \n ')
 
     const discovery = section('test-discovery')!
-    expect(discovery.textContent).toContain(TEST_MATCH_REQUIRED_ERROR)
-    expect(discovery.textContent).toContain(SUITE_MATCH_REQUIRED_ERROR)
+    expect(discovery.textContent).toContain(TEST_MATCH_REQUIRED_ERROR())
+    expect(discovery.textContent).toContain(SUITE_MATCH_REQUIRED_ERROR())
     expect(discovery.textContent).not.toMatch(DOTTED_CONFIG_PATH)
     expect(testMatch?.getAttribute('aria-invalid')).toBe('true')
     expect(applyConfigChanges).not.toHaveBeenCalled()
@@ -1172,7 +1203,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(screenshotHeading!.compareDocumentPosition(plannerHeading!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
     // The heading row holds the Models heading and Add model; the list spans the row below.
-    const addModel = sectionButton('models', ADD_MODEL_LABEL)
+    const addModel = sectionButton('models', ADD_MODEL_LABEL())
     expect(addModel?.parentElement).toBe(section('models'))
     expect(section('models')?.firstElementChild?.tagName).toBe('H2')
 
@@ -1354,7 +1385,7 @@ describe('ConfigPage task tabs shell', () => {
 
     const panel = await openModelRow('backup')
     await act(async () => {
-      buttonIn(panel, MAKE_DEFAULT_LABEL)!.click()
+      buttonIn(panel, MAKE_DEFAULT_LABEL())!.click()
     })
     await flushRender()
 
@@ -1370,7 +1401,7 @@ describe('ConfigPage task tabs shell', () => {
 
     const browser = section('browser')!
     expect(browser.querySelector('h2')?.textContent).toBe(CONFIG_SECTION_LABELS.browser)
-    expect(browser.textContent).toContain(HEADLESS_HELP)
+    expect(browser.textContent).toContain(HEADLESS_HELP())
 
     const headlessSwitch = browser.querySelector(`#${configFieldControlId(configFieldKeyOf(HEADLESS_SEGMENTS))}`) as HTMLButtonElement | null
     expect(headlessSwitch).not.toBeNull()
@@ -1641,7 +1672,7 @@ describe('ConfigPage task tabs shell', () => {
 
     await renderAt('/config/targets?section=login-states')
 
-    expect(section('login-states')?.textContent).toContain(NO_LOGIN_STATES_TEXT)
+    expect(section('login-states')?.textContent).toContain(NO_LOGIN_STATES_TEXT())
     expect(section('login-states')?.textContent).not.toContain('No auth states saved')
     expect(section('login-states')?.textContent).not.toContain('Save auth state from a connected web Live Mode session.')
     expect(section('login-states')?.querySelector('h3')).toBeNull()
@@ -1652,7 +1683,7 @@ describe('ConfigPage task tabs shell', () => {
 
     const view = await renderAt('/config/targets?section=login-states')
 
-    expect(section('login-states')?.textContent).toContain(LOGIN_STATES_LOAD_FAILED_TEXT)
+    expect(section('login-states')?.textContent).toContain(LOGIN_STATES_LOAD_FAILED_TEXT())
     expect(section('login-states')?.textContent).not.toContain('Could not load saved auth states.')
     expect(view.textContent).not.toContain('metadata path leaked')
   })
@@ -1663,7 +1694,7 @@ describe('ConfigPage task tabs shell', () => {
 
     await renderAt('/config/targets')
 
-    expect(section('login-states')?.textContent).toContain(LOGIN_STATES_LOADING_TEXT)
+    expect(section('login-states')?.textContent).toContain(LOGIN_STATES_LOADING_TEXT())
     expect(section('login-states')?.querySelector('table')).toBeNull()
     expect(section('targets')?.querySelector('[data-target="staging"]')).not.toBeNull()
     expect(section('devices')?.querySelector('[data-device="iosLocal"]')).not.toBeNull()
@@ -1673,8 +1704,8 @@ describe('ConfigPage task tabs shell', () => {
       read.resolve({ authStates: [] })
     })
     await flushRender()
-    expect(section('login-states')?.textContent).not.toContain(LOGIN_STATES_LOADING_TEXT)
-    expect(section('login-states')?.textContent).toContain(NO_LOGIN_STATES_TEXT)
+    expect(section('login-states')?.textContent).not.toContain(LOGIN_STATES_LOADING_TEXT())
+    expect(section('login-states')?.textContent).toContain(NO_LOGIN_STATES_TEXT())
   })
 
   it('LOGIN-STATES-RELOAD: a failed read offers Reload login states, which re-runs only that read and shows the list, while the other sections stay rendered', async () => {
@@ -1687,8 +1718,8 @@ describe('ConfigPage task tabs shell', () => {
     await renderAt('/config/targets')
 
     const loginStates = section('login-states')!
-    expect(loginStates.textContent).toContain(LOGIN_STATES_LOAD_FAILED_TEXT)
-    const reload = sectionButton('login-states', RELOAD_LOGIN_STATES_LABEL)
+    expect(loginStates.textContent).toContain(LOGIN_STATES_LOAD_FAILED_TEXT())
+    const reload = sectionButton('login-states', RELOAD_LOGIN_STATES_LABEL())
     expect(reload).not.toBeNull()
     expect(section('targets')?.querySelector('[data-target="staging"]')).not.toBeNull()
     expect(section('devices')?.querySelector('[data-device="iosLocal"]')).not.toBeNull()
@@ -1701,7 +1732,7 @@ describe('ConfigPage task tabs shell', () => {
 
     expect(fetchAuthStates).toHaveBeenCalledTimes(2)
     expect(fetchConfig).toHaveBeenCalledTimes(1)
-    expect(section('login-states')!.textContent).not.toContain(LOGIN_STATES_LOAD_FAILED_TEXT)
+    expect(section('login-states')!.textContent).not.toContain(LOGIN_STATES_LOAD_FAILED_TEXT())
     expect(section('login-states')!.querySelector('[data-login-state="staging-web:admin"]')).not.toBeNull()
     expect(section('targets')?.querySelector('[data-target="staging"]')).not.toBeNull()
     expect(section('devices')?.querySelector('[data-device="iosLocal"]')).not.toBeNull()
@@ -1716,11 +1747,11 @@ describe('ConfigPage task tabs shell', () => {
 
     const view = await renderAt('/config/targets')
 
-    expect(section('targets')!.textContent).toContain(NO_TARGETS_TEXT)
-    expect(sectionButton('targets', ADD_TARGET_LABEL)).not.toBeNull()
-    expect(section('devices')!.textContent).toContain(NO_DEVICES_TEXT)
-    expect(sectionButton('devices', ADD_DEVICE_LABEL)).not.toBeNull()
-    expect(section('login-states')!.textContent).toContain(NO_LOGIN_STATES_TEXT)
+    expect(section('targets')!.textContent).toContain(NO_TARGETS_TEXT())
+    expect(sectionButton('targets', ADD_TARGET_LABEL())).not.toBeNull()
+    expect(section('devices')!.textContent).toContain(NO_DEVICES_TEXT())
+    expect(sectionButton('devices', ADD_DEVICE_LABEL())).not.toBeNull()
+    expect(section('login-states')!.textContent).toContain(NO_LOGIN_STATES_TEXT())
     expect(section('targets')!.querySelector('[data-target]')).toBeNull()
     expect(section('devices')!.querySelector('[data-device]')).toBeNull()
 
@@ -1791,7 +1822,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(dashboard.querySelector('[data-config-section-shell]')).toBeNull()
     const portRow = dashboard.querySelector('[data-field-path="services.dashboard.port"]') as HTMLElement | null
     expect(portRow).not.toBeNull()
-    expect(portRow!.querySelector('[data-field-help]')?.textContent).toBe(PORT_RESTART_HELP)
+    expect(portRow!.querySelector('[data-field-help]')?.textContent).toBe(PORT_RESTART_HELP())
     expect(portRow!.hasAttribute('data-apply-state')).toBe(false)
     const portInput = document.getElementById(
       configFieldControlId(configFieldKeyOf(['services', 'dashboard', 'port'])),
@@ -2023,7 +2054,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(modelInput?.type).toBe('text')
     expect(modelInput?.value).toBe('openrouter/auto')
     expect(baseUrlField?.textContent).toContain('Base URL')
-    expect(baseUrlField?.textContent).toContain(BASE_URL_HELP)
+    expect(baseUrlField?.textContent).toContain(BASE_URL_HELP())
     expect((baseUrlField?.querySelector('input') as HTMLInputElement | null)?.value).toBe('https://openrouter.ai/api/v1')
     expect(contextWindowInput?.value).toBe('256k')
     // The help is an inline line, with no tooltip trigger.
@@ -2035,7 +2066,7 @@ describe('ConfigPage task tabs shell', () => {
     const addBaseUrl = addField('baseURL')?.querySelector('input') as HTMLInputElement | null
     const addModel = addField('model')?.querySelector('input') as HTMLInputElement | null
     expect(addBaseUrl?.placeholder).toBe('https://openrouter.ai/api/v1')
-    expect(addField('baseURL')?.textContent).toContain(BASE_URL_HELP)
+    expect(addField('baseURL')?.textContent).toContain(BASE_URL_HELP())
     const listId = addModel?.getAttribute('list')
     expect(listId).toBeTruthy()
     expect(document.getElementById(listId!)?.querySelector('option[value="openrouter/auto"]')).not.toBeNull()
@@ -2056,7 +2087,7 @@ describe('ConfigPage task tabs shell', () => {
 
     const baseUrlInput = addField('baseURL')?.querySelector('input') as HTMLInputElement | null
     const error = addField('baseURL')?.querySelector('[data-field-error]')
-    expect(error?.textContent).toBe(BASE_URL_REQUIRED_ERROR)
+    expect(error?.textContent).toBe(BASE_URL_REQUIRED_ERROR())
     expect(baseUrlInput?.getAttribute('aria-invalid')).toBe('true')
     expect(baseUrlInput?.getAttribute('aria-describedby')?.split(' ')).toContain(error?.id)
     expect(connectLLM).not.toHaveBeenCalled()
@@ -2084,7 +2115,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.querySelector('input[type="password"]')).toBeNull()
 
     await act(async () => {
-      buttonIn(panel, TEST_CONNECTION_LABEL)!.click()
+      buttonIn(panel, TEST_CONNECTION_LABEL())!.click()
     })
     await flushRender()
 
@@ -2122,7 +2153,7 @@ describe('ConfigPage task tabs shell', () => {
     )
 
     await act(async () => {
-      buttonIn(panel, TEST_CONNECTION_LABEL)!.click()
+      buttonIn(panel, TEST_CONNECTION_LABEL())!.click()
     })
     await flushRender()
 
@@ -2148,7 +2179,7 @@ describe('ConfigPage task tabs shell', () => {
     expect(panel.textContent).not.toContain('Save Credential')
 
     // A not-connected sign-in row offers Sign in again.
-    expect(buttonIn(panel, SIGN_IN_AGAIN_LABEL)).not.toBeNull()
+    expect(buttonIn(panel, SIGN_IN_AGAIN_LABEL())).not.toBeNull()
     expect(document.body.textContent).not.toContain('Login with OpenAI subscription')
     expect(document.body.textContent).not.toContain('Save Credential')
   })
@@ -2168,7 +2199,7 @@ describe('ConfigPage task tabs shell', () => {
       const panel = await openModelRow('planner')
 
       await act(async () => {
-        buttonIn(panel, SIGN_IN_AGAIN_LABEL)!.click()
+        buttonIn(panel, SIGN_IN_AGAIN_LABEL())!.click()
       })
       await flushRender()
 
@@ -2219,7 +2250,7 @@ describe('ConfigPage task tabs shell', () => {
       const panel = await openModelRow('planner')
 
       await act(async () => {
-        buttonIn(panel, SIGN_IN_AGAIN_LABEL)!.click()
+        buttonIn(panel, SIGN_IN_AGAIN_LABEL())!.click()
       })
       await flushRender()
 
@@ -2329,10 +2360,10 @@ describe('ConfigPage task tabs shell', () => {
     await openRow(section('targets')!.querySelector('[data-target="shopIos"]'))
 
     const device = fieldControl(['registry', 'targets', 'shopIos', 'device'])
-    expect(device?.textContent).toBe(TARGET_DEVICE_NONE)
+    expect(device?.textContent).toBe(TARGET_DEVICE_NONE())
     await pressKey(device!, 'Enter')
     expect((Array.from(document.body.querySelectorAll('[role="option"]')) as HTMLElement[]).map((option) => option.textContent)).toEqual([
-      TARGET_DEVICE_NONE,
+      TARGET_DEVICE_NONE(),
       'iosLocal',
     ])
     await pressKey(document.activeElement!, 'Escape')
@@ -2389,3 +2420,49 @@ function cleanupAfterDialog() {
   }
   container = null
 }
+
+describe('ConfigPage after a language change', () => {
+  afterEach(async () => {
+    await act(async () => {
+      await i18n.changeLanguage('en')
+    })
+    i18n.removeResourceBundle('fr', 'translation')
+  })
+
+  it('shows the new tab label and section heading on the same nodes with no remount', async () => {
+    i18n.addResourceBundle('fr', 'translation', {
+      'config.tabs.models': 'Modèles',
+      'config.sections.screenshotSize': "Taille des captures d'écran",
+    })
+    await renderAt('/config/models')
+    const tab = tabTrigger('models')
+    const heading = section('screenshot-size')?.querySelector(':scope > h2')
+    expect(tab?.textContent).toContain('Models')
+    expect(heading?.textContent).toBe('Screenshot size')
+
+    await act(async () => {
+      await i18n.changeLanguage('fr')
+    })
+
+    expect(tabTrigger('models')).toBe(tab)
+    expect(section('screenshot-size')?.querySelector(':scope > h2')).toBe(heading)
+    expect(tab?.textContent).toContain('Modèles')
+    expect(tab?.textContent).not.toContain('Models')
+    expect(heading?.textContent).toBe("Taille des captures d'écran")
+  })
+
+  it('shows the new label of the chosen log level on the same control', async () => {
+    i18n.addResourceBundle('fr', 'translation', { 'config.loggingLevel.info': 'Renseignement' })
+    await renderAt('/config/project')
+    const control = fieldControl(['services', 'logging', 'level'])
+    expect(control?.textContent).toContain('Info')
+
+    await act(async () => {
+      await i18n.changeLanguage('fr')
+    })
+
+    expect(fieldControl(['services', 'logging', 'level'])).toBe(control)
+    expect(control?.textContent).toContain('Renseignement')
+    expect(control?.textContent).not.toContain('Info')
+  })
+})

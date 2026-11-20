@@ -1,6 +1,6 @@
 // The likelier correction contradicts the target's own recorded result, so it is offered first.
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type {
   Mark,
   MarkPreviewKnowledgeRecord,
@@ -14,9 +14,11 @@ import {
   RunsMarksHistoryResultSchema,
 } from '@vostride/agent-qa-schema'
 import { generateRunId } from '@vostride/agent-qa-ids'
+import i18n from '@/i18n'
 import type { FeedbackReadFailure } from '@/lib/api'
 
 import { UNNAMED_STEP_LABEL } from '@/lib/display-step'
+import { formatLocale } from '@/lib/format'
 import {
   CHOICE_LABELS,
   CHOICE_LEGEND,
@@ -44,7 +46,6 @@ import {
   SUBMIT_REASON_REFUSED,
   SUBMIT_REASON_SENDING,
   CLI_ESCAPE_PARTS,
-  CLI_ESCAPE_TEXT,
   PREVIEW_REFUSAL_TEXT,
   PREVIEW_RETRY_ACCESSIBLE_NAME,
   RETRY_LABEL,
@@ -54,18 +55,15 @@ import {
   previewRefusalText,
   dispositionText,
   quarantinedText,
-  APPLIED_KNOWLEDGE_PREFIX,
-  APPLIED_TEST_FILE_PREFIX,
   APPLIED_UNAVAILABLE_TEXT,
+  appliedChangeText,
   appliedRecordUnavailableText,
   TECHNICAL_DETAILS_LABEL,
   TECHNICAL_DETAILS_ROW_LABELS,
   basisDetailText,
   type SubmitBlockInput,
   NO_STEP_VERDICT_TEXT,
-  ONE_STEP_SCOPE_TEXT,
   RECORDED_RESULT_TEXT,
-  WHOLE_TEST_SCOPE_TEXT,
   composerHeading,
   feedbackEntryLabel,
   feedbackOutcomeClass,
@@ -184,7 +182,7 @@ describe('choice order and meaning', () => {
       'false-pass': 'The test missed a problem it should have caught.',
     })
     expect(new Set(MARKS.map((kind) => CHOICE_MEANINGS.passed[kind])).size).toBe(3)
-    expect(CHOICE_LEGEND.trim()).not.toBe('')
+    expect(CHOICE_LEGEND().trim()).not.toBe('')
   })
 
   it('CLOSED-SETS-RUNTIME: the outcome classes and composer states are exactly the published sets', () => {
@@ -219,7 +217,7 @@ describe('the composer names its target', () => {
       prefix: 'Feedback on ',
       name: memberDisplayName(checkout),
     })
-    expect(composerHeading({ member: checkout, step: { stepIndex: 0 }, stepCount: 1, suite: false }).name).toBe(UNNAMED_STEP_LABEL)
+    expect(composerHeading({ member: checkout, step: { stepIndex: 0 }, stepCount: 1, suite: false }).name).toBe(UNNAMED_STEP_LABEL())
     expect(feedbackPartsText({ prefix: 'a', name: 'b', suffix: 'c' })).toBe('abc')
     expect(feedbackPartsText({ prefix: 'a' })).toBe('a')
 
@@ -228,32 +226,32 @@ describe('the composer names its target', () => {
       steps: [0, 1, 2].map((stepIndex) => ({ testIndex: 0, stepIndex, cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: 'd' }) as const),
     }
     expect(feedbackPartsText(feedbackTargetView({ detail, target: { testIndex: 0, stepIndex: 1 }, runStatus: 'passed' }).heading))
-      .toBe(`Feedback on step 2 of 3 · ${UNNAMED_STEP_LABEL}`)
+      .toBe(`Feedback on step 2 of 3 · ${UNNAMED_STEP_LABEL()}`)
     expect(feedbackPartsText(feedbackTargetView({ detail, target: { testIndex: 1, stepIndex: 0 }, runStatus: 'passed' }).heading))
-      .toBe(`Feedback on step 1 of 7 · ${UNNAMED_STEP_LABEL}`)
+      .toBe(`Feedback on step 1 of 7 · ${UNNAMED_STEP_LABEL()}`)
   })
 
   it('SCOPE-LINE: whole test or one step, the suite step naming its test, then the target recorded result', () => {
     const passedStep = { ...coupon, status: 'passed' as const }
     expect(feedbackPartsText(scopeLine({ member: checkout, suite: true, runStatus: 'failed' })))
-      .toBe(`${WHOLE_TEST_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.failed}`)
+      .toBe('Whole test · recorded: failed')
     expect(scopeLine({ member: checkout, step: passedStep, suite: true, runStatus: 'failed' })).toEqual({
-      prefix: `${ONE_STEP_SCOPE_TEXT} in `,
+      prefix: 'One step in ',
       name: memberDisplayName(checkout),
       suffix: ` ${memberHandleLabel(1)} · ${RECORDED_RESULT_TEXT.passed}`,
     })
     expect(feedbackPartsText(scopeLine({ member: checkout, step: passedStep, suite: false, runStatus: 'failed' })))
-      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.passed}`)
+      .toBe('One step · recorded: passed')
     expect(feedbackPartsText(scopeLine({ member: checkout, step: { ...coupon, status: 'healed' }, suite: false, runStatus: 'failed' })))
-      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.healed}`)
+      .toBe('One step · recorded: healed — counts as passed')
     expect(feedbackPartsText(scopeLine({ member: checkout, step: { ...coupon, status: 'failed' }, suite: false, runStatus: 'failed' })))
-      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.passed}`)
+      .toBe('One step · recorded: passed')
     expect(feedbackPartsText(scopeLine({ member: { ...checkout, outcome: 'timeout' }, step: { stepIndex: 2 }, suite: false, runStatus: 'failed' })))
-      .toBe(`${ONE_STEP_SCOPE_TEXT} · ${NO_STEP_VERDICT_TEXT(RECORDED_RESULT_TEXT.timeout)}`)
+      .toBe("One step · no step verdict recorded — using the test's result (recorded: timed out — counts as failed)")
     expect(feedbackPartsText(scopeLine({ member: { testIndex: 0 }, suite: false, runStatus: 'healed' })))
-      .toBe(`${WHOLE_TEST_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.healed}`)
+      .toBe('Whole test · recorded: healed — counts as passed')
     expect(feedbackPartsText(scopeLine({ member: { testIndex: 0 }, suite: false, runStatus: 'running' })))
-      .toBe(`${WHOLE_TEST_SCOPE_TEXT} · ${RECORDED_RESULT_TEXT.failed}`)
+      .toBe('Whole test · recorded: failed')
   })
 
   it('RECORDED-RESULT-ROWS: one row per member outcome, each counting as the class the order uses', () => {
@@ -280,10 +278,10 @@ describe('the header entry names itself', () => {
 
   it('ENTRY-LABEL: a step, a single test and a suite test each name their target, with the plain marked suffix', () => {
     expect(feedbackEntryLabel({ scope: 'step', stepNumber: 3 })).toBe('Give feedback on step 3')
-    expect(feedbackEntryLabel({ scope: 'test' })).toBe(FEEDBACK_ENTRY_TEST_LABEL)
+    expect(feedbackEntryLabel({ scope: 'test' })).toBe(FEEDBACK_ENTRY_TEST_LABEL())
     expect(feedbackEntryLabel({ scope: 'test', memberName: 'Checkout', handle: '#2' })).toBe('Give feedback on Checkout #2')
     expect(feedbackEntryLabel({ scope: 'test', markedChoice: 'false-fail' })).toBe(
-      `${FEEDBACK_ENTRY_TEST_LABEL} — already marked: ${CHOICE_LABELS['false-fail']}`,
+      `${FEEDBACK_ENTRY_TEST_LABEL()} — already marked: ${CHOICE_LABELS['false-fail']}`,
     )
     expect(feedbackEntryLabel({ scope: 'step', stepNumber: 1, markedChoice: 'confirmed-bug' })).toBe(
       `Give feedback on step 1 — already marked: ${CHOICE_LABELS['confirmed-bug']}`,
@@ -329,8 +327,8 @@ describe('a test the dashboard cannot address', () => {
 
   it('HAS-UNIQUE-ADDRESS: no unique address is the first reason Send feedback is unavailable', () => {
     const base = { kind: undefined, currentKey: '', landedKey: undefined, landedOutcome: undefined, inFlight: false }
-    expect(submitBlockedReason({ ...base, noUniqueAddress: true })).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS)
-    expect(submitBlockedReason({ ...base, noUniqueAddress: false })).toBe(SUBMIT_REASON_NO_CHOICE)
+    expect(submitBlockedReason({ ...base, noUniqueAddress: true })).toBe(SUBMIT_REASON_NO_UNIQUE_ADDRESS())
+    expect(submitBlockedReason({ ...base, noUniqueAddress: false })).toBe(SUBMIT_REASON_NO_CHOICE())
   })
 })
 
@@ -406,8 +404,8 @@ describe('the preview names what the mark will do', () => {
     for (const arm of ['consequences', 'quarantined', 'already-marked'] as const) {
       expect(feedbackPreviewState({ kind: 'false-fail', landed: read({ kind: arm }) })).toBe(arm)
     }
-    expect(PREVIEW_IDLE_TEXT).toBe('Choose an option above to see what this will do.')
-    expect(PREVIEW_UPDATING_TEXT).toBe('Updating…')
+    expect(PREVIEW_IDLE_TEXT()).toBe('Choose an option above to see what this will do.')
+    expect(PREVIEW_UPDATING_TEXT()).toBe('Updating…')
     expect(PREVIEW_LINE_LABELS).toEqual({ knowledge: 'Knowledge', change: 'Change' })
   })
 
@@ -429,8 +427,8 @@ describe('the preview names what the mark will do', () => {
     expect(recordEffectLine(record(true, { kind: 'effects', effects: [{ direction: 'confirm' }] }))).toBe('confirms')
     expect(recordEffectLine(record(true, { kind: 'effects', effects: [{ direction: 'confirm' }, overturn] }))).toBe('confirms · counts against')
     expect(recordEffectLine(record(false, { kind: 'effects', effects: [overturn, overturn] }))).toBe('counts against × 2')
-    expect(recordEffectLine(record(true, { kind: 'unreadable' }))).toBe(UNREADABLE_RECORD_TEXT)
-    expect(UNREADABLE_RECORD_TEXT).toBe("This record can't be read — it keeps its place, and nothing is applied to it.")
+    expect(recordEffectLine(record(true, { kind: 'unreadable' }))).toBe(UNREADABLE_RECORD_TEXT())
+    expect(UNREADABLE_RECORD_TEXT()).toBe("This record can't be read — it keeps its place, and nothing is applied to it.")
     expect(CONTENT_ABSENCE_TEXT).toEqual({
       'not-found': 'Record content not found',
       'scan-incomplete': 'Record content could not be fully read',
@@ -449,7 +447,7 @@ describe('the preview names what the mark will do', () => {
     expect(previewFixText({ kind: 'confirmed-bug' }))
       .toBe('Nothing changes — a real product bug needs a product fix, not a test or knowledge change')
     expect(PREVIEW_FIX_TEXT['test-edit']).toBe('The test file will be edited')
-    expect(DRAFT_WORDING_NOT_SHOWN_TEXT).toBe("The exact wording isn't shown here — it's written when you send.")
+    expect(DRAFT_WORDING_NOT_SHOWN_TEXT()).toBe("The exact wording isn't shown here — it's written when you send.")
     for (const text of [PREVIEW_FIX_TEXT['test-edit'], PREVIEW_FIX_TEXT['no-draftable-fix'], PREVIEW_FIX_TEXT['confirmed-bug'],
       ...Object.values(PREVIEW_FIX_TEXT.knowledge)]) expect(text).not.toMatch(/review|proposal|draft/i)
   })
@@ -518,12 +516,11 @@ describe('the special arms and the failed read', () => {
     expect(PREVIEW_READ_FAILED_TEXT("the dashboard server didn't answer")).toBe(
       "Couldn't check what this will do — the dashboard server didn't answer.",
     )
-    expect(CLI_ESCAPE_TEXT).toBe('You can still record feedback from the CLI (agent-qa runs mark) or over MCP.')
-    expect(feedbackPartsText(CLI_ESCAPE_PARTS)).toBe(CLI_ESCAPE_TEXT)
+    expect(feedbackPartsText(CLI_ESCAPE_PARTS)).toBe('You can still record feedback from the CLI (agent-qa runs mark) or over MCP.')
     expect(CLI_ESCAPE_PARTS.name).toBe('agent-qa runs mark')
-    expect(RETRY_LABEL).toBe('Retry')
-    expect(PREVIEW_RETRY_ACCESSIBLE_NAME).toBe('Retry checking what this will do')
-    expect(PREVIEW_RETRY_ACCESSIBLE_NAME.startsWith(RETRY_LABEL)).toBe(true)
+    expect(RETRY_LABEL()).toBe('Retry')
+    expect(PREVIEW_RETRY_ACCESSIBLE_NAME()).toBe('Retry checking what this will do')
+    expect(PREVIEW_RETRY_ACCESSIBLE_NAME().startsWith(RETRY_LABEL())).toBe(true)
   })
 })
 
@@ -539,34 +536,34 @@ describe('one first-match rule decides Send feedback', () => {
 
   it('SUBMIT-BLOCKED-REASON-ORDER: each condition alone yields its own reason, and a current consequences or quarantined read yields none', () => {
     const rows: [string, Partial<SubmitBlockInput>, string][] = [
-      ['no unique address', { noUniqueAddress: true }, SUBMIT_REASON_NO_UNIQUE_ADDRESS],
-      ['no choice', { kind: undefined }, SUBMIT_REASON_NO_CHOICE],
-      ['nothing landed', { landedKey: undefined, landedOutcome: undefined }, SUBMIT_REASON_CHECKING],
-      ['not current', { landedKey: 'k-before' }, SUBMIT_REASON_CHECKING],
-      ['failed', { landedOutcome: 'failed' }, SUBMIT_REASON_PREVIEW_FAILED],
-      ...MARK_PREVIEW_REFUSALS.map((kind): [string, Partial<SubmitBlockInput>, string] => [kind, { landedOutcome: kind }, SUBMIT_REASON_REFUSED]),
-      ['already-marked', { landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED],
-      ['in flight', { inFlight: true }, SUBMIT_REASON_SENDING],
+      ['no unique address', { noUniqueAddress: true }, SUBMIT_REASON_NO_UNIQUE_ADDRESS()],
+      ['no choice', { kind: undefined }, SUBMIT_REASON_NO_CHOICE()],
+      ['nothing landed', { landedKey: undefined, landedOutcome: undefined }, SUBMIT_REASON_CHECKING()],
+      ['not current', { landedKey: 'k-before' }, SUBMIT_REASON_CHECKING()],
+      ['failed', { landedOutcome: 'failed' }, SUBMIT_REASON_PREVIEW_FAILED()],
+      ...MARK_PREVIEW_REFUSALS.map((kind): [string, Partial<SubmitBlockInput>, string] => [kind, { landedOutcome: kind }, SUBMIT_REASON_REFUSED()]),
+      ['already-marked', { landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED()],
+      ['in flight', { inFlight: true }, SUBMIT_REASON_SENDING()],
       ['quarantined', { landedOutcome: 'quarantined' }, ''],
       ['consequences', {}, ''],
     ]
     for (const [name, over, reason] of rows) {
       expect(submitBlockedReason({ ...enabled, ...over }), name).toBe(reason)
     }
-    expect(SUBMIT_REASON_PREVIEW_FAILED).toBe("Consequences couldn't be checked — retry above.")
-    expect(SUBMIT_REASON_REFUSED).toBe("This mark can't be recorded — see above.")
-    expect(SUBMIT_REASON_ALREADY_MARKED).toBe("You already said this — there's nothing new to record.")
+    expect(SUBMIT_REASON_PREVIEW_FAILED()).toBe("Consequences couldn't be checked — retry above.")
+    expect(SUBMIT_REASON_REFUSED()).toBe("This mark can't be recorded — see above.")
+    expect(SUBMIT_REASON_ALREADY_MARKED()).toBe("You already said this — there's nothing new to record.")
   })
 
   it('SUBMIT-BLOCKED-REASON-ORDER: with every blocking condition true the first row wins, and lifting each in turn hands over to the next', () => {
     const cascade: [Partial<SubmitBlockInput>, string][] = [
-      [{}, SUBMIT_REASON_NO_UNIQUE_ADDRESS],
-      [{ noUniqueAddress: false }, SUBMIT_REASON_NO_CHOICE],
-      [{ kind: 'false-fail' }, SUBMIT_REASON_CHECKING],
-      [{ landedKey: 'k-now' }, SUBMIT_REASON_PREVIEW_FAILED],
-      [{ landedOutcome: 'run-not-found' }, SUBMIT_REASON_REFUSED],
-      [{ landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED],
-      [{ landedOutcome: 'consequences' }, SUBMIT_REASON_SENDING],
+      [{}, SUBMIT_REASON_NO_UNIQUE_ADDRESS()],
+      [{ noUniqueAddress: false }, SUBMIT_REASON_NO_CHOICE()],
+      [{ kind: 'false-fail' }, SUBMIT_REASON_CHECKING()],
+      [{ landedKey: 'k-now' }, SUBMIT_REASON_PREVIEW_FAILED()],
+      [{ landedOutcome: 'run-not-found' }, SUBMIT_REASON_REFUSED()],
+      [{ landedOutcome: 'already-marked' }, SUBMIT_REASON_ALREADY_MARKED()],
+      [{ landedOutcome: 'consequences' }, SUBMIT_REASON_SENDING()],
       [{ inFlight: false }, ''],
     ]
     let input: SubmitBlockInput = {
@@ -586,7 +583,7 @@ describe('one first-match rule decides Send feedback', () => {
 
 describe('Technical details copy', () => {
   it('TECHNICAL-DETAILS-ROWS: the locked row labels, and the basis with its prior mark when there is one', () => {
-    expect(TECHNICAL_DETAILS_LABEL).toBe('Technical details')
+    expect(TECHNICAL_DETAILS_LABEL()).toBe('Technical details')
     expect(TECHNICAL_DETAILS_ROW_LABELS).toEqual({
       kind: 'Mark kind',
       address: 'Address',
@@ -599,12 +596,13 @@ describe('Technical details copy', () => {
   })
 })
 
-// A time is the browser's own format of `markedAt`, so cells compute it with `formatMarkTime`.
+// A time is `markedAt` in the dashboard's language and the browser's region, so cells compute it
+// with `formatMarkTime`.
 describe('the history copy', () => {
   const RUN_ID = generateRunId()
 
-  it('MARK-TIME-FORMAT: the month, day and 24-hour time of markedAt in the browser locale; a non-finite time has none', () => {
-    const format = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+  it("the month, day and 24-hour time of markedAt in the dashboard's language and the browser's region; a non-finite time has none", () => {
+    const format = new Intl.DateTimeFormat(formatLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
     for (const ms of [0, Date.UTC(2026, 8, 23, 10, 41), Date.UTC(2026, 0, 1, 23, 5)]) {
       expect(formatMarkTime(ms)).toBe(format.format(new Date(ms)))
     }
@@ -636,10 +634,10 @@ describe('the history copy', () => {
     expect(historyTitle('step', 2)).toBe('Feedback on this step (2)')
     expect(historyTitle('test', 0)).toBe('Feedback on this test (0)')
     expect(runHistoryLabel(3)).toBe('All feedback on this run (3)')
-    expect(ACTIVE_TEXT).toBe('Active')
+    expect(ACTIVE_TEXT()).toBe('Active')
     expect(replacedByText('Sep 23, 10:41')).toBe('Replaced by your later mark at Sep 23, 10:41')
     expect(replacedByText()).toBe('Replaced by your later mark')
-    expect(REPLACEMENT_EXPLANATION).toBe('Only your latest mark on a test or step counts.')
+    expect(REPLACEMENT_EXPLANATION()).toBe('Only your latest mark on a test or step counts.')
     expect(HISTORY_EMPTY_TEXT).toEqual({
       step: 'No feedback on this step yet.',
       test: 'No feedback on this test yet.',
@@ -650,14 +648,15 @@ describe('the history copy', () => {
     expect(historyStateText('ledger-unavailable')).toBe("This run's feedback history can't be read right now.")
     expect(HISTORY_READ_FAILED_TEXT(feedbackReadFailureReason('network')))
       .toBe(`Couldn't load this run's feedback history — ${feedbackReadFailureReason('network')}.`)
-    expect(HISTORY_RETRY_ACCESSIBLE_NAME).toBe('Retry loading feedback history')
-    expect(HISTORY_RETRY_ACCESSIBLE_NAME.startsWith(RETRY_LABEL)).toBe(true)
+    expect(HISTORY_RETRY_ACCESSIBLE_NAME()).toBe('Retry loading feedback history')
+    expect(HISTORY_RETRY_ACCESSIBLE_NAME().startsWith(RETRY_LABEL())).toBe(true)
   })
 
   it('HISTORY-APPLIED-COPY: an applied fix says what it changed; a historical draft says its change was not recorded', () => {
-    expect(APPLIED_KNOWLEDGE_PREFIX).toBe('Changed knowledge: ')
-    expect(APPLIED_TEST_FILE_PREFIX).toBe('Edited the test file ')
-    expect(APPLIED_UNAVAILABLE_TEXT).toBe('What this mark changed was not recorded.')
+    expect(appliedChangeText({ kind: 'knowledge', records: [{ recordId: 'mem_1', content: 'Use the coupon field' }] }))
+      .toBe('Changed knowledge: “Use the coupon field”')
+    expect(appliedChangeText({ kind: 'test-file', filePath: 'tests/checkout.yaml' })).toBe('Edited the test file tests/checkout.yaml')
+    expect(APPLIED_UNAVAILABLE_TEXT()).toBe('What this mark changed was not recorded.')
     expect(appliedRecordUnavailableText('mem_1')).toBe('mem_1 (content unavailable)')
     expect(dispositionText({ kind: 'drafted', fix: 'fact', proposalId: 'prop_x', proposalKind: 'knowledge' }))
       .toBe('Recorded — a fix was drafted (older mark)')
@@ -677,7 +676,7 @@ describe('the history copy', () => {
     expect(historyTargetLabel({ testIndex: 1, stepIndex: 1 }, detail)).toEqual({ prefix: 'Step 2 of 5 · ', name: 'apply coupon' })
     expect(feedbackPartsText(historyTargetLabel({ testIndex: 1 }, detail))).toBe(`checkout ${memberHandleLabel(1)} · whole test`)
     expect(historyTargetLabel({ testIndex: 1 }, detail).name).toBe('checkout')
-    expect(historyTargetLabel({ testIndex: 1, stepIndex: 3 }, detail)).toEqual({ prefix: 'Step 4 of 5 · ', name: UNNAMED_STEP_LABEL })
+    expect(historyTargetLabel({ testIndex: 1, stepIndex: 3 }, detail)).toEqual({ prefix: 'Step 4 of 5 · ', name: UNNAMED_STEP_LABEL() })
     expect(feedbackPartsText(historyTargetLabel({ testIndex: 0 }, null))).toBe(`${memberDisplayName({ testIndex: 0 })} ${memberHandleLabel(0)} · whole test`)
   })
 })
@@ -719,5 +718,33 @@ describe('docked or stacked is one rule', () => {
 
   it('LAYOUTS-RUNTIME: the layouts are exactly docked and stacked', () => {
     expect([...FEEDBACK_LAYOUTS]).toEqual(['docked', 'stacked'])
+  })
+})
+
+describe('the feedback text in another language', () => {
+  afterEach(async () => {
+    await i18n.changeLanguage('en')
+    i18n.removeResourceBundle('de', 'translation')
+  })
+
+  it('places a name where the sentence puts it, never reads a name for slots, and follows a switch back', async () => {
+    i18n.addResourceBundle('de', 'translation', {
+      'feedback.history.targetStep': '{{name}} · Schritt {{number}} von {{total}}',
+      'feedback.retry': 'Erneut versuchen',
+    })
+    await i18n.changeLanguage('de')
+    const detail = {
+      members: [{ testIndex: 1, attempts: 1, name: 'checkout', totalSteps: 5 }],
+      steps: [{ testIndex: 1, stepIndex: 1, stepText: 'type {{total}} into {{name}}', cacheStatus: 'miss', verifierVerdict: { pass: true, reasoning: '' }, selfHealOccurred: false, briefDigest: 'd' } as const],
+    }
+
+    expect(historyTargetLabel({ testIndex: 1, stepIndex: 1 }, detail))
+      .toEqual({ prefix: '', name: 'type {{total}} into {{name}}', suffix: ' · Schritt 2 von 5' })
+    expect(RETRY_LABEL()).toBe('Erneut versuchen')
+
+    await i18n.changeLanguage('en')
+    expect(feedbackPartsText(historyTargetLabel({ testIndex: 1, stepIndex: 1 }, detail)))
+      .toBe('Step 2 of 5 · type {{total}} into {{name}}')
+    expect(RETRY_LABEL()).toBe('Retry')
   })
 })

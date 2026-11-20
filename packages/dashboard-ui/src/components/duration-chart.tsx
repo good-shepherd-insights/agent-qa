@@ -5,14 +5,9 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart"
+import { formatDateTime } from "@/lib/format"
 import { cn, formatDuration } from "@/lib/utils"
-
-const chartConfig = {
-  duration: {
-    label: "Duration",
-    color: "var(--chart-2)",
-  },
-} satisfies ChartConfig
+import { useTranslation } from "@/i18n"
 
 interface DurationChartProps {
   data: { date: string; duration: number }[]
@@ -20,23 +15,30 @@ interface DurationChartProps {
 }
 
 function formatDate(value: string) {
-  const d = new Date(value)
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+  return formatDateTime(new Date(value), { month: "short", day: "numeric" })
 }
 
 function renderDurationTooltipValue(value: unknown, name: unknown) {
-  const label = typeof name === "string" ? name : "Duration"
   const formattedValue = typeof value === "number" ? formatDuration(value) : String(value)
 
   return (
     <>
-      <span className="text-muted-foreground">{label}</span>
+      <span className="text-muted-foreground">{String(name)}</span>
       <span className="font-mono font-medium text-foreground tabular-nums">{formattedValue}</span>
     </>
   )
 }
 
 export function DurationChart({ data, className }: DurationChartProps) {
+  const { t } = useTranslation()
+  const label = t("insights.chart.duration")
+  const chartConfig = {
+    duration: {
+      label,
+      color: "var(--chart-2)",
+    },
+  } satisfies ChartConfig
+
   return (
     <ChartContainer config={chartConfig} className={cn("h-[300px] w-full aspect-auto", className)}>
       <LineChart data={data} accessibilityLayer>
@@ -61,6 +63,7 @@ export function DurationChart({ data, className }: DurationChartProps) {
         <Line
           type="linear"
           dataKey="duration"
+          name={label}
           stroke="var(--color-duration)"
           strokeWidth={2}
           dot={false}

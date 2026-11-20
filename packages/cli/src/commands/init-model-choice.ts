@@ -1,5 +1,6 @@
 import {
   NameSlugSchema,
+  listSavedCredentials,
   loadLLMAuthPlugins,
   resolveLLMAuth,
   type SavedCredential,
@@ -8,6 +9,7 @@ import { getProvider } from '@vostride/agent-qa-model'
 import { SUBSCRIPTION_AUTH_ENTRY_NAME } from '@vostride/agent-qa-schema'
 import { CliRefusal } from '../composition/cli-refusal.js'
 import type { InitSection } from '../init-ui/init-ui.js'
+import { readSignIn, type SignInClock } from './saved-sign-in.js'
 import { SUBSCRIPTION_AUTH_PACKAGE } from './scaffold-content.js'
 
 export const INIT_MODEL_CHOICES = [
@@ -55,10 +57,15 @@ export type InitModelPick =
 
 type SavedPick = Extract<InitModelPick, { kind: 'saved' }>
 
-const SAVED_KIND_STATUS: Record<SavedCredentialType, string> = {
-  oauth: 'signed in',
+const SAVED_KIND_STATUS: Record<Exclude<SavedCredentialType, 'oauth'>, string> = {
   api: 'key saved',
   bearer: 'token saved',
+}
+
+function savedStatus(credential: SavedCredential, clock: SignInClock): string {
+  return credential.type === 'oauth'
+    ? readSignIn(credential.signIn, clock).status
+    : SAVED_KIND_STATUS[credential.type]
 }
 
 // A saved credential is listed where the new choice it acts as stands; a compatible key acts as
@@ -92,13 +99,16 @@ function savedPicks(saved: readonly SavedCredential[]): SavedPick[] {
   )
 }
 
-export function initModelSections(saved: readonly SavedCredential[]): InitSection<InitModelPick>[] {
+export function initModelSections(
+  saved: readonly SavedCredential[],
+  clock: SignInClock,
+): InitSection<InitModelPick>[] {
   const newChoices: InitSection<InitModelPick> = {
     heading: 'Connect a new model',
     options: INIT_MODEL_CHOICES.map((choice) => ({
       value: { kind: 'new', choice } as const,
       label: INIT_MODEL_CHOICE_TEXT[choice].label,
-      status: newChoiceStatus(choice, saved),
+      status: newChoiceStatus(choice, saved, clock),
     })),
   }
   const picks = savedPicks(saved).sort(
@@ -107,6 +117,7 @@ export function initModelSections(saved: readonly SavedCredential[]): InitSectio
       (a.name < b.name ? -1 : a.name > b.name ? 1 : 0),
   )
   if (picks.length === 0) return [newChoices]
+  const byName = new Map(saved.map((credential) => [credential.name, credential]))
   return [
     newChoices,
     {
@@ -114,7 +125,7 @@ export function initModelSections(saved: readonly SavedCredential[]): InitSectio
       options: picks.map((pick) => ({
         value: pick,
         label: `${pick.name} (${getProvider(pick.provider)?.label ?? pick.provider})`,
-        status: SAVED_KIND_STATUS[pick.type],
+        status: savedStatus(byName.get(pick.name)!, clock),
       })),
     },
   ]
@@ -236,15 +247,17 @@ function freeName(stable: string, provider: string, saved: readonly SavedCredent
 
 // A new choice that would reuse a saved credential under its stable name shows that
 // credential's status, as its saved row does.
-function newChoiceStatus(choice: InitModelChoice, saved: readonly SavedCredential[]): string {
+function newChoiceStatus(
+  choice: InitModelChoice,
+  saved: readonly SavedCredential[],
+  clock: SignInClock,
+): string {
   const { name, provider } = NEW_CHOICE_TARGETS[choice]
   const shared =
     freeName(name, provider, saved) === name
       ? saved.find((credential) => credential.name === name)
       : undefined
-  return shared === undefined
-    ? INIT_MODEL_CHOICE_TEXT[choice].status
-    : SAVED_KIND_STATUS[shared.type]
+  return shared === undefined ? INIT_MODEL_CHOICE_TEXT[choice].status : savedStatus(shared, clock)
 }
 
 export function modelEntryFor(pick: InitModelPick, flags: InitModelFlags): InitModelSetup {
@@ -303,12 +316,13 @@ export function resolveLlmFlag(value: string, saved: readonly SavedCredential[])
 export interface InitModelStatus {
   status: 'ready' | 'pending'
   reason?: string
+  signIn?: string
 }
 
 const DASHBOARD_REASON = "set up on the dashboard's model page"
 
 // Read from the local store only: the subscription plugin is loaded so the resolver knows its
-// provider, and nothing leaves the machine.
+// provider, a sign-in's state comes from its stored times, and nothing leaves the machine.
 export async function modelStatus(input: {
   entry?: InitModelEntry
   dashboard?: InitModelSetup['dashboard']
@@ -316,6 +330,7 @@ export async function modelStatus(input: {
   projectDir: string
   authPath: string
   pluginInstalled: boolean
+  clock: SignInClock
 }): Promise<InitModelStatus> {
   const { entry } = input
   if (entry === undefined) return { status: 'pending', reason: DASHBOARD_REASON }
@@ -334,7 +349,17 @@ export async function modelStatus(input: {
     }
   }
   const auth = await resolveLLMAuth(entry.name, entry, input.authPath)
-  if (auth.kind !== 'missing') return { status: 'ready' }
+  if (auth.kind !== 'missing') {
+    if (!subscription) return { status: 'ready' }
+    const signIn = (await listSavedCredentials(input.authPath)).find(
+      (credential) => credential.name === entry.name && credential.type === 'oauth',
+    )
+    if (signIn?.type !== 'oauth') return { status: 'ready' }
+    const state = readSignIn(signIn.signIn, input.clock)
+    return state.expired === undefined
+      ? { status: 'ready', signIn: state.status }
+      : { status: 'pending', reason: state.expired }
+  }
   return {
     status: 'pending',
     reason: subscription ? 'not signed in' : "add the key on the dashboard's model page",

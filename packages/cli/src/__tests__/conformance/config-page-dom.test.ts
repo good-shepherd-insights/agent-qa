@@ -173,7 +173,7 @@ function realAuthFingerprint(): string {
 
 async function launchBrowser(dashboard: SpawnedDashboard): Promise<Browser> {
   try {
-    return await chromium.launch({ headless: true })
+    return await chromium.launch({ headless: true, args: ['--lang=en-US'] })
   } catch (error) {
     await dashboard.stop()
     throw new Error(`${BROWSER_INSTALL_INSTRUCTION} underlying error: ${error instanceof Error ? error.message : String(error)}`)
@@ -306,8 +306,8 @@ describe('Config tabs, links, geometry, masking and names on the shipped bundle'
       gpt: { type: 'api', provider: 'anthropic-compatible', key: SENTINELS.auth },
     })
     const spawned = await spawnDashboard(project.root, project.configPath)
-    expect(spawned.ready, `the built dashboard never listened. stdout: ${spawned.stdout().slice(-1200)} stderr: ${spawned.stderr().slice(-1200)}`).toBe(true)
     dashboard = spawned
+    expect(spawned.ready, `the built dashboard never listened. stdout: ${spawned.stdout().slice(-1200)} stderr: ${spawned.stderr().slice(-1200)}`).toBe(true)
     harness = new Harness(await launchBrowser(spawned), spawned.origin)
   }, 180_000)
 
@@ -610,8 +610,8 @@ describe('the continuous add flow, keyboard recovery and outside edits on the sh
     stub = await startStubModelServer()
     project = writeProject('add', TASK2_CONFIG)
     const spawned = await spawnDashboard(project.root, project.configPath)
-    expect(spawned.ready, `the built dashboard never listened. stdout: ${spawned.stdout().slice(-1200)} stderr: ${spawned.stderr().slice(-1200)}`).toBe(true)
     dashboard = spawned
+    expect(spawned.ready, `the built dashboard never listened. stdout: ${spawned.stdout().slice(-1200)} stderr: ${spawned.stderr().slice(-1200)}`).toBe(true)
     harness = new Harness(await launchBrowser(spawned), spawned.origin)
   }, 180_000)
 

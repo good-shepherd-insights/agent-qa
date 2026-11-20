@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router"
+import { formatPercent, formatRegionalNumber, formatRelativeCompact } from "@/lib/format"
 import { routes } from "@/lib/routes"
 import { toast } from "sonner"
 import { FileCode, Zap } from "lucide-react"
@@ -51,6 +52,7 @@ import {
   formatDuration,
   normalizeTimestamp,
 } from "@/lib/utils"
+import { useTranslation } from "@/i18n"
 
 const VALID_SUITE_VIEWS = ["builder", "yaml"] as const
 type SuiteViewerView = (typeof VALID_SUITE_VIEWS)[number]
@@ -85,22 +87,7 @@ function createEmptySuiteAnalytics(suiteId: string): SuiteAnalyticsDetail {
 }
 
 function formatPassRate(rate: number | null): string {
-  return rate === null ? "\u2014" : `${Math.round(rate * 100)}%`
-}
-
-function formatRelativeCompact(iso: string): string {
-  if (!iso) return ""
-  const date = new Date(normalizeTimestamp(iso))
-  const diffMs = Date.now() - date.getTime()
-  const diffSec = Math.floor(diffMs / 1000)
-  if (diffSec < 60) return "just now"
-  const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return `${diffMin}m ago`
-  const diffHr = Math.floor(diffMin / 60)
-  if (diffHr < 24) return `${diffHr}h ago`
-  const diffDay = Math.floor(diffHr / 24)
-  if (diffDay < 7) return `${diffDay}d ago`
-  return formatDate(iso)
+  return rate === null ? "\u2014" : formatPercent(Math.round(rate * 100))
 }
 
 function MetricScopeControl({
@@ -116,8 +103,9 @@ function MetricScopeControl({
   totalCount: number
   onModeChange: (mode: MetricScopeMode) => void
 }) {
+  const { t } = useTranslation()
   if (!configured) {
-    return <p className="text-xs text-muted-foreground">No analytics scope configured</p>
+    return <p className="text-xs text-muted-foreground">{t("suites.viewer.scope.none")}</p>
   }
 
   return (
@@ -133,12 +121,12 @@ function MetricScopeControl({
             className="h-7 rounded-[2px] px-2 text-xs"
             onClick={() => onModeChange(value)}
           >
-            {value === "scoped" ? "Scoped" : "All runs"}
+            {value === "scoped" ? t("suites.viewer.scope.scoped") : t("suites.viewer.scope.all")}
           </Button>
         ))}
       </div>
       <span className="text-xs text-muted-foreground">
-        {scopedCount} scoped / {totalCount} total runs
+        {t("suites.viewer.scope.counts", { scoped: scopedCount, count: totalCount })}
       </span>
     </div>
   )
@@ -151,10 +139,11 @@ function RunHistoryTable({
   runs: SuiteAnalyticsDetail["runs"]
   compactDate?: boolean
 }) {
+  const { t } = useTranslation()
   if (runs.length === 0) {
     return (
       <div className="flex items-center justify-center h-16 text-sm text-muted-foreground">
-        No runs yet
+        {t("suites.viewer.history.empty")}
       </div>
     )
   }
@@ -163,9 +152,9 @@ function RunHistoryTable({
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Status</TableHead>
-          <TableHead>Duration</TableHead>
-          <TableHead>Date</TableHead>
+          <TableHead>{t("suites.viewer.history.status")}</TableHead>
+          <TableHead>{t("suites.viewer.history.duration")}</TableHead>
+          <TableHead>{t("suites.viewer.history.date")}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -184,7 +173,7 @@ function RunHistoryTable({
             </TableCell>
             <TableCell>
               {run.status === "running" ? (
-                <span className="text-blue-500 text-sm">In progress...</span>
+                <span className="text-blue-500 text-sm">{t("suites.viewer.history.inProgress")}</span>
               ) : (
                 <span className="text-muted-foreground">
                   {formatDuration(run.duration)}
@@ -194,7 +183,10 @@ function RunHistoryTable({
             <TableCell>
               {compactDate ? (
                 <span className="text-muted-foreground">
-                  {formatRelativeCompact(run.createdAt)}
+                  {formatRelativeCompact(normalizeTimestamp(run.createdAt), {
+                    empty: "",
+                    after: { days: 7, format: () => formatDate(run.createdAt) },
+                  })}
                 </span>
               ) : (
                 <Tooltip>
@@ -217,6 +209,7 @@ function RunHistoryTable({
 }
 
 export default function SuiteViewerPage() {
+  const { t } = useTranslation()
   const params = useParams<{ "suite-id": string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -249,7 +242,7 @@ export default function SuiteViewerPage() {
     return match ? normalizeSuiteName(match[1]) : null
   }, [content])
 
-  usePageTitle(suiteName || "Suite")
+  usePageTitle(suiteName || t("suites.viewer.fallbackName"))
 
   const scopeConfigured = analyticsData.scope?.configured === true
   const selectedTrends = metricScopeMode === "scoped" && scopeConfigured && analyticsData.scopedTrends
@@ -315,7 +308,7 @@ export default function SuiteViewerPage() {
       .catch(() => {
         if (!cancelled) {
           setNotFound(true)
-          toast.error("Failed to load suite file")
+          toast.error(t("suites.viewer.loadFailed"))
         }
       })
       .finally(() => {
@@ -349,11 +342,11 @@ export default function SuiteViewerPage() {
     setIsRunning(true)
     try {
       const result = await triggerRun({ file: filePath })
-      toast.success("Run started")
+      toast.success(t("suites.viewer.runStarted"))
       navigate(routes.runLive(result.runId))
     } catch (err) {
       toast.error(
-        `Failed to start run: ${err instanceof Error ? err.message : String(err)}`,
+        t("suites.viewer.runFailed", { message: err instanceof Error ? err.message : String(err) }),
       )
     } finally {
       setIsRunning(false)
@@ -386,9 +379,9 @@ export default function SuiteViewerPage() {
     return (
       <EmptyState
         icon={FileCode}
-        title="Suite not found"
-        description="This suite doesn't exist"
-        actionLabel="View All Suites"
+        title={t("suites.viewer.notFound.title")}
+        description={t("suites.viewer.notFound.description")}
+        actionLabel={t("suites.viewer.notFound.action")}
         onAction={() => navigate(routes.suites)}
       />
     )
@@ -429,27 +422,27 @@ export default function SuiteViewerPage() {
 
       <InsightsLineGrid className="grid-cols-2 divide-x divide-y-0 border-x-0 border-t-0">
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Pass Rate</span>
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("suites.viewer.metric.passRate")}</span>
           <span className="text-xl font-semibold text-foreground">
             {formatPassRate(selectedTrends.passRate)}
           </span>
         </InsightsLineCell>
         <InsightsLineCell className="flex flex-col gap-0.5 px-3 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Avg Duration</span>
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("suites.viewer.metric.avgDuration")}</span>
           <span className="text-xl font-semibold text-foreground">
             {formatDuration(analyticsData.trends.avgDuration)}
           </span>
         </InsightsLineCell>
         <InsightsLineCell className="flex flex-col gap-0.5 border-t border-border px-3 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Total Runs</span>
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("suites.viewer.metric.totalRuns")}</span>
           <span className="text-xl font-semibold text-foreground">
-            {analyticsData.total.toLocaleString()}
+            {formatRegionalNumber(analyticsData.total)}
           </span>
         </InsightsLineCell>
         <InsightsLineCell className="flex flex-col gap-0.5 border-t border-border px-3 py-2">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Flaky Score</span>
+          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{t("suites.viewer.metric.flakyScore")}</span>
           <span className="text-xl font-semibold text-foreground">
-            {(selectedFlakyScore * 100).toFixed(0)}%
+            {formatPercent(Number((selectedFlakyScore * 100).toFixed(0)))}
           </span>
         </InsightsLineCell>
       </InsightsLineGrid>
@@ -457,7 +450,9 @@ export default function SuiteViewerPage() {
       <InsightsLineGrid className="border-x-0 border-y-0">
         <InsightsLineCell className="flex flex-col gap-2 px-3 py-3">
           <span className="text-sm font-medium text-foreground">
-            {metricScopeMode === "scoped" && scopeConfigured ? "Scoped Runs" : "All Runs"} ({runs.length})
+            {metricScopeMode === "scoped" && scopeConfigured
+              ? t("suites.viewer.history.scoped", { count: runs.length })
+              : t("suites.viewer.history.all", { count: runs.length })}
           </span>
           <RunHistoryTable runs={runs.slice(0, 5)} compactDate />
         </InsightsLineCell>
@@ -469,7 +464,7 @@ export default function SuiteViewerPage() {
     <TooltipProvider>
       <div className="flex h-full min-h-0 flex-col">
         <SuiteNavbar
-          suiteName={suiteName || "Suite"}
+          suiteName={suiteName || t("suites.viewer.fallbackName")}
           suiteId={suiteId}
           unsaved={false}
           isCreateMode={false}
@@ -503,8 +498,8 @@ export default function SuiteViewerPage() {
         >
           <div className="px-4 border-b border-border">
             <TabsList variant="line">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="insights">Insights</TabsTrigger>
+              <TabsTrigger value="overview">{t("suites.viewer.tab.overview")}</TabsTrigger>
+              <TabsTrigger value="insights">{t("suites.viewer.tab.insights")}</TabsTrigger>
             </TabsList>
           </div>
 
@@ -528,7 +523,7 @@ export default function SuiteViewerPage() {
                     variant="line"
                     className="w-full grid grid-cols-2 px-4 md:w-fit md:inline-flex"
                   >
-                    <TabsTrigger value="builder">Builder</TabsTrigger>
+                    <TabsTrigger value="builder">{t("suites.viewer.view.builder")}</TabsTrigger>
                     <TabsTrigger value="yaml">YAML</TabsTrigger>
                   </TabsList>
                 </div>
@@ -556,33 +551,33 @@ export default function SuiteViewerPage() {
               {analyticsData.isFlaky && (
                 <Badge variant="destructive">
                   <Zap className="size-3" />
-                  Flaky (score: {analyticsData.flakyScore.toFixed(2)})
+                  {t("suites.viewer.flaky", { score: analyticsData.flakyScore.toFixed(2) })}
                 </Badge>
               )}
 
               <InsightsLineGrid className="grid-cols-2 divide-x divide-y-0 md:grid-cols-4">
                 <InsightsLineCell className="border-b border-border md:border-b-0">
                   <div>
-                    <p className="text-sm text-muted-foreground">Total Runs</p>
-                    <p className="mt-0.5 text-2xl font-semibold">{analyticsData.total.toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">{t("suites.viewer.metric.totalRuns")}</p>
+                    <p className="mt-0.5 text-2xl font-semibold">{formatRegionalNumber(analyticsData.total)}</p>
                   </div>
                 </InsightsLineCell>
                 <InsightsLineCell className="border-b border-border md:border-b-0 md:border-r">
                   <div>
-                    <p className="text-sm text-muted-foreground">Pass Rate</p>
+                    <p className="text-sm text-muted-foreground">{t("suites.viewer.metric.passRate")}</p>
                     <p className="mt-0.5 text-2xl font-semibold">{formatPassRate(selectedTrends.passRate)}</p>
                   </div>
                 </InsightsLineCell>
                 <InsightsLineCell>
                   <div>
-                    <p className="text-sm text-muted-foreground">Avg Duration</p>
+                    <p className="text-sm text-muted-foreground">{t("suites.viewer.metric.avgDuration")}</p>
                     <p className="mt-0.5 text-2xl font-semibold">{formatDuration(analyticsData.trends.avgDuration)}</p>
                   </div>
                 </InsightsLineCell>
                 <InsightsLineCell>
                   <div>
-                    <p className="text-sm text-muted-foreground">Flaky Score</p>
-                    <p className="mt-0.5 text-2xl font-semibold">{(selectedFlakyScore * 100).toFixed(0)}%</p>
+                    <p className="text-sm text-muted-foreground">{t("suites.viewer.metric.flakyScore")}</p>
+                    <p className="mt-0.5 text-2xl font-semibold">{formatPercent(Number((selectedFlakyScore * 100).toFixed(0)))}</p>
                   </div>
                 </InsightsLineCell>
               </InsightsLineGrid>
@@ -602,13 +597,13 @@ export default function SuiteViewerPage() {
               {selectedTrends.daily.length > 0 && (
                 <InsightsLineGrid className="md:grid-cols-2 md:divide-x md:divide-y-0">
                   <InsightsLineCell className="px-4 py-3">
-                      <p className="text-sm font-medium mb-2">Pass Rate</p>
+                      <p className="text-sm font-medium mb-2">{t("suites.viewer.chart.passRate")}</p>
                       <div className="h-[160px] overflow-hidden">
                         <PassRateChart data={passRateData} />
                       </div>
                   </InsightsLineCell>
                   <InsightsLineCell className="px-4 py-3">
-                      <p className="text-sm font-medium mb-2">Duration</p>
+                      <p className="text-sm font-medium mb-2">{t("suites.viewer.chart.duration")}</p>
                       <div className="h-[160px] overflow-hidden">
                         <DurationChart data={durationData} />
                       </div>
@@ -619,7 +614,9 @@ export default function SuiteViewerPage() {
               <InsightsLineGrid>
                 <InsightsLineCell className="px-4 py-3">
                   <p className="text-sm font-medium mb-2">
-                    {metricScopeMode === "scoped" && scopeConfigured ? "Scoped Runs" : "All Runs"} ({runs.length})
+                    {metricScopeMode === "scoped" && scopeConfigured
+                      ? t("suites.viewer.history.scoped", { count: runs.length })
+                      : t("suites.viewer.history.all", { count: runs.length })}
                   </p>
                   <RunHistoryTable runs={runs} />
                 </InsightsLineCell>

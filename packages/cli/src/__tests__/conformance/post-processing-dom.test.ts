@@ -70,15 +70,13 @@ const BACKLOG_CHAINS = 3
 
 
 /**
- * A published constant, read out of the module that publishes it.
+ * A single-quoted member of an exported object literal, read out of the module that publishes it.
  *
- * `live-view-dom.test.ts`'s `publishedSentence`, widened by one level because the sentences this
- * file asserts on live inside a `Record` literal rather than at the top level. Extracted rather
- * than imported for that file's own reason: importing a `dashboard-ui` module into a Node test
- * would drag a renderer in. Either way the cell fails when the sentence moves, which is the point —
- * a hardcoded copy would go on passing against a page that says something else.
+ * Used for `STAGE_CARD_LINE_SELECTORS`, the card-line selectors this file harvests by. Extracted
+ * rather than imported because importing a `dashboard-ui` module into a Node test would drag a
+ * renderer in. The file fails when a selector moves, rather than harvesting nothing.
  */
-function publishedRecordSentence(relativePath: string, record: string, key: string): string {
+function publishedRecordMember(relativePath: string, record: string, key: string): string {
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
   const block = new RegExp(`${record}[^=]*=\\s*\\{([\\s\\S]*?)\\n\\}`, 'u').exec(source)
   if (block === null) throw new Error(`${record} is no longer an exported object literal in ${relativePath}`)
@@ -95,31 +93,74 @@ function publishedPollMs(): number {
   return Number(match[1])
 }
 
-/** A single-quoted exported string constant, read out of the shipped module rather than retyped. */
-function publishedConstant(relativePath: string, name: string): string {
+/**
+ * One source-level string body as the runtime would see it.
+ *
+ * `run-detail-failure-dom.test.ts`'s helper, carried here for its reason: a constant whose text
+ * contains its own quote would otherwise come back carrying the backslash the source needed, and
+ * nothing on the page would ever match it.
+ */
+function unescapeStringBody(body: string): string {
+  const named: Record<string, string> = {
+    n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v', '0': '\0',
+  }
+  let out = ''
+  let index = 0
+  while (index < body.length) {
+    const char = body[index] as string
+    if (char !== '\\' || index + 1 >= body.length) {
+      out += char
+      index += 1
+      continue
+    }
+    const next = body[index + 1] as string
+    const braced = next === 'u' ? /^u\{([0-9a-fA-F]+)\}/u.exec(body.slice(index + 1)) : null
+    const quad = next === 'u' ? /^u([0-9a-fA-F]{4})/u.exec(body.slice(index + 1)) : null
+    const hex = next === 'x' ? /^x([0-9a-fA-F]{2})/u.exec(body.slice(index + 1)) : null
+    const escape = braced ?? quad ?? hex
+    if (escape !== null) {
+      out += String.fromCodePoint(Number.parseInt(escape[1] as string, 16))
+      index += 1 + escape[0].length
+      continue
+    }
+    out += named[next] ?? next
+    index += 2
+  }
+  return out
+}
+
+// The English text of one catalog key, in either quote style, on the key's line or the next.
+function publishedText(area: string, key: string): string {
+  const relativePath = join('i18n', 'locales', 'en', `${area}.ts`)
   const source = readFileSync(join(PACKAGES_ROOT, 'dashboard-ui', 'src', relativePath), 'utf8')
-  const match = new RegExp(`export const ${name}\\s*=\\s*'([^']+)'`, 'u').exec(source)
-  if (match === null) throw new Error(`${name} is no longer an exported single-quoted string in ${relativePath}`)
-  return match[1] as string
+  const quotedKey = key.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
+  const entry = new RegExp(
+    `(['"])${quotedKey}\\1:[ \\t]*(?:\\n[ \\t]*)?(['"])((?:\\\\.|[^\\\\])*?)\\2`,
+    'u',
+  ).exec(source)
+  if (entry === null) {
+    throw new Error(`${key} is not a quoted entry of ${relativePath}`)
+  }
+  return unescapeStringBody(entry[3] as string)
 }
 
 const POLL_MS = publishedPollMs()
 const REASON_ABSENT_HANDED_OFF =
-  publishedRecordSentence('lib/post-processing-view.ts', 'FAILED_REASON_ABSENT_TEXT', 'handedOff')
+  publishedText('runDetail', 'runDetail.postProcessing.failedReasonAbsent.handedOff')
 const PENDING_POSTURE_HANDED_OFF =
-  publishedRecordSentence('lib/post-processing-view.ts', 'PENDING_POSTURE_TEXT', 'handedOff')
-const WILL_RETRY_TEXT = publishedConstant('lib/post-processing-view.ts', 'WILL_RETRY_TEXT')
+  publishedText('runDetail', 'runDetail.postProcessing.pendingPosture.handedOff')
+const WILL_RETRY_TEXT = publishedText('runDetail', 'runDetail.postProcessing.willRetry')
 
 // A reason and its absence share the card's outcome line, so the cell reads the whole record.
 const REASON_ABSENT_SENTENCES = ['handedOff', 'detached', 'drained', 'unknown'].map((key) =>
-  publishedRecordSentence('lib/post-processing-view.ts', 'FAILED_REASON_ABSENT_TEXT', key),
+  publishedText('runDetail', `runDetail.postProcessing.failedReasonAbsent.${key}`),
 )
 
 /**
  * `stageFailedText`'s join for the analysis stage, spelled here rather than imported.
  *
  * The cli package cannot import dashboard-ui, so this prefix is the one half that is retyped; the
- * reason half is still read out of the shipped module above, which is the half that could drift
+ * reason half is still read out of the English catalog above, which is the half that could drift
  * without anybody noticing.
  */
 const ANALYSIS_FAILED_PREFIX = 'Analysis failed — '
@@ -132,7 +173,7 @@ const STAGE_CARD_LINES = {
 } as const
 
 for (const [kind, selector] of Object.entries(STAGE_CARD_LINES)) {
-  const published = publishedRecordSentence(
+  const published = publishedRecordMember(
     'components/run-detail/post-processing-chips.tsx',
     'STAGE_CARD_LINE_SELECTORS',
     kind,
@@ -765,7 +806,7 @@ beforeAll(async () => {
 
   let browser: Browser
   try {
-    browser = await chromium.launch({ headless: true })
+    browser = await chromium.launch({ headless: true, args: ['--lang=en-US'] })
   } catch (error) {
     throw new Error(
       `${BROWSER_INSTALL_INSTRUCTION} underlying error: `

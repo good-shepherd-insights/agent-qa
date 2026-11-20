@@ -10,6 +10,7 @@ import {
   ProductTourProvider,
   useProductTour,
 } from '@/components/product-tour'
+import i18n from '@/i18n'
 import {
   PRODUCT_TOUR_COOKIE,
   PRODUCT_TOUR_SCHEMA_VERSION,
@@ -607,6 +608,32 @@ describe('AppLayout product tour integration', () => {
   })
 })
 
+describe('an open tour after a language change', () => {
+  afterEach(async () => {
+    await act(async () => {
+      await i18n.changeLanguage('en')
+    })
+    i18n.removeResourceBundle('fr', 'translation')
+  })
+
+  it('shows the new title in the same card on /runs', async () => {
+    await renderAppAt('/runs')
+    const card = dialog()
+    expect(card?.textContent).toContain('Welcome to agent-qa')
+
+    i18n.addResourceBundle('fr', 'translation', {
+      'tour.intro.title': 'Bienvenue dans agent-qa',
+    })
+    await act(async () => {
+      await i18n.changeLanguage('fr')
+    })
+
+    expect(dialog()).toBe(card)
+    expect(card?.textContent).toContain('Bienvenue dans agent-qa')
+    expect(card?.textContent).not.toContain('Welcome to agent-qa')
+  })
+})
+
 describe('ProductTourProvider auto-start behavior', () => {
   it.each(allowedRoutes)('auto-starts the intro step on %s', async (path) => {
     await renderTour({ path })
@@ -808,7 +835,7 @@ describe('ProductTourProvider route-aware navigation and fallback rendering', ()
 
     expect(container?.querySelector('[data-testid="location"]')?.textContent).toBe('/config/models')
     expect(textContent()).toContain('Configure your LLM first')
-    expect(textContent()).toContain(TOUR_LLM_SETUP_BODY)
+    expect(textContent()).toContain(TOUR_LLM_SETUP_BODY())
     expect(textContent()).not.toContain('save the config')
     expect(resolveProductTourStepRoute(getProductTourStep('llm-setup')!)).toBe(routes.configTab('models'))
   })

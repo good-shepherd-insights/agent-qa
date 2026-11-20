@@ -2,6 +2,7 @@ import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
 import { SearchIcon } from "lucide-react"
 
+import { useTranslation } from "@/i18n"
 import { cn } from "@/lib/utils"
 import {
   Dialog,
@@ -28,8 +29,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title,
+  description,
   children,
   className,
   showCloseButton = true,
@@ -40,11 +41,14 @@ function CommandDialog({
   className?: string
   showCloseButton?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <Dialog {...props}>
       <DialogHeader className="sr-only">
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        <DialogTitle>{title ?? t('common.dialog.commandTitle')}</DialogTitle>
+        <DialogDescription>
+          {description ?? t('common.dialog.commandDescription')}
+        </DialogDescription>
       </DialogHeader>
       <DialogContent
         className={cn("top-[18vh] translate-y-0 overflow-hidden p-0 sm:max-w-2xl", className)}
@@ -84,9 +88,11 @@ function CommandList({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.List>) {
+  const { t } = useTranslation()
   return (
     <CommandPrimitive.List
       data-slot="command-list"
+      label={t('common.suggestions')}
       className={cn(
         "flex-1 min-h-0 scroll-py-1 overflow-x-hidden overflow-y-auto",
         className

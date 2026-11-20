@@ -12,6 +12,7 @@ import type {
   RunDetailStep,
 } from "@vostride/agent-qa-schema"
 
+import i18n from "@/i18n"
 import RunDetailPage from "@/pages/run-detail"
 import {
   ANALYSIS_FAILED_FALLBACK_TEXT,
@@ -307,7 +308,7 @@ describe("a failed member's group carries the op's sentence and its provenance",
     expect(block?.getAttribute("data-verdict-producer")).toBe("deterministic-classifier")
     expect(block?.getAttribute("data-verdict-confidence")).toBe("0")
     expect(block?.querySelector("[data-verdict-provenance]")?.textContent)
-      .toBe(DETERMINISTIC_FALLBACK_LABEL)
+      .toBe(DETERMINISTIC_FALLBACK_LABEL())
   })
 
   it("renders NO block on a member the analysis had no verdict for (a passed member)", async () => {
@@ -366,7 +367,7 @@ describe("the sentence's lifecycle is painted from the chip word", () => {
     await push(CHIP_RUNNING)
     const marker = view.querySelector("[data-verdict-marker]")
     expect(marker?.getAttribute("data-verdict-marker")).toBe("provisional")
-    expect(marker?.textContent).toBe(ANALYSIS_PROVISIONAL_TEXT)
+    expect(marker?.textContent).toBe(ANALYSIS_PROVISIONAL_TEXT())
     expect(view.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer"))
       .toBe("deterministic-classifier")
 
@@ -395,13 +396,13 @@ describe("the sentence's lifecycle is painted from the chip word", () => {
 
     const marker = view.querySelector("[data-verdict-marker]")
     expect(marker?.getAttribute("data-verdict-marker")).toBe("failed")
-    expect(marker?.textContent).toBe(ANALYSIS_FAILED_FALLBACK_TEXT)
+    expect(marker?.textContent).toBe(ANALYSIS_FAILED_FALLBACK_TEXT())
     expect(
       view.querySelector("[data-verdict-block]")?.getAttribute("data-verdict-producer"),
       "the floor verdict stands as it was authored",
     ).toBe("deterministic-classifier")
     expect(view.querySelector("[data-verdict-provenance]")?.textContent)
-      .toBe(DETERMINISTIC_FALLBACK_LABEL)
+      .toBe(DETERMINISTIC_FALLBACK_LABEL())
   })
 })
 
@@ -527,7 +528,7 @@ describe("evidence the durable read found MISSING is said so, and changes nothin
     const chip = view.querySelector('[data-member="0"] [data-cited-artifact-state="unavailable"]')
     expect(chip?.getAttribute("data-cited-artifact-sha"), "the ref keeps its place").toBe(SHA_GONE)
     expect(chip?.querySelector('[data-evidence-state="unavailable"][data-evidence-incomplete]')).not.toBeNull()
-    expect(chip?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL)
+    expect(chip?.textContent).toContain(EVIDENCE_INCOMPLETE_LABEL())
     expect(
       view.querySelector(`[data-member="0"] [data-cited-artifact="${SHA_PRESENT}"]`),
       "the artifact that IS there is still one click from the sentence",
@@ -760,6 +761,36 @@ describe("the records on the failing path reach the visible member and no other"
     expect(view.querySelector('[data-member="1"] [data-verdict-sentence]')?.textContent)
       .toBe('observed (step 0): "Login timed out"')
     expect(view.querySelector('[data-member="1"] [data-verdict-provenance]')?.textContent)
-      .toBe(DETERMINISTIC_FALLBACK_LABEL)
+      .toBe(DETERMINISTIC_FALLBACK_LABEL())
+  })
+})
+
+describe("a mounted run page after a language change", () => {
+  afterEach(async () => {
+    await act(async () => {
+      await i18n.changeLanguage("en")
+    })
+    i18n.removeResourceBundle("fr", "translation")
+  })
+
+  it("shows the verdict's provenance word in the new language in the same block, then English again", async () => {
+    const view = await renderPage()
+    const block = view.querySelector('[data-member="0"] [data-verdict-block]')
+    const provenance = () => block?.querySelector("[data-verdict-provenance]")?.textContent
+    expect(provenance()).toBe("deterministic fallback")
+
+    i18n.addResourceBundle("fr", "translation", {
+      "runDetail.analysis.deterministicFallback": "repli déterministe",
+    })
+    await act(async () => {
+      await i18n.changeLanguage("fr")
+    })
+    expect(view.querySelector('[data-member="0"] [data-verdict-block]'), "not remounted").toBe(block)
+    expect(provenance()).toBe("repli déterministe")
+
+    await act(async () => {
+      await i18n.changeLanguage("en")
+    })
+    expect(provenance()).toBe("deterministic fallback")
   })
 })
